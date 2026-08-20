@@ -72,16 +72,18 @@ class TestChildSessionManagerDepth:
     """Tests for ChildSessionManager depth calculations."""
 
     @pytest.fixture
-    def mock_storage(self):
+    def mock_storage(self) -> MagicMock:
         """Create a mock storage with configurable sessions."""
         return MagicMock()
 
     @pytest.fixture
-    def manager(self, mock_storage):
+    def manager(self, mock_storage: MagicMock) -> ChildSessionManager:
         """Create a manager with default settings."""
         return ChildSessionManager(session_storage=mock_storage, max_agent_depth=2)
 
-    def test_get_session_depth_no_parent(self, manager, mock_storage) -> None:
+    def test_get_session_depth_no_parent(
+        self, manager: ChildSessionManager, mock_storage: MagicMock
+    ) -> None:
         """Session with no parent has depth 0."""
         mock_session = MagicMock()
         mock_session.agent_depth = 0
@@ -91,7 +93,9 @@ class TestChildSessionManagerDepth:
 
         assert depth == 0
 
-    def test_get_session_depth_one_parent(self, manager, mock_storage) -> None:
+    def test_get_session_depth_one_parent(
+        self, manager: ChildSessionManager, mock_storage: MagicMock
+    ) -> None:
         """Session with agent_depth=1 returns depth 1."""
         mock_child = MagicMock()
         mock_child.agent_depth = 1
@@ -101,7 +105,9 @@ class TestChildSessionManagerDepth:
 
         assert depth == 1
 
-    def test_get_session_depth_two_parents(self, manager, mock_storage) -> None:
+    def test_get_session_depth_two_parents(
+        self, manager: ChildSessionManager, mock_storage: MagicMock
+    ) -> None:
         """Session with agent_depth=2 returns depth 2."""
         mock_grandchild = MagicMock()
         mock_grandchild.agent_depth = 2
@@ -111,7 +117,9 @@ class TestChildSessionManagerDepth:
 
         assert depth == 2
 
-    def test_get_session_depth_handles_missing_session(self, manager, mock_storage) -> None:
+    def test_get_session_depth_handles_missing_session(
+        self, manager: ChildSessionManager, mock_storage: MagicMock
+    ) -> None:
         """Missing session returns depth 0."""
         mock_storage.get.return_value = None
 
@@ -119,7 +127,9 @@ class TestChildSessionManagerDepth:
 
         assert depth == 0
 
-    def test_get_session_depth_none_agent_depth(self, manager, mock_storage) -> None:
+    def test_get_session_depth_none_agent_depth(
+        self, manager: ChildSessionManager, mock_storage: MagicMock
+    ) -> None:
         """Session with None agent_depth returns 0."""
         mock_session = MagicMock()
         mock_session.agent_depth = None
@@ -134,16 +144,18 @@ class TestChildSessionManagerCanSpawn:
     """Tests for ChildSessionManager.can_spawn_child method."""
 
     @pytest.fixture
-    def mock_storage(self):
+    def mock_storage(self) -> MagicMock:
         """Create a mock storage."""
         return MagicMock()
 
     @pytest.fixture
-    def manager(self, mock_storage):
+    def manager(self, mock_storage: MagicMock) -> ChildSessionManager:
         """Create a manager with max_agent_depth=2."""
         return ChildSessionManager(session_storage=mock_storage, max_agent_depth=2)
 
-    def test_can_spawn_at_depth_zero(self, manager, mock_storage) -> None:
+    def test_can_spawn_at_depth_zero(
+        self, manager: ChildSessionManager, mock_storage: MagicMock
+    ) -> None:
         """Session at depth 0 can spawn children."""
         mock_session = MagicMock()
         mock_session.agent_depth = 0
@@ -155,7 +167,9 @@ class TestChildSessionManagerCanSpawn:
         assert reason == "OK"
         assert depth == 0
 
-    def test_can_spawn_at_depth_one(self, manager, mock_storage) -> None:
+    def test_can_spawn_at_depth_one(
+        self, manager: ChildSessionManager, mock_storage: MagicMock
+    ) -> None:
         """Session at depth 1 can spawn children (max=2)."""
         mock_child = MagicMock()
         mock_child.agent_depth = 1
@@ -167,7 +181,9 @@ class TestChildSessionManagerCanSpawn:
         assert reason == "OK"
         assert depth == 1
 
-    def test_cannot_spawn_at_max_depth(self, manager, mock_storage) -> None:
+    def test_cannot_spawn_at_max_depth(
+        self, manager: ChildSessionManager, mock_storage: MagicMock
+    ) -> None:
         """Session at max depth cannot spawn children."""
         mock_grandchild = MagicMock()
         mock_grandchild.agent_depth = 2
@@ -180,7 +196,9 @@ class TestChildSessionManagerCanSpawn:
         assert "2" in reason
         assert depth == 2
 
-    def test_cannot_spawn_parent_not_found(self, manager, mock_storage) -> None:
+    def test_cannot_spawn_parent_not_found(
+        self, manager: ChildSessionManager, mock_storage: MagicMock
+    ) -> None:
         """Cannot spawn if parent session not found."""
         mock_storage.get.return_value = None
 
@@ -195,18 +213,20 @@ class TestChildSessionManagerCreate:
     """Tests for ChildSessionManager.create_child_session method."""
 
     @pytest.fixture
-    def mock_storage(self):
+    def mock_storage(self) -> MagicMock:
         """Create a mock storage with register method."""
         storage = MagicMock()
         storage.register.return_value = MagicMock(id="sess-new-child")
         return storage
 
     @pytest.fixture
-    def manager(self, mock_storage):
+    def manager(self, mock_storage: MagicMock) -> ChildSessionManager:
         """Create a manager."""
         return ChildSessionManager(session_storage=mock_storage, max_agent_depth=2)
 
-    def test_create_child_session_success(self, manager, mock_storage) -> None:
+    def test_create_child_session_success(
+        self, manager: ChildSessionManager, mock_storage: MagicMock
+    ) -> None:
         """Successfully creates a child session."""
         # Setup parent session at depth 0
         mock_parent = MagicMock()
@@ -238,7 +258,9 @@ class TestChildSessionManagerCreate:
         assert "agent-" in call_kwargs["external_id"]
         assert "title" not in call_kwargs
 
-    def test_create_child_session_with_git_branch(self, manager, mock_storage) -> None:
+    def test_create_child_session_with_git_branch(
+        self, manager: ChildSessionManager, mock_storage: MagicMock
+    ) -> None:
         """Creates child session with git branch."""
         mock_parent = MagicMock()
         mock_parent.parent_session_id = None
@@ -258,7 +280,9 @@ class TestChildSessionManagerCreate:
         call_kwargs = mock_storage.register.call_args.kwargs
         assert call_kwargs["git_branch"] == "feature/test"
 
-    def test_create_child_session_depth_exceeded_raises(self, manager, mock_storage) -> None:
+    def test_create_child_session_depth_exceeded_raises(
+        self, manager: ChildSessionManager, mock_storage: MagicMock
+    ) -> None:
         """Raises ValueError when max depth would be exceeded."""
         # Setup parent session at depth 2 (max)
         mock_grandchild = MagicMock()
@@ -275,7 +299,9 @@ class TestChildSessionManagerCreate:
         with pytest.raises(ValueError, match="Max agent depth"):
             manager.create_child_session(config)
 
-    def test_create_child_session_parent_not_found_raises(self, manager, mock_storage) -> None:
+    def test_create_child_session_parent_not_found_raises(
+        self, manager: ChildSessionManager, mock_storage: MagicMock
+    ) -> None:
         """Raises ValueError when parent session not found."""
         mock_storage.get.return_value = None
 
@@ -294,16 +320,18 @@ class TestChildSessionManagerQueryMethods:
     """Tests for ChildSessionManager query methods."""
 
     @pytest.fixture
-    def mock_storage(self):
+    def mock_storage(self) -> MagicMock:
         """Create a mock storage."""
         return MagicMock()
 
     @pytest.fixture
-    def manager(self, mock_storage):
+    def manager(self, mock_storage: MagicMock) -> ChildSessionManager:
         """Create a manager."""
         return ChildSessionManager(session_storage=mock_storage)
 
-    def test_get_child_sessions(self, manager, mock_storage) -> None:
+    def test_get_child_sessions(
+        self, manager: ChildSessionManager, mock_storage: MagicMock
+    ) -> None:
         """get_child_sessions delegates to storage."""
         mock_children = [MagicMock(id="child-1"), MagicMock(id="child-2")]
         mock_storage.find_children.return_value = mock_children
@@ -313,7 +341,9 @@ class TestChildSessionManagerQueryMethods:
         mock_storage.find_children.assert_called_once_with("sess-parent")
         assert result == mock_children
 
-    def test_get_session_lineage_root_only(self, manager, mock_storage) -> None:
+    def test_get_session_lineage_root_only(
+        self, manager: ChildSessionManager, mock_storage: MagicMock
+    ) -> None:
         """Lineage of root session is just the root."""
         mock_root = MagicMock(id="sess-root", parent_session_id=None)
         mock_storage.get.return_value = mock_root
@@ -323,7 +353,9 @@ class TestChildSessionManagerQueryMethods:
         assert len(lineage) == 1
         assert lineage[0].id == "sess-root"
 
-    def test_get_session_lineage_with_parents(self, manager, mock_storage) -> None:
+    def test_get_session_lineage_with_parents(
+        self, manager: ChildSessionManager, mock_storage: MagicMock
+    ) -> None:
         """Lineage traces back to root in correct order."""
         mock_grandchild = MagicMock(id="sess-grandchild", parent_session_id="sess-child")
         mock_child = MagicMock(id="sess-child", parent_session_id="sess-root")
@@ -343,7 +375,9 @@ class TestChildSessionManagerQueryMethods:
         assert lineage[1].id == "sess-child"
         assert lineage[2].id == "sess-grandchild"
 
-    def test_get_session_lineage_missing_session(self, manager, mock_storage) -> None:
+    def test_get_session_lineage_missing_session(
+        self, manager: ChildSessionManager, mock_storage: MagicMock
+    ) -> None:
         """Lineage of missing session is empty."""
         mock_storage.get.return_value = None
 
@@ -352,7 +386,10 @@ class TestChildSessionManagerQueryMethods:
         assert lineage == []
 
     def test_get_session_lineage_allows_long_valid_chain(
-        self, manager, mock_storage, caplog: pytest.LogCaptureFixture
+        self,
+        manager: ChildSessionManager,
+        mock_storage: MagicMock,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Legitimate long lineage chains should not be treated as corrupt."""
         sessions = {}
@@ -370,7 +407,10 @@ class TestChildSessionManagerQueryMethods:
         assert "Lineage" not in caplog.text
 
     def test_get_session_lineage_cycle_logs_once(
-        self, manager, mock_storage, caplog: pytest.LogCaptureFixture
+        self,
+        manager: ChildSessionManager,
+        mock_storage: MagicMock,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Lineage cycles are detected without repeated warning spam."""
         mock_session = MagicMock()

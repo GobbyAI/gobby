@@ -82,7 +82,8 @@ def test_event_summary_rejects_invalid_line_numbers(line_num: object) -> None:
 
 
 def test_snapshot_coerces_every_categorical_field_and_truncates_tail() -> None:
-    tail = tuple(_event(line_num) for line_num in range(1, WATCHDOG_TAIL_LIMIT + 3))
+    overflow = 3
+    tail = tuple(_event(line_num) for line_num in range(1, WATCHDOG_TAIL_LIMIT + overflow))
     snapshot = WatchdogTranscriptSnapshot(
         provider=_SECRET,
         tail=tail,
@@ -100,7 +101,9 @@ def test_snapshot_coerces_every_categorical_field_and_truncates_tail() -> None:
     encoded = json.dumps(snapshot.to_log_dict())
 
     assert snapshot.provider == "unknown"
-    assert [item.line_num for item in snapshot.tail] == list(range(3, 11))
+    assert [item.line_num for item in snapshot.tail] == list(
+        range(overflow, WATCHDOG_TAIL_LIMIT + overflow)
+    )
     assert snapshot.latest_turn_kind is None
     assert snapshot.provider_error_kind is None
     assert snapshot.provider_error_reason is None

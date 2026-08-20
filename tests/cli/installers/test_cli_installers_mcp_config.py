@@ -572,8 +572,6 @@ class TestStripMCPToolOverridesTOML:
         result = strip_mcp_tool_overrides_toml(config)
         assert result["success"] is True
         assert result["stripped"] is True
-        import tomllib
-
         with open(config, "rb") as f:
             parsed = tomllib.load(f)
         # gobby tools stripped
@@ -607,8 +605,6 @@ class TestStripMCPToolOverridesTOML:
         result = strip_mcp_tool_overrides_toml(config, server_name="custom")
         assert result["success"] is True
         assert result["stripped"] is True
-        import tomllib
-
         with open(config, "rb") as f:
             parsed = tomllib.load(f)
         assert "tools" not in parsed["mcp_servers"]["custom"]

@@ -19,8 +19,6 @@ from click.testing import CliRunner
 from gobby.cli import cli
 from gobby.storage.tasks import TaskNotFoundError
 
-pytestmark = pytest.mark.unit
-
 
 @pytest.fixture
 def runner() -> CliRunner:
@@ -92,6 +90,7 @@ def hub_sample_project(hub_db):
     return project.to_dict()
 
 
+@pytest.mark.unit
 class TestResolveTaskIdWithSeqNum:
     """Tests for resolve_task_id with #N format."""
 
@@ -164,6 +163,7 @@ class TestResolveTaskIdWithSeqNum:
         assert result is None
 
 
+@pytest.mark.unit
 class TestResolveTaskIdWithPathFormat:
     """Tests for resolve_task_id with path format (1.2.3)."""
 
@@ -203,10 +203,11 @@ class TestResolveTaskIdWithPathFormat:
         assert result is None
 
 
+@pytest.mark.unit
 class TestResolveTaskIdWithDeprecatedFormat:
     """Tests for deprecated gt-* format handling."""
 
-    def test_resolve_gt_format_shows_deprecation_error(self, runner: CliRunner) -> None:
+    def test_resolve_gt_format_shows_deprecation_error(self) -> None:
         """Test that gt-* format shows deprecation error."""
         from gobby.cli.tasks._utils import resolve_task_id
 
@@ -222,6 +223,7 @@ class TestResolveTaskIdWithDeprecatedFormat:
         assert result is None
 
 
+@pytest.mark.unit
 class TestCliShowCommandWithHashFormat:
     """Tests for `gobby tasks show` with #N format."""
 
@@ -248,6 +250,7 @@ class TestCliShowCommandWithHashFormat:
         mock_manager.get_task.assert_called()
 
 
+@pytest.mark.unit
 class TestCliUpdateCommandWithHashFormat:
     """Tests for `gobby tasks update` with #N format."""
 
@@ -275,6 +278,7 @@ class TestCliUpdateCommandWithHashFormat:
         assert mock_manager.update_task.call_args.kwargs["title"] == "Updated title"
 
 
+@pytest.mark.unit
 class TestCliDeleteCommandWithHashFormat:
     """Tests for `gobby tasks delete` with #N format."""
 
@@ -300,6 +304,7 @@ class TestCliDeleteCommandWithHashFormat:
         mock_manager.delete_task.assert_called()
 
 
+@pytest.mark.unit
 class TestCliCloseCommandWithHashFormat:
     """Tests for `gobby tasks close` with #N format."""
 
@@ -329,6 +334,7 @@ class TestCliCloseCommandWithHashFormat:
         mock_manager.close_task.assert_not_called()
 
 
+@pytest.mark.integration
 class TestIntegrationResolveTaskId:
     """Integration tests using real database for #N format resolution."""
 
@@ -473,6 +479,7 @@ class TestIntegrationResolveTaskId:
         assert result is None
 
 
+@pytest.mark.unit
 class TestParseTaskRefs:
     """Tests for parse_task_refs helper function.
 

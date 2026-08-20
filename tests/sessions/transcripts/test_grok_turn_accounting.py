@@ -82,35 +82,57 @@ _SHAPE_CASES: tuple[
 )
 
 
-def test_audited_shapes_turn_and_usage_accounting() -> None:
+@pytest.mark.parametrize(
+    ("name", "builder", "turns", "turn_count", "pair_count", "expected_usage"),
+    _SHAPE_CASES,
+    ids=[case[0] for case in _SHAPE_CASES],
+)
+def test_audited_shapes_turn_and_usage_accounting(
+    name: str,
+    builder: Callable[[], list[str]],
+    turns: tuple[TurnSpec, ...],
+    turn_count: int,
+    pair_count: int,
+    expected_usage: TokenUsage,
+) -> None:
     parser = GrokTranscriptParser(session_id="grok-audit")
-    for name, builder, turns, turn_count, pair_count, expected_usage in _SHAPE_CASES:
-        lines = builder()
-        assert lines, f"{name}: empty stream"
-        records = [_assert_real_envelope(line) for line in lines]
-        _assert_shape_counts(name, records, turns)
+    lines = builder()
+    assert lines, f"{name}: empty stream"
+    records = [_assert_real_envelope(line) for line in lines]
+    _assert_shape_counts(name, records, turns)
 
-        parsed = parser.parse_lines(lines)
-        messages = [item for item in parsed if isinstance(item, ParsedMessage)]
-        assert messages, f"{name}: parser returned no messages"
-        sentinels = [item for item in messages if _is_unknown_sentinel(item)]
-        assert sentinels == [], f"{name}: unknown-block sentinels {sentinels!r}"
+    parsed = parser.parse_lines(lines)
+    messages = [item for item in parsed if isinstance(item, ParsedMessage)]
+    assert messages, f"{name}: parser returned no messages"
+    sentinels = [item for item in messages if _is_unknown_sentinel(item)]
+    assert sentinels == [], f"{name}: unknown-block sentinels {sentinels!r}"
 
-        stats = compute_message_stats(cast(Sequence[MessageProtocol], messages))
-        boundaries = [item for item in messages if item.content_type == "turn_completed"]
-        assert len(boundaries) == turn_count, name
-        assert stats["turn_count"] == turn_count, name
-        assert stats["message_count"] == len(messages) - len(boundaries), name
-        assert all(item.content_type in NON_MESSAGE_CONTENT_TYPES for item in boundaries)
+    stats = compute_message_stats(cast(Sequence[MessageProtocol], messages))
+    boundaries = [item for item in messages if item.content_type == "turn_completed"]
+    assert len(boundaries) == turn_count, name
+    assert stats["turn_count"] == turn_count, name
+    assert stats["message_count"] == len(messages) - len(boundaries), name
+    assert all(item.content_type in NON_MESSAGE_CONTENT_TYPES for item in boundaries)
 
-        assert _sum_usage(messages) == expected_usage, name
+    assert _sum_usage(messages) == expected_usage, name
 
-        extracted = parser.extract_last_messages(records, num_pairs=max(1, len(records)))
-        assert _adjacency_pair_count(extracted) == pair_count, name
+    extracted = parser.extract_last_messages(records, num_pairs=max(1, len(records)))
+    assert _adjacency_pair_count(extracted) == pair_count, name
 
+
+def test_10695_audit_counts() -> None:
     _assert_10695_audit_counts()
+
+
+def test_10715_marathon_shape() -> None:
     _assert_10715_marathon_shape()
+
+
+def test_10725_all_synthetic() -> None:
     _assert_10725_all_synthetic()
+
+
+def test_10711_real_prompt_count() -> None:
     _assert_10711_real_prompt_count()
 
 

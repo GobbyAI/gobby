@@ -681,7 +681,7 @@ class TestHistoryInjection:
         )
         leftover = 10
         max_total = 200 + len(first_entry) + leftover
-        assert leftover + 2 + len(omit_line) > leftover
+        assert leftover < 2 + len(omit_line)
         assert len(omit_line) <= max_total - 200
 
         mock_manager = AsyncMock()

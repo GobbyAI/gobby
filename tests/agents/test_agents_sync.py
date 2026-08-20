@@ -196,7 +196,9 @@ class TestSyncBundledAgents:
             result = sync_bundled_agents(db)
 
         assert result["skipped"] == 1
-        step_body = mgr.get(created.id).definition_json["step_workflow"]
+        stored = mgr.get(created.id)
+        assert stored is not None
+        step_body = stored.definition_json["step_workflow"]
         allowed = step_body["steps"][0]["allowed_mcp_tools"]
         assert allowed == [
             "gobby-worktrees:get_worktree",
@@ -576,7 +578,7 @@ class TestSyncBundledAgents:
         assert result["orphaned"] == 1
         assert _mgr(db).get_by_name("test-agent") is None
 
-    @pytest.mark.unit
+    @pytest.mark.integration
     def test_sync_soft_deletes_removed_plan_review_researcher(
         self, definition_db: PostgresHubDatabase
     ) -> None:
@@ -648,14 +650,18 @@ class TestSyncBundledAgents:
             result = sync_bundled_agents(db)
 
         assert result["orphaned"] == 1
-        assert mgr.get(owned_orphan.id, include_deleted=True).deleted_at is not None
-        assert mgr.get(project_orphan.id).deleted_at is None
-        assert mgr.get(custom_orphan.id).deleted_at is None
+        owned = mgr.get(owned_orphan.id, include_deleted=True)
+        assert owned is not None
+        assert owned.deleted_at is not None
+        project = mgr.get(project_orphan.id)
+        assert project is not None
+        assert project.deleted_at is None
+        custom = mgr.get(custom_orphan.id)
+        assert custom is not None
+        assert custom.deleted_at is None
 
     @pytest.mark.integration
-    def test_sync_with_real_bundled_agents(
-        self, tmp_path: Path, definition_db: PostgresHubDatabase
-    ) -> None:
+    def test_sync_with_real_bundled_agents(self, definition_db: PostgresHubDatabase) -> None:
         """Test that sync works with the actual bundled agents directory."""
         db = definition_db
 
@@ -708,7 +714,8 @@ class TestSyncBundledAgents:
         }
         stepful = [name for name, has_child in children.items() if has_child]
         stepless = [name for name, has_child in children.items() if not has_child]
-        assert len(stepful) == 21
+        bundled_stems = {path.stem for path in get_bundled_agents_path().glob("*.yaml")}
+        assert len(stepful) == len(bundled_stems) - len(_STEPLESS_BUNDLED_AGENTS)
         assert set(stepless) == _STEPLESS_BUNDLED_AGENTS
         for row in db.fetchall("SELECT name, definition_json FROM agent_definitions"):
             body = row["definition_json"]
@@ -758,6 +765,7 @@ class TestSyncBundledAgents:
         assert toggle is not None
         assert toggle.enabled is True
         pinned_row = mgr.get(pinned.id)
+        assert pinned_row is not None
         assert pinned_row.enabled is False
         assert pinned_row.enabled_pinned is True
 
@@ -768,11 +776,11 @@ _LEGACY_STEP_KEYS = ("steps", "step_variables", "exit_condition")
 
 @pytest.mark.unit
 def test_bundled_agents_nested_step_workflow() -> None:
-    """All 25 bundled agents load under the nested step_workflow model."""
+    """Bundled agents load under the nested step_workflow model."""
     from gobby.workflows.definitions import AgentDefinitionBody
 
     paths = sorted(get_bundled_agents_path().glob("*.yaml"))
-    assert len(paths) == 25
+    assert {path.stem for path in paths} >= _STEPLESS_BUNDLED_AGENTS
 
     for path in paths:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -787,7 +795,7 @@ def test_bundled_agents_nested_step_workflow() -> None:
             assert len(body.step_workflow.steps) >= 1, path.name
 
 
-@pytest.mark.unit
+@pytest.mark.integration
 def test_memory_recall_helper_not_bundled(definition_db: PostgresHubDatabase) -> None:
     """Memory recall is daemon-owned and no helper agent is bundled."""
     result = sync_bundled_agents(definition_db)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from gobby.build.service import BuildOptions, BuildResult, build
-from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks import LocalTaskManager, Task
 
 pytestmark = pytest.mark.unit
 
@@ -32,7 +32,7 @@ def _options(**overrides: object) -> BuildOptions:
     return BuildOptions(**values)
 
 
-def _tree(task_manager: LocalTaskManager, project_id: str) -> tuple[object, list[object]]:
+def _tree(task_manager: LocalTaskManager, project_id: str) -> tuple[Task, list[Task]]:
     epic = task_manager.create_task(
         project_id=project_id,
         title="Automated epic",

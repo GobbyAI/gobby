@@ -20,8 +20,6 @@ from gobby.workflows.definitions import (
 )
 from gobby.workflows.dry_run import WorkflowEvaluation
 
-pytestmark = pytest.mark.unit
-
 
 def _create_agent(
     db: PostgresHubDatabase,
@@ -91,7 +89,7 @@ class TestAgentNotFound:
         _create_agent(db, project_id=unrelated_id)
         monkeypatch.setattr(
             "gobby.utils.project_context.get_project_context",
-            lambda: {"id": target_id},
+            lambda cwd=None: {"id": target_id},
         )
 
         result = await evaluate_spawn(agent="test-agent", db=db)

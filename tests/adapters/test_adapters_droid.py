@@ -60,6 +60,7 @@ class TestDroidTranslateToHookEvent:
             }
         )
 
+        assert event is not None
         assert event.event_type is event_type
         assert event.session_id == "droid-session"
         assert event.source is SessionSource.DROID
@@ -79,6 +80,7 @@ class TestDroidTranslateToHookEvent:
                 "tool_name": "Read",
             }
         )
+        assert event is not None
         assert event.event_type is HookEventType.BEFORE_TOOL
         assert event.session_id == "direct-session"
 
@@ -91,6 +93,7 @@ class TestDroidTranslateToHookEvent:
                 "input_data": {"session_id": "nested-session", "cwd": "/repo"},
             }
         )
+        assert event is not None
         assert event.event_type is HookEventType.SESSION_START
         assert event.session_id == "nested-session"
         assert event.data["session_id"] == "nested-session"
@@ -103,6 +106,7 @@ class TestDroidTranslateToHookEvent:
                 "input_data": {"sessionId": "camel-session", "cwd": "/repo"},
             }
         )
+        assert event is not None
         assert event.session_id == "camel-session"
         assert event.data["session_id"] == "camel-session"
         assert event.cwd == "/repo"
@@ -117,6 +121,7 @@ class TestDroidTranslateToHookEvent:
                 "input_data": {"cwd": "/repo"},
             }
         )
+        assert event is not None
         assert event.session_id == "top-level-session"
         assert event.machine_id == "21000000-0000-4000-8000-000000000001"
         assert event.data["session_id"] == "top-level-session"
@@ -131,6 +136,7 @@ class TestDroidTranslateToHookEvent:
             }
         )
 
+        assert event is not None
         assert event.session_id == "top-level-session"
         assert event.data["session_id"] == "top-level-session"
 
@@ -139,6 +145,7 @@ class TestDroidTranslateToHookEvent:
         event = adapter.translate_to_hook_event(
             {"hook_type": "FutureHook", "input_data": {"session_id": "future"}}
         )
+        assert event is not None
         assert event.event_type is HookEventType.NOTIFICATION
 
     def test_normalizes_user_prompt_and_droid_mcp_tool_name(self) -> None:
@@ -153,6 +160,7 @@ class TestDroidTranslateToHookEvent:
                 },
             }
         )
+        assert event is not None
         assert event.data["prompt"] == "Build it"
         assert event.data["tool_name"] == "mcp__gobby__list_mcp_servers"
         assert event.data["mcp_server"] == "gobby"
@@ -167,6 +175,7 @@ class TestDroidTranslateToHookEvent:
 
         event = DroidAdapter().translate_to_hook_event(native)
 
+        assert event is not None
         assert event.data["tool_name"] == "Bash"
         assert event.data["tool_output"].startswith("droid-zero-exit")
         assert event.metadata["is_failure"] is False
@@ -183,6 +192,7 @@ class TestDroidTranslateToHookEvent:
             }
         )
 
+        assert event is not None
         assert event.data["tool_name"] == "Bash"
         assert "is_error" not in event.data
         assert "is_failure" not in event.metadata

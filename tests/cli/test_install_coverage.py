@@ -30,6 +30,13 @@ from gobby.ui_exposure import UiExposeError
 pytestmark = pytest.mark.unit
 
 
+def _isolate_gobby_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    home = tmp_path / "gobby-home"
+    home.mkdir()
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+    return home
+
+
 @pytest.fixture
 def runner(monkeypatch: pytest.MonkeyPatch) -> CliRunner:
     import importlib
@@ -1051,12 +1058,13 @@ class TestInstallFilesHomeLifecycle:
         assert any("remote daemon" in error for error in errors)
 
     def test_filesystem_identity_requires_held_claim_and_refuses_racer(
-        self, tmp_path: Path
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from gobby.cli.install_files_home import acquire_install_maintenance
         from gobby.paths import get_gobby_home
         from gobby.runner_pid_file import claim_pid_file
 
+        _isolate_gobby_home(tmp_path, monkeypatch)
         first = claim_pid_file(get_gobby_home() / "gobby.pid", role="daemon")
         assert first is not None
         try:
@@ -1065,11 +1073,14 @@ class TestInstallFilesHomeLifecycle:
         finally:
             first.release()
 
-    def test_install_to_start_converts_held_claim_under_flock(self, tmp_path: Path) -> None:
+    def test_install_to_start_converts_held_claim_under_flock(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from gobby.cli._install_daemon import maybe_start_daemon_after_install
         from gobby.paths import get_gobby_home
         from gobby.runner_pid_file import claim_pid_file
 
+        _isolate_gobby_home(tmp_path, monkeypatch)
         claim = claim_pid_file(get_gobby_home() / "gobby.pid", role="maintenance")
         assert claim is not None
         converted = MagicMock()
@@ -1110,13 +1121,14 @@ class TestInstallFilesHomeLifecycle:
         assert not local_install_requires_maintenance(datastore_mode="remote", full_install=True)
 
     def test_targeted_codex_install_skips_exclusive_maintenance_while_daemon_holds_claim(
-        self, tmp_path: Path, runner: CliRunner
+        self, tmp_path: Path, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from gobby.paths import get_gobby_home
         from gobby.runner_pid_file import claim_pid_file
 
         files_home = tmp_path / "files"
         files_home.mkdir()
+        _isolate_gobby_home(tmp_path, monkeypatch)
         first = claim_pid_file(get_gobby_home() / "gobby.pid", role="daemon")
         assert first is not None
         acquire = MagicMock(side_effect=AssertionError("must not acquire"))
@@ -1166,12 +1178,15 @@ class TestInstallFilesHomeLifecycle:
         finally:
             first.release()
 
-    def test_config_only_install_refuses_live_daemon_claim(self, tmp_path: Path) -> None:
+    def test_config_only_install_refuses_live_daemon_claim(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from gobby.paths import get_gobby_home
         from gobby.runner_pid_file import claim_pid_file
 
         files_home = tmp_path / "files"
         files_home.mkdir()
+        _isolate_gobby_home(tmp_path, monkeypatch)
         first = claim_pid_file(get_gobby_home() / "gobby.pid", role="daemon")
         assert first is not None
         try:

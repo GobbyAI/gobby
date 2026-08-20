@@ -22,6 +22,18 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.unit
 
+
+@pytest.fixture
+def sample_hook_event() -> HookEvent:
+    return HookEvent(
+        event_type=HookEventType.SESSION_START,
+        session_id="test-session-123",
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={"key": "value"},
+    )
+
+
 # =============================================================================
 # Test Fixtures and Concrete Implementation for Testing
 # =============================================================================
@@ -173,18 +185,7 @@ class TestBaseAdapterSubclassing:
 class TestTranslateToHookEvent:
     """Tests for translate_to_hook_event abstract method behavior."""
 
-    @pytest.fixture
-    def sample_hook_event(self):
-        """Create a sample HookEvent for testing."""
-        return HookEvent(
-            event_type=HookEventType.SESSION_START,
-            session_id="test-session-123",
-            source=SessionSource.CLAUDE,
-            timestamp=datetime.now(UTC),
-            data={"key": "value"},
-        )
-
-    def test_translate_returns_hook_event(self, sample_hook_event) -> None:
+    def test_translate_returns_hook_event(self, sample_hook_event: HookEvent) -> None:
         """translate_to_hook_event returns HookEvent when successful."""
         adapter = ConcreteAdapter(translate_result=sample_hook_event)
 
@@ -283,18 +284,7 @@ class TestHandleNative:
     """Tests for the concrete handle_native method."""
 
     @pytest.fixture
-    def sample_hook_event(self):
-        """Create a sample HookEvent for testing."""
-        return HookEvent(
-            event_type=HookEventType.BEFORE_TOOL,
-            session_id="sess-handle-native",
-            source=SessionSource.CLAUDE,
-            timestamp=datetime.now(UTC),
-            data={"tool_name": "Write"},
-        )
-
-    @pytest.fixture
-    def mock_hook_manager(self):
+    def mock_hook_manager(self) -> MagicMock:
         """Create a mock HookManager."""
         manager = MagicMock()
         manager.handle.return_value = HookResponse(decision="allow")
@@ -427,18 +417,7 @@ class TestHandleNative:
 class TestHandleNativeEdgeCases:
     """Edge case tests for handle_native method."""
 
-    @pytest.fixture
-    def sample_hook_event(self):
-        """Create a sample HookEvent for testing."""
-        return HookEvent(
-            event_type=HookEventType.SESSION_START,
-            session_id="edge-case-session",
-            source=SessionSource.CLAUDE,
-            timestamp=datetime.now(UTC),
-            data={},
-        )
-
-    def test_handle_native_with_empty_native_event(self, sample_hook_event) -> None:
+    def test_handle_native_with_empty_native_event(self, sample_hook_event: HookEvent) -> None:
         """handle_native works with empty native event dict."""
         mock_manager = MagicMock()
         mock_manager.handle.return_value = HookResponse(decision="allow")

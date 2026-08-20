@@ -180,6 +180,7 @@ class _Harness:
         self.graph_inventory_seen: dict[str, dict[str, int]] | None = None
         self.archives_seen: dict[str, Path] | None = None
         self.volume_inventories_seen: dict[str, dict[str, object]] | None = None
+        self._real_subprocess_run = subprocess.run
 
     # -- recording --------------------------------------------------------
 
@@ -201,7 +202,6 @@ class _Harness:
     def subprocess_run(self, args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
         if args[:2] != ["docker", "inspect"]:
             return self._real_subprocess_run(args, **kwargs)
-        assert args[:2] == ["docker", "inspect"], f"unexpected command: {args}"
         assert kwargs.get("timeout"), f"missing subprocess timeout: {args}"
         container = args[-1]
         self._step(f"inspect:{container}")
@@ -601,7 +601,7 @@ class TestRestore:
             raise FilesHomeArchiveError("temp_write", "injected temp write failure")
 
         monkeypatch.setattr(hub_cli, "archive_files_home_store", _fail)
-        result = _invoke(runtime, "--output", str(tmp_path / "new-backup"))
+        result = _invoke(runtime, "--output", str(dest))
         assert result.exit_code != 0
         assert (dest / "prior.txt").read_text(encoding="utf-8") == "keep"
 
@@ -941,7 +941,7 @@ class TestEpoch:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setenv("GOBBY_MAINTENANCE_EPOCH", "e1")
+        monkeypatch.setenv(MAINTENANCE_EPOCH_ENV, "e1")
         database = MagicMock()
         database.fetchall.side_effect = [
             [{"key": "databases.qdrant.url"}],

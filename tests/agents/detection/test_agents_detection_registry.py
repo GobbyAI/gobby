@@ -81,6 +81,7 @@ def test_refresh_and_reload_reuse_unchanged_fingerprint() -> None:
     assert database.fetchall.call_count == 3
 
 
+@pytest.mark.unit
 def test_bundled_manifests_cover_supported_providers_and_rule_contract() -> None:
     manifests_path = get_bundled_detection_manifests_path()
     providers = {"agy", "claude", "codex", "droid", "grok", "qwen"}
@@ -115,6 +116,7 @@ def test_bundled_manifests_cover_supported_providers_and_rule_contract() -> None
     )
 
 
+@pytest.mark.unit
 def test_grok_bundled_manifest_matches_recorded_approval_menu() -> None:
     manifests_path = get_bundled_detection_manifests_path()
     compiled = compile_manifest((manifests_path / "grok.toml").read_text(encoding="utf-8"))
@@ -131,6 +133,7 @@ def test_grok_bundled_manifest_matches_recorded_approval_menu() -> None:
     assert evaluation.match.reason == "approval"
 
 
+@pytest.mark.integration
 def test_detection_manifest_migration_applies(temp_db: HubDatabase) -> None:
     columns = {
         row["column_name"]
@@ -160,6 +163,7 @@ def test_detection_manifest_migration_applies(temp_db: HubDatabase) -> None:
     } <= columns
 
 
+@pytest.mark.integration
 def test_sync_removes_orphaned_bundled_manifest_and_preserves_user_manifest(
     temp_db: HubDatabase,
     tmp_path: Path,
@@ -207,6 +211,7 @@ def test_sync_removes_orphaned_bundled_manifest_and_preserves_user_manifest(
             )
 
 
+@pytest.mark.integration
 def test_cache_boundary_and_user_ownership(
     temp_db: HubDatabase,
     tmp_path: Path,

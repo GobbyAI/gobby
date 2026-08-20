@@ -1052,8 +1052,8 @@ def _grok_event(update: dict[str, object]) -> str:
 def _grok_boundary_lines() -> list[str]:
     """Two grok assistant texts plus one completed-turn boundary.
 
-    The extra in-flight assistant text distinguishes boundary counting from the
-    old per-text-block increment: current code would report two turns.
+    The extra in-flight assistant text must not increment turn count: the
+    parser still reports one completed turn.
     """
     return [
         _grok_event(

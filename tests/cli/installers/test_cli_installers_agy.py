@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -44,8 +45,10 @@ def agy_env(temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
         yield temp_dir
 
 
-def _load_json(path: Path) -> dict:
-    return json.loads(path.read_text())
+def _load_json(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text())
+    assert isinstance(payload, dict)
+    return payload
 
 
 def test_install_agy_global_writes_vendor_hooks_and_mcp(

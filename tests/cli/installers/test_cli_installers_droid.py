@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -27,7 +29,7 @@ def project_path(temp_dir: Path) -> Path:
 
 
 @pytest.fixture
-def droid_env(temp_dir: Path, monkeypatch: pytest.MonkeyPatch):
+def droid_env(temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     monkeypatch.delenv("GOBBY_HOOKS_DIR", raising=False)
     monkeypatch.delenv("GOBBY_DROID_HOOKS_FILE", raising=False)
     with (
@@ -42,8 +44,10 @@ def droid_env(temp_dir: Path, monkeypatch: pytest.MonkeyPatch):
         yield temp_dir
 
 
-def _load_json(path: Path) -> dict:
-    return json.loads(path.read_text())
+def _load_json(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text())
+    assert isinstance(payload, dict)
+    return payload
 
 
 def test_install_droid_global_writes_hooks_and_mcp(

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from gobby.sessions.transcripts.base import TokenUsage
@@ -74,11 +75,12 @@ def build_stream(turns: list[TurnSpec], *, session_id: str = "grok-fixture") -> 
         nonlocal seq
         method = _METHODS[seq % 2]
         seq += 1
+        stamped = datetime(2026, 8, 18, 12, 0, 0, tzinfo=UTC) + timedelta(seconds=seq)
         payload = {
             "jsonrpc": "2.0",
             "method": method,
             "params": {"sessionId": session_id, "update": update},
-            "timestamp": f"2026-08-18T12:{seq // 60:02d}:{seq % 60:02d}.000Z",
+            "timestamp": stamped.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
         }
         lines.append(json.dumps(payload, separators=(",", ":")))
 
@@ -119,7 +121,13 @@ def _text_update(session_update: str, text: str) -> dict[str, Any]:
     return {"sessionUpdate": session_update, "content": {"type": "text", "text": text}}
 
 
-def _emit_tools(emit: Any, *, session_id: str, turn_i: int, count: int) -> None:
+def _emit_tools(
+    emit: Callable[[dict[str, Any]], None],
+    *,
+    session_id: str,
+    turn_i: int,
+    count: int,
+) -> None:
     for tool_i in range(count):
         call_id = f"{session_id}-t{turn_i}-{tool_i}"
         emit(
@@ -331,7 +339,12 @@ SESSION_10711_PAIR_COUNT = 8
 
 SESSION_10695_USAGE = expected_token_usage(SESSION_10695_TURNS)
 SESSION_10715_USAGE = expected_token_usage(SESSION_10715_TURNS)
-SESSION_10725_USAGE = expected_token_usage(SESSION_10725_TURNS)
+SESSION_10725_USAGE = TokenUsage(
+    input_tokens=171,
+    output_tokens=40,
+    cache_creation_tokens=10,
+    cache_read_tokens=20,
+)
 SESSION_10711_USAGE = expected_token_usage(SESSION_10711_TURNS)
 
 

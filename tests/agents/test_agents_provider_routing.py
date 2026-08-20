@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from uuid import uuid4
 
 import pytest
 
@@ -79,9 +80,10 @@ def test_multi_and_unknown_provider(caplog: pytest.LogCaptureFixture) -> None:
     assert codex_stall.is_provider_error("beta unavailable") is True
 
     caplog.set_level(logging.WARNING)
-    unknown_prompt = PromptDetector(registry, "other")
-    unknown_idle = IdleDetector(registry, "other")
-    unknown_stall = StallClassifier(registry, "other")
+    unknown_provider = f"other-{uuid4()}"
+    unknown_prompt = PromptDetector(registry, unknown_provider)
+    unknown_idle = IdleDetector(registry, unknown_provider)
+    unknown_stall = StallClassifier(registry, unknown_provider)
 
     assert unknown_prompt.detect_prompt("alpha trust") is None
     assert unknown_idle.detect("alpha idle") == "unknown"
@@ -91,6 +93,6 @@ def test_multi_and_unknown_provider(caplog: pytest.LogCaptureFixture) -> None:
     warnings = [
         record
         for record in caplog.records
-        if "No detection manifest for provider other" in record.getMessage()
+        if f"No detection manifest for provider {unknown_provider}" in record.getMessage()
     ]
     assert len(warnings) == 1

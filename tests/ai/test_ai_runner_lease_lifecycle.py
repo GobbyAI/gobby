@@ -306,8 +306,20 @@ def test_renew_with_backoff_logs_slow_success_at_debug(
     lease.activate()
     # Only the module-local clock is faked, so the elapsed measurement crosses
     # the 1s slow threshold while the lease's own deadline math stays real.
-    clock = iter((0.0, 2.0))
-    monkeypatch.setattr(embedding_lease, "time", SimpleNamespace(monotonic=lambda: next(clock)))
+    clock_values = [0.0, 2.0]
+    clock_iter = iter(clock_values)
+
+    def monotonic() -> float:
+        try:
+            return next(clock_iter)
+        except StopIteration:
+            return clock_values[-1]
+
+    monkeypatch.setattr(
+        embedding_lease,
+        "time",
+        SimpleNamespace(monotonic=monotonic, sleep=lambda _seconds: None),
+    )
 
     with caplog.at_level(logging.DEBUG, logger=embedding_lease.__name__):
         assert embedding_lease._renew_with_backoff(lease) is True
@@ -449,16 +461,18 @@ async def test_reacquire_unmanaged_lease_without_record_reacknowledges(
     lease = _lease(state, generation="config-revision:5", revision=5)
     lease.activate()
     lease.fence()
+    rebuilds: list[CompletedSwitchRecord | None] = []
     handle = embedding_lease._ManagedEmbeddingLease(
         lease,
         asyncio.get_running_loop(),
         read_completed_record=lambda: None,
-        request_rebuild=lambda record: pytest.fail("unexpected rebuild request"),
+        request_rebuild=rebuilds.append,
     )
 
     assert await embedding_lease._reacquire_lease(handle) is True
 
     handle.assert_serving()
+    assert rebuilds == []
 
 
 @pytest.mark.asyncio
@@ -773,17 +787,19 @@ async def test_reacquire_polls_until_storage_reachable(
             raise ConnectionError("storage still unreachable")
         return _completed_record(run_id="run-1", committed_revision=7)
 
+    rebuilds: list[CompletedSwitchRecord | None] = []
     handle = embedding_lease._ManagedEmbeddingLease(
         lease,
         asyncio.get_running_loop(),
         read_completed_record=read_record,
-        request_rebuild=lambda record: pytest.fail("unexpected rebuild request"),
+        request_rebuild=rebuilds.append,
     )
 
     assert await embedding_lease._reacquire_lease(handle) is True
 
     assert probes["count"] == 3
     handle.assert_serving()
+    assert rebuilds == []
 
 
 @pytest.mark.asyncio
@@ -801,14 +817,15 @@ async def test_reacquire_disposal_during_probe_does_not_reacknowledge(
 
     def read_record() -> CompletedSwitchRecord | None:
         probe_started.set()
-        release_probe.wait()
+        assert release_probe.wait(timeout=1.0)
         return _completed_record(run_id="run-1", committed_revision=7)
 
+    rebuilds: list[CompletedSwitchRecord | None] = []
     handle = embedding_lease._ManagedEmbeddingLease(
         lease,
         asyncio.get_running_loop(),
         read_completed_record=read_record,
-        request_rebuild=lambda _record: pytest.fail("unexpected rebuild request"),
+        request_rebuild=rebuilds.append,
     )
     recovery = asyncio.create_task(embedding_lease._reacquire_lease(handle))
     await asyncio.wait_for(asyncio.to_thread(probe_started.wait), timeout=1.0)
@@ -817,9 +834,11 @@ async def test_reacquire_disposal_during_probe_does_not_reacknowledge(
 
     assert await asyncio.wait_for(recovery, timeout=1.0) is False
     assert db.ack_insert_count() == 1
+    assert rebuilds == []
 
 
 @pytest.mark.asyncio
+@pytest.mark.slow
 async def test_renew_loop_fences_reacquires_and_resumes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -843,11 +862,12 @@ async def test_renew_loop_fences_reacquires_and_resumes(
             db.renew_rowcount = 1
         return _completed_record(run_id="run-1", committed_revision=7)
 
+    rebuilds: list[CompletedSwitchRecord | None] = []
     handle = embedding_lease._ManagedEmbeddingLease(
         lease,
         asyncio.get_running_loop(),
         read_completed_record=read_record,
-        request_rebuild=lambda record: pytest.fail("unexpected rebuild request"),
+        request_rebuild=rebuilds.append,
     )
     db.fail_execute = ConnectionError("partition")
     loop_task = asyncio.create_task(
@@ -872,6 +892,7 @@ async def test_renew_loop_fences_reacquires_and_resumes(
         await asyncio.wait_for(loop_task, timeout=5.0)
         assert reacquisition_count == 2
         assert db.ack_insert_count() == 3
+        assert rebuilds == []
         with pytest.raises(EmbeddingGenerationLeaseLost):
             handle.assert_serving()
     finally:

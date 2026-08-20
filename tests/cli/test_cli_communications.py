@@ -6,6 +6,8 @@ from click.testing import CliRunner
 
 from gobby.cli.communications import comms
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def mock_daemon_client():

@@ -147,7 +147,7 @@ async def test_build_coordinator_summary_survives_and_root_attaches_before_tick(
     )
     coordinator = SessionManager(temp_db).register(
         external_id="coord-ext",
-        machine_id="21000000-0000-4000-8000-000000000001",
+        machine_id=LOCAL_MACHINE_ID,
         source="codex",
         project_id=project_id,
         title="Coordinator",
@@ -209,7 +209,7 @@ async def test_build_rejects_coordinator_from_another_project(
     )
     coordinator = SessionManager(temp_db).register(
         external_id="other-coord-ext",
-        machine_id="21000000-0000-4000-8000-000000000001",
+        machine_id=LOCAL_MACHINE_ID,
         source="codex",
         project_id=other_project.id,
         title="Other Coordinator",
@@ -247,7 +247,7 @@ async def test_build_accepts_cross_project_uuid_coordinator_with_explicit_projec
     )
     coordinator = SessionManager(temp_db).register(
         external_id="other-explicit-coord-ext",
-        machine_id="21000000-0000-4000-8000-000000000001",
+        machine_id=LOCAL_MACHINE_ID,
         source="codex",
         project_id=other_project.id,
         title="Other Coordinator",
@@ -504,9 +504,7 @@ async def test_build_validates_target_branch_exists(
     plan_file = repo_path / "plan.md"
     plan_file.write_text("# Plan\n")
 
-    import subprocess
-
-    subprocess.run(["git", "init", "-b", "main"], cwd=repo_path, check=True, capture_output=True)
+    _init_git_repo(repo_path)
 
     with pytest.raises(ValueError, match="target branch.*missing.*main"):
         await _build(
@@ -2265,7 +2263,7 @@ async def test_build_task_ref_removes_skipped_pr_from_progressed_child_epic(
         (
             "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa5001",
             "reviewer-session",
-            "21000000-0000-4000-8000-000000000001",
+            LOCAL_MACHINE_ID,
             "test",
             sample_project["id"],
         ),
@@ -2296,9 +2294,10 @@ async def test_build_task_ref_removes_skipped_pr_from_progressed_child_epic(
     assert result.applied_stages_skipped == ["pr"]
     child_rows = task_manager.stage_states.list_for_task(child.id)
     assert [row.stage_name for row in child_rows] == ["development", "epic_qa", "merge"]
-    assert task_manager.stage_states.current_stage(child.id).stage_name == "merge"
+    child_stage = task_manager.stage_states.current_stage(child.id)
+    assert child_stage is not None
+    assert child_stage.stage_name == "merge"
     updated_child = task_manager.get_task(child.id)
-    assert updated_child.claimed_by_session_id is None
     assert updated_child.claimed_by_session_id is None
 
 
@@ -2377,7 +2376,9 @@ async def test_build_task_ref_removes_auto_started_skipped_pr_from_child_epic(
     assert result.applied_stages_skipped == ["pr"]
     child_rows = task_manager.stage_states.list_for_task(child.id)
     assert [row.stage_name for row in child_rows] == ["development", "epic_qa", "merge"]
-    assert task_manager.stage_states.current_stage(child.id).stage_name == "merge"
+    child_stage = task_manager.stage_states.current_stage(child.id)
+    assert child_stage is not None
+    assert child_stage.stage_name == "merge"
 
 
 @pytest.mark.asyncio
@@ -2479,7 +2480,9 @@ async def test_build_resume_cascades_skipped_pr_to_descendants(
 
     child_rows = task_manager.stage_states.list_for_task(child.id)
     assert [row.stage_name for row in child_rows] == ["development", "epic_qa", "merge"]
-    assert task_manager.stage_states.current_stage(child.id).stage_name == "merge"
+    child_stage = task_manager.stage_states.current_stage(child.id)
+    assert child_stage is not None
+    assert child_stage.stage_name == "merge"
 
 
 @pytest.mark.asyncio
@@ -2544,7 +2547,9 @@ async def test_build_resume_development_epic_defers_workspace_provisioning(
     )
 
     assert result.initial_lifecycle == "development"
-    assert task_manager.stage_states.current_stage(parent.id).stage_name == "development"
+    parent_stage = task_manager.stage_states.current_stage(parent.id)
+    assert parent_stage is not None
+    assert parent_stage.stage_name == "development"
     # Resume never provisions integration workspaces; provisioning happens
     # lazily at development-forward spawns (#19573).
     parent_artifacts = task_manager.artifacts.get_artifacts(parent.id)

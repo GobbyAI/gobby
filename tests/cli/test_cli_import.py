@@ -10,7 +10,7 @@ import pytest
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.sync.task_github_import import GITHUB_CLI_TIMEOUT_SECONDS, GitHubIssueImporter
 
-pytestmark = pytest.mark.unit
+# Integration tests below use the hub database; unit tests are marked locally.
 
 # projects.id is a native uuid column.
 PROJECT_ID = "aeaeaeae-0000-4000-8000-000000000001"
@@ -266,6 +266,7 @@ async def test_import_normalizes_malformed_labels_and_timestamps(
     assert {record.__dict__["github_repo"] for record in timestamp_records} == {"owner/repo"}
 
 
+@pytest.mark.integration
 def test_github_cli_subprocess_timeouts_are_bounded(
     github_importer: GitHubIssueImporter,
 ) -> None:

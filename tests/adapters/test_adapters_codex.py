@@ -67,16 +67,16 @@ def _load_live_codex_command_events() -> list[dict[str, Any]]:
 
 
 @pytest.mark.parametrize(
-    ("cli_name", "adapter", "hook_type"),
+    ("_cli_name", "adapter", "hook_type"),
     [
-        ("codex", CodexHooksAdapter(), "SessionStart"),
-        ("claude", ClaudeCodeAdapter(), "session-start"),
-        ("qwen", QwenAdapter(), "SessionStart"),
-        ("droid", DroidAdapter(), "SessionStart"),
+        pytest.param("codex", CodexHooksAdapter(), "SessionStart", id="codex"),
+        pytest.param("claude", ClaudeCodeAdapter(), "session-start", id="claude"),
+        pytest.param("qwen", QwenAdapter(), "SessionStart", id="qwen"),
+        pytest.param("droid", DroidAdapter(), "SessionStart", id="droid"),
     ],
 )
 def test_duplicate_session_start_adapter_output_omits_persona(
-    cli_name: str, adapter: Any, hook_type: str
+    _cli_name: str, adapter: Any, hook_type: str
 ) -> None:
     first_response = HookResponse(
         decision="allow",
@@ -94,7 +94,6 @@ def test_duplicate_session_start_adapter_output_omits_persona(
     second_result = adapter.translate_from_hook_response(second_response, hook_type=hook_type)
     second_payload = json.dumps(second_result, sort_keys=True)
 
-    assert cli_name
     assert "## Role" in first_payload
     assert "## Personality" in first_payload
     assert "Claimed task refs: #15237 [in_progress]" in second_payload
@@ -230,15 +229,12 @@ class TestGetMachineId:
         assert id1 == "test-machine-id-12345"
 
     @patch("gobby.utils.machine_id.get_machine_id")
-    def test_fallback_when_no_hostname(self, mock_get_machine_id: MagicMock) -> None:
-        """Returns valid ID from utils.machine_id (may be UUID or machineid format)."""
-        # machineid returns 32-char hex, uuid4 returns 36-char UUID
+    def test_returns_supplied_machine_id(self, mock_get_machine_id: MagicMock) -> None:
+        """Returns the durable machine ID supplied by get_machine_id."""
         mock_get_machine_id.return_value = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
 
         machine_id = _get_daemon_machine_id()
-        assert isinstance(machine_id, str)
-        # Accept both machineid format (32 chars) and UUID format (36 chars)
-        assert len(machine_id) >= 32
+        assert machine_id == "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
 
 
 # =============================================================================
@@ -3845,6 +3841,8 @@ class TestCodexClientApprovalResponseRouting:
 
         reader_task = asyncio.create_task(client._read_loop())
         await asyncio.wait_for(reader_task, timeout=2.0)
+        if client._incoming_request_tasks:
+            await asyncio.gather(*client._incoming_request_tasks)
 
         assert len(written_lines) >= 1
         response = json.loads(written_lines[0].strip())
@@ -3939,6 +3937,8 @@ class TestCodexClientApprovalResponseRouting:
 
         reader_task = asyncio.create_task(client._read_loop())
         await asyncio.wait_for(reader_task, timeout=2.0)
+        if client._incoming_request_tasks:
+            await asyncio.gather(*client._incoming_request_tasks)
 
         assert len(written_lines) >= 1
         response = json.loads(written_lines[0].strip())
@@ -3994,6 +3994,8 @@ class TestCodexClientApprovalResponseRouting:
 
         reader_task = asyncio.create_task(client._read_loop())
         await asyncio.wait_for(reader_task, timeout=2.0)
+        if client._incoming_request_tasks:
+            await asyncio.gather(*client._incoming_request_tasks)
 
         assert handler_called
         assert pending_future.done()

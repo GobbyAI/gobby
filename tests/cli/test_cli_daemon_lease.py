@@ -10,6 +10,8 @@ from click.testing import CliRunner
 
 from gobby.cli.daemon_lease import lease
 
+pytestmark = pytest.mark.unit
+
 
 def _response(status_code: int, payload: dict[str, object]) -> httpx.Response:
     return httpx.Response(

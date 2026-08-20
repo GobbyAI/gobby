@@ -6,6 +6,7 @@ which handle installing and uninstalling Gobby hooks for Claude Code CLI.
 
 import json
 import os
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -43,7 +44,7 @@ class TestInstallClaude:
         return project
 
     @pytest.fixture
-    def mock_install_dir(self, temp_dir: Path) -> Path:
+    def mock_install_dir(self, temp_dir: Path) -> Iterator[Path]:
         """Create a mock install directory with required files."""
         install_dir = temp_dir / "install"
         claude_dir = install_dir / "claude"
@@ -1286,7 +1287,7 @@ class TestInstallClaudeEdgeCases:
         mock_mcp_config.return_value = {"success": True, "added": False}
 
         # Create project with unicode path
-        unicode_project = temp_dir / "test-project-unicode"
+        unicode_project = temp_dir / "test-project-ünicode"
         unicode_project.mkdir()
 
         mock_home = temp_dir / "home"
@@ -1653,6 +1654,8 @@ class TestUninstallClaudeEdgeCases:
         from gobby.cli.installers.claude import uninstall_claude
 
         mock_get_install_dir.return_value = mock_install_dir
+        if os.geteuid() == 0:
+            pytest.skip("chmod 000 does not deny reads for uid 0")
 
         # Create settings file but make it unreadable
         claude_path = temp_project / ".claude"

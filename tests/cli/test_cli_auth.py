@@ -8,6 +8,8 @@ from click.testing import CliRunner
 from gobby.cli.auth import auth
 from gobby.storage.auth import hash_token, rotate_local_api_token
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def mock_stores() -> Iterator[tuple[MagicMock, MagicMock]]:

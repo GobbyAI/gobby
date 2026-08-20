@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from collections import Counter
 from collections.abc import Callable
@@ -102,47 +103,62 @@ def test_vendored_grok_audit_fixtures_match_builders() -> None:
         assert path.read_text(encoding="utf-8") == "\n".join(builder()) + "\n"
 
 
-def test_user_anchored_coverage_on_audited_shapes() -> None:
+@pytest.mark.parametrize(
+    ("name", "builder", "expected_real", "expected_completeness"),
+    _SHAPE_CASES,
+    ids=[case[0] for case in _SHAPE_CASES],
+)
+def test_user_anchored_coverage_on_audited_shapes(
+    name: str,
+    builder: Callable[[], list[str]],
+    expected_real: int,
+    expected_completeness: float,
+) -> None:
     parser = GrokTranscriptParser(session_id="grok-coverage-audit")
-    for name, builder, expected_real, expected_completeness in _SHAPE_CASES:
-        records = [_load_record(line) for line in builder()]
-        metric = compute_user_anchored_coverage(parser, records)
-        assert len(metric.real_prompts) == expected_real, name
-        assert metric.anchored == expected_real, name
-        if name == "10725":
-            assert metric.real_prompts == ()
-            assert metric.anchored == 0
-            assert metric.coverage == 1.0
-            assert metric.completeness == 1.0
-        else:
-            assert metric.coverage == 1.0, name
-            pair_prompt_counts = Counter(prompt for prompt, _response in metric.pairs)
-            for prompt in metric.real_prompts:
-                assert pair_prompt_counts[prompt] == 1, name
-        assert metric.completeness == expected_completeness, name
+    records = [_load_record(line) for line in builder()]
+    metric = compute_user_anchored_coverage(parser, records)
+    assert len(metric.real_prompts) == expected_real, name
+    assert metric.anchored == expected_real, name
+    if name == "10725":
+        assert metric.real_prompts == ()
+        assert metric.anchored == 0
+        assert metric.coverage == 1.0
+        assert metric.completeness == 1.0
+    else:
+        assert metric.coverage == 1.0, name
+        pair_prompt_counts = Counter(prompt for prompt, _response in metric.pairs)
+        for prompt in metric.real_prompts:
+            assert pair_prompt_counts[prompt] == 1, name
+    assert metric.completeness == expected_completeness, name
 
 
 @pytest.mark.skipif(
     not os.environ.get(_AUDIT_DIR_ENV),
     reason=f"set {_AUDIT_DIR_ENV} to replay audited updates.jsonl files",
 )
-def test_real_transcript_replay_opt_in() -> None:
+def test_real_transcript_replay_opt_in(caplog: pytest.LogCaptureFixture) -> None:
     root = Path(os.environ[_AUDIT_DIR_ENV]).expanduser()
     assert root.is_dir(), f"{_AUDIT_DIR_ENV} is not a directory: {root}"
     paths = sorted(path for path in root.rglob("updates.jsonl") if path.is_file())
     assert paths, f"no updates.jsonl files under {root}"
     parser = GrokTranscriptParser(session_id="grok-coverage-replay")
-    for path in paths:
-        records = _load_jsonl(path)
-        metric = compute_user_anchored_coverage(parser, records)
-        print(
-            f"{path}: coverage={metric.coverage:.4f} "
-            f"real_prompts={len(metric.real_prompts)} "
-            f"anchored={metric.anchored} "
-            f"completeness={metric.completeness:.4f}"
-        )
-        assert 0.0 <= metric.coverage <= 1.0
-        assert 0.0 <= metric.completeness <= 1.0
+    logger = logging.getLogger("gobby.sessions.transcripts.grok_coverage_audit")
+    min_coverage = 0.5
+    with caplog.at_level(logging.INFO, logger=logger.name):
+        for path in paths:
+            records = _load_jsonl(path)
+            metric = compute_user_anchored_coverage(parser, records)
+            logger.info(
+                "%s: coverage=%.4f real_prompts=%s anchored=%s completeness=%.4f",
+                path,
+                metric.coverage,
+                len(metric.real_prompts),
+                metric.anchored,
+                metric.completeness,
+            )
+            assert metric.coverage >= min_coverage, path
+            assert metric.completeness >= min_coverage, path
+    assert caplog.records
 
 
 def _real_user_prompts(records: list[dict[str, Any]]) -> list[str]:
