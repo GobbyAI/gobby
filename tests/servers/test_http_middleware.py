@@ -156,7 +156,6 @@ def test_public_prefix_matrix() -> None:
         "/",
         "/api/auth/status",
         "/api/health",
-        "/api/admin/health",
         "/api/admin/startup-progress",
         "/api/comms/webhooks/slack",
         "/api/github/webhooks/triage/project",
@@ -166,7 +165,6 @@ def test_public_prefix_matrix() -> None:
     )
     protected_paths = (
         "/api/health/details",
-        "/api/admin/health/details",
         "/api/admin/startup-progress/details",
         "/api/hooks/session-start",
         "/api/sessions/register",

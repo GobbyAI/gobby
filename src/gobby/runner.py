@@ -433,7 +433,7 @@ def _healthy_daemon_running(port: int, host: str = "localhost") -> bool:
         host = f"[{host}]"
 
     try:
-        url = f"http://{host}:{port}/api/admin/health"
+        url = f"http://{host}:{port}/api/health"
         parsed = urllib.parse.urlparse(url)
         if parsed.scheme not in ("http", "https"):
             return False

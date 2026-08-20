@@ -98,7 +98,6 @@ PROTECTED_PATHS = [
 PUBLIC_PATHS = [
     "/",
     "/api/health",
-    "/api/admin/health",
     "/api/admin/startup-progress",
     "/api/auth/status",
     "/api/comms/webhooks/test",

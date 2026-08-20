@@ -155,7 +155,7 @@ class DaemonClient:
         """
         try:
             response = httpx.get(
-                f"{self.url}/api/admin/health",
+                f"{self.url}/api/health",
                 headers=self._auth_headers,
                 timeout=self.timeout,
                 trust_env=False,

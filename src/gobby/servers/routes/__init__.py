@@ -4,7 +4,7 @@ FastAPI route modules for Gobby HTTP server.
 Each module contains an APIRouter with related endpoints.
 """
 
-from gobby.servers.routes.admin import create_admin_router
+from gobby.servers.routes.admin import create_admin_router, create_health_router
 from gobby.servers.routes.agent_spawn import create_agent_spawn_router
 from gobby.servers.routes.agents import create_agents_router
 from gobby.servers.routes.attention import create_attention_router
@@ -50,6 +50,7 @@ from gobby.servers.routes.wiki_code import create_wiki_code_router
 
 __all__ = [
     "create_admin_router",
+    "create_health_router",
     "create_agent_spawn_router",
     "create_agents_router",
     "create_attention_router",

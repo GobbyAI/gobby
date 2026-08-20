@@ -219,7 +219,7 @@ def test_http_plane_responsive_during_coverage_regeneration(
                 while not update_finished.is_set():
                     started = time.monotonic()
                     try:
-                        response = health_client.get("/api/admin/health")
+                        response = health_client.get("/api/health")
                         elapsed = time.monotonic() - started
                         if response.status_code == 200:
                             health_latencies.append(elapsed)
@@ -237,7 +237,7 @@ def test_http_plane_responsive_during_coverage_regeneration(
             # regeneration finished quickly.
             while len(health_latencies) + len(health_failures) < 3:
                 started = time.monotonic()
-                response = health_client.get("/api/admin/health")
+                response = health_client.get("/api/health")
                 assert response.status_code == 200
                 health_latencies.append(time.monotonic() - started)
 

@@ -1363,7 +1363,7 @@ fn stop_post_connect_failure_with_shutdown_marker_is_suppressed_and_dequeued() -
     )?;
     let health_request = join_daemon(health_daemon)?;
 
-    assert!(health_request.contains("GET /api/admin/health HTTP/1.1"));
+    assert!(health_request.contains("GET /api/health HTTP/1.1"));
     assert_eq!(output.status.code(), Some(0));
     assert_json_stdout(&output, serde_json::json!({"continue": true}))?;
     assert_stderr_empty(&output, "planned shutdown Stop")?;

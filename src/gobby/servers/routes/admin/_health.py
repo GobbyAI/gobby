@@ -1,4 +1,4 @@
-"""Health, status, and metrics endpoints for admin router."""
+"""Liveness probe plus admin status and metrics endpoints."""
 
 import asyncio
 import logging
@@ -143,7 +143,10 @@ async def _get_falkordb_memory_status(server: "HTTPServer") -> dict[str, Any]:
         return _unavailable_falkordb_memory_status()
 
 
-def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
+def create_health_router(server: "HTTPServer") -> APIRouter:
+    """Public liveness probe at ``/api/health``, mounted outside the admin prefix."""
+    router = APIRouter(prefix="/api", tags=["health"])
+
     @router.get("/health")
     async def health_check() -> dict[str, Any]:
         """Lightweight health check including local hook-runtime compatibility."""
@@ -155,6 +158,10 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             "hook_runtime": hook_runtime.to_dict(),
         }
 
+    return router
+
+
+def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
     @router.get("/startup-progress")
     async def startup_progress() -> dict[str, Any]:
         """Return subsystem initialization progress for CLI display."""

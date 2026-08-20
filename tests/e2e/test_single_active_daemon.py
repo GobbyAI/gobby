@@ -129,7 +129,7 @@ def _wait_for_standby(instance: DaemonInstance, timeout: float = 30.0) -> None:
                 f"Logs:\n{instance.read_logs()}\nErrors:\n{instance.read_error_logs()}"
             )
         try:
-            response = httpx.get(f"{instance.http_url}/api/admin/health", timeout=1.0)
+            response = httpx.get(f"{instance.http_url}/api/health", timeout=1.0)
             if response.status_code == 200 and response.json().get("lease_mode") == "standby":
                 return
         except httpx.HTTPError:

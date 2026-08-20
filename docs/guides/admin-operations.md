@@ -109,7 +109,7 @@ Run the HTTP checks from a machine holding the current token:
 BASE="${GOBBY_DAEMON_URL:-http://localhost:60887}"
 TOKEN="$(tr -d '\r\n' < "${GOBBY_HOME:-$HOME/.gobby}/local_cli_token")"
 
-for path in /api/health /api/admin/health /api/admin/startup-progress; do
+for path in /api/health /api/admin/startup-progress; do
   curl -fsS "$BASE$path" >/dev/null
 done
 
@@ -221,7 +221,7 @@ Use `--dry-run` before a real pack on active machines.
 Useful admin routes:
 
 ```text
-GET  /api/admin/health
+GET  /api/health
 GET  /api/admin/startup-progress
 GET  /api/admin/status
 GET  /api/admin/metrics
