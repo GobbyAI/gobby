@@ -13,6 +13,7 @@ Use this guide to decide what has to be installed before running Gobby.
 | Gobby daemon | Python 3.13+, `uv`, Docker with Compose v2, the managed PostgreSQL/Qdrant/FalkorDB stack, and the listed local ports | 4+ CPU cores, 16 GB RAM, SSD/NVMe storage |
 | Daemon + web UI | Daemon requirements; installed UI is served on port 60887 | 16 GB RAM |
 | Local embedding model | LM Studio with `lms` or Ollama with `ollama` | 16 GB RAM, GPU or unified memory when also running a chat model |
+| Local generation (LM Studio, Ollama, vLLM / vllm-metal) | Operator-managed runtime plus a named `ai.generation.endpoints` entry; Gobby does not start the server | 16+ GB RAM or unified memory; GPU or Apple Silicon for chat models |
 
 An embedding provider remains optional. Choosing `None` disables semantic
 embedding work, but does not skip installation or startup of the managed
@@ -104,6 +105,22 @@ OpenAI embeddings set dimensions to 1536. If you change models, make sure `embed
 matches the model output.
 
 For provider details, see [search.md](./search.md).
+
+## Local generation runtimes
+
+Gobby does not install, launch, or stop local chat servers. Start the runtime
+yourself, then add a named endpoint under `ai.generation.endpoints`. Canonical
+vLLM and vllm-metal share the Gobby protocol value `vllm`.
+
+| Runtime | Typical `api_base` | Gobby protocol | Notes |
+|---------|--------------------|----------------|-------|
+| LM Studio | `http://localhost:1234` | `lmstudio` | `lms` CLI; web chat via Codex OSS |
+| Ollama | `http://localhost:11434` | `ollama` | `ollama` CLI; web chat via Codex OSS |
+| vLLM | `http://localhost:8000/v1` | `vllm` | CUDA/ROCm hosts; web chat via Codex config-override (`wire_api="chat"`), not `--oss` |
+| vllm-metal | `http://localhost:8000/v1` | `vllm` | Apple Silicon/MLX plugin; same protocol as canonical vLLM. Install: [vllm-metal installation](https://docs.vllm.ai/projects/vllm-metal/en/latest/installation/) |
+
+Copy-pasteable endpoint YAML, the `model: auto` exactly-one rule, and API-key
+handling live in [llm-features.md](./llm-features.md).
 
 ## Memory And Search Footprint
 
@@ -260,9 +277,11 @@ more RAM or VRAM than the embedding model.
 ## See Also
 
 - [configuration.md](./configuration.md) - Daemon and project configuration
+- [llm-features.md](./llm-features.md) - Generation endpoint candidates, vLLM, and vllm-metal
+- [providers-and-models.md](./providers-and-models.md) - Provider catalogs and web-chat transports
 - [search.md](./search.md) - Search and embedding configuration
 - [memory.md](./memory.md) - Memory backend configuration
 - [hub-owned-files-home.md](../architecture/hub-owned-files-home.md) - Hub files owner contract
 - [CONTRIBUTING.md](../../CONTRIBUTING.md) - Development environment setup
 
-_Last verified: 2026-08-18_
+_Last verified: 2026-08-20_
