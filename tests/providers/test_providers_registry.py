@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
+
 import gobby.providers as providers
 import gobby.providers.registry as registry
+
+pytestmark = pytest.mark.unit
 
 
 def test_registry_exposes_only_live_provider_helpers() -> None:

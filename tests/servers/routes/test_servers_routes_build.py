@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -13,10 +15,12 @@ import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
+from gobby.storage.hub.protocol import HubDatabase
+
 pytestmark = pytest.mark.unit
 
 
-async def _run_db(func, *args, **kwargs):
+async def _run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     return func(*args, **kwargs)
 
 
@@ -705,7 +709,7 @@ def test_post_api_build_restart_empty_pr_creates_opts() -> None:
 
 
 def test_post_api_build_resolves_relative_hidden_plan_from_request_cwd(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     from gobby.build.service import DispatcherTickSummary

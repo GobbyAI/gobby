@@ -3,6 +3,8 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 
+import pytest
+
 from gobby.providers.capabilities.models import (
     ActivationDescriptor,
     FactProvenance,
@@ -14,6 +16,8 @@ from gobby.providers.capabilities.models import (
     SourceState,
     SpeedMode,
 )
+
+pytestmark = pytest.mark.unit
 
 
 def _snapshot(supported_efforts: tuple[str, ...] | None) -> ProviderSnapshot:

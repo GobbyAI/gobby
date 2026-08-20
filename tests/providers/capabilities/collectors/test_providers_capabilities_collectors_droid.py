@@ -2,6 +2,8 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from unittest.mock import patch
 
+import pytest
+
 from gobby.llm.context_windows import resolve_context_window_with_source
 from gobby.providers.capabilities.collectors import validate_snapshot
 from gobby.providers.capabilities.collectors.droid import (
@@ -9,6 +11,8 @@ from gobby.providers.capabilities.collectors.droid import (
     DroidCollector,
 )
 from gobby.providers.capabilities.models import ReasoningSupport, SpeedMode
+
+pytestmark = pytest.mark.unit
 
 _OBSERVED_AT = datetime(2026, 8, 4, 12, tzinfo=UTC)
 _MODELS_DOCUMENT = """
@@ -30,6 +34,7 @@ def _collector(document: str = _MODELS_DOCUMENT) -> DroidCollector:
     return DroidCollector(fetch_text=fetch_text, clock=lambda: _OBSERVED_AT)
 
 
+@pytest.mark.asyncio
 async def test_usage_multiplier_parsed() -> None:
     collector = _collector()
     snapshot = validate_snapshot(await collector.collect(), collector.sources)
@@ -44,6 +49,7 @@ async def test_usage_multiplier_parsed() -> None:
     assert model.reasoning is ReasoningSupport.KNOWN
 
 
+@pytest.mark.asyncio
 async def test_fast_pairing_requires_explicit_label_and_standard_match() -> None:
     collector = _collector()
     snapshot = validate_snapshot(await collector.collect(), collector.sources)
@@ -69,6 +75,7 @@ async def test_fast_pairing_requires_explicit_label_and_standard_match() -> None
     assert models["glm-5.2-fast"].default_effort == "high"
 
 
+@pytest.mark.asyncio
 async def test_context_falls_back_to_model_metadata() -> None:
     collector = _collector()
     snapshot = validate_snapshot(await collector.collect(), collector.sources)

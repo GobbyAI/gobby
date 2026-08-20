@@ -8,11 +8,13 @@ from typing import Any, cast
 import pytest
 import yaml
 
+from gobby.agents.sync import get_bundled_agents_path
+from gobby.skills.sync import get_bundled_skills_path
+
 pytestmark = pytest.mark.unit
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-AGENTS_DIR = REPO_ROOT / "src/gobby/install/shared/workflows/agents"
-SKILLS_DIR = REPO_ROOT / "src/gobby/install/shared/skills"
+AGENTS_DIR = get_bundled_agents_path()
+SKILLS_DIR = get_bundled_skills_path()
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -104,6 +106,7 @@ def test_merge_worker_blocks_native_delegation_tools() -> None:
 
 def test_restricted_skill_load_steps_use_gobby_proxy_guidance() -> None:
     """Restricted load-skill steps should instruct agents to use the Gobby proxy."""
+    inspected = 0
     for path in AGENTS_DIR.glob("*.yaml"):
         agent = _load_yaml(path)
         for step in agent.get("step_workflow", {}).get("steps") or []:
@@ -116,6 +119,7 @@ def test_restricted_skill_load_steps_use_gobby_proxy_guidance() -> None:
             ):
                 continue
 
+            inspected += 1
             status = step.get("status_message") or ""
             label = f"{path.name}:{step.get('name')}"
             assert "mcp__gobby__call_tool" in status, label
@@ -125,6 +129,7 @@ def test_restricted_skill_load_steps_use_gobby_proxy_guidance() -> None:
             assert "native Skill" in status, label
             assert "GitHub/app connector" in status, label
             assert "Computer Use tools" in status, label
+    assert inspected >= 1
 
 
 def test_epic_review_skill_defines_methodology_and_verdict_block() -> None:
@@ -311,7 +316,7 @@ def test_tdd_discipline_skills_are_bundled() -> None:
 
     assert "test judgment" in discipline.lower()
     assert "test-driven-development" in discipline
-    assert "red" in tdd.lower()
+    assert "red evidence" in tdd.lower()
     assert "minimal green" in tdd.lower()
     assert "refactor/final-green" in tdd.lower()
     assert "test-quality audit" in tdd.lower()
@@ -327,22 +332,27 @@ def test_qa_and_epic_reviewers_check_tdd_required_evidence() -> None:
     epic = _agent("epic-reviewer")
     epic_skill = (SKILLS_DIR / "epic-review/SKILL.md").read_text()
 
+    qa_review = _step(qa, "review")["status_message"]
+    epic_review = _step(epic, "review")["status_message"]
     for text in (
         qa["instructions"],
-        _step(qa, "review")["status_message"],
+        qa_review,
         epic["instructions"],
-        _step(epic, "review")["status_message"],
+        epic_review,
         epic_skill,
     ):
         assert "tdd:required" in text
         assert "test-driven-development" in text
-        assert "red" in text.lower()
-        assert "green" in text.lower()
         assert "test-quality" in text.lower()
         assert "supported" in text.lower()
         assert "missing baseline" in text.lower()
         assert "unsupported-language" in text.lower()
         assert "repo-native validation" in text.lower()
+    assert "red evidence" in qa["instructions"].lower()
+    assert "contains red, green" in qa_review.lower()
+    assert "checked red, green" in epic["instructions"].lower()
+    assert "red/green" in epic_review
+    assert "red failure" in epic_skill.lower()
 
 
 def test_agent_definition_model_preserves_skills_blocks() -> None:

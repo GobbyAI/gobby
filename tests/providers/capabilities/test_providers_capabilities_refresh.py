@@ -203,6 +203,7 @@ class _Collector:
         return await self._collect()
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_startup_nonblocking() -> None:
     prior = _snapshot("codex", "gpt-old")
@@ -226,6 +227,7 @@ async def test_startup_nonblocking() -> None:
     await refresh
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_startup_and_successful_refresh_run_coverage_audits() -> None:
     prior = _snapshot("synthetic", "old-model")
@@ -249,6 +251,8 @@ async def test_startup_and_successful_refresh_run_coverage_audits() -> None:
     assert auditor.async_calls == 1
 
 
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_claude_refresh_with_compatibility_effort_docs_emits_no_warnings(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -295,6 +299,7 @@ async def _async_snapshot(provider: str, model: str) -> ProviderSnapshot:
     return _snapshot(provider, model)
 
 
+@pytest.mark.unit
 def test_coverage_audit_bounds_deduplicates_and_logs_recovery(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -329,6 +334,7 @@ def test_coverage_audit_bounds_deduplicates_and_logs_recovery(
     ]
 
 
+@pytest.mark.unit
 def test_coverage_audit_warns_for_missing_alias_target_and_logs_recovery(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -356,6 +362,7 @@ def test_coverage_audit_warns_for_missing_alias_target_and_logs_recovery(
     assert "Provider synthetic model metadata alias targets recovered" in messages
 
 
+@pytest.mark.unit
 def test_coverage_audit_skips_configured_local_models(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -378,6 +385,7 @@ def test_coverage_audit_skips_configured_local_models(
     assert local_model not in messages[0]
 
 
+@pytest.mark.unit
 def test_coverage_audit_skips_provider_using_local_endpoint(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -395,6 +403,7 @@ def test_coverage_audit_skips_provider_using_local_endpoint(
     assert not caplog.records
 
 
+@pytest.mark.unit
 def test_qwen_local_model_values_uses_loopback_base_urls() -> None:
     settings = {
         "modelProviders": {
@@ -422,6 +431,7 @@ def test_qwen_local_model_values_uses_loopback_base_urls() -> None:
     )
 
 
+@pytest.mark.unit
 def test_codex_detects_active_loopback_model_provider() -> None:
     config = {
         "model_provider": "local-endpoint",
@@ -437,6 +447,7 @@ def test_codex_detects_active_loopback_model_provider() -> None:
     )
 
 
+@pytest.mark.unit
 def test_claude_detects_effective_loopback_model_endpoint() -> None:
     settings = {"env": {"ANTHROPIC_BASE_URL": "http://[::1]:1234/v1"}}
 
@@ -455,6 +466,7 @@ def test_claude_detects_effective_loopback_model_endpoint() -> None:
     "message",
     ("network unavailable", "response was empty", "malformed response"),
 )
+@pytest.mark.unit
 async def test_failed_refresh_retains_last_good(message: str) -> None:
     prior = _snapshot("codex", "gpt-old")
     store = _MemoryStore(prior)
@@ -475,6 +487,8 @@ async def test_failed_refresh_retains_last_good(message: str) -> None:
     assert store.failures == [("codex", "provider-api", message)]
 
 
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_authentication_required_refresh_is_informational(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -498,6 +512,7 @@ async def test_authentication_required_refresh_is_informational(
     assert refresh_records[0].levelno == logging.INFO
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_source_timeout_records_attempt() -> None:
     store = _MemoryStore(_snapshot("codex", "gpt-old"))
@@ -518,6 +533,7 @@ async def test_source_timeout_records_attempt() -> None:
     assert store.snapshot.sources[0].attempts == 2
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_refreshes_providers_concurrently() -> None:
     store = _MemoryStore(_snapshot("codex", "gpt-old"))
@@ -549,6 +565,7 @@ async def test_refreshes_providers_concurrently() -> None:
     assert started == 2
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_schedule_immediate_then_daily() -> None:
     store = _MemoryStore(_snapshot("codex", "gpt-old"))
@@ -579,6 +596,7 @@ async def test_schedule_immediate_then_daily() -> None:
     assert delays == [86_400.0, 86_400.0]
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_atomic_snapshot_swap(postgres_db: HubDatabase) -> None:
     store = ProviderCapabilityStore(postgres_db)

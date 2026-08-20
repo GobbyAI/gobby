@@ -1,5 +1,7 @@
 """Tests for HubManager."""
 
+from typing import Any
+
 import pytest
 
 from gobby.config.skills import HubConfig
@@ -13,18 +15,22 @@ class MockProvider(HubProvider):
     """Mock provider for testing."""
 
     def __init__(
-        self, hub_name: str, base_url: str, auth_token: str | None = None, **kwargs
+        self,
+        hub_name: str,
+        base_url: str,
+        auth_token: str | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initialize mock provider, accepting any extra kwargs."""
         super().__init__(hub_name=hub_name, base_url=base_url, auth_token=auth_token)
         # Store extra kwargs for inspection in tests
-        self._extra_kwargs = kwargs
+        self._extra_kwargs: dict[str, Any] = kwargs
 
     @property
     def provider_type(self) -> str:
         return "mock"
 
-    async def discover(self) -> dict:
+    async def discover(self) -> dict[str, Any]:
         return {"api_base": self.base_url}
 
     async def search(self, query: str, limit: int = 20) -> list[HubSkillInfo]:
@@ -235,6 +241,7 @@ class TestCreateProvider:
         provider = manager._create_provider("hub")
         assert provider.provider_type == "github-collection"
         assert isinstance(provider, GitHubCollectionMock)
+        assert provider._extra_kwargs.get("repo") == "user/skills"
 
     def test_create_provider_raises_valueerror_for_unknown_type(self) -> None:
         """Test _create_provider raises ValueError for unknown hub type."""
@@ -378,6 +385,7 @@ class TestSearchAll:
         manager = HubManager(configs=configs)
         manager.register_provider_factory("clawdhub", MockProvider)
 
+        providers: dict[str, MockProvider] = {}
         for hub_name in ["hub-a", "hub-b", "hub-c"]:
             provider = manager.get_provider(hub_name)
             result = HubSkillInfo(
@@ -387,6 +395,7 @@ class TestSearchAll:
                 hub_name=hub_name,
             )
             provider.search = AsyncMock(return_value=[result])
+            providers[hub_name] = provider
 
         # Only search hub-a and hub-c
         results, errors = await manager.search_all("test", hub_names=["hub-a", "hub-c"])
@@ -397,6 +406,7 @@ class TestSearchAll:
         assert "skill-a" in slugs
         assert "skill-c" in slugs
         assert "skill-b" not in slugs
+        providers["hub-b"].search.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_search_all_skips_unknown_hubs(self) -> None:
@@ -467,7 +477,9 @@ class TestAuthStatus:
 class TestWarnMissingAuth:
     """Tests for HubManager.warn_missing_auth."""
 
-    def test_warn_missing_auth_logs_for_misconfigured_hubs(self, caplog) -> None:
+    def test_warn_missing_auth_logs_for_misconfigured_hubs(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """Emits one INFO per hub with missing required auth; none for others."""
         import logging
 
@@ -500,7 +512,9 @@ class TestWarnMissingAuth:
             assert "gobby install" in msg
             assert "environment" not in msg.lower()
 
-    def test_lazy_create_provider_does_not_emit_warning(self, caplog) -> None:
+    def test_lazy_create_provider_does_not_emit_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """The lazy warning at provider-creation time is now DEBUG, not WARNING.
 
         Prevents duplication with the one-shot warn_missing_auth at startup.

@@ -1,4 +1,5 @@
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -10,11 +11,15 @@ from gobby.communications.manager import EventSubscriptionNotFoundError
 from gobby.communications.models import ChannelConfig, CommsMessage
 from gobby.config.app import DaemonConfig
 from gobby.servers.auth_service import AuthService
+from gobby.servers.http import HTTPServer
+from gobby.storage.hub.protocol import HubDatabase
 from tests.servers.conftest import create_http_server
+
+pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def comms_manager():
+def comms_manager() -> MagicMock:
     manager = MagicMock()
     manager.handle_inbound = AsyncMock(return_value=[])
     manager.add_channel = AsyncMock()
@@ -22,7 +27,7 @@ def comms_manager():
     manager.remove_channel = AsyncMock()
     manager._store = MagicMock()
 
-    def channel_to_dict(channel):
+    def channel_to_dict(channel: ChannelConfig) -> dict[str, Any]:
         payload = asdict(channel)
         payload.pop("webhook_secret", None)
         payload["active"] = False
@@ -39,7 +44,7 @@ def comms_manager():
 
 
 @pytest.fixture
-def server(comms_manager, temp_db):
+def server(comms_manager: MagicMock, temp_db: HubDatabase) -> HTTPServer:
     """HTTPServer with mocked comms manager."""
     config = DaemonConfig()
     config.communications.enabled = True
@@ -50,12 +55,12 @@ def server(comms_manager, temp_db):
 
 
 @pytest.fixture
-def client(server):
+def client(server: HTTPServer) -> TestClient:
     return TestClient(server.app)
 
 
 @pytest.fixture
-def ui_auth_client(server: Any, tmp_path) -> TestClient:
+def ui_auth_client(server: HTTPServer, tmp_path: Path) -> TestClient:
     server.auth_service = AuthService(
         lambda: server.services.database,
         token_file=tmp_path / "missing-local-token",
@@ -63,7 +68,7 @@ def ui_auth_client(server: Any, tmp_path) -> TestClient:
     return TestClient(server.app)
 
 
-def test_receive_webhook_ok(client, comms_manager):
+def test_receive_webhook_ok(client: TestClient, comms_manager: MagicMock) -> None:
     comms_manager.handle_inbound.return_value = [
         CommsMessage(
             id="msg1",
@@ -79,7 +84,9 @@ def test_receive_webhook_ok(client, comms_manager):
     comms_manager.handle_inbound.assert_called_once()
 
 
-def test_receive_webhook_bypasses_ui_auth(ui_auth_client, comms_manager):
+def test_receive_webhook_bypasses_ui_auth(
+    ui_auth_client: TestClient, comms_manager: MagicMock
+) -> None:
     protected_response = ui_auth_client.get("/api/comms/channels")
     assert protected_response.status_code == 401
 
@@ -90,7 +97,9 @@ def test_receive_webhook_bypasses_ui_auth(ui_auth_client, comms_manager):
     comms_manager.handle_inbound.assert_called_once()
 
 
-def test_receive_webhook_rejects_unverified_channel(client, comms_manager):
+def test_receive_webhook_rejects_unverified_channel(
+    client: TestClient, comms_manager: MagicMock
+) -> None:
     comms_manager.handle_inbound.side_effect = ValueError("invalid webhook signature")
 
     response = client.post("/api/comms/webhooks/slack", json={"text": "unverified"})
@@ -99,7 +108,7 @@ def test_receive_webhook_rejects_unverified_channel(client, comms_manager):
     assert response.json()["detail"] == "invalid webhook signature"
 
 
-def test_receive_webhook_url_verification(client, comms_manager):
+def test_receive_webhook_url_verification(client: TestClient, comms_manager: MagicMock) -> None:
     adapter = SlackAdapter()
 
     async def parse_slack_webhook(
@@ -121,7 +130,7 @@ def test_receive_webhook_url_verification(client, comms_manager):
     assert response.text == "challenge_token"
 
 
-def test_verify_webhook_get(client):
+def test_verify_webhook_get(client: TestClient) -> None:
     response = client.get("/api/comms/webhooks/teams?validationToken=token123")
     assert response.status_code == 200
     assert response.text == "token123"
@@ -131,7 +140,7 @@ def test_verify_webhook_get(client):
     assert response.text == "chal123"
 
 
-def test_send_message(client, comms_manager):
+def test_send_message(client: TestClient, comms_manager: MagicMock) -> None:
     message = CommsMessage(
         id="msg1",
         channel_id="ch1",
@@ -186,7 +195,7 @@ def test_send_message_reports_adapter_failure(
     assert response.json() == {"detail": "Telegram rejected the destination"}
 
 
-def test_send_message_unknown_channel(client, comms_manager):
+def test_send_message_unknown_channel(client: TestClient, comms_manager: MagicMock) -> None:
     comms_manager.send_message = AsyncMock(
         side_effect=ValueError("Channel 'missing' not found or not active")
     )
@@ -197,7 +206,7 @@ def test_send_message_unknown_channel(client, comms_manager):
     assert response.json() == {"detail": "Channel 'missing' not found or not active"}
 
 
-def test_list_channels(client, comms_manager):
+def test_list_channels(client: TestClient, comms_manager: MagicMock) -> None:
     ch = ChannelConfig(
         id="ch1",
         channel_type="slack",
@@ -217,7 +226,7 @@ def test_list_channels(client, comms_manager):
     assert "webhook_secret" not in response.json()[0]
 
 
-def test_create_channel(client, comms_manager):
+def test_create_channel(client: TestClient, comms_manager: MagicMock) -> None:
     ch = ChannelConfig(
         id="ch1",
         channel_type="slack",
@@ -241,7 +250,7 @@ def test_create_channel(client, comms_manager):
     comms_manager.add_channel.assert_called_once()
 
 
-def test_create_channel_reports_init_error(client, comms_manager):
+def test_create_channel_reports_init_error(client: TestClient, comms_manager: MagicMock) -> None:
     ch = ChannelConfig(
         id="ch1",
         channel_type="slack",
@@ -269,7 +278,7 @@ def test_create_channel_reports_init_error(client, comms_manager):
     assert response.json()["init_error"] == "bad token"
 
 
-def test_update_channel(client, comms_manager):
+def test_update_channel(client: TestClient, comms_manager: MagicMock) -> None:
     ch = ChannelConfig(
         id="ch1",
         channel_type="slack",
@@ -297,7 +306,9 @@ def test_update_channel(client, comms_manager):
     assert ch.name == "renamed-slack"
 
 
-def test_update_channel_preserves_secret_refs_when_editing_non_secret_config(client, comms_manager):
+def test_update_channel_preserves_secret_refs_when_editing_non_secret_config(
+    client: TestClient, comms_manager: MagicMock
+) -> None:
     ch = ChannelConfig(
         id="ch1",
         channel_type="slack",
@@ -326,7 +337,9 @@ def test_update_channel_preserves_secret_refs_when_editing_non_secret_config(cli
     comms_manager.update_channel.assert_called_once_with(ch, secrets=None)
 
 
-def test_update_channel_forwards_secret_changes(client, comms_manager):
+def test_update_channel_forwards_secret_changes(
+    client: TestClient, comms_manager: MagicMock
+) -> None:
     ch = ChannelConfig(
         id="ch1",
         channel_type="slack",
@@ -345,7 +358,7 @@ def test_update_channel_forwards_secret_changes(client, comms_manager):
     comms_manager.update_channel.assert_called_once_with(ch, secrets={"bot_token": "new-token"})
 
 
-def test_update_channel_partial_config_only(client, comms_manager):
+def test_update_channel_partial_config_only(client: TestClient, comms_manager: MagicMock) -> None:
     """Test that partial updates (only config, not enabled) don't overwrite with None."""
     ch = ChannelConfig(
         id="ch1",
@@ -366,7 +379,7 @@ def test_update_channel_partial_config_only(client, comms_manager):
     assert ch.enabled is True  # Not overwritten to None
 
 
-def test_update_channel_partial_enabled_only(client, comms_manager):
+def test_update_channel_partial_enabled_only(client: TestClient, comms_manager: MagicMock) -> None:
     """Test that partial updates (only enabled, not config) don't overwrite with None."""
     ch = ChannelConfig(
         id="ch1",
@@ -387,14 +400,14 @@ def test_update_channel_partial_enabled_only(client, comms_manager):
     assert ch.config_json == {"keep": "this"}  # Not overwritten to None
 
 
-def test_update_channel_not_found(client, comms_manager):
+def test_update_channel_not_found(client: TestClient, comms_manager: MagicMock) -> None:
     comms_manager.get_channel.return_value = None
 
     response = client.put("/api/comms/channels/ch1", json={"enabled": False})
     assert response.status_code == 404
 
 
-def test_remove_channel(client, comms_manager):
+def test_remove_channel(client: TestClient, comms_manager: MagicMock) -> None:
     ch = ChannelConfig(
         id="ch1",
         channel_type="slack",
@@ -412,7 +425,7 @@ def test_remove_channel(client, comms_manager):
     comms_manager.remove_channel.assert_called_once_with("myslack")
 
 
-def test_get_channel_status(client, comms_manager):
+def test_get_channel_status(client: TestClient, comms_manager: MagicMock) -> None:
     ch = ChannelConfig(
         id="ch1",
         channel_type="slack",

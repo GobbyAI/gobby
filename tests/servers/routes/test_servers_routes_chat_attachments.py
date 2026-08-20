@@ -474,6 +474,7 @@ def test_delete_reports_file_removal_failure_after_metadata_delete(
         (uploaded["id"],),
     )
     assert uploaded_row is not None
+
     def fail_unlink(_locator: str) -> None:
         raise PermissionError("blocked")
 
@@ -493,10 +494,11 @@ def test_delete_reports_file_removal_failure_after_metadata_delete(
     assert remaining["claim_token"] is None
 
 
-def test_upload_vanished_files_home_raises_and_does_not_recreate(
+def test_vanished_files_home_raises_and_does_not_recreate(
     client: TestClient,
     files_home: Path,
 ) -> None:
+    # client is requested for its environment setup side effect.
     from gobby.paths import FilesHomeError, require_files_home
 
     require_files_home()
@@ -507,10 +509,11 @@ def test_upload_vanished_files_home_raises_and_does_not_recreate(
     assert not files_home.exists()
 
 
-def test_upload_replaced_files_home_raises(
+def test_replaced_files_home_raises(
     client: TestClient,
     files_home: Path,
 ) -> None:
+    # client is requested for its environment setup side effect.
     from gobby.paths import FilesHomeError, publish_files_home_descendant, require_files_home
 
     require_files_home()
@@ -705,4 +708,3 @@ async def test_unpublished_after_replace_is_removed_by_restart_cleanup(
     )
     assert row is None
     assert not dest.exists()
-

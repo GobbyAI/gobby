@@ -1,14 +1,14 @@
 """Tests for SkillLoader (TDD - written before implementation)."""
 
+from pathlib import Path
+
 import pytest
 
 from gobby.skills import limits
 from gobby.skills.loader import SkillLoader, SkillLoadError
 
-pytestmark = pytest.mark.integration
 
-
-def test_rejects_oversized_loaded_file(skill_dir, monkeypatch) -> None:
+def test_rejects_oversized_loaded_file(skill_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(limits, "MAX_LOADED_FILE_BYTES", 8)
     references = skill_dir / "references"
     references.mkdir()
@@ -18,7 +18,9 @@ def test_rejects_oversized_loaded_file(skill_dir, monkeypatch) -> None:
         SkillLoader().load_skill(skill_dir)
 
 
-def test_rejects_loaded_files_over_total_limit(skill_dir, monkeypatch) -> None:
+def test_rejects_loaded_files_over_total_limit(
+    skill_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(limits, "MAX_SKILL_TOTAL_BYTES", 1)
     references = skill_dir / "references"
     references.mkdir()
@@ -29,7 +31,7 @@ def test_rejects_loaded_files_over_total_limit(skill_dir, monkeypatch) -> None:
 
 
 @pytest.fixture
-def skill_dir(tmp_path):
+def skill_dir(tmp_path: Path) -> Path:
     """Create a temporary directory with a valid SKILL.md."""
     skill_dir = tmp_path / "commit-message"
     skill_dir.mkdir()
@@ -53,7 +55,7 @@ Generate commit messages following conventional commits format.
 
 
 @pytest.fixture
-def skill_file(tmp_path):
+def skill_file(tmp_path: Path) -> Path:
     """Create a temporary SKILL.md file."""
     skill_file = tmp_path / "SKILL.md"
     skill_file.write_text("""---
@@ -69,7 +71,7 @@ Content here.
 
 
 @pytest.fixture
-def skills_root(tmp_path):
+def skills_root(tmp_path: Path) -> Path:
     """Create a temporary directory with multiple skill directories."""
     # Skill 1: commit-message
     commit_dir = tmp_path / "commit-message"
@@ -106,7 +108,7 @@ Content 2
 class TestSkillLoaderSingleFile:
     """Tests for loading single SKILL.md files."""
 
-    def test_load_skill_from_file(self, skill_file) -> None:
+    def test_load_skill_from_file(self, skill_file: Path) -> None:
         """Test loading a single SKILL.md file."""
         from gobby.skills.loader import SkillLoader
 
@@ -117,7 +119,7 @@ class TestSkillLoaderSingleFile:
         assert skill.description == "A standalone skill"
         assert str(skill_file) in skill.source_path
 
-    def test_load_skill_from_directory(self, skill_dir) -> None:
+    def test_load_skill_from_directory(self, skill_dir: Path) -> None:
         """Test loading SKILL.md from a directory."""
         from gobby.skills.loader import SkillLoader
 
@@ -127,7 +129,7 @@ class TestSkillLoaderSingleFile:
         assert skill.name == "commit-message"
         assert skill.description == "Generate conventional commit messages"
 
-    def test_load_skill_not_found(self, tmp_path) -> None:
+    def test_load_skill_not_found(self, tmp_path: Path) -> None:
         """Test loading from nonexistent path raises error."""
         from gobby.skills.loader import SkillLoader, SkillLoadError
 
@@ -135,7 +137,7 @@ class TestSkillLoaderSingleFile:
         with pytest.raises(SkillLoadError, match="not found"):
             loader.load_skill(tmp_path / "nonexistent")
 
-    def test_load_skill_no_skill_md_in_dir(self, tmp_path) -> None:
+    def test_load_skill_no_skill_md_in_dir(self, tmp_path: Path) -> None:
         """Test loading from directory without SKILL.md raises error."""
         from gobby.skills.loader import SkillLoader, SkillLoadError
 
@@ -146,7 +148,7 @@ class TestSkillLoaderSingleFile:
         with pytest.raises(SkillLoadError, match="SKILL.md"):
             loader.load_skill(empty_dir)
 
-    def test_load_skill_validates_on_load(self, tmp_path) -> None:
+    def test_load_skill_validates_on_load(self, tmp_path: Path) -> None:
         """Test that skills are validated when loaded."""
         from gobby.skills.loader import SkillLoader, SkillLoadError
 
@@ -164,7 +166,7 @@ Content
         with pytest.raises(SkillLoadError, match="validation"):
             loader.load_skill(skill_file)
 
-    def test_load_skill_skip_validation(self, tmp_path) -> None:
+    def test_load_skill_skip_validation(self, tmp_path: Path) -> None:
         """Test that validation can be skipped."""
         from gobby.skills.loader import SkillLoader
 
@@ -186,7 +188,7 @@ Content
 class TestSkillLoaderDirectory:
     """Tests for loading skills from a directory."""
 
-    def test_load_directory(self, skills_root) -> None:
+    def test_load_directory(self, skills_root: Path) -> None:
         """Test loading all skills from a directory."""
         from gobby.skills.loader import SkillLoader
 
@@ -198,7 +200,7 @@ class TestSkillLoaderDirectory:
         assert names == {"commit-message", "code-review"}
 
     def test_load_directory_skips_unexpected_error(
-        self, skills_root, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+        self, skills_root: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
         """An unexpected error in one skill does not prevent loading the rest."""
         from gobby.skills.loader import SkillLoader
@@ -206,7 +208,7 @@ class TestSkillLoaderDirectory:
         loader = SkillLoader()
         load_skill = loader.load_skill
 
-        def load_with_error(path, *, validate=True):
+        def load_with_error(path: Path, *, validate: bool = True) -> object:
             if path.name == "commit-message":
                 raise OSError("cannot read skill")
             return load_skill(path, validate=validate)
@@ -218,7 +220,7 @@ class TestSkillLoaderDirectory:
         assert [skill.name for skill in skills] == ["code-review"]
         assert "Skipping invalid skill: cannot read skill" in caplog.text
 
-    def test_load_directory_empty(self, tmp_path) -> None:
+    def test_load_directory_empty(self, tmp_path: Path) -> None:
         """Test loading from empty directory returns empty list."""
         from gobby.skills.loader import SkillLoader
 
@@ -227,7 +229,7 @@ class TestSkillLoaderDirectory:
 
         assert skills == []
 
-    def test_load_directory_not_found(self, tmp_path) -> None:
+    def test_load_directory_not_found(self, tmp_path: Path) -> None:
         """Test loading from nonexistent directory raises error."""
         from gobby.skills.loader import SkillLoader, SkillLoadError
 
@@ -235,7 +237,7 @@ class TestSkillLoaderDirectory:
         with pytest.raises(SkillLoadError, match="not found"):
             loader.load_directory(tmp_path / "nonexistent")
 
-    def test_load_directory_source_path(self, skills_root) -> None:
+    def test_load_directory_source_path(self, skills_root: Path) -> None:
         """Test that source_path is set correctly for directory skills."""
         from gobby.skills.loader import SkillLoader
 
@@ -249,7 +251,7 @@ class TestSkillLoaderDirectory:
 class TestSkillLoaderDirectoryNameMatch:
     """Tests for directory name matching skill name."""
 
-    def test_directory_name_matches_skill_name(self, skill_dir) -> None:
+    def test_directory_name_matches_skill_name(self, skill_dir: Path) -> None:
         """Test loading skill where directory name matches skill name."""
         from gobby.skills.loader import SkillLoader
 
@@ -259,7 +261,7 @@ class TestSkillLoaderDirectoryNameMatch:
         # Directory is "commit-message", skill name is "commit-message"
         assert skill.name == skill_dir.name
 
-    def test_directory_name_mismatch_raises_error(self, tmp_path) -> None:
+    def test_directory_name_mismatch_raises_error(self, tmp_path: Path) -> None:
         """Test that mismatched directory/skill names raise error."""
         from gobby.skills.loader import SkillLoader, SkillLoadError
 
@@ -278,7 +280,7 @@ Content
         with pytest.raises(SkillLoadError, match="mismatch"):
             loader.load_skill(wrong_dir)
 
-    def test_directory_name_mismatch_can_be_skipped(self, tmp_path) -> None:
+    def test_directory_name_mismatch_can_be_skipped(self, tmp_path: Path) -> None:
         """Test that directory name check can be skipped."""
         from gobby.skills.loader import SkillLoader
 
@@ -296,7 +298,7 @@ Content
         skill = loader.load_skill(wrong_dir, check_dir_name=False)
         assert skill.name == "actual-skill-name"
 
-    def test_file_load_skips_directory_name_check(self, skill_file) -> None:
+    def test_file_load_skips_directory_name_check(self, skill_file: Path) -> None:
         """Test that loading a file directly skips directory name check."""
         from gobby.skills.loader import SkillLoader
 
@@ -309,7 +311,7 @@ Content
 class TestSkillLoaderSourceType:
     """Tests for source type tracking."""
 
-    def test_source_type_is_local(self, skill_file) -> None:
+    def test_source_type_is_local(self, skill_file: Path) -> None:
         """Test that source_type is set to 'local'."""
         from gobby.skills.loader import SkillLoader
 
@@ -318,7 +320,7 @@ class TestSkillLoaderSourceType:
 
         assert skill.source_type == "local"
 
-    def test_source_type_filesystem(self, skill_file) -> None:
+    def test_source_type_filesystem(self, skill_file: Path) -> None:
         """Test setting source_type to 'filesystem'."""
         from gobby.skills.loader import SkillLoader
 

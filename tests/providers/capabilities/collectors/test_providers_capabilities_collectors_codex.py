@@ -4,12 +4,14 @@ import json
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 import pytest
 
-from gobby.providers.capabilities.collectors.base import validate_snapshot
+from gobby.providers.capabilities.collectors.base import CapabilityCollector, validate_snapshot
 from gobby.providers.capabilities.collectors.codex import CodexCollector, CodexSourceError
 from gobby.providers.capabilities.models import SourceState, SpeedMode
+from gobby.providers.capabilities.refresh import CapabilityRefreshCoordinator
 from gobby.providers.capabilities.store import ProviderCapabilityStore
 from gobby.storage.hub.protocol import HubDatabase
 
@@ -57,6 +59,7 @@ def _collector(
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit
 async def test_fast_tier_same_selector_route() -> None:
     collector = _collector(
         [
@@ -90,6 +93,7 @@ async def test_fast_tier_same_selector_route() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit
 async def test_models_cache_enriches_missing_context_lengths(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -148,6 +152,7 @@ async def test_models_cache_enriches_missing_context_lengths(
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit
 async def test_app_server_context_precedes_conflicting_cache_value() -> None:
     collector = _collector([_model()], {"gpt-test": 64_000})
 
@@ -159,6 +164,7 @@ async def test_app_server_context_precedes_conflicting_cache_value() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit
 async def test_app_server_max_context_precedes_conflicting_cache_value() -> None:
     collector = _collector(
         [_model(contextWindow=None, maxContextWindow=256_000)],
@@ -171,6 +177,7 @@ async def test_app_server_max_context_precedes_conflicting_cache_value() -> None
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit
 @pytest.mark.parametrize(
     "cache_contents",
     [pytest.param(None, id="missing"), pytest.param("{malformed", id="malformed")],
@@ -201,6 +208,7 @@ async def test_unavailable_models_cache_is_optional(
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit
 async def test_model_absent_from_cache_retains_unknown_context() -> None:
     collector = _collector(
         [_model(contextWindow=None, maxContextWindow=None)],
@@ -215,6 +223,7 @@ async def test_model_absent_from_cache_retains_unknown_context() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit
 async def test_reasoning_effort_variants() -> None:
     efforts = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
     collector = _collector(
@@ -244,14 +253,20 @@ async def test_app_server_down_retains_last_good(postgres_db: HubDatabase) -> No
     async def app_server_down() -> Sequence[Mapping[str, object]]:
         raise FileNotFoundError("codex executable is unavailable")
 
+    collector = CodexCollector(
+        fetch_models=app_server_down,
+        clock=lambda: _OBSERVED_AT,
+    )
     with pytest.raises(CodexSourceError, match="codex executable is unavailable"):
-        await CodexCollector(
-            fetch_models=app_server_down,
-            clock=lambda: _OBSERVED_AT,
-        ).collect()
+        await collector.collect()
 
-    after = store.get_provider_snapshot("codex")
+    coordinator = CapabilityRefreshCoordinator(
+        store, {"codex": cast(CapabilityCollector, collector)}
+    )
+    await coordinator.refresh_all()
+
+    after = coordinator.get_provider_snapshot("codex")
     assert after is not None
     assert after.models == before.models
     assert after.generation == before.generation
-    assert after.sources[0].state is SourceState.OK
+    assert after.sources[0].state is SourceState.STALE

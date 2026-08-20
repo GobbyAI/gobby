@@ -223,10 +223,10 @@ class TestSessionManagerLifecycle:
         assert all(transition.session_id == session.id for transition in transitions)
         assert all(transition.project_id == sample_project["id"] for transition in transitions)
         assert all(transition.source == "claude" for transition in transitions)
-        assert all(
-            transition.transitioned_at.utcoffset().total_seconds() == 0
-            for transition in transitions
-        )
+        for transition in transitions:
+            offset = transition.transitioned_at.utcoffset()
+            assert offset is not None
+            assert offset.total_seconds() == 0
 
     def test_same_status_updates_do_not_emit_semantic_transitions(
         self,
@@ -726,7 +726,7 @@ class TestSessionManagerLifecycle:
             terminal_context=terminal_context,
         )
         monkeypatch.setattr(
-            "gobby.storage.sessions._field_update.resolve_pane_ownership",
+            "gobby.storage.sessions._terminal_revival.resolve_pane_ownership",
             _validated_owner(older.id),
         )
 
@@ -780,7 +780,7 @@ class TestSessionManagerLifecycle:
             lambda event, session_id: notifications.append((event, session_id)),
         )
         monkeypatch.setattr(
-            "gobby.storage.sessions._field_update.resolve_pane_ownership",
+            "gobby.storage.sessions._terminal_revival.resolve_pane_ownership",
             lambda *_args, **_kwargs: pytest.fail("spawned claims must not inspect processes"),
         )
 
@@ -838,7 +838,7 @@ class TestSessionManagerLifecycle:
             lambda event, session_id: notifications.append((event, session_id)),
         )
         monkeypatch.setattr(
-            "gobby.storage.sessions._field_update.resolve_pane_ownership",
+            "gobby.storage.sessions._terminal_revival.resolve_pane_ownership",
             _same_pid_process_resolve,
         )
 
@@ -911,7 +911,7 @@ class TestSessionManagerLifecycle:
         )
         session_manager.update_status(newer.id, "expired")
         monkeypatch.setattr(
-            "gobby.storage.sessions._field_update.resolve_pane_ownership",
+            "gobby.storage.sessions._terminal_revival.resolve_pane_ownership",
             _same_pid_process_resolve,
         )
 
@@ -954,7 +954,7 @@ class TestSessionManagerLifecycle:
         session_manager.update_status(requested.id, "expired")
         session_manager.mark_transcript_processed(requested.id)
         monkeypatch.setattr(
-            "gobby.storage.sessions._field_update.resolve_pane_ownership",
+            "gobby.storage.sessions._terminal_revival.resolve_pane_ownership",
             _validated_owner(owner.id),
         )
 
@@ -1006,7 +1006,7 @@ class TestSessionManagerLifecycle:
         )
         if reason is None:
             monkeypatch.setattr(
-                "gobby.storage.sessions._field_update.resolve_pane_ownership",
+                "gobby.storage.sessions._terminal_revival.resolve_pane_ownership",
                 _validated_owner(requested.id),
             )
         else:
@@ -1024,7 +1024,7 @@ class TestSessionManagerLifecycle:
                 )
 
             monkeypatch.setattr(
-                "gobby.storage.sessions._field_update.resolve_pane_ownership",
+                "gobby.storage.sessions._terminal_revival.resolve_pane_ownership",
                 ownerless_resolver,
             )
 
@@ -1094,7 +1094,7 @@ class TestSessionManagerLifecycle:
         )
         monkeypatch.setattr(session_manager, "_notify_status_transition", transitions.append)
         monkeypatch.setattr(
-            "gobby.storage.sessions._field_update.resolve_pane_ownership",
+            "gobby.storage.sessions._terminal_revival.resolve_pane_ownership",
             lambda _sessions, requested_session_id=None: PaneOwnershipDecision(
                 terminal_session_identity(requested),
                 requested_session_id,
@@ -1190,7 +1190,7 @@ class TestSessionManagerLifecycle:
             )
 
         monkeypatch.setattr(
-            "gobby.storage.sessions._field_update.resolve_pane_ownership",
+            "gobby.storage.sessions._terminal_revival.resolve_pane_ownership",
             resolve,
         )
         changes: list[tuple[str, str]] = []
@@ -1206,7 +1206,9 @@ class TestSessionManagerLifecycle:
 
         assert first is not None
         assert first.status == "active"
-        assert session_manager.get(spawned.id).status == "expired"
+        spawned_after = session_manager.get(spawned.id)
+        assert spawned_after is not None
+        assert spawned_after.status == "expired"
         history_after = session_manager.get(history.id)
         assert history_before is not None
         assert history_after is not None
@@ -1219,7 +1221,7 @@ class TestSessionManagerLifecycle:
         changes.clear()
         transitions.clear()
         monkeypatch.setattr(
-            "gobby.storage.sessions._field_update.resolve_pane_ownership",
+            "gobby.storage.sessions._terminal_revival.resolve_pane_ownership",
             lambda *_args, **_kwargs: pytest.fail("idempotent reconciliation must not resolve"),
         )
 

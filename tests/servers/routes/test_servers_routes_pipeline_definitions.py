@@ -168,7 +168,6 @@ def test_get_templates(client: TestClient) -> None:
 
 def test_create_get_update_toggle_delete_cycle(
     client: TestClient,
-    pipe_manager: PipelineDefinitionManager,
 ) -> None:
     created = client.post(
         "/api/pipelines/definitions",
@@ -192,6 +191,15 @@ def test_create_get_update_toggle_delete_cycle(
     assert updated.status_code == 200
     assert updated.json()["definition"]["description"] == "updated"
 
+    toggled = client.put(f"/api/pipelines/definitions/{definition_id}/toggle")
+    assert toggled.status_code == 200
+    assert toggled.json()["definition"]["enabled"] is False
+
+    deleted = client.delete(f"/api/pipelines/definitions/{definition_id}")
+    assert deleted.status_code == 200
+    assert deleted.json()["deleted"] is True
+    assert client.get(f"/api/pipelines/definitions/{definition_id}").status_code == 404
+
 
 def test_update_strips_reserved_gobby_tag(client: TestClient) -> None:
     created = client.post(
@@ -211,15 +219,6 @@ def test_update_strips_reserved_gobby_tag(client: TestClient) -> None:
     )
     assert updated.status_code == 200
     assert updated.json()["definition"]["tags"] == ["keep", "ops"]
-
-    toggled = client.put(f"/api/pipelines/definitions/{definition_id}/toggle")
-    assert toggled.status_code == 200
-    assert toggled.json()["definition"]["enabled"] is False
-
-    deleted = client.delete(f"/api/pipelines/definitions/{definition_id}")
-    assert deleted.status_code == 200
-    assert deleted.json()["deleted"] is True
-    assert client.get(f"/api/pipelines/definitions/{definition_id}").status_code == 404
 
 
 def test_duplicate_import_export_restore(

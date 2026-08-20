@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from gobby.providers.capabilities.apply import (
     SpeedUnavailableError,
     apply_speed,
@@ -8,6 +10,8 @@ from gobby.providers.capabilities.apply import (
 )
 from gobby.providers.capabilities.models import ActivationDescriptor, SpeedMode
 from gobby.providers.capabilities.resolve import SpeedResolution, SpeedStatus
+
+pytestmark = pytest.mark.unit
 
 
 def _resolution(

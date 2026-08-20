@@ -2,6 +2,7 @@
 Tests for TranscriptAnalyzer in gobby.sessions.analyzer.
 """
 
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -17,7 +18,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def sample_turns():
+def sample_turns() -> list[dict[str, Any]]:
     return [
         {"type": "user", "message": {"content": "Fix the bug in the login page"}},
         {
@@ -57,7 +58,7 @@ def sample_turns():
     ]
 
 
-def test_extract_handoff_context_basic(sample_turns) -> None:
+def test_extract_handoff_context_basic(sample_turns: list[dict[str, Any]]) -> None:
     analyzer = TranscriptAnalyzer()
     ctx = analyzer.extract_handoff_context(sample_turns)
 
@@ -93,7 +94,7 @@ def test_initial_goal_skips_claude_meta_and_compaction_entries() -> None:
     assert ctx.initial_goal == "actual user goal"
 
 
-def test_extract_handoff_context_no_task(sample_turns) -> None:
+def test_extract_handoff_context_no_task() -> None:
     # Filter out mcp_call_tool lines
     # This requires deep filtering of the fixture structure
     turns = [
@@ -118,7 +119,7 @@ def test_extract_handoff_context_no_task(sample_turns) -> None:
     assert "/path/to/login.py" in ctx.files_modified
 
 
-def test_extract_handoff_context_recent_activity(sample_turns) -> None:
+def test_extract_handoff_context_recent_activity(sample_turns: list[dict[str, Any]]) -> None:
     analyzer = TranscriptAnalyzer()
     ctx = analyzer.extract_handoff_context(sample_turns)
     # Check that recent tools are captured with detailed descriptions
@@ -127,22 +128,6 @@ def test_extract_handoff_context_recent_activity(sample_turns) -> None:
     # New format shows details: "Ran: <cmd>", "Write: <path>", "Called <server>.<tool>"
     activity_str = " ".join(ctx.recent_activity)
     assert "Ran:" in activity_str or "Write:" in activity_str
-
-
-def test_extract_handoff_context_max_turns() -> None:
-    # Generate many turns
-    turns = [{"type": "user", "message": {"content": f"msg {i}"}} for i in range(200)]
-    # Make the last one have a goal just to check scanning logic (first user message is usually goal)
-    # But max_turns applies to backward scan for activity.
-    # Initial goal scan is forward from 0.
-
-    analyzer = TranscriptAnalyzer()
-    ctx = analyzer.extract_handoff_context(turns, max_turns=50)
-
-    assert ctx.initial_goal == "msg 0"
-    # recent_activity should only scan last 50 turns?
-    # Logic says `relevant_turns = turns[-max_turns:]`
-    # So it won't see tool uses before that.
 
 
 def test_extract_handoff_context_max_turns_deprecated() -> None:
@@ -1505,7 +1490,7 @@ def test_extract_key_decisions() -> None:
                 "content": [
                     {
                         "type": "text",
-                        "text": "I opted for PostgreSQL instead of PostgreSQL for local storage.",
+                        "text": "I opted for PostgreSQL instead of SQLite for local storage.",
                     },
                 ]
             },
@@ -1575,7 +1560,7 @@ def test_initial_goal_handles_list_content() -> None:
 
 
 @pytest.fixture
-def qwen_turns():
+def qwen_turns() -> list[dict[str, Any]]:
     """Turns in Qwen's current nested message-parts format."""
     return [
         {
@@ -1630,21 +1615,21 @@ def qwen_turns():
     ]
 
 
-def test_qwen_initial_goal(qwen_turns) -> None:
+def test_qwen_initial_goal(qwen_turns: list[dict[str, Any]]) -> None:
     """Qwen format: initial goal extracted from first user message."""
     analyzer = TranscriptAnalyzer()
     ctx = analyzer.extract_handoff_context(qwen_turns)
     assert ctx.initial_goal == "Fix the auth bug"
 
 
-def test_qwen_tool_calls_detected(qwen_turns) -> None:
+def test_qwen_tool_calls_detected(qwen_turns: list[dict[str, Any]]) -> None:
     """Qwen format: tool calls from functionCall parts are detected."""
     analyzer = TranscriptAnalyzer()
     ctx = analyzer.extract_handoff_context(qwen_turns)
     assert len(ctx.recent_activity) > 0
 
 
-def test_qwen_key_decisions(qwen_turns) -> None:
+def test_qwen_key_decisions(qwen_turns: list[dict[str, Any]]) -> None:
     """Qwen format: key decisions from assistant text content are extracted."""
     analyzer = TranscriptAnalyzer()
     ctx = analyzer.extract_handoff_context(qwen_turns)

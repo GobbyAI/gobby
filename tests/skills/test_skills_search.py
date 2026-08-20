@@ -13,7 +13,7 @@ from gobby.skills.search import SearchFilters, SkillSearch, SkillSearchResult
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.skills import Skill
 
-pytestmark = pytest.mark.unit
+pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
@@ -504,6 +504,7 @@ class TestSkillSearchFiltering:
         filters = SearchFilters(category="git")
         results = search.search("workflow", top_k=10, filters=filters)
 
+        assert results
         # Only skills with category="git" should be returned
         for result in results:
             skill = next(s for s in sample_skills if s.id == result.skill_id)
@@ -530,6 +531,7 @@ class TestSkillSearchFiltering:
         filters = SearchFilters(tags_any=["quality", "nonexistent"])
         results = search.search("code", top_k=10, filters=filters)
 
+        assert results
         for result in results:
             skill = next(s for s in sample_skills if s.id == result.skill_id)
             skill_tags = skill.get_tags()
@@ -544,6 +546,7 @@ class TestSkillSearchFiltering:
         filters = SearchFilters(tags_all=["git", "workflow"])
         results = search.search("commit", top_k=10, filters=filters)
 
+        assert results
         for result in results:
             skill = next(s for s in sample_skills if s.id == result.skill_id)
             skill_tags = skill.get_tags()
@@ -560,6 +563,7 @@ class TestSkillSearchFiltering:
         filters = SearchFilters(category="git", tags_any=["commits"])
         results = search.search("message", top_k=10, filters=filters)
 
+        assert results
         for result in results:
             skill = next(s for s in sample_skills if s.id == result.skill_id)
             assert skill.get_category() == "git"

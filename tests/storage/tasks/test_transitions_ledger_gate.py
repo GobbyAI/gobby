@@ -11,7 +11,7 @@ from gobby.storage.tasks import LocalTaskManager, Task
 pytestmark = pytest.mark.unit
 
 
-def test_close_task_does_not_verify_ledger(temp_db, tmp_path: Path) -> None:
+def test_close_task_does_not_verify_ledger(temp_db: HubDatabase, tmp_path: Path) -> None:
     task = _create_task(temp_db, tmp_path)
     task_manager = LocalTaskManager(temp_db)
 

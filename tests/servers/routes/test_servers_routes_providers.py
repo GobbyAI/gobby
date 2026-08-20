@@ -197,8 +197,8 @@ class TestProviderRoutes:
                 assert p["available"] is False
                 assert p["path"] is None
 
-    def test_all_providers_available(self, client: TestClient) -> None:
-        """All providers available when all binaries found."""
+    def test_all_binaries_found_agy_still_unavailable(self, client: TestClient) -> None:
+        """All binaries are found while agy remains unavailable."""
         paths = {
             "claude": "/usr/local/bin/claude",
             "grok": "/usr/local/bin/grok",
@@ -247,147 +247,146 @@ class TestProviderRoutes:
         )
 
 
+def _assert_models_response_matrix_shape() -> None:
+    observed_at = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
+    provenance = FactProvenance(
+        source_key="factory-docs",
+        source_url="https://docs.factory.ai/models.md",
+        observed_at=observed_at,
+    )
+    activation = ActivationDescriptor(
+        kind="model_selector",
+        surface="spawn-cli",
+        params={},
+    )
+    model = ModelCapability(
+        canonical_model="gpt-5.4",
+        display_name="GPT-5.4",
+        aliases=(),
+        available=True,
+        hidden=False,
+        is_default=False,
+        context_length=200_000,
+        max_output_tokens=None,
+        reasoning=ReasoningSupport.KNOWN,
+        supported_efforts=("low", "medium", "high"),
+        default_effort="medium",
+        latency_class=None,
+        input_modalities=("text",),
+        supports_tools=True,
+        routes=(
+            ModelRoute(
+                speed_mode=SpeedMode.STANDARD,
+                selector="gpt-5.4",
+                available=True,
+                usage_multiplier=Decimal("1"),
+                throughput_multiplier=None,
+                latency_class=None,
+                activations=(activation,),
+                provenance={"usage_multiplier": provenance},
+            ),
+            ModelRoute(
+                speed_mode=SpeedMode.FAST,
+                selector="gpt-5.4-fast",
+                available=True,
+                usage_multiplier=Decimal("5"),
+                throughput_multiplier=None,
+                latency_class="fast",
+                activations=(activation,),
+                provenance={"usage_multiplier": provenance},
+            ),
+        ),
+        provenance={"context_length": provenance},
+    )
+    snapshot = ProviderSnapshot(
+        provider="droid",
+        generation=12,
+        models=(model,),
+        sources=(
+            SourceHealth(
+                source_key="factory-docs",
+                source_url="https://docs.factory.ai/models.md",
+                required=True,
+                state=SourceState.OK,
+                attempts=1,
+                last_attempt_at=observed_at,
+                last_success_at=observed_at,
+                last_error=None,
+            ),
+        ),
+    )
+    service = MagicMock()
+    service.get_provider_snapshot.side_effect = lambda provider: (
+        snapshot if provider == "droid" else None
+    )
+    app = FastAPI()
+    app.include_router(create_providers_router(_server_stub(provider_capability_service=service)))
+
+    response = TestClient(app).get("/api/providers/models")
+
+    providers = {entry["provider"]: entry for entry in response.json()["providers"]}
+    assert providers["droid"]["refresh"] == {
+        "generation": 12,
+        "sources": [
+            {
+                "source_key": "factory-docs",
+                "source_url": "https://docs.factory.ai/models.md",
+                "required": True,
+                "state": "ok",
+                "attempts": 1,
+                "last_attempt_at": observed_at.isoformat(),
+                "last_success_at": observed_at.isoformat(),
+                "last_error": None,
+            }
+        ],
+    }
+    assert providers["droid"]["models"] == [
+        {
+            "canonical_model": "gpt-5.4",
+            "display_name": "GPT-5.4",
+            "aliases": [],
+            "available": True,
+            "hidden": False,
+            "is_default": False,
+            "context_length": {"value": 200_000, "source": "factory-docs"},
+            "max_output_tokens": {"value": None, "source": "unknown"},
+            "latency_class": None,
+            "reasoning": {
+                "status": "known",
+                "supported_efforts": ["low", "medium", "high"],
+                "default_effort": "medium",
+            },
+            "input_modalities": ["text"],
+            "supports_tools": True,
+            "routes": {
+                "standard": {
+                    "selector": "gpt-5.4",
+                    "available": True,
+                    "usage_multiplier": "1",
+                    "throughput_multiplier": None,
+                    "latency_class": None,
+                    "activations": [
+                        {"kind": "model_selector", "surface": "spawn-cli", "params": {}}
+                    ],
+                },
+                "fast": {
+                    "selector": "gpt-5.4-fast",
+                    "available": True,
+                    "usage_multiplier": "5",
+                    "throughput_multiplier": None,
+                    "latency_class": "fast",
+                    "activations": [
+                        {"kind": "model_selector", "surface": "spawn-cli", "params": {}}
+                    ],
+                },
+            },
+            "provenance": {"usage_multiplier": provenance.to_dict()},
+        }
+    ]
+
+
 class TestProviderModelsRoute:
     """Tests for GET /api/providers/models."""
-
-    def _assert_models_response_matrix_shape(self) -> None:
-        observed_at = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
-        provenance = FactProvenance(
-            source_key="factory-docs",
-            source_url="https://docs.factory.ai/models.md",
-            observed_at=observed_at,
-        )
-        activation = ActivationDescriptor(
-            kind="model_selector",
-            surface="spawn-cli",
-            params={},
-        )
-        model = ModelCapability(
-            canonical_model="gpt-5.4",
-            display_name="GPT-5.4",
-            aliases=(),
-            available=True,
-            hidden=False,
-            is_default=False,
-            context_length=200_000,
-            max_output_tokens=None,
-            reasoning=ReasoningSupport.KNOWN,
-            supported_efforts=("low", "medium", "high"),
-            default_effort="medium",
-            latency_class=None,
-            input_modalities=("text",),
-            supports_tools=True,
-            routes=(
-                ModelRoute(
-                    speed_mode=SpeedMode.STANDARD,
-                    selector="gpt-5.4",
-                    available=True,
-                    usage_multiplier=Decimal("1"),
-                    throughput_multiplier=None,
-                    latency_class=None,
-                    activations=(activation,),
-                    provenance={"usage_multiplier": provenance},
-                ),
-                ModelRoute(
-                    speed_mode=SpeedMode.FAST,
-                    selector="gpt-5.4-fast",
-                    available=True,
-                    usage_multiplier=Decimal("5"),
-                    throughput_multiplier=None,
-                    latency_class="fast",
-                    activations=(activation,),
-                    provenance={"usage_multiplier": provenance},
-                ),
-            ),
-            provenance={"context_length": provenance},
-        )
-        snapshot = ProviderSnapshot(
-            provider="droid",
-            generation=12,
-            models=(model,),
-            sources=(
-                SourceHealth(
-                    source_key="factory-docs",
-                    source_url="https://docs.factory.ai/models.md",
-                    required=True,
-                    state=SourceState.OK,
-                    attempts=1,
-                    last_attempt_at=observed_at,
-                    last_success_at=observed_at,
-                    last_error=None,
-                ),
-            ),
-        )
-        service = MagicMock()
-        service.get_provider_snapshot.side_effect = lambda provider: (
-            snapshot if provider == "droid" else None
-        )
-        app = FastAPI()
-        app.include_router(
-            create_providers_router(_server_stub(provider_capability_service=service))
-        )
-
-        response = TestClient(app).get("/api/providers/models")
-
-        providers = {entry["provider"]: entry for entry in response.json()["providers"]}
-        assert providers["droid"]["refresh"] == {
-            "generation": 12,
-            "sources": [
-                {
-                    "source_key": "factory-docs",
-                    "source_url": "https://docs.factory.ai/models.md",
-                    "required": True,
-                    "state": "ok",
-                    "attempts": 1,
-                    "last_attempt_at": observed_at.isoformat(),
-                    "last_success_at": observed_at.isoformat(),
-                    "last_error": None,
-                }
-            ],
-        }
-        assert providers["droid"]["models"] == [
-            {
-                "canonical_model": "gpt-5.4",
-                "display_name": "GPT-5.4",
-                "aliases": [],
-                "available": True,
-                "hidden": False,
-                "is_default": False,
-                "context_length": {"value": 200_000, "source": "factory-docs"},
-                "max_output_tokens": {"value": None, "source": "unknown"},
-                "latency_class": None,
-                "reasoning": {
-                    "status": "known",
-                    "supported_efforts": ["low", "medium", "high"],
-                    "default_effort": "medium",
-                },
-                "input_modalities": ["text"],
-                "supports_tools": True,
-                "routes": {
-                    "standard": {
-                        "selector": "gpt-5.4",
-                        "available": True,
-                        "usage_multiplier": "1",
-                        "throughput_multiplier": None,
-                        "latency_class": None,
-                        "activations": [
-                            {"kind": "model_selector", "surface": "spawn-cli", "params": {}}
-                        ],
-                    },
-                    "fast": {
-                        "selector": "gpt-5.4-fast",
-                        "available": True,
-                        "usage_multiplier": "5",
-                        "throughput_multiplier": None,
-                        "latency_class": "fast",
-                        "activations": [
-                            {"kind": "model_selector", "surface": "spawn-cli", "params": {}}
-                        ],
-                    },
-                },
-                "provenance": {"usage_multiplier": provenance.to_dict()},
-            }
-        ]
 
     def test_returns_all_providers_with_models(self, client: TestClient) -> None:
         """Endpoint returns supported providers with model lists."""
@@ -1027,7 +1026,7 @@ class TestProviderModelsRoute:
 
 
 def test_models_response_matrix_shape() -> None:
-    TestProviderModelsRoute()._assert_models_response_matrix_shape()
+    _assert_models_response_matrix_shape()
 
 
 def test_cold_start_seed_and_pending() -> None:

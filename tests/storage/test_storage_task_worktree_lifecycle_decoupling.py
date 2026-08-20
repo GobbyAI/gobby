@@ -1,12 +1,19 @@
 """Regression tests for decoupled task/worktree lifecycle state."""
 
+from typing import Any
+
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager, WorktreeStatus
 
+pytestmark = pytest.mark.unit
 
-def test_close_task_does_not_mark_linked_worktree_merged(temp_db, sample_project) -> None:
+
+def test_close_task_does_not_mark_linked_worktree_merged(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     task_manager = LocalTaskManager(temp_db)
     worktree_manager = LocalWorktreeManager(temp_db)
     task = task_manager.create_task(
@@ -38,8 +45,8 @@ def test_close_task_does_not_mark_linked_worktree_merged(temp_db, sample_project
     ],
 )
 def test_reopen_task_does_not_reactivate_linked_worktree(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     transition_method: str,
     expected_status: str,
 ) -> None:

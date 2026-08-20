@@ -11,16 +11,16 @@ from gobby.workflows.definitions import PipelineApproval, PipelineDefinition, Pi
 from gobby.workflows.pipeline_executor import PipelineExecutor
 from gobby.workflows.pipeline_state import ApprovalRequired, ExecutionStatus, StepStatus
 
-pytestmark = [pytest.mark.unit, pytest.mark.no_config_protection]
+pytestmark = [pytest.mark.no_config_protection]
 
 
 @pytest.fixture
-def mock_db():
+def mock_db() -> MagicMock:
     return MagicMock()
 
 
 @pytest.fixture
-def mock_execution_manager():
+def mock_execution_manager() -> MagicMock:
     manager = MagicMock()
     # Default execution
     mock_execution = MagicMock()
@@ -45,12 +45,12 @@ def mock_execution_manager():
 
 
 @pytest.fixture
-def mock_llm_service():
+def mock_llm_service() -> AsyncMock:
     return AsyncMock()
 
 
 @pytest.fixture
-def mock_loader():
+def mock_loader() -> MagicMock:
     loader = MagicMock()
     loader.load_pipeline = AsyncMock()
     return loader
@@ -60,8 +60,13 @@ class TestPipelineResume:
     """Tests for resuming pipeline execution."""
 
     @pytest.mark.asyncio
+    @pytest.mark.unit
     async def test_approve_resumes_execution_and_runs_next_step(
-        self, mock_db, mock_execution_manager, mock_llm_service, mock_loader
+        self,
+        mock_db: MagicMock,
+        mock_execution_manager: MagicMock,
+        mock_llm_service: AsyncMock,
+        mock_loader: MagicMock,
     ) -> None:
         """Test that approve() resumes pipeline execution and runs subsequent steps."""
 
@@ -136,6 +141,7 @@ class TestPipelineResume:
 
         assert len(step2_calls) > 0, "Pipeline execution did not resume to step2 after approval"
 
+    @pytest.mark.asyncio
     @pytest.mark.integration
     async def test_approve_runs_gated_action_and_output_conditioned_step(
         self,
@@ -185,8 +191,14 @@ class TestPipelineResume:
             "downstream-output"
         )
 
+    @pytest.mark.asyncio
+    @pytest.mark.unit
     async def test_approve_disabled_pipeline_cancels_execution(
-        self, mock_db, mock_execution_manager, mock_llm_service, mock_loader
+        self,
+        mock_db: MagicMock,
+        mock_execution_manager: MagicMock,
+        mock_llm_service: AsyncMock,
+        mock_loader: MagicMock,
     ) -> None:
         pipeline = PipelineDefinition(
             name="disabled-resume-pipeline",
@@ -208,7 +220,7 @@ class TestPipelineResume:
             approval_token="disabled-token",
             status=StepStatus.WAITING_APPROVAL,
         )
-        mock_execution_manager.get_step_by_approval_token.return_value = waiting_step
+        mock_execution_manager.consume_step_approval.return_value = waiting_step
 
         execution = MagicMock(
             id="pe-disabled-123",
@@ -235,8 +247,13 @@ class TestPipelineResume:
         mock_execution_manager.create_step_execution.assert_not_called()
 
     @pytest.mark.asyncio
+    @pytest.mark.unit
     async def test_cancelled_execution_rejects_resume(
-        self, mock_db, mock_execution_manager, mock_llm_service, mock_loader
+        self,
+        mock_db: MagicMock,
+        mock_execution_manager: MagicMock,
+        mock_llm_service: AsyncMock,
+        mock_loader: MagicMock,
     ) -> None:
         """Cancelled executions are terminal and cannot be resumed."""
         pipeline = PipelineDefinition(
@@ -266,8 +283,13 @@ class TestPipelineResume:
             )
 
     @pytest.mark.asyncio
+    @pytest.mark.unit
     async def test_completed_execution_rejects_resume(
-        self, mock_db, mock_execution_manager, mock_llm_service, mock_loader
+        self,
+        mock_db: MagicMock,
+        mock_execution_manager: MagicMock,
+        mock_llm_service: AsyncMock,
+        mock_loader: MagicMock,
     ) -> None:
         """Completed executions are terminal and cannot be resumed."""
         pipeline = PipelineDefinition(
@@ -302,8 +324,8 @@ class TestPipelineResume:
         self,
         temp_db: HubDatabase,
         sample_project: dict[str, object],
-        mock_llm_service,
-        mock_loader,
+        mock_llm_service: AsyncMock,
+        mock_loader: MagicMock,
     ) -> None:
         """Failed executions reset and reuse real step rows before re-executing."""
         pipeline = PipelineDefinition(

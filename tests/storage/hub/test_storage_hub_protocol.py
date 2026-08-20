@@ -5,7 +5,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, ClassVar, Literal, get_args, get_origin, get_type_hints
 
+import pytest
+
 from gobby.storage.hub.protocol import HubDatabase, LockAcquisitionOrderError, LockTarget, Row
+
+pytestmark = pytest.mark.unit
 
 
 def test_protocol_symbols_are_importable() -> None:

@@ -13001,16 +13001,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/storage/tasks/test_transitions_ledger_gate.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 15,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 2,
-      "path": "tests/storage/tasks/test_transitions_ledger_gate.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/storage/test_agent_capture.py::::mypy:type-arg",
       "issue_code": "mypy:type-arg",
       "line": 11,
@@ -17077,6 +17067,586 @@
       "message": "Function is missing a type annotation for one or more arguments",
       "occurrences": 118,
       "path": "tests/worktrees/test_worktree_git.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/memory/test_memory_manager_1.py::::mypy:method-assign",
+      "issue_code": "mypy:method-assign",
+      "line": 296,
+      "message": "Cannot assign to a method",
+      "occurrences": 2,
+      "path": "tests/memory/test_memory_manager_1.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/memory/test_memory_manager_1.py::::mypy:arg-type",
+      "issue_code": "mypy:arg-type",
+      "line": 334,
+      "message": "Argument \"memory_type\" to \"Memory\" has incompatible type \"str\"; expected \"MemoryType\"",
+      "occurrences": 6,
+      "path": "tests/memory/test_memory_manager_1.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/memory/test_memory_manager_1.py::::mypy:union-attr",
+      "issue_code": "mypy:union-attr",
+      "line": 433,
+      "message": "Item \"None\" of \"Memory | None\" has no attribute \"access_count\"",
+      "occurrences": 8,
+      "path": "tests/memory/test_memory_manager_1.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/memory/test_memory_manager_1.py::::mypy:var-annotated",
+      "issue_code": "mypy:var-annotated",
+      "line": 443,
+      "message": "Need type annotation for \"snapshots\" (hint: \"snapshots: list[<type>] = ...\")",
+      "occurrences": 1,
+      "path": "tests/memory/test_memory_manager_1.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/memory/test_memory_manager_1.py::::mypy:func-returns-value",
+      "issue_code": "mypy:func-returns-value",
+      "line": 488,
+      "message": "Function does not return a value (it only ever returns None)",
+      "occurrences": 3,
+      "path": "tests/memory/test_memory_manager_1.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/memory/test_memory_manager_1.py::::mypy:index",
+      "issue_code": "mypy:index",
+      "line": 1176,
+      "message": "Value of type \"Mapping[str, Any] | None\" is not indexable",
+      "occurrences": 2,
+      "path": "tests/memory/test_memory_manager_1.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/memory/test_memory_protocol.py::::mypy:arg-type",
+      "issue_code": "mypy:arg-type",
+      "line": 91,
+      "message": "Argument \"memory_type\" to \"MemoryQuery\" has incompatible type \"str\"; expected \"MemoryType | None\"",
+      "occurrences": 2,
+      "path": "tests/memory/test_memory_protocol.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/memory/test_memory_protocol.py::::mypy:misc",
+      "issue_code": "mypy:misc",
+      "line": 135,
+      "message": "Property \"text\" defined in \"MemoryQuery\" is read-only",
+      "occurrences": 1,
+      "path": "tests/memory/test_memory_protocol.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/memory/test_memory_protocol.py::::mypy:type-arg",
+      "issue_code": "mypy:type-arg",
+      "line": 290,
+      "message": "Missing type parameters for generic type \"dict\"",
+      "occurrences": 1,
+      "path": "tests/memory/test_memory_protocol.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/project_verification/test_project_verification_refresh.py::::mypy:attr-defined",
+      "issue_code": "mypy:attr-defined",
+      "line": 411,
+      "message": "Module \"gobby.project_verification.refresh\" does not explicitly export attribute \"collect_evidence\"",
+      "occurrences": 1,
+      "path": "tests/project_verification/test_project_verification_refresh.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/servers/routes/test_servers_routes_build.py::::mypy:arg-type",
+      "issue_code": "mypy:arg-type",
+      "line": 40,
+      "message": "Argument 1 to \"create_build_router\" has incompatible type \"SimpleNamespace\"; expected \"HTTPServer\"",
+      "occurrences": 6,
+      "path": "tests/servers/routes/test_servers_routes_build.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/servers/routes/test_servers_routes_build.py::::mypy:attr-defined",
+      "issue_code": "mypy:attr-defined",
+      "line": 548,
+      "message": "Module \"gobby.servers.routes.build\" does not explicitly export attribute \"asyncio\"",
+      "occurrences": 1,
+      "path": "tests/servers/routes/test_servers_routes_build.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/servers/routes/test_servers_routes_chat_attachments.py::::mypy:index",
+      "issue_code": "mypy:index",
+      "line": 440,
+      "message": "Value of type \"Mapping[str, Any] | None\" is not indexable",
+      "occurrences": 1,
+      "path": "tests/servers/routes/test_servers_routes_chat_attachments.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/servers/routes/test_servers_routes_communications.py::::mypy:arg-type",
+      "issue_code": "mypy:arg-type",
+      "line": 78,
+      "message": "Argument \"created_at\" to \"CommsMessage\" has incompatible type \"str\"; expected \"datetime\"",
+      "occurrences": 23,
+      "path": "tests/servers/routes/test_servers_routes_communications.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/servers/routes/test_servers_routes_sessions_routes.py::::mypy:no-untyped-def",
+      "issue_code": "mypy:no-untyped-def",
+      "line": 50,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "occurrences": 89,
+      "path": "tests/servers/routes/test_servers_routes_sessions_routes.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/servers/routes/test_servers_routes_sessions_routes.py::::mypy:var-annotated",
+      "issue_code": "mypy:var-annotated",
+      "line": 58,
+      "message": "Need type annotation for \"defaults\"",
+      "occurrences": 1,
+      "path": "tests/servers/routes/test_servers_routes_sessions_routes.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/servers/test_servers_sessions_routes.py::::mypy:attr-defined",
+      "issue_code": "mypy:attr-defined",
+      "line": 908,
+      "message": "\"Callable[[MutableMapping[str, Any], Callable[[], Awaitable[MutableMapping[str, Any]]], Callable[[MutableMapping[str, Any]], Awaitable[None]]], Awaitable[None]]\" has no attribute \"state\"",
+      "occurrences": 2,
+      "path": "tests/servers/test_servers_sessions_routes.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/servers/websocket/chat/test_servers_websocket_chat_provider_routing.py::::mypy:method-assign",
+      "issue_code": "mypy:method-assign",
+      "line": 36,
+      "message": "Cannot assign to a method",
+      "occurrences": 3,
+      "path": "tests/servers/websocket/chat/test_servers_websocket_chat_provider_routing.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/servers/websocket/chat/test_servers_websocket_chat_provider_routing.py::::mypy:attr-defined",
+      "issue_code": "mypy:attr-defined",
+      "line": 39,
+      "message": "\"ChatSessionMixin\" has no attribute \"hook_broadcaster\"",
+      "occurrences": 10,
+      "path": "tests/servers/websocket/chat/test_servers_websocket_chat_provider_routing.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/servers/websocket/chat/test_servers_websocket_chat_session.py::::mypy:type-arg",
+      "issue_code": "mypy:type-arg",
+      "line": 22,
+      "message": "Missing type parameters for generic type \"dict\"",
+      "occurrences": 9,
+      "path": "tests/servers/websocket/chat/test_servers_websocket_chat_session.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/servers/websocket/chat/test_servers_websocket_chat_session.py::::mypy:no-untyped-def",
+      "issue_code": "mypy:no-untyped-def",
+      "line": 54,
+      "message": "Function is missing a return type annotation",
+      "occurrences": 3,
+      "path": "tests/servers/websocket/chat/test_servers_websocket_chat_session.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/servers/websocket/chat/test_servers_websocket_chat_session.py::::mypy:func-returns-value",
+      "issue_code": "mypy:func-returns-value",
+      "line": 97,
+      "message": "Function does not return a value (it only ever returns None)",
+      "occurrences": 2,
+      "path": "tests/servers/websocket/chat/test_servers_websocket_chat_session.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/servers/websocket/chat/test_servers_websocket_chat_session.py::::mypy:attr-defined",
+      "issue_code": "mypy:attr-defined",
+      "line": 110,
+      "message": "\"DummyMixin\" has no attribute \"_cancel_tts\"",
+      "occurrences": 6,
+      "path": "tests/servers/websocket/chat/test_servers_websocket_chat_session.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/servers/websocket/chat/test_servers_websocket_chat_session.py::::mypy:method-assign",
+      "issue_code": "mypy:method-assign",
+      "line": 230,
+      "message": "Cannot assign to a method",
+      "occurrences": 3,
+      "path": "tests/servers/websocket/chat/test_servers_websocket_chat_session.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/servers/websocket/chat/test_servers_websocket_chat_session.py::::mypy:misc",
+      "issue_code": "mypy:misc",
+      "line": 287,
+      "message": "\"None\" not callable",
+      "occurrences": 2,
+      "path": "tests/servers/websocket/chat/test_servers_websocket_chat_session.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/servers/websocket/test_servers_websocket_auth.py::::mypy:attr-defined",
+      "issue_code": "mypy:attr-defined",
+      "line": 78,
+      "message": "Module \"gobby.runner_init.servers\" does not explicitly export attribute \"WebChatRuntimeManager\"",
+      "occurrences": 1,
+      "path": "tests/servers/websocket/test_servers_websocket_auth.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/servers/websocket/test_servers_websocket_auth.py::::mypy:arg-type",
+      "issue_code": "mypy:arg-type",
+      "line": 97,
+      "message": "Argument \"auth_callback\" to \"WebSocketServer\" has incompatible type \"object\"; expected \"Callable[[str], Coroutine[Any, Any, str | None]]\"",
+      "occurrences": 1,
+      "path": "tests/servers/websocket/test_servers_websocket_auth.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/servers/websocket/test_servers_websocket_auth.py::::mypy:assignment",
+      "issue_code": "mypy:assignment",
+      "line": 120,
+      "message": "Incompatible types in assignment (expression has type \"Callable[[str], Coroutine[Any, Any, str | None]] | None\", variable has type \"Callable[[str], Coroutine[Any, Any, str | None]]\")",
+      "occurrences": 1,
+      "path": "tests/servers/websocket/test_servers_websocket_auth.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/servers/websocket/test_servers_websocket_auth.py::::mypy:union-attr",
+      "issue_code": "mypy:union-attr",
+      "line": 160,
+      "message": "Item \"None\" of \"Response | None\" has no attribute \"body\"",
+      "occurrences": 4,
+      "path": "tests/servers/websocket/test_servers_websocket_auth.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/sessions/test_sessions_analyzer.py::::mypy:arg-type",
+      "issue_code": "mypy:arg-type",
+      "line": 92,
+      "message": "Argument 1 to \"extract_handoff_context\" of \"TranscriptAnalyzer\" has incompatible type \"list[object]\"; expected \"list[dict[str, Any]]\"",
+      "occurrences": 2,
+      "path": "tests/sessions/test_sessions_analyzer.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/sessions/test_sessions_analyzer.py::::mypy:index",
+      "issue_code": "mypy:index",
+      "line": 1237,
+      "message": "Value of type \"dict[str, Any] | None\" is not indexable",
+      "occurrences": 3,
+      "path": "tests/sessions/test_sessions_analyzer.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/skills/hubs/test_skills_hubs_base.py::::mypy:abstract",
+      "issue_code": "mypy:abstract",
+      "line": 24,
+      "message": "Cannot instantiate abstract class \"HubProvider\" with abstract attributes \"discover\", \"download_skill\", ... and \"search\" (3 methods suppressed)",
+      "occurrences": 2,
+      "path": "tests/skills/hubs/test_skills_hubs_base.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/skills/hubs/test_skills_hubs_manager.py::::mypy:method-assign",
+      "issue_code": "mypy:method-assign",
+      "line": 307,
+      "message": "Cannot assign to a method",
+      "occurrences": 8,
+      "path": "tests/skills/hubs/test_skills_hubs_manager.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/skills/hubs/test_skills_hubs_manager.py::::mypy:assignment",
+      "issue_code": "mypy:assignment",
+      "line": 398,
+      "message": "Incompatible types in assignment (expression has type \"HubProvider\", target has type \"MockProvider\")",
+      "occurrences": 1,
+      "path": "tests/skills/hubs/test_skills_hubs_manager.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/skills/hubs/test_skills_hubs_manager.py::::mypy:attr-defined",
+      "issue_code": "mypy:attr-defined",
+      "line": 409,
+      "message": "\"Callable[[str, int], Coroutine[Any, Any, list[HubSkillInfo]]]\" has no attribute \"assert_not_awaited\"",
+      "occurrences": 1,
+      "path": "tests/skills/hubs/test_skills_hubs_manager.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/skills/test_skills_loader.py::::mypy:operator",
+      "issue_code": "mypy:operator",
+      "line": 120,
+      "message": "Unsupported right operand type for in (\"str | None\")",
+      "occurrences": 2,
+      "path": "tests/skills/test_skills_loader.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/storage/sessions/test_storage_sessions_models.py::::mypy:type-arg",
+      "issue_code": "mypy:type-arg",
+      "line": 30,
+      "message": "Missing type parameters for generic type \"dict\"",
+      "occurrences": 3,
+      "path": "tests/storage/sessions/test_storage_sessions_models.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/storage/sessions/test_storage_sessions_registration.py::::mypy:type-arg",
+      "issue_code": "mypy:type-arg",
+      "line": 92,
+      "message": "Missing type parameters for generic type \"dict\"",
+      "occurrences": 27,
+      "path": "tests/storage/sessions/test_storage_sessions_registration.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/storage/sessions/test_storage_sessions_registration.py::::mypy:arg-type",
+      "issue_code": "mypy:arg-type",
+      "line": 280,
+      "message": "Argument \"created_at\" to \"Session\" has incompatible type \"str\"; expected \"datetime\"",
+      "occurrences": 2,
+      "path": "tests/storage/sessions/test_storage_sessions_registration.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/storage/sessions/test_storage_sessions_registration.py::::mypy:index",
+      "issue_code": "mypy:index",
+      "line": 497,
+      "message": "Value of type \"Mapping[str, Any] | None\" is not indexable",
+      "occurrences": 3,
+      "path": "tests/storage/sessions/test_storage_sessions_registration.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/storage/tasks/test_storage_tasks_cascade.py::::mypy:index",
+      "issue_code": "mypy:index",
+      "line": 38,
+      "message": "Value of type \"Mapping[str, Any] | None\" is not indexable",
+      "occurrences": 1,
+      "path": "tests/storage/tasks/test_storage_tasks_cascade.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/storage/test_storage_clones.py::::mypy:arg-type",
+      "issue_code": "mypy:arg-type",
+      "line": 145,
+      "message": "Argument \"last_sync_at\" to \"Clone\" has incompatible type \"str\"; expected \"datetime | None\"",
+      "occurrences": 14,
+      "path": "tests/storage/test_storage_clones.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/storage/test_storage_communications.py::::mypy:arg-type",
+      "issue_code": "mypy:arg-type",
+      "line": 37,
+      "message": "Argument \"created_at\" to \"ChannelConfig\" has incompatible type \"str\"; expected \"datetime\"",
+      "occurrences": 11,
+      "path": "tests/storage/test_storage_communications.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/storage/test_storage_plans.py::::mypy:operator",
+      "issue_code": "mypy:operator",
+      "line": 80,
+      "message": "Unsupported operand types for in (\"str | None\" and \"str\")",
+      "occurrences": 1,
+      "path": "tests/storage/test_storage_plans.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/storage/test_storage_prompts.py::::mypy:arg-type",
+      "issue_code": "mypy:arg-type",
+      "line": 54,
+      "message": "Argument \"created_at\" to \"PromptRecord\" has incompatible type \"str\"; expected \"datetime\"",
+      "occurrences": 2,
+      "path": "tests/storage/test_storage_prompts.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/tasks/expansion/test_tasks_expansion_apply.py::::mypy:no-untyped-def",
+      "issue_code": "mypy:no-untyped-def",
+      "line": 38,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "occurrences": 17,
+      "path": "tests/tasks/expansion/test_tasks_expansion_apply.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/tasks/expansion/test_tasks_expansion_apply.py::::mypy:index",
+      "issue_code": "mypy:index",
+      "line": 83,
+      "message": "Value of type \"dict[str, str] | None\" is not indexable",
+      "occurrences": 7,
+      "path": "tests/tasks/expansion/test_tasks_expansion_apply.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/tasks/expansion/test_tasks_expansion_apply.py::::mypy:type-arg",
+      "issue_code": "mypy:type-arg",
+      "line": 102,
+      "message": "Missing type parameters for generic type \"dict\"",
+      "occurrences": 1,
+      "path": "tests/tasks/expansion/test_tasks_expansion_apply.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/tasks/expansion/test_tasks_expansion_apply.py::::mypy:operator",
+      "issue_code": "mypy:operator",
+      "line": 173,
+      "message": "Unsupported right operand type for in (\"list[str] | None\")",
+      "occurrences": 4,
+      "path": "tests/tasks/expansion/test_tasks_expansion_apply.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/tasks/expansion/test_tasks_expansion_apply.py::::mypy:arg-type",
+      "issue_code": "mypy:arg-type",
+      "line": 339,
+      "message": "Argument 1 to \"set\" has incompatible type \"list[str] | None\"; expected \"Iterable[str]\"",
+      "occurrences": 1,
+      "path": "tests/tasks/expansion/test_tasks_expansion_apply.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/tasks/expansion/test_tasks_expansion_apply.py::::mypy:union-attr",
+      "issue_code": "mypy:union-attr",
+      "line": 342,
+      "message": "Item \"None\" of \"StageState | None\" has no attribute \"state\"",
+      "occurrences": 4,
+      "path": "tests/tasks/expansion/test_tasks_expansion_apply.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/tasks/expansion/test_tasks_expansion_apply.py::::mypy:assignment",
+      "issue_code": "mypy:assignment",
+      "line": 392,
+      "message": "Incompatible types in assignment (expression has type \"def fail_second_delete(task_id: str, *, unlink: bool) -> bool\", variable has type \"Callable[[str, bool, bool], bool]\")",
+      "occurrences": 1,
+      "path": "tests/tasks/expansion/test_tasks_expansion_apply.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/tasks/expansion/test_tasks_expansion_apply.py::::mypy:method-assign",
+      "issue_code": "mypy:method-assign",
+      "line": 392,
+      "message": "Cannot assign to a method",
+      "occurrences": 2,
+      "path": "tests/tasks/expansion/test_tasks_expansion_apply.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/telemetry/test_telemetry_providers.py::::mypy:attr-defined",
+      "issue_code": "mypy:attr-defined",
+      "line": 70,
+      "message": "\"object\" has no attribute \"force_flush\"",
+      "occurrences": 2,
+      "path": "tests/telemetry/test_telemetry_providers.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/utils/test_utils_session_context.py::::mypy:comparison-overlap",
+      "issue_code": "mypy:comparison-overlap",
+      "line": 115,
+      "message": "Non-overlapping equality check (left operand type: \"Token[dict[str, Any] | None] | None\", right operand type: \"Literal['project-token']\")",
+      "occurrences": 7,
+      "path": "tests/utils/test_utils_session_context.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/utils/test_utils_session_context.py::::mypy:union-attr",
+      "issue_code": "mypy:union-attr",
+      "line": 143,
+      "message": "Item \"None\" of \"SessionContext | None\" has no attribute \"session_id\"",
+      "occurrences": 1,
+      "path": "tests/utils/test_utils_session_context.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/utils/test_utils_status_1.py::::mypy:union-attr",
+      "issue_code": "mypy:union-attr",
+      "line": 44,
+      "message": "Item \"None\" of \"_Call | None\" has no attribute \"kwargs\"",
+      "occurrences": 1,
+      "path": "tests/utils/test_utils_status_1.py",
+      "severity": "high",
+      "test_name": ""
+    },
+    {
+      "fingerprint": "tests/workflows/test_workflows_pipeline_resume.py::::mypy:method-assign",
+      "issue_code": "mypy:method-assign",
+      "line": 359,
+      "message": "Cannot assign to a method",
+      "occurrences": 1,
+      "path": "tests/workflows/test_workflows_pipeline_resume.py",
       "severity": "high",
       "test_name": ""
     }

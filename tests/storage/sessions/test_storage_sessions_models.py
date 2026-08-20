@@ -219,8 +219,14 @@ class TestSessionManagerModelFields:
 
         # Retrieve and convert to dict
         full_session = session_manager.get(session.id)
+        assert full_session is not None
         d = full_session.to_dict()
 
+        assert d["workflow_name"] == "plan-execute"
+        assert d["context_injected"] is True
+        assert d["original_prompt"] == "Test prompt"
+        assert d["summary_path"] == "/summary.md"
+        assert d["summary_markdown"] == "# Summary"
         assert "id" in d
         assert "external_id" in d
         assert "machine_id" in d

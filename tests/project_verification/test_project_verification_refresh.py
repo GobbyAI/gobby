@@ -294,7 +294,13 @@ def test_split_run_commands_joins_backslash_continuations() -> None:
     assert _split_run_commands(run) == ["uv run pytest --cov=gobby tests/unit"]
 
 
-@pytest.mark.parametrize("run", ["uv run pytest \\", r"uv run pytest \\"])
+@pytest.mark.parametrize(
+    "run",
+    [
+        pytest.param("uv run pytest \\", id="single-backslash"),
+        pytest.param(r"uv run pytest \\", id="double-backslash"),
+    ],
+)
 def test_split_run_commands_rejects_trailing_backslash(run: str) -> None:
     assert _split_run_commands(run) == []
 
@@ -798,8 +804,12 @@ def test_write_verification_backs_up_corrupt_file_and_cleans_temp_on_failure(
     corrupt_content = b"{not-json\n"
     project_json.write_bytes(corrupt_content)
 
-    def fail_replace(_source: str, _destination: Path) -> None:
-        raise OSError("replace failed")
+    original_replace = os.replace
+
+    def fail_replace(source: str | os.PathLike[str], destination: str | os.PathLike[str]) -> None:
+        if Path(destination) == project_json:
+            raise OSError("replace failed")
+        original_replace(source, destination)
 
     monkeypatch.setattr(os, "replace", fail_replace)
 

@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.utils.project_context import get_project_context
@@ -169,7 +170,7 @@ def test_resolve_and_seed_contexts_current_alias_without_context_does_not_warn(
 
 
 def test_resumed_codex_register_recovery_seeds_canonical_session_for_variables(
-    temp_db,
+    temp_db: HubDatabase,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A failed resumed Codex registration must not seed a stale wrapper session id."""
@@ -289,13 +290,9 @@ def test_override_mode_project_ref_name_canonicalized_for_context_not_session_sc
         # UUID session_ref is authoritative across projects — resolver is NOT
         # scoped by the project override.
         mgr.resolve_session_reference.assert_called_once_with(SESSION_EXTERNAL_UUID, None)
-        assert mgr.resolve_session_reference.call_count == 1
-        assert mgr.resolve_session_reference.call_args is not None
         # Project *context*, on the other hand, uses the canonical UUID.
         assert tokens.resolved_project_id == PROJECT_B_UUID
         mock_from_ref.assert_called_once_with(PROJECT_B_UUID, mgr.db)
-        assert mock_from_ref.call_count == 1
-        assert mock_from_ref.call_args is not None
     finally:
         reset_seeded_contexts(tokens)
 
@@ -326,8 +323,6 @@ def test_override_mode_hash_n_ref_uses_project_ref_as_session_scope() -> None:
         )
     try:
         mgr.resolve_session_reference.assert_called_once_with("#5", PROJECT_B_UUID)
-        assert mgr.resolve_session_reference.call_count == 1
-        assert mgr.resolve_session_reference.call_args is not None
     finally:
         reset_seeded_contexts(tokens)
 
@@ -400,8 +395,6 @@ def test_fallback_mode_uuid_session_ref_not_scoped_by_header_project() -> None:
         # Header project is NOT passed to the session resolver — UUID refs must
         # resolve across projects regardless of header.
         mgr.resolve_session_reference.assert_called_once_with(SESSION_EXTERNAL_UUID, None)
-        assert mgr.resolve_session_reference.call_count == 1
-        assert mgr.resolve_session_reference.call_args is not None
     finally:
         reset_seeded_contexts(tokens)
 
@@ -462,10 +455,7 @@ def test_fallback_mode_session_project_wins_over_project_ref() -> None:
     try:
         assert tokens.project_token == "session-derived-token"
         mock_from_session.assert_called_once_with(SESSION_PLATFORM_UUID, mgr, mgr.db)
-        assert mock_from_session.call_count == 1
-        assert mock_from_session.call_args is not None
         mock_from_ref.assert_not_called()
-        assert mock_from_ref.call_count == 0
         assert not mock_from_ref.called
     finally:
         reset_seeded_contexts(tokens)
@@ -536,8 +526,6 @@ def test_fallback_mode_session_derivation_fails_falls_through_to_project_ref() -
     try:
         assert tokens.project_token == "fallback-token"
         mock_from_ref.assert_called_once_with(PROJECT_B_UUID, mgr.db)
-        assert mock_from_ref.call_count == 1
-        assert mock_from_ref.call_args is not None
     finally:
         reset_seeded_contexts(tokens)
 
@@ -612,14 +600,12 @@ def test_resolve_and_seed_contexts_both_unresolvable_returns_empty_tokens() -> N
 
 
 def test_resolve_and_seed_contexts_valueerror_on_session_logs_warning(
-    caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Ambiguous external_id surfaces as a warning and leaves session_token empty."""
     mgr = _make_session_manager(resolve_exc=ValueError("Ambiguous session reference"))
     mock_warning = MagicMock()
     monkeypatch.setattr("gobby.utils.session_context.logger.warning", mock_warning)
-    caplog.set_level(logging.WARNING, logger="gobby.utils.session_context")
     tokens = resolve_and_seed_contexts(
         session_ref=SESSION_EXTERNAL_UUID,
         session_manager=mgr,

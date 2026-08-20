@@ -9,6 +9,8 @@ import pytest
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.worktrees import LocalWorktreeManager, Worktree
 
+pytestmark = pytest.mark.unit
+
 _TIMESTAMP = datetime.fromisoformat("2026-01-01T00:00:00+00:00")
 
 

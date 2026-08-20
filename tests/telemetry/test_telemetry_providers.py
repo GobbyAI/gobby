@@ -2,6 +2,7 @@
 Tests for telemetry providers.
 """
 
+from collections.abc import Iterator
 from unittest.mock import MagicMock
 
 import pytest
@@ -18,9 +19,11 @@ from gobby.telemetry.providers import (
     shutdown_providers,
 )
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture(autouse=True)
-def cleanup_providers() -> None:
+def cleanup_providers() -> Iterator[None]:
     """Ensure providers are cleared after each test."""
     shutdown_providers()
     yield
@@ -94,6 +97,7 @@ def test_get_meter_provider(
     provider2 = get_meter_provider(config)
     assert provider1 is provider2
 
+    caplog.set_level("WARNING")
     generate_latest()
     assert "Cannot call collect on a MetricReader" not in caplog.text
 

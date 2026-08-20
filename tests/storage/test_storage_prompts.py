@@ -1,6 +1,7 @@
 """Tests for prompt storage (LocalPromptManager)."""
 
 import uuid
+from collections.abc import Iterator
 
 import pytest
 
@@ -16,20 +17,20 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(temp_db: HubDatabase):
+def db(temp_db: HubDatabase) -> Iterator[HubDatabase]:
     """Create a fresh database with migrations applied."""
     database = temp_db
     yield database
 
 
 @pytest.fixture
-def manager(db):
+def manager(db: HubDatabase) -> LocalPromptManager:
     """Create a prompt manager for testing."""
     return LocalPromptManager(db)
 
 
 @pytest.fixture
-def manager_dev(db):
+def manager_dev(db: HubDatabase) -> LocalPromptManager:
     """Create a prompt manager with dev mode enabled."""
     return LocalPromptManager(db, dev_mode=True)
 
@@ -85,7 +86,7 @@ class TestPromptRecord:
 class TestLocalPromptManagerCRUD:
     """Tests for basic CRUD operations."""
 
-    def test_create_prompt(self, manager) -> None:
+    def test_create_prompt(self, manager: LocalPromptManager) -> None:
         """Test creating a prompt."""
         record = manager.create_prompt(
             name="test/prompt",
@@ -100,13 +101,13 @@ class TestLocalPromptManagerCRUD:
         assert record.content == "Hello world"
         assert record.scope == "bundled"
 
-    def test_create_prompt_duplicate_fails(self, manager) -> None:
+    def test_create_prompt_duplicate_fails(self, manager: LocalPromptManager) -> None:
         manager.create_prompt(name="test/duplicate", content="First", scope="global")
 
         with pytest.raises(ValueError, match="already exists"):
             manager.create_prompt(name="test/duplicate", content="Second", scope="global")
 
-    def test_rename_then_recreate_prompt(self, manager) -> None:
+    def test_rename_then_recreate_prompt(self, manager: LocalPromptManager) -> None:
         original = manager.create_prompt(name="test/original", content="First", scope="global")
         manager.update_prompt(original.id, name="test/renamed")
 
@@ -115,7 +116,7 @@ class TestLocalPromptManagerCRUD:
         assert recreated.id != original.id
         assert recreated.name == "test/original"
 
-    def test_get_prompt(self, manager) -> None:
+    def test_get_prompt(self, manager: LocalPromptManager) -> None:
         """Test retrieving a prompt by ID."""
         created = manager.create_prompt(
             name="test/get",
@@ -128,11 +129,11 @@ class TestLocalPromptManagerCRUD:
         assert fetched.id == created.id
         assert fetched.name == "test/get"
 
-    def test_get_prompt_not_found(self, manager) -> None:
+    def test_get_prompt_not_found(self, manager: LocalPromptManager) -> None:
         """Test getting non-existent prompt returns None."""
         assert manager.get_prompt("00000000-0000-0000-0000-0000000000ff") is None
 
-    def test_get_by_name_bundled(self, manager) -> None:
+    def test_get_by_name_bundled(self, manager: LocalPromptManager) -> None:
         """Test get_by_name returns bundled prompt."""
         manager.create_prompt(
             name="expansion/system",
@@ -145,7 +146,7 @@ class TestLocalPromptManagerCRUD:
         assert record.content == "Bundled content"
         assert record.scope == "bundled"
 
-    def test_update_prompt_dev_mode(self, manager_dev) -> None:
+    def test_update_prompt_dev_mode(self, manager_dev: LocalPromptManager) -> None:
         """Test updating a bundled prompt in dev mode."""
         created = manager_dev.create_prompt(
             name="test/update",
@@ -157,7 +158,7 @@ class TestLocalPromptManagerCRUD:
         assert updated is not None
         assert updated.content == "Updated"
 
-    def test_update_bundled_raises_without_dev_mode(self, manager) -> None:
+    def test_update_bundled_raises_without_dev_mode(self, manager: LocalPromptManager) -> None:
         """Test that updating bundled prompt raises without dev mode."""
         created = manager.create_prompt(
             name="test/readonly",
@@ -168,7 +169,7 @@ class TestLocalPromptManagerCRUD:
         with pytest.raises(ValueError, match="bundled"):
             manager.update_prompt(created.id, content="Should fail")
 
-    def test_update_global_allowed(self, manager) -> None:
+    def test_update_global_allowed(self, manager: LocalPromptManager) -> None:
         """Test that updating global prompt is allowed without dev mode."""
         created = manager.create_prompt(
             name="test/global",
@@ -180,7 +181,7 @@ class TestLocalPromptManagerCRUD:
         assert updated is not None
         assert updated.content == "Updated"
 
-    def test_delete_prompt_dev_mode(self, manager_dev) -> None:
+    def test_delete_prompt_dev_mode(self, manager_dev: LocalPromptManager) -> None:
         """Test deleting a bundled prompt in dev mode."""
         created = manager_dev.create_prompt(
             name="test/delete",
@@ -192,7 +193,7 @@ class TestLocalPromptManagerCRUD:
         assert result is True
         assert manager_dev.get_prompt(created.id) is None
 
-    def test_delete_bundled_raises_without_dev_mode(self, manager) -> None:
+    def test_delete_bundled_raises_without_dev_mode(self, manager: LocalPromptManager) -> None:
         """Test that deleting bundled prompt raises without dev mode."""
         created = manager.create_prompt(
             name="test/nodelete",
@@ -203,7 +204,7 @@ class TestLocalPromptManagerCRUD:
         with pytest.raises(ValueError, match="bundled"):
             manager.delete_prompt(created.id)
 
-    def test_delete_global_allowed(self, manager) -> None:
+    def test_delete_global_allowed(self, manager: LocalPromptManager) -> None:
         """Test that deleting global prompt is allowed."""
         created = manager.create_prompt(
             name="test/deleteglobal",
@@ -218,7 +219,7 @@ class TestLocalPromptManagerCRUD:
 class TestPromptPrecedence:
     """Tests for scope-based precedence."""
 
-    def test_global_overrides_bundled(self, manager) -> None:
+    def test_global_overrides_bundled(self, manager: LocalPromptManager) -> None:
         """Test that global scope overrides bundled."""
         manager.create_prompt(
             name="test/precedence",
@@ -236,7 +237,7 @@ class TestPromptPrecedence:
         assert record.content == "Global override"
         assert record.scope == "global"
 
-    def test_get_bundled_ignores_override(self, manager) -> None:
+    def test_get_bundled_ignores_override(self, manager: LocalPromptManager) -> None:
         """Test that get_bundled always returns the bundled version."""
         manager.create_prompt(
             name="test/bundled",
@@ -254,7 +255,7 @@ class TestPromptPrecedence:
         assert record.content == "Bundled version"
         assert record.scope == "bundled"
 
-    def test_get_by_name_returns_none_when_missing(self, manager) -> None:
+    def test_get_by_name_returns_none_when_missing(self, manager: LocalPromptManager) -> None:
         """Test that get_by_name returns None for unknown names."""
         assert manager.get_by_name("nonexistent/prompt") is None
 
@@ -262,7 +263,7 @@ class TestPromptPrecedence:
 class TestPromptListing:
     """Tests for listing and searching prompts."""
 
-    def test_list_prompts(self, manager) -> None:
+    def test_list_prompts(self, manager: LocalPromptManager) -> None:
         """Test listing all prompts."""
         manager.create_prompt(name="a/first", content="First", scope="bundled")
         manager.create_prompt(name="b/second", content="Second", scope="bundled")
@@ -272,7 +273,7 @@ class TestPromptListing:
         assert "a/first" in names
         assert "b/second" in names
 
-    def test_list_prompts_by_scope(self, manager) -> None:
+    def test_list_prompts_by_scope(self, manager: LocalPromptManager) -> None:
         """Test filtering by scope."""
         manager.create_prompt(name="test/bundled", content="B", scope="bundled")
         manager.create_prompt(name="test/global", content="G", scope="global")
@@ -283,7 +284,7 @@ class TestPromptListing:
         global_ = manager.list_prompts(scope="global")
         assert all(r.scope == "global" for r in global_)
 
-    def test_list_prompts_by_category(self, manager) -> None:
+    def test_list_prompts_by_category(self, manager: LocalPromptManager) -> None:
         """Test filtering by category (name prefix)."""
         manager.create_prompt(name="expansion/system", content="E", scope="bundled")
         manager.create_prompt(name="memory/extract", content="M", scope="bundled")
@@ -291,7 +292,7 @@ class TestPromptListing:
         expansion = manager.list_prompts(category="expansion")
         assert all(r.name.startswith("expansion/") for r in expansion)
 
-    def test_list_overrides(self, manager) -> None:
+    def test_list_overrides(self, manager: LocalPromptManager) -> None:
         """Test listing only override prompts."""
         manager.create_prompt(name="test/bundled", content="B", scope="bundled")
         manager.create_prompt(name="test/override", content="O", scope="global")
@@ -300,7 +301,7 @@ class TestPromptListing:
         assert len(overrides) == 1
         assert overrides[0].name == "test/override"
 
-    def test_get_and_delete_override(self, manager) -> None:
+    def test_get_and_delete_override(self, manager: LocalPromptManager) -> None:
         """Test prompt override lookup and deletion helpers."""
         manager.create_prompt(name="test/bundled", content="B", scope="bundled")
         override = manager.create_prompt(name="test/bundled", content="O", scope="global")
@@ -312,7 +313,7 @@ class TestPromptListing:
         assert bundled is not None
         assert bundled.content == "B"
 
-    def test_count_prompts(self, manager) -> None:
+    def test_count_prompts(self, manager: LocalPromptManager) -> None:
         """Test counting prompts."""
         manager.create_prompt(name="test/one", content="1", scope="bundled")
         manager.create_prompt(name="test/two", content="2", scope="bundled")
@@ -330,7 +331,7 @@ class TestPromptListing:
         assert manager.count_prompts(scope="bundled", enabled=True) == 2
         assert manager.count_prompts(scope="global") == 2
 
-    def test_search_prompts(self, manager) -> None:
+    def test_search_prompts(self, manager: LocalPromptManager) -> None:
         """Test searching prompts by text."""
         manager.create_prompt(
             name="expansion/system",
@@ -353,7 +354,7 @@ class TestPromptListing:
 class TestPromptChangeNotifier:
     """Tests for change notification system."""
 
-    def test_notification_on_create(self, db) -> None:
+    def test_notification_on_create(self, db: HubDatabase) -> None:
         """Test that create triggers notification."""
         notifier = PromptChangeNotifier()
         events: list[PromptChangeEvent] = []
@@ -366,7 +367,7 @@ class TestPromptChangeNotifier:
         assert events[0].event_type == "create"
         assert events[0].prompt_name == "test/notify"
 
-    def test_notification_on_update(self, db) -> None:
+    def test_notification_on_update(self, db: HubDatabase) -> None:
         """Test that update triggers notification."""
         notifier = PromptChangeNotifier()
         events: list[PromptChangeEvent] = []
@@ -379,7 +380,7 @@ class TestPromptChangeNotifier:
         assert len(events) == 2
         assert events[1].event_type == "update"
 
-    def test_notification_on_delete(self, db) -> None:
+    def test_notification_on_delete(self, db: HubDatabase) -> None:
         """Test that delete triggers notification."""
         notifier = PromptChangeNotifier()
         events: list[PromptChangeEvent] = []
@@ -392,7 +393,7 @@ class TestPromptChangeNotifier:
         assert len(events) == 2
         assert events[1].event_type == "delete"
 
-    def test_remove_listener(self, db) -> None:
+    def test_remove_listener(self, db: HubDatabase) -> None:
         """Test removing a listener."""
         notifier = PromptChangeNotifier()
         events: list[PromptChangeEvent] = []

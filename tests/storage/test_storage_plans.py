@@ -71,14 +71,13 @@ def test_update_plan_hash_regenerates_manifest(temp_db: HubDatabase, tmp_path: P
         root_task_ref=root_task_ref,
         plan_id="task-200-red",
     )
-    first_mtime = manifest.stat().st_mtime_ns
     plan.write_text(plan.read_text(encoding="utf-8") + "\n", encoding="utf-8")
 
     updated = manager.update_plan_hash(record.plan_id, project_id=project_id)
 
     assert hasattr(manager, "generate_coverage_manifest")
     assert updated.plan_hash != record.plan_hash
-    assert manifest.stat().st_mtime_ns > first_mtime
+    assert updated.plan_hash in manifest.read_text(encoding="utf-8")
 
 
 def test_archive_removes_coverage_manifest(temp_db: HubDatabase, tmp_path: Path) -> None:

@@ -282,6 +282,32 @@ def _session_stub() -> Session:
     )
 
 
+def _session_update_bound_values(conn: _CaptureConnection) -> dict[str, object]:
+    sql, params = conn.calls[0]
+    names = [
+        "machine_id",
+        "transcript_path_set",
+        "transcript_path",
+        "git_branch_set",
+        "git_branch",
+        "parent_session_id_set",
+        "parent_session_id",
+        "terminal_context_guard",
+        "terminal_context",
+        "workflow_name",
+        "is_local_provided",
+        "is_local",
+        "sandbox_enabled",
+        "sandbox_policy_hash",
+        "updated_at",
+        "last_activity",
+        "id",
+    ]
+    bound = dict(zip(names, params, strict=True))
+    assert "%s" in sql
+    return bound
+
+
 def test_update_existing_session_binds_is_local_as_booleans_for_postgres() -> None:
     session = _session_stub()
     conn = _CaptureConnection()
@@ -304,10 +330,14 @@ def test_update_existing_session_binds_is_local_as_booleans_for_postgres() -> No
         now=datetime.fromisoformat("2026-05-22T00:00:01+00:00"),
     )
 
-    params = conn.calls[0][1]
+    bound = _session_update_bound_values(conn)
 
-    assert params[10:13] == (True, True, True)
-    assert all(type(value) is bool for value in params[10:13])
+    assert bound["is_local_provided"] is True
+    assert bound["is_local"] is True
+    assert bound["sandbox_enabled"] is True
+    assert type(bound["is_local_provided"]) is bool
+    assert type(bound["is_local"]) is bool
+    assert type(bound["sandbox_enabled"]) is bool
 
 
 def test_update_existing_session_preserve_is_local_uses_boolean_guard_param() -> None:
@@ -332,11 +362,13 @@ def test_update_existing_session_preserve_is_local_uses_boolean_guard_param() ->
         now=datetime.fromisoformat("2026-05-22T00:00:01+00:00"),
     )
 
-    params = conn.calls[0][1]
+    bound = _session_update_bound_values(conn)
 
-    assert params[10:13] == (False, False, None)
-    assert type(params[10]) is bool
-    assert type(params[11]) is bool
+    assert bound["is_local_provided"] is False
+    assert bound["is_local"] is False
+    assert bound["sandbox_enabled"] is None
+    assert type(bound["is_local_provided"]) is bool
+    assert type(bound["is_local"]) is bool
 
 
 def test_update_existing_session_ignores_invalid_terminal_context_json() -> None:

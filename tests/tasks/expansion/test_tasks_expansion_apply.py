@@ -516,6 +516,7 @@ def test_apply_refuses_duplicate_output_without_reset(temp_db, sample_project) -
         service.apply_run(second.id, session_id=None)
 
 
+@pytest.mark.slow
 def test_concurrent_apply_creates_one_subtask_tree(temp_db, sample_project) -> None:
     service = _service(temp_db)
     parent = service.task_manager.create_task(
@@ -563,6 +564,10 @@ def test_concurrent_apply_creates_one_subtask_tree(temp_db, sample_project) -> N
                 applied.append(future.result(timeout=10))
             except ValueError as exc:
                 errors.append(str(exc))
+            except threading.BrokenBarrierError as exc:
+                pytest.fail(f"worker barrier failed: {exc}")
+            except Exception as exc:
+                pytest.fail(f"unexpected worker failure: {type(exc).__name__}: {exc}")
 
     assert len(applied) == 1
     assert errors == [

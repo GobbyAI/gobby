@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -33,7 +33,9 @@ def _dependency(
 
 @patch("gobby.utils.status.daemon_auth_headers", return_value={"Authorization": "Bearer status"})
 @patch("httpx.AsyncClient.get")
-async def test_fetch_rich_status_sends_bearer(mock_get, _mock_headers) -> None:
+async def test_fetch_rich_status_sends_bearer(
+    mock_get: AsyncMock, _mock_headers: MagicMock
+) -> None:
     response = MagicMock(status_code=200)
     response.json.return_value = {"success": True}
     mock_get.return_value = response
@@ -44,7 +46,7 @@ async def test_fetch_rich_status_sends_bearer(mock_get, _mock_headers) -> None:
 
 class TestStatusUtils:
     @patch("httpx.AsyncClient.get")
-    async def test_fetch_rich_status_success(self, mock_get) -> None:
+    async def test_fetch_rich_status_success(self, mock_get: AsyncMock) -> None:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
@@ -69,7 +71,7 @@ class TestStatusUtils:
         assert data["tasks"]["open"] == 2
 
     @patch("httpx.AsyncClient.get")
-    async def test_fetch_rich_status_failure(self, mock_get) -> None:
+    async def test_fetch_rich_status_failure(self, mock_get: AsyncMock) -> None:
         mock_response = MagicMock()
         mock_response.status_code = 500
         mock_get.return_value = mock_response
@@ -78,13 +80,13 @@ class TestStatusUtils:
         assert status == {}
 
     @patch("httpx.AsyncClient.get")
-    async def test_fetch_rich_status_connection_error(self, mock_get) -> None:
+    async def test_fetch_rich_status_connection_error(self, mock_get: AsyncMock) -> None:
         mock_get.side_effect = httpx.ConnectError("Connection failed")
         status = await fetch_rich_status(8080)
         assert status == {}
 
     @patch("httpx.AsyncClient.get")
-    async def test_fetch_rich_status_other_error(self, mock_get) -> None:
+    async def test_fetch_rich_status_other_error(self, mock_get: AsyncMock) -> None:
         mock_get.side_effect = Exception("Unknown error")
         status = await fetch_rich_status(8080)
         assert status == {}

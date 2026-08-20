@@ -66,9 +66,11 @@ class TestRecommendSkillsForTask:
     @patch("gobby.hooks.skill_manager.HookSkillManager.recommend_skills")
     def test_returns_list(self, mock_recommend: MagicMock) -> None:
         """Should return a list of skill names."""
+        task = {"title": "Test task"}
         mock_recommend.return_value = ["gobby-tasks"]
-        result = recommend_skills_for_task({"title": "Test task"})
-        assert isinstance(result, list)
+        result = recommend_skills_for_task(task)
+        assert result == ["gobby-tasks"]
+        mock_recommend.assert_called_once_with(category=None)
 
     @patch("gobby.hooks.skill_manager.HookSkillManager.recommend_skills")
     def test_with_code_category(self, mock_recommend: MagicMock) -> None:
@@ -105,7 +107,8 @@ class TestRecommendSkillsForTask:
         task = {"title": "Test task"}
         result = recommend_skills_for_task(task)
 
-        assert isinstance(result, list)
+        assert result == ["gobby-tasks"]
+        mock_recommend.assert_called_once_with(category=None)
 
     @patch("gobby.hooks.skill_manager.HookSkillManager.recommend_skills")
     def test_with_none_task(self, mock_recommend: MagicMock) -> None:
@@ -119,4 +122,5 @@ class TestRecommendSkillsForTask:
         """Should return always-apply skills for empty dict."""
         mock_recommend.return_value = ["gobby-tasks"]
         result = recommend_skills_for_task({})
-        assert isinstance(result, list)
+        assert result == ["gobby-tasks"]
+        mock_recommend.assert_called_once_with(category=None)

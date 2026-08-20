@@ -210,8 +210,8 @@ class TestSessionRegistration:
     """Tests for session source registration."""
 
     @pytest.mark.asyncio
-    async def test_sdk_session_registers_with_sdk_source(self) -> None:
-        """SDK ChatSession should register with source='web_chat' or 'sdk'."""
+    async def test_default_provider_registers_claude_web_chat(self) -> None:
+        """Default provider registers with source='claude' and session_type='web_chat'."""
         mixin = _make_mixin()
 
         session = await _create_session_for_provider(mixin, provider=None)
@@ -224,8 +224,8 @@ class TestSessionRegistration:
         assert register_kwargs["session_type"] == "web_chat"
 
     @pytest.mark.asyncio
-    async def test_cli_session_registers_with_cli_source(self) -> None:
-        """Explicit Claude provider should still register the session in the mixin and DB."""
+    async def test_explicit_claude_provider_registers_claude_web_chat(self) -> None:
+        """Explicit Claude provider registers with source='claude' and session_type='web_chat'."""
         mixin = _make_mixin()
 
         session = await _create_session_for_provider(mixin, provider="claude")
@@ -249,8 +249,6 @@ async def _create_session_for_provider(
     """Helper to invoke provider routing logic and return the created session.
 
     This calls into the session creation path that routes based on provider.
-    The exact method name may differ in implementation — this helper isolates
-    that coupling.
     """
     with (
         patch(

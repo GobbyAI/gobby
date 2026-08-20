@@ -26,6 +26,8 @@ from gobby.plans.parser import parse_plan as _real_parse_plan
 
 pytestmark = pytest.mark.unit
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
 
 def parse_plan(*args: Any, **kwargs: Any) -> PlanDocument:
     """Test wrapper that defaults to draft mode (manifest validation opt-out).
@@ -48,10 +50,10 @@ def _section_ids(document: PlanDocument) -> set[str]:
 
 def _fixture_plan(name: str) -> Path:
     candidates = [
-        Path(".gobby/plans") / name,
-        Path(".gobby/plans/completed") / name,
+        REPO_ROOT / ".gobby/plans" / name,
+        REPO_ROOT / ".gobby/plans/completed" / name,
     ]
-    project_config = Path(".gobby/project.json")
+    project_config = REPO_ROOT / ".gobby/project.json"
     if project_config.exists():
         data = json.loads(project_config.read_text(encoding="utf-8"))
         parent_project_path = data.get("parent_project_path")

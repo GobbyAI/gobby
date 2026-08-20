@@ -16,6 +16,8 @@ from gobby.providers.capabilities.collectors.claude import (
 )
 from gobby.providers.capabilities.models import ReasoningSupport, SourceState, SpeedMode
 
+pytestmark = pytest.mark.unit
+
 _FIXTURES = Path(__file__).parent / "fixtures" / "claude"
 _OBSERVED_AT = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
 _SOURCE_KEYS = {
@@ -40,6 +42,7 @@ def _collector(documents: Mapping[str, str]) -> ClaudeCollector:
     return ClaudeCollector(fetch_text=fetch_text, clock=lambda: _OBSERVED_AT)
 
 
+@pytest.mark.asyncio
 async def test_alias_to_canonical_mapping() -> None:
     documents = _documents()
     documents["model-config"] = documents["model-config"].replace(
@@ -57,6 +60,7 @@ async def test_alias_to_canonical_mapping() -> None:
     assert "haiku" in models["claude-haiku-4-5-20251001"].aliases
 
 
+@pytest.mark.asyncio
 async def test_fact_provenance() -> None:
     collector = _collector(_documents())
 
@@ -86,6 +90,7 @@ async def test_fact_provenance() -> None:
         ("effort-docs", "## Compatibility", "## Model support"),
     ],
 )
+@pytest.mark.asyncio
 async def test_malformed_required_source_fails_snapshot(
     source_key: str,
     old: str,
@@ -98,6 +103,7 @@ async def test_malformed_required_source_fails_snapshot(
         await _collector(documents).collect()
 
 
+@pytest.mark.asyncio
 async def test_current_and_legacy_models_emit_standard_routes() -> None:
     collector = _collector(_documents())
 
@@ -113,6 +119,7 @@ async def test_current_and_legacy_models_emit_standard_routes() -> None:
     assert all(source.state is SourceState.OK for source in snapshot.sources)
 
 
+@pytest.mark.asyncio
 async def test_effort_compatibility_uses_canonical_model_ids() -> None:
     documents = _documents()
 
@@ -152,6 +159,7 @@ async def test_effort_compatibility_uses_canonical_model_ids() -> None:
         ),
     ],
 )
+@pytest.mark.asyncio
 async def test_invalid_effort_supported_models_declaration_fails_snapshot(
     replacement: str,
     detail: str,
@@ -166,6 +174,7 @@ async def test_invalid_effort_supported_models_declaration_fails_snapshot(
         await _collector(documents).collect()
 
 
+@pytest.mark.asyncio
 async def test_duplicate_effort_supported_models_declaration_fails_snapshot() -> None:
     documents = _documents()
     declaration = next(

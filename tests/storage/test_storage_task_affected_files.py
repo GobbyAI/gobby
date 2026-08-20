@@ -1,5 +1,7 @@
 """Tests for TaskAffectedFileManager storage layer."""
 
+from collections.abc import Iterator
+
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
@@ -15,7 +17,7 @@ TASK_3 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3"
 
 
 @pytest.fixture
-def db(temp_db: HubDatabase):
+def db(temp_db: HubDatabase) -> Iterator[HubDatabase]:
     """Create a fresh database with task rows for FK constraints."""
     database = temp_db
     database.execute(

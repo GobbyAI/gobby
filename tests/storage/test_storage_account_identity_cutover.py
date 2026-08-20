@@ -6,6 +6,7 @@ import uuid
 from collections.abc import Iterator
 from types import TracebackType
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import psycopg
 import pytest
@@ -32,6 +33,8 @@ from gobby.storage.maintenance_epoch import (
 )
 from gobby.storage.schema_contract import apply_schema, expected_schema_identity
 from tests.fixtures.postgres import isolated_test_schema
+
+pytestmark = pytest.mark.integration
 
 
 class _FailAfterOwnerUuidConversion:
@@ -66,7 +69,18 @@ class _FailAfterOwnerUuidConversion:
 def predecessor_database(postgres_database_url: str) -> Iterator[str]:
     with isolated_test_schema(postgres_database_url, "identity") as schema_name:
         apply_schema(postgres_database_url, schema=schema_name)
-        scoped_url = postgres_database_url + f"?options=-csearch_path%3D{schema_name}"
+        parts = urlsplit(postgres_database_url)
+        query = dict(parse_qsl(parts.query, keep_blank_values=True))
+        search_path_option = f"-csearch_path={schema_name}"
+        existing_options = query.get("options", "")
+        query["options"] = (
+            f"{existing_options} {search_path_option}".strip()
+            if existing_options
+            else search_path_option
+        )
+        scoped_url = urlunsplit(
+            (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
+        )
         with psycopg.connect(scoped_url, autocommit=True) as connection:
             _restore_predecessor_shape(connection)
             _seed_predecessor_data(connection)

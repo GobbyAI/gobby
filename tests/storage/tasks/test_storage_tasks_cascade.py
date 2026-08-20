@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._build_cascade import cascade_build_state_to_subtree
 
 pytestmark = pytest.mark.unit
 
 
-def test_cascade_uses_unattended_field(temp_db, sample_project) -> None:
+def test_cascade_uses_unattended_field(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(
         project_id=sample_project["id"],

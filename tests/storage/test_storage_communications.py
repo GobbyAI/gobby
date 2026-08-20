@@ -132,8 +132,8 @@ def test_delete_channel_cascades_attachments(store: LocalCommunicationsStore) ->
     assert len(store.list_attachments(msg.id)) == 0
 
 
-def test_delete_channel_is_atomic(store: LocalCommunicationsStore) -> None:
-    """All cascade deletes happen in one transaction — other channels are untouched."""
+def test_delete_channel_preserves_unrelated_channel_data(store: LocalCommunicationsStore) -> None:
+    """Deleting one channel leaves unrelated channel rows intact."""
     ch1 = _make_channel(store, name="ch-1")
     ch2 = _make_channel(store, name="ch-2")
 

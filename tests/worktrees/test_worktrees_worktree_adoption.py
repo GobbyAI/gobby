@@ -9,6 +9,8 @@ import pytest
 from gobby.worktrees.git._models import WorktreeInfo
 from gobby.worktrees.git.manager import WorktreeGitManager
 
+pytestmark = pytest.mark.integration
+
 
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(

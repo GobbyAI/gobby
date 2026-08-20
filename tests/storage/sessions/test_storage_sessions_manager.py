@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from importlib import import_module
+from typing import cast
 from unittest.mock import patch
 
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
@@ -22,11 +24,11 @@ def _local_machine_identity() -> Iterator[None]:
         yield
 
 
-def _storage_session_manager_cls():
+def _storage_session_manager_cls() -> type[SessionManager]:
     module = import_module("gobby.storage.sessions")
     manager_cls = getattr(module, "SessionManager", None)
     assert manager_cls is not None, "gobby.storage.sessions must export SessionManager"
-    return manager_cls
+    return cast(type[SessionManager], manager_cls)
 
 
 @pytest.fixture

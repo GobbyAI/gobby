@@ -30,6 +30,7 @@ pytestmark = pytest.mark.unit
 # memories.id) — synthetic slugs like "proj-123" are rejected by PostgreSQL.
 PROJECT_ID = "11111111-1111-4111-8111-111111111111"
 SESSION_ID = "22222222-2222-4222-8222-222222222222"
+OTHER_PROJECT_ID = "33333333-3333-4333-8333-333333333333"
 MISSING_MEMORY_ID = "99999999-9999-4999-8999-999999999999"
 
 # =============================================================================
@@ -38,13 +39,13 @@ MISSING_MEMORY_ID = "99999999-9999-4999-8999-999999999999"
 
 
 @pytest.fixture
-def db(hub_db):
+def db(hub_db: HubDatabase) -> HubDatabase:
     """Create a temporary hub database for testing."""
     return hub_db
 
 
 @pytest.fixture
-def memory_config():
+def memory_config() -> MemoryConfig:
     """Create a default memory configuration with PostgreSQL backend."""
     return MemoryConfig(
         enabled=True,
@@ -61,13 +62,13 @@ def memory_manager(db: HubDatabase, memory_config: MemoryConfig) -> MemoryManage
 
 
 @pytest.fixture
-def mock_storage():
+def mock_storage() -> MagicMock:
     """Create a mock LocalMemoryManager."""
     return MagicMock(spec=LocalMemoryManager)
 
 
 @pytest.fixture
-def mock_config():
+def mock_config() -> MagicMock:
     """Create a mock MemoryConfig."""
     config = MagicMock(spec=MemoryConfig)
     config.access_debounce_seconds = 60
@@ -76,7 +77,7 @@ def mock_config():
 
 
 @pytest.fixture
-def mock_db():
+def mock_db() -> MagicMock:
     """Create a mock database."""
     return MagicMock(spec=HubDatabase)
 
@@ -89,20 +90,20 @@ def mock_db():
 class TestMemoryManagerInit:
     """Tests for MemoryManager initialization."""
 
-    def test_init_creates_storage(self, db, memory_config) -> None:
+    def test_init_creates_storage(self, db: HubDatabase, memory_config: MemoryConfig) -> None:
         """Test that initialization creates a LocalMemoryManager."""
         manager = MemoryManager(db=db, config=memory_config)
         assert manager.db is db
         assert manager.config is memory_config
         assert isinstance(manager.storage, LocalMemoryManager)
 
-    def test_init_creates_backend(self, db, memory_config) -> None:
+    def test_init_creates_backend(self, db: HubDatabase, memory_config: MemoryConfig) -> None:
         """Test that initialization creates a MemoryBackendProtocol instance."""
         manager = MemoryManager(db=db, config=memory_config)
         assert hasattr(manager, "_backend")
         assert isinstance(manager._backend, MemoryBackendProtocol)
 
-    def test_init_with_null_backend(self, db) -> None:
+    def test_init_with_null_backend(self, db: HubDatabase) -> None:
         """Test that null backend can be used for testing."""
         config = MemoryConfig(backend="null")
         manager = MemoryManager(db=db, config=config)
@@ -150,7 +151,9 @@ class TestCreateMemory:
         assert memory_manager.storage.get_memory(created.id).id == created.id
 
     @pytest.mark.asyncio
-    async def test_create_memory_with_all_params(self, db, memory_config) -> None:
+    async def test_create_memory_with_all_params(
+        self, db: HubDatabase, memory_config: MemoryConfig
+    ) -> None:
         """Test memory creation with all parameters."""
         db.execute(
             "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
@@ -187,7 +190,7 @@ class TestCreateMemory:
         assert memory.tags == ["ui", "theme"]
 
     @pytest.mark.asyncio
-    async def test_create_memory_default_values(self, memory_manager: MemoryManager):
+    async def test_create_memory_default_values(self, memory_manager: MemoryManager) -> None:
         """Test memory creation uses correct defaults."""
         memory = await memory_manager.create_memory(content="Simple fact")
 
@@ -199,14 +202,13 @@ class TestCreateMemory:
     async def test_create_memory_uses_project_plus_global_dedup_scope(
         self,
         memory_manager: MemoryManager,
-        db,
+        db: HubDatabase,
     ) -> None:
         """Facade creation sees globals, isolates projects, and keeps global creation global."""
-        other_project_id = "22222222-2222-4222-8222-222222222222"
         db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_ID, "Project 1"))
         db.execute(
             "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            (other_project_id, "Project 2"),
+            (OTHER_PROJECT_ID, "Project 2"),
         )
 
         global_memory = await memory_manager.create_memory(
@@ -228,7 +230,7 @@ class TestCreateMemory:
         )
         second_project = await memory_manager.create_memory(
             content="Facade project isolated",
-            project_id=other_project_id,
+            project_id=OTHER_PROJECT_ID,
         )
         new_global = await memory_manager.create_memory(
             content="Facade project isolated",
@@ -286,7 +288,9 @@ class TestProjectionScopeRepair:
     """Tests for startup repair of explicit scope projections."""
 
     @pytest.mark.asyncio
-    async def test_manager_delegates_projection_scope_repair(self, mock_db, memory_config) -> None:
+    async def test_manager_delegates_projection_scope_repair(
+        self, mock_db: MagicMock, memory_config: MemoryConfig
+    ) -> None:
         manager = MemoryManager(db=mock_db, config=memory_config)
         expected = ProjectionScopeRepairResult(vectors_repaired=2, graph_entities_repaired=3)
         manager._projection_repair_service.repair = AsyncMock(return_value=expected)
@@ -319,9 +323,9 @@ class TestMemoryScopeChanges:
     @pytest.mark.asyncio
     async def test_promote_memory_updates_vector_payload_and_marks_graph_pending(
         self,
-        mock_db,
-        memory_config,
-    ):
+        mock_db: MagicMock,
+        memory_config: MemoryConfig,
+    ) -> None:
         vector_store = MagicMock()
         vector_store.set_payload = AsyncMock()
         manager = MemoryManager(db=mock_db, config=memory_config, vector_store=vector_store)
@@ -372,7 +376,7 @@ class TestSearchMemories:
     @pytest.mark.asyncio
     async def test_search_memories_no_query_returns_top_memories(
         self, memory_manager: MemoryManager
-    ):
+    ) -> None:
         """Test search_memories without query returns top memories."""
         await memory_manager.create_memory(content="Low importance")
         await memory_manager.create_memory(content="High importance")
@@ -383,7 +387,9 @@ class TestSearchMemories:
         assert len(memories) == 2
 
     @pytest.mark.asyncio
-    async def test_search_memories_no_query_all_returned(self, memory_manager: MemoryManager):
+    async def test_search_memories_no_query_all_returned(
+        self, memory_manager: MemoryManager
+    ) -> None:
         """Test search_memories without query returns all memories (no VectorStore)."""
         await memory_manager.create_memory(content="Python is a programming language")
         await memory_manager.create_memory(content="JavaScript runs in browsers")
@@ -393,7 +399,7 @@ class TestSearchMemories:
         assert len(memories) == 2
 
     @pytest.mark.asyncio
-    async def test_search_memories_by_memory_type(self, memory_manager: MemoryManager):
+    async def test_search_memories_by_memory_type(self, memory_manager: MemoryManager) -> None:
         """Test search_memories filters by memory type."""
         await memory_manager.create_memory(content="Fact 1", memory_type="fact")
         await memory_manager.create_memory(content="Pref 1", memory_type="preference")
@@ -404,7 +410,7 @@ class TestSearchMemories:
         assert memories[0].memory_type == "preference"
 
     @pytest.mark.asyncio
-    async def test_search_memories_limit(self, memory_manager: MemoryManager):
+    async def test_search_memories_limit(self, memory_manager: MemoryManager) -> None:
         """Test search_memories respects limit parameter."""
         for i in range(5):
             await memory_manager.create_memory(content=f"Memory {i}")
@@ -414,7 +420,9 @@ class TestSearchMemories:
         assert len(memories) == 3
 
     @pytest.mark.asyncio
-    async def test_search_memories_updates_access_stats(self, memory_manager: MemoryManager):
+    async def test_search_memories_updates_access_stats(
+        self, memory_manager: MemoryManager
+    ) -> None:
         """Test search_memories updates access statistics."""
         memory = await memory_manager.create_memory(content="Track access")
         original_count = memory.access_count
@@ -428,7 +436,7 @@ class TestSearchMemories:
     @pytest.mark.asyncio
     async def test_recall_search_on_degraded_manager_emits_caller_event(
         self, memory_manager: MemoryManager
-    ):
+    ) -> None:
         """Regression #17491: a manager without vector wiring routes queries through
         the keyword fallback, which must still emit one recall-signal event per
         search carrying the caller and join keys — fallback is never silent."""
@@ -457,7 +465,7 @@ class TestAccessStats:
     """Tests for access statistics updates."""
 
     @pytest.mark.asyncio
-    async def test_update_access_stats_debouncing(self, memory_manager: MemoryManager):
+    async def test_update_access_stats_debouncing(self, memory_manager: MemoryManager) -> None:
         """Test access stats debouncing prevents rapid updates."""
         memory = await memory_manager.create_memory(content="Debounce test")
 
@@ -473,6 +481,7 @@ class TestAccessStats:
         # Should still be same count due to debouncing
         assert updated_again.access_count == first_access_count
 
+    @pytest.mark.asyncio
     async def test_update_access_stats_empty_list(self, memory_manager: MemoryManager) -> None:
         """Test _update_access_stats handles empty list."""
         with patch.object(memory_manager.storage, "update_access_stats") as update_access_stats:
@@ -481,7 +490,10 @@ class TestAccessStats:
         assert result is None
         assert update_access_stats.call_count == 0
 
-    async def test_update_access_stats_invalid_timestamp(self, db, memory_config) -> None:
+    @pytest.mark.asyncio
+    async def test_update_access_stats_invalid_timestamp(
+        self, db: HubDatabase, memory_config: MemoryConfig
+    ) -> None:
         """Test _update_access_stats handles invalid timestamps gracefully."""
         manager = MemoryManager(db=db, config=memory_config)
 
@@ -491,7 +503,10 @@ class TestAccessStats:
 
         assert await manager._update_access_stats([memory]) is None
 
-    async def test_update_access_stats_no_timezone(self, db, memory_config) -> None:
+    @pytest.mark.asyncio
+    async def test_update_access_stats_no_timezone(
+        self, db: HubDatabase, memory_config: MemoryConfig
+    ) -> None:
         """Test _update_access_stats handles timestamps without timezone."""
         manager = MemoryManager(db=db, config=memory_config)
 
@@ -518,7 +533,7 @@ class TestDeleteMemory:
     """Tests for the delete_memory method."""
 
     @pytest.mark.asyncio
-    async def test_delete_existing_memory(self, memory_manager: MemoryManager):
+    async def test_delete_existing_memory(self, memory_manager: MemoryManager) -> None:
         """Test deleting an existing memory."""
         memory = await memory_manager.create_memory(content="To delete")
 
@@ -543,7 +558,7 @@ class TestListMemories:
     """Tests for list_memories method."""
 
     @pytest.mark.asyncio
-    async def test_list_memories_basic(self, memory_manager: MemoryManager):
+    async def test_list_memories_basic(self, memory_manager: MemoryManager) -> None:
         """Test basic memory listing."""
         await memory_manager.create_memory(content="Memory 1")
         await memory_manager.create_memory(content="Memory 2")
@@ -553,7 +568,7 @@ class TestListMemories:
         assert len(memories) == 2
 
     @pytest.mark.asyncio
-    async def test_list_memories_with_offset(self, memory_manager: MemoryManager):
+    async def test_list_memories_with_offset(self, memory_manager: MemoryManager) -> None:
         """Test memory listing with offset."""
         for i in range(5):
             await memory_manager.create_memory(content=f"Memory {i}")
@@ -563,7 +578,7 @@ class TestListMemories:
         assert len(memories) == 2
 
     @pytest.mark.asyncio
-    async def test_list_memories_by_type(self, memory_manager: MemoryManager):
+    async def test_list_memories_by_type(self, memory_manager: MemoryManager) -> None:
         """Test memory listing filtered by type."""
         await memory_manager.create_memory(content="Fact", memory_type="fact")
         await memory_manager.create_memory(content="Preference", memory_type="preference")
@@ -583,7 +598,7 @@ class TestContentExists:
     """Tests for content_exists method."""
 
     @pytest.mark.asyncio
-    async def test_content_exists_true(self, memory_manager: MemoryManager):
+    async def test_content_exists_true(self, memory_manager: MemoryManager) -> None:
         """Test content_exists returns True for existing content."""
         await memory_manager.create_memory(content="Existing content")
 
@@ -607,7 +622,7 @@ class TestGetMemory:
     """Tests for get_memory method."""
 
     @pytest.mark.asyncio
-    async def test_get_memory_exists(self, memory_manager: MemoryManager):
+    async def test_get_memory_exists(self, memory_manager: MemoryManager) -> None:
         """Test getting an existing memory."""
         created = await memory_manager.create_memory(content="Get test")
 
@@ -633,7 +648,7 @@ class TestUpdateMemory:
     """Tests for update_memory method."""
 
     @pytest.mark.asyncio
-    async def test_update_memory_content(self, memory_manager: MemoryManager):
+    async def test_update_memory_content(self, memory_manager: MemoryManager) -> None:
         """Test updating memory content preserves the memory ID."""
         memory = await memory_manager.create_memory(content="Original")
 
@@ -644,7 +659,7 @@ class TestUpdateMemory:
         assert memory_manager.get_memory(memory.id).content == "Updated"
 
     @pytest.mark.asyncio
-    async def test_update_memory_tags(self, memory_manager: MemoryManager):
+    async def test_update_memory_tags(self, memory_manager: MemoryManager) -> None:
         """Test updating memory tags."""
         memory = await memory_manager.create_memory(content="Test", tags=["old"])
 
@@ -653,7 +668,7 @@ class TestUpdateMemory:
         assert updated.tags == ["new", "tags"]
 
     @pytest.mark.asyncio
-    async def test_update_memory_type(self, memory_manager: MemoryManager):
+    async def test_update_memory_type(self, memory_manager: MemoryManager) -> None:
         """Test updating and persisting a memory type."""
         memory = await memory_manager.create_memory(content="Test", memory_type="fact")
 
@@ -663,13 +678,15 @@ class TestUpdateMemory:
         assert memory_manager.get_memory(memory.id).memory_type == "preference"
 
     @pytest.mark.asyncio
-    async def test_update_memory_not_found_raises(self, memory_manager: MemoryManager):
+    async def test_update_memory_not_found_raises(self, memory_manager: MemoryManager) -> None:
         """Test updating non-existent memory raises ValueError."""
         with pytest.raises(ValueError, match="not found"):
             await memory_manager.update_memory(MISSING_MEMORY_ID, tags=["new"])
 
     @pytest.mark.asyncio
-    async def test_scoped_update_rejects_other_project(self, db, memory_config) -> None:
+    async def test_scoped_update_rejects_other_project(
+        self, db: HubDatabase, memory_config: MemoryConfig
+    ) -> None:
         """An out-of-scope update leaves the memory and secondary indices unchanged."""
         mock_vs = MagicMock()
         mock_vs.upsert = AsyncMock()
@@ -680,10 +697,13 @@ class TestUpdateMemory:
             db=db, config=memory_config, vector_store=mock_vs, embed_fn=mock_embed
         )
         manager._kg_service = mock_kg
-        project_b = "22222222-2222-4222-8222-222222222222"
         db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_ID, "Project A"))
-        db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (project_b, "Project B"))
-        memory = await manager.create_memory(content="Project B memory", project_id=project_b)
+        db.execute(
+            "INSERT INTO projects (id, name) VALUES (%s, %s)", (OTHER_PROJECT_ID, "Project B")
+        )
+        memory = await manager.create_memory(
+            content="Project B memory", project_id=OTHER_PROJECT_ID
+        )
         mock_vs.upsert.reset_mock()
 
         with pytest.raises(ValueError, match="not found"):
@@ -718,7 +738,7 @@ class TestGetStats:
         assert stats["by_type"] == {}
 
     @pytest.mark.asyncio
-    async def test_get_stats_with_memories(self, memory_manager: MemoryManager):
+    async def test_get_stats_with_memories(self, memory_manager: MemoryManager) -> None:
         """Test stats with multiple memories."""
         await memory_manager.create_memory(content="Fact 1", memory_type="fact")
         await memory_manager.create_memory(content="Fact 2", memory_type="fact")
@@ -740,7 +760,7 @@ class TestEdgeCases:
     """Tests for edge cases and error handling."""
 
     @pytest.mark.asyncio
-    async def test_duplicate_content_handling(self, memory_manager: MemoryManager):
+    async def test_duplicate_content_handling(self, memory_manager: MemoryManager) -> None:
         """Test creating memory with duplicate content returns existing."""
         memory1 = await memory_manager.create_memory(content="Duplicate test")
         memory2 = await memory_manager.create_memory(content="Duplicate test")
@@ -748,13 +768,15 @@ class TestEdgeCases:
         assert memory1.id == memory2.id
 
     @pytest.mark.asyncio
-    async def test_search_memories_empty_database(self, memory_manager: MemoryManager):
+    async def test_search_memories_empty_database(self, memory_manager: MemoryManager) -> None:
         """Test search_memories on empty database returns empty list."""
         memories = await memory_manager.search_memories()
         assert memories == []
 
     @pytest.mark.asyncio
-    async def test_update_access_stats_exception_handling(self, db, memory_config):
+    async def test_update_access_stats_exception_handling(
+        self, db: HubDatabase, memory_config: MemoryConfig
+    ) -> None:
         """Test _update_access_stats handles storage exceptions."""
         manager = MemoryManager(db=db, config=memory_config)
 
@@ -778,7 +800,9 @@ class TestSearchMemoriesAsContext:
     """Tests for search_memories_as_context method."""
 
     @pytest.mark.asyncio
-    async def test_search_memories_as_context_returns_formatted_context(self, db, memory_config):
+    async def test_search_memories_as_context_returns_formatted_context(
+        self, db: HubDatabase, memory_config: MemoryConfig
+    ) -> None:
         """Test search_memories_as_context returns properly formatted context string."""
         manager = MemoryManager(db=db, config=memory_config)
 
@@ -798,7 +822,9 @@ class TestSearchMemoriesAsContext:
         assert context.count(f"memory_id: {fact.id}") == 1
 
     @pytest.mark.asyncio
-    async def test_search_memories_as_context_empty_memories(self, db, memory_config):
+    async def test_search_memories_as_context_empty_memories(
+        self, db: HubDatabase, memory_config: MemoryConfig
+    ) -> None:
         """Test search_memories_as_context returns empty string when no memories."""
         manager = MemoryManager(db=db, config=memory_config)
 
@@ -807,7 +833,9 @@ class TestSearchMemoriesAsContext:
         assert context == ""
 
     @pytest.mark.asyncio
-    async def test_search_memories_as_context_respects_limit(self, db, memory_config):
+    async def test_search_memories_as_context_respects_limit(
+        self, db: HubDatabase, memory_config: MemoryConfig
+    ) -> None:
         """Test search_memories_as_context respects limit parameter."""
         manager = MemoryManager(db=db, config=memory_config)
 
@@ -820,7 +848,9 @@ class TestSearchMemoriesAsContext:
         assert "<project-memory>" in context
 
     @pytest.mark.asyncio
-    async def test_search_memories_as_context_respects_project_filter(self, db, memory_config):
+    async def test_search_memories_as_context_respects_project_filter(
+        self, db: HubDatabase, memory_config: MemoryConfig
+    ) -> None:
         """Test search_memories_as_context filters by project_id."""
         manager = MemoryManager(db=db, config=memory_config)
 
@@ -848,7 +878,9 @@ class TestVectorStoreIntegration:
         assert memory_manager.vector_store is None
 
     @pytest.mark.asyncio
-    async def test_embed_and_upsert_failure_logged(self, db, memory_config) -> None:
+    async def test_embed_and_upsert_failure_logged(
+        self, db: HubDatabase, memory_config: MemoryConfig
+    ) -> None:
         """_embed_and_upsert logs warning on failure."""
         from unittest.mock import AsyncMock
 
@@ -866,7 +898,7 @@ class TestVectorStoreIntegration:
 
     @pytest.mark.asyncio
     async def test_vectorstore_unavailable_does_not_disable_embeddings(
-        self, db, memory_config
+        self, db: HubDatabase, memory_config: MemoryConfig
     ) -> None:
         """Transient VectorStore failures should not mark embeddings unavailable."""
         from unittest.mock import AsyncMock
@@ -888,7 +920,9 @@ class TestVectorStoreIntegration:
         assert not hasattr(manager, "_embeddings_available")
 
     @pytest.mark.asyncio
-    async def test_create_memory_with_vectorstore(self, db, memory_config) -> None:
+    async def test_create_memory_with_vectorstore(
+        self, db: HubDatabase, memory_config: MemoryConfig
+    ) -> None:
         """create_memory embeds content into VectorStore when available."""
         from unittest.mock import AsyncMock
 
@@ -906,8 +940,8 @@ class TestVectorStoreIntegration:
     @pytest.mark.asyncio
     async def test_create_and_update_retry_embedding_until_provider_recovers(
         self,
-        db,
-        memory_config,
+        db: HubDatabase,
+        memory_config: MemoryConfig,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Transient embed failures never suppress later create/update attempts."""
@@ -958,8 +992,8 @@ class TestVectorStoreIntegration:
     @pytest.mark.asyncio
     async def test_vector_upsert_failure_leaves_content_marked_for_reindex(
         self,
-        db,
-        memory_config,
+        db: HubDatabase,
+        memory_config: MemoryConfig,
     ) -> None:
         mock_vs = MagicMock()
         mock_vs.upsert = AsyncMock(side_effect=RuntimeError("qdrant rejected write"))
@@ -985,8 +1019,8 @@ class TestLifecycleService:
     @pytest.mark.asyncio
     async def test_restore_memory_indices_recreates_vector_and_requeues_graph(
         self,
-        db,
-        memory_config,
+        db: HubDatabase,
+        memory_config: MemoryConfig,
     ) -> None:
         mock_vs = MagicMock()
         mock_vs.upsert = AsyncMock()
@@ -1028,8 +1062,8 @@ class TestLifecycleService:
     @pytest.mark.asyncio
     async def test_restore_memory_indices_returns_false_for_missing_row(
         self,
-        db,
-        memory_config,
+        db: HubDatabase,
+        memory_config: MemoryConfig,
     ) -> None:
         manager = MemoryManager(db=db, config=memory_config)
 
@@ -1046,8 +1080,8 @@ class TestLifecycleService:
     @pytest.mark.asyncio
     async def test_create_update_delete_updates_secondary_indices(
         self,
-        db,
-        memory_config,
+        db: HubDatabase,
+        memory_config: MemoryConfig,
     ) -> None:
         """Lifecycle service handles mutable metadata without vector churn."""
         mock_vs = MagicMock()
@@ -1080,7 +1114,7 @@ class TestLifecycleService:
         mock_vs.delete.assert_awaited_once_with(memory.id)
 
     @pytest.mark.asyncio
-    async def test_content_update_refreshes_secondary_indices(self, db) -> None:
+    async def test_content_update_refreshes_secondary_indices(self, db: HubDatabase) -> None:
         config = MemoryConfig(
             enabled=True,
             backend="local",
@@ -1165,7 +1199,9 @@ class TestDeleteMemoryExtended:
     """Extended tests for delete_memory with VectorStore and KG."""
 
     @pytest.mark.asyncio
-    async def test_delete_with_vectorstore(self, db, memory_config) -> None:
+    async def test_delete_with_vectorstore(
+        self, db: HubDatabase, memory_config: MemoryConfig
+    ) -> None:
         """delete_memory removes from VectorStore when available."""
         from unittest.mock import AsyncMock
 
@@ -1184,7 +1220,9 @@ class TestDeleteMemoryExtended:
         assert mock_vs.delete.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_scoped_delete_preserves_other_project_indices(self, db, memory_config) -> None:
+    async def test_scoped_delete_preserves_other_project_indices(
+        self, db: HubDatabase, memory_config: MemoryConfig
+    ) -> None:
         """An out-of-scope delete leaves the row, vector, and graph artifacts intact."""
         mock_vs = MagicMock()
         mock_vs.delete = AsyncMock()
@@ -1196,12 +1234,13 @@ class TestDeleteMemoryExtended:
             db=db, config=memory_config, vector_store=mock_vs, embed_fn=mock_embed
         )
         manager._kg_service = mock_kg
-        project_b = "22222222-2222-4222-8222-222222222222"
         db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_ID, "Project A"))
-        db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (project_b, "Project B"))
+        db.execute(
+            "INSERT INTO projects (id, name) VALUES (%s, %s)", (OTHER_PROJECT_ID, "Project B")
+        )
         memory = await manager.create_memory(
             content="Project B protected memory",
-            project_id=project_b,
+            project_id=OTHER_PROJECT_ID,
         )
         mock_vs.delete.reset_mock()
 
@@ -1213,7 +1252,9 @@ class TestDeleteMemoryExtended:
         mock_kg.remove_memory_from_graph.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_delete_vectorstore_error_handled(self, db, memory_config) -> None:
+    async def test_delete_vectorstore_error_handled(
+        self, db: HubDatabase, memory_config: MemoryConfig
+    ) -> None:
         """delete_memory handles VectorStore delete failure gracefully."""
         from unittest.mock import AsyncMock
 
@@ -1466,7 +1507,9 @@ class TestReindexEmbeddings:
         assert "not configured" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_reindex_with_vectorstore(self, db, memory_config) -> None:
+    async def test_reindex_with_vectorstore(
+        self, db: HubDatabase, memory_config: MemoryConfig
+    ) -> None:
         """reindex_embeddings rebuilds collection with all memories."""
         from unittest.mock import AsyncMock
 
@@ -1499,8 +1542,8 @@ class TestEntityGraph:
 
     def test_clear_graph_clients_clears_manager_and_child_service_refs(
         self,
-        db,
-        memory_config,
+        db: HubDatabase,
+        memory_config: MemoryConfig,
     ) -> None:
         """clear_graph_clients removes all graph references owned by the manager."""
         manager = MemoryManager(db=db, config=memory_config, falkordb_host=None)
@@ -1518,7 +1561,9 @@ class TestEntityGraph:
         assert manager._indexing_service._kg_service is None
 
     @pytest.mark.asyncio
-    async def test_get_entity_graph_no_falkordb(self, db, memory_config) -> None:
+    async def test_get_entity_graph_no_falkordb(
+        self, db: HubDatabase, memory_config: MemoryConfig
+    ) -> None:
         """get_entity_graph returns None when no FalkorDB configured."""
         manager = MemoryManager(db=db, config=memory_config, falkordb_host=None)
         assert manager._falkor_client is None
@@ -1527,7 +1572,9 @@ class TestEntityGraph:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_get_entity_neighbors_no_falkordb(self, db, memory_config) -> None:
+    async def test_get_entity_neighbors_no_falkordb(
+        self, db: HubDatabase, memory_config: MemoryConfig
+    ) -> None:
         """get_entity_neighbors returns None when no FalkorDB configured."""
         manager = MemoryManager(db=db, config=memory_config, falkordb_host=None)
         assert manager._falkor_client is None
@@ -1621,7 +1668,9 @@ class TestCreateMemoryAutoCrossref:
     """Tests for create_memory with auto_crossref."""
 
     @pytest.mark.asyncio
-    async def test_auto_crossref_failure_handled(self, db, memory_config) -> None:
+    async def test_auto_crossref_failure_handled(
+        self, db: HubDatabase, memory_config: MemoryConfig
+    ) -> None:
         """Auto-crossref failure does not prevent memory creation."""
         memory_config.auto_crossref = True
         manager = MemoryManager(db=db, config=memory_config)

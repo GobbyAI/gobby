@@ -70,18 +70,8 @@ def test_project(project_storage: LocalProjectManager, temp_dir: Path) -> dict[s
 @pytest.fixture
 def http_server(
     session_storage: SessionManager,
-    temp_dir: Path,
 ) -> HTTPServer:
     """Create an HTTP server instance for testing."""
-    mock_config = MagicMock()
-    mock_config.logging.max_size_mb = 10
-    mock_config.logging.backup_count = 3
-    mock_config.logging.dir = "/tmp"
-    mock_config.memory.backend = "null"
-    mock_config.workflow.timeout = 30
-    mock_config.workflow.enabled = True
-    mock_config.get_gobby_tasks_config.return_value.enabled = False
-
     services = ServiceContainer(
         database=session_storage.db,
         session_manager=session_storage,
@@ -362,7 +352,7 @@ class TestListSessionsEdgeCases:
 class TestGetSessionEdgeCases:
     """Tests for sessions_get edge cases and error paths."""
 
-    def test_get_session_repairs_stale_codex_context_window(
+    def test_get_session_resolves_context_window_without_writing_back(
         self,
         client: TestClient,
         session_storage: SessionManager,

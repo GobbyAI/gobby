@@ -419,7 +419,7 @@ class TestGetCommitCount:
         """Returns 0 when repo_path row exists but value is empty."""
         db = MagicMock()
         session = _make_session(project_id="proj-1")
-        db.fetchone.return_value = ("",)
+        db.fetchone.return_value = {"repo_path": ""}
 
         count = await _get_commit_count(db, session)
 

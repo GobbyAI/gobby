@@ -5,6 +5,8 @@ Tests FastAPI endpoints for pipeline execution, approval, and querying.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -26,7 +28,7 @@ def mock_server() -> MagicMock:
     server.services.workflow_loader = MagicMock()
     server.services.get_pipeline_executor.return_value = MagicMock()
 
-    async def run_db(func, *args, **kwargs):
+    async def run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         return func(*args, **kwargs)
 
     server.run_db = AsyncMock(side_effect=run_db)

@@ -10,7 +10,9 @@ Exercises the real AuthMixin._authenticate method with all code paths:
 
 from __future__ import annotations
 
+from collections.abc import Callable, Coroutine
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -111,7 +113,10 @@ async def test_wired_callback_rejects_and_accepts(monkeypatch: pytest.MonkeyPatc
 class ConcreteAuthServer(AuthMixin):
     """Concrete class using AuthMixin for testing."""
 
-    def __init__(self, auth_callback=None):
+    def __init__(
+        self,
+        auth_callback: Callable[[str], Coroutine[Any, Any, str | None]] | None = None,
+    ) -> None:
         self.auth_callback = auth_callback
 
 

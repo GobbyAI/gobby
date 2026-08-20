@@ -3,11 +3,9 @@
 Relocated from tests/workflows/test_context_actions.py as part of dead-code cleanup.
 """
 
-from dataclasses import dataclass, field
-from typing import Any
-
 import pytest
 
+from gobby.sessions.analyzer import HandoffContext
 from gobby.sessions.formatting import format_handoff_as_markdown
 
 pytestmark = pytest.mark.unit
@@ -16,27 +14,15 @@ pytestmark = pytest.mark.unit
 class TestFormatHandoffAsMarkdown:
     """Tests for the format_handoff_as_markdown function."""
 
-    @dataclass
-    class MockHandoffContext:
-        """Mock HandoffContext for testing."""
-
-        active_gobby_task: dict[str, Any] | None = None
-        active_worktree: dict[str, Any] | None = None
-        git_commits: list[dict[str, str]] = field(default_factory=list)
-        git_status: str = ""
-        files_modified: list[str] = field(default_factory=list)
-        initial_goal: str = ""
-        recent_activity: list[str] = field(default_factory=list)
-
     def test_empty_context_returns_empty_string(self) -> None:
         """Should return empty string when all context fields are empty."""
-        ctx = self.MockHandoffContext()
+        ctx = HandoffContext()
         result = format_handoff_as_markdown(ctx)
         assert result == ""
 
     def test_formats_active_task(self) -> None:
         """Should format active task section."""
-        ctx = self.MockHandoffContext(
+        ctx = HandoffContext(
             active_gobby_task={
                 "id": "gt-123",
                 "title": "Fix auth bug",
@@ -51,7 +37,7 @@ class TestFormatHandoffAsMarkdown:
 
     def test_formats_active_task_with_missing_fields(self) -> None:
         """Should handle missing fields in active task with defaults."""
-        ctx = self.MockHandoffContext(active_gobby_task={"some_field": "value"})
+        ctx = HandoffContext(active_gobby_task={"some_field": "value"})
         result = format_handoff_as_markdown(ctx)
 
         assert "### Active Task" in result
@@ -60,7 +46,7 @@ class TestFormatHandoffAsMarkdown:
 
     def test_formats_worktree_context(self) -> None:
         """Should format worktree context section."""
-        ctx = self.MockHandoffContext(
+        ctx = HandoffContext(
             active_worktree={
                 "branch_name": "feature/auth",
                 "worktree_path": "/path/to/worktree",
@@ -78,7 +64,7 @@ class TestFormatHandoffAsMarkdown:
 
     def test_formats_worktree_without_task_id(self) -> None:
         """Should format worktree without task_id."""
-        ctx = self.MockHandoffContext(
+        ctx = HandoffContext(
             active_worktree={
                 "branch_name": "feature/auth",
                 "worktree_path": "/path",
@@ -92,7 +78,7 @@ class TestFormatHandoffAsMarkdown:
 
     def test_formats_git_commits(self) -> None:
         """Should format git commits section."""
-        ctx = self.MockHandoffContext(
+        ctx = HandoffContext(
             git_commits=[
                 {"hash": "abc123def456", "message": "feat: add feature"},
                 {"hash": "789xyz", "message": "fix: bug fix"},
@@ -106,7 +92,7 @@ class TestFormatHandoffAsMarkdown:
 
     def test_formats_git_status(self) -> None:
         """Should format git status section."""
-        ctx = self.MockHandoffContext(git_status="M src/file.py\nA new_file.py")
+        ctx = HandoffContext(git_status="M src/file.py\nA new_file.py")
         result = format_handoff_as_markdown(ctx)
 
         assert "### Uncommitted Changes" in result
@@ -114,7 +100,7 @@ class TestFormatHandoffAsMarkdown:
 
     def test_formats_files_modified(self) -> None:
         """Should format files modified section only for uncommitted files."""
-        ctx = self.MockHandoffContext(
+        ctx = HandoffContext(
             files_modified=["src/auth.py", "tests/test_auth.py"],
             git_status="M src/auth.py\nM tests/test_auth.py",
         )
@@ -126,7 +112,7 @@ class TestFormatHandoffAsMarkdown:
 
     def test_files_modified_filters_committed_files(self) -> None:
         """Should not show files that are no longer in git status (committed)."""
-        ctx = self.MockHandoffContext(
+        ctx = HandoffContext(
             files_modified=["src/auth.py", "tests/test_auth.py"],
             git_status="M tests/test_auth.py",
         )
@@ -138,7 +124,7 @@ class TestFormatHandoffAsMarkdown:
 
     def test_files_modified_not_shown_without_git_status(self) -> None:
         """Should not show files modified section if git_status is empty."""
-        ctx = self.MockHandoffContext(
+        ctx = HandoffContext(
             files_modified=["src/auth.py", "tests/test_auth.py"],
             git_status="",
         )
@@ -148,7 +134,7 @@ class TestFormatHandoffAsMarkdown:
 
     def test_formats_initial_goal(self) -> None:
         """Should format initial goal section when no task or task is active."""
-        ctx = self.MockHandoffContext(initial_goal="Implement user authentication")
+        ctx = HandoffContext(initial_goal="Implement user authentication")
         result = format_handoff_as_markdown(ctx)
 
         assert "### Original Goal" in result
@@ -156,7 +142,7 @@ class TestFormatHandoffAsMarkdown:
 
     def test_initial_goal_shown_for_ready_task(self) -> None:
         """Should show initial goal when task state is ready."""
-        ctx = self.MockHandoffContext(
+        ctx = HandoffContext(
             initial_goal="Fix the bug",
             active_gobby_task={
                 "id": "gt-123",
@@ -170,7 +156,7 @@ class TestFormatHandoffAsMarkdown:
 
     def test_initial_goal_shown_for_in_progress_task(self) -> None:
         """Should show initial goal when task state is in_progress."""
-        ctx = self.MockHandoffContext(
+        ctx = HandoffContext(
             initial_goal="Fix the bug",
             active_gobby_task={
                 "id": "gt-123",
@@ -184,7 +170,7 @@ class TestFormatHandoffAsMarkdown:
 
     def test_initial_goal_hidden_for_closed_task(self) -> None:
         """Should not show initial goal when task is closed."""
-        ctx = self.MockHandoffContext(
+        ctx = HandoffContext(
             initial_goal="Fix the bug",
             active_gobby_task={"id": "gt-123", "title": "Fix bug", "state": {"is_closed": True}},
         )
@@ -194,7 +180,7 @@ class TestFormatHandoffAsMarkdown:
 
     def test_initial_goal_hidden_for_review_task(self) -> None:
         """Should not show initial goal when task is in review."""
-        ctx = self.MockHandoffContext(
+        ctx = HandoffContext(
             initial_goal="Fix the bug",
             active_gobby_task={
                 "id": "gt-123",
@@ -208,7 +194,7 @@ class TestFormatHandoffAsMarkdown:
 
     def test_formats_recent_activity(self) -> None:
         """Should format recent activity section with max 5 items."""
-        ctx = self.MockHandoffContext(
+        ctx = HandoffContext(
             recent_activity=[
                 "Activity 1",
                 "Activity 2",
@@ -232,19 +218,19 @@ class TestFormatHandoffAsMarkdown:
 
     def test_formats_multiple_sections(self) -> None:
         """Should format multiple sections separated by double newlines."""
-        ctx = self.MockHandoffContext(
+        ctx = HandoffContext(
             initial_goal="Fix the bug",
             git_status="M file.py",
         )
         result = format_handoff_as_markdown(ctx)
 
+        assert "### Original Goal" in result
+        assert "### Uncommitted Changes" in result
         assert "\n\n" in result
-        sections = result.split("\n\n")
-        assert len(sections) == 2
 
     def test_prompt_template_parameter_is_ignored(self) -> None:
         """Should ignore prompt_template parameter (reserved for future)."""
-        ctx = self.MockHandoffContext(initial_goal="Goal")
+        ctx = HandoffContext(initial_goal="Goal")
         result = format_handoff_as_markdown(ctx, prompt_template="custom template")
 
         assert "### Original Goal" in result
@@ -252,7 +238,7 @@ class TestFormatHandoffAsMarkdown:
 
     def test_handles_empty_strings_in_context(self) -> None:
         """Should not include sections with empty strings."""
-        ctx = self.MockHandoffContext(
+        ctx = HandoffContext(
             initial_goal="",
             git_status="",
         )
@@ -263,7 +249,7 @@ class TestFormatHandoffAsMarkdown:
 
     def test_handles_commit_with_empty_hash(self) -> None:
         """Should handle commits with empty hash gracefully."""
-        ctx = self.MockHandoffContext(git_commits=[{"hash": "", "message": "test commit"}])
+        ctx = HandoffContext(git_commits=[{"hash": "", "message": "test commit"}])
         result = format_handoff_as_markdown(ctx)
 
         assert "### Commits This Session" in result
@@ -271,7 +257,7 @@ class TestFormatHandoffAsMarkdown:
 
     def test_active_skills_section_removed(self) -> None:
         """Active skills section was removed - redundant with _build_skill_injection_context()."""
-        ctx = self.MockHandoffContext(git_commits=[{"hash": "abc1234", "message": "test"}])
+        ctx = HandoffContext(git_commits=[{"hash": "abc1234", "message": "test"}])
         result = format_handoff_as_markdown(ctx)
 
         assert "### Active Skills" not in result

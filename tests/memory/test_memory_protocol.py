@@ -185,7 +185,7 @@ class TestMemoryRecord:
             created_at=datetime.now(UTC),
         )
         assert record.memory_type == "fact"  # Default type
-        assert record.tags == [] or record.tags is None
+        assert record.tags == []
         assert record.access_count == 0
 
     def test_noncanonical_memory_type_is_rejected(self) -> None:
@@ -235,10 +235,7 @@ class TestMemoryBackendProtocol:
 
     def test_protocol_is_runtime_checkable(self) -> None:
         """Test that protocol can be checked at runtime."""
-        # The protocol should be decorated with @runtime_checkable
-        assert hasattr(MemoryBackendProtocol, "__protocol_attrs__") or isinstance(
-            MemoryBackendProtocol, type
-        )
+        assert getattr(MemoryBackendProtocol, "_is_runtime_protocol", False) is True
 
     def test_protocol_defines_capabilities_method(self) -> None:
         """Test that protocol defines capabilities() method."""
@@ -273,7 +270,7 @@ class TestMemoryBackendProtocolCompliance:
     """Tests to verify a mock backend satisfies the protocol."""
 
     @pytest.fixture
-    def mock_backend(self):
+    def mock_backend(self) -> MemoryBackendProtocol:
         """Create a mock that satisfies the protocol."""
 
         class MockBackend:
@@ -340,14 +337,14 @@ class TestMemoryBackendProtocolCompliance:
             ) -> MemoryRecord | None:
                 return None
 
-        return MockBackend()
+        return cast(MemoryBackendProtocol, MockBackend())
 
-    def test_mock_satisfies_protocol(self, mock_backend) -> None:
+    def test_mock_satisfies_protocol(self, mock_backend: MemoryBackendProtocol) -> None:
         """Test that mock backend is recognized as implementing the protocol."""
         assert isinstance(mock_backend, MemoryBackendProtocol)
 
     @pytest.mark.asyncio
-    async def test_create_returns_record(self, mock_backend):
+    async def test_create_returns_record(self, mock_backend: MemoryBackendProtocol) -> None:
         """Test that create returns a typed MemoryRecord outcome."""
         result = await mock_backend.create("test content")
         assert isinstance(result, MemoryWriteResult)
@@ -356,39 +353,39 @@ class TestMemoryBackendProtocolCompliance:
         assert result.memory.content == "test content"
 
     @pytest.mark.asyncio
-    async def test_search_returns_list(self, mock_backend) -> None:
+    async def test_search_returns_list(self, mock_backend: MemoryBackendProtocol) -> None:
         """Test that search returns a list of records."""
         query = MemoryQuery(text="test")
         results = await mock_backend.search(query)
         assert isinstance(results, list)
 
     @pytest.mark.asyncio
-    async def test_get_returns_optional_record(self, mock_backend) -> None:
+    async def test_get_returns_optional_record(self, mock_backend: MemoryBackendProtocol) -> None:
         """Test that get returns Optional[MemoryRecord]."""
         record = await mock_backend.get("mock-id")
         assert record is None
 
     @pytest.mark.asyncio
-    async def test_update_returns_record(self, mock_backend) -> None:
+    async def test_update_returns_record(self, mock_backend: MemoryBackendProtocol) -> None:
         """Test that update returns MemoryRecord."""
         record = await mock_backend.update("mock-id", content="updated")
         assert isinstance(record, MemoryRecord)
         assert record.content == "updated"
 
     @pytest.mark.asyncio
-    async def test_delete_returns_bool(self, mock_backend) -> None:
+    async def test_delete_returns_bool(self, mock_backend: MemoryBackendProtocol) -> None:
         """Test that delete returns boolean."""
         result = await mock_backend.delete("mock-id")
         assert isinstance(result, bool)
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_list_memories_returns_list(self, mock_backend) -> None:
+    async def test_list_memories_returns_list(self, mock_backend: MemoryBackendProtocol) -> None:
         """Test that list_memories returns list[MemoryRecord]."""
         records = await mock_backend.list_memories()
         assert isinstance(records, list)
 
-    def test_capabilities_returns_set(self, mock_backend) -> None:
+    def test_capabilities_returns_set(self, mock_backend: MemoryBackendProtocol) -> None:
         """Test that capabilities returns a set of MemoryCapability."""
         caps = mock_backend.capabilities()
         assert isinstance(caps, set)

@@ -1588,10 +1588,14 @@ class TestProcessSessionTranscriptParsers:
             model=None,
         )
         manager.session_manager.update_context_usage.assert_called_once()
-        call = manager.session_manager.update_context_usage.call_args
-        snapshot = call.kwargs.get("snapshot") if call.kwargs else None
+        update_context_usage_call = manager.session_manager.update_context_usage.call_args
+        snapshot = (
+            update_context_usage_call.kwargs.get("snapshot")
+            if update_context_usage_call.kwargs
+            else None
+        )
         if snapshot is None:
-            snapshot = call.args[1]
+            snapshot = update_context_usage_call.args[1]
         assert snapshot.context_used_tokens == 104960
         assert snapshot.context_usage_ratio == pytest.approx(104960 / 258400)
 

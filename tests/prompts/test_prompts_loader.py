@@ -18,14 +18,14 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def synced_db(db):
+def synced_db(db: HubDatabase) -> HubDatabase:
     """Database with bundled prompts synced."""
     sync_bundled_prompts(db)
     return db
 
 
 @pytest.fixture
-def manager(db):
+def manager(db: HubDatabase) -> LocalPromptManager:
     """Create a prompt manager for seeding test data."""
     return LocalPromptManager(db)
 
@@ -33,7 +33,7 @@ def manager(db):
 class TestPromptLoader:
     """Tests for PromptLoader class."""
 
-    def test_load_from_database(self, synced_db) -> None:
+    def test_load_from_database(self, synced_db: HubDatabase) -> None:
         """Test loading prompt from database."""
         loader = PromptLoader(db=synced_db)
 
@@ -43,14 +43,16 @@ class TestPromptLoader:
         assert template.name == "expansion/system"
         assert "Task Expansion Compiler" in template.content
 
-    def test_load_file_not_found(self, db) -> None:
+    def test_load_file_not_found(self, db: HubDatabase) -> None:
         """Test that FileNotFoundError is raised for non-existent templates."""
         loader = PromptLoader(db=db)
 
         with pytest.raises(FileNotFoundError, match="Prompt template not found"):
             loader.load("completely/nonexistent/path")
 
-    def test_render_with_jinja2_variables(self, db, manager) -> None:
+    def test_render_with_jinja2_variables(
+        self, db: HubDatabase, manager: LocalPromptManager
+    ) -> None:
         """Test rendering template with Jinja2 variables."""
         manager.create_prompt(
             name="test/template",
@@ -65,7 +67,9 @@ class TestPromptLoader:
 
         assert result == "Hello, Claude!"
 
-    def test_render_raises_for_undefined_variable(self, db, manager) -> None:
+    def test_render_raises_for_undefined_variable(
+        self, db: HubDatabase, manager: LocalPromptManager
+    ) -> None:
         manager.create_prompt(
             name="test/undefined",
             content="Hello, {{ missing }}!",
@@ -78,7 +82,9 @@ class TestPromptLoader:
         with pytest.raises(UndefinedError):
             loader.render("test/undefined")
 
-    def test_render_uses_builtin_default_filter(self, db, manager) -> None:
+    def test_render_uses_builtin_default_filter(
+        self, db: HubDatabase, manager: LocalPromptManager
+    ) -> None:
         manager.create_prompt(
             name="test/jinja-default",
             content="{{ missing | default('fallback') }}|{{ empty | default('fallback', true) }}",
@@ -90,7 +96,7 @@ class TestPromptLoader:
 
         assert loader.render("test/jinja-default", {"empty": ""}) == "fallback|fallback"
 
-    def test_render_with_defaults(self, db, manager) -> None:
+    def test_render_with_defaults(self, db: HubDatabase, manager: LocalPromptManager) -> None:
         """Test rendering uses default values from variables."""
         manager.create_prompt(
             name="test/greet",
@@ -107,7 +113,7 @@ class TestPromptLoader:
 
         assert result == "Hello, World!"
 
-    def test_render_with_conditionals(self, db, manager) -> None:
+    def test_render_with_conditionals(self, db: HubDatabase, manager: LocalPromptManager) -> None:
         """Test rendering with Jinja2 conditionals."""
         manager.create_prompt(
             name="test/conditional",
@@ -126,7 +132,9 @@ class TestPromptLoader:
         assert "Base content." in result_true
         assert "Extra content here." in result_true
 
-    def test_precedence_global_over_bundled(self, db, manager) -> None:
+    def test_precedence_global_over_bundled(
+        self, db: HubDatabase, manager: LocalPromptManager
+    ) -> None:
         """Test that global templates take precedence over bundled."""
         manager.create_prompt(
             name="test/precedence",
@@ -144,7 +152,7 @@ class TestPromptLoader:
 
         assert template.content == "Global version"
 
-    def test_cache_behavior(self, synced_db) -> None:
+    def test_cache_behavior(self, synced_db: HubDatabase) -> None:
         """Test that templates are cached after first load."""
         loader = PromptLoader(db=synced_db)
 
@@ -158,7 +166,9 @@ class TestPromptLoader:
 
         assert template1 is not template3
 
-    def test_cache_invalidation_via_notifier(self, db, manager) -> None:
+    def test_cache_invalidation_via_notifier(
+        self, db: HubDatabase, manager: LocalPromptManager
+    ) -> None:
         """Test that cache is invalidated when notifier fires."""
         notifier = PromptChangeNotifier()
         loader = PromptLoader(db=db, notifier=notifier)
@@ -183,7 +193,7 @@ class TestPromptLoader:
         template2 = loader.load("test/cache")
         assert template2.content == "Updated"
 
-    def test_list_templates(self, synced_db) -> None:
+    def test_list_templates(self, synced_db: HubDatabase) -> None:
         """Test listing available templates."""
         loader = PromptLoader(db=synced_db)
 
@@ -196,7 +206,7 @@ class TestPromptLoader:
         expansion_templates = loader.list_templates(category="expansion")
         assert all(t.startswith("expansion/") for t in expansion_templates)
 
-    def test_exists(self, synced_db) -> None:
+    def test_exists(self, synced_db: HubDatabase) -> None:
         """Test checking if template exists."""
         loader = PromptLoader(db=synced_db)
 
@@ -329,7 +339,7 @@ class TestBundledTemplates:
             "import/search_fetch",
         ],
     )
-    def test_bundled_template_loads(self, synced_db, template_path: str) -> None:
+    def test_bundled_template_loads(self, synced_db: HubDatabase, template_path: str) -> None:
         """Test that each bundled template loads without error."""
         loader = PromptLoader(db=synced_db)
         template = loader.load(template_path)
@@ -337,7 +347,7 @@ class TestBundledTemplates:
         assert template is not None
         assert template.content != ""
 
-    def test_expansion_system_no_tdd_mode_in_prompt(self, synced_db) -> None:
+    def test_expansion_system_no_tdd_mode_in_prompt(self, synced_db: HubDatabase) -> None:
         """Test that expansion/system template does not include TDD mode."""
         loader = PromptLoader(db=synced_db)
 
@@ -348,7 +358,7 @@ class TestBundledTemplates:
         assert "TDD Mode Enabled" not in result_with_flag
         assert result == result_with_flag
 
-    def test_expansion_system_prefers_related_existing_tests(self, synced_db) -> None:
+    def test_expansion_system_prefers_related_existing_tests(self, synced_db: HubDatabase) -> None:
         loader = PromptLoader(db=synced_db)
 
         result = loader.render("expansion/system", {})

@@ -1,6 +1,7 @@
 """Tests for HubProvider ABC and related dataclasses."""
 
 from abc import ABC
+from typing import Any
 
 import pytest
 
@@ -50,7 +51,7 @@ class TestHubProvider:
             def provider_type(self) -> str:
                 return "complete"
 
-            async def discover(self) -> dict:
+            async def discover(self) -> dict[str, Any]:
                 return {}
 
             async def search(self, query: str, limit: int = 20) -> list[HubSkillInfo]:
@@ -80,7 +81,7 @@ class TestHubProvider:
             def provider_type(self) -> str:
                 return "test"
 
-            async def discover(self) -> dict:
+            async def discover(self) -> dict[str, Any]:
                 return {}
 
             async def search(self, query: str, limit: int = 20) -> list[HubSkillInfo]:
@@ -108,7 +109,7 @@ class TestHubProvider:
             def provider_type(self) -> str:
                 return "test"
 
-            async def discover(self) -> dict:
+            async def discover(self) -> dict[str, Any]:
                 return {}
 
             async def search(self, query: str, limit: int = 20) -> list[HubSkillInfo]:
@@ -184,6 +185,7 @@ class TestHubSkillInfo:
             description="A test",
             hub_name="hub",
             version="1.0.0",
+            score=0.42,
         )
         d = info.to_dict()
         assert d["slug"] == "test-skill"
@@ -191,6 +193,7 @@ class TestHubSkillInfo:
         assert d["description"] == "A test"
         assert d["hub_name"] == "hub"
         assert d["version"] == "1.0.0"
+        assert d["score"] == 0.42
 
 
 class TestHubSkillDetails:

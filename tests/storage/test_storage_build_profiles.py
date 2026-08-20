@@ -8,12 +8,13 @@ from typing import Any
 import pytest
 
 from gobby.storage.build_profiles import BuildProfileError, BuildProfileLoader, BuildProfileManager
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
 
 def test_bundled_build_profiles_sync_and_resolve(
-    temp_db: Any, sample_project: dict[str, Any]
+    temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     result = BuildProfileLoader().sync(temp_db)
     manager = BuildProfileManager(temp_db)
@@ -32,7 +33,7 @@ def test_bundled_build_profiles_sync_and_resolve(
 
 
 def test_project_profile_accepts_delivery_target_repo(
-    temp_db: Any, sample_project: dict[str, Any]
+    temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     manager = BuildProfileManager(temp_db)
     profile = manager.create(
@@ -53,7 +54,7 @@ def test_project_profile_accepts_delivery_target_repo(
 
 
 def test_project_profile_update_changes_delivery_fields(
-    temp_db: Any, sample_project: dict[str, Any]
+    temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     manager = BuildProfileManager(temp_db)
     manager.create(
@@ -83,7 +84,7 @@ def test_project_profile_update_changes_delivery_fields(
 
 
 def test_project_profile_update_clears_delivery_target_repo_with_empty_string(
-    temp_db: Any, sample_project: dict[str, Any]
+    temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     manager = BuildProfileManager(temp_db)
     manager.create(
@@ -110,7 +111,7 @@ def test_project_profile_update_clears_delivery_target_repo_with_empty_string(
 
 
 def test_project_profile_rejects_active_duplicate_before_insert(
-    temp_db: Any, sample_project: dict[str, Any]
+    temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     manager = BuildProfileManager(temp_db)
     manager.create(
@@ -138,7 +139,7 @@ def test_project_profile_rejects_active_duplicate_before_insert(
 
 
 def test_profile_from_row_logs_malformed_json(
-    temp_db: Any, sample_project: dict[str, Any], caplog: pytest.LogCaptureFixture
+    temp_db: HubDatabase, sample_project: dict[str, Any], caplog: pytest.LogCaptureFixture
 ) -> None:
     manager = BuildProfileManager(temp_db)
     profile = manager.create(
@@ -164,7 +165,7 @@ def test_profile_from_row_logs_malformed_json(
 
 
 def test_project_profile_rejects_invalid_delivery_target_repo(
-    temp_db: Any, sample_project: dict[str, Any]
+    temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     manager = BuildProfileManager(temp_db)
 
@@ -184,7 +185,7 @@ def test_project_profile_rejects_invalid_delivery_target_repo(
 
 
 def test_project_disabled_profile_blocks_installed_fallback(
-    temp_db: Any, sample_project: dict[str, Any]
+    temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     BuildProfileLoader().sync(temp_db)
     manager = BuildProfileManager(temp_db)
@@ -205,7 +206,7 @@ def test_project_disabled_profile_blocks_installed_fallback(
 
 
 def test_custom_profile_cannot_restore_without_bundled_counterpart(
-    temp_db: Any, sample_project: dict[str, Any]
+    temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     manager = BuildProfileManager(temp_db)
     manager.create(
@@ -224,7 +225,7 @@ def test_custom_profile_cannot_restore_without_bundled_counterpart(
 
 
 def test_bundled_profiles_default_plan_enhancement_rounds_to_zero(
-    temp_db: Any, sample_project: dict[str, Any]
+    temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     BuildProfileLoader().sync(temp_db)
     manager = BuildProfileManager(temp_db)
@@ -235,7 +236,7 @@ def test_bundled_profiles_default_plan_enhancement_rounds_to_zero(
 
 
 def test_project_profile_round_trips_plan_enhancement_rounds(
-    temp_db: Any, sample_project: dict[str, Any]
+    temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     manager = BuildProfileManager(temp_db)
     created = manager.create(
@@ -265,7 +266,7 @@ def test_project_profile_round_trips_plan_enhancement_rounds(
 
 
 def test_create_rejects_negative_plan_enhancement_rounds(
-    temp_db: Any, sample_project: dict[str, Any]
+    temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     manager = BuildProfileManager(temp_db)
     with pytest.raises(BuildProfileError, match="plan_enhancement_rounds"):
@@ -283,7 +284,7 @@ def test_create_rejects_negative_plan_enhancement_rounds(
 
 
 def test_resync_after_plan_enhancement_field_does_not_drift(
-    temp_db: Any, sample_project: dict[str, Any]
+    temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     # The new plan_enhancement_rounds column must not make unchanged bundled
     # rows look edited: a second sync should skip every profile.
@@ -299,7 +300,7 @@ def test_resync_after_plan_enhancement_field_does_not_drift(
     assert default.state == "bundled"
 
 
-def test_sync_skips_row_with_previous_shape_hash(temp_db: Any) -> None:
+def test_sync_skips_row_with_previous_shape_hash(temp_db: HubDatabase) -> None:
     BuildProfileLoader().sync(temp_db)
     manager = BuildProfileManager(temp_db)
     row = temp_db.fetchone(
@@ -329,7 +330,7 @@ def test_sync_skips_row_with_previous_shape_hash(temp_db: Any) -> None:
     assert unchanged["bundled_hash"] == previous_hash
 
 
-def test_enabled_toggle_does_not_change_bundled_drift_hashes(temp_db: Any) -> None:
+def test_enabled_toggle_does_not_change_bundled_drift_hashes(temp_db: HubDatabase) -> None:
     BuildProfileLoader().sync(temp_db)
     manager = BuildProfileManager(temp_db)
     row = temp_db.fetchone(
@@ -346,7 +347,9 @@ def test_enabled_toggle_does_not_change_bundled_drift_hashes(temp_db: Any) -> No
     assert manager.row_hash(toggled) == bundled_hash
 
 
-def test_sync_refresh_preserves_installed_enabled_toggle(temp_db: Any, tmp_path: Path) -> None:
+def test_sync_refresh_preserves_installed_enabled_toggle(
+    temp_db: HubDatabase, tmp_path: Path
+) -> None:
     registry = tmp_path / "build_profiles.yaml"
     registry.write_text(
         """version: 1

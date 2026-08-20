@@ -259,7 +259,7 @@ class TestLocalCloneManagerCreate:
     """Tests for LocalCloneManager.create method."""
 
     @pytest.fixture
-    def mock_db(self):
+    def mock_db(self) -> MagicMock:
         """Create mock database."""
         db = MagicMock()
         db.execute.return_value.fetchone.return_value = {
@@ -269,11 +269,11 @@ class TestLocalCloneManagerCreate:
         return db
 
     @pytest.fixture
-    def manager(self, mock_db):
+    def manager(self, mock_db: MagicMock) -> LocalCloneManager:
         """Create manager with mock database."""
         return LocalCloneManager(db=mock_db)
 
-    def test_create_minimal(self, manager, mock_db) -> None:
+    def test_create_minimal(self, manager: LocalCloneManager, mock_db: MagicMock) -> None:
         """Create clone with minimal required fields."""
         clone = manager.create(
             project_id="proj-abc",
@@ -291,7 +291,7 @@ class TestLocalCloneManagerCreate:
         assert str(uuid.UUID(clone.id)) == clone.id
         mock_db.execute.assert_called_once()
 
-    def test_create_detached(self, manager, mock_db) -> None:
+    def test_create_detached(self, manager: LocalCloneManager, mock_db: MagicMock) -> None:
         clone = manager.create(
             project_id="proj-abc",
             branch_name=None,
@@ -301,7 +301,7 @@ class TestLocalCloneManagerCreate:
         assert clone.branch_name is None
         assert mock_db.execute.call_args.args[1][3] is None
 
-    def test_create_with_all_fields(self, manager, mock_db) -> None:
+    def test_create_with_all_fields(self, manager: LocalCloneManager, mock_db: MagicMock) -> None:
         """Create clone with all optional fields."""
         mock_db.fetchone.return_value = {"machine_id": MACHINE_ID}
         clone = manager.create(
@@ -321,7 +321,9 @@ class TestLocalCloneManagerCreate:
         assert clone.remote_url == "https://github.com/user/repo.git"
         assert clone.cleanup_after == datetime(2026, 1, 23, 12, tzinfo=UTC)
 
-    def test_create_generates_unique_id(self, manager, mock_db) -> None:
+    def test_create_generates_unique_id(
+        self, manager: LocalCloneManager, mock_db: MagicMock
+    ) -> None:
         """Create generates unique clone ID."""
         clone1 = manager.create(
             project_id="proj-abc",
@@ -343,16 +345,16 @@ class TestLocalCloneManagerGet:
     """Tests for LocalCloneManager.get method."""
 
     @pytest.fixture
-    def mock_db(self):
+    def mock_db(self) -> MagicMock:
         """Create mock database."""
         return MagicMock()
 
     @pytest.fixture
-    def manager(self, mock_db):
+    def manager(self, mock_db: MagicMock) -> LocalCloneManager:
         """Create manager with mock database."""
         return LocalCloneManager(db=mock_db)
 
-    def test_get_existing(self, manager, mock_db) -> None:
+    def test_get_existing(self, manager: LocalCloneManager, mock_db: MagicMock) -> None:
         """Get returns Clone for existing ID."""
         mock_db.fetchone.return_value = {
             "id": "clone-123456",
@@ -377,7 +379,7 @@ class TestLocalCloneManagerGet:
         assert clone.id == "clone-123456"
         mock_db.fetchone.assert_called_once()
 
-    def test_get_nonexistent(self, manager, mock_db) -> None:
+    def test_get_nonexistent(self, manager: LocalCloneManager, mock_db: MagicMock) -> None:
         """Get returns None for nonexistent ID."""
         mock_db.fetchone.return_value = None
 
@@ -385,7 +387,9 @@ class TestLocalCloneManagerGet:
 
         assert clone is None
 
-    def test_get_hides_terminal_cleanup_record(self, manager, mock_db) -> None:
+    def test_get_hides_terminal_cleanup_record(
+        self, manager: LocalCloneManager, mock_db: MagicMock
+    ) -> None:
         """Terminal cleanup rows behave as removed from normal lookups."""
         mock_db.fetchone.return_value = _clone_row(status=CloneStatus.CLEANUP.value)
 
@@ -398,16 +402,16 @@ class TestLocalCloneManagerGetByTask:
     """Tests for LocalCloneManager.get_by_task method."""
 
     @pytest.fixture
-    def mock_db(self):
+    def mock_db(self) -> MagicMock:
         """Create mock database."""
         return MagicMock()
 
     @pytest.fixture
-    def manager(self, mock_db):
+    def manager(self, mock_db: MagicMock) -> LocalCloneManager:
         """Create manager with mock database."""
         return LocalCloneManager(db=mock_db)
 
-    def test_get_by_task_existing(self, manager, mock_db) -> None:
+    def test_get_by_task_existing(self, manager: LocalCloneManager, mock_db: MagicMock) -> None:
         """Get clone linked to task."""
         mock_db.fetchone.return_value = {
             "id": "clone-123456",
@@ -431,7 +435,7 @@ class TestLocalCloneManagerGetByTask:
         assert clone is not None
         assert clone.task_id == "gt-task123"
 
-    def test_get_by_task_nonexistent(self, manager, mock_db) -> None:
+    def test_get_by_task_nonexistent(self, manager: LocalCloneManager, mock_db: MagicMock) -> None:
         """Returns None if no clone linked to task."""
         mock_db.fetchone.return_value = None
 
@@ -493,16 +497,16 @@ class TestLocalCloneManagerList:
     """Tests for LocalCloneManager.list_clones method."""
 
     @pytest.fixture
-    def mock_db(self):
+    def mock_db(self) -> MagicMock:
         """Create mock database."""
         return MagicMock()
 
     @pytest.fixture
-    def manager(self, mock_db):
+    def manager(self, mock_db: MagicMock) -> LocalCloneManager:
         """Create manager with mock database."""
         return LocalCloneManager(db=mock_db)
 
-    def test_list_all(self, manager, mock_db) -> None:
+    def test_list_all(self, manager: LocalCloneManager, mock_db: MagicMock) -> None:
         """List returns all clones."""
         mock_db.fetchall.return_value = [
             {
@@ -545,7 +549,7 @@ class TestLocalCloneManagerList:
         assert clones[0].id == "clone-1"
         assert clones[1].id == "clone-2"
 
-    def test_list_with_filters(self, manager, mock_db) -> None:
+    def test_list_with_filters(self, manager: LocalCloneManager, mock_db: MagicMock) -> None:
         """List with project_id and status filters."""
         mock_db.fetchall.return_value = []
 
@@ -557,7 +561,9 @@ class TestLocalCloneManagerList:
         assert "project_id = %s" in query
         assert "status = %s" in query
 
-    def test_list_excludes_terminal_cleanup_records(self, manager, mock_db) -> None:
+    def test_list_excludes_terminal_cleanup_records(
+        self, manager: LocalCloneManager, mock_db: MagicMock
+    ) -> None:
         """Normal clone listings never expose terminal cleanup rows."""
         mock_db.fetchall.return_value = []
 
@@ -572,16 +578,16 @@ class TestLocalCloneManagerUpdate:
     """Tests for LocalCloneManager.update method."""
 
     @pytest.fixture
-    def mock_db(self):
+    def mock_db(self) -> MagicMock:
         """Create mock database."""
         return MagicMock()
 
     @pytest.fixture
-    def manager(self, mock_db):
+    def manager(self, mock_db: MagicMock) -> LocalCloneManager:
         """Create manager with mock database."""
         return LocalCloneManager(db=mock_db)
 
-    def test_update_status(self, manager, mock_db) -> None:
+    def test_update_status(self, manager: LocalCloneManager, mock_db: MagicMock) -> None:
         """Update clone status."""
         mock_db.fetchone.return_value = _clone_row(status="stale")
 
@@ -593,7 +599,7 @@ class TestLocalCloneManagerUpdate:
         assert "UPDATE clones SET" in query
         assert "status = %s" in query
 
-    def test_update_agent_session(self, manager, mock_db) -> None:
+    def test_update_agent_session(self, manager: LocalCloneManager, mock_db: MagicMock) -> None:
         """Update clone agent session."""
         mock_db.fetchone.return_value = _clone_row(agent_session_id="sess-new")
 
@@ -604,7 +610,7 @@ class TestLocalCloneManagerUpdate:
         query = call_args[0][0]
         assert "agent_session_id = %s" in query
 
-    def test_update_last_sync(self, manager, mock_db) -> None:
+    def test_update_last_sync(self, manager: LocalCloneManager, mock_db: MagicMock) -> None:
         """Update clone last_sync_at."""
         mock_db.fetchone.return_value = _clone_row(last_sync_at="2026-01-22T12:00:00+00:00")
 
@@ -619,16 +625,16 @@ class TestLocalCloneManagerDelete:
     """Tests for LocalCloneManager.delete method."""
 
     @pytest.fixture
-    def mock_db(self):
+    def mock_db(self) -> MagicMock:
         """Create mock database."""
         return MagicMock()
 
     @pytest.fixture
-    def manager(self, mock_db):
+    def manager(self, mock_db: MagicMock) -> LocalCloneManager:
         """Create manager with mock database."""
         return LocalCloneManager(db=mock_db)
 
-    def test_delete(self, manager, mock_db) -> None:
+    def test_delete(self, manager: LocalCloneManager, mock_db: MagicMock) -> None:
         """Delete removes clone record."""
         # Mock cursor with rowcount
         mock_cursor = MagicMock()
@@ -649,16 +655,16 @@ class TestLocalCloneManagerStatusMethods:
     """Tests for LocalCloneManager status helper methods."""
 
     @pytest.fixture
-    def mock_db(self):
+    def mock_db(self) -> MagicMock:
         """Create mock database."""
         return MagicMock()
 
     @pytest.fixture
-    def manager(self, mock_db):
+    def manager(self, mock_db: MagicMock) -> LocalCloneManager:
         """Create manager with mock database."""
         return LocalCloneManager(db=mock_db)
 
-    def test_mark_syncing(self, manager, mock_db) -> None:
+    def test_mark_syncing(self, manager: LocalCloneManager, mock_db: MagicMock) -> None:
         """mark_syncing updates status to syncing."""
         mock_db.fetchone.return_value = _clone_row(status="syncing")
 
@@ -669,7 +675,7 @@ class TestLocalCloneManagerStatusMethods:
         params = call_args[0][1]
         assert "syncing" in params
 
-    def test_mark_stale(self, manager, mock_db) -> None:
+    def test_mark_stale(self, manager: LocalCloneManager, mock_db: MagicMock) -> None:
         """mark_stale updates status to stale."""
         mock_db.fetchone.return_value = _clone_row(status="stale")
 
@@ -680,7 +686,7 @@ class TestLocalCloneManagerStatusMethods:
         params = call_args[0][1]
         assert "stale" in params
 
-    def test_mark_cleanup(self, manager, mock_db) -> None:
+    def test_mark_cleanup(self, manager: LocalCloneManager, mock_db: MagicMock) -> None:
         """mark_cleanup updates status to cleanup."""
         mock_db.fetchone.return_value = _clone_row(status="cleanup")
 
@@ -691,7 +697,7 @@ class TestLocalCloneManagerStatusMethods:
         params = call_args[0][1]
         assert "cleanup" in params
 
-    def test_record_sync(self, manager, mock_db) -> None:
+    def test_record_sync(self, manager: LocalCloneManager, mock_db: MagicMock) -> None:
         """record_sync updates status to active and sets last_sync_at."""
         mock_db.fetchone.return_value = {
             "id": "clone-123",
@@ -719,7 +725,7 @@ class TestLocalCloneManagerStatusMethods:
         assert "status = %s" in query
         assert "last_sync_at = %s" in query
 
-    def test_claim(self, manager, mock_db) -> None:
+    def test_claim(self, manager: LocalCloneManager, mock_db: MagicMock) -> None:
         """claim sets agent_session_id."""
         mock_db.execute.return_value.rowcount = 1
         mock_db.fetchone.return_value = {
@@ -755,7 +761,9 @@ class TestLocalCloneManagerStatusMethods:
             CloneStatus.CLEANUP.value,
         )
 
-    def test_claim_returns_none_when_owned_by_another_session(self, manager, mock_db) -> None:
+    def test_claim_returns_none_when_owned_by_another_session(
+        self, manager: LocalCloneManager, mock_db: MagicMock
+    ) -> None:
         """claim reports a conditional update that matched no rows."""
         mock_db.execute.return_value.rowcount = 0
         mock_db.fetchone.return_value = {"machine_id": MACHINE_ID}
@@ -946,7 +954,7 @@ class TestLocalCloneManagerRegisterAdopted:
                 remote_url=None,
             )
 
-    def test_release(self, manager, mock_db) -> None:
+    def test_release(self, manager: LocalCloneManager, mock_db: MagicMock) -> None:
         """release clears agent_session_id."""
         mock_db.fetchone.return_value = {
             "id": "clone-123",
@@ -1138,16 +1146,16 @@ class TestLocalCloneManagerCountByStatus:
     """Tests for LocalCloneManager.count_by_status method."""
 
     @pytest.fixture
-    def mock_db(self):
+    def mock_db(self) -> MagicMock:
         """Create mock database."""
         return MagicMock()
 
     @pytest.fixture
-    def manager(self, mock_db):
+    def manager(self, mock_db: MagicMock) -> LocalCloneManager:
         """Create manager with mock database."""
         return LocalCloneManager(db=mock_db)
 
-    def test_count_by_status(self, manager, mock_db) -> None:
+    def test_count_by_status(self, manager: LocalCloneManager, mock_db: MagicMock) -> None:
         """count_by_status returns counts grouped by status."""
         mock_db.fetchall.return_value = [
             {"status": "active", "count": 3},
@@ -1165,7 +1173,7 @@ class TestLocalCloneManagerCountByStatus:
         params = call_args[0][1]
         assert params == ("proj-abc", MACHINE_ID, CloneStatus.CLEANUP.value)
 
-    def test_count_by_status_empty(self, manager, mock_db) -> None:
+    def test_count_by_status_empty(self, manager: LocalCloneManager, mock_db: MagicMock) -> None:
         """count_by_status returns empty dict when no clones."""
         mock_db.fetchall.return_value = []
 
@@ -1178,16 +1186,18 @@ class TestLocalCloneManagerFindStale:
     """Tests for LocalCloneManager.find_stale method."""
 
     @pytest.fixture
-    def mock_db(self):
+    def mock_db(self) -> MagicMock:
         """Create mock database."""
         return MagicMock()
 
     @pytest.fixture
-    def manager(self, mock_db):
+    def manager(self, mock_db: MagicMock) -> LocalCloneManager:
         """Create manager with mock database."""
         return LocalCloneManager(db=mock_db)
 
-    def test_find_stale_returns_clones(self, manager, mock_db) -> None:
+    def test_find_stale_returns_clones(
+        self, manager: LocalCloneManager, mock_db: MagicMock
+    ) -> None:
         """find_stale returns stale clones."""
         mock_db.fetchall.return_value = [
             {
@@ -1221,7 +1231,9 @@ class TestLocalCloneManagerFindStale:
         assert "updated_at < %s" in query
         assert "LIMIT %s" in query
 
-    def test_find_stale_includes_interrupted_syncs(self, manager, mock_db) -> None:
+    def test_find_stale_includes_interrupted_syncs(
+        self, manager: LocalCloneManager, mock_db: MagicMock
+    ) -> None:
         """find_stale includes syncing clones older than the threshold."""
         mock_db.fetchall.return_value = [_clone_row(status="syncing")]
 
@@ -1232,7 +1244,7 @@ class TestLocalCloneManagerFindStale:
         assert params[1] == require_machine_id()
         assert params[2:4] == ("active", "syncing")
 
-    def test_find_stale_empty(self, manager, mock_db) -> None:
+    def test_find_stale_empty(self, manager: LocalCloneManager, mock_db: MagicMock) -> None:
         """find_stale returns empty list when no stale clones."""
         mock_db.fetchall.return_value = []
 
@@ -1240,7 +1252,7 @@ class TestLocalCloneManagerFindStale:
 
         assert result == []
 
-    def test_find_stale_custom_params(self, manager, mock_db) -> None:
+    def test_find_stale_custom_params(self, manager: LocalCloneManager, mock_db: MagicMock) -> None:
         """find_stale passes custom hours and limit."""
         mock_db.fetchall.return_value = []
 
@@ -1260,16 +1272,16 @@ class TestLocalCloneManagerCleanupStale:
     """Tests for LocalCloneManager.cleanup_stale method."""
 
     @pytest.fixture
-    def mock_db(self):
+    def mock_db(self) -> MagicMock:
         """Create mock database."""
         return MagicMock()
 
     @pytest.fixture
-    def manager(self, mock_db):
+    def manager(self, mock_db: MagicMock) -> LocalCloneManager:
         """Create manager with mock database."""
         return LocalCloneManager(db=mock_db)
 
-    def test_cleanup_stale_dry_run(self, manager, mock_db) -> None:
+    def test_cleanup_stale_dry_run(self, manager: LocalCloneManager, mock_db: MagicMock) -> None:
         """cleanup_stale in dry_run returns stale clones without updating."""
         mock_db.fetchall.return_value = [
             {
@@ -1297,7 +1309,7 @@ class TestLocalCloneManagerCleanupStale:
         # In dry_run, only fetchall is called (from find_stale), no execute for updates
         mock_db.execute.assert_not_called()
 
-    def test_cleanup_stale_actual(self, manager, mock_db) -> None:
+    def test_cleanup_stale_actual(self, manager: LocalCloneManager, mock_db: MagicMock) -> None:
         """cleanup_stale marks clones as stale when dry_run=False."""
         # find_stale fetchall
         mock_db.fetchall.return_value = [
@@ -1343,7 +1355,7 @@ class TestLocalCloneManagerCleanupStale:
         # execute was called (from mark_stale -> update)
         mock_db.execute.assert_called()
 
-    def test_cleanup_stale_empty(self, manager, mock_db) -> None:
+    def test_cleanup_stale_empty(self, manager: LocalCloneManager, mock_db: MagicMock) -> None:
         """cleanup_stale returns empty list when no stale clones."""
         mock_db.fetchall.return_value = []
 
@@ -1357,16 +1369,16 @@ class TestLocalCloneManagerUpdateValidation:
     """Tests for LocalCloneManager.update field validation."""
 
     @pytest.fixture
-    def mock_db(self):
+    def mock_db(self) -> MagicMock:
         """Create mock database."""
         return MagicMock()
 
     @pytest.fixture
-    def manager(self, mock_db):
+    def manager(self, mock_db: MagicMock) -> LocalCloneManager:
         """Create manager with mock database."""
         return LocalCloneManager(db=mock_db)
 
-    def test_update_no_fields(self, manager, mock_db) -> None:
+    def test_update_no_fields(self, manager: LocalCloneManager, mock_db: MagicMock) -> None:
         """Update with no fields returns existing clone."""
         mock_db.fetchone.return_value = {
             "id": "clone-123",
