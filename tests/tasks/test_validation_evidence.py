@@ -40,6 +40,22 @@ def test_repeated_prefixes_are_aliased_without_dropping_paths() -> None:
         assert f"- {rendered_path} (+1/-0)" in evidence.text
 
 
+def test_oversized_shared_prefix_collapses_to_directory_summary() -> None:
+    prefix = "crates/gterminal/vendor/libghostty-vt/src/"
+    paths = [f"{prefix}file-{index:04d}.zig" for index in range(400)]
+    extra = "Cargo.toml"
+    evidence = build_close_diff_evidence(
+        "".join(_added_file_diff(path) for path in [*paths, extra]),
+        criteria="file: crates/gterminal/build.rs",
+    )
+
+    assert evidence.manifest_count == 401
+    assert evidence.manifest_chars <= 5_500
+    assert f"{prefix}** (400 files" in evidence.text
+    assert "- Cargo.toml (+1/-0)" in evidence.text
+    assert f"- {prefix}file-0000.zig" not in evidence.text
+
+
 def test_manifest_still_fails_when_exact_paths_cannot_fit() -> None:
     paths = [f"unique-file-{index:03d}-{'x' * 80}.txt" for index in range(100)]
 

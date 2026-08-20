@@ -278,3 +278,8 @@ gobby_yc_demo_script.md
 
 # Impeccable critique snapshots and detector config (written by the vendored detector/critique scripts)
 .impeccable/
+
+# Generated libghostty-vt Zig build artifacts
+crates/gterminal/vendor/libghostty-vt/zig-out/
+crates/gterminal/vendor/libghostty-vt/.zig-cache/
+crates/gterminal/vendor/libghostty-vt/zig-pkg/

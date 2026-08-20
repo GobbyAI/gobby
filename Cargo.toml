@@ -17,3 +17,6 @@ opt-level = "z"
 
 [profile.release.package.gobby-wiki]
 opt-level = 3
+
+[patch.crates-io]
+portable-pty = { path = "crates/gterminal/vendor/portable-pty" }

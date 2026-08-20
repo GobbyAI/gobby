@@ -154,7 +154,91 @@ def _build_file_manifest(
         if len(manifest) <= max_chars:
             return manifest
 
-    return manifest
+    return _collapse_overflow_prefixes(
+        files,
+        displays,
+        aliases,
+        additions=additions,
+        deletions=deletions,
+        max_chars=max_chars,
+    )
+
+
+def _largest_remaining_prefix(
+    files: list[ChangedFileEvidence],
+    remaining: list[int],
+) -> tuple[str, list[int]] | None:
+    counts: dict[str, list[int]] = {}
+    for index in remaining:
+        components = files[index].path.split("/")[:-1]
+        for depth in range(1, len(components) + 1):
+            prefix = "/".join(components[:depth]) + "/"
+            counts.setdefault(prefix, []).append(index)
+    candidates = [(prefix, members) for prefix, members in counts.items() if len(members) >= 2]
+    if not candidates:
+        return None
+    prefix, members = max(candidates, key=lambda item: (len(item[1]), len(item[0])))
+    return prefix, members
+
+
+def _collapse_overflow_prefixes(
+    files: list[ChangedFileEvidence],
+    displays: list[str],
+    aliases: list[tuple[str, str]],
+    *,
+    additions: int,
+    deletions: int,
+    max_chars: int,
+) -> str:
+    remaining = list(range(len(files)))
+    summaries: list[str] = []
+    while True:
+        manifest = _format_collapsed_manifest(
+            files,
+            displays,
+            aliases,
+            remaining,
+            summaries,
+            additions,
+            deletions,
+        )
+        if len(manifest) <= max_chars:
+            return manifest
+        collapse = _largest_remaining_prefix(files, remaining)
+        if collapse is None:
+            return manifest
+        prefix, members = collapse
+        member_set = set(members)
+        remaining = [index for index in remaining if index not in member_set]
+        added = sum(files[index].additions for index in members)
+        removed = sum(files[index].deletions for index in members)
+        summaries.append(f"- {prefix}** ({len(members)} files, +{added}/-{removed})")
+
+
+def _format_collapsed_manifest(
+    files: list[ChangedFileEvidence],
+    displays: list[str],
+    aliases: list[tuple[str, str]],
+    remaining: list[int],
+    summaries: list[str],
+    additions: int,
+    deletions: int,
+) -> str:
+    lines = [f"Changed files ({len(files)} total, +{additions}/-{deletions}):"]
+    used_aliases = [
+        (alias, prefix)
+        for alias, prefix in aliases
+        if any(displays[index].startswith(alias) for index in remaining)
+    ]
+    if used_aliases:
+        lines.append("Path aliases (exact prefixes):")
+        lines.extend(f"- {alias} = {prefix}" for alias, prefix in used_aliases)
+    lines.extend(summaries)
+    lines.extend(
+        f"- {displays[index]} (+{files[index].additions}/-{files[index].deletions})"
+        for index in remaining
+    )
+    return "\n".join(lines)
 
 
 def _format_file_manifest(
