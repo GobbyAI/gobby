@@ -139,10 +139,17 @@ def resolve_clear_continuation(
              WHERE s.source = %s
                AND s.status <> 'deleted'
                AND jsonb_typeof(sv.variables -> %s) = 'object'
-             ORDER BY s.created_at DESC, s.id DESC
+               AND (sv.variables -> %s ->> 'consumed_by') IS NULL
+             ORDER BY (sv.variables -> %s ->> 'created_at') DESC, s.id DESC
              LIMIT %s
             """,
-            (source, CLEAR_ATTEMPT_VARIABLE, MAX_CLEAR_CONTINUATION_CANDIDATES),
+            (
+                source,
+                CLEAR_ATTEMPT_VARIABLE,
+                CLEAR_ATTEMPT_VARIABLE,
+                CLEAR_ATTEMPT_VARIABLE,
+                MAX_CLEAR_CONTINUATION_CANDIDATES,
+            ),
         )
     except Exception:
         logger.warning("Failed resolving clear continuation", exc_info=True)

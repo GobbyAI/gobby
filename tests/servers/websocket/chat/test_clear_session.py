@@ -295,7 +295,7 @@ class _CommitMixin(ChatSessionMixin):
         self.web_chat_runtime_manager: Any = MagicMock()
         self.config_runtime: Any = None
         self.event_handlers: Any = MagicMock()
-        self._ended: list[tuple[str, SessionEndReason | None]] = []
+        self._ended: list[tuple[str, SessionEndReason | None, str | None]] = []
 
     async def _fire_lifecycle(self, cid: str, event_type: str, data: object) -> None:
         return None
@@ -306,7 +306,9 @@ class _CommitMixin(ChatSessionMixin):
         *,
         reason: SessionEndReason | None = None,
     ) -> None:
-        self._ended.append((conversation_id, reason))
+        # Record the db id the lifecycle handler would resolve from the live wrapper.
+        live = self._chat_sessions[conversation_id]
+        self._ended.append((conversation_id, reason, live.db_session_id))
 
 
 class TestCommitClearSuccessor:
@@ -353,7 +355,7 @@ class TestCommitClearSuccessor:
         assert session.db_session_id == "succ-db"
         assert session.seq_num == 99
         assert session.message_index == 0
-        assert mixin._ended == [("conv-1", SessionEndReason.CLEAR)]
+        assert mixin._ended == [("conv-1", SessionEndReason.CLEAR, "pred-db")]
         assert mixin.web_chat_runtime_manager.create_session.call_count == 0
         session._on_mode_persist("code")
         assert persist_targets == ["succ-db"]
@@ -382,54 +384,6 @@ class TestCommitClearSuccessor:
         assert session.db_session_id == "pred-db"
         assert session.seq_num == 11
         assert mixin._ended == []
-
-
-class TestCreateChatSessionInnerForceNew:
-    @pytest.mark.asyncio
-    async def test_force_new_does_not_reuse_existing_row_or_start_second_backend(self) -> None:
-        mixin = _CommitMixin()
-        existing = MagicMock()
-        existing.id = "pred-db"
-        existing.seq_num = 11
-        existing.session_type = "web_chat"
-        existing.source = "claude"
-        existing.project_id = "proj-1"
-        existing.external_id = "conv-1"
-        existing.usage_output_tokens = 40
-        existing.chat_mode = "code"
-        existing.approved_tools_json = None
-        mixin.session_manager.get.return_value = existing
-        created = MagicMock()
-        created.id = "succ-db"
-        created.seq_num = 12
-        mixin.session_manager.create_web_chat_session.return_value = created
-        live = _live_session()
-        live.start = AsyncMock()
-        mixin.web_chat_runtime_manager.create_session.return_value = MagicMock()
-
-        session = await mixin._create_chat_session_inner(
-            "conv-1",
-            model="claude-opus",
-            provider="claude",
-            force_new=True,
-            reuse_session=live,
-        )
-
-        assert session is live
-        assert live.db_session_id == "succ-db"
-        assert live.seq_num == 12
-        assert live.db_session_id != existing.id
-        mixin.web_chat_runtime_manager.create_session.assert_not_called()
-        live.start.assert_not_awaited()
-        mixin.session_manager.create_web_chat_session.assert_called_once()
-        external_id = mixin.session_manager.create_web_chat_session.call_args.kwargs.get(
-            "external_id"
-        )
-        if external_id is None:
-            # create_web_chat_session mints a bootstrap id internally
-            pass
-        else:
-            assert external_id != "conv-1"
 
 
 def _web_chat_row(sessions: SessionManager, project_id: str, label: str) -> Any:

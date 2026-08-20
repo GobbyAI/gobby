@@ -392,7 +392,6 @@ async def _clear_web_chat_self(
     try:
         result = await _clear_live_web_chat_fallback(
             web_chat_session_registry,
-            handoff,
             *session_ids,
             attempt_id=attempt_id,
             continuation_prompt=build_clear_self_continue_prompt(predecessor_ref=predecessor_id),

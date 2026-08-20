@@ -13,6 +13,7 @@ import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions._handoff import register_handoff_tools
+from gobby.sessions import clear_continuation
 from gobby.sessions.clear_continuation import (
     CLEAR_HANDOFF_TTL_SECONDS,
     ClearContinuationResolution,
@@ -177,6 +178,48 @@ def test_resolve_binds_trusted_predecessor_hint(session_db: HubDatabase) -> None
         terminal_context=TERMINAL,
         chat_context=None,
     )
+
+    resolved = _resolve(session_db, terminal_context=None, predecessor_hint=PRED_ID)
+
+    assert resolved.predecessor is not None
+    assert resolved.predecessor.id == PRED_ID
+    assert resolved.attempt_id == ATTEMPT_ID
+    assert resolved.degrade_reason is None
+
+
+def test_resolve_consumed_markers_do_not_starve_candidate_window(
+    session_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(clear_continuation, "MAX_CLEAR_CONTINUATION_CANDIDATES", 3)
+    stage_clear_attempt(
+        session_db,
+        PRED_ID,
+        attempt_id=ATTEMPT_ID,
+        terminal_context=TERMINAL,
+        chat_context=None,
+    )
+    for index in range(3):
+        newer_id = str(uuid4())
+        _insert_session(
+            session_db,
+            newer_id,
+            external_id=f"consumed-predecessor-{index}",
+            machine_id=MACHINE_ID,
+            project_id=PROJECT_ID,
+        )
+        stage_clear_attempt(
+            session_db,
+            newer_id,
+            attempt_id=f"consumed-attempt-{index}",
+            terminal_context=None,
+            chat_context=None,
+        )
+        session_db.execute(
+            "UPDATE session_variables SET variables = "
+            "jsonb_set(variables, '{clear_attempt,consumed_by}', '\"x\"') "
+            "WHERE session_id = %s",
+            (newer_id,),
+        )
 
     resolved = _resolve(session_db, terminal_context=None, predecessor_hint=PRED_ID)
 

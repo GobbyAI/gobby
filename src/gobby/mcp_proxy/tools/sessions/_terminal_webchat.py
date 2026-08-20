@@ -77,13 +77,11 @@ async def _compact_live_web_chat_fallback(
 
 async def _clear_live_web_chat_fallback(
     web_chat_session_registry: WebChatSessionRegistry | None,
-    handoff: str,
     *session_ids: str | None,
     attempt_id: str,
     continuation_prompt: str,
 ) -> dict[str, Any] | None:
     """Clear a live web-chat session after the caller has staged the attempt."""
-    _ = handoff
     if web_chat_session_registry is None:
         return None
 

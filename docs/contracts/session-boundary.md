@@ -239,11 +239,13 @@ predecessor termination happens only after backend `clear_context` succeeds.
    in `WebSocketServer.__init__`. One hub transaction expires the predecessor
    (`reason='clear'`), inserts a force-new successor
    (`external_id` `web-chat-bootstrap:{uuid}` so conversation identity cannot
-   be reused), writes parentage, and seeds handoff variables. `SESSION_END`
-   fan-out runs only after that commit. Commit failure leaves the predecessor
-   live serving the already-cleared backend and fails the attempt (degrade,
-   never wedge). After commit: claim transfer, rebind the live wrapper
-   (`db_session_id`, seq, persist callbacks) to the successor, then send the
+   be reused), writes parentage, and seeds handoff variables.
+   `SESSION_END(reason='clear')` fan-out for the **predecessor** runs only
+   after that commit and before the live wrapper is rebound, so the event
+   carries the predecessor id. Commit failure leaves the predecessor live
+   serving the already-cleared backend and fails the attempt (degrade, never
+   wedge). After fan-out: rebind the live wrapper (`db_session_id`, seq,
+   persist callbacks) to the successor, transfer claims, then send the
    continuation prompt. Exactly one backend process remains.
 
 Split commit into separately invoked terminate-then-create hooks is forbidden:
@@ -265,6 +267,7 @@ sequenceDiagram
     Backend-->>Registry: true
     Registry->>Hub: expire predecessor insert successor
     Hub-->>Registry: successor row
+    Registry->>Registry: SESSION_END(clear) for predecessor
     Registry->>Registry: rebind live wrapper
     Registry-->>Tool: cleared true successor_id
   end

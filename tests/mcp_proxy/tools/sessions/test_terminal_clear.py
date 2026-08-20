@@ -404,10 +404,13 @@ class TestClearSelfWebChatPath:
             _compact_live_web_chat_fallback,
         )
 
-        clear_params = list(inspect.signature(_clear_live_web_chat_fallback).parameters)
+        clear_sig = inspect.signature(_clear_live_web_chat_fallback)
+        clear_params = list(clear_sig.parameters)
         compact_params = list(inspect.signature(_compact_live_web_chat_fallback).parameters)
         assert clear_params[0] == "web_chat_session_registry"
-        assert clear_params[1] == "handoff"
+        assert "handoff" not in clear_params
+        assert clear_sig.parameters["attempt_id"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert clear_sig.parameters["continuation_prompt"].kind is inspect.Parameter.KEYWORD_ONLY
         assert compact_params[0] == "web_chat_session_registry"
 
     def test_live_web_chat_clear_self_clears_backend_via_registry(

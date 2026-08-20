@@ -28,7 +28,7 @@ from gobby.utils.json_helpers import json_dumps
 from gobby.utils.machine_id import get_machine_id
 from gobby.workflows.state_manager import SessionVariableManager
 
-from ._clear_commit import bind_force_new_reuse_session, rebind_live_clear_successor
+from ._clear_commit import rebind_live_clear_successor
 from ._session_binding import (
     _build_agent_identity_preamble,
     _first_configured_chat_binding,
@@ -247,8 +247,10 @@ class ChatSessionMixin:
             return {"ok": False, "reason": "clear successor commit failed"}
         if successor is None:
             return {"ok": False, "reason": "clear successor commit returned no row"}
-        rebind_live_clear_successor(self, session, successor)
+        # Fan out while the live wrapper still resolves to the predecessor: the
+        # SESSION_END handler reads db_session_id from the wrapper.
         await self._fire_session_end(conversation_id, reason=SessionEndReason.CLEAR)
+        rebind_live_clear_successor(self, session, successor)
         self._transfer_clear_claims(predecessor_id, successor.id)
         return {
             "ok": True,
@@ -281,24 +283,13 @@ class ChatSessionMixin:
         resume_session_id: str | None = None,
         provider: str | None = None,
         reasoning_effort: str | None = None,
-        *,
-        force_new: bool = False,
-        reuse_session: ChatSessionProtocol | None = None,
     ) -> ChatSessionProtocol:
         """Inner implementation — must be called under the per-conversation lock from _session_create_locks."""
-        if force_new and reuse_session is not None:
-            return await bind_force_new_reuse_session(
-                self,
-                reuse_session,
-                conversation_id,
-                model=model,
-                provider=provider,
-            )
         session_key = conversation_id
         session_manager = getattr(self, "session_manager", None)
         existing_db_session = None
         existing_terminal_resume = False
-        if session_manager and not force_new:
+        if session_manager:
             try:
                 candidate = await run_db(self, session_manager.get, session_key)
                 if candidate:
