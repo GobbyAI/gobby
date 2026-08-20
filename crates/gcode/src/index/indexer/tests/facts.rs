@@ -221,7 +221,9 @@ fn inheritance_pending_status_keeps_graph_only_owner() {
 mod serial_db {
     use super::super::super::IndexOutcome;
     use super::super::super::file::write_parsed_file_facts;
-    use super::super::super::local_imports::resolve_local_import_inheritance;
+    use super::super::super::local_imports::{
+        resolve_local_import_inheritance, resolve_project_local_import_inheritance,
+    };
     use super::super::super::sink::PostgresCodeFactSink;
     use crate::db;
     use crate::index::api;
@@ -306,9 +308,12 @@ mod serial_db {
                 source: b"class Base:\n    pass\n",
             },
         );
-        let owners =
-            resolve_local_import_inheritance(&mut conn, &project_id, &["pkg/impl.py".to_string()])
-                .expect("promote python reexport");
+        let owners = resolve_local_import_inheritance(
+            &mut conn,
+            &project_id,
+            &["pkg/__init__.py".to_string()],
+        )
+        .expect("promote python reexport");
         assert_eq!(owners, vec!["pkg/derived.py".to_string()]);
         let after = inheritance_row(&mut conn, &project_id);
         assert_eq!(after.target_kind, "symbol");
@@ -343,13 +348,11 @@ mod serial_db {
                 source: b"pub trait Store {}\n",
             },
         );
-        let owners = resolve_local_import_inheritance(
-            &mut conn,
-            &project_id,
-            &["src/store/types.rs".to_string()],
-        )
-        .expect("promote rust reexport");
-        assert_eq!(owners, vec!["src/store/client.rs".to_string()]);
+        let repair = resolve_project_local_import_inheritance(&mut conn, &project_id)
+            .expect("promote rust reexport via repair");
+        assert_eq!(repair.owners, vec!["src/store/client.rs".to_string()]);
+        assert_eq!(repair.pending, 1);
+        assert_eq!(repair.resolved, 1);
         let after = inheritance_row(&mut conn, &project_id);
         assert_eq!(after.target_kind, "symbol");
         assert!(after.target_symbol_id.is_some());
@@ -402,12 +405,8 @@ mod serial_db {
                 source: b"class Base:\n    pass\n",
             },
         );
-        resolve_local_import_inheritance(
-            &mut conn,
-            &project_id,
-            &["pkg/a.py".to_string(), "pkg/b.py".to_string()],
-        )
-        .expect("ambiguous subtree");
+        resolve_local_import_inheritance(&mut conn, &project_id, &["pkg/__init__.py".to_string()])
+            .expect("ambiguous subtree");
         let row = inheritance_row(&mut conn, &project_id);
         assert_eq!(row.target_kind, "local_import");
         assert_eq!(row.target_module.as_deref(), Some("pkg/__init__.py"));
@@ -448,7 +447,7 @@ mod serial_db {
                 source: b"class Base:\n    pass\n",
             },
         );
-        resolve_local_import_inheritance(&mut conn, &project_id, &["pkg/impl.py".to_string()])
+        resolve_local_import_inheritance(&mut conn, &project_id, &["pkg/api.py".to_string()])
             .expect("plain file miss");
         let row = inheritance_row(&mut conn, &project_id);
         assert_eq!(row.target_kind, "local_import");
@@ -505,7 +504,7 @@ mod serial_db {
             helper_hash,
             parse,
         );
-        resolve_local_import_inheritance(&mut conn, &project_id, &["pkg/impl.py".to_string()])
+        resolve_local_import_inheritance(&mut conn, &project_id, &["pkg/__init__.py".to_string()])
             .expect("nested method miss");
         let row = inheritance_row(&mut conn, &project_id);
         assert_eq!(row.target_kind, "local_import");
@@ -939,7 +938,7 @@ mod serial_db {
         let hash = "hash-type";
         let parse = ParseResult {
             symbols: vec![type_symbol(
-                project_id, rel, hash, "Type", 0, "rust", "struct",
+                project_id, rel, hash, "Type", 0, "rust", "type",
             )],
             imports: Vec::new(),
             calls: Vec::new(),

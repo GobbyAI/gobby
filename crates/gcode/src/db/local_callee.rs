@@ -116,7 +116,10 @@ fn query_module_prefix_candidates(
     let kinds = ["function", "class", "type"];
     let sql = format!(
         "SELECT s.id, s.kind, s.parent_symbol_id{LOCAL_CALLEE_FROM}
-          AND s.file_path LIKE ANY($3) ESCAPE '#'
+          AND EXISTS (
+              SELECT 1 FROM unnest($3::text[]) AS module_prefix(value)
+              WHERE s.file_path LIKE module_prefix.value ESCAPE '#'
+          )
           AND s.parent_symbol_id IS NULL
           AND s.kind = ANY($5)
          ORDER BY s.file_path, s.byte_start"

@@ -226,7 +226,9 @@ reindex; steady-state runs promote stranded local imports and queue graph drift
 for the daemon sync worker. Pending `LocalImport` inheritance rows project as
 `UnresolvedCallee` endpoints until promoted. Promotion searches module-root
 candidates' subtrees (`mod.rs`, `lib.rs`, `main.rs`, `__init__.py`,
-`index.{js,ts,…}`) for a unique top-level definition. Rows stranded by a
+`index.{js,ts,…}`) for a unique top-level definition; a pending row is
+re-evaluated when its owner or candidate file reindexes or when `gcode repair`
+runs — indexing the defining file alone does not re-trigger it. Rows stranded by a
 resolver change are rewritten with `gcode index --full --files <owner paths>`
 (the hash shortcut is skipped under `--full`, and the file's
 `(file, content_hash)` rows are replaced). The gate compares the
