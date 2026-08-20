@@ -322,7 +322,8 @@ pub enum CallTargetKind {
     /// carrier after an index run. Inheritance misses keep this kind and the
     /// side's `*_external_module` carrier so a later provider index can retry;
     /// the kind therefore persists past a completed index run for inheritance
-    /// rows only.
+    /// rows only. Pending inheritance rows project as `UnresolvedCallee`
+    /// endpoints until promotion.
     LocalImport,
 }
 
