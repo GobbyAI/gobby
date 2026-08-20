@@ -39,6 +39,8 @@ GCODE_NAVIGATION_COMMANDS = frozenset(
         "symbol-at",
         "symbols",
         "callers",
+        "callees",
+        "graph view",
         "usages",
         "imports",
         "path",
@@ -137,6 +139,8 @@ def gcode_navigation_metadata(parts: list[str]) -> tuple[str, dict[str, Any]] | 
     if len(parts) < 2 or shell_command_name(parts[0]) != "gcode":
         return None
     subcommand = parts[1]
+    if subcommand == "graph" and len(parts) >= 3 and parts[2] == "view":
+        subcommand = "graph view"
     if subcommand not in GCODE_NAVIGATION_COMMANDS:
         return None
     kind = "search" if subcommand in GCODE_SEARCH_COMMANDS else "read"

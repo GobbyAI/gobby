@@ -77,11 +77,22 @@ Use these **before making changes** to understand what you'll affect:
 
 - `gcode blast-radius <name>` — walk call/import graph transitively to find all affected code
 - `gcode callers <symbol-id>` — who calls this function/method? Prefer a full symbol ID after resolving one
+- `gcode callees <symbol>` — who this function/method calls (`limit`/`offset` only; no output-clip `--token-budget`)
 - `gcode usages <symbol-id>` — all usages (calls + imports). Prefer a full symbol ID after resolving one
 - `gcode imports <file>` — what does this file import?
 - `gcode path <from> <to>` — shortest CALLS path between two symbol queries (requires the graph backend); `--max-depth` bounds the hop search
 
 `gcode search`, `gcode usages`, and `gcode blast-radius` accept `--token-budget <N>` to trim returned rows to an approximate token budget — useful when feeding bounded context to an agent.
+
+## Graph views
+
+- `gcode graph view --view=fcg|mcg|class-hierarchy <seed>` — scoped CALLS, IMPORTS, or heritage dump as complete JSON plus a complete Mermaid fence
+
+CHG is complete within `--depth` (no row LIMIT); omitted `--depth` is 8 for CHG and 1 for FCG/MCG. FCG/MCG keep #18786 incoming/outgoing edge limits and report `incoming_truncated` / `outgoing_truncated`; they do not clip JSON or Mermaid. MCG communities are Leiden via `analyze`.
+
+A unique MCG file-path seed and every uniquely resolving raw module alias of that file (`E(P)`, including importer-relative specifiers recovered from active `code_imports`) yield the same scoped graph. Walk the provider-file key plus every module key in `E(P)` so consumers of each alias and outgoing dependencies of the provider appear for all those seeds. After each hop, close newly discovered files and uniquely resolved modules through the same `E` operation so a discovered alias of `Q` still reaches `Q`'s provider dependencies. Incoming IMPORTS are consumers, not owners. Do not persist a provider-file column or ownership fact.
+
+`nodes[].file` is nullable: declaring path for files/symbols, unique provider path for a uniquely resolved module, otherwise null.
 
 ## Graph Lifecycle
 
@@ -95,6 +106,7 @@ for the UI, but graph sync/read/lifecycle behavior lives in `gcode`.
 - `gcode graph clear` — clear the current project's graph projection
 - `gcode graph clear --project-id <id>` — clear a projection without resolving a project root
 - `gcode graph rebuild` — rebuild it (cheaper than `gcode invalidate` + reindex; doesn't touch PostgreSQL symbol/content rows)
+- `gcode repair` — promote stranded local imports, detect graph drift, and queue affected files for projection resync
 - `gcode graph cleanup-orphans` — remove graph projection data for files missing from PostgreSQL and run project graph orphan cleanup
 - `gcode vector cleanup-orphans` — remove Qdrant code-symbol vectors for files missing from PostgreSQL, without resolving embeddings
 - `gcode prune` — remove stale project records globally and reconcile graph and vector projections for all remaining indexed projects; use `--project` to scope projection cleanup
@@ -124,6 +136,8 @@ See `docs/guides/codewiki.md` for the dormant daemon status/error contract, cano
 | Source code of a specific symbol | `gcode symbol <full-uuid>` |
 | What breaks if I change X | `gcode blast-radius <name>` |
 | Who calls a function | `gcode callers <symbol-id>` |
+| Who a function calls | `gcode callees <symbol>` |
+| A scoped CALLS, IMPORTS, or class-hierarchy graph | `gcode graph view --view=fcg\|mcg\|class-hierarchy <seed>` |
 | All references to a symbol | `gcode usages <symbol-id>` |
 | Shortest call path between two symbols | `gcode path <from> <to>` |
 

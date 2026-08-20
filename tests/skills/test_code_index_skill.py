@@ -105,6 +105,22 @@ def test_code_index_skill_documents_paused_gwiki_code_lifecycle() -> None:
     assert "gcode codewiki" not in body
 
 
+def test_code_index_skill_documents_callees_and_graph_view() -> None:
+    body = parse_skill_file(SKILL_PATH).content
+
+    assert "`gcode callees <symbol>`" in body
+    assert "`limit`/`offset` only" in body
+    assert "no output-clip `--token-budget`" in body
+    assert "`gcode graph view --view=fcg|mcg|class-hierarchy <seed>`" in body
+    assert "complete within `--depth`" in body
+    assert "omitted `--depth` is 8 for CHG and 1 for FCG/MCG" in body
+    assert "`incoming_truncated`" in body
+    assert "`outgoing_truncated`" in body
+    assert "Leiden via `analyze`" in body
+    assert "`E(P)`" in body
+    assert "`nodes[].file` is nullable" in body
+
+
 def test_code_index_skill_matches_gcode_bundled_asset_when_present() -> None:
     """Keep Gobby's install template byte-identical to gcode's bundled skill."""
     assert SKILL_PATH.read_bytes() == _gcode_bundled_skill_path().read_bytes()

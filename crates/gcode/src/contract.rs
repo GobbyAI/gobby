@@ -257,6 +257,13 @@ pub fn contract() -> CliContract {
             CommandContract {
                 daemon_consumed: true,
                 positionals: vec![PositionalContract::required("SYMBOL")],
+                flags: graph_read_flags(),
+                json_output_keys: graph_read_keys(),
+                ..CommandContract::new("callees", "Find callees of a symbol UUID or name.")
+            },
+            CommandContract {
+                daemon_consumed: true,
+                positionals: vec![PositionalContract::required("SYMBOL")],
                 flags: {
                     let mut flags = graph_read_flags();
                     flags.push(token_budget_flag());

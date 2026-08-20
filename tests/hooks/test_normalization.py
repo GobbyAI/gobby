@@ -1472,6 +1472,29 @@ class TestCanonicalToolMetadata:
         assert data["canonical_code_navigation_repo_scope"] is True
 
 
+def test_gcode_callees_and_graph_view_are_navigation() -> None:
+    for command, expected_kind in (
+        ("gcode callees TaskValidator", "read"),
+        ("gcode graph view --view=fcg Derived", "read"),
+        ("gcode graph view --view=class-hierarchy Derived", "read"),
+    ):
+        data = {"tool_name": "exec_command", "tool_input": {"command": command}}
+        normalize_tool_fields(data)
+        assert data["canonical_tool_kind"] == expected_kind
+        assert data["canonical_code_index_navigation"] is True
+        assert data["canonical_code_index_command"].startswith("gcode ")
+
+    for command in (
+        "gcode graph clear",
+        "gcode graph rebuild",
+        "gcode graph sync-file --file src/app.py",
+        "gcode graph cleanup-orphans",
+    ):
+        data = {"tool_name": "exec_command", "tool_input": {"command": command}}
+        normalize_tool_fields(data)
+        assert "canonical_code_index_navigation" not in data
+
+
 class TestFdDuplicationTokens:
     """Tests for fd-duplication (`N>&M`) scanning in the shell tokenizer (gobby-#17743)."""
 
@@ -1927,7 +1950,7 @@ class TestStringArgumentCoercion:
         }
         normalize_tool_fields(data)
         assert data["tool_input"]["arguments"] == {"title": "Test"}
-        assert data["_input_coerced"] is True
+        assert data["_input_coerced"]
         assert data["mcp_server"] == "gobby-tasks"
         assert data["mcp_tool"] == "create_task"
 

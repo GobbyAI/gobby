@@ -132,6 +132,47 @@ fn contract_is_version_five_without_codewiki() {
     );
 }
 
+#[test]
+fn graph_view_payload_keys_are_complete() {
+    let contract = serde_json::to_value(gobby_code::contract::contract()).expect("contract json");
+    assert_eq!(
+        output_keys(&contract, "graph view"),
+        [
+            "project_id",
+            "project_root",
+            "view",
+            "seed",
+            "depth",
+            "incoming_truncated",
+            "outgoing_truncated",
+            "hint",
+            "nodes",
+            "edges",
+            "communities",
+            "mermaid",
+        ]
+    );
+
+    let callees = command(&contract, "callees");
+    assert_eq!(callees["daemon_consumed"], serde_json::json!(true));
+    assert_eq!(
+        output_keys(&contract, "callees"),
+        output_keys(&contract, "callers")
+    );
+    let callees_flags: Vec<String> = callees["flags"]
+        .as_array()
+        .expect("callees flags")
+        .iter()
+        .map(|flag| flag["name"].as_str().expect("flag name").to_string())
+        .collect();
+    assert!(callees_flags.contains(&"--limit".to_string()));
+    assert!(callees_flags.contains(&"--offset".to_string()));
+    assert!(
+        !callees_flags.contains(&"--token-budget".to_string()),
+        "callees must not grow an output-clip --token-budget; flags={callees_flags:?}"
+    );
+}
+
 fn grep_flag_names(contract: &Value) -> Vec<String> {
     command(contract, "grep")["flags"]
         .as_array()

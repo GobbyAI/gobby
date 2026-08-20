@@ -920,6 +920,63 @@
       ]
     },
     {
+      "name": "callees",
+      "summary": "Find callees of a symbol UUID or name.",
+      "daemon_consumed": true,
+      "positionals": [
+        {
+          "name": "SYMBOL",
+          "required": true,
+          "repeatable": false
+        }
+      ],
+      "flags": [
+        {
+          "name": "--limit",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--offset",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--format",
+          "takes_value": true,
+          "value_name": "json|text",
+          "allowed_values": [
+            "json",
+            "text"
+          ],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "project_id",
+        "total",
+        "offset",
+        "limit",
+        "results",
+        "id",
+        "name",
+        "file_path",
+        "line",
+        "confidence",
+        "relation",
+        "distance",
+        "metadata",
+        "hint"
+      ]
+    },
+    {
       "name": "usages",
       "summary": "Find incoming call usages of a symbol UUID or name.",
       "daemon_consumed": true,
