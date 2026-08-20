@@ -508,20 +508,6 @@ class GcodeGateway:
             env=env,
         )
 
-    async def prune_all_projects(
-        self,
-        *,
-        retention_days: int,
-        timeout: float | None = None,
-        env: Mapping[str, str] | None = None,
-    ) -> GcodeCommandResult:
-        binary = await self._ensure_version()
-        return await self._run_command_result(
-            [binary, "prune", "--force", "--retention-days", str(retention_days)],
-            timeout=timeout,
-            env=env,
-        )
-
     async def prune_project_for_maintenance(
         self,
         project_root: Path,

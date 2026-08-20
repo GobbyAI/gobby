@@ -288,7 +288,6 @@ async def test_gateway_builds_vector_and_prune_args_with_timeouts(
         FakeProcess(stdout=b"No stale projects found."),
         FakeProcess(stdout=b"indexed"),
         FakeProcess(stdout=b'{"indexed_files": 1}'),
-        FakeProcess(stdout=b"global prune"),
         FakeProcess(stdout=b"targeted prune"),
         FakeProcess(stdout=b"invalidated"),
     ]
@@ -314,7 +313,6 @@ async def test_gateway_builds_vector_and_prune_args_with_timeouts(
     }
     maintenance_result = await gateway.maintenance_index(tmp_path, timeout=11)
     nightly_result = await gateway.nightly_full_reindex(tmp_path, timeout=12)
-    global_prune_result = await gateway.prune_all_projects(retention_days=45, timeout=13)
     targeted_prune_result = await gateway.prune_project_for_maintenance(
         tmp_path, retention_days=45, timeout=14
     )
@@ -322,10 +320,9 @@ async def test_gateway_builds_vector_and_prune_args_with_timeouts(
 
     assert maintenance_result.success is True
     assert nightly_result.success is True
-    assert global_prune_result.success is True
     assert targeted_prune_result.success is True
     assert invalidate_result.success is True
-    assert timeouts == [7.0, 7.0, 42.0, 42.0, 42.0, 11, 12, 13, 14, 15]
+    assert timeouts == [7.0, 7.0, 42.0, 42.0, 42.0, 11, 12, 14, 15]
     assert calls[1:] == [
         (
             "/tmp/gcode",
@@ -382,13 +379,6 @@ async def test_gateway_builds_vector_and_prune_args_with_timeouts(
             str(tmp_path),
             "--format",
             "json",
-        ),
-        (
-            "/tmp/gcode",
-            "prune",
-            "--force",
-            "--retention-days",
-            "45",
         ),
         (
             "/tmp/gcode",

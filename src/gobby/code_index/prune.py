@@ -8,7 +8,9 @@ import logging
 import signal
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
+from time import perf_counter
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict
 from uuid import uuid4
 
@@ -236,7 +238,7 @@ class CodeIndexPruner:
         }
 
     async def prune_all_projects(self) -> CodeIndexPruneResult:
-        """Run global gcode prune and retry targeted projects only on failure."""
+        """Run global prune in-process under the same lock the HTTP route uses."""
         if self._global_lock.locked():
             return {
                 "success": True,
@@ -249,97 +251,46 @@ class CodeIndexPruner:
             }
 
         async with self._global_lock:
-            gateway = self._context.gcode_gateway
-            if gateway is None:
-                return {
-                    "success": False,
-                    "status": "unavailable",
-                    "run_id": None,
-                    "message": "Code index prune failed: gcode gateway unavailable",
-                    "stdout": "",
-                    "stderr": "",
-                    "retried_projects": 0,
-                }
-
             run_id = uuid4().hex
-            result = await gateway.prune_all_projects(
+            started_at = datetime.now(UTC).isoformat()
+            started = perf_counter()
+            outcome = await self._run_operator_global_prune_locked(
+                force=True,
                 retention_days=self._context.config.content_retention_days,
-                timeout=CODE_INDEX_PRUNE_TIMEOUT_SECONDS,
             )
-            if result.timed_out:
-                status: Literal["completed", "failed", "timed_out"] = "timed_out"
-            elif result.success or _is_noop_shutdown_result(result):
-                status = "completed"
-            else:
-                status = "failed"
-
+            status: Literal["completed", "failed"] = "failed" if outcome["failed"] else "completed"
+            stdout = json.dumps(outcome, sort_keys=True)
             log_gcode_maintenance_event(
                 log_file=_maintenance_log_file(self._context),
                 event="global_prune",
                 run_id=run_id,
                 project_id=None,
                 root_path=None,
-                result=result,
+                result=GcodeCommandResult(
+                    command=("in-process", "global_prune"),
+                    returncode=0 if status == "completed" else 1,
+                    stdout=stdout,
+                    stderr="",
+                    started_at=started_at,
+                    completed_at=datetime.now(UTC).isoformat(),
+                    duration_seconds=perf_counter() - started,
+                    timeout_seconds=None,
+                ),
                 status=status,
             )
-
             if status == "completed":
                 await self._clear_dirty_projects()
-                return {
-                    "success": True,
-                    "status": status,
-                    "run_id": run_id,
-                    "message": f"Code index prune completed: run_id={run_id} global:pruned",
-                    "stdout": result.stdout,
-                    "stderr": result.stderr,
-                    "retried_projects": 0,
-                }
-
-            detail = result.stderr.strip() or result.stdout.strip() or "gcode prune failed"
-            dirty_projects = await self._list_dirty_projects()
-            indexed_projects = await self._context.run_db(
-                self._context.storage.list_indexed_projects
-            )
-            for project in _failed_indexed_projects(indexed_projects, result):
-                await self._context.run_db(
-                    self._context.storage.mark_prune_dirty,
-                    str(project.id),
-                    str(project.root_path),
-                    "global_prune_failed",
-                )
-            retry_projects = _retry_dirty_projects(dirty_projects, result)
-            outcomes: list[str] = []
-            for project in retry_projects:
-                project_id = str(project.project_id)
-                if not project.root_path:
-                    outcomes.append(f"{project_id}:skipped_missing_root")
-                    continue
-                await self._context.run_db(
-                    self._context.storage.record_prune_failure,
-                    project_id,
-                    detail,
-                )
-                outcomes.append(
-                    await self.prune_project(
-                        project_id=project_id,
-                        root_path=str(project.root_path),
-                        dirty=True,
-                        reason="global_prune_retry",
-                        run_id=run_id,
-                    )
-                )
-
             return {
-                "success": False,
+                "success": status == "completed",
                 "status": status,
                 "run_id": run_id,
                 "message": (
-                    f"Code index prune completed: run_id={run_id} "
-                    f"global:{status} retries={len(outcomes)}"
+                    f"Code index prune completed: run_id={run_id} global:{status} "
+                    f"failed={len(outcome['failed'])} skipped={len(outcome['skipped'])}"
                 ),
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "retried_projects": len(outcomes),
+                "stdout": stdout,
+                "stderr": "",
+                "retried_projects": 0,
             }
 
     async def _list_dirty_projects(self, *, page_size: int = 100) -> list[Any]:
@@ -553,58 +504,8 @@ def register_code_index_prune_cron(
         cron_storage.wake_system_job(repaired.id)
 
 
-def _retry_dirty_projects(projects: list[Any], result: GcodeCommandResult) -> list[Any]:
-    failed_ids = _failed_project_ids(result.stdout) | _failed_project_ids(result.stderr)
-    projects_with_roots = [project for project in projects if getattr(project, "root_path", None)]
-    if not failed_ids:
-        return projects_with_roots
-    return [project for project in projects_with_roots if str(project.project_id) in failed_ids]
-
-
-def _failed_indexed_projects(projects: list[Any], result: GcodeCommandResult) -> list[Any]:
-    failed_ids = _failed_project_ids(result.stdout) | _failed_project_ids(result.stderr)
-    projects_with_roots = [project for project in projects if getattr(project, "root_path", None)]
-    if not failed_ids:
-        return projects_with_roots
-    return [project for project in projects_with_roots if str(project.id) in failed_ids]
-
-
 def _dirty_prune_cursor(dirty: Any) -> tuple[Any, Any, str]:
     return (dirty.updated_at, dirty.created_at, dirty.project_id)
-
-
-def _failed_project_ids(text: str) -> set[str]:
-    if not text.strip():
-        return set()
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError:
-        return set()
-    if not isinstance(payload, dict):
-        return set()
-
-    failed: set[str] = set()
-    for key in ("failed_project_ids", "failed_projects", "project_failures"):
-        if key in payload:
-            failed.update(_collect_project_ids(payload[key]))
-    return failed
-
-
-def _collect_project_ids(value: object) -> set[str]:
-    if isinstance(value, str):
-        return {value}
-    if isinstance(value, dict):
-        for key in ("project_id", "id"):
-            item = value.get(key)
-            if isinstance(item, str):
-                return {item}
-        return set()
-    if isinstance(value, list):
-        collected: set[str] = set()
-        for item in value:
-            collected.update(_collect_project_ids(item))
-        return collected
-    return set()
 
 
 def _maintenance_log_file(context: CodeIndexContext) -> str:

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import signal
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -118,21 +117,11 @@ class PruneGateway:
     def __init__(
         self,
         *,
-        global_result: GcodeCommandResult | None = None,
         targeted_result: GcodeCommandResult | None = None,
     ) -> None:
-        self.global_result = global_result or _gcode_result(("/tmp/gcode", "prune", "--force"))
         self.targeted_result = targeted_result
-        self.global_timeouts: list[float | None] = []
         self.retention_days: list[int] = []
         self.targeted_roots: list[Path] = []
-
-    async def prune_all_projects(
-        self, *, retention_days: int, timeout: float | None = None
-    ) -> GcodeCommandResult:
-        self.retention_days.append(retention_days)
-        self.global_timeouts.append(timeout)
-        return self.global_result
 
     async def prune_project_for_maintenance(
         self,
@@ -203,9 +192,12 @@ class PersistingPruneStorage(PruneStorage):
 
 
 @pytest.mark.asyncio
-async def test_global_prune_runs_once_and_clears_dirty_projects(tmp_path: Path) -> None:
-    storage = PruneStorage()
-    storage.dirty_projects = [_dirty("proj-1", tmp_path / "one")]
+async def test_global_prune_runs_in_process_and_clears_dirty_projects(tmp_path: Path) -> None:
+    live_root = tmp_path / "one"
+    live_root.mkdir()
+    storage = PersistingPruneStorage()
+    storage.projects = [SimpleNamespace(id="proj-1", root_path=str(live_root))]
+    storage.dirty_projects = [_dirty("proj-1", live_root)]
     gateway = PruneGateway()
     context = PruneContext(storage, gateway, tmp_path / "maintenance.log")
     pruner = CodeIndexPruner(context)  # type: ignore[arg-type]
@@ -214,35 +206,40 @@ async def test_global_prune_runs_once_and_clears_dirty_projects(tmp_path: Path) 
 
     run_id = result["run_id"]
     assert isinstance(run_id, str)
+    outcome = {
+        "completed": ["proj-1"],
+        "failed": [],
+        "skipped": [],
+    }
     assert result == {
         "success": True,
         "status": "completed",
         "run_id": run_id,
-        "message": f"Code index prune completed: run_id={run_id} global:pruned",
-        "stdout": "",
+        "message": (
+            f"Code index prune completed: run_id={run_id} global:completed failed=0 skipped=0"
+        ),
+        "stdout": json.dumps(outcome, sort_keys=True),
         "stderr": "",
         "retried_projects": 0,
     }
-    assert gateway.global_timeouts == [CODE_INDEX_PRUNE_TIMEOUT_SECONDS]
     assert gateway.retention_days == [17]
-    assert gateway.targeted_roots == []
+    assert gateway.targeted_roots == [live_root]
     assert storage.cleared_dirty == ["proj-1"]
     log_text = (tmp_path / "maintenance.log").read_text(encoding="utf-8")
     assert '"event": "global_prune"' in log_text
-    assert '"command": ["/tmp/gcode", "prune", "--force"]' in log_text
+    assert '"command": ["in-process", "global_prune"]' in log_text
+    assert '"exit_status": 0' in log_text
 
 
 @pytest.mark.asyncio
-async def test_global_prune_failure_retries_only_machine_owned_dirty_roots(
-    tmp_path: Path,
-) -> None:
-    root_one = tmp_path / "one"
-    root_two = tmp_path / "two"
-    storage = PruneStorage()
-    storage.dirty_projects = [_dirty("proj-1", root_one), _dirty("proj-2", root_two)]
+async def test_global_prune_failure_leaves_project_dirty(tmp_path: Path) -> None:
+    live_root = tmp_path / "one"
+    live_root.mkdir()
+    storage = PersistingPruneStorage()
+    storage.projects = [SimpleNamespace(id="proj-1", root_path=str(live_root))]
     gateway = PruneGateway(
-        global_result=_gcode_result(
-            ("/tmp/gcode", "prune", "--force"),
+        targeted_result=_gcode_result(
+            ("/tmp/gcode", "prune", "--force", "--project", str(live_root)),
             returncode=1,
             stderr="projection prune failed",
         )
@@ -254,150 +251,42 @@ async def test_global_prune_failure_retries_only_machine_owned_dirty_roots(
 
     run_id = result["run_id"]
     assert isinstance(run_id, str)
-    assert result == {
-        "success": False,
-        "status": "failed",
-        "run_id": run_id,
-        "message": f"Code index prune completed: run_id={run_id} global:failed retries=2",
-        "stdout": "",
-        "stderr": "projection prune failed",
-        "retried_projects": 2,
-    }
-    assert storage.marked_dirty == []
-    assert storage.failures == [
-        ("proj-1", "projection prune failed"),
-        ("proj-2", "projection prune failed"),
-    ]
-    assert gateway.targeted_roots == [root_one, root_two]
-    assert storage.cleared_dirty == ["proj-1", "proj-2"]
-
-
-@pytest.mark.asyncio
-async def test_global_prune_failure_marks_clean_project_for_next_cycle(tmp_path: Path) -> None:
-    project_root = tmp_path / "clean-project"
-    storage = PersistingPruneStorage()
-    storage.projects = [SimpleNamespace(id="proj-clean", root_path=str(project_root))]
-    gateway = PruneGateway(
-        global_result=_gcode_result(
-            ("/tmp/gcode", "prune", "--force"),
-            returncode=1,
-            stderr="projection prune failed",
-        )
-    )
-    context = PruneContext(storage, gateway, tmp_path / "maintenance.log")
-    pruner = CodeIndexPruner(context)  # type: ignore[arg-type]
-
-    first_result = await pruner.prune_all_projects()
-
-    assert first_result["retried_projects"] == 0
-    assert [(dirty.project_id, dirty.reason) for dirty in storage.dirty_projects] == [
-        ("proj-clean", "global_prune_failed")
-    ]
-    assert gateway.targeted_roots == []
-
-    second_result = await pruner.prune_all_projects()
-
-    assert second_result["retried_projects"] == 1
-    assert gateway.targeted_roots == [project_root]
-    assert storage.dirty_projects == []
-
-
-@pytest.mark.asyncio
-async def test_global_prune_failure_retries_structured_failed_project_ids(
-    tmp_path: Path,
-) -> None:
-    root_one = tmp_path / "one"
-    root_two = tmp_path / "two"
-    storage = PruneStorage()
-    storage.dirty_projects = [_dirty("proj-1", root_one), _dirty("proj-2", root_two)]
-    gateway = PruneGateway(
-        global_result=_gcode_result(
-            ("/tmp/gcode", "prune", "--force"),
-            returncode=1,
-            stderr=json.dumps({"failed_project_ids": ["proj-2"]}),
-        )
-    )
-    context = PruneContext(storage, gateway, tmp_path / "maintenance.log")
-    pruner = CodeIndexPruner(context)  # type: ignore[arg-type]
-
-    result = await pruner.prune_all_projects()
-
     assert result["success"] is False
     assert result["status"] == "failed"
-    assert result["retried_projects"] == 1
-    assert storage.marked_dirty == []
-    assert gateway.targeted_roots == [root_two]
-
-
-@pytest.mark.asyncio
-async def test_global_prune_sigterm_with_no_stale_stdout_is_completed(
-    tmp_path: Path,
-) -> None:
-    storage = PruneStorage()
-    gateway = PruneGateway(
-        global_result=_gcode_result(
-            ("/tmp/gcode", "prune", "--force"),
-            returncode=-signal.SIGTERM,
-            stdout="No stale projects found.",
-        )
-    )
-    context = PruneContext(storage, gateway, tmp_path / "maintenance.log")
-    pruner = CodeIndexPruner(context)  # type: ignore[arg-type]
-
-    result = await pruner.prune_all_projects()
-
-    run_id = result["run_id"]
-    assert isinstance(run_id, str)
-    assert result == {
-        "success": True,
-        "status": "completed",
-        "run_id": run_id,
-        "message": f"Code index prune completed: run_id={run_id} global:pruned",
-        "stdout": "No stale projects found.",
-        "stderr": "",
-        "retried_projects": 0,
-    }
-
-
-@pytest.mark.asyncio
-async def test_global_prune_timeout_returns_failed_structured_result(tmp_path: Path) -> None:
-    storage = PruneStorage()
-    gateway = PruneGateway(
-        global_result=_gcode_result(
-            ("/tmp/gcode", "prune", "--force"),
-            stderr="prune exceeded deadline",
-            timed_out=True,
-        )
-    )
-    context = PruneContext(storage, gateway, tmp_path / "maintenance.log")
-    pruner = CodeIndexPruner(context)  # type: ignore[arg-type]
-
-    result = await pruner.prune_all_projects()
-
-    assert result["success"] is False
-    assert result["status"] == "timed_out"
-    assert result["stderr"] == "prune exceeded deadline"
     assert result["retried_projects"] == 0
+    assert [(dirty.project_id, dirty.reason) for dirty in storage.dirty_projects] == [
+        ("proj-1", "operator_prune_failed")
+    ]
+    assert storage.cleared_dirty == []
+    log_text = (tmp_path / "maintenance.log").read_text(encoding="utf-8")
+    assert '"event": "global_prune"' in log_text
+    assert '"exit_status": 1' in log_text
 
 
 @pytest.mark.asyncio
-async def test_global_prune_unavailable_gateway_returns_failed_structured_result(
-    tmp_path: Path,
-) -> None:
-    context = PruneContext(PruneStorage(), None, tmp_path / "maintenance.log")
+async def test_global_prune_force_and_retention_reach_prune_project(tmp_path: Path) -> None:
+    live_root = tmp_path / "live"
+    live_root.mkdir()
+    storage = PruneStorage()
+    storage.projects = [SimpleNamespace(id="proj-live", root_path=str(live_root))]
+    gateway = PruneGateway()
+    context = PruneContext(storage, gateway, tmp_path / "maintenance.log")
     pruner = CodeIndexPruner(context)  # type: ignore[arg-type]
+    lock = pruner._project_locks.setdefault("proj-live", asyncio.Lock())
+    await lock.acquire()
+    try:
+        skipped = await pruner.run_operator_global_prune(force=False)
+        assert skipped["skipped"] == [{"project_id": "proj-live", "reason": "skipped_locked"}]
+        assert gateway.targeted_roots == []
+    finally:
+        lock.release()
 
     result = await pruner.prune_all_projects()
 
-    assert result == {
-        "success": False,
-        "status": "unavailable",
-        "run_id": None,
-        "message": "Code index prune failed: gcode gateway unavailable",
-        "stdout": "",
-        "stderr": "",
-        "retried_projects": 0,
-    }
+    assert result["success"] is True
+    assert result["status"] == "completed"
+    assert gateway.retention_days == [17]
+    assert gateway.targeted_roots == [live_root]
 
 
 @pytest.mark.asyncio
