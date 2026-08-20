@@ -2,7 +2,7 @@
 
 Verifies context handoff rules sync correctly and have proper structure:
 - clear-pending-context-reset-on-start: set_variable on session_start
-- inject-previous-session-summary: inject_context on session_start
+- inject-clear-handoff-on-prompt: inject_context on turn_start (clear_self one-shot)
 - inject-compact-handoff: inject_context on session_start
 - inject-task-context-on-start: inject_context on session_start
 - preserve-context-on-compact: set_variable on pre_compact (reset tracking vars)
@@ -37,7 +37,7 @@ pytestmark = pytest.mark.unit
 
 CONTEXT_HANDOFF_RULES = {
     "clear-pending-context-reset-on-start",
-    "inject-previous-session-summary",
+    "inject-clear-handoff-on-prompt",
     "inject-compact-handoff",
     "inject-compact-handoff-on-prompt",
     "inject-task-context-on-start",
@@ -47,6 +47,10 @@ CONTEXT_HANDOFF_RULES = {
     "nudge-compact-on-context-pressure-mid-turn",
     "auto-compact-after-task-close",
 }
+_FOSSIL_PREVIOUS_SESSION_SUMMARY = "inject-previous-session-summary"
+_MANIFEST_PATH = (
+    Path(__file__).resolve().parents[2] / "src/gobby/install/bundled_content_manifest.json"
+)
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
 _BUNDLED_RULES = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/rules"
 
@@ -152,6 +156,19 @@ class TestContextHandoffSync:
 
         assert "capture-baseline-dirty-files-on-start" not in session_start_rule_names
 
+    def test_fossil_previous_session_summary_is_pruned(self, db, manager) -> None:
+        """Template sync removes or disables the 0.4.x clear-injection fossil."""
+        _sync_bundled(db)
+        row = manager.get_by_name(_FOSSIL_PREVIOUS_SESSION_SUMMARY)
+        assert row is None or not row.enabled
+
+    def test_manifest_drops_fossil_and_lists_clear_handoff(self) -> None:
+        files_map = json.loads(_MANIFEST_PATH.read_text(encoding="utf-8"))["files"]
+        assert (
+            "workflows/rules/context-handoff/inject-previous-session-summary.yaml" not in files_map
+        )
+        assert "workflows/rules/context-handoff/inject-clear-handoff.yaml" in files_map
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # clear-pending-context-reset-on-start
@@ -198,29 +215,117 @@ class TestClearPendingContextResetOnStart:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# inject-previous-session-summary
+# inject-clear-handoff-on-prompt
 # ═══════════════════════════════════════════════════════════════════════
 
 
-class TestInjectPreviousSessionSummary:
-    """Inject previous session summary on clear."""
+class TestInjectClearHandoff:
+    """Deliver the clear_self handoff once on the successor's first turn_start."""
 
     def test_event_and_effect(self, db, manager) -> None:
         _sync_bundled(db)
-        row = manager.get_by_name("inject-previous-session-summary")
+        row = manager.get_by_name("inject-clear-handoff-on-prompt")
         assert row is not None
+        assert row.enabled
+        assert row.priority == 11
         body = RuleDefinitionBody.model_validate(row.definition_json)
-        assert body.event.value == "session_start"
-        assert body.effects[0].type == "inject_context"
-        assert body.effects[0].template is not None
-        assert "Previous Session Context" in body.effects[0].template
-
-    def test_has_when_condition(self, db, manager) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("inject-previous-session-summary")
-        body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.event.value == "turn_start"
         assert body.when is not None
-        assert "clear" in body.when
+        assert "clear_handoff_inject_pending" in body.when
+        assert body.effects is not None
+        effects = body.effects
+        assert effects[0].type == "inject_context"
+        template = effects[0].template
+        assert template is not None
+        assert "<!-- gobby:injected-context:begin -->" in template
+        assert "<!-- gobby:injected-context:end -->" in template
+        assert "Continuation Context (deliberate clear)" in template
+        assert "Previous Session Context" not in template
+        assert "Durable Tool-Call Evidence" not in template
+        assert "Required Skill Reload" not in template
+        assert "skill_fetch_batch_directive" not in template
+        assert "handoff_summary_injectable" in template
+        assert effects[1].type == "set_variable"
+        assert effects[1].variable == "clear_handoff_inject_pending"
+        assert effects[1].value is False
+
+    @pytest.mark.asyncio
+    async def test_prompt_path_injects_work_context_once(self, db: HubDatabase) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id=SESSION_ID,
+            source=SessionSource.GROK,
+            timestamp=datetime.now(UTC),
+            data={},
+        )
+        variables: dict[str, Any] = {
+            "clear_handoff_inject_pending": True,
+            "handoff_summary_injectable": "Clear continuation UNIQUE_CLEAR_HANDOFF",
+            "mcp_calls": {"gobby-sessions": ["clear_self"]},
+            "compact_resume_required_skills": ["tasks"],
+        }
+        first = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+        assert first.context is not None
+        assert "<!-- gobby:injected-context:begin -->" in first.context
+        assert "Continuation Context (deliberate clear)" in first.context
+        assert "Clear continuation UNIQUE_CLEAR_HANDOFF" in first.context
+        assert "Previous Session Context" not in first.context
+        assert "Durable Tool-Call Evidence" not in first.context
+        assert "Required Skill Reload" not in first.context
+        assert variables["clear_handoff_inject_pending"] is False
+
+        second = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+        assert not (second.context and "UNIQUE_CLEAR_HANDOFF" in second.context)
+        assert not (second.context and "Continuation Context (deliberate clear)" in second.context)
+
+    @pytest.mark.asyncio
+    async def test_prompt_path_skips_when_pending_false(self, db: HubDatabase) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id=SESSION_ID,
+            source=SessionSource.GROK,
+            timestamp=datetime.now(UTC),
+            data={},
+        )
+        skipped = await engine.evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={
+                "clear_handoff_inject_pending": False,
+                "handoff_summary_injectable": "Should not inject UNIQUE_CLEAR_SKIP",
+            },
+        )
+        assert not (skipped.context and "UNIQUE_CLEAR_SKIP" in skipped.context)
+        assert not (
+            skipped.context and "Continuation Context (deliberate clear)" in skipped.context
+        )
+
+    @pytest.mark.asyncio
+    async def test_session_start_clear_does_not_inject_fossil_or_handoff(
+        self, db: HubDatabase
+    ) -> None:
+        """A plain user /clear (no clear_self pending flag) injects no handoff block."""
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        event = HookEvent(
+            event_type=HookEventType.SESSION_START,
+            session_id=SESSION_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"source": "clear"},
+        )
+        result = await engine.evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={"handoff_summary_injectable": "SHOULD_NOT_APPEAR UNIQUE_PLAIN_CLEAR"},
+        )
+        assert not (result.context and "Previous Session Context" in result.context)
+        assert not (result.context and "SHOULD_NOT_APPEAR UNIQUE_PLAIN_CLEAR" in result.context)
+        assert not (result.context and "Continuation Context (deliberate clear)" in result.context)
 
 
 # ═══════════════════════════════════════════════════════════════════════

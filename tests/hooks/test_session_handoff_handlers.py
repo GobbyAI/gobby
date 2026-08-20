@@ -1691,3 +1691,31 @@ class TestSessionStartClearBinding:
         assert winner_vars.get("handoff_summary_injectable") == CLEAR_HANDOFF
         assert loser_vars.get("clear_handoff_inject_pending") is not True
         assert [session_id for session_id, _prompt in scheduled] == [winner_id]
+
+
+class TestClearHandoffRuleTemplate:
+    """Fossil session_start injection is gone; clear handoff is a turn_start rule."""
+
+    def test_fossil_template_replaced_by_clear_handoff_rule(self) -> None:
+        handoff_dir = files("gobby.install.shared").joinpath("workflows/rules/context-handoff")
+        fossil = handoff_dir.joinpath("inject-previous-session-summary.yaml")
+        clear = handoff_dir.joinpath("inject-clear-handoff.yaml")
+        assert not fossil.is_file()
+        assert clear.is_file()
+        payload = yaml.safe_load(clear.read_text(encoding="utf-8"))
+        rule = payload["rules"]["inject-clear-handoff-on-prompt"]
+        assert rule["event"] == "turn_start"
+        assert rule["priority"] == 11
+        assert "clear_handoff_inject_pending" in rule["when"]
+        template = next(
+            effect["template"]
+            for effect in rule["effects"]
+            if effect.get("type") == "inject_context"
+        )
+        assert "Continuation Context (deliberate clear)" in template
+        assert "Previous Session Context" not in template
+        assert "Durable Tool-Call Evidence" not in template
+        assert "Required Skill Reload" not in template
+        pending = next(effect for effect in rule["effects"] if effect.get("type") == "set_variable")
+        assert pending["variable"] == "clear_handoff_inject_pending"
+        assert pending["value"] is False

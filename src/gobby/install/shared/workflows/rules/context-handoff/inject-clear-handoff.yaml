@@ -1,0 +1,21 @@
+tags: [context-handoff, context, handoff, lifecycle, gobby, default]
+
+rules:
+  inject-clear-handoff-on-prompt:
+    description: "Deliver the clear_self handoff on the successor's first prompt"
+    event: turn_start
+    enabled: true
+    priority: 11
+    when: "variables.get('clear_handoff_inject_pending')"
+    effects:
+      - type: inject_context
+        template: |
+          <!-- gobby:injected-context:begin -->
+          ## Continuation Context (deliberate clear)
+          *Injected by Gobby session handoff*
+
+          {{ handoff_summary_injectable or '' }}
+          <!-- gobby:injected-context:end -->
+      - type: set_variable
+        variable: clear_handoff_inject_pending
+        value: false
