@@ -48,6 +48,7 @@ const PROVIDER_LABELS: Record<string, string> = {
 const ENDPOINT_LABELS: Record<string, string> = {
   "lm-studio": "LM Studio",
   ollama: "Ollama",
+  vllm: "vLLM",
 };
 
 // Providers that must never be offered as a choice anywhere in the web UI

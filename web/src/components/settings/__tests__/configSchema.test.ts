@@ -30,6 +30,20 @@ const SCHEMA: Record<string, unknown> = {
       type: "object",
       properties: { generation: { $ref: "#/$defs/GenerationConfig" } },
     },
+    GenerationEndpointConfig: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        protocol: {
+          enum: ["openai-compatible", "lmstudio", "ollama", "vllm"],
+          type: "string",
+        },
+        wire_api: {
+          enum: ["chat-completions", "responses"],
+          type: "string",
+        },
+      },
+    },
     GenerationConfig: {
       type: "object",
       properties: {
@@ -38,6 +52,10 @@ const SCHEMA: Record<string, unknown> = {
           default: 600,
           minimum: 1,
           maximum: 3600,
+        },
+        endpoints: {
+          type: "object",
+          additionalProperties: { $ref: "#/$defs/GenerationEndpointConfig" },
         },
       },
     },
@@ -82,6 +100,22 @@ describe("resolveSchemaNode", () => {
     expect(resolveSchemaNode(SCHEMA, "does.not.exist")).toBeNull();
   });
 
+  it("walks additionalProperties to a map-item enum field", () => {
+    const node = resolveSchemaNode(
+      SCHEMA,
+      "ai.generation.endpoints.local.protocol",
+    );
+    expect(node?.enum).toEqual([
+      "openai-compatible",
+      "lmstudio",
+      "ollama",
+      "vllm",
+    ]);
+    expect(
+      resolveSchemaNode(SCHEMA, "ai.generation.endpoints.local.wire_api")?.enum,
+    ).toEqual(["chat-completions", "responses"]);
+  });
+
   it("returns null when the schema is null", () => {
     expect(resolveSchemaNode(null, "recommend_tools.profile")).toBeNull();
   });
@@ -100,6 +134,17 @@ describe("enumOptionsAt", () => {
     expect(enumOptionsAt(SCHEMA, "recommend_tools.candidates")).toEqual([]);
     expect(enumOptionsAt(SCHEMA, "missing.path")).toEqual([]);
     expect(enumOptionsAt(null, "recommend_tools.profile")).toEqual([]);
+  });
+
+  it("maps a map-item enum through additionalProperties", () => {
+    expect(
+      enumOptionsAt(SCHEMA, "ai.generation.endpoints.local.protocol"),
+    ).toEqual([
+      { value: "openai-compatible", label: "openai-compatible" },
+      { value: "lmstudio", label: "lmstudio" },
+      { value: "ollama", label: "ollama" },
+      { value: "vllm", label: "vllm" },
+    ]);
   });
 });
 

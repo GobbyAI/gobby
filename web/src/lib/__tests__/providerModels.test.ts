@@ -368,6 +368,7 @@ describe("providerModels", () => {
   it("humanizes endpoint provider ids instead of raw scheme casing (#20047)", () => {
     expect(getProviderDisplayName("endpoint:lm-studio")).toBe("LM Studio");
     expect(getProviderDisplayName("endpoint:ollama")).toBe("Ollama");
+    expect(getProviderDisplayName("endpoint:vllm")).toBe("vLLM");
     expect(getProviderDisplayName("endpoint:my-box")).toBe("My Box");
   });
 

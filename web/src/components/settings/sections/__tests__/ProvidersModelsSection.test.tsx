@@ -57,12 +57,63 @@ const SCHEMA: Record<string, unknown> = {
         prompt_path: { anyOf: [{ type: "string" }, { type: "null" }] },
       },
     },
+    GenerationEndpointConfig: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        protocol: {
+          enum: ["openai-compatible", "lmstudio", "ollama", "vllm"],
+          type: "string",
+        },
+        wire_api: {
+          enum: ["chat-completions", "responses"],
+          type: "string",
+        },
+        api_base: { type: "string" },
+        model: { type: "string" },
+        api_key: { anyOf: [{ type: "string" }, { type: "null" }] },
+        tool_chat: { type: "boolean" },
+      },
+    },
+    GenerationConfig: {
+      type: "object",
+      properties: {
+        timeout_seconds: { type: "number" },
+        candidate_timeout_seconds: { type: "number" },
+        cli_candidate_timeout_seconds: { type: "number" },
+        endpoints: {
+          type: "object",
+          additionalProperties: { $ref: "#/$defs/GenerationEndpointConfig" },
+        },
+      },
+    },
+    AIConfig: {
+      type: "object",
+      properties: { generation: { $ref: "#/$defs/GenerationConfig" } },
+    },
   },
   type: "object",
   properties: {
     recommend_tools: { $ref: "#/$defs/RecommendToolsConfig" },
+    ai: { $ref: "#/$defs/AIConfig" },
   },
 };
+
+function optionValues(select: HTMLElement): string[] {
+  return within(select)
+    .getAllByRole("option")
+    .map((option) => (option as HTMLOptionElement).value);
+}
+
+function withProtocolEnum(values: string[]): Record<string, unknown> {
+  const schema = JSON.parse(JSON.stringify(SCHEMA)) as Record<string, unknown>;
+  const defs = schema.$defs as Record<string, Record<string, unknown>>;
+  const endpoint = defs.GenerationEndpointConfig as {
+    properties: { protocol: { enum: string[] } };
+  };
+  endpoint.properties.protocol.enum = values;
+  return schema;
+}
 
 function makeConfigValues(): Record<string, unknown> {
   return {
@@ -96,6 +147,21 @@ function makeConfigValues(): Record<string, unknown> {
             wire_api: "chat-completions",
             api_base: "http://localhost:1234",
             model: "gemma",
+            vision_extract: true,
+          },
+          openrouter: {
+            protocol: "openai-compatible",
+            wire_api: "responses",
+            api_base: "https://openrouter.ai/api/v1",
+            model: "gpt-4",
+            vision_extract: true,
+          },
+          vllm: {
+            protocol: "vllm",
+            wire_api: "chat-completions",
+            api_base: "http://127.0.0.1:8000/v1",
+            model: "auto",
+            vision_extract: true,
           },
         },
         profile_defaults: { feature_mid: ["claude/sonnet"] },
@@ -271,5 +337,149 @@ describe("ProvidersModelsSection", () => {
     expect(screen.getByLabelText("Tool recommendation profile")).toHaveValue(
       "feature_mid",
     );
+  });
+
+  it("lists protocol options from the daemon schema including vllm", async () => {
+    renderSection(makeContext());
+    await waitForProviderCatalog();
+
+    const protocol = screen.getByLabelText("Protocol (lmstudio)");
+    expect(optionValues(protocol)).toEqual([
+      "openai-compatible",
+      "lmstudio",
+      "ollama",
+      "vllm",
+    ]);
+  });
+
+  it("derives protocol options from the schema rather than a hardcoded list", async () => {
+    const schema = withProtocolEnum(["vllm", "openai-compatible"]);
+    renderSection(
+      makeContext({
+        schema,
+        configValues: {
+          ...makeConfigValues(),
+          ai: {
+            generation: {
+              timeout_seconds: 600,
+              candidate_timeout_seconds: 60,
+              cli_candidate_timeout_seconds: 150,
+              endpoints: {
+                local: {
+                  protocol: "vllm",
+                  wire_api: "chat-completions",
+                  api_base: "http://127.0.0.1:8000/v1",
+                  model: "auto",
+                },
+              },
+              profile_defaults: {},
+            },
+          },
+        },
+      }),
+    );
+    await waitForProviderCatalog();
+
+    expect(optionValues(screen.getByLabelText("Protocol (local)"))).toEqual([
+      "vllm",
+      "openai-compatible",
+    ]);
+  });
+
+  it("exposes wire_api for openai-compatible and pins chat-completions for vllm", async () => {
+    renderSection(makeContext());
+    await waitForProviderCatalog();
+
+    const wireApi = screen.getByLabelText("Wire API (openrouter)");
+    expect(wireApi).toHaveValue("responses");
+    expect(optionValues(wireApi)).toEqual(["chat-completions", "responses"]);
+    expect(screen.queryByLabelText("Wire API (vllm)")).toBeNull();
+    expect(screen.queryByLabelText("Wire API (lmstudio)")).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("Protocol (openrouter)"), {
+      target: { value: "vllm" },
+    });
+    expect(screen.queryByLabelText("Wire API (openrouter)")).toBeNull();
+  });
+
+  it("writes chat-completions on a vllm switch and restores wire_api choices after switching back", async () => {
+    const ctx = makeContext();
+    renderSection(ctx);
+    await waitForProviderCatalog();
+
+    fireEvent.change(screen.getByLabelText("Protocol (openrouter)"), {
+      target: { value: "vllm" },
+    });
+    const save = screen.getByRole("button", { name: "Save" });
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(save);
+    await waitFor(() => expect(ctx.saveConfig).toHaveBeenCalledTimes(1));
+
+    const vllmPayload = vi.mocked(ctx.saveConfig).mock.calls[0][0] as Record<
+      string,
+      Record<string, { protocol?: string; wire_api?: string }>
+    >;
+    expect(vllmPayload["ai.generation.endpoints"].openrouter).toEqual(
+      expect.objectContaining({
+        protocol: "vllm",
+        wire_api: "chat-completions",
+      }),
+    );
+
+    fireEvent.change(screen.getByLabelText("Protocol (openrouter)"), {
+      target: { value: "openai-compatible" },
+    });
+    const restored = screen.getByLabelText("Wire API (openrouter)");
+    expect(optionValues(restored)).toEqual(["chat-completions", "responses"]);
+    expect(restored).toHaveValue("chat-completions");
+
+    fireEvent.change(restored, { target: { value: "responses" } });
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(save);
+    await waitFor(() => expect(ctx.saveConfig).toHaveBeenCalledTimes(2));
+
+    const restoredPayload = vi.mocked(ctx.saveConfig).mock
+      .calls[1][0] as Record<
+      string,
+      Record<string, { protocol?: string; wire_api?: string }>
+    >;
+    expect(restoredPayload["ai.generation.endpoints"].openrouter).toEqual(
+      expect.objectContaining({
+        protocol: "openai-compatible",
+        wire_api: "responses",
+      }),
+    );
+  });
+
+  it("neither renders nor submits vision_extract for any protocol", async () => {
+    const ctx = makeContext();
+    renderSection(ctx);
+    await waitForProviderCatalog();
+
+    expect(screen.queryAllByLabelText(/vision extract/i)).toHaveLength(0);
+    expect(screen.queryAllByText(/vision extract/i)).toHaveLength(0);
+
+    fireEvent.change(screen.getByLabelText("Model (lmstudio)"), {
+      target: { value: "gemma-2" },
+    });
+    const save = screen.getByRole("button", { name: "Save" });
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(save);
+    await waitFor(() => expect(ctx.saveConfig).toHaveBeenCalledTimes(1));
+
+    const payload = vi.mocked(ctx.saveConfig).mock.calls[0][0] as Record<
+      string,
+      Record<string, Record<string, unknown>>
+    >;
+    const endpoints = payload["ai.generation.endpoints"];
+    expect(Object.keys(endpoints).sort()).toEqual([
+      "lmstudio",
+      "openrouter",
+      "vllm",
+    ]);
+    for (const endpoint of Object.values(endpoints)) {
+      expect(endpoint).not.toHaveProperty("vision_extract");
+    }
+    expect(endpoints.lmstudio.model).toBe("gemma-2");
   });
 });
