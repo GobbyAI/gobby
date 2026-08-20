@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 from types import SimpleNamespace, TracebackType
 from typing import Any, get_args
@@ -208,6 +209,55 @@ async def test_openai_compatible_adapter_forwards_reasoning_effort() -> None:
     assert completions.calls[0]["reasoning_effort"] == "high"
     assert completions.calls[1]["reasoning_effort"] == "low"
     assert completions.calls[1]["response_format"] == {"type": "json_object"}
+
+
+def _gif_data_url() -> str:
+    encoded = base64.standard_b64encode(b"GIF89a").decode("utf-8")
+    return f"data:image/gif;base64,{encoded}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protocol", ["openai-compatible", "vllm"])
+async def test_generate_with_images(protocol: str) -> None:
+    endpoint = GenerationEndpointConfig(
+        protocol=protocol,
+        api_base="http://localhost:8000/v1",
+        model="local-vlm",
+        api_key="test-key",
+    )
+    completions = _FakeOpenAICompletions()
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+
+    with patch("openai.AsyncOpenAI", return_value=fake_client):
+        adapter = OpenAICompatibleLocalProviderAdapter(endpoint)
+
+    text_only = await adapter.generate_text_result(
+        "caption this",
+        system_prompt="system",
+        model="local-vlm",
+        max_tokens=64,
+    )
+    image_result = await adapter.generate_text_result(
+        "caption this",
+        system_prompt="system",
+        model="local-vlm",
+        max_tokens=64,
+        images=[_gif_data_url()],
+    )
+
+    assert text_only.text == "local reply"
+    assert image_result.text == "local reply"
+    text_messages = completions.calls[0]["messages"]
+    image_messages = completions.calls[1]["messages"]
+    assert text_messages[1] == {"role": "user", "content": "caption this"}
+    content = image_messages[1]["content"]
+    assert isinstance(content, list)
+    image_block = next(part for part in content if part["type"] == "image_url")
+    text_block = next(part for part in content if part["type"] == "text")
+    assert image_block["image_url"]["url"].startswith("data:image/gif;base64,")
+    assert text_block["text"] == "caption this"
+    assert completions.calls[1]["model"] == "local-vlm"
+    assert "auto" not in completions.calls[1]["model"]
 
 
 @pytest.mark.asyncio

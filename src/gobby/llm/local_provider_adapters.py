@@ -18,7 +18,7 @@ from gobby.llm.base import (
     VisionProviderUnavailableError,
     validate_vision_description,
 )
-from gobby.llm.image_payloads import prepare_image_data
+from gobby.llm.image_payloads import prepare_image_data, prepare_image_inputs
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +66,7 @@ class LocalProviderAdapter(Protocol):
         model: str,
         max_tokens: int | None,
         reasoning_effort: str | None = None,
+        images: list[str] | None = None,
     ) -> LLMTextResult:
         """Generate text with usage metadata."""
 
@@ -252,9 +253,21 @@ class OpenAICompatibleLocalProviderAdapter:
         model: str,
         max_tokens: int | None,
         reasoning_effort: str | None = None,
+        images: list[str] | None = None,
     ) -> LLMTextResult:
         if not self._client:
             raise RuntimeError("Local LLM client not initialised")
+
+        user_content: str | list[dict[str, Any]]
+        if images:
+            prepared = await prepare_image_inputs(images, logger)
+            user_content = [
+                {"type": "image_url", "image_url": {"url": data_url}}
+                for _, _, _, data_url in prepared
+            ]
+            user_content.append({"type": "text", "text": prompt})
+        else:
+            user_content = prompt
 
         request: dict[str, Any] = {
             "model": model,
@@ -263,7 +276,7 @@ class OpenAICompatibleLocalProviderAdapter:
                     "role": "system",
                     "content": system_prompt or "You are a helpful assistant.",
                 },
-                {"role": "user", "content": prompt},
+                {"role": "user", "content": user_content},
             ],
             "max_tokens": max_tokens or 8000,
         }
@@ -386,7 +399,9 @@ class LMStudioLocalProviderAdapter:
         model: str,
         max_tokens: int | None,
         reasoning_effort: str | None = None,
+        images: list[str] | None = None,
     ) -> LLMTextResult:
+        del images
         payload: dict[str, Any] = {
             "model": model,
             "input": prompt,
@@ -478,7 +493,9 @@ class OllamaLocalProviderAdapter:
         model: str,
         max_tokens: int | None,
         reasoning_effort: str | None = None,
+        images: list[str] | None = None,
     ) -> LLMTextResult:
+        del images
         payload = _ollama_chat_payload(
             prompt,
             system_prompt=system_prompt,

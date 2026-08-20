@@ -33,7 +33,7 @@ from gobby.config.feature_base import (
     FeatureProfile,
 )
 from gobby.llm.base import validate_vision_description
-from gobby.llm.image_payloads import MAX_IMAGE_BYTES
+from gobby.llm.image_payloads import MAX_IMAGE_BYTES, prepare_image_inputs
 from gobby.servers.chat_attachment_limits import resolve_server_attachment_limits
 from gobby.servers.responses import JSONResponse
 from gobby.servers.upload_limits import read_bounded_upload
@@ -86,6 +86,7 @@ class TextGeneratePayload(BaseModel):
     candidate_timeout_seconds: float | None = Field(default=None, gt=0.0)
     cli_candidate_timeout_seconds: float | None = Field(default=None, gt=0.0)
     total_timeout_seconds: float | None = Field(default=None, gt=0.0)
+    images: list[str] | None = None
 
     @property
     def effective_profile(self) -> str | None:
@@ -250,6 +251,9 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
             configured_total=generation_config.timeout_seconds,
         )
         try:
+            images = payload.images or None
+            if images:
+                await prepare_image_inputs(images)
             result = await service.generate_result(
                 TextGenerationRequest(
                     prompt=payload.prompt,
@@ -265,6 +269,7 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
                     candidate_timeout_seconds=candidate_timeout,
                     cli_candidate_timeout_seconds=cli_candidate_timeout,
                     total_timeout_seconds=total_timeout,
+                    images=images,
                 )
             )
             response: dict[str, Any] = {

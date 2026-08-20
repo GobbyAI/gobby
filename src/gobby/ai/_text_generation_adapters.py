@@ -134,6 +134,7 @@ class LocalTextGenerateAdapter:
             max_tokens=request.max_tokens,
             reasoning_effort=request.reasoning_effort,
             caller=request.caller,
+            images=request.images,
         )
 
     async def generate_json(self, request: TextGenerationRequest) -> dict[str, Any]:

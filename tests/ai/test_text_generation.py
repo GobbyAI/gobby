@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import signal
 from collections.abc import AsyncIterator
@@ -801,6 +802,217 @@ async def test_text_generation_service_explicit_provider_model_bypasses_profile_
     assert codex.requests == []
     assert local.requests[0].profile == "feature_low"
     assert local.requests[0].model == "qwen-local"
+
+
+def _gif_data_url() -> str:
+    encoded = base64.standard_b64encode(b"GIF89a").decode("utf-8")
+    return f"data:image/gif;base64,{encoded}"
+
+
+def _endpoint_binding(
+    provider: str,
+    model: str,
+    *,
+    protocol: str,
+    wire_api: str = "chat-completions",
+    input_modalities: tuple[str, ...] | None = ("text", "image"),
+    adapter_style: AIAdapterStyle = AIAdapterStyle.OPENAI_COMPATIBLE,
+) -> CapabilityBinding:
+    endpoint_name = provider.removeprefix("endpoint:")
+    metadata: dict[str, object] = {
+        "endpoint": endpoint_name,
+        "protocol": protocol,
+        "wire_api": wire_api,
+    }
+    if input_modalities is not None:
+        metadata["input_modalities"] = list(input_modalities)
+    return CapabilityBinding(
+        capability=AICapability.TEXT_GENERATE,
+        provider=provider,
+        adapter_style=adapter_style,
+        available=True,
+        models=(model,),
+        metadata=metadata,
+    )
+
+
+@pytest.mark.asyncio
+async def test_image_routing_mixed_catalog() -> None:
+    text_only = RecordingAdapter("endpoint:text-only")
+    vision = RecordingAdapter("endpoint:vision")
+    registry = AICapabilityRegistry(
+        [
+            _endpoint_binding(
+                "endpoint:text-only",
+                "llama",
+                protocol="openai-compatible",
+                input_modalities=("text",),
+            ),
+            _endpoint_binding(
+                "endpoint:vision",
+                "qwen-vl",
+                protocol="vllm",
+                input_modalities=("text", "image"),
+            ),
+        ]
+    )
+    service = TextGenerationService(
+        registry,
+        {"endpoint:text-only": text_only, "endpoint:vision": vision},
+    )
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="caption",
+            candidates=("endpoint:text-only/llama", "endpoint:vision/qwen-vl"),
+            images=[_gif_data_url()],
+        )
+    )
+
+    assert result.provider == "endpoint:vision"
+    assert result.model == "qwen-vl"
+    assert text_only.requests == []
+    assert vision.requests[0].images == [_gif_data_url()]
+
+
+@pytest.mark.asyncio
+async def test_image_request_text_only_selection_diagnostic() -> None:
+    adapter = RecordingAdapter("endpoint:text-only")
+    registry = AICapabilityRegistry(
+        [
+            _endpoint_binding(
+                "endpoint:text-only",
+                "llama",
+                protocol="openai-compatible",
+                input_modalities=("text",),
+            )
+        ]
+    )
+    service = TextGenerationService(registry, {"endpoint:text-only": adapter})
+
+    with pytest.raises(ValueError, match="Image inputs are not supported by endpoint:text-only"):
+        await service.generate_result(
+            TextGenerationRequest(
+                prompt="caption",
+                provider="endpoint:text-only",
+                model="llama",
+                images=[_gif_data_url()],
+            )
+        )
+
+    assert adapter.requests == []
+
+
+@pytest.mark.asyncio
+async def test_image_routing_skips_generic_codex() -> None:
+    vision = RecordingAdapter("endpoint:vision")
+    generic_codex = RecordingAdapter("codex")
+    grok = RecordingAdapter("grok")
+    agy = RecordingAdapter("agy")
+    droid = RecordingAdapter("droid")
+    qwen = RecordingAdapter("qwen")
+    responses = RecordingAdapter("endpoint:openrouter")
+    lmstudio = RecordingAdapter("endpoint:lm-studio")
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("gpt-5.3-codex-spark",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="grok",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("grok-4",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="agy",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=("auto",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="droid",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=("default",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="qwen",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=("qwen3-coder",),
+            ),
+            _endpoint_binding(
+                "endpoint:openrouter",
+                "kimi",
+                protocol="openai-compatible",
+                wire_api="responses",
+                input_modalities=("text", "image"),
+                adapter_style=AIAdapterStyle.DAEMON,
+            ),
+            _endpoint_binding(
+                "endpoint:lm-studio",
+                "llava",
+                protocol="lmstudio",
+                input_modalities=("text", "image"),
+            ),
+            _endpoint_binding(
+                "endpoint:vision",
+                "qwen-vl",
+                protocol="vllm",
+                input_modalities=("text", "image"),
+            ),
+        ]
+    )
+    service = TextGenerationService(
+        registry,
+        {
+            "codex": generic_codex,
+            "grok": grok,
+            "agy": agy,
+            "droid": droid,
+            "qwen": qwen,
+            "endpoint:openrouter": responses,
+            "endpoint:lm-studio": lmstudio,
+            "endpoint:vision": vision,
+        },
+    )
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="caption",
+            candidates=(
+                "codex/gpt-5.3-codex-spark",
+                "grok/grok-4",
+                "agy/auto",
+                "droid/default",
+                "qwen/qwen3-coder",
+                "endpoint:openrouter/kimi",
+                "endpoint:lm-studio/llava",
+                "endpoint:vision/qwen-vl",
+            ),
+            images=[_gif_data_url()],
+        )
+    )
+
+    assert result.provider == "endpoint:vision"
+    assert result.model == "qwen-vl"
+    assert generic_codex.requests == []
+    assert grok.requests == []
+    assert agy.requests == []
+    assert droid.requests == []
+    assert qwen.requests == []
+    assert responses.requests == []
+    assert lmstudio.requests == []
+    assert vision.requests[0].images == [_gif_data_url()]
 
 
 @pytest.mark.asyncio
