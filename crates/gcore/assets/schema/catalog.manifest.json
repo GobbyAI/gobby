@@ -1045,6 +1045,10 @@
       "definition": "integer|int4|YES||NEVER"
     },
     {
+      "name": "code_indexed_project_states.indexer_version",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
       "name": "code_indexed_project_states.last_indexed_at",
       "definition": "timestamp with time zone|timestamptz|YES||NEVER"
     },

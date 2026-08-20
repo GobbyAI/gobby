@@ -13,10 +13,11 @@ pub use lifecycle::{
 };
 pub use payload::{GraphBlastRadiusTarget, GraphPayload};
 pub use read::{
-    DEFAULT_SYMBOL_PATH_MAX_DEPTH, MAX_SYMBOL_PATH_DEPTH, blast_radius, blast_radius_graph,
-    count_callers, count_usages, file_graph, find_callee_ids_batch, find_caller_ids,
-    find_caller_ids_batch, find_callers, find_usage_ids, find_usages, get_imports,
-    project_overview_graph, resolve_external_call_target, shortest_symbol_path, symbol_neighbors,
+    DEFAULT_SYMBOL_PATH_MAX_DEPTH, GraphFileHashRead, GraphFileHashes, MAX_SYMBOL_PATH_DEPTH,
+    blast_radius, blast_radius_graph, count_callers, count_usages, file_graph,
+    find_callee_ids_batch, find_caller_ids, find_caller_ids_batch, find_callers, find_usage_ids,
+    find_usages, get_imports, project_overview_graph, read_project_file_hashes,
+    resolve_external_call_target, shortest_symbol_path, symbol_neighbors,
 };
 pub(crate) use write::delete_content_version;
 pub use write::{

@@ -73,6 +73,8 @@ pub(crate) enum Command {
         #[arg(long)]
         skip_if_locked: bool,
     },
+    /// Reconcile stranded index state and graph projection drift
+    Repair,
     /// Show project index status
     Status,
     /// Clear index and force re-index

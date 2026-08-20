@@ -28,7 +28,8 @@ pub fn run(ctx: &Context, format: Format) -> anyhow::Result<()> {
                     total_symbols::BIGINT AS total_symbols,
                     last_indexed_at::TEXT AS last_indexed_at,
                     COALESCE(index_duration_ms, 0)::BIGINT AS index_duration_ms,
-                    NULL::BIGINT AS total_eligible_files
+                    NULL::BIGINT AS total_eligible_files,
+                    indexer_version
              FROM code_indexed_project_states
              WHERE machine_id = $1 AND project_id = $2",
                 &[&machine_id, &project_id],

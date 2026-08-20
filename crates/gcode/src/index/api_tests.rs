@@ -443,6 +443,130 @@ mod serial_db {
     }
 }
 
+#[test]
+#[serial_test::serial(serial_db)]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+fn mark_graph_unsynced_clears_completion_and_attempt_for_selected_files() {
+    let (mut conn, database_url) = connect_test_db();
+    let project_id = unique_test_project_id("gcode-mark-graph-unsynced");
+    cleanup_project(&mut conn, &project_id).expect("pre-clean test project rows");
+    let _cleanup = ProjectCleanup {
+        database_url,
+        project_id: project_id.clone(),
+    };
+    seed_project(&mut conn, &project_id);
+    let machine_id = gobby_core::machine::read_local_machine_id().expect("machine id");
+    let file = indexed_file(&project_id, "src/lib.rs", "hash-1", 1, 16);
+    api::upsert_file(&mut conn, &file).expect("insert indexed file");
+    api::upsert_file_state(&mut conn, &machine_id, &file).expect("set current indexed file");
+    let old_file = indexed_file(&project_id, "src/lib.rs", "hash-old", 1, 16);
+    api::upsert_file(&mut conn, &old_file).expect("insert historic indexed file");
+    let empty_file = indexed_file(&project_id, "src/empty.rs", "hash-empty", 0, 0);
+    api::upsert_file(&mut conn, &empty_file).expect("insert empty indexed file");
+    api::upsert_file_state(&mut conn, &machine_id, &empty_file)
+        .expect("set current empty indexed file");
+    let file_id = db::id_param(&file.id).expect("file uuid");
+    conn.execute(
+        "UPDATE code_indexed_files
+         SET graph_synced = TRUE, graph_sync_attempted_at = NOW()
+         WHERE project_id = $1",
+        &[&db::id_param(&project_id).expect("project uuid")],
+    )
+    .expect("mark graph synced");
+    assert_eq!(
+        api::graph_synced_files(&mut conn, &machine_id, &project_id)
+            .expect("list graph candidates")
+            .iter()
+            .map(|file| file.file_path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["src/lib.rs"]
+    );
+
+    assert_eq!(
+        api::mark_graph_unsynced(
+            &mut conn,
+            &machine_id,
+            &project_id,
+            &["src/lib.rs".to_string()],
+        )
+        .expect("mark graph pending"),
+        1
+    );
+    let row = conn
+        .query_one(
+            "SELECT graph_synced, graph_sync_attempted_at IS NULL
+             FROM code_indexed_files WHERE id = $1",
+            &[&file_id],
+        )
+        .expect("read graph state");
+    assert!(!row.get::<_, bool>(0));
+    assert!(row.get::<_, bool>(1));
+    let historic_synced: bool = conn
+        .query_one(
+            "SELECT graph_synced FROM code_indexed_files WHERE id = $1",
+            &[&db::id_param(&old_file.id).expect("historic file uuid")],
+        )
+        .expect("read historic graph state")
+        .get(0);
+    assert!(historic_synced);
+}
+
+#[test]
+#[serial_test::serial(serial_db)]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+fn project_stats_preserve_and_replace_indexer_version() {
+    let (mut conn, database_url) = connect_test_db();
+    let project_id = unique_test_project_id("gcode-indexer-version");
+    cleanup_project(&mut conn, &project_id).expect("pre-clean test project rows");
+    let _cleanup = ProjectCleanup {
+        database_url,
+        project_id: project_id.clone(),
+    };
+    let machine_id = gobby_core::machine::read_local_machine_id().expect("machine id");
+    let mut project = IndexedProject {
+        id: project_id.clone(),
+        root_path: format!("/tmp/{project_id}"),
+        total_files: 1,
+        total_symbols: 1,
+        last_indexed_at: String::new(),
+        index_duration_ms: 0,
+        total_eligible_files: None,
+        indexer_version: None,
+    };
+    api::upsert_project_stats(&mut conn, &machine_id, &project).expect("seed null version");
+    assert_eq!(
+        api::project_indexer_version(&mut conn, &machine_id, &project_id)
+            .expect("read null version"),
+        None
+    );
+
+    project.indexer_version = Some("1.6.0".to_string());
+    api::upsert_project_stats(&mut conn, &machine_id, &project).expect("stamp version");
+    project.indexer_version = None;
+    api::upsert_project_stats(&mut conn, &machine_id, &project).expect("preserve version");
+    assert_eq!(
+        api::project_indexer_version(&mut conn, &machine_id, &project_id)
+            .expect("read version")
+            .as_deref(),
+        Some("1.6.0")
+    );
+
+    project.indexer_version = Some("1.6.1".to_string());
+    api::upsert_project_stats(&mut conn, &machine_id, &project).expect("replace version");
+    assert_eq!(
+        api::project_indexer_version(&mut conn, &machine_id, &project_id)
+            .expect("read replacement")
+            .as_deref(),
+        Some("1.6.1")
+    );
+}
+
 fn connect_test_db() -> (postgres::Client, String) {
     let database_url = crate::test_env::postgres_test_database_url("postgres API SQL tests");
     let conn = gobby_core::postgres::connect_readwrite(&database_url)
@@ -467,6 +591,7 @@ fn seed_project_for_machine(conn: &mut postgres::Client, machine_id: &str, proje
             last_indexed_at: String::new(),
             index_duration_ms: 0,
             total_eligible_files: None,
+            indexer_version: None,
         },
     )
     .expect("seed project row");

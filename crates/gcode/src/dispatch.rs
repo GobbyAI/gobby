@@ -100,6 +100,7 @@ fn service_config_selection(command: &Command) -> config::ServiceConfigSelection
 
     match command {
         Command::Index { .. } => ServiceConfigSelection::all(),
+        Command::Repair => ServiceConfigSelection::falkordb_only(),
         Command::Status => ServiceConfigSelection::projection_cleanup(),
         Command::Invalidate { .. } => ServiceConfigSelection::projection_cleanup(),
         Command::Graph { .. }
@@ -313,6 +314,7 @@ fn run() -> anyhow::Result<()> {
             skip_if_locked,
             format,
         ),
+        Command::Repair => commands::repair::run(&ctx, format),
         Command::Status => {
             ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::status::run(&ctx, format)

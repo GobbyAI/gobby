@@ -12,6 +12,12 @@ use crate::models::{
     Symbol,
 };
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GraphSyncedFile {
+    pub file_path: String,
+    pub content_hash: String,
+}
+
 const SYMBOL_UPSERT_BATCH_SIZE: usize = 500;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -420,14 +426,18 @@ pub fn upsert_project_stats(
     conn.execute(
         "INSERT INTO code_indexed_project_states (
             machine_id, project_id, root_path, total_files, total_symbols,
-            last_indexed_at, index_duration_ms
-        ) VALUES ($1,$2,$3,$4,$5,NOW(),$6)
+            last_indexed_at, index_duration_ms, indexer_version
+        ) VALUES ($1,$2,$3,$4,$5,NOW(),$6,$7)
         ON CONFLICT(machine_id, project_id) DO UPDATE SET
             root_path=excluded.root_path,
             total_files=excluded.total_files,
             total_symbols=excluded.total_symbols,
             last_indexed_at=excluded.last_indexed_at,
             index_duration_ms=excluded.index_duration_ms,
+            indexer_version=COALESCE(
+                excluded.indexer_version,
+                code_indexed_project_states.indexer_version
+            ),
             updated_at=NOW()",
         &[
             &id_param(machine_id)?,
@@ -436,9 +446,77 @@ pub fn upsert_project_stats(
             &to_i32(project.total_files),
             &to_i32(project.total_symbols),
             &to_i32(project.index_duration_ms as usize),
+            &project.indexer_version.as_deref(),
         ],
     )?;
     Ok(())
+}
+
+pub fn project_indexer_version(
+    conn: &mut impl GenericClient,
+    machine_id: &str,
+    project_id: &str,
+) -> anyhow::Result<Option<String>> {
+    let row = conn.query_opt(
+        "SELECT indexer_version
+         FROM code_indexed_project_states
+         WHERE machine_id = $1 AND project_id = $2",
+        &[&id_param(machine_id)?, &id_param(project_id)?],
+    )?;
+    Ok(row
+        .map(|row| row.try_get::<_, Option<String>>("indexer_version"))
+        .transpose()?
+        .flatten())
+}
+
+pub fn graph_synced_files(
+    conn: &mut impl GenericClient,
+    machine_id: &str,
+    project_id: &str,
+) -> anyhow::Result<Vec<GraphSyncedFile>> {
+    let rows = conn.query(
+        "SELECT f.file_path, f.content_hash
+         FROM code_indexed_file_states s
+         JOIN code_indexed_files f
+           ON f.project_id = s.project_id
+          AND f.file_path = s.file_path
+          AND f.content_hash = s.content_hash
+         WHERE s.machine_id = $1 AND s.project_id = $2
+           AND f.graph_synced AND f.symbol_count > 0
+         ORDER BY f.file_path",
+        &[&id_param(machine_id)?, &id_param(project_id)?],
+    )?;
+    rows.into_iter()
+        .map(|row| {
+            Ok(GraphSyncedFile {
+                file_path: row.try_get("file_path")?,
+                content_hash: row.try_get("content_hash")?,
+            })
+        })
+        .collect()
+}
+
+pub fn mark_graph_unsynced(
+    conn: &mut impl GenericClient,
+    machine_id: &str,
+    project_id: &str,
+    paths: &[String],
+) -> anyhow::Result<usize> {
+    if paths.is_empty() {
+        return Ok(0);
+    }
+    let updated = conn.execute(
+        "UPDATE code_indexed_files f
+         SET graph_synced = FALSE, graph_sync_attempted_at = NULL
+         FROM code_indexed_file_states s
+         WHERE s.machine_id = $1 AND s.project_id = $2
+           AND f.project_id = s.project_id
+           AND f.file_path = s.file_path
+           AND f.content_hash = s.content_hash
+           AND f.file_path = ANY($3)",
+        &[&id_param(machine_id)?, &id_param(project_id)?, &paths],
+    )?;
+    usize::try_from(updated).map_err(|_| anyhow::anyhow!("updated file count exceeds usize"))
 }
 
 pub fn upsert_imports(

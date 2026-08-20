@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 pub const RUNNER_PROTOCOL_VERSION: u32 = 1;
 pub const BASELINE_VERSION: i32 = 375;
 pub const BASELINE_CHECKSUM: &str =
-    "d19810005e6c931219781941ab1c63ecc057973dfe60e2d4a8b6a69f460c6dd0";
+    "8467fc42e29fec1f58986e7ac141c3cdcf8c6a417c61c73ff3cca63241e2a2cf";
 pub const BASELINE_SQL: &str = include_str!("../../assets/schema/baseline.sql");
 pub const SEED_MANIFEST_JSON: &str = include_str!("../../assets/schema/seed.manifest.json");
 pub const CATALOG_MANIFEST_JSON: &str = include_str!("../../assets/schema/catalog.manifest.json");
@@ -162,6 +162,14 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         filename: "397_memories_source_task_index.sql",
         checksum: "72104d71d3c69a8c277e206cf1d8932570c532899bed45dc006ecec02e4cdddd",
         sql: include_str!("../../assets/schema/migrations/397_memories_source_task_index.sql"),
+    },
+    EmbeddedMigration {
+        version: 398,
+        filename: "398_code_indexed_project_states_indexer_version.sql",
+        checksum: "1dbe00b375b252d2ab283e1a0c1ef66f5bcd79b1f2a9618a4452f7a1ab153da2",
+        sql: include_str!(
+            "../../assets/schema/migrations/398_code_indexed_project_states_indexer_version.sql"
+        ),
     },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

@@ -37,6 +37,7 @@ fn parsed_reindex_preserves_summaries_for_immutable_content_versions() {
             last_indexed_at: String::new(),
             index_duration_ms: 0,
             total_eligible_files: None,
+            indexer_version: None,
         },
     )
     .expect("seed project row");
@@ -195,6 +196,7 @@ fn indexing_adopts_existing_content_version_without_reparse() {
             last_indexed_at: String::new(),
             index_duration_ms: 0,
             total_eligible_files: None,
+            indexer_version: None,
         },
     )
     .expect("seed first machine project state");
@@ -309,6 +311,7 @@ fn full_indexing_reparses_previously_adopted_content() {
             last_indexed_at: String::new(),
             index_duration_ms: 0,
             total_eligible_files: None,
+            indexer_version: None,
         },
     )
     .expect("seed first machine project state");
@@ -419,6 +422,7 @@ fn overlay_indexing_adopts_existing_content_version_without_reparse() {
             last_indexed_at: String::new(),
             index_duration_ms: 0,
             total_eligible_files: None,
+            indexer_version: None,
         },
     )
     .expect("seed parent project state");
@@ -447,6 +451,7 @@ fn overlay_indexing_adopts_existing_content_version_without_reparse() {
             last_indexed_at: String::new(),
             index_duration_ms: 0,
             total_eligible_files: None,
+            indexer_version: None,
         },
     )
     .expect("seed first machine overlay project state");

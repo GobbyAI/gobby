@@ -59,7 +59,8 @@ pub(super) fn collect_projects_from(database_url: &str) -> anyhow::Result<Vec<In
                 total_symbols::BIGINT AS total_symbols,
                 last_indexed_at::TEXT AS last_indexed_at,
                 COALESCE(index_duration_ms, 0)::BIGINT AS index_duration_ms,
-                NULL::BIGINT AS total_eligible_files
+                NULL::BIGINT AS total_eligible_files,
+                indexer_version
          FROM code_indexed_project_states
          WHERE machine_id = $1
          ORDER BY last_indexed_at DESC NULLS LAST",
@@ -92,6 +93,10 @@ pub(super) fn indexed_project_from_row(row: &postgres::Row) -> anyhow::Result<In
             .ok()
             .flatten()
             .map(|n| n as usize),
+        indexer_version: row
+            .try_get::<_, Option<String>>("indexer_version")
+            .ok()
+            .flatten(),
     })
 }
 

@@ -127,6 +127,7 @@ mod tests {
             last_indexed_at: "1".to_string(),
             index_duration_ms: 1,
             total_eligible_files: Some(1),
+            indexer_version: None,
         }
     }
 

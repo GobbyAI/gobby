@@ -1,5 +1,6 @@
 mod graph_payloads;
 mod payload_queries;
+mod reconcile;
 mod relationship_queries;
 mod relationships;
 mod support;
@@ -9,6 +10,7 @@ pub use graph_payloads::{
 };
 #[cfg(test)]
 pub(super) use payload_queries::{blast_radius_file_import_query, file_calls_query};
+pub use reconcile::{GraphFileHashRead, GraphFileHashes, read_project_file_hashes};
 #[cfg(test)]
 pub(crate) use relationship_queries::{
     get_imports_query, resolve_external_call_target_query, symbol_callee_edges_query,

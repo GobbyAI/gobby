@@ -63,6 +63,26 @@ pub fn contract() -> CliContract {
                 )
             },
             CommandContract {
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![format_flag()],
+                json_output_keys: vec![
+                    "project_id",
+                    "mode",
+                    "previous_indexer_version",
+                    "indexer_version",
+                    "local_import_calls",
+                    "local_import_inheritance",
+                    "marked_for_resync",
+                    "graph_reconcile",
+                    "duration_ms",
+                ],
+                ..CommandContract::new(
+                    "repair",
+                    "Repair stranded index state and graph projection drift.",
+                )
+            },
+            CommandContract {
                 positionals: vec![],
                 flags: vec![format_flag()],
                 json_output_keys: vec![],

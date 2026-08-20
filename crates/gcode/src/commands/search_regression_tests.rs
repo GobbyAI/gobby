@@ -59,6 +59,7 @@ fn hybrid_search_excludes_indexed_file_deleted_from_disk() -> anyhow::Result<()>
         last_indexed_at: String::new(),
         index_duration_ms: 0,
         total_eligible_files: Some(1),
+        indexer_version: None,
     };
     let machine_id = gobby_core::machine::read_local_machine_id()?;
     api::upsert_project_stats(&mut conn, &machine_id, &project)?;

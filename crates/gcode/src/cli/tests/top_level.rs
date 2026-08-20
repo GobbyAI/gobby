@@ -19,6 +19,13 @@ fn test_parse_index_require_cpp_semantics() {
 }
 
 #[test]
+fn test_parse_repair() {
+    let cli = Cli::try_parse_from(["gcode", "repair", "--format", "json"]).expect("repair parses");
+    assert!(matches!(cli.command, Command::Repair));
+    assert!(matches!(cli.format, Some(output::Format::Json)));
+}
+
+#[test]
 fn test_parse_invalidate_project_id() {
     let cli = Cli::try_parse_from([
         "gcode",

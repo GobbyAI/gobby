@@ -58,6 +58,7 @@ pub(super) fn refresh_project_stats(
     project_id: &str,
     elapsed_ms: u64,
     total_eligible_files: Option<usize>,
+    indexer_version: Option<&str>,
 ) {
     let total_files = count_machine_rows(conn, machine_id, project_id, false);
     let total_symbols = count_machine_rows(conn, machine_id, project_id, true);
@@ -73,6 +74,7 @@ pub(super) fn refresh_project_stats(
             last_indexed_at: epoch_secs_str(),
             index_duration_ms: elapsed_ms,
             total_eligible_files,
+            indexer_version: indexer_version.map(ToOwned::to_owned),
         },
     ) {
         eprintln!(

@@ -3,6 +3,7 @@ pub(crate) mod graph;
 pub(crate) mod grep;
 pub(crate) mod index;
 pub(crate) mod init;
+pub(crate) mod repair;
 pub(crate) mod scope;
 pub(crate) mod search;
 pub(crate) mod status;

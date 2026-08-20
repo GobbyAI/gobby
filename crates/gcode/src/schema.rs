@@ -30,6 +30,7 @@ const TABLE_CONTRACTS: &[TableContract] = &[
             "total_symbols",
             "last_indexed_at",
             "index_duration_ms",
+            "indexer_version",
             "created_at",
             "updated_at",
         ],

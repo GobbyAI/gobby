@@ -74,6 +74,8 @@ struct ProjectListing {
     index_duration_ms: Option<u64>,
     #[serde(default)]
     total_eligible_files: Option<usize>,
+    #[serde(default)]
+    indexer_version: Option<String>,
 }
 
 impl ProjectListing {
@@ -184,6 +186,7 @@ fn indexed_project(project: ProjectListing) -> IndexedProject {
         last_indexed_at: project.last_indexed_at.unwrap_or_default(),
         index_duration_ms: project.index_duration_ms.unwrap_or(0),
         total_eligible_files: project.total_eligible_files,
+        indexer_version: project.indexer_version,
     }
 }
 
@@ -306,6 +309,7 @@ mod tests {
             last_indexed_at: None,
             index_duration_ms: None,
             total_eligible_files: None,
+            indexer_version: None,
         }
     }
 
@@ -369,6 +373,7 @@ mod tests {
             last_indexed_at: String::new(),
             index_duration_ms: 0,
             total_eligible_files: None,
+            indexer_version: None,
         })
         .expect("json");
         assert_eq!(payload["id"], "proj");

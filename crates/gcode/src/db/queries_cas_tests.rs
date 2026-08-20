@@ -243,6 +243,7 @@ fn seeded_file(prefix: &str, hash: &str) -> (postgres::Client, String, ProjectCl
             last_indexed_at: String::new(),
             index_duration_ms: 0,
             total_eligible_files: None,
+            indexer_version: None,
         },
     )
     .expect("seed project");

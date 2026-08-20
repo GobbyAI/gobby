@@ -513,6 +513,7 @@ mod serial_db {
                 last_indexed_at: String::new(),
                 index_duration_ms: 0,
                 total_eligible_files: None,
+                indexer_version: None,
             },
         )
         .expect("seed project");

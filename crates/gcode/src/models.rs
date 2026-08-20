@@ -532,6 +532,8 @@ pub struct IndexedProject {
     pub index_duration_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_eligible_files: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub indexer_version: Option<String>,
 }
 
 fn is_zero_usize(value: &usize) -> bool {

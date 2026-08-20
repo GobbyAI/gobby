@@ -12,6 +12,11 @@ use crate::utils::short_id;
 use gobby_core::progress::ProgressBar;
 use serde::Serialize;
 
+pub(crate) enum RunIndexLockedOutput {
+    IndexOnly(IndexOutcome),
+    Projections(IndexSyncProjectionsOutput),
+}
+
 // Args map 1:1 to the `gcode index` CLI flags; a wrapper struct would only add
 // indirection between clap and this entry point.
 #[allow(clippy::too_many_arguments)]
@@ -44,46 +49,13 @@ pub fn run(
         sync_projections,
     };
 
-    // Both the PostgreSQL index phase and the graph/vector projection sync run
-    // under the same per-project lock. A concurrent daemon-triggered projection
-    // should observe the busy lock and skip with SkippedBusy instead of racing
-    // FalkorDB, Qdrant, or the embedding endpoint.
-    enum RunOutput {
-        IndexOnly(IndexOutcome),
-        Projections(IndexSyncProjectionsOutput),
-    }
-
-    let mut index_progress = StderrIndexProgress::new(target_ctx.quiet);
     let lock_policy = if skip_if_locked {
         IndexLockPolicy::brief_index_flush_try()
     } else {
         IndexLockPolicy::wait()
     };
     let run_output = index_lock::with_project_lock(&target_ctx, lock_policy, || {
-        let outcome = api::index_files(
-            request,
-            &target_ctx,
-            api::IndexOptions::with_progress(&mut index_progress),
-        )?;
-        if sync_projections {
-            let mut projection_progress = StderrProjectionProgress::new(target_ctx.quiet);
-            // Bound the projection phase so a wedged FalkorDB/Qdrant/embedding
-            // backend cannot pin the per-project lock held by `with_project_lock`
-            // (#17711). Failures fold into degraded reports, never an error.
-            let projections = sync::sync_after_index_bounded(
-                &target_ctx,
-                &outcome.graph_file_paths,
-                &outcome.vector_file_paths,
-                sync::DEFAULT_PROJECTION_SYNC_STALL_TIMEOUT,
-                &mut projection_progress,
-            );
-            Ok(RunOutput::Projections(sync_projections_payload(
-                &outcome,
-                projections,
-            )))
-        } else {
-            Ok(RunOutput::IndexOnly(outcome))
-        }
+        run_index_locked(&target_ctx, request)
     })?;
 
     let run_output = match run_output {
@@ -110,15 +82,46 @@ pub fn run(
     };
 
     match run_output {
-        RunOutput::Projections(payload) => match format {
+        RunIndexLockedOutput::Projections(payload) => match format {
             Format::Json => output::print_json(&payload),
             Format::Text => output::print_text(&sync_projections_text(&payload)?),
         },
-        RunOutput::IndexOnly(outcome) => match format {
+        RunIndexLockedOutput::IndexOnly(outcome) => match format {
             Format::Json => output::print_json(&outcome),
             Format::Text => output::print_text(&index_text(&outcome)),
         },
     }
+}
+
+pub(crate) fn run_index_locked(
+    ctx: &Context,
+    request: IndexRequest,
+) -> anyhow::Result<RunIndexLockedOutput> {
+    let sync_projections = request.sync_projections;
+    let mut index_progress = StderrIndexProgress::new(ctx.quiet);
+    let outcome = api::index_files(
+        request,
+        ctx,
+        api::IndexOptions::with_progress(&mut index_progress),
+    )?;
+    if !sync_projections {
+        return Ok(RunIndexLockedOutput::IndexOnly(outcome));
+    }
+
+    let mut projection_progress = StderrProjectionProgress::new(ctx.quiet);
+    // Bound the projection phase so a wedged FalkorDB/Qdrant/embedding backend
+    // cannot pin the project lock. Failures fold into degraded reports.
+    let projections = sync::sync_after_index_bounded(
+        ctx,
+        &outcome.graph_file_paths,
+        &outcome.vector_file_paths,
+        sync::DEFAULT_PROJECTION_SYNC_STALL_TIMEOUT,
+        &mut projection_progress,
+    );
+    Ok(RunIndexLockedOutput::Projections(sync_projections_payload(
+        &outcome,
+        projections,
+    )))
 }
 
 struct StderrProgress {

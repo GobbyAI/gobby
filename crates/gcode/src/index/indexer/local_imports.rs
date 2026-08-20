@@ -24,6 +24,13 @@ use crate::db;
 use crate::index::api;
 use crate::models::{CallRelation, CallTargetKind, InheritanceRelation};
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LocalImportRepair {
+    pub pending: usize,
+    pub resolved: usize,
+    pub owners: Vec<String>,
+}
+
 /// Resolve every pending `local_import` call written for `file_paths` during this
 /// run. Returns the number of calls promoted to a `Symbol` target.
 ///
@@ -36,16 +43,16 @@ pub(super) fn resolve_local_import_calls(
     file_paths: &[String],
 ) -> anyhow::Result<usize> {
     let pending = db::read_local_import_calls(conn, project_id, file_paths)?;
-    resolve_pending_local_import_calls(conn, project_id, pending)
+    Ok(resolve_pending_local_import_calls(conn, project_id, pending)?.resolved)
 }
 
 /// Resolve any pending `local_import` rows left from an earlier interrupted
 /// promotion pass. Full, unfiltered indexes call this after the normal
 /// changed-file pass so stale project rows are not stranded forever.
-pub(super) fn resolve_project_local_import_calls(
+pub(crate) fn resolve_project_local_import_calls(
     conn: &mut Client,
     project_id: &str,
-) -> anyhow::Result<usize> {
+) -> anyhow::Result<LocalImportRepair> {
     let pending = db::read_project_local_import_calls(conn, project_id)?;
     resolve_pending_local_import_calls(conn, project_id, pending)
 }
@@ -54,7 +61,9 @@ fn resolve_pending_local_import_calls(
     conn: &mut Client,
     project_id: &str,
     pending: Vec<CallRelation>,
-) -> anyhow::Result<usize> {
+) -> anyhow::Result<LocalImportRepair> {
+    let pending_count = pending.len();
+    let owners = pending_call_owners(&pending);
     let mut resolved_count = 0usize;
     for call in &pending {
         let candidate_files = call.local_import_candidate_files();
@@ -77,7 +86,15 @@ fn resolve_pending_local_import_calls(
         };
         api::promote_local_import_call(conn, project_id, call, &resolved)?;
     }
-    Ok(resolved_count)
+    Ok(LocalImportRepair {
+        pending: pending_count,
+        resolved: resolved_count,
+        owners: owners.into_iter().collect(),
+    })
+}
+
+fn pending_call_owners(pending: &[CallRelation]) -> BTreeSet<String> {
+    pending.iter().map(|call| call.file_path.clone()).collect()
 }
 
 /// A `local_import` call that matched a canonical symbol, rewritten to a `Symbol`
@@ -122,14 +139,13 @@ pub(super) fn resolve_local_import_inheritance(
             .filter(|row| inheritance_names_trigger(row, trigger_paths)),
     );
     dedup_inheritance(&mut pending);
-    resolve_pending_local_import_inheritance(conn, project_id, pending)
+    Ok(resolve_pending_local_import_inheritance(conn, project_id, pending)?.owners)
 }
 
-#[allow(dead_code)]
-pub(super) fn resolve_project_local_import_inheritance(
+pub(crate) fn resolve_project_local_import_inheritance(
     conn: &mut Client,
     project_id: &str,
-) -> anyhow::Result<Vec<String>> {
+) -> anyhow::Result<LocalImportRepair> {
     let pending = db::read_project_local_import_inheritance(conn, project_id)?;
     resolve_pending_local_import_inheritance(conn, project_id, pending)
 }
@@ -168,7 +184,8 @@ fn resolve_pending_local_import_inheritance(
     conn: &mut Client,
     project_id: &str,
     pending: Vec<InheritanceRelation>,
-) -> anyhow::Result<Vec<String>> {
+) -> anyhow::Result<LocalImportRepair> {
+    let pending_count = pending.len();
     let mut owners = BTreeSet::new();
     let mut to_promote = Vec::new();
     for original in pending {
@@ -206,6 +223,7 @@ fn resolve_pending_local_import_inheritance(
             to_promote.push((original, updated));
         }
     }
+    let resolved_count = to_promote.len();
     for chunk in to_promote.chunks(INHERITANCE_PROMOTION_BATCH) {
         let mut tx = conn.transaction()?;
         for (original, updated) in chunk {
@@ -222,5 +240,38 @@ fn resolve_pending_local_import_inheritance(
             owners.insert(original.file_path.clone());
         }
     }
-    Ok(owners.into_iter().collect())
+    Ok(LocalImportRepair {
+        pending: pending_count,
+        resolved: resolved_count,
+        owners: owners.into_iter().collect(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pending_call_owner_collection_is_distinct_and_sorted() {
+        let call = |path: &str, line| {
+            CallRelation::new(
+                "caller".to_string(),
+                "callee".to_string(),
+                path.to_string(),
+                line,
+            )
+            .with_local_import_target("callee".to_string(), vec!["target.rs".to_string()])
+        };
+        let pending = vec![
+            call("src/b.rs", 1),
+            call("src/a.rs", 2),
+            call("src/b.rs", 3),
+        ];
+        assert_eq!(
+            pending_call_owners(&pending)
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec!["src/a.rs".to_string(), "src/b.rs".to_string()]
+        );
+    }
 }

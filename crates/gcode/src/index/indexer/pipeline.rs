@@ -205,6 +205,7 @@ fn index_discovered_files(
         project_id,
         start.elapsed().as_millis() as u64,
         Some(eligible_files),
+        (request.full && request.path_filter.is_none()).then_some(env!("CARGO_PKG_VERSION")),
     );
     outcome.durations.stats_ms = stats_start.elapsed().as_millis() as u64;
     outcome.durations.total_ms = start.elapsed().as_millis() as u64;
@@ -351,6 +352,7 @@ fn index_explicit_files_with_connection(
         project_id,
         start.elapsed().as_millis() as u64,
         Some(routed_file_count),
+        None,
     );
     outcome.durations.stats_ms = stats_start.elapsed().as_millis() as u64;
     outcome.durations.total_ms = start.elapsed().as_millis() as u64;

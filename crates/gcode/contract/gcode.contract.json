@@ -147,17 +147,47 @@
           "repeatable": false
         }
       ],
-      "json_output_keys": [
-        "project_id",
-        "root",
-        "indexed_files",
-        "indexed_symbols",
-        "skipped_files",
-        "errors"
-      ]
-    },
-    {
-      "name": "status",
+    "json_output_keys": [
+      "project_id",
+      "root",
+      "indexed_files",
+      "indexed_symbols",
+      "skipped_files",
+      "errors"
+    ]
+  },
+  {
+    "name": "repair",
+    "summary": "Repair stranded index state and graph projection drift.",
+    "daemon_consumed": true,
+    "positionals": [],
+    "flags": [
+      {
+        "name": "--format",
+        "takes_value": true,
+        "value_name": "json|text",
+        "allowed_values": [
+          "json",
+          "text"
+        ],
+        "required": false,
+        "repeatable": false
+      }
+    ],
+    "json_output_keys": [
+      "project_id",
+      "mode",
+      "previous_indexer_version",
+      "indexer_version",
+      "local_import_calls",
+      "local_import_inheritance",
+      "marked_for_resync",
+      "graph_reconcile",
+      "duration_ms"
+    ]
+  },
+  {
+    "name": "status",
       "summary": "Show project index status.",
       "daemon_consumed": false,
       "positionals": [],
