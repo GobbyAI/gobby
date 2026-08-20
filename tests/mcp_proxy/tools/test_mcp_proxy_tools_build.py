@@ -7,11 +7,25 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.build.service import BuildResult, DispatcherTickSummary
 from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
+
+
+def _small_build_result(**overrides: Any) -> BuildResult:
+    values: dict[str, Any] = {
+        "task_id": "task-1",
+        "created": False,
+        "initial_lifecycle": "development",
+        "applied_stages_skipped": [],
+        "tick_dispatched": 0,
+        "dispatcher_tick": DispatcherTickSummary(),
+    }
+    values.update(overrides)
+    return BuildResult(**values)
 
 
 def _registry(temp_db: Any) -> Any:
@@ -84,17 +98,14 @@ def test_removed_fields_are_not_exposed(temp_db: Any) -> None:
 async def test_build_task_tool_calls_shared_service_and_returns_result_dict(
     temp_db: Any,
 ) -> None:
-    from gobby.build.service import BuildResult, DispatcherTickSummary
-
     registry = _registry(temp_db)
     build_task = registry.get_tool("build_task")
-    build_result = BuildResult(
-        task_id="task-1",
-        created=False,
+    build_result = _small_build_result(
         initial_lifecycle="in_development",
         applied_stages_skipped=["qa"],
         tick_dispatched=1,
         dispatcher_tick=DispatcherTickSummary(ticks=1, scanned=3, executed=1, skipped=0),
+        dry_run=True,
     )
 
     with patch(
@@ -141,7 +152,7 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(
             "reason": None,
         },
         "manifest": None,
-        "dry_run": False,
+        "dry_run": True,
     }
     call = build.call_args
     assert call.args[0] == "#42"
@@ -183,18 +194,9 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(
 async def test_build_task_tool_resolves_current_coordinator_from_mcp_session(
     temp_db: Any,
 ) -> None:
-    from gobby.build.service import BuildResult, DispatcherTickSummary
-
     registry = _registry(temp_db)
     build_task = registry.get_tool("build_task")
-    build_result = BuildResult(
-        task_id="task-1",
-        created=False,
-        initial_lifecycle="development",
-        applied_stages_skipped=[],
-        tick_dispatched=0,
-        dispatcher_tick=DispatcherTickSummary(),
-    )
+    build_result = _small_build_result()
 
     with (
         session_context_for_test("coordinator-session-uuid"),
@@ -210,18 +212,9 @@ async def test_build_task_tool_resolves_current_coordinator_from_mcp_session(
 
 @pytest.mark.asyncio
 async def test_build_task_tool_omitted_backend_defaults_to_worktree(temp_db: Any) -> None:
-    from gobby.build.service import BuildResult, DispatcherTickSummary
-
     registry = _registry(temp_db)
     build_task = registry.get_tool("build_task")
-    build_result = BuildResult(
-        task_id="task-1",
-        created=False,
-        initial_lifecycle="development",
-        applied_stages_skipped=[],
-        tick_dispatched=0,
-        dispatcher_tick=DispatcherTickSummary(),
-    )
+    build_result = _small_build_result()
 
     with patch(
         "gobby.mcp_proxy.tools.build.build", new=AsyncMock(return_value=build_result)
@@ -236,18 +229,9 @@ async def test_build_task_tool_omitted_backend_defaults_to_worktree(temp_db: Any
 @pytest.mark.parametrize("isolation", ["none", "worktree", "clone"])
 @pytest.mark.asyncio
 async def test_build_task_tool_accepts_explicit_isolation(temp_db: Any, isolation: str) -> None:
-    from gobby.build.service import BuildResult, DispatcherTickSummary
-
     registry = _registry(temp_db)
     build_task = registry.get_tool("build_task")
-    build_result = BuildResult(
-        task_id="task-1",
-        created=False,
-        initial_lifecycle="development",
-        applied_stages_skipped=[],
-        tick_dispatched=0,
-        dispatcher_tick=DispatcherTickSummary(),
-    )
+    build_result = _small_build_result()
 
     with patch(
         "gobby.mcp_proxy.tools.build.build", new=AsyncMock(return_value=build_result)
@@ -273,18 +257,9 @@ async def test_build_task_tool_rejects_clone_isolation_conflicts(
 
 @pytest.mark.asyncio
 async def test_build_task_tool_clone_flag_requires_clone_backend(temp_db: Any) -> None:
-    from gobby.build.service import BuildResult, DispatcherTickSummary
-
     registry = _registry(temp_db)
     build_task = registry.get_tool("build_task")
-    build_result = BuildResult(
-        task_id="task-1",
-        created=False,
-        initial_lifecycle="development",
-        applied_stages_skipped=[],
-        tick_dispatched=0,
-        dispatcher_tick=DispatcherTickSummary(),
-    )
+    build_result = _small_build_result()
 
     with patch(
         "gobby.mcp_proxy.tools.build.build", new=AsyncMock(return_value=build_result)
@@ -319,16 +294,9 @@ async def test_build_task_tool_rejects_workspace_backend_isolation_conflict(
 
 @pytest.mark.asyncio
 async def test_build_task_surfaces_paused_automation(temp_db: Any) -> None:
-    from gobby.build.service import BuildResult, DispatcherTickSummary
-
     registry = _registry(temp_db)
     build_task = registry.get_tool("build_task")
-    build_result = BuildResult(
-        task_id="task-1",
-        created=False,
-        initial_lifecycle="development",
-        applied_stages_skipped=[],
-        tick_dispatched=0,
+    build_result = _small_build_result(
         dispatcher_tick=DispatcherTickSummary(reason="automation_disabled"),
     )
 

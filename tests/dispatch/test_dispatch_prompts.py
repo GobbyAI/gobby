@@ -46,8 +46,6 @@ def test_dispatch_prompt_builder_keys_present() -> None:
 
 
 def test_plan_enhancer_prompt_builder_renders_round_and_plan_path() -> None:
-    from types import SimpleNamespace
-
     from gobby.dispatch.prompts import PROMPT_BUILDERS
 
     builder = PROMPT_BUILDERS["plan-enhancer"]
@@ -72,8 +70,6 @@ def test_plan_enhancer_prompt_builder_renders_round_and_plan_path() -> None:
 
 
 def test_plan_enhancer_taskless_shares_builder_and_omits_round_when_absent() -> None:
-    from types import SimpleNamespace
-
     from gobby.dispatch.prompts import PROMPT_BUILDERS
 
     assert PROMPT_BUILDERS["plan-enhancer-taskless"] is PROMPT_BUILDERS["plan-enhancer"]

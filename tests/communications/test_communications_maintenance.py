@@ -9,6 +9,8 @@ from gobby.runner_maintenance import cleanup_comms_messages_loop
 from gobby.storage.communications import LocalCommunicationsStore
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture(autouse=True)
 def mock_attachment_manager() -> Iterator[MagicMock]:

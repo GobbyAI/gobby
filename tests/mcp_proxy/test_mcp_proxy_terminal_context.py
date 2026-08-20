@@ -12,6 +12,8 @@ from gobby.mcp_proxy.terminal_context import (
     serialize_terminal_context,
 )
 
+pytestmark = pytest.mark.unit
+
 
 def test_current_terminal_context_collects_supported_identity(
     monkeypatch: pytest.MonkeyPatch,

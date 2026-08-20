@@ -1,22 +1,26 @@
 import base64
 import hashlib
 import hmac
+from collections.abc import Callable
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import urlencode
 
+import httpx
 import pytest
 
 from gobby.communications.adapters.sms import SMSAdapter
 from gobby.communications.models import ChannelConfig, CommsMessage
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
-def adapter():
+def adapter() -> SMSAdapter:
     return SMSAdapter()
 
 
 @pytest.fixture
-def mock_secret_resolver():
+def mock_secret_resolver() -> Callable[[str], str | None]:
     def _resolve(secret_ref: str) -> str | None:
         if secret_ref == "$secret:TWILIO_AUTH_TOKEN":
             return "token_123"
@@ -26,7 +30,9 @@ def mock_secret_resolver():
 
 
 @pytest.mark.asyncio
-async def test_initialize(adapter, mock_secret_resolver):
+async def test_initialize(
+    adapter: SMSAdapter, mock_secret_resolver: Callable[[str], str | None]
+) -> None:
     config = ChannelConfig(
         id="test",
         channel_type="sms",
@@ -47,11 +53,13 @@ async def test_initialize(adapter, mock_secret_resolver):
     assert adapter._account_sid == "AC123"
     assert adapter._from_number == "+1234567890"
     assert adapter._client is not None
-    assert adapter._client.auth._auth_header.startswith("Basic ")
+    assert isinstance(adapter._client.auth, httpx.BasicAuth)
 
 
 @pytest.mark.asyncio
-async def test_send_message(adapter, mock_secret_resolver):
+async def test_send_message(
+    adapter: SMSAdapter, mock_secret_resolver: Callable[[str], str | None]
+) -> None:
     config = ChannelConfig(
         id="test",
         channel_type="sms",
@@ -96,7 +104,7 @@ async def test_send_message(adapter, mock_secret_resolver):
         assert kwargs["data"]["Body"] == "Hello SMS"
 
 
-def test_parse_webhook(adapter):
+def test_parse_webhook(adapter: SMSAdapter) -> None:
     payload = {
         "From": "+0987654321",
         "To": "+1234567890",
@@ -114,7 +122,7 @@ def test_parse_webhook(adapter):
     assert messages[0].identity_id == "+0987654321"
 
 
-def test_parse_webhook_urlencoded(adapter):
+def test_parse_webhook_urlencoded(adapter: SMSAdapter) -> None:
     payload = b"From=%2B0987654321&To=%2B1234567890&Body=Hello+Twilio&MessageSid=SM123"
 
     messages = adapter.parse_webhook(payload, {})
@@ -126,7 +134,7 @@ def test_parse_webhook_urlencoded(adapter):
     assert messages[0].platform_message_id == "SM123"
 
 
-def test_verify_webhook(adapter):
+def test_verify_webhook(adapter: SMSAdapter) -> None:
     url = "https://example.com/webhook"
     secret = "secret123"
 

@@ -17,8 +17,6 @@ import pytest
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
 
-pytestmark = pytest.mark.unit
-
 
 @pytest.fixture
 def mock_task_manager() -> MagicMock:
@@ -48,6 +46,7 @@ def sample_task_uuid() -> Task:
     )
 
 
+@pytest.mark.unit
 class TestResolveTaskIdForMCP:
     """Tests for the resolve_task_id_for_mcp helper function."""
 
@@ -134,6 +133,7 @@ class TestResolveTaskIdForMCP:
         assert "gt-abc123" in str(exc_info.value)
 
 
+@pytest.mark.unit
 class TestMCPGetTaskWithHashFormat:
     """Tests for get_task MCP tool with #N format."""
 
@@ -149,7 +149,7 @@ class TestMCPGetTaskWithHashFormat:
 
         # Create registry and get the get_task tool
         registry = create_task_registry(mock_task_manager)
-        get_task_func = registry._tools["get_task"].func
+        get_task_func = registry.get_tool("get_task")
 
         # Call with #1 format
         with patch(
@@ -174,7 +174,7 @@ class TestMCPGetTaskWithHashFormat:
         mock_task_manager.db = MagicMock()
 
         registry = create_task_registry(mock_task_manager)
-        get_task_func = registry._tools["get_task"].func
+        get_task_func = registry.get_tool("get_task")
 
         with patch(
             "gobby.mcp_proxy.tools.tasks._resolution.get_project_context",
@@ -193,7 +193,7 @@ class TestMCPGetTaskWithHashFormat:
         mock_task_manager.get_task.return_value = None
 
         registry = create_task_registry(mock_task_manager)
-        get_task_func = registry._tools["get_task"].func
+        get_task_func = registry.get_tool("get_task")
 
         with patch(
             "gobby.mcp_proxy.tools.tasks._resolution.get_project_context",
@@ -205,6 +205,7 @@ class TestMCPGetTaskWithHashFormat:
         assert "not found" in result["error"].lower() or "gt-abc123" in result["error"].lower()
 
 
+@pytest.mark.unit
 class TestMCPUpdateTaskWithHashFormat:
     """Tests for update_task MCP tool with #N format."""
 
@@ -220,7 +221,7 @@ class TestMCPUpdateTaskWithHashFormat:
         mock_task_manager.db = MagicMock()
 
         registry = create_task_registry(mock_task_manager)
-        update_task_func = registry._tools["update_task"].func
+        update_task_func = registry.get_tool("update_task")
 
         with patch(
             "gobby.mcp_proxy.tools.tasks._resolution.get_project_context",
@@ -241,6 +242,7 @@ class TestMCPUpdateTaskWithHashFormat:
         assert mock_task_manager.update_task.call_args is not None
 
 
+@pytest.mark.unit
 class TestMCPCloseTaskWithHashFormat:
     """Tests for close_task MCP tool with #N format."""
 
@@ -258,7 +260,7 @@ class TestMCPCloseTaskWithHashFormat:
         mock_task_manager.db = MagicMock()
 
         registry = create_task_registry(mock_task_manager)
-        close_task_func = registry._tools["close_task"].func
+        close_task_func = registry.get_tool("close_task")
 
         with patch(
             "gobby.mcp_proxy.tools.tasks._resolution.get_project_context",
@@ -276,6 +278,7 @@ class TestMCPCloseTaskWithHashFormat:
         assert mock_task_manager.resolve_task_reference.call_args is not None
 
 
+@pytest.mark.integration
 class TestIntegrationMCPTaskIdResolution:
     """Integration tests using real database for MCP task ID resolution."""
 
@@ -303,7 +306,7 @@ class TestIntegrationMCPTaskIdResolution:
         )
 
         registry = create_task_registry(manager)
-        get_task_func = registry._tools["get_task"].func
+        get_task_func = registry.get_tool("get_task")
 
         # Test #1 resolution
         with (
@@ -362,7 +365,7 @@ class TestIntegrationMCPTaskIdResolution:
         )
 
         registry = create_task_registry(manager)
-        get_task_func = registry._tools["get_task"].func
+        get_task_func = registry.get_tool("get_task")
 
         # Test path resolution (1.2)
         with (
@@ -398,7 +401,7 @@ class TestIntegrationMCPTaskIdResolution:
         )
 
         registry = create_task_registry(manager)
-        get_task_func = registry._tools["get_task"].func
+        get_task_func = registry.get_tool("get_task")
 
         with (
             patch(

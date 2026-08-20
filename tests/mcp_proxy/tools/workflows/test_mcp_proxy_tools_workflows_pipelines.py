@@ -104,11 +104,6 @@ class TestAutoSubscribeLineage:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# _resolve_session_ref
-# ═══════════════════════════════════════════════════════════════════════
-
-
-# ═══════════════════════════════════════════════════════════════════════
 # _build_input_schema
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -436,14 +431,12 @@ class TestRegisterExposedPipelineTools:
 
         registry = InternalToolRegistry("test")
         loader = MagicMock()
-        mock_pipeline = MagicMock(
-            name="disabled-exposed",
-            enabled=False,
-            expose_as_tool=True,
-        )
+        mock_pipeline = MagicMock(enabled=False, expose_as_tool=True)
+        mock_pipeline.name = "disabled-exposed"
         mock_wf = MagicMock(definition=mock_pipeline)
         loader.discover_pipelines_sync.return_value = [mock_wf]
 
         _register_exposed_pipeline_tools(registry, loader, lambda: None)
 
         assert registry.get_schema("pipeline:disabled-exposed") is None
+        assert registry._tools == {}

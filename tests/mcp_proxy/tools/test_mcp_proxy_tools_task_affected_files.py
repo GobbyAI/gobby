@@ -1,5 +1,6 @@
 """Tests for task affected files MCP tools."""
 
+from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -10,7 +11,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def mock_resolve():
+def mock_resolve() -> Iterator[None]:
     """Mock resolve_task_id_for_mcp to pass through IDs."""
     with patch(
         "gobby.mcp_proxy.tools.tasks._affected_files.resolve_task_id_for_mcp",
@@ -20,7 +21,7 @@ def mock_resolve():
 
 
 @pytest.fixture
-def ctx():
+def ctx() -> MagicMock:
     """Create a mock RegistryContext."""
     mock_ctx = MagicMock()
     mock_ctx.task_manager = MagicMock()

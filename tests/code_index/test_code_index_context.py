@@ -155,9 +155,8 @@ def test_context_propagates_unexpected_gateway_init_errors() -> None:
 
 
 @pytest.mark.asyncio
-async def test_context_invalidate_removes_only_local_state(tmp_path: Path) -> None:
+async def test_context_invalidate_removes_only_local_state() -> None:
     storage = MagicMock()
-    storage.get_project_stats.return_value = _project(tmp_path)
     storage.delete_project_index.return_value = {"files": 1, "projects": 1}
     gateway = MagicMock()
     gateway.graph_clear = AsyncMock(return_value={"success": True})

@@ -17,6 +17,8 @@ from websockets.frames import Close
 from gobby.communications.adapters.discord import DiscordAdapter
 from gobby.communications.models import ChannelConfig, CommsMessage
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def channel_config() -> ChannelConfig:
@@ -99,7 +101,6 @@ async def test_send_message_success(
 
         msg_id = await adapter.send_message(message)
 
-        assert message.channel_id != message.metadata_json["platform_destination"]
         assert msg_id == "1234567890"
         mock_post.assert_called_once_with(
             "/channels/channel_123/messages",
@@ -276,30 +277,12 @@ async def test_send_identify(adapter: DiscordAdapter) -> None:
 
 @pytest.mark.asyncio
 async def test_gateway_resume_logic(adapter: DiscordAdapter) -> None:
-    """Test RESUME payload shape and gateway URL selection.
-
-    Unit test of data shapes — the adapter has no public method for building
-    the resume payload, so we verify the expected structure directly.
-    """
+    """Test gateway URL selection when a resume URL is stored."""
     adapter._bot_token = "test-token"
     adapter._session_id = "existing-session"
     adapter._resume_gateway_url = DiscordAdapter._gateway_url_with_query("wss://resume.discord.gg")
     adapter._sequence = 42
 
-    # Verify resume payload structure
-    resume_payload = {
-        "op": 6,
-        "d": {
-            "token": adapter._bot_token,
-            "session_id": adapter._session_id,
-            "seq": adapter._sequence,
-        },
-    }
-    assert resume_payload["op"] == 6
-    assert resume_payload["d"]["session_id"] == "existing-session"
-    assert resume_payload["d"]["seq"] == 42
-
-    # Verify gateway URL selection
     assert adapter._resume_gateway_url == "wss://resume.discord.gg?v=10&encoding=json"
     gateway_url = adapter._resume_gateway_url or adapter._DEFAULT_GATEWAY_URL
     assert gateway_url == "wss://resume.discord.gg?v=10&encoding=json"
@@ -460,22 +443,64 @@ async def test_heartbeat_closes_when_ack_is_missing(adapter: DiscordAdapter) -> 
     assert ws.close_kwargs == {"code": 4000, "reason": "Heartbeat ACK timeout"}
 
 
-def test_invalid_session_clears_state(adapter: DiscordAdapter) -> None:
-    """Test that non-resumable Invalid Session (op 9, d=false) clears session state."""
+@pytest.mark.asyncio
+async def test_invalid_session_clears_state(adapter: DiscordAdapter) -> None:
+    """Non-resumable Invalid Session (op 9, d=false) clears state and IDENTIFYs."""
+    adapter._bot_token = "test-token"
     adapter._session_id = "old-session"
     adapter._resume_gateway_url = "wss://resume.discord.gg"
     adapter._sequence = 10
 
-    # Simulate what _run_gateway does on op 9 with d=false
-    resumable = False
-    if not resumable:
-        adapter._session_id = None
-        adapter._resume_gateway_url = None
-        adapter._sequence = None
+    sent: list[str] = []
+
+    class InvalidSessionGateway:
+        def __init__(self) -> None:
+            self._messages = [json.dumps({"op": 9, "d": False})]
+
+        async def send(self, payload: str) -> None:
+            sent.append(payload)
+
+        async def __aenter__(self) -> InvalidSessionGateway:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        def __aiter__(self) -> InvalidSessionGateway:
+            return self
+
+        async def __anext__(self) -> str:
+            if self._messages:
+                return self._messages.pop(0)
+            raise StopAsyncIteration
+
+    sleep_calls = 0
+
+    async def fake_sleep(_delay: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls >= 2:
+            raise asyncio.CancelledError
+
+    with (
+        patch("gobby.communications.adapters.discord.HAS_WEBSOCKETS", True),
+        patch(
+            "gobby.communications.adapters.discord.websockets.connect",
+            return_value=InvalidSessionGateway(),
+        ),
+        patch("random.random", return_value=0.0),
+        patch("random.uniform", return_value=0.0),
+        patch("asyncio.sleep", side_effect=fake_sleep),
+    ):
+        await adapter._run_gateway()
 
     assert adapter._session_id is None
     assert adapter._resume_gateway_url is None
     assert adapter._sequence is None
+    identify_payloads = [
+        json.loads(payload) for payload in sent if json.loads(payload).get("op") == 2
+    ]
+    assert identify_payloads, sent
 
 
 # --- Embed support ---
@@ -695,3 +720,94 @@ async def test_fetch_gateway_url_fallback_on_http_error(
         await adapter.initialize(channel_config, secret_resolver)
 
     assert adapter._gateway_url == DiscordAdapter._DEFAULT_GATEWAY_URL
+
+
+@pytest.mark.asyncio
+async def test_send_message_chunking(
+    adapter: DiscordAdapter,
+    channel_config: ChannelConfig,
+    secret_resolver: Callable[[str], str | None],
+) -> None:
+    channel_config.config_json["enable_gateway"] = False
+    await adapter.initialize(channel_config, secret_resolver)
+
+    long_content = "A" * 2500
+    msg = CommsMessage(
+        id="test_id",
+        channel_id="gobby-internal-channel",
+        direction="outbound",
+        content=long_content,
+        metadata_json={"platform_destination": "channel_123"},
+        created_at="2024-01-01T00:00:00Z",
+    )
+
+    with patch.object(adapter._client, "post", new_callable=AsyncMock) as mock_post:
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {}
+        mock_response.json.return_value = {"id": "msg_456"}
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+
+        result = await adapter.send_message(msg)
+
+        assert mock_post.call_count == 2
+        assert result == "msg_456"
+
+
+def test_parse_webhook_reaction_added(adapter: DiscordAdapter) -> None:
+    """parse_webhook() parses MESSAGE_REACTION_ADD into reaction CommsMessage."""
+    payload = {
+        "t": "MESSAGE_REACTION_ADD",
+        "d": {
+            "user_id": "user_789",
+            "channel_id": "channel_123",
+            "message_id": "msg_456",
+            "emoji": {"id": None, "name": "thumbsup"},
+        },
+    }
+
+    messages = adapter.parse_webhook(payload, {})
+
+    assert len(messages) == 1
+    msg = messages[0]
+    assert msg.content_type == "reaction"
+    assert msg.content == "thumbsup"
+    assert msg.platform_message_id == "msg_456"
+    assert msg.identity_id == "user_789"
+    assert msg.channel_id == ""
+    assert msg.metadata_json["platform_channel_id"] == "channel_123"
+
+
+def test_parse_webhook_extracts_thread_id(adapter: DiscordAdapter) -> None:
+    """parse_webhook() extracts platform_thread_id from thread metadata."""
+    payload = {
+        "type": 0,
+        "channel_id": "channel_123",
+        "id": "msg_123",
+        "author": {"id": "user_123"},
+        "content": "Reply in thread",
+        "thread": {"id": "thread_999"},
+    }
+
+    messages = adapter.parse_webhook(payload, {})
+
+    assert len(messages) == 1
+    assert messages[0].platform_thread_id == "thread_999"
+
+
+def test_parse_webhook_extracts_thread_from_message_reference(adapter: DiscordAdapter) -> None:
+    """parse_webhook() extracts thread from message_reference when no thread metadata."""
+    payload = {
+        "type": 0,
+        "channel_id": "channel_123",
+        "id": "msg_123",
+        "author": {"id": "user_123"},
+        "content": "Reply via reference",
+        "message_reference": {"channel_id": "thread_888", "message_id": "msg_original"},
+    }
+
+    messages = adapter.parse_webhook(payload, {})
+
+    assert len(messages) == 1
+    assert messages[0].platform_thread_id == "thread_888"

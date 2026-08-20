@@ -244,9 +244,9 @@ class TestCreateAgentDefinition:
         assert result["success"] is True
         assert "max_turns" not in result["agent"]
         assert row is not None
-        persisted = (
-            row.definition_json if isinstance(row.definition_json, str) else row.definition_json
-        )
+        persisted = row.definition_json
+        if isinstance(persisted, str):
+            persisted = json.loads(persisted)
         assert "max_turns" not in persisted
 
     def test_duplicate_fails(self, definition_db: PostgresHubDatabase) -> None:

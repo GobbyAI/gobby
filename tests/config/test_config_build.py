@@ -43,14 +43,19 @@ def test_load_build_config_merges_agent_limit_from_global_project_and_flags(
     (home / ".gobby").mkdir(parents=True)
     (project_root / ".gobby").mkdir(parents=True)
     (home / ".gobby" / "build.yaml").write_text(yaml.safe_dump({"max_active_agents": 4}))
-    (project_root / ".gobby" / "build.yaml").write_text(yaml.safe_dump({"max_active_agents": 3}))
     monkeypatch.setattr(build_config.Path, "home", lambda: home)
+
+    global_only = build_config.load_build_config(project_root=project_root)
+    assert global_only.max_active_agents == 4
+
+    (project_root / ".gobby" / "build.yaml").write_text(yaml.safe_dump({"max_active_agents": 3}))
+    project_overrides_global = build_config.load_build_config(project_root=project_root)
+    assert project_overrides_global.max_active_agents == 3
 
     cfg = build_config.load_build_config(
         project_root=project_root,
         flag_overrides={"max_active_agents": 2},
     )
-
     assert cfg.max_active_agents == 2
 
 

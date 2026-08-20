@@ -125,8 +125,9 @@ def mock_claude_sdk(mock_query_func: Any) -> Generator[None]:
     """Mock the Claude Agent SDK for testing."""
     with (
         patch("gobby.llm.claude_cli.shutil.which", return_value="/usr/bin/claude"),
-        patch("os.path.exists", return_value=True),
-        patch("os.access", return_value=True),
+        patch("gobby.llm.claude_cli._is_usable_cli_path", return_value=True),
+        patch("gobby.llm.claude_cli.os.path.exists", return_value=True),
+        patch("gobby.llm.claude_cli.os.access", return_value=True),
         patch("gobby.llm.claude_sdk.query", mock_query_func),
         patch("gobby.llm.claude_sdk.AssistantMessage", MockAssistantMessage),
         patch("gobby.llm.claude_sdk.ResultMessage", MockResultMessage),
@@ -1380,6 +1381,7 @@ class TestDescribeImage:
             _query: Any,
             options: Any,
             _logger: Any,
+            **_kwargs: Any,
         ) -> str:
             captured_cwds.append(options.cwd)
             return "A blue diagram"

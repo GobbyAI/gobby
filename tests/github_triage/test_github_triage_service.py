@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+from collections.abc import Callable
 from hashlib import sha256
 from types import SimpleNamespace
 from typing import Any
@@ -788,25 +789,25 @@ async def test_explicit_judge_approval_fences_untrusted_issue_and_isolates_build
 
 
 @pytest.mark.parametrize(
-    "judge",
+    "judge_factory",
     [
-        AsyncMock(side_effect=RuntimeError("judge unavailable")),
-        AsyncMock(return_value={"verdict": "implement", "reason": "not typed"}),
-        AsyncMock(return_value=TriageOutcome("invalid", "unknown verdict")),
+        lambda: AsyncMock(side_effect=RuntimeError("judge unavailable")),
+        lambda: AsyncMock(return_value={"verdict": "implement", "reason": "not typed"}),
+        lambda: AsyncMock(return_value=TriageOutcome("invalid", "unknown verdict")),
     ],
     ids=["raises", "untyped", "invalid-verdict"],
 )
 async def test_judge_failure_or_malformed_response_escalates_without_build(
     temp_db,
     sample_project,
-    judge: AsyncMock,
+    judge_factory: Callable[[], AsyncMock],
 ) -> None:
     _enable_config(temp_db, sample_project["id"])
     build_func = AsyncMock()
     service = GitHubIssueTriageService(
         db=temp_db,
         mcp_manager=FakeGitHubMCP(),
-        judge=judge,
+        judge=judge_factory(),
         build_func=build_func,
     )
 

@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from gobby.config.app import DaemonConfig, load_yaml
 from gobby.config.feature_base import FeatureProfile, candidate_labels
@@ -12,7 +13,7 @@ from gobby.config.sessions import MemoryRecallConfig
 pytestmark = pytest.mark.unit
 
 
-def test_memory_recall_config_shape(temp_dir: Path) -> None:
+def test_memory_recall_config_fields() -> None:
     """Memory recall config exposes only classifier and search controls."""
     assert set(MemoryRecallConfig.model_fields) == {
         "profile",
@@ -22,6 +23,9 @@ def test_memory_recall_config_shape(temp_dir: Path) -> None:
         "candidate_limit",
         "min_score",
     }
+
+
+def test_memory_recall_config_defaults() -> None:
     cfg = MemoryRecallConfig()
     assert cfg.enabled is True
     assert cfg.profile == FeatureProfile.LOW
@@ -30,18 +34,30 @@ def test_memory_recall_config_shape(temp_dir: Path) -> None:
     assert cfg.candidate_limit == 8
     assert cfg.min_score == 0.45
     assert DaemonConfig().memory_recall.enabled is True
-    assert MemoryRecallConfig(min_score=0.75).min_score == 0.75
-    with pytest.raises(ValueError):
-        MemoryRecallConfig(min_score=-0.1)
-    with pytest.raises(ValueError):
-        MemoryRecallConfig(min_score=1.1)
-    with pytest.raises(ValueError):
-        MemoryRecallConfig(timeout=0)
-    assert MemoryRecallConfig(timeout=75).timeout == 75
-    assert MemoryRecallConfig(timeout=89).timeout == 89
-    with pytest.raises(ValueError):
-        MemoryRecallConfig(timeout=90)
 
+
+def _assert_field_error(exc: ValidationError, field: str) -> None:
+    assert any(error["loc"] == (field,) for error in exc.errors())
+
+
+def test_memory_recall_config_validation_bounds() -> None:
+    assert MemoryRecallConfig(min_score=0.75).min_score == 0.75
+    with pytest.raises(ValidationError) as exc_info:
+        MemoryRecallConfig(min_score=-0.1)
+    _assert_field_error(exc_info.value, "min_score")
+    with pytest.raises(ValidationError) as exc_info:
+        MemoryRecallConfig(min_score=1.1)
+    _assert_field_error(exc_info.value, "min_score")
+    with pytest.raises(ValidationError) as exc_info:
+        MemoryRecallConfig(timeout=0)
+    _assert_field_error(exc_info.value, "timeout")
+    assert MemoryRecallConfig(timeout=89).timeout == 89
+    with pytest.raises(ValidationError) as exc_info:
+        MemoryRecallConfig(timeout=90)
+    _assert_field_error(exc_info.value, "timeout")
+
+
+def test_memory_recall_config_yaml_loading(temp_dir: Path) -> None:
     disabled_config_file = temp_dir / "disabled.yaml"
     disabled_config_file.write_text(
         yaml.safe_dump(

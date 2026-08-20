@@ -82,14 +82,14 @@ class TestSkillsList:
 
     @patch("gobby.skills.formatting.format_skills_json", return_value='[{"name":"test"}]')
     @patch("gobby.cli.skills.get_skill_storage")
-    def test_list_json(
-        self, mock_storage_fn: MagicMock, _fmt: MagicMock, runner: CliRunner
-    ) -> None:
+    def test_list_json(self, mock_storage_fn: MagicMock, fmt: MagicMock, runner: CliRunner) -> None:
         mock_storage_fn.return_value.list_skills.return_value = [_mock_skill()]
         result = runner.invoke(
             skills, ["list", "--json"], obj=_make_config_obj(), catch_exceptions=False
         )
         assert result.exit_code == 0
+        fmt.assert_called_once()
+        assert '[{"name":"test"}]' in result.output
 
     @patch("gobby.cli.skills.get_skill_tags", return_value=["git", "test"])
     @patch("gobby.cli.skills.get_skill_storage")
@@ -422,7 +422,8 @@ class TestSkillsValidate:
     ) -> None:
         skill_file = tmp_path / "SKILL.md"
         skill_file.write_text("# Test")
-        parsed = MagicMock(name="test-skill")
+        parsed = MagicMock()
+        parsed.configure_mock(name="test-skill")
         mock_loader_cls.return_value.load_skill.return_value = parsed
         validation_result = MagicMock(valid=True, warnings=[], errors=[])
         mock_validator_cls.return_value.validate.return_value = validation_result
@@ -443,7 +444,8 @@ class TestSkillsValidate:
     ) -> None:
         skill_file = tmp_path / "SKILL.md"
         skill_file.write_text("# Test")
-        parsed = MagicMock(name="bad-skill")
+        parsed = MagicMock()
+        parsed.configure_mock(name="bad-skill")
         mock_loader_cls.return_value.load_skill.return_value = parsed
         validation_result = MagicMock(
             valid=False, errors=["Name too long"], warnings=["No version"]
@@ -718,20 +720,24 @@ class TestSkillsDoc:
     @patch("gobby.skills.formatting.format_skills_markdown_table", return_value="| Name | Desc |")
     @patch("gobby.cli.skills.get_skill_storage")
     def test_doc_markdown(
-        self, mock_storage_fn: MagicMock, _fmt: MagicMock, runner: CliRunner
+        self, mock_storage_fn: MagicMock, fmt: MagicMock, runner: CliRunner
     ) -> None:
         mock_storage_fn.return_value.list_skills.return_value = [_mock_skill()]
         result = runner.invoke(skills, ["doc"], obj=_make_config_obj(), catch_exceptions=False)
         assert result.exit_code == 0
+        fmt.assert_called_once()
+        assert "| Name | Desc |" in result.output
 
     @patch("gobby.skills.formatting.format_skills_json", return_value='[{"name": "s"}]')
     @patch("gobby.cli.skills.get_skill_storage")
-    def test_doc_json(self, mock_storage_fn: MagicMock, _fmt: MagicMock, runner: CliRunner) -> None:
+    def test_doc_json(self, mock_storage_fn: MagicMock, fmt: MagicMock, runner: CliRunner) -> None:
         mock_storage_fn.return_value.list_skills.return_value = [_mock_skill()]
         result = runner.invoke(
             skills, ["doc", "--format", "json"], obj=_make_config_obj(), catch_exceptions=False
         )
         assert result.exit_code == 0
+        fmt.assert_called_once()
+        assert '[{"name": "s"}]' in result.output
 
     @patch("gobby.skills.formatting.format_skills_markdown_table", return_value="content")
     @patch("gobby.cli.skills.get_skill_storage")
@@ -954,8 +960,7 @@ class TestHelperFunctions:
         client.check_health.return_value = (False, "Connection refused")
         assert check_daemon(client) is False
 
-    @patch("gobby.cli.skills.DaemonClient")
-    def test_call_skills_tool_success(self, mock_client_cls: MagicMock) -> None:
+    def test_call_skills_tool_success(self) -> None:
         from gobby.cli.skills import call_skills_tool
 
         client = MagicMock()
@@ -963,9 +968,8 @@ class TestHelperFunctions:
         result = call_skills_tool(client, "test_tool", {"arg": 1})
         assert result == {"key": "val"}
 
-    @patch("gobby.cli.skills.DaemonClient")
     def test_call_skills_tool_success_non_dict_result(
-        self, mock_client_cls: MagicMock, capsys: pytest.CaptureFixture[str]
+        self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         from gobby.cli.skills import call_skills_tool
 
@@ -976,10 +980,7 @@ class TestHelperFunctions:
         assert result == ["skill-a", "skill-b"]
         assert "Error:" not in captured.err
 
-    @patch("gobby.cli.skills.DaemonClient")
-    def test_call_skills_tool_failure(
-        self, mock_client_cls: MagicMock, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_call_skills_tool_failure(self, capsys: pytest.CaptureFixture[str]) -> None:
         from gobby.cli.skills import call_skills_tool
 
         client = MagicMock()
@@ -989,8 +990,7 @@ class TestHelperFunctions:
         assert result == {"success": False, "error": "daemon says no"}
         assert "Error: daemon says no" in captured.err
 
-    @patch("gobby.cli.skills.DaemonClient")
-    def test_call_skills_tool_exception(self, mock_client_cls: MagicMock) -> None:
+    def test_call_skills_tool_exception(self) -> None:
         from gobby.cli.skills import call_skills_tool
 
         client = MagicMock()

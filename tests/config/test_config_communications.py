@@ -6,8 +6,10 @@ from pydantic import ValidationError
 from gobby.config.app import DaemonConfig
 from gobby.config.communications import ChannelDefaults, CommunicationsConfig
 
+pytestmark = pytest.mark.unit
 
-def test_channel_defaults_pydantic():
+
+def test_channel_defaults_pydantic() -> None:
     """Test ChannelDefaults with custom values."""
     defaults = ChannelDefaults(
         rate_limit_per_minute=60,
@@ -32,13 +34,14 @@ def test_channel_defaults_pydantic():
         ("burst", -1),
     ],
 )
-def test_channel_defaults_reject_non_positive_pacing(field: str, value: int):
+def test_channel_defaults_reject_non_positive_pacing(field: str, value: int) -> None:
     """ChannelDefaults rejects unsafe pacing values."""
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError) as exc_info:
         ChannelDefaults(**{field: value})
+    assert any(error["loc"] == (field,) for error in exc_info.value.errors())
 
 
-def test_communications_config_pydantic():
+def test_communications_config_pydantic() -> None:
     """Test CommunicationsConfig with custom values."""
     config = CommunicationsConfig(
         enabled=True,
@@ -51,7 +54,7 @@ def test_communications_config_pydantic():
     assert config.channel_defaults.rate_limit_per_minute == 30  # Default
 
 
-def test_communications_config_default():
+def test_communications_config_default() -> None:
     """Test CommunicationsConfig defaults."""
     config = CommunicationsConfig()
     assert config.enabled is False
@@ -61,7 +64,7 @@ def test_communications_config_default():
     assert config.channel_defaults.rate_limit_per_minute == 30
 
 
-def test_daemon_config_includes_communications():
+def test_daemon_config_includes_communications() -> None:
     """Test CommunicationsConfig is wired into DaemonConfig."""
     config = DaemonConfig()
     assert hasattr(config, "communications")

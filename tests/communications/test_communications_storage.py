@@ -17,6 +17,8 @@ from gobby.storage.communications import LocalCommunicationsStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 def comms_store(temp_db: HubDatabase) -> LocalCommunicationsStore:

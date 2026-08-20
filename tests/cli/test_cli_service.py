@@ -1,11 +1,14 @@
 from unittest.mock import patch
 
+import pytest
 from click.testing import CliRunner
 
 from gobby.cli.service import disable, enable, install, status, uninstall
 
+pytestmark = pytest.mark.unit
 
-def test_install_success():
+
+def test_install_success() -> None:
     runner = CliRunner()
     result_mock = {
         "success": True,
@@ -29,7 +32,7 @@ def test_install_success():
         assert "uv run gobby service install" in result.output
 
 
-def test_install_prod_success():
+def test_install_prod_success() -> None:
     runner = CliRunner()
     result_mock = {
         "success": True,
@@ -42,7 +45,7 @@ def test_install_prod_success():
         assert "tool upgrade" in result.output
 
 
-def test_install_failed():
+def test_install_failed() -> None:
     runner = CliRunner()
     result_mock = {"success": False, "error": "test error"}
     with patch("gobby.cli.service.install_service", return_value=result_mock):
@@ -51,7 +54,7 @@ def test_install_failed():
         assert "Failed: test error" in result.output
 
 
-def test_uninstall_success():
+def test_uninstall_success() -> None:
     runner = CliRunner()
     result_mock = {"success": True, "platform": "macOS"}
     with patch("gobby.cli.service.uninstall_service", return_value=result_mock):
@@ -60,7 +63,7 @@ def test_uninstall_success():
         assert "Service uninstalled (macOS)" in result.output
 
 
-def test_uninstall_failed():
+def test_uninstall_failed() -> None:
     runner = CliRunner()
     result_mock = {"success": False, "error": "test error"}
     with patch("gobby.cli.service.uninstall_service", return_value=result_mock):
@@ -69,7 +72,7 @@ def test_uninstall_failed():
         assert "Failed: test error" in result.output
 
 
-def test_status_not_installed():
+def test_status_not_installed() -> None:
     runner = CliRunner()
     result_mock = {"installed": False, "platform": "macOS"}
     with patch("gobby.cli.service.get_service_status", return_value=result_mock):
@@ -78,7 +81,7 @@ def test_status_not_installed():
         assert "not installed" in result.output
 
 
-def test_status_running():
+def test_status_running() -> None:
     runner = CliRunner()
     result_mock = {
         "installed": True,
@@ -101,7 +104,7 @@ def test_status_running():
         assert "w1" in result.output
 
 
-def test_status_enabled_not_running():
+def test_status_enabled_not_running() -> None:
     runner = CliRunner()
     result_mock = {"installed": True, "enabled": True, "running": False, "mode": "prod"}
     with patch("gobby.cli.service.get_service_status", return_value=result_mock):
@@ -110,7 +113,7 @@ def test_status_enabled_not_running():
         assert "enabled, not running" in result.output
 
 
-def test_status_disabled():
+def test_status_disabled() -> None:
     runner = CliRunner()
     result_mock = {"installed": True, "enabled": False, "running": False, "mode": "prod"}
     with patch("gobby.cli.service.get_service_status", return_value=result_mock):
@@ -119,7 +122,7 @@ def test_status_disabled():
         assert "(disabled" in result.output
 
 
-def test_enable_success():
+def test_enable_success() -> None:
     runner = CliRunner()
     with patch(
         "gobby.cli.service.enable_service", return_value={"success": True, "platform": "macOS"}
@@ -129,14 +132,15 @@ def test_enable_success():
         assert "enabled" in result.output
 
 
-def test_enable_failed():
+def test_enable_failed() -> None:
     runner = CliRunner()
     with patch("gobby.cli.service.enable_service", return_value={"success": False, "error": "e"}):
         result = runner.invoke(enable, [])
         assert result.exit_code == 1
+        assert "Failed: e" in result.output
 
 
-def test_disable_success():
+def test_disable_success() -> None:
     runner = CliRunner()
     with patch(
         "gobby.cli.service.disable_service", return_value={"success": True, "platform": "macOS"}
@@ -146,8 +150,9 @@ def test_disable_success():
         assert "disabled" in result.output
 
 
-def test_disable_failed():
+def test_disable_failed() -> None:
     runner = CliRunner()
     with patch("gobby.cli.service.disable_service", return_value={"success": False, "error": "e"}):
         result = runner.invoke(disable, [])
         assert result.exit_code == 1
+        assert "Failed: e" in result.output

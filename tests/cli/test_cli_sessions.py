@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -50,12 +51,12 @@ def test_blocked_attention_deduplicates_and_sorts_reasons() -> None:
 
 
 @pytest.fixture
-def mock_session_manager():
+def mock_session_manager() -> Iterator[MagicMock]:
     with patch("gobby.cli.sessions.get_session_manager") as mock:
         yield mock.return_value
 
 
-def test_list_sessions_empty(mock_session_manager) -> None:
+def test_list_sessions_empty(mock_session_manager: MagicMock) -> None:
     """Test 'sessions list' with no sessions."""
     mock_session_manager.list.return_value = []
 
@@ -67,7 +68,7 @@ def test_list_sessions_empty(mock_session_manager) -> None:
     mock_session_manager.list.assert_called_once()
 
 
-def test_list_sessions_populated(mock_session_manager) -> None:
+def test_list_sessions_populated(mock_session_manager: MagicMock) -> None:
     """Test 'sessions list' with active sessions."""
     mock_session_manager.list.return_value = [MOCK_SESSION]
 
@@ -82,7 +83,7 @@ def test_list_sessions_populated(mock_session_manager) -> None:
 
 
 def test_list_sessions_renders_attention_separately_from_lifecycle(
-    mock_session_manager,
+    mock_session_manager: MagicMock,
 ) -> None:
     """Blocked roster entries render in their own column without changing lifecycle icons."""
     mock_session_manager.list.return_value = [MOCK_SESSION]
@@ -100,7 +101,7 @@ def test_list_sessions_renders_attention_separately_from_lifecycle(
     assert "!2 Approval required" in session_row
 
 
-def test_list_sessions_filters_by_machine_id(mock_session_manager) -> None:
+def test_list_sessions_filters_by_machine_id(mock_session_manager: MagicMock) -> None:
     """Test 'sessions list --machine-id' forwards the filter."""
     mock_session_manager.list.return_value = []
 
@@ -116,7 +117,7 @@ def test_list_sessions_filters_by_machine_id(mock_session_manager) -> None:
     )
 
 
-def test_show_session_found(mock_session_manager) -> None:
+def test_show_session_found(mock_session_manager: MagicMock) -> None:
     """Test 'sessions show' with valid ID."""
     mock_session_manager.get.return_value = MOCK_SESSION
 
@@ -130,7 +131,7 @@ def test_show_session_found(mock_session_manager) -> None:
     assert "Title: Test Session" in result.output
 
 
-def test_show_session_not_found(mock_session_manager) -> None:
+def test_show_session_not_found(mock_session_manager: MagicMock) -> None:
     """Test 'sessions show' with invalid ID."""
     mock_session_manager.get.return_value = None
 
@@ -143,7 +144,7 @@ def test_show_session_not_found(mock_session_manager) -> None:
     assert "Session not found: invalid-id" in result.output
 
 
-def test_delete_session_success(mock_session_manager) -> None:
+def test_delete_session_success(mock_session_manager: MagicMock) -> None:
     """Test 'sessions delete' with confirmation."""
     mock_session_manager.get.return_value = MOCK_SESSION
     mock_session_manager.delete.return_value = True
@@ -160,7 +161,7 @@ def test_delete_session_success(mock_session_manager) -> None:
     mock_session_manager.db.close.assert_not_called()
 
 
-def test_session_stats(mock_session_manager) -> None:
+def test_session_stats(mock_session_manager: MagicMock) -> None:
     """Test 'sessions stats' command."""
     mock_session_manager.list.return_value = [MOCK_SESSION]
 
@@ -173,7 +174,7 @@ def test_session_stats(mock_session_manager) -> None:
     assert "claude_code: 1" in result.output
 
 
-def test_renumber_sessions_defaults_to_dry_run(mock_session_manager) -> None:
+def test_renumber_sessions_defaults_to_dry_run(mock_session_manager: MagicMock) -> None:
     """Test 'sessions renumber' previews by default."""
     mock_session_manager.renumber_project_sessions.return_value = [
         {
@@ -207,7 +208,7 @@ def test_renumber_sessions_defaults_to_dry_run(mock_session_manager) -> None:
     mock_session_manager.renumber_project_sessions.assert_called_once_with("proj-1", dry_run=True)
 
 
-def test_renumber_sessions_apply_writes_refs(mock_session_manager) -> None:
+def test_renumber_sessions_apply_writes_refs(mock_session_manager: MagicMock) -> None:
     """Test 'sessions renumber --apply' writes through the storage helper."""
     mock_session_manager.renumber_project_sessions.return_value = [
         {
@@ -231,7 +232,7 @@ def test_renumber_sessions_apply_writes_refs(mock_session_manager) -> None:
     mock_session_manager.renumber_project_sessions.assert_called_once_with("proj-1", dry_run=False)
 
 
-def test_renumber_sessions_rejects_removed_dry_run_option(mock_session_manager) -> None:
+def test_renumber_sessions_rejects_removed_dry_run_option(mock_session_manager: MagicMock) -> None:
     """Test 'sessions renumber' has --apply as the only explicit mode flag."""
     runner = CliRunner()
     result = runner.invoke(

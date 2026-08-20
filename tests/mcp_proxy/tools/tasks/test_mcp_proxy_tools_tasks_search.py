@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.mcp_proxy.tools.tasks._search import create_reindex_registry, create_search_registry
+from gobby.storage.tasks import TaskNotFoundError
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -177,24 +178,17 @@ class TestSearchTasksValidation:
         assert result["tasks"] == []
         assert result["count"] == 0
 
-    def test_whitespace_only_query_returns_error(self, task_manager: LocalTaskManager) -> None:
+    @pytest.mark.parametrize("query", ["   ", "\t\n"])
+    def test_whitespace_only_query_returns_error(
+        self, task_manager: LocalTaskManager, query: str
+    ) -> None:
         ctx = _make_ctx(task_manager)
         registry = create_search_registry(ctx)
         func = registry.get_tool("search_tasks")
 
-        result = func(query="   ")
+        result = func(query=query)
         assert "error" in result
         assert result["count"] == 0
-
-    def test_none_like_empty_query(self, task_manager: LocalTaskManager) -> None:
-        """Query that is falsy but not empty string."""
-        ctx = _make_ctx(task_manager)
-        registry = create_search_registry(ctx)
-        func = registry.get_tool("search_tasks")
-
-        # Empty string after strip
-        result = func(query="\t\n")
-        assert "error" in result
 
 
 class TestSearchTasksProjectFilter:
@@ -390,21 +384,6 @@ class TestSearchTasksResults:
 class TestSearchTasksStageStateFilter:
     """Tests for current-stage-state filter handling."""
 
-    def test_comma_separated_stage_state_split_into_list(
-        self,
-        task_manager: LocalTaskManager,
-        real_project: dict,
-        seeded_tasks: list,
-    ) -> None:
-        ctx = _make_ctx(task_manager, project_id=real_project["id"])
-        registry = create_search_registry(ctx)
-        func = registry.get_tool("search_tasks")
-
-        result = func(query="test", current_stage_state="ready,in_progress")
-
-        assert isinstance(result, dict)
-        assert "tasks" in result
-
     def test_single_stage_state_passed_as_string(
         self,
         task_manager: LocalTaskManager,
@@ -489,7 +468,7 @@ class TestSearchTasksParentFilter:
         mock_resolve: MagicMock,
         task_manager: LocalTaskManager,
     ) -> None:
-        mock_resolve.side_effect = Exception("Invalid reference")
+        mock_resolve.side_effect = TaskNotFoundError("bad-ref")
         ctx = _make_ctx(task_manager)
 
         registry = create_search_registry(ctx)

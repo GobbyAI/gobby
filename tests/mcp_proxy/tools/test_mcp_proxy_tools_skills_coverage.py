@@ -133,14 +133,14 @@ class TestListSkills:
     """Tests for list_skills tool."""
 
     @pytest.mark.asyncio
-    async def test_list_skills_empty(self, mock_db):
+    async def test_list_skills_empty(self, mock_db: MagicMock) -> None:
         registry = _create_registry(mock_db)
         result = await registry.call("list_skills", {})
         assert result["success"] is True
         assert result["count"] == 0
 
     @pytest.mark.asyncio
-    async def test_list_skills_with_metadata(self, mock_db):
+    async def test_list_skills_with_metadata(self, mock_db: MagicMock) -> None:
         skill = _make_skill(
             metadata={"skillport": {"category": "dev", "tags": ["testing"]}},
         )
@@ -154,7 +154,7 @@ class TestListSkills:
         assert result["skills"][0]["tags"] == ["testing"]
 
     @pytest.mark.asyncio
-    async def test_list_skills_with_category_filter(self, mock_db):
+    async def test_list_skills_with_category_filter(self, mock_db: MagicMock) -> None:
         registry = _create_registry(mock_db)
         result = await registry.call("list_skills", {"category": "dev"})
         assert result["success"] is True
@@ -163,7 +163,7 @@ class TestListSkills:
         assert last_call_kwargs.get("category") == "dev"
 
     @pytest.mark.asyncio
-    async def test_list_skills_exception(self, mock_db):
+    async def test_list_skills_exception(self, mock_db: MagicMock) -> None:
         registry = _create_registry(mock_db)
         registry._mock_storage.list_skills.side_effect = RuntimeError("db error")
 
@@ -181,14 +181,14 @@ class TestGetSkill:
     """Tests for get_skill tool."""
 
     @pytest.mark.asyncio
-    async def test_get_skill_no_params(self, mock_db):
+    async def test_get_skill_no_params(self, mock_db: MagicMock) -> None:
         registry = _create_registry(mock_db)
         result = await registry.call("get_skill", {})
         assert result["success"] is False
         assert "required" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_get_skill_by_name(self, mock_db):
+    async def test_get_skill_by_name(self, mock_db: MagicMock) -> None:
         skill = _make_skill()
         registry = _create_registry(mock_db)
         registry._mock_storage.get_skill_with_manifest.return_value = _make_snapshot(skill)
@@ -198,7 +198,7 @@ class TestGetSkill:
         assert result["skill"]["name"] == "test-skill"
 
     @pytest.mark.asyncio
-    async def test_get_skill_by_id(self, mock_db):
+    async def test_get_skill_by_id(self, mock_db: MagicMock) -> None:
         skill = _make_skill()
         registry = _create_registry(mock_db)
         registry._mock_storage.get_skill_with_manifest.return_value = _make_snapshot(skill)
@@ -216,7 +216,7 @@ class TestGetSkill:
         )
 
     @pytest.mark.asyncio
-    async def test_get_skill_not_found(self, mock_db):
+    async def test_get_skill_not_found(self, mock_db: MagicMock) -> None:
         registry = _create_registry(mock_db)
         registry._mock_storage.get_skill_with_manifest.return_value = None
 
@@ -225,7 +225,7 @@ class TestGetSkill:
         assert "not found" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_get_skill_records_usage(self, mock_db):
+    async def test_get_skill_records_usage(self, mock_db: MagicMock) -> None:
         skill = _make_skill()
         registry = _create_registry(mock_db)
         registry._mock_storage.get_skill_with_manifest.return_value = _make_snapshot(skill)
@@ -236,7 +236,7 @@ class TestGetSkill:
         registry._mock_sm.record_skills_used.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_get_skill_exception(self, mock_db):
+    async def test_get_skill_exception(self, mock_db: MagicMock) -> None:
         registry = _create_registry(mock_db)
         registry._mock_storage.get_skill_with_manifest.side_effect = RuntimeError("db crash")
 
@@ -253,14 +253,14 @@ class TestSearchSkills:
     """Tests for search_skills tool."""
 
     @pytest.mark.asyncio
-    async def test_search_empty_query(self, mock_db):
+    async def test_search_empty_query(self, mock_db: MagicMock) -> None:
         registry = _create_registry(mock_db)
         result = await registry.call("search_skills", {"query": ""})
         assert result["success"] is False
         assert "required" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_search_success(self, mock_db):
+    async def test_search_success(self, mock_db: MagicMock) -> None:
         registry = _create_registry(mock_db)
 
         mock_result = MagicMock()
@@ -277,7 +277,7 @@ class TestSearchSkills:
         assert result["count"] == 1
 
     @pytest.mark.asyncio
-    async def test_search_with_filters(self, mock_db):
+    async def test_search_with_filters(self, mock_db: MagicMock) -> None:
         registry = _create_registry(mock_db)
 
         result = await registry.call(
@@ -288,7 +288,7 @@ class TestSearchSkills:
         registry._mock_search.search_async.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_search_exception(self, mock_db):
+    async def test_search_exception(self, mock_db: MagicMock) -> None:
         registry = _create_registry(mock_db)
         registry._mock_search.search_async.side_effect = RuntimeError("search fail")
 
@@ -305,13 +305,13 @@ class TestRemoveSkill:
     """Tests for remove_skill tool."""
 
     @pytest.mark.asyncio
-    async def test_remove_no_params(self, mock_db):
+    async def test_remove_no_params(self, mock_db: MagicMock) -> None:
         registry = _create_registry(mock_db)
         result = await registry.call("remove_skill", {})
         assert result["success"] is False
 
     @pytest.mark.asyncio
-    async def test_remove_by_name(self, mock_db):
+    async def test_remove_by_name(self, mock_db: MagicMock) -> None:
         skill = _make_skill()
         registry = _create_registry(mock_db)
         registry._mock_storage.get_by_name.return_value = skill
@@ -321,7 +321,7 @@ class TestRemoveSkill:
         assert result["removed"] is True
 
     @pytest.mark.asyncio
-    async def test_remove_not_found(self, mock_db):
+    async def test_remove_not_found(self, mock_db: MagicMock) -> None:
         registry = _create_registry(mock_db)
         registry._mock_storage.get_skill.side_effect = ValueError("x")
         registry._mock_storage.get_by_name.return_value = None
@@ -330,7 +330,7 @@ class TestRemoveSkill:
         assert result["success"] is False
 
     @pytest.mark.asyncio
-    async def test_remove_exception(self, mock_db):
+    async def test_remove_exception(self, mock_db: MagicMock) -> None:
         registry = _create_registry(mock_db)
         registry._mock_storage.get_by_name.side_effect = RuntimeError("fail")
 
@@ -347,13 +347,13 @@ class TestRestoreSkill:
     """Tests for restore_skill tool."""
 
     @pytest.mark.asyncio
-    async def test_restore_no_params(self, mock_db):
+    async def test_restore_no_params(self, mock_db: MagicMock) -> None:
         registry = _create_registry(mock_db)
         result = await registry.call("restore_skill", {})
         assert result["success"] is False
 
     @pytest.mark.asyncio
-    async def test_restore_success(self, mock_db):
+    async def test_restore_success(self, mock_db: MagicMock) -> None:
         skill = _make_skill(deleted_at="2024-01-01")
         restored = _make_skill(deleted_at=None)
         registry = _create_registry(mock_db)
@@ -365,7 +365,7 @@ class TestRestoreSkill:
         assert result["restored"] is True
 
     @pytest.mark.asyncio
-    async def test_restore_not_deleted(self, mock_db):
+    async def test_restore_not_deleted(self, mock_db: MagicMock) -> None:
         skill = _make_skill(deleted_at=None)
         registry = _create_registry(mock_db)
         registry._mock_storage.get_by_name.return_value = skill
@@ -384,7 +384,7 @@ class TestMoveSkill:
     """Tests for move skill tools."""
 
     @pytest.mark.asyncio
-    async def test_move_to_project(self, mock_db):
+    async def test_move_to_project(self, mock_db: MagicMock) -> None:
         skill = _make_skill(source="project", project_id="11111111-1111-4111-8111-111111110001")
         registry = _create_registry(mock_db)
         registry._mock_storage.move_to_project.return_value = skill
@@ -396,7 +396,7 @@ class TestMoveSkill:
         assert result["success"] is True
 
     @pytest.mark.asyncio
-    async def test_move_to_project_error(self, mock_db):
+    async def test_move_to_project_error(self, mock_db: MagicMock) -> None:
         registry = _create_registry(mock_db)
         registry._mock_storage.move_to_project.side_effect = ValueError("nope")
 
@@ -407,7 +407,7 @@ class TestMoveSkill:
         assert result["success"] is False
 
     @pytest.mark.asyncio
-    async def test_move_to_installed(self, mock_db):
+    async def test_move_to_installed(self, mock_db: MagicMock) -> None:
         skill = _make_skill(source="installed")
         registry = _create_registry(mock_db)
         registry._mock_storage.move_to_installed.return_value = skill
@@ -416,7 +416,7 @@ class TestMoveSkill:
         assert result["success"] is True
 
     @pytest.mark.asyncio
-    async def test_move_to_installed_error(self, mock_db):
+    async def test_move_to_installed_error(self, mock_db: MagicMock) -> None:
         registry = _create_registry(mock_db)
         registry._mock_storage.move_to_installed.side_effect = ValueError("nope")
 
@@ -433,13 +433,13 @@ class TestUpdateSkill:
     """Tests for update_skill tool."""
 
     @pytest.mark.asyncio
-    async def test_update_no_params(self, mock_db):
+    async def test_update_no_params(self, mock_db: MagicMock) -> None:
         registry = _create_registry(mock_db)
         result = await registry.call("update_skill", {})
         assert result["success"] is False
 
     @pytest.mark.asyncio
-    async def test_update_success(self, mock_db):
+    async def test_update_success(self, mock_db: MagicMock) -> None:
         skill = _make_skill()
         update_result = MagicMock()
         update_result.error = None
@@ -456,7 +456,7 @@ class TestUpdateSkill:
         assert result["updated"] is True
 
     @pytest.mark.asyncio
-    async def test_update_with_error(self, mock_db):
+    async def test_update_with_error(self, mock_db: MagicMock) -> None:
         skill = _make_skill()
         update_result = MagicMock()
         update_result.error = "source not available"
@@ -469,7 +469,7 @@ class TestUpdateSkill:
         assert result["success"] is False
 
     @pytest.mark.asyncio
-    async def test_update_not_found(self, mock_db):
+    async def test_update_not_found(self, mock_db: MagicMock) -> None:
         registry = _create_registry(mock_db)
         registry._mock_storage.get_skill.side_effect = ValueError("x")
         registry._mock_storage.get_by_name.return_value = None
@@ -487,14 +487,14 @@ class TestHubTools:
     """Tests for list_hubs and search_hub tools."""
 
     @pytest.mark.asyncio
-    async def test_list_hubs_no_manager(self, mock_db):
+    async def test_list_hubs_no_manager(self, mock_db: MagicMock) -> None:
         registry = _create_registry(mock_db, hub_manager=None)
         result = await registry.call("list_hubs", {})
         assert result["success"] is True
         assert result["count"] == 0
 
     @pytest.mark.asyncio
-    async def test_list_hubs_with_manager(self, mock_db):
+    async def test_list_hubs_with_manager(self, mock_db: MagicMock) -> None:
         hub_manager = MagicMock()
         hub_manager.list_hubs.return_value = ["hub1"]
         config = MagicMock()
@@ -508,21 +508,21 @@ class TestHubTools:
         assert result["count"] == 1
 
     @pytest.mark.asyncio
-    async def test_search_hub_no_manager(self, mock_db):
+    async def test_search_hub_no_manager(self, mock_db: MagicMock) -> None:
         registry = _create_registry(mock_db, hub_manager=None)
         result = await registry.call("search_hub", {"query": "test"})
         assert result["success"] is False
         assert "No hub manager" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_search_hub_empty_query(self, mock_db):
+    async def test_search_hub_empty_query(self, mock_db: MagicMock) -> None:
         hub_manager = MagicMock()
         registry = _create_registry(mock_db, hub_manager=hub_manager)
         result = await registry.call("search_hub", {"query": ""})
         assert result["success"] is False
 
     @pytest.mark.asyncio
-    async def test_search_hub_success(self, mock_db):
+    async def test_search_hub_success(self, mock_db: MagicMock) -> None:
         hub_manager = MagicMock()
         hub_manager.search_all = AsyncMock(return_value=([{"name": "skill-1"}], []))
 

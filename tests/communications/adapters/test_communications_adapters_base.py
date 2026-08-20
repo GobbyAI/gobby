@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 
+from gobby.communications import adapters as adapters_mod
 from gobby.communications.adapters import (
     get_adapter_class,
     list_adapter_types,
@@ -60,19 +61,17 @@ class DummyAdapter(BaseChannelAdapter):
 
 def test_adapter_registry() -> None:
     """Test registering and retrieving adapters."""
-    # Register the adapter
     register_adapter("dummy", DummyAdapter)
+    try:
+        adapter_class = get_adapter_class("dummy")
+        assert adapter_class is DummyAdapter
 
-    # Retrieve it
-    adapter_class = get_adapter_class("dummy")
-    assert adapter_class is DummyAdapter
+        assert get_adapter_class("nonexistent") is None
 
-    # Check non-existent
-    assert get_adapter_class("nonexistent") is None
-
-    # List types
-    types = list_adapter_types()
-    assert "dummy" in types
+        types = list_adapter_types()
+        assert "dummy" in types
+    finally:
+        adapters_mod._ADAPTER_REGISTRY.pop("dummy", None)
 
 
 def test_chunk_message_short() -> None:

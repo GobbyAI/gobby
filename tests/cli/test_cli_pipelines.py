@@ -18,14 +18,6 @@ from gobby.workflows.loader_cache import DiscoveredWorkflow
 pytestmark = pytest.mark.unit
 
 
-def pipelines_available() -> bool:
-    """Check if pipelines command is registered in CLI."""
-    try:
-        return "pipelines" in cli.commands
-    except Exception:
-        return False
-
-
 @pytest.fixture
 def runner() -> CliRunner:
     """Create a CLI test runner."""
@@ -77,20 +69,16 @@ class TestPipelinesCLIRegistration:
 
     def test_pipelines_command_exists(self, runner) -> None:
         """Verify pipelines command is registered."""
+        assert "pipelines" in cli.commands
         result = runner.invoke(cli, ["pipelines", "--help"])
-
-        if result.exit_code == 2 and "No such command 'pipelines'" in result.output:
-            pytest.skip("pipelines CLI command not yet registered")
 
         assert result.exit_code == 0
         assert "pipelines" in result.output.lower()
 
     def test_pipelines_subcommands_exist(self, runner) -> None:
         """Verify expected subcommands are registered."""
+        assert "pipelines" in cli.commands
         result = runner.invoke(cli, ["pipelines", "--help"])
-
-        if result.exit_code == 2 and "No such command 'pipelines'" in result.output:
-            pytest.skip("pipelines CLI command not yet registered")
 
         assert result.exit_code == 0
         assert "list" in result.output
@@ -101,7 +89,6 @@ class TestPipelinesCLIRegistration:
 class TestPipelinesList:
     """Tests for gobby pipelines list command."""
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_list_discovers_pipelines(self, runner, mock_discovered_pipelines) -> None:
         """Verify 'gobby pipelines list' calls discover_pipelines."""
         mock_loader = MagicMock()
@@ -116,7 +103,6 @@ class TestPipelinesList:
             assert result.exit_code == 0
             mock_loader.discover_pipelines_sync.assert_called_once_with("project-uuid")
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_list_outputs_pipeline_names(self, runner, mock_discovered_pipelines) -> None:
         """Verify list command outputs pipeline names."""
         mock_loader = MagicMock()
@@ -129,7 +115,6 @@ class TestPipelinesList:
             assert "deploy" in result.output
             assert "test" in result.output
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_list_shows_descriptions(self, runner, mock_discovered_pipelines) -> None:
         """Verify list command shows pipeline descriptions."""
         mock_loader = MagicMock()
@@ -141,7 +126,6 @@ class TestPipelinesList:
             assert result.exit_code == 0
             assert "Deploy to production" in result.output
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_list_shows_source(self, runner, mock_discovered_pipelines) -> None:
         """Verify list command indicates project vs global source."""
         mock_loader = MagicMock()
@@ -153,7 +137,6 @@ class TestPipelinesList:
             assert result.exit_code == 0
             assert "project" in result.output.lower()
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_list_empty_result(self, runner) -> None:
         """Verify list handles no pipelines found."""
         mock_loader = MagicMock()
@@ -165,7 +148,6 @@ class TestPipelinesList:
             assert result.exit_code == 0
             assert "no pipeline" in result.output.lower() or result.output.strip() == ""
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_list_json_format(self, runner, mock_discovered_pipelines) -> None:
         """Verify list command supports --json output."""
         import json
@@ -185,7 +167,6 @@ class TestPipelinesList:
 class TestPipelinesShow:
     """Tests for gobby pipelines show command."""
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_show_loads_pipeline(self, runner, mock_pipeline) -> None:
         """Verify 'gobby pipelines show <name>' loads the pipeline."""
         mock_loader = MagicMock()
@@ -200,7 +181,6 @@ class TestPipelinesShow:
             assert result.exit_code == 0
             mock_loader.load_pipeline_sync.assert_called_once_with("deploy", "project-uuid")
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_show_outputs_pipeline_details(self, runner, mock_pipeline) -> None:
         """Verify show command outputs pipeline definition details."""
         mock_loader = MagicMock()
@@ -213,7 +193,6 @@ class TestPipelinesShow:
             assert "deploy" in result.output
             assert "Deploy to production" in result.output
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_show_outputs_steps(self, runner, mock_pipeline) -> None:
         """Verify show command outputs step information."""
         mock_loader = MagicMock()
@@ -226,7 +205,6 @@ class TestPipelinesShow:
             assert "build" in result.output
             assert "test" in result.output
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_show_not_found(self, runner) -> None:
         """Verify show returns error for nonexistent pipeline."""
         mock_loader = MagicMock()
@@ -237,7 +215,6 @@ class TestPipelinesShow:
 
             assert result.exit_code != 0 or "not found" in result.output.lower()
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_show_json_format(self, runner, mock_pipeline) -> None:
         """Verify show command supports --json output."""
         import json
@@ -277,17 +254,13 @@ class TestPipelinesRun:
             outputs_json='{"result": "success"}',
         )
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_run_subcommand_exists(self, runner) -> None:
         """Verify 'run' subcommand is registered."""
         result = runner.invoke(cli, ["pipelines", "--help"])
         assert "run" in result.output
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_run_loads_and_executes(self, runner, mock_pipeline, mock_execution) -> None:
         """Verify 'gobby pipelines run <name>' loads and executes pipeline."""
-        from unittest.mock import AsyncMock
-
         mock_loader = MagicMock()
         mock_loader.load_pipeline_sync.return_value = mock_pipeline
 
@@ -309,11 +282,8 @@ class TestPipelinesRun:
             assert mock_executor.execute.call_count == 1
             assert mock_executor.execute.call_args is not None
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_run_parses_inputs(self, runner, mock_pipeline, mock_execution) -> None:
         """Verify '-i key=value' parses inputs correctly."""
-        from unittest.mock import AsyncMock
-
         mock_loader = MagicMock()
         mock_loader.load_pipeline_sync.return_value = mock_pipeline
 
@@ -336,11 +306,8 @@ class TestPipelinesRun:
             assert inputs.get("env") == "prod"
             assert inputs.get("version") == "1.0"
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_run_outputs_execution_id(self, runner, mock_pipeline, mock_execution) -> None:
         """Verify run command outputs execution_id and status."""
-        from unittest.mock import AsyncMock
-
         mock_loader = MagicMock()
         mock_loader.load_pipeline_sync.return_value = mock_pipeline
 
@@ -357,11 +324,8 @@ class TestPipelinesRun:
             assert "pe-abc123" in result.output
             assert "completed" in result.output.lower()
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_run_handles_approval_required(self, runner, mock_pipeline) -> None:
         """Verify run command handles ApprovalRequired with token display."""
-        from unittest.mock import AsyncMock
-
         from gobby.workflows.pipeline_state import ApprovalRequired
 
         mock_loader = MagicMock()
@@ -387,7 +351,6 @@ class TestPipelinesRun:
             assert "approval" in result.output.lower()
             assert "approval-token-xyz" in result.output
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_run_pipeline_not_found(self, runner) -> None:
         """Verify run returns error for nonexistent pipeline."""
         mock_loader = MagicMock()
@@ -414,11 +377,9 @@ class TestPipelinesRun:
         assert result.exit_code != 0
         assert "Pipeline 'deploy' is disabled" in result.output
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_run_json_format(self, runner, mock_pipeline, mock_execution) -> None:
         """Verify run command supports --json output."""
         import json
-        from unittest.mock import AsyncMock
 
         mock_loader = MagicMock()
         mock_loader.load_pipeline_sync.return_value = mock_pipeline
@@ -476,20 +437,17 @@ class TestPipelineRunsShow:
             ),
         ]
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_runs_subcommand_exists(self, runner) -> None:
         """Verify 'runs' subcommand is registered."""
         result = runner.invoke(cli, ["pipelines", "--help"])
         assert "runs" in result.output
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_old_status_subcommand_is_removed(self, runner) -> None:
         """Verify old 'status' subcommand is not registered."""
         result = runner.invoke(cli, ["pipelines", "status", "pe-abc123"])
         assert result.exit_code == 2
         assert "No such command" in result.output
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_status_fetches_execution(self, runner, mock_execution, mock_step_executions) -> None:
         """Verify 'gobby pipelines runs show <id>' fetches execution."""
         mock_manager = MagicMock()
@@ -502,7 +460,6 @@ class TestPipelineRunsShow:
             assert result.exit_code == 0
             mock_manager.get_execution.assert_called_once_with("pe-abc123")
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_status_displays_execution_details(
         self, runner, mock_execution, mock_step_executions
     ) -> None:
@@ -519,7 +476,6 @@ class TestPipelineRunsShow:
             assert "deploy" in result.output
             assert "running" in result.output.lower()
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_status_shows_step_statuses(self, runner, mock_execution, mock_step_executions) -> None:
         """Verify status command shows step statuses."""
         mock_manager = MagicMock()
@@ -534,7 +490,6 @@ class TestPipelineRunsShow:
             assert "test" in result.output
             assert "completed" in result.output.lower()
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_status_not_found(self, runner) -> None:
         """Verify status returns error for nonexistent execution."""
         mock_manager = MagicMock()
@@ -545,7 +500,6 @@ class TestPipelineRunsShow:
 
             assert result.exit_code != 0 or "not found" in result.output.lower()
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_status_json_format(self, runner, mock_execution, mock_step_executions) -> None:
         """Verify status command supports --json output."""
         import json
@@ -567,7 +521,6 @@ class TestPipelineRunsShow:
 class TestPipelinesDaemonApproval:
     """Tests for daemon-backed pipeline approval commands."""
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     @pytest.mark.parametrize(
         ("action", "expected_path", "expected_text"),
         [
@@ -633,7 +586,6 @@ class TestPipelinesDaemonApproval:
         assert "pe-daemon" in result.output
         get_local_executor.assert_not_called()
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_approve_falls_back_to_local_when_daemon_unreachable(self, runner) -> None:
         """Verify local approval is used only after the daemon route is unreachable."""
         from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
@@ -694,17 +646,13 @@ class TestPipelinesApprove:
         with patch("gobby.cli.pipelines._try_daemon_approval", return_value=None):
             yield
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_approve_subcommand_exists(self, runner) -> None:
         """Verify 'approve' subcommand is registered."""
         result = runner.invoke(cli, ["pipelines", "--help"])
         assert "approve" in result.output
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_approve_calls_executor(self, runner) -> None:
         """Verify 'gobby pipelines approve <token>' calls executor.approve()."""
-        from unittest.mock import AsyncMock
-
         from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
 
         mock_executor = MagicMock()
@@ -732,11 +680,8 @@ class TestPipelinesApprove:
                 "approval-token-xyz", approved_by="local-user"
             )
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_approve_shows_result(self, runner) -> None:
         """Verify approve command shows execution result."""
-        from unittest.mock import AsyncMock
-
         from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
 
         mock_executor = MagicMock()
@@ -757,11 +702,8 @@ class TestPipelinesApprove:
             assert "pe-abc123" in result.output
             assert "completed" in result.output.lower()
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_approve_invalid_token(self, runner) -> None:
         """Verify approve handles invalid token."""
-        from unittest.mock import AsyncMock
-
         mock_executor = MagicMock()
         mock_executor.approve = AsyncMock(side_effect=ValueError("Invalid token"))
 
@@ -770,11 +712,9 @@ class TestPipelinesApprove:
 
             assert result.exit_code != 0 or "invalid" in result.output.lower()
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_approve_json_format(self, runner) -> None:
         """Verify approve command supports --json output."""
         import json
-        from unittest.mock import AsyncMock
 
         from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
 
@@ -806,17 +746,13 @@ class TestPipelinesReject:
         with patch("gobby.cli.pipelines._try_daemon_approval", return_value=None):
             yield
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_reject_subcommand_exists(self, runner) -> None:
         """Verify 'reject' subcommand is registered."""
         result = runner.invoke(cli, ["pipelines", "--help"])
         assert "reject" in result.output
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_reject_calls_executor(self, runner) -> None:
         """Verify 'gobby pipelines reject <token>' calls executor.reject()."""
-        from unittest.mock import AsyncMock
-
         from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
 
         mock_executor = MagicMock()
@@ -844,11 +780,8 @@ class TestPipelinesReject:
                 "approval-token-xyz", rejected_by="local-user"
             )
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_reject_shows_result(self, runner) -> None:
         """Verify reject command shows execution result."""
-        from unittest.mock import AsyncMock
-
         from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
 
         mock_executor = MagicMock()
@@ -868,11 +801,8 @@ class TestPipelinesReject:
             assert result.exit_code == 0
             assert "pe-abc123" in result.output
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_reject_invalid_token(self, runner) -> None:
         """Verify reject handles invalid token."""
-        from unittest.mock import AsyncMock
-
         mock_executor = MagicMock()
         mock_executor.reject = AsyncMock(side_effect=ValueError("Invalid token"))
 
@@ -881,11 +811,9 @@ class TestPipelinesReject:
 
             assert result.exit_code != 0 or "invalid" in result.output.lower()
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_reject_json_format(self, runner) -> None:
         """Verify reject command supports --json output."""
         import json
-        from unittest.mock import AsyncMock
 
         from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
 
@@ -944,13 +872,11 @@ class TestPipelinesHistory:
             ),
         ]
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_history_subcommand_exists(self, runner) -> None:
         """Verify 'history' subcommand is registered."""
         result = runner.invoke(cli, ["pipelines", "--help"])
         assert "history" in result.output
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_history_lists_executions(self, runner, mock_executions) -> None:
         """Verify 'gobby pipelines history <name>' lists executions."""
         mock_manager = MagicMock()
@@ -964,7 +890,6 @@ class TestPipelinesHistory:
             call_kwargs = mock_manager.list_executions.call_args
             assert call_kwargs.kwargs.get("pipeline_name") == "deploy"
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_history_shows_id_status_created(self, runner, mock_executions) -> None:
         """Verify history shows id, status, and created_at."""
         mock_manager = MagicMock()
@@ -979,7 +904,6 @@ class TestPipelinesHistory:
             assert "completed" in result.output.lower()
             assert "failed" in result.output.lower()
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_history_supports_limit(self, runner, mock_executions) -> None:
         """Verify history supports --limit flag."""
         mock_manager = MagicMock()
@@ -992,7 +916,6 @@ class TestPipelinesHistory:
             call_kwargs = mock_manager.list_executions.call_args
             assert call_kwargs.kwargs.get("limit") == 2
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_history_empty_result(self, runner) -> None:
         """Verify history handles no executions gracefully."""
         mock_manager = MagicMock()
@@ -1004,7 +927,6 @@ class TestPipelinesHistory:
             assert result.exit_code == 0
             assert "no executions" in result.output.lower() or "0" in result.output
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_history_json_format(self, runner, mock_executions) -> None:
         """Verify history command supports --json output."""
         import json
@@ -1025,7 +947,6 @@ class TestPipelinesHistory:
             assert data["limit"] == 20
             assert data["offset"] == 0
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_history_offset_passes_through(self, runner, mock_executions) -> None:
         """--offset flag is forwarded to list_executions and shown in JSON."""
         import json
@@ -1046,7 +967,6 @@ class TestPipelinesHistory:
             call_kwargs = mock_manager.list_executions.call_args.kwargs
             assert call_kwargs["offset"] == 10
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_history_text_footer_shows_range(self, runner, mock_executions) -> None:
         """Plain-text history output includes a 'Showing X-Y of N' footer."""
         mock_manager = MagicMock()
@@ -1087,20 +1007,17 @@ class TestPipelineRunsList:
             ),
         ]
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_runs_subcommand_exists(self, runner) -> None:
         """Verify 'runs' subcommand is registered."""
         result = runner.invoke(cli, ["pipelines", "--help"])
         assert "runs" in result.output
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_old_executions_subcommand_is_removed(self, runner) -> None:
         """Verify old 'executions' subcommand is not registered."""
         result = runner.invoke(cli, ["pipelines", "executions"])
         assert result.exit_code == 2
         assert "No such command" in result.output
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_executions_lists_all(self, runner, mock_executions) -> None:
         """Verify 'gobby pipelines runs list' lists executions."""
         mock_manager = MagicMock()
@@ -1115,7 +1032,6 @@ class TestPipelineRunsList:
             assert "pe-bbb222" in result.output
             assert "deploy" in result.output
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_executions_status_filter(self, runner, mock_executions) -> None:
         """Verify --status flag filters executions."""
         mock_manager = MagicMock()
@@ -1131,7 +1047,6 @@ class TestPipelineRunsList:
 
             assert call_kwargs.kwargs.get("status") == ExecutionStatus.COMPLETED
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_executions_name_filter(self, runner, mock_executions) -> None:
         """Verify --name filters by pipeline definition name."""
         mock_manager = MagicMock()
@@ -1145,7 +1060,6 @@ class TestPipelineRunsList:
             call_kwargs = mock_manager.list_executions.call_args
             assert call_kwargs.kwargs.get("pipeline_name") == "deploy"
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_executions_json_output(self, runner, mock_executions) -> None:
         """Verify --json flag produces JSON output."""
         import json
@@ -1169,7 +1083,6 @@ class TestPipelineRunsList:
             assert data["offset"] == 0
             assert data["status_summary"] == {"completed": 1, "running": 1}
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_runs_list_offset_passes_through(self, runner, mock_executions) -> None:
         """--offset flag is forwarded to list_executions and surfaced in JSON."""
         import json
@@ -1193,7 +1106,6 @@ class TestPipelineRunsList:
             assert call_kwargs["offset"] == 10
             assert call_kwargs["limit"] == 5
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_executions_empty(self, runner) -> None:
         """Verify executions handles no results."""
         mock_manager = MagicMock()
@@ -1206,7 +1118,6 @@ class TestPipelineRunsList:
             assert result.exit_code == 0
             assert "no executions" in result.output.lower()
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_executions_invalid_status(self, runner) -> None:
         """Verify invalid --status is rejected."""
         mock_manager = MagicMock()
@@ -1237,13 +1148,11 @@ class TestPipelinesSearch:
             ),
         ]
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_search_subcommand_exists(self, runner) -> None:
         """Verify 'search' subcommand is registered."""
         result = runner.invoke(cli, ["pipelines", "--help"])
         assert "search" in result.output
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_search_basic(self, runner, mock_search_results) -> None:
         """Verify basic search works."""
         mock_manager = MagicMock()
@@ -1257,7 +1166,6 @@ class TestPipelinesSearch:
             assert "deploy-prod" in result.output
             mock_manager.search_executions.assert_called_once()
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_search_json_output(self, runner, mock_search_results) -> None:
         """Verify --json flag produces JSON output."""
         import json
@@ -1276,7 +1184,6 @@ class TestPipelinesSearch:
             assert data["offset"] == 0
             assert data["query"] == "deploy"
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_search_offset_passes_through(self, runner, mock_search_results) -> None:
         """--offset flag is forwarded to search_executions."""
         mock_manager = MagicMock()
@@ -1291,7 +1198,6 @@ class TestPipelinesSearch:
             call_kwargs = mock_manager.search_executions.call_args.kwargs
             assert call_kwargs["offset"] == 4
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_search_no_results(self, runner) -> None:
         """Verify search handles no results."""
         mock_manager = MagicMock()
@@ -1303,7 +1209,6 @@ class TestPipelinesSearch:
             assert result.exit_code == 0
             assert "no executions" in result.output.lower()
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_search_no_errors_flag(self, runner, mock_search_results) -> None:
         """Verify --no-errors flag is passed through."""
         mock_manager = MagicMock()
@@ -1320,13 +1225,11 @@ class TestPipelinesSearch:
 class TestPipelinesImport:
     """Tests for gobby pipelines import command."""
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_import_subcommand_exists(self, runner) -> None:
         """Verify 'import' subcommand is registered."""
         result = runner.invoke(cli, ["pipelines", "--help"])
         assert "import" in result.output
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_import_reads_lobster_file(self, runner, tmp_path) -> None:
         """Verify 'gobby pipelines import path.lobster' reads file."""
         # Create a test .lobster file
@@ -1353,7 +1256,6 @@ steps:
             assert result.exit_code == 0
             assert "imported-pipeline" in result.output
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_import_saves_to_workflows_dir(self, runner, tmp_path) -> None:
         """Verify import saves converted pipeline to .gobby/workflows/."""
         # Create a test .lobster file
@@ -1380,7 +1282,6 @@ steps:
             saved_file = workflows_dir / "deploy.yaml"
             assert saved_file.exists()
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_import_converts_external_format(self, runner, tmp_path) -> None:
         """Verify import converts external format to Gobby format."""
         import yaml
@@ -1423,7 +1324,6 @@ steps:
             # Verify approval: true -> approval.required: true
             assert saved_content["steps"][2]["approval"]["required"] is True
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_import_outputs_saved_path(self, runner, tmp_path) -> None:
         """Verify import outputs the saved file path."""
         # Create a test .lobster file
@@ -1448,7 +1348,6 @@ steps:
             assert result.exit_code == 0
             assert "test-pipeline.yaml" in result.output
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_import_file_not_found(self, runner, tmp_path) -> None:
         """Verify import handles file not found error."""
         # Create project directory structure
@@ -1460,7 +1359,6 @@ steps:
 
             assert result.exit_code != 0 or "not found" in result.output.lower()
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_import_no_project(self, runner, tmp_path) -> None:
         """Verify import handles no project context."""
         # Create a test .lobster file
@@ -1479,7 +1377,6 @@ steps:
             # Should fail or warn when no project context
             assert result.exit_code != 0 or "project" in result.output.lower()
 
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_import_custom_output(self, runner, tmp_path) -> None:
         """Verify import supports --output flag for custom destination."""
         # Create a test .lobster file

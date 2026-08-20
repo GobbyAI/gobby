@@ -15,6 +15,8 @@ from gobby.communications.models import (
     CommsRoutingRule,
 )
 
+pytestmark = pytest.mark.unit
+
 
 def test_channel_capabilities_from_row() -> None:
     row = {
@@ -142,8 +144,8 @@ def test_comms_routing_rule_from_row() -> None:
     assert rule.config_json == {"auto_reply": True}
 
 
-def test_models_with_missing_fields_from_row() -> None:
-    # Only required fields provided in the row
+def test_routing_rule_from_row_defaults() -> None:
+    """Missing optional CommsRoutingRule columns use model defaults."""
     row = {
         "id": "rule-min",
         "name": "Minimal Rule",
@@ -152,9 +154,6 @@ def test_models_with_missing_fields_from_row() -> None:
         "created_at": "2026-03-21T00:00:00Z",
         "updated_at": "2026-03-21T00:00:00Z",
     }
-    # For CommsRoutingRule, config_json is required in __init__ but we've refactored
-    # to use _parse_json_field which handles missing keys.
-    # Wait, in my refactored CommsRoutingRule, config_json has a default_factory=dict.
     rule = CommsRoutingRule.from_row(row)
     assert rule.id == "rule-min"
     assert rule.name == "Minimal Rule"
@@ -164,7 +163,9 @@ def test_models_with_missing_fields_from_row() -> None:
     assert rule.enabled is True
     assert rule.config_json == {}
 
-    # Test CommsMessage with missing fields
+
+def test_comms_message_from_row_defaults() -> None:
+    """Missing optional CommsMessage columns use model defaults."""
     msg_row = {
         "id": "msg-min",
         "channel_id": "chan-1",

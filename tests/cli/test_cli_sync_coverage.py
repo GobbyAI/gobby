@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -20,17 +21,16 @@ def runner() -> CliRunner:
 
 
 @pytest.fixture(autouse=True)
-def mock_runtime_hub_database():
+def mock_runtime_hub_database() -> Iterator[MagicMock]:
     """Keep sync CLI tests isolated from the user's runtime hub config."""
-    with patch("gobby.cli.runtime.require_cli_database") as mock_open:
-        mock_open.return_value = MagicMock()
-        yield mock_open
+    with patch("gobby.cli.runtime.require_cli_database") as mock_require_cli_database:
+        mock_require_cli_database.return_value = MagicMock()
+        yield mock_require_cli_database
 
 
 # All lazy imports in sync() need to be patched at the source module:
 #   from gobby.utils.dev import is_dev_mode          -> gobby.utils.dev.is_dev_mode
 #   from gobby.sync.integrity import ...             -> gobby.sync.integrity.*
-#   from gobby.cli.runtime import require_cli_database -> gobby.cli.runtime.require_cli_database
 #   from gobby.cli.runtime import require_cli_database -> gobby.cli.runtime.require_cli_database
 #   from gobby.sync_registry import sync_bundled_content_to_db -> gobby.sync_registry.sync_bundled_content_to_db
 

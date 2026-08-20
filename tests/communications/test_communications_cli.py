@@ -9,6 +9,8 @@ from click.testing import CliRunner
 
 from gobby.cli.communications import comms
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def runner() -> CliRunner:
@@ -76,6 +78,7 @@ def test_status_api_failure(runner: CliRunner, mock_client: MagicMock) -> None:
     with patch("gobby.cli.communications.get_daemon_client", return_value=mock_client):
         result = runner.invoke(comms, ["status"])
 
+    assert result.exit_code == 1
     assert "Error" in result.output
 
 
@@ -88,6 +91,7 @@ def test_status_connection_failure(runner: CliRunner, mock_client: MagicMock) ->
     with patch("gobby.cli.communications.get_daemon_client", return_value=mock_client):
         result = runner.invoke(comms, ["status"])
 
+    assert result.exit_code == 1
     assert "Daemon connection failed" in result.output
 
 
@@ -119,6 +123,7 @@ def test_send_failure(runner: CliRunner, mock_client: MagicMock) -> None:
     with patch("gobby.cli.communications.get_daemon_client", return_value=mock_client):
         result = runner.invoke(comms, ["send", "nonexistent", "Hello"])
 
+    assert result.exit_code == 1
     assert "Error" in result.output
 
 
@@ -131,6 +136,7 @@ def test_send_connection_failure(runner: CliRunner, mock_client: MagicMock) -> N
     with patch("gobby.cli.communications.get_daemon_client", return_value=mock_client):
         result = runner.invoke(comms, ["send", "my-slack", "Hello"])
 
+    assert result.exit_code == 1
     assert "Daemon connection failed" in result.output
 
 
@@ -182,6 +188,7 @@ def test_channels_list_api_failure(runner: CliRunner, mock_client: MagicMock) ->
     with patch("gobby.cli.communications.get_daemon_client", return_value=mock_client):
         result = runner.invoke(comms, ["channels", "list"])
 
+    assert result.exit_code == 1
     assert "Error" in result.output
 
 
@@ -249,6 +256,7 @@ def test_channels_add_api_failure(runner: CliRunner, mock_client: MagicMock) -> 
             input="fake-token\n\n",
         )
 
+    assert result.exit_code == 1
     assert "Error" in result.output
 
 
@@ -286,6 +294,7 @@ def test_channels_remove_not_found(runner: CliRunner, mock_client: MagicMock) ->
     with patch("gobby.cli.communications.get_daemon_client", return_value=mock_client):
         result = runner.invoke(comms, ["channels", "remove", "nonexistent", "--yes"])
 
+    assert result.exit_code == 1
     assert "not found" in result.output
 
 
@@ -298,4 +307,5 @@ def test_channels_remove_connection_failure(runner: CliRunner, mock_client: Magi
     with patch("gobby.cli.communications.get_daemon_client", return_value=mock_client):
         result = runner.invoke(comms, ["channels", "remove", "my-slack", "--yes"])
 
+    assert result.exit_code == 1
     assert "Daemon connection failed" in result.output

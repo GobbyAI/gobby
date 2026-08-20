@@ -34,6 +34,7 @@ def attachment_manager(attachment_dir: Path) -> AttachmentManager:
     return AttachmentManager(storage_dir=attachment_dir)
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_store_async(attachment_manager: AttachmentManager) -> None:
     content = b"async content"
@@ -43,6 +44,7 @@ async def test_store_async(attachment_manager: AttachmentManager) -> None:
     assert "async_test.bin" in path.name
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_download(attachment_manager: AttachmentManager) -> None:
     mock_response = MagicMock()
@@ -63,18 +65,21 @@ async def test_download(attachment_manager: AttachmentManager) -> None:
     assert "file.pdf" in path.name
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_store_sanitizes_filename(attachment_manager: AttachmentManager) -> None:
     path = await attachment_manager.store(b"data", "../../../etc/passwd")
-    assert "etc" not in str(path.parent.name)
+    assert path.resolve().is_relative_to(attachment_manager.storage_dir.resolve())
     assert "passwd" in path.name
 
 
+@pytest.mark.unit
 def test_get_path_nonexistent(attachment_manager: AttachmentManager) -> None:
     result = attachment_manager.get_path("nonexistent.txt")
     assert result is None
 
 
+@pytest.mark.unit
 def test_get_path_requires_exact_stored_original_name(
     attachment_manager: AttachmentManager,
     attachment_dir: Path,
@@ -85,6 +90,7 @@ def test_get_path_requires_exact_stored_original_name(
     assert attachment_manager.get_path("file.txt") is None
 
 
+@pytest.mark.unit
 def test_get_path_returns_newest_exact_original_name(
     attachment_manager: AttachmentManager,
     attachment_dir: Path,
@@ -99,6 +105,7 @@ def test_get_path_returns_newest_exact_original_name(
     assert attachment_manager.get_path("file.txt") == newer
 
 
+@pytest.mark.unit
 def test_cleanup_old(attachment_manager: AttachmentManager, attachment_dir: Path) -> None:
     old_file = attachment_dir / "old_file.txt"
     old_file.write_text("old")
@@ -114,6 +121,7 @@ def test_cleanup_old(attachment_manager: AttachmentManager, attachment_dir: Path
     assert new_file.exists()
 
 
+@pytest.mark.unit
 def test_validate_size(attachment_manager: AttachmentManager) -> None:
     assert attachment_manager.validate_size(1024, "telegram") is True
     assert attachment_manager.validate_size(100 * 1024 * 1024, "telegram") is False
@@ -121,12 +129,14 @@ def test_validate_size(attachment_manager: AttachmentManager) -> None:
     assert attachment_manager.validate_size(30 * 1024 * 1024, "unknown") is False
 
 
+@pytest.mark.unit
 def test_get_size_limit(attachment_manager: AttachmentManager) -> None:
     assert attachment_manager.get_size_limit("telegram") == PLATFORM_SIZE_LIMITS["telegram"]
     assert attachment_manager.get_size_limit("discord") == PLATFORM_SIZE_LIMITS["discord"]
     assert attachment_manager.get_size_limit("unknown") == 25 * 1024 * 1024
 
 
+@pytest.mark.unit
 def test_storage_dir_created_automatically(tmp_path: Path) -> None:
     target = tmp_path / "nested" / "deep" / "attachments"
     mgr = AttachmentManager(storage_dir=target)
@@ -134,6 +144,7 @@ def test_storage_dir_created_automatically(tmp_path: Path) -> None:
     assert mgr.storage_dir == target
 
 
+@pytest.mark.unit
 def test_comms_attachment_from_row() -> None:
     row = {
         "id": "ca-123",
@@ -155,6 +166,7 @@ def test_comms_attachment_from_row() -> None:
     assert attachment.size_bytes == 12345
 
 
+@pytest.mark.unit
 def test_comms_attachment_from_row_defaults() -> None:
     row = {
         "id": "ca-789",
@@ -201,6 +213,7 @@ def _create_test_message(store: LocalCommunicationsStore, channel_id: str) -> st
     return store.create_message(msg).id
 
 
+@pytest.mark.integration
 def test_attachment_crud(comms_store: LocalCommunicationsStore) -> None:
     channel_id = _create_test_channel(comms_store)
     message_id = _create_test_message(comms_store, channel_id)
@@ -230,6 +243,7 @@ def test_attachment_crud(comms_store: LocalCommunicationsStore) -> None:
     assert comms_store.get_attachment(saved.id) is None
 
 
+@pytest.mark.integration
 def test_create_message_with_attachments_links_rows_atomically(
     comms_store: LocalCommunicationsStore,
 ) -> None:
@@ -262,6 +276,7 @@ def test_create_message_with_attachments_links_rows_atomically(
     assert comms_store.list_attachments(persisted.id) == saved_attachments
 
 
+@pytest.mark.integration
 def test_deduplicated_message_logs_skipped_attachment_persistence(
     comms_store: LocalCommunicationsStore,
     caplog: pytest.LogCaptureFixture,
@@ -321,6 +336,7 @@ def test_deduplicated_message_logs_skipped_attachment_persistence(
     assert record.__dict__["platform_message_id"] == "platform-message-1"
 
 
+@pytest.mark.integration
 def test_create_message_with_attachments_rolls_back_on_attachment_failure(
     comms_store: LocalCommunicationsStore,
     monkeypatch: pytest.MonkeyPatch,
@@ -358,6 +374,7 @@ def test_create_message_with_attachments_rolls_back_on_attachment_failure(
     assert attachment_count["count"] == 0
 
 
+@pytest.mark.integration
 def test_attachment_list_multiple(comms_store: LocalCommunicationsStore) -> None:
     channel_id = _create_test_channel(comms_store)
     message_id = _create_test_message(comms_store, channel_id)
@@ -377,6 +394,7 @@ def test_attachment_list_multiple(comms_store: LocalCommunicationsStore) -> None
     assert len(comms_store.list_attachments(message_id)) == 3
 
 
+@pytest.mark.integration
 def test_delete_attachments_for_message(comms_store: LocalCommunicationsStore) -> None:
     channel_id = _create_test_channel(comms_store)
     message_id = _create_test_message(comms_store, channel_id)
@@ -397,6 +415,7 @@ def test_delete_attachments_for_message(comms_store: LocalCommunicationsStore) -
     assert comms_store.list_attachments(message_id) == []
 
 
+@pytest.mark.integration
 def test_attachment_cascade_on_message_delete(
     comms_store: LocalCommunicationsStore, tmp_path: Path
 ) -> None:
@@ -422,13 +441,16 @@ def test_attachment_cascade_on_message_delete(
         )
     )
 
-    deleted_count, local_paths = comms_store.delete_messages_before(datetime(2025, 1, 1))
+    deleted_count, local_paths = comms_store.delete_messages_before(
+        datetime(2025, 1, 1, tzinfo=UTC)
+    )
 
     assert deleted_count == 1
     assert local_paths == [str(attachment_path)]
     assert comms_store.list_attachments(message_id) == []
 
 
+@pytest.mark.integration
 def test_attachment_crud_and_message_cleanup_are_machine_scoped(
     temp_db: HubDatabase,
     tmp_path: Path,
@@ -480,7 +502,9 @@ def test_attachment_crud_and_message_cleanup_are_machine_scoped(
     assert local_store.get_attachment(remote_attachment.id) is None
     assert [row.id for row in local_store.list_attachments(message_id)] == [local_attachment.id]
     local_store.delete_attachment(remote_attachment.id)
-    deleted_count, local_paths = local_store.delete_messages_before(datetime(2025, 1, 1))
+    deleted_count, local_paths = local_store.delete_messages_before(
+        datetime(2025, 1, 1, tzinfo=UTC)
+    )
 
     assert deleted_count == 0
     assert local_paths == []
@@ -488,6 +512,7 @@ def test_attachment_crud_and_message_cleanup_are_machine_scoped(
     assert remote_store.get_attachment(remote_attachment.id) is not None
 
 
+@pytest.mark.unit
 def test_delete_paths_only_unlinks_files_in_storage_directory(
     attachment_manager: AttachmentManager, attachment_dir: Path, tmp_path: Path
 ) -> None:
@@ -503,6 +528,7 @@ def test_delete_paths_only_unlinks_files_in_storage_directory(
     assert outside_path.exists()
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_telegram_send_attachment(tmp_path: Path) -> None:
     from gobby.communications.adapters.telegram import TelegramAdapter
@@ -543,6 +569,7 @@ async def test_telegram_send_attachment(tmp_path: Path) -> None:
     assert adapter._client.post.await_args.args[0].endswith("/sendDocument")
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_slack_send_attachment(tmp_path: Path) -> None:
     from gobby.communications.adapters.slack import SlackAdapter
@@ -605,6 +632,7 @@ async def test_slack_send_attachment(tmp_path: Path) -> None:
     assert adapter._client.post.await_count == 2
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_discord_send_attachment(tmp_path: Path) -> None:
     from gobby.communications.adapters.discord import DiscordAdapter
@@ -643,6 +671,7 @@ async def test_discord_send_attachment(tmp_path: Path) -> None:
     assert adapter._route_buckets == {}
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_email_send_attachment(tmp_path: Path) -> None:
     from gobby.communications.adapters.email import EmailAdapter
@@ -678,6 +707,7 @@ async def test_email_send_attachment(tmp_path: Path) -> None:
         mock_smtp.send_message.assert_called_once()
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_sms_send_attachment_requires_url() -> None:
     from gobby.communications.adapters.sms import SMSAdapter
@@ -706,6 +736,7 @@ async def test_sms_send_attachment_requires_url() -> None:
         await adapter.send_attachment(msg, att, Path("/tmp/photo.jpg"))
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_sms_send_attachment_with_url() -> None:
     from gobby.communications.adapters.sms import SMSAdapter
@@ -745,6 +776,7 @@ async def test_sms_send_attachment_with_url() -> None:
     )
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_base_adapter_send_attachment_raises() -> None:
     from gobby.communications.adapters.base import BaseChannelAdapter

@@ -14,6 +14,8 @@ import pytest
 from gobby.communications.adapters.sms import SMSAdapter
 from gobby.communications.models import ChannelConfig, CommsMessage
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def channel_config() -> ChannelConfig:
@@ -126,7 +128,6 @@ async def test_send_message_success(
 
         msg_id = await adapter.send_message(message)
 
-        assert message.channel_id != message.metadata_json["platform_destination"]
         assert msg_id == "SM12345"
         mock_post.assert_called_with(
             "Messages.json",

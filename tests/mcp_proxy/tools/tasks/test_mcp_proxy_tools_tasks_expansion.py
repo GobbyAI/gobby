@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 from datetime import timedelta
 from inspect import signature
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.storage.expansion_runs import ExpansionRun, LocalExpansionRunManager
-from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.tasks.expansion_service import ExpansionService
 from gobby.utils.datetime import utc_now
@@ -20,7 +22,7 @@ from tests.storage.tasks._stage_test_helpers import initialize_manifest, set_sta
 pytestmark = pytest.mark.unit
 
 
-def _task(task_manager: LocalTaskManager, sample_project):
+def _task(task_manager: LocalTaskManager, sample_project: dict[str, Any]) -> Task:
     return task_manager.create_task(
         project_id=sample_project["id"],
         title="Expand me",
@@ -90,7 +92,7 @@ def test_start_expansion_schema_accepts_explicit_null_optionals(temp_db) -> None
     assert errors == []
 
 
-def test_start_expansion_idempotent(temp_db, sample_project) -> None:
+def test_start_expansion_idempotent(temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
     from gobby.mcp_proxy.tools.tasks._expansion import start_expansion_run_impl
 
     task_manager = LocalTaskManager(temp_db)
@@ -115,7 +117,9 @@ def test_start_expansion_idempotent(temp_db, sample_project) -> None:
     assert result.run_id == run.id
 
 
-def test_start_expansion_replaces_stale_crashed_run(temp_db, sample_project) -> None:
+def test_start_expansion_replaces_stale_crashed_run(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     from gobby.mcp_proxy.tools.tasks._expansion import start_expansion_run_impl
 
     task_manager = LocalTaskManager(temp_db)
@@ -132,7 +136,7 @@ def test_start_expansion_replaces_stale_crashed_run(temp_db, sample_project) -> 
         (utc_now() - timedelta(minutes=31), crashed.id),
     )
 
-    def finish_immediately(coro):
+    def finish_immediately(coro: object) -> ExpansionRun | None:
         coro.close()
         return run_manager.get_latest_for_task(task.id)
 
@@ -154,7 +158,9 @@ def test_start_expansion_replaces_stale_crashed_run(temp_db, sample_project) -> 
     assert run_manager.get(crashed.id).status == "failed"
 
 
-def test_completion_emits_terminal_event(temp_db, sample_project) -> None:
+def test_completion_emits_terminal_event(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     from gobby.mcp_proxy.tools.tasks._expansion import start_expansion_run_impl
 
     task_manager = LocalTaskManager(temp_db)
@@ -190,11 +196,9 @@ def test_completion_emits_terminal_event(temp_db, sample_project) -> None:
     registry.emit.assert_any_call(
         "expansion_run_completed", task_id=task.id, run_id="dddddddd-dddd-4ddd-8ddd-dddddddd4006"
     )
-    assert registry.emit.call_count >= 1
-    assert registry.emit.call_args is not None
 
 
-def test_failure_emits_terminal_event(temp_db, sample_project) -> None:
+def test_failure_emits_terminal_event(temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
     from gobby.mcp_proxy.tools.tasks._expansion import start_expansion_run_impl
 
     task_manager = LocalTaskManager(temp_db)
@@ -232,11 +236,11 @@ def test_failure_emits_terminal_event(temp_db, sample_project) -> None:
         run_id="dddddddd-dddd-4ddd-8ddd-dddddddd4004",
         reason="boom",
     )
-    assert registry.emit.call_count >= 1
-    assert registry.emit.call_args is not None
 
 
-def test_cancellation_emits_terminal_event(temp_db, sample_project) -> None:
+def test_cancellation_emits_terminal_event(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     from gobby.mcp_proxy.tools.tasks._expansion import start_expansion_run_impl
 
     task_manager = LocalTaskManager(temp_db)
@@ -271,11 +275,11 @@ def test_cancellation_emits_terminal_event(temp_db, sample_project) -> None:
     registry.emit.assert_any_call(
         "expansion_run_cancelled", task_id=task.id, run_id="dddddddd-dddd-4ddd-8ddd-dddddddd4007"
     )
-    assert registry.emit.call_count >= 1
-    assert registry.emit.call_args is not None
 
 
-def test_start_expansion_accepts_caller_allocated_run_id(temp_db, sample_project) -> None:
+def test_start_expansion_accepts_caller_allocated_run_id(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     from gobby.mcp_proxy.tools.tasks._expansion import start_expansion_run_impl
 
     task_manager = LocalTaskManager(temp_db)
@@ -312,7 +316,9 @@ def test_start_expansion_accepts_caller_allocated_run_id(temp_db, sample_project
     assert run_manager.get("dddddddd-dddd-4ddd-8ddd-dddddddd400d") is not None
 
 
-def test_start_expansion_reset_output_calls_reset(temp_db, sample_project) -> None:
+def test_start_expansion_reset_output_calls_reset(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     from gobby.mcp_proxy.tools.tasks._expansion import start_expansion_run_impl
 
     task_manager = LocalTaskManager(temp_db)
@@ -353,11 +359,11 @@ def test_start_expansion_reset_output_calls_reset(temp_db, sample_project) -> No
 
     assert result.run_id == "dddddddd-dddd-4ddd-8ddd-dddddddd400a"
     reset.assert_called_once()
-    assert reset.call_count == 1
-    assert reset.call_args is not None
 
 
-def test_synchronous_terminal_emits_event(temp_db, sample_project) -> None:
+def test_synchronous_terminal_emits_event(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     from gobby.mcp_proxy.tools.tasks._expansion import start_expansion_run_impl
 
     task_manager = LocalTaskManager(temp_db)
@@ -395,8 +401,6 @@ def test_synchronous_terminal_emits_event(temp_db, sample_project) -> None:
     registry.emit.assert_any_call(
         "expansion_run_completed", task_id=task.id, run_id="dddddddd-dddd-4ddd-8ddd-dddddddd4001"
     )
-    assert registry.emit.call_count >= 1
-    assert registry.emit.call_args is not None
 
 
 def test_stage_pipeline_mutex_suppresses_expansion_terminal_event(
@@ -474,7 +478,9 @@ def test_stage_pipeline_mutex_suppresses_expansion_terminal_event(
 
 
 @pytest.mark.asyncio
-async def test_async_start_returns_running_and_emits_later(temp_db, sample_project) -> None:
+async def test_async_start_returns_running_and_emits_later(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     from gobby.mcp_proxy.tools.tasks._expansion import start_expansion_run_impl
 
     task_manager = LocalTaskManager(temp_db)
@@ -513,5 +519,3 @@ async def test_async_start_returns_running_and_emits_later(temp_db, sample_proje
     registry.emit.assert_any_call(
         "expansion_run_completed", task_id=task.id, run_id="dddddddd-dddd-4ddd-8ddd-dddddddd4008"
     )
-    assert registry.emit.call_count >= 1
-    assert registry.emit.call_args is not None

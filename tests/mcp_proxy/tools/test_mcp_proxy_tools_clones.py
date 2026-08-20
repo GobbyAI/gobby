@@ -13,7 +13,6 @@ import asyncio
 import subprocess
 import threading
 from dataclasses import replace
-from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -30,6 +29,18 @@ pytestmark = pytest.mark.integration
 
 RECENT_TIMESTAMP = "2026-01-02T03:04:05+00:00"
 STALE_TIMESTAMP = "2025-01-02T03:04:05+00:00"
+
+
+async def _let_cancellation_propagate(operation: asyncio.Task[Any]) -> None:
+    cancellation_cycle = asyncio.Event()
+
+    async def observe_cancellation_cycle() -> None:
+        cancellation_cycle.set()
+
+    observer = asyncio.create_task(observe_cancellation_cycle())
+    await cancellation_cycle.wait()
+    await observer
+    assert operation.done() is False
 
 
 def _merge_test_clone() -> Clone:
@@ -133,7 +144,10 @@ async def test_foreign_clone_id_fails_before_side_effects(
         ]
 
     assert all(result["error_code"] == "machine_ownership_mismatch" for result in results)
-    mock_git_manager.assert_not_called()
+    assert mock_git_manager.method_calls == []
+    mock_git_manager.sync_clone.assert_not_called()
+    mock_git_manager.merge_branch.assert_not_called()
+    mock_git_manager.delete_clone.assert_not_called()
     mock_clone_storage.claim.assert_called_once_with(clone_id, "s1")
     mock_clone_storage.update.assert_not_called()
     mock_clone_storage.mark_merged.assert_not_called()
@@ -260,6 +274,7 @@ class TestCreateClone:
         result = await asyncio.wait_for(operation, timeout=1)
         assert result["success"] is False
 
+    @pytest.mark.asyncio
     async def test_create_clone_cancellation_waits_for_record_commit(
         self,
         registry: Any,
@@ -290,15 +305,7 @@ class TestCreateClone:
 
         assert await asyncio.to_thread(started.wait, 2)
         operation.cancel()
-        cancellation_cycle = asyncio.Event()
-
-        async def observe_cancellation_cycle() -> None:
-            cancellation_cycle.set()
-
-        observer = asyncio.create_task(observe_cancellation_cycle())
-        await cancellation_cycle.wait()
-        await observer
-        assert operation.done() is False
+        await _let_cancellation_propagate(operation)
 
         release.set()
         with pytest.raises(asyncio.CancelledError):
@@ -702,6 +709,7 @@ class TestDeleteClone:
         assert original_clone.id == "clone-123"
         assert original_clone.task_id == "task-123"
 
+    @pytest.mark.asyncio
     async def test_delete_clone_file_exception_restores_original_status(
         self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
     ) -> None:
@@ -788,15 +796,7 @@ class TestDeleteClone:
 
         assert await asyncio.to_thread(started.wait, 2)
         operation.cancel()
-        cancellation_cycle = asyncio.Event()
-
-        async def observe_cancellation_cycle() -> None:
-            cancellation_cycle.set()
-
-        observer = asyncio.create_task(observe_cancellation_cycle())
-        await cancellation_cycle.wait()
-        await observer
-        assert operation.done() is False
+        await _let_cancellation_propagate(operation)
         mock_clone_storage.delete.assert_not_called()
 
         release.set()
@@ -1230,15 +1230,7 @@ class TestSyncClone:
 
         assert await asyncio.to_thread(started.wait, 2)
         operation.cancel()
-        cancellation_cycle = asyncio.Event()
-
-        async def observe_cancellation_cycle() -> None:
-            cancellation_cycle.set()
-
-        observer = asyncio.create_task(observe_cancellation_cycle())
-        await cancellation_cycle.wait()
-        await observer
-        assert operation.done() is False
+        await _let_cancellation_propagate(operation)
         mock_clone_storage.record_sync.assert_not_called()
         mock_clone_storage.update.assert_not_called()
 
@@ -1337,6 +1329,7 @@ class TestMergeCloneToTarget:
         result = await operation
         assert result["success"] is True
 
+    @pytest.mark.asyncio
     async def test_merge_clone_cancellation_waits_for_git_worker_before_unlock(
         self,
         registry: Any,
@@ -1388,6 +1381,7 @@ class TestMergeCloneToTarget:
         assert ["branch", "-D", "clone-merge/feature/test"] in commands
         mock_git_manager.merge_branch.assert_called_once()
 
+    @pytest.mark.asyncio
     async def test_merge_clone_stash_cancellation_restores_exact_stash_before_unlock(
         self,
         registry: Any,
@@ -1627,13 +1621,14 @@ class TestMergeCloneToTarget:
         assert cleanup_call.args[0][:2] == ["branch", "-D"]
         mock_clone_storage.update.assert_any_call("clone-123", status="active")
 
+    @pytest.mark.asyncio
     async def test_merge_clone_stash_identity_lookup_failure_does_not_merge(
         self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
     ) -> None:
         """A successful stash push still requires an exact post-push identity."""
         mock_clone_storage.get.return_value = _merge_test_clone()
 
-        def failing_identity_lookup(args, **_kwargs):
+        def failing_identity_lookup(args: list[str], **_kwargs: object) -> Any:
             if args == ["stash", "list", "-1", "--format=%H"]:
                 return _git_result(stdout="")
             if args == ["stash", "list", "--format=%H%x00%gs"]:
@@ -1667,6 +1662,7 @@ class TestMergeCloneToTarget:
             _git_result(stdout=""),
             _git_result(),
             _git_result(stdout=""),
+            _git_result(),
             OSError("cannot delete temporary branch"),
         ]
         mock_git_manager.merge_branch.return_value = MagicMock(success=True)
@@ -1739,6 +1735,7 @@ class TestMergeCloneToTarget:
                 )
             ),
             _git_result(),
+            _git_result(),
             _git_result(stdout="stash@{0}\x00interleaved\nstash@{1}\x00ours"),
             _git_result(),
         ]
@@ -1764,6 +1761,7 @@ class TestMergeCloneToTarget:
             _git_result(stdout=""),
             _git_result(),
             _git_result(stdout="ours\x00On main: test-stash-marker"),
+            _git_result(),
             _git_result(),
             _git_result(stdout="stash@{0}\x00ours"),
             _git_result(returncode=1, stderr="restore conflict"),
@@ -2153,8 +2151,8 @@ class TestDetectStaleClones:
                 remote_url=None,
                 last_sync_at=None,
                 cleanup_after=None,
-                created_at=datetime.fromisoformat(STALE_TIMESTAMP),
-                updated_at=datetime.fromisoformat(STALE_TIMESTAMP),
+                created_at=STALE_TIMESTAMP,
+                updated_at=STALE_TIMESTAMP,
             ),
         ]
 
@@ -2346,6 +2344,7 @@ class TestCleanupStaleClones:
         assert result["cleaned"][0]["record_deleted"] is True
         mock_clone_storage.delete.assert_called_once_with("clone-1")
 
+    @pytest.mark.asyncio
     async def test_cleanup_cancellation_finishes_current_item_and_stops(
         self,
         registry: Any,
@@ -2391,15 +2390,7 @@ class TestCleanupStaleClones:
 
         assert await asyncio.to_thread(started.wait, 2)
         operation.cancel()
-        cancellation_cycle = asyncio.Event()
-
-        async def observe_cancellation_cycle() -> None:
-            cancellation_cycle.set()
-
-        observer = asyncio.create_task(observe_cancellation_cycle())
-        await cancellation_cycle.wait()
-        await observer
-        assert operation.done() is False
+        await _let_cancellation_propagate(operation)
 
         release.set()
         with pytest.raises(asyncio.CancelledError):
@@ -2452,6 +2443,7 @@ class TestCleanupStaleClones:
         )
         mock_clone_storage.delete.assert_not_called()
 
+    @pytest.mark.asyncio
     async def test_cleanup_delete_files_exception_restores_stale_record(
         self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
     ) -> None:
@@ -2510,8 +2502,8 @@ class TestCleanupStaleClones:
                 remote_url=None,
                 last_sync_at=None,
                 cleanup_after=None,
-                created_at=datetime.fromisoformat(STALE_TIMESTAMP),
-                updated_at=datetime.fromisoformat(STALE_TIMESTAMP),
+                created_at=STALE_TIMESTAMP,
+                updated_at=STALE_TIMESTAMP,
             ),
         ]
         mock_git_manager.delete_clone.return_value = MagicMock(success=True)

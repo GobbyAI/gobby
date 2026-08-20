@@ -132,8 +132,9 @@ def make_adapter(
     return adapter
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_start_loads_channels():
+async def test_start_loads_channels() -> None:
     """start() loads enabled channels and initializes adapters."""
     channel = make_channel()
     store = make_store([channel])
@@ -156,8 +157,9 @@ async def test_start_loads_channels():
     store.list_channels.assert_any_call(enabled_only=True)
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_start_polls_poll_only_adapter_with_global_webhook_url():
+async def test_start_polls_poll_only_adapter_with_global_webhook_url() -> None:
     """Poll-only adapters keep polling when webhook-capable channels use webhooks."""
     channel = make_channel()
     store = make_store([channel])
@@ -177,6 +179,7 @@ async def test_start_polls_poll_only_adapter_with_global_webhook_url():
     manager._polling_manager.start_polling.assert_called_once_with(channel.name, adapter, None)
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_adapter_config_updates_persist_through_channel_store() -> None:
     channel = make_channel(
@@ -202,6 +205,7 @@ async def test_adapter_config_updates_persist_through_channel_store() -> None:
     store.update_channel.assert_called_once_with(channel)
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_stale_adapter_config_callback_cannot_overwrite_replacement() -> None:
     channel = make_channel(
@@ -229,6 +233,7 @@ async def test_stale_adapter_config_callback_cannot_overwrite_replacement() -> N
     assert channel.config_json == {"bot_token": "$secret:telegram-token"}
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_non_telegram_group_message_skips_telegram_group_policy() -> None:
     channel = make_channel(channel_type="slack")
@@ -256,7 +261,8 @@ async def test_non_telegram_group_message_skips_telegram_group_policy() -> None:
     assert admitted is True
 
 
-async def test_telegram_init_uses_global_webhook_url_as_inbound_source():
+@pytest.mark.unit
+async def test_telegram_init_uses_global_webhook_url_as_inbound_source() -> None:
     """Telegram webhook setup follows the manager's global inbound mode decision."""
     channel = make_channel(channel_type="telegram", config_json={})
     store = make_store([channel])
@@ -280,6 +286,7 @@ async def test_telegram_init_uses_global_webhook_url_as_inbound_source():
     manager._polling_manager.start_polling.assert_not_called()
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_telegram_init_resolves_webhook_secret_reference() -> None:
     channel = make_channel(
@@ -305,8 +312,9 @@ async def test_telegram_init_resolves_webhook_secret_reference() -> None:
     secret_store.get.assert_called_once_with("COMMS_TELEGRAM_WEBHOOK_SECRET_MY_TELEGRAM")
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_telegram_init_removes_stale_channel_webhook_url_when_polling():
+async def test_telegram_init_removes_stale_channel_webhook_url_when_polling() -> None:
     """Telegram polling setup cannot leave a channel-level webhook registered."""
     channel = make_channel(
         channel_type="telegram",
@@ -331,8 +339,9 @@ async def test_telegram_init_removes_stale_channel_webhook_url_when_polling():
     manager._polling_manager.start_polling.assert_called_once_with(channel.name, adapter, None)
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_start_skips_unknown_adapter():
+async def test_start_skips_unknown_adapter() -> None:
     """start() logs error but continues if adapter type is unknown."""
     channel = make_channel(channel_type="unknown_type")
     store = make_store([channel])
@@ -344,8 +353,9 @@ async def test_start_skips_unknown_adapter():
     assert "test-channel" not in manager._adapters
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_start_rejects_invalid_channel_rate_limit_before_activation():
+async def test_start_rejects_invalid_channel_rate_limit_before_activation() -> None:
     channel = make_channel(config_json={"rate_limit_per_minute": 0, "burst": 1})
     store = make_store([channel])
     manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
@@ -359,8 +369,9 @@ async def test_start_rejects_invalid_channel_rate_limit_before_activation():
     mock_adapter_cls.assert_not_called()
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_stop_shuts_down_all_adapters():
+async def test_stop_shuts_down_all_adapters() -> None:
     """stop() calls shutdown on all active adapters and clears state."""
     channel = make_channel()
     store = make_store([channel])
@@ -387,8 +398,9 @@ async def test_stop_shuts_down_all_adapters():
     assert len(manager._channel_by_name) == 0
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_send_message_success():
+async def test_send_message_success() -> None:
     """send_message() sends and stores message, returns CommsMessage."""
     channel = make_channel()
     store = make_store([channel])
@@ -410,6 +422,7 @@ async def test_send_message_success():
     store.create_message.assert_called_once()
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_set_reaction_delegates_to_capable_adapter() -> None:
     channel = make_channel(channel_type="telegram")
@@ -439,6 +452,7 @@ async def test_set_reaction_delegates_to_capable_adapter() -> None:
         await manager.set_reaction("test-channel", "chat-1", "message-1", None)
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_edit_message_persists_final_content(temp_db: HubDatabase) -> None:
     channel = make_channel(channel_id="00000000-0000-0000-0000-000000000101")
@@ -487,8 +501,9 @@ async def test_edit_message_persists_final_content(temp_db: HubDatabase) -> None
     ]
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_send_message_unknown_channel_raises():
+async def test_send_message_unknown_channel_raises() -> None:
     """send_message() raises ValueError for unknown channel."""
     store = make_store()
     manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
@@ -497,8 +512,9 @@ async def test_send_message_unknown_channel_raises():
         await manager.send_message("no-such-channel", "Hello!")
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_send_message_adapter_failure_marks_failed():
+async def test_send_message_adapter_failure_marks_failed() -> None:
     """send_message() marks message failed if adapter raises."""
     channel = make_channel()
     store = make_store([channel])
@@ -518,8 +534,9 @@ async def test_send_message_adapter_failure_marks_failed():
     store.create_message.assert_called_once()
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_send_message_rate_limit_timeout_marks_failed():
+async def test_send_message_rate_limit_timeout_marks_failed() -> None:
     """send_message() marks message failed if rate-limit waiting exceeds its bound."""
     channel = make_channel()
     store = make_store([channel])
@@ -544,8 +561,9 @@ async def test_send_message_rate_limit_timeout_marks_failed():
     store.create_message.assert_called_once()
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_send_proactive_rate_limits_and_persists_message():
+async def test_send_proactive_rate_limits_and_persists_message() -> None:
     channel = make_channel()
     store = make_store([channel])
     manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
@@ -567,8 +585,9 @@ async def test_send_proactive_rate_limits_and_persists_message():
     store.create_message.assert_called_once()
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_send_message_gobby_chat_without_broadcast_marks_failed():
+async def test_send_message_gobby_chat_without_broadcast_marks_failed() -> None:
     channel = make_channel(
         name="gobby_chat",
         channel_type="gobby_chat",
@@ -586,8 +605,9 @@ async def test_send_message_gobby_chat_without_broadcast_marks_failed():
     store.create_message.assert_called_once()
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_set_websocket_broadcast_before_start_wires_gobby_chat_on_start():
+async def test_set_websocket_broadcast_before_start_wires_gobby_chat_on_start() -> None:
     channel = make_channel(
         name="gobby_chat",
         channel_type="gobby_chat",
@@ -609,8 +629,9 @@ async def test_set_websocket_broadcast_before_start_wires_gobby_chat_on_start():
     assert payload["content"] == "Hello!"
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_send_message_telegram_4xx_redacts_token_from_logs_and_storage(caplog):
+async def test_send_message_telegram_4xx_redacts_token_from_logs_and_storage(caplog) -> None:
     token = "test-telegram-token"
     channel = make_channel(
         channel_type="telegram",
@@ -662,8 +683,9 @@ async def test_send_message_telegram_4xx_redacts_token_from_logs_and_storage(cap
     assert token not in caplog.text
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_send_message_fires_event_callback():
+async def test_send_message_fires_event_callback() -> None:
     """send_message() fires event_callback after send."""
     channel = make_channel()
     store = make_store([channel])
@@ -687,6 +709,7 @@ async def test_send_message_fires_event_callback():
     assert callback_events[0][0] == "comms.message_sent"
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_send_message_logs_event_callback_failures_at_warning(
     caplog: pytest.LogCaptureFixture,
@@ -711,8 +734,9 @@ async def test_send_message_logs_event_callback_failures_at_warning(
     assert "Event callback error on send_message" in caplog.text
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_send_event_routes_to_channels():
+async def test_send_event_routes_to_channels() -> None:
     """send_event() uses router to find channels and sends to each."""
     channel = make_channel(channel_id="chan-1")
     store = make_store([channel])
@@ -733,6 +757,7 @@ async def test_send_event_routes_to_channels():
     assert msgs[0].content == "A task was created!"
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_send_event_id_is_durable_across_manager_restart(temp_db: HubDatabase) -> None:
     """A recovered event returns its persisted message without sending twice."""
@@ -803,7 +828,8 @@ async def test_send_event_id_is_durable_across_manager_restart(temp_db: HubDatab
     }
 
 
-async def test_send_event_skips_inactive_channels():
+@pytest.mark.unit
+async def test_send_event_skips_inactive_channels() -> None:
     """send_event() skips channel IDs that don't have active adapters."""
     store = make_store()
     manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
@@ -814,8 +840,9 @@ async def test_send_event_skips_inactive_channels():
     assert msgs == []
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_handle_inbound_stores_messages():
+async def test_handle_inbound_stores_messages() -> None:
     """handle_inbound() parses and stores messages."""
     channel = make_channel(webhook_secret=None)
     store = make_store([channel])
@@ -845,6 +872,7 @@ async def test_handle_inbound_stores_messages():
     store.create_message.assert_called_once()
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_handle_inbound_persists_downloaded_attachments() -> None:
     channel = make_channel(webhook_secret=None)
@@ -892,6 +920,7 @@ async def test_handle_inbound_persists_downloaded_attachments() -> None:
     store.create_message_with_attachments.assert_called_once_with(stored[0], [attachment])
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_handle_inbound_transcribes_voice_note_before_event(tmp_path: Path) -> None:
     channel = make_channel(webhook_secret=None)
@@ -949,6 +978,7 @@ async def test_handle_inbound_transcribes_voice_note_before_event(tmp_path: Path
     )
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_voice_transcription_timeout_preserves_message_and_marks_failed(
     tmp_path: Path,
@@ -991,6 +1021,7 @@ async def test_voice_transcription_timeout_preserves_message_and_marks_failed(
     assert message.metadata_json["voice_transcription_status"] == "failed"
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_handle_inbound_describes_sticker_before_event(tmp_path: Path) -> None:
     channel = make_channel(webhook_secret=None)
@@ -1062,7 +1093,8 @@ async def test_handle_inbound_describes_sticker_before_event(tmp_path: Path) -> 
     )
 
 
-async def test_handle_inbound_webhook_verification_failure():
+@pytest.mark.unit
+async def test_handle_inbound_webhook_verification_failure() -> None:
     """handle_inbound() raises ValueError if webhook signature fails."""
     channel = make_channel(webhook_secret="mysecret")
     store = make_store([channel])
@@ -1081,8 +1113,9 @@ async def test_handle_inbound_webhook_verification_failure():
         await manager.handle_inbound("test-channel", b"payload", {"X-Signature": "bad"})
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_handle_inbound_verifies_adapter_when_webhook_secret_unset():
+async def test_handle_inbound_verifies_adapter_when_webhook_secret_unset() -> None:
     """Adapters still reject forged webhooks when channel.webhook_secret is unset."""
     manager = CommunicationsManager(make_config(), make_store([]), make_secret_store(), MagicMock())
     slack_adapter = SlackAdapter()
@@ -1111,8 +1144,9 @@ async def test_handle_inbound_verifies_adapter_when_webhook_secret_unset():
             await manager.handle_inbound(channel_name, b"forged", headers)
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_handle_inbound_resolves_webhook_secret_ref():
+async def test_handle_inbound_resolves_webhook_secret_ref() -> None:
     """handle_inbound() resolves webhook_secret refs before signature verification."""
     channel = make_channel(webhook_secret="$secret:COMMS_SLACK_WEBHOOK_SECRET_MY_SLACK")
     store = make_store([channel])
@@ -1141,8 +1175,9 @@ async def test_handle_inbound_resolves_webhook_secret_ref():
     )
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_handle_inbound_resolves_identity():
+async def test_handle_inbound_resolves_identity() -> None:
     """handle_inbound() resolves identity and sets session_id."""
     channel = make_channel()
     store = make_store([channel])
@@ -1181,7 +1216,8 @@ async def test_handle_inbound_resolves_identity():
     assert stored[0].metadata_json["external_user_id"] == "ext-user-1"
 
 
-async def test_handle_inbound_messages_continues_after_identity_resolution_failure():
+@pytest.mark.unit
+async def test_handle_inbound_messages_continues_after_identity_resolution_failure() -> None:
     """A bad inbound message should not abort the rest of the batch."""
     channel = make_channel()
     store = make_store([channel])
@@ -1245,6 +1281,7 @@ async def test_handle_inbound_messages_continues_after_identity_resolution_failu
         ("gobby_chat", "gobby_chat", {}, "gobby_chat"),
     ],
 )
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_handle_inbound_messages_stores_internal_channel_id(
     adapter_name: str,
@@ -1279,8 +1316,9 @@ async def test_handle_inbound_messages_stores_internal_channel_id(
     store.create_message.assert_called_once_with(stored[0])
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_adapter_rate_limit_callback_wires_to_limiter():
+async def test_adapter_rate_limit_callback_wires_to_limiter() -> None:
     """Verify adapter rate_limit_callback updates the manager's rate limiter."""
     channel = make_channel(channel_id="chan-rate-limit")
     store = make_store([channel])
@@ -1310,8 +1348,9 @@ async def test_adapter_rate_limit_callback_wires_to_limiter():
     assert manager._rate_limiter.check("chan-rate-limit") is False
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_add_channel_creates_and_initializes():
+async def test_add_channel_creates_and_initializes() -> None:
     """add_channel() saves to DB and initializes adapter."""
     store = make_store()
     manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
@@ -1330,7 +1369,8 @@ async def test_add_channel_creates_and_initializes():
     assert manager.channel_to_dict(channel)["init_error"] is None
 
 
-async def test_add_channel_returns_inactive_with_init_error_on_adapter_failure():
+@pytest.mark.unit
+async def test_add_channel_returns_inactive_with_init_error_on_adapter_failure() -> None:
     store = make_store()
     manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
 
@@ -1348,8 +1388,9 @@ async def test_add_channel_returns_inactive_with_init_error_on_adapter_failure()
     store.create_channel.assert_called_once()
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_add_channel_stores_secrets_in_secret_store():
+async def test_add_channel_stores_secrets_in_secret_store() -> None:
     """add_channel() stores secrets in SecretStore and puts refs in channel config."""
     store = make_store()
     secret_store = make_secret_store()
@@ -1388,7 +1429,8 @@ async def test_add_channel_stores_secrets_in_secret_store():
     assert secret_store.set.call_args_list[-1].kwargs["plaintext_value"] == "whsec_keep_separate"
 
 
-async def test_add_channel_persists_webhook_secret_reference(temp_db, mock_machine_id: str):
+@pytest.mark.integration
+async def test_add_channel_persists_webhook_secret_reference(temp_db, mock_machine_id: str) -> None:
     """New channel rows contain a SecretStore reference instead of plaintext."""
     assert mock_machine_id
     store = LocalCommunicationsStore(temp_db)
@@ -1415,14 +1457,9 @@ async def test_add_channel_persists_webhook_secret_reference(temp_db, mock_machi
     )
 
 
-def test_plaintext_webhook_secret_migrator_is_removed() -> None:
-    from gobby.communications.lifecycle import AdapterLifecycleOperations
-
-    assert not hasattr(AdapterLifecycleOperations, "_migrate_plaintext_webhook_secrets")
-
-
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_add_channel_does_not_mutate_caller_config():
+async def test_add_channel_does_not_mutate_caller_config() -> None:
     store = make_store()
     secret_store = make_secret_store()
     manager = CommunicationsManager(make_config(), store, secret_store, MagicMock())
@@ -1440,7 +1477,8 @@ async def test_add_channel_does_not_mutate_caller_config():
     assert created_channel.config_json["bot_token"] == "$secret:COMMS_SLACK_BOT_TOKEN_MY_SLACK"
 
 
-def test_channel_to_dict_redacts_webhook_secret():
+@pytest.mark.unit
+def test_channel_to_dict_redacts_webhook_secret() -> None:
     channel = make_channel(webhook_secret="$secret:COMMS_SLACK_WEBHOOK_SECRET_MY_SLACK")
     manager = CommunicationsManager(
         make_config(), make_store([channel]), make_secret_store(), MagicMock()
@@ -1452,6 +1490,7 @@ def test_channel_to_dict_redacts_webhook_secret():
     assert payload["active"] is False
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_init_adapter_offloads_secret_ref_store_reads() -> None:
     loop_thread_id = threading.get_ident()
@@ -1482,6 +1521,7 @@ async def test_init_adapter_offloads_secret_ref_store_reads() -> None:
     secret_store.get.assert_any_call("COMMS_TEST_TOKEN")
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_init_adapter_resolves_secret_refs_with_real_secret_store(
     temp_db, mock_machine_id: str
@@ -1527,8 +1567,9 @@ async def test_init_adapter_resolves_secret_refs_with_real_secret_store(
     await adapter.shutdown()
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_add_channel_skips_empty_secrets():
+async def test_add_channel_skips_empty_secrets() -> None:
     """add_channel() skips empty secret values."""
     store = make_store()
     secret_store = make_secret_store()
@@ -1547,8 +1588,9 @@ async def test_add_channel_skips_empty_secrets():
     assert secret_store.set.call_args.kwargs["name"] == "COMMS_SLACK_BOT_TOKEN_MY_SLACK"
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_remove_channel_shuts_down_and_deletes():
+async def test_remove_channel_shuts_down_and_deletes() -> None:
     """remove_channel() shuts down adapter and deletes from DB."""
     channel = make_channel()
     store = make_store([channel])
@@ -1567,8 +1609,9 @@ async def test_remove_channel_shuts_down_and_deletes():
     assert "test-channel" not in manager._adapters
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_remove_channel_not_found_noop():
+async def test_remove_channel_not_found_noop() -> None:
     """remove_channel() reports not found only when no DB row exists."""
     store = make_store()
     manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
@@ -1579,7 +1622,8 @@ async def test_remove_channel_not_found_noop():
     store.delete_channel.assert_not_called()
 
 
-async def test_remove_channel_deletes_inactive_db_row_by_name():
+@pytest.mark.unit
+async def test_remove_channel_deletes_inactive_db_row_by_name() -> None:
     channel = make_channel(enabled=False)
     store = make_store([channel])
     manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
@@ -1592,7 +1636,8 @@ async def test_remove_channel_deletes_inactive_db_row_by_name():
     assert manager.get_channel_status("test-channel")["status"] == "not_found"
 
 
-def test_list_channels():
+@pytest.mark.unit
+def test_list_channels() -> None:
     """list_channels() returns all channels from DB."""
     channels = [make_channel("ch1"), make_channel("ch2", channel_id="chan-2")]
     store = make_store(channels)
@@ -1604,7 +1649,8 @@ def test_list_channels():
     store.list_channels.assert_called_with(enabled_only=False)
 
 
-def test_get_channel_status_active():
+@pytest.mark.unit
+def test_get_channel_status_active() -> None:
     """get_channel_status() returns active status for running adapter."""
     channel = make_channel()
     store = make_store()
@@ -1620,7 +1666,8 @@ def test_get_channel_status_active():
     assert status["supports_webhooks"] is True
 
 
-def test_get_channel_status_inactive():
+@pytest.mark.unit
+def test_get_channel_status_inactive() -> None:
     """get_channel_status() returns inactive for DB-only channel."""
     channel = make_channel()
     store = make_store()
@@ -1632,7 +1679,8 @@ def test_get_channel_status_inactive():
     assert status["active"] is False
 
 
-def test_get_channel_status_not_found():
+@pytest.mark.unit
+def test_get_channel_status_not_found() -> None:
     """get_channel_status() returns not_found for unknown channel."""
     store = make_store()
     store.list_channels.return_value = []
@@ -1643,7 +1691,8 @@ def test_get_channel_status_not_found():
     assert status["active"] is False
 
 
-def test_get_channel_delegates_to_store():
+@pytest.mark.unit
+def test_get_channel_delegates_to_store() -> None:
     """get_channel() delegates to store.get_channel()."""
     channel = make_channel()
     store = make_store()
@@ -1655,7 +1704,8 @@ def test_get_channel_delegates_to_store():
     store.get_channel.assert_called_once_with("chan-1")
 
 
-def test_get_channel_returns_none_for_missing():
+@pytest.mark.unit
+def test_get_channel_returns_none_for_missing() -> None:
     """get_channel() returns None when channel doesn't exist."""
     store = make_store()
     store.get_channel.return_value = None
@@ -1665,7 +1715,8 @@ def test_get_channel_returns_none_for_missing():
     assert result is None
 
 
-async def test_update_channel_delegates_to_store():
+@pytest.mark.unit
+async def test_update_channel_delegates_to_store() -> None:
     """update_channel() delegates to store and sets updated_at."""
     channel = make_channel()
     store = make_store()
@@ -1681,7 +1732,8 @@ async def test_update_channel_delegates_to_store():
     assert channel.updated_at != "2024-01-01T00:00:00"
 
 
-async def test_update_channel_stores_changed_secrets():
+@pytest.mark.unit
+async def test_update_channel_stores_changed_secrets() -> None:
     channel = make_channel(channel_type="slack", name="my-slack")
     store = make_store()
     store.update_channel.return_value = channel
@@ -1701,7 +1753,8 @@ async def test_update_channel_stores_changed_secrets():
     assert channel.config_json["bot_token"] == "$secret:COMMS_SLACK_BOT_TOKEN_MY_SLACK"
 
 
-async def test_update_channel_disable_stops_runtime_traffic():
+@pytest.mark.unit
+async def test_update_channel_disable_stops_runtime_traffic() -> None:
     channel = make_channel()
     store = make_store([channel])
     store.update_channel.return_value = channel
@@ -1723,7 +1776,8 @@ async def test_update_channel_disable_stops_runtime_traffic():
     assert manager.channel_to_dict(channel)["active"] is False
 
 
-async def test_update_channel_enabled_reinitializes_and_refreshes_runtime_state():
+@pytest.mark.unit
+async def test_update_channel_enabled_reinitializes_and_refreshes_runtime_state() -> None:
     channel = make_channel(config_json={"rate_limit_per_minute": 7, "burst": 3})
     store = make_store([channel])
     store.update_channel.return_value = channel
@@ -1746,8 +1800,9 @@ async def test_update_channel_enabled_reinitializes_and_refreshes_runtime_state(
     manager._rate_limiter.configure_channel.assert_called_once_with("chan-1", 7, 3)
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_send_message_injects_platform_destination():
+async def test_send_message_injects_platform_destination() -> None:
     """send_message() injects platform_destination from channel config."""
     channel = make_channel(config_json={"default_destination": "C0123ABCD"})
     store = make_store([channel])
@@ -1764,8 +1819,9 @@ async def test_send_message_injects_platform_destination():
     assert msg.metadata_json.get("platform_destination") == "C0123ABCD"
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_send_message_preserves_caller_platform_destination():
+async def test_send_message_preserves_caller_platform_destination() -> None:
     """send_message() does not override platform_destination if caller provided it."""
     channel = make_channel(config_json={"default_destination": "C0123ABCD"})
     store = make_store([channel])
@@ -1784,8 +1840,9 @@ async def test_send_message_preserves_caller_platform_destination():
     assert msg.metadata_json["platform_destination"] == "COVERRIDE"
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_send_message_no_platform_destination_without_config():
+async def test_send_message_no_platform_destination_without_config() -> None:
     """send_message() does not inject platform_destination when channel has no default."""
     channel = make_channel(config_json={})
     store = make_store([channel])
@@ -1802,8 +1859,9 @@ async def test_send_message_no_platform_destination_without_config():
     assert "platform_destination" not in msg.metadata_json
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_send_message_injects_conversation_reference_destination():
+async def test_send_message_injects_conversation_reference_destination() -> None:
     """send_message() injects Teams conversation reference destination fields."""
     channel = make_channel(channel_type="teams", config_json={})
     identity = CommsIdentity(
@@ -1841,6 +1899,7 @@ async def test_send_message_injects_conversation_reference_destination():
     )
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_telegram_inbound_session_reply_resolves_chat_destination() -> None:
     """A session auto-created from Telegram inbound can send back to the originating chat."""
@@ -1917,8 +1976,9 @@ async def test_telegram_inbound_session_reply_resolves_chat_destination() -> Non
     }
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_send_message_propagates_thread_id():
+async def test_send_message_propagates_thread_id() -> None:
     """send_message() should include platform_thread_id from thread map."""
     channel = make_channel(webhook_secret=None)
     store = make_store([channel])
@@ -1939,6 +1999,7 @@ async def test_send_message_propagates_thread_id():
     assert msg.status == "sent"
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_send_message_explicit_thread_id_overrides_tracked_thread() -> None:
     channel = make_channel(webhook_secret=None)
@@ -1963,6 +2024,7 @@ async def test_send_message_explicit_thread_id_overrides_tracked_thread() -> Non
     assert message.platform_thread_id == "explicit-thread"
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_handle_inbound_deduplicates_platform_message_and_returns_it_for_ack() -> None:
     channel = make_channel()
@@ -2002,6 +2064,7 @@ async def test_handle_inbound_deduplicates_platform_message_and_returns_it_for_a
     manager.event_callback.assert_not_awaited()
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_handle_inbound_deduplicates_reaction_before_action_dispatch() -> None:
     channel = make_channel()
@@ -2041,7 +2104,8 @@ async def test_handle_inbound_deduplicates_reaction_before_action_dispatch() -> 
     store.create_message.assert_not_called()
 
 
-async def test_handle_inbound_populates_thread_map_and_handles_reactions():
+@pytest.mark.unit
+async def test_handle_inbound_populates_thread_map_and_handles_reactions() -> None:
     """handle_inbound_messages() should populate thread map and dispatch reactions."""
     channel = make_channel(webhook_secret=None)
     store = make_store([channel])
@@ -2108,6 +2172,7 @@ async def test_handle_inbound_populates_thread_map_and_handles_reactions():
     assert manager.reaction_handler.handle_reaction.await_args is not None
 
 
+@pytest.mark.unit
 def test_thread_map_lru_eviction_order() -> None:
     """Unit test of internal LRU thread map — no public API exposes this behavior."""
     store = make_store()
@@ -2131,6 +2196,7 @@ def test_thread_map_lru_eviction_order() -> None:
     assert manager._get_thread_id("ch", "s4") == "t4"  # Newly added
 
 
+@pytest.mark.unit
 def test_thread_map_move_to_end_on_track() -> None:
     """Unit test of internal LRU refresh — no public API exposes this behavior."""
     store = make_store()
@@ -2151,6 +2217,7 @@ def test_thread_map_move_to_end_on_track() -> None:
     assert manager._get_thread_id("ch", "s3") == "t3"
 
 
+@pytest.mark.unit
 def test_event_subscription_crud_validates_scope_and_invalidates_cache() -> None:
     """Manager CRUD owns subscription identity, validation, and cache invalidation."""
     channel = make_channel(name="Telegram", channel_id="cccccccc-1111-4ccc-8ccc-cccccccc0001")
@@ -2255,6 +2322,7 @@ def test_event_subscription_crud_validates_scope_and_invalidates_cache() -> None
         ),
     ],
 )
+@pytest.mark.unit
 def test_event_subscription_create_rejects_invalid_contract(
     overrides: dict[str, object],
     message: str,
@@ -2276,6 +2344,7 @@ def test_event_subscription_create_rejects_invalid_contract(
         cast(Any, manager.create_event_subscription)(**kwargs)
 
 
+@pytest.mark.unit
 def test_event_subscription_session_must_belong_to_selected_project() -> None:
     channel = make_channel(name="Telegram", channel_id="cccccccc-1111-4ccc-8ccc-cccccccc0001")
     store = make_store([channel])
@@ -2318,6 +2387,7 @@ def _telegram_group_message(*, sender_id: str, mentioned: bool) -> CommsMessage:
     ("mentioned", "expected_passive"),
     [(False, True), (True, False)],
 )
+@pytest.mark.unit
 async def test_configured_group_message_is_classified_before_persistence(
     mentioned: bool,
     expected_passive: bool,
@@ -2356,6 +2426,7 @@ async def test_configured_group_message_is_classified_before_persistence(
     store.create_message.assert_called_once_with(message)
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_group_allowlist_rejection_happens_before_identity_or_persistence() -> None:
     channel = make_channel(
@@ -2385,6 +2456,7 @@ async def test_group_allowlist_rejection_happens_before_identity_or_persistence(
     store.create_message.assert_not_called()
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_telegram_reply_targets_originating_session_with_shared_chat() -> None:
     channel = make_channel(

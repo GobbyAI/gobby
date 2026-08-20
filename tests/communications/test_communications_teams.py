@@ -1,5 +1,6 @@
 import asyncio
 import json
+from collections.abc import Callable
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt
@@ -8,14 +9,16 @@ import pytest
 from gobby.communications.adapters.teams import TeamsAdapter
 from gobby.communications.models import ChannelConfig, CommsMessage
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
-def adapter():
+def adapter() -> TeamsAdapter:
     return TeamsAdapter()
 
 
 @pytest.fixture
-def mock_secret_resolver():
+def mock_secret_resolver() -> Callable[[str], str | None]:
     def _resolve(secret_ref: str) -> str | None:
         if secret_ref == "$secret:TEAMS_APP_ID":
             return "app_id_123"
@@ -42,7 +45,9 @@ def _teams_config() -> ChannelConfig:
 
 
 @pytest.mark.asyncio
-async def test_initialize_and_refresh(adapter, mock_secret_resolver):
+async def test_initialize_and_refresh(
+    adapter: TeamsAdapter, mock_secret_resolver: Callable[[str], str | None]
+) -> None:
     config = _teams_config()
 
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
@@ -62,7 +67,9 @@ async def test_initialize_and_refresh(adapter, mock_secret_resolver):
 
 
 @pytest.mark.asyncio
-async def test_concurrent_refresh(adapter, mock_secret_resolver):
+async def test_concurrent_refresh(
+    adapter: TeamsAdapter, mock_secret_resolver: Callable[[str], str | None]
+) -> None:
     config = _teams_config()
 
     # Initial initialize
@@ -117,7 +124,9 @@ async def test_concurrent_refresh(adapter, mock_secret_resolver):
 
 
 @pytest.mark.asyncio
-async def test_send_message(adapter, mock_secret_resolver):
+async def test_send_message(
+    adapter: TeamsAdapter, mock_secret_resolver: Callable[[str], str | None]
+) -> None:
     config = _teams_config()
 
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
@@ -158,7 +167,7 @@ async def test_send_message(adapter, mock_secret_resolver):
         assert kwargs["headers"]["Authorization"] == "Bearer token_123"
 
 
-def test_parse_webhook(adapter):
+def test_parse_webhook(adapter: TeamsAdapter) -> None:
     payload = {
         "type": "message",
         "id": "msg_123",
@@ -178,7 +187,7 @@ def test_parse_webhook(adapter):
     assert messages[0].metadata_json["service_url"] == "https://smba.trafficmanager.net/teams/"
 
 
-def test_verify_webhook(adapter):
+def test_verify_webhook(adapter: TeamsAdapter) -> None:
     adapter._app_id = "app_id_123"
 
     mock_jwk_client = MagicMock()
@@ -224,7 +233,39 @@ def test_verify_webhook(adapter):
     assert not result
 
 
-def test_verify_webhook_configures_jwks_timeout(adapter):
+def test_verify_webhook_real_rsa_jwt_rejects_bad_audience_or_issuer(
+    adapter: TeamsAdapter,
+) -> None:
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    signing_key = MagicMock()
+    signing_key.key = private_key.public_key()
+    jwk_client = MagicMock()
+    jwk_client.get_signing_key_from_jwt.return_value = signing_key
+    adapter._app_id = "app_id_123"
+    adapter._jwk_client = jwk_client
+
+    service_url = "https://smba.trafficmanager.net/teams/"
+    claims = {
+        "aud": "app_id_123",
+        "iss": "https://api.botframework.com",
+        "serviceUrl": service_url,
+    }
+    body = json.dumps({"serviceUrl": service_url}).encode()
+    valid_token = jwt.encode(claims, private_key, algorithm="RS256")
+    assert adapter.verify_webhook(body, {"Authorization": f"Bearer {valid_token}"}, "secret")
+
+    wrong_aud = jwt.encode({**claims, "aud": "other-app"}, private_key, algorithm="RS256")
+    assert not adapter.verify_webhook(body, {"Authorization": f"Bearer {wrong_aud}"}, "secret")
+
+    wrong_iss = jwt.encode(
+        {**claims, "iss": "https://evil.example"}, private_key, algorithm="RS256"
+    )
+    assert not adapter.verify_webhook(body, {"Authorization": f"Bearer {wrong_iss}"}, "secret")
+
+
+def test_verify_webhook_configures_jwks_timeout(adapter: TeamsAdapter) -> None:
     adapter._app_id = "app_id_123"
 
     with patch("gobby.communications.adapters.teams.PyJWKClient") as mock_jwk_client:

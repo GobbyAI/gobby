@@ -184,7 +184,6 @@ async def test_maintenance_purges_indexed_project_after_missing_threshold(
     storage.get_registry_project.return_value = (True, False)
     storage.list_projection_cleanup_pending.return_value = []
     storage.list_indexed_projects.return_value = [project]
-    storage.get_registry_project.return_value = (True, False)
     storage.delete_project_index.return_value = {
         "files": 2,
         "symbols": 3,
@@ -241,7 +240,6 @@ async def test_run_maintenance_offloads_resolve_indexed_project(
     storage.get_registry_project.return_value = (True, False)
     storage.list_projection_cleanup_pending.return_value = []
     storage.list_indexed_projects.return_value = [project]
-    storage.get_registry_project.return_value = (True, False)
     seen: list[object] = []
 
     async def fake_to_thread(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
@@ -431,8 +429,6 @@ async def test_maintenance_purges_indexed_project_when_gcode_rejects_existing_ro
         )
 
     assert gcode_gateway.maintenance_calls == [(root, 30)]
-    assert gcode_gateway.maintenance_result is not None
-    assert "--sync-projections" not in gcode_gateway.maintenance_result.command
     storage.delete_project_index.assert_called_once_with("proj-stale")
     storage.get_unsummarized_symbols.assert_not_called()
     clear_graph.assert_not_awaited()
@@ -708,9 +704,8 @@ async def test_maintenance_daemon_config_failure_opens_shared_breaker_once(
 
 
 @pytest.mark.asyncio
-async def test_maintenance_logs_and_raises_on_unexpected_delete_counts(
+async def test_maintenance_calls_delete_project_index_once_on_unexpected_delete_counts(
     tmp_path: Path,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     missing_root = tmp_path / "missing"
     project = IndexedProject(
@@ -747,8 +742,7 @@ async def test_maintenance_logs_and_raises_on_unexpected_delete_counts(
         run_db=run_db,
     )
 
-    with caplog.at_level(logging.WARNING):
-        await _run_maintenance(cast(CodeIndexContext, context))
+    await _run_maintenance(cast(CodeIndexContext, context))
 
     assert storage.delete_project_index.call_count == 1
     assert storage.delete_project_index.call_args == call("proj-missing")

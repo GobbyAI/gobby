@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -19,21 +18,10 @@ from gobby.utils.session_context import session_context_for_test
 pytestmark = pytest.mark.unit
 
 
-class _TestRegistry(InternalToolRegistry):
-    """Registry subclass with get_tool for testing."""
-
-    def get_tool(self, name: str) -> Callable[..., Any] | None:
-        tool = self._tools.get(name)
-        return tool.func if tool else None
-
-
 def _make_registry(
     session_manager: Any = None,
-) -> _TestRegistry:
-    real = create_session_messages_registry(session_manager=session_manager)
-    test_reg = _TestRegistry(name=real.name, description=real.description)
-    test_reg._tools = real._tools
-    return test_reg
+) -> InternalToolRegistry:
+    return create_session_messages_registry(session_manager=session_manager)
 
 
 class TestRegisterSession:
@@ -287,8 +275,8 @@ class TestRegisterSession:
             sandbox_enabled=None,
         )
 
-    def test_session_manager_none_returns_error(self) -> None:
-        """Returns error when session_manager is None."""
+    def test_register_session_not_registered_when_session_manager_is_none(self) -> None:
+        """register_session is omitted when session_manager is None."""
         registry = _make_registry(session_manager=None)
         register = registry.get_tool("register_session")
         # Tool won't be registered if session_manager is None (factory guard)

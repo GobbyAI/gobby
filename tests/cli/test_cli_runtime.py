@@ -15,6 +15,8 @@ from gobby.cli import cli
 from gobby.cli.runtime import CliRuntime, require_cli_database, resolve_cli_project
 from gobby.config.app import DaemonConfig
 
+pytestmark = pytest.mark.unit
+
 
 def test_subcommand_help_does_not_open_runtime_database(
     monkeypatch: pytest.MonkeyPatch,
@@ -28,6 +30,7 @@ def test_subcommand_help_does_not_open_runtime_database(
     open_database.assert_not_called()
 
 
+@contextmanager
 def _database_context(database: MagicMock) -> Iterator[MagicMock]:
     try:
         yield database
@@ -86,7 +89,7 @@ def test_runtime_memoizes_database_and_closes_once(monkeypatch: pytest.MonkeyPat
     database = MagicMock()
 
     def open_database(*args: object, **kwargs: object) -> object:
-        return contextmanager(_database_context)(database)
+        return _database_context(database)
 
     monkeypatch.setattr("gobby.cli.runtime.runtime_hub_database", open_database)
     runtime = CliRuntime(config_file="custom.yaml")
@@ -132,7 +135,7 @@ def test_click_teardown_closes_database_for_all_exit_paths(
     database = MagicMock()
 
     def open_database(*args: object, **kwargs: object) -> object:
-        return contextmanager(_database_context)(database)
+        return _database_context(database)
 
     monkeypatch.setattr("gobby.cli.runtime.runtime_hub_database", open_database)
 

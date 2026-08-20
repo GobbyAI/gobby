@@ -228,8 +228,13 @@ def test_register_command_malformed_plan_raises_click_exception(
     assert "missing kind: front-matter" in exc_info.value.message
 
 
-def test_register_command_binary_plan_raises_click_exception(tmp_path: Path) -> None:
+def test_register_command_binary_plan_raises_click_exception(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_id = _create_project(temp_db, tmp_path)
     plan = _write_binary_register_plan(tmp_path)
+    monkeypatch.setattr(plans_module, "resolve_project_ref", lambda *_args, **_kwargs: project_id)
+    monkeypatch.setattr(plans_module, "_open_db", lambda: _NonClosingDb(temp_db))
 
     with pytest.raises(click.ClickException) as exc_info:
         plans_module.register_plan_command.callback(

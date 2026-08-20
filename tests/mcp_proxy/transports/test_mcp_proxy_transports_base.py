@@ -521,15 +521,13 @@ class TestEdgeCases:
         self, base_transport: BaseTransportConnection, mock_session: MagicMock
     ) -> None:
         """Test health_check with zero timeout."""
+        mock_session.list_tools = wait_forever
         base_transport._state = ConnectionState.CONNECTED
         base_transport._session = mock_session
 
-        # Even with zero timeout, if the operation is fast enough it might succeed
-        # This tests that the timeout parameter is passed correctly
-        result = await base_transport.health_check(timeout=0.001)
+        result = await base_transport.health_check(timeout=0.0)
 
-        # Result depends on execution speed, but should not raise
-        assert result in (True, False)
+        assert result is False
 
     @pytest.mark.asyncio
     async def test_health_check_with_very_large_consecutive_failures(

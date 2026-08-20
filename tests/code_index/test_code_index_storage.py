@@ -459,7 +459,7 @@ class _CaptureFetchallDb:
 def test_get_pending_sync_files_uses_boolean_literals_for_postgres() -> None:
     """PostgreSQL BOOLEAN columns must not be compared to integer literals."""
     db = _CaptureFetchallDb()
-    storage = CodeIndexStorage(db)  # type: ignore[arg-type]
+    storage = CodeIndexStorage(cast(HubDatabase, db))
 
     assert storage.get_pending_sync_files(PROJECT_ID) == []
 
@@ -847,7 +847,7 @@ def test_delete_project_index_removes_only_local_project_state(
             )
         ],
     )
-    code_storage.upsert_content_chunks(_make_chunks(code_storage))
+    code_storage.upsert_content_chunks(_upsert_file_and_make_chunks(code_storage))
 
     counts = code_storage.delete_project_index(PROJECT_ID)
 
@@ -897,13 +897,13 @@ def test_count_files(code_storage: CodeIndexStorage) -> None:
 # ── Content Chunks ─────────────────────────────────────────────────────
 
 
-def _make_chunks(
+def _upsert_file_and_make_chunks(
     storage: CodeIndexStorage,
     project_id: str = PROJECT_ID,
     file_path: str = "src/app.py",
     content_hash: str = FILE_CONTENT_HASH,
 ) -> list[ContentChunk]:
-    """Helper to create sample content chunks."""
+    """Upsert the indexed file row, then return sample content chunks for it."""
     _upsert_test_file(storage, file_path, content_hash, project_id=project_id)
     return [
         ContentChunk(
@@ -933,7 +933,7 @@ def _make_chunks(
 
 def test_upsert_content_chunks(code_storage: CodeIndexStorage) -> None:
     """Content chunks can be upserted."""
-    chunks = _make_chunks(code_storage)
+    chunks = _upsert_file_and_make_chunks(code_storage)
     count = code_storage.upsert_content_chunks(chunks)
     assert count == 2
 
@@ -945,7 +945,7 @@ def test_upsert_empty_chunks(code_storage: CodeIndexStorage) -> None:
 
 def test_search_content_fts_finds_text(code_storage: CodeIndexStorage) -> None:
     """Keyword search finds text in content chunks."""
-    code_storage.upsert_content_chunks(_make_chunks(code_storage))
+    code_storage.upsert_content_chunks(_upsert_file_and_make_chunks(code_storage))
 
     results = code_storage.search_content_fts("greeting", PROJECT_ID)
     assert len(results) >= 1
@@ -956,8 +956,8 @@ def test_search_content_fts_finds_text(code_storage: CodeIndexStorage) -> None:
 
 def test_search_content_fts_filter_by_file(code_storage: CodeIndexStorage) -> None:
     """Keyword search can be filtered to a specific file."""
-    chunks1 = _make_chunks(code_storage, file_path="a.py")
-    chunks2 = _make_chunks(code_storage, file_path="b.py")
+    chunks1 = _upsert_file_and_make_chunks(code_storage, file_path="a.py")
+    chunks2 = _upsert_file_and_make_chunks(code_storage, file_path="b.py")
     code_storage.upsert_content_chunks(chunks1)
     code_storage.upsert_content_chunks(chunks2)
 
@@ -967,14 +967,14 @@ def test_search_content_fts_filter_by_file(code_storage: CodeIndexStorage) -> No
 
 def test_search_content_fts_empty_query(code_storage: CodeIndexStorage) -> None:
     """Empty query returns no results."""
-    code_storage.upsert_content_chunks(_make_chunks(code_storage))
+    code_storage.upsert_content_chunks(_upsert_file_and_make_chunks(code_storage))
     assert code_storage.search_content_fts("", PROJECT_ID) == []
     assert code_storage.search_content_fts("   ", PROJECT_ID) == []
 
 
 def test_search_content_fts_no_match(code_storage: CodeIndexStorage) -> None:
     """Query with no matching content returns empty list."""
-    code_storage.upsert_content_chunks(_make_chunks(code_storage))
+    code_storage.upsert_content_chunks(_upsert_file_and_make_chunks(code_storage))
     results = code_storage.search_content_fts("zzz_nonexistent_zzz", PROJECT_ID)
     assert results == []
 
@@ -983,7 +983,7 @@ def test_search_content_fts_surfaces_backend_failure(
     code_storage: CodeIndexStorage, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Backend failures are treated as unavailable search results."""
-    code_storage.upsert_content_chunks(_make_chunks(code_storage))
+    code_storage.upsert_content_chunks(_upsert_file_and_make_chunks(code_storage))
 
     def fail_fetch_all(_hub: Any, _sql: str, _params: list[Any]) -> list[Any]:
         raise RuntimeError("pg_search unavailable")
