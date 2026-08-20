@@ -72,6 +72,10 @@ pub(crate) fn rust_qualified_call_target(
     })
 }
 
+pub(crate) fn rust_source_root_for_rel_path(rel_path: &str) -> Option<String> {
+    rust_module_context_for_rel_path(rel_path).map(|context| context.source_root)
+}
+
 fn rust_module_context_for_rel_path(rel_path: &str) -> Option<RustModuleContext> {
     let parts: Vec<&str> = rel_path
         .split('/')

@@ -408,15 +408,19 @@ name = "app"
     assert_eq!(display.target_external_module.as_deref(), Some("std::fmt"));
 
     let invented = parsed.calls.iter().any(|call| {
-        call.local_import_candidate_files().iter().any(|file| {
-            file.ends_with("Self.rs") || file.ends_with("/Self/mod.rs")
-        })
+        call.local_import_candidate_files()
+            .iter()
+            .any(|file| file.ends_with("Self.rs") || file.ends_with("/Self/mod.rs"))
     }) || parsed.inheritance.iter().any(|row| {
         row.target_local_import_candidate_files()
             .iter()
             .any(|file| file.ends_with("Self.rs") || file.contains("/Self/"))
     });
-    assert!(!invented, "Self.rs local candidate leaked: {:?}", parsed.calls);
+    assert!(
+        !invented,
+        "Self.rs local candidate leaked: {:?}",
+        parsed.calls
+    );
 }
 
 #[test]
@@ -718,19 +722,22 @@ name = "app"
 
 #[test]
 fn classifies_rust_workspace_member_dependencies() {
-    let parsed = parse_rust(
+    let parsed = parse_source(
+        "crates/app/src/main.rs",
         r#"
 use serde_json::from_str;
 
-fn run() {
+fn go() {
     from_str("{}");
+    app::service::run();
+    gobby_core::config::load();
 }
 "#,
         &[
             (
                 "Cargo.toml",
                 r#"[workspace]
-members = ["crates/app"]
+members = ["crates/app", "crates/core"]
 "#,
             ),
             (
@@ -740,14 +747,43 @@ name = "app"
 
 [dependencies]
 serde_json = "1"
+gobby-core = { path = "../core" }
 "#,
             ),
+            (
+                "crates/core/Cargo.toml",
+                r#"[package]
+name = "gobby-core"
+"#,
+            ),
+            ("crates/app/src/service.rs", "pub fn run() {}\n"),
         ],
     );
 
-    let call = parsed.calls.first().expect("from_str call");
-    assert_eq!(call.callee_target_kind.as_str(), "external");
-    assert_eq!(call.callee_external_module.as_deref(), Some("serde_json"));
+    let from_str = parsed
+        .calls
+        .iter()
+        .find(|call| call.callee_name == "from_str")
+        .expect("from_str call");
+    assert_eq!(from_str.callee_target_kind.as_str(), "external");
+    assert_eq!(
+        from_str.callee_external_module.as_deref(),
+        Some("serde_json")
+    );
+
+    assert_rust_local_import!(&parsed, "run", "crates/app/src/service.rs");
+    assert_rust_local_import!(&parsed, "run", "crates/app/src/service/mod.rs");
+
+    let sibling = parsed
+        .calls
+        .iter()
+        .find(|call| call.callee_name == "load")
+        .expect("gobby_core::config::load call");
+    assert_eq!(sibling.callee_target_kind.as_str(), "external");
+    assert_eq!(
+        sibling.callee_external_module.as_deref(),
+        Some("gobby_core::config")
+    );
 }
 
 #[test]

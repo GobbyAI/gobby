@@ -194,7 +194,7 @@ fn register_rust_path_import(
     let Some(root) = segments.first().copied() else {
         return;
     };
-    if !is_external_rust_root(root, import_context) {
+    if !is_external_rust_root(root, rel_path, import_context) {
         return;
     }
 

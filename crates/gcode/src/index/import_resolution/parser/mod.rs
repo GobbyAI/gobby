@@ -92,10 +92,11 @@ pub(crate) fn seed_import_bindings(
     language: &str,
     import_context: &ImportResolutionContext,
     bindings: &mut ImportBindings,
+    rel_path: &str,
 ) {
     match language {
         "rust" => {
-            for root in rust_external_roots(import_context) {
+            for root in rust_external_roots(import_context, rel_path) {
                 bindings.external_roots.insert(
                     root.clone(),
                     ExternalRootBinding {
@@ -454,8 +455,7 @@ pub(crate) fn resolve_rust_local_qualified_callee(
         return None;
     }
     let qualifier_path = qualifier_path?;
-    let rewritten =
-        rewrite_rust_local_module_qualifier(import_bindings, symbols, qualifier_path);
+    let rewritten = rewrite_rust_local_module_qualifier(import_bindings, symbols, qualifier_path);
     import_context.rust_qualified_candidate(rel_path, &rewritten, callee_name)
 }
 
