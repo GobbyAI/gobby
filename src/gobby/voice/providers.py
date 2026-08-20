@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import importlib
 import logging
 from collections.abc import Callable
+from importlib import import_module
 from typing import TYPE_CHECKING, cast
 
 from gobby.voice.tts import TTSProvider, TTSProviderCapabilities, TTSProviderStatus
@@ -27,7 +27,7 @@ def _load_provider_factory(provider: str) -> tuple[ProviderFactory | None, str |
 
     module_name, class_name = spec
     try:
-        module = importlib.import_module(module_name)
+        module = import_module(module_name)
     except ImportError:
         logger.debug(
             "Failed to import TTS provider module %s for %s",

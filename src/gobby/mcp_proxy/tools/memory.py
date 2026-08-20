@@ -65,6 +65,8 @@ def derive_memory_create_provenance(
     created_by_agent: str | None = None,
 ) -> tuple[str | None, str | None]:
     """Derive task/agent provenance. Lookup failures degrade to None."""
+    from gobby.storage.tasks import TaskNotFoundError
+
     task_id: str | None = None
     try:
         if source_task_id:
@@ -81,7 +83,7 @@ def derive_memory_create_provenance(
                 sort_order="desc",
             )
             task_id = str(claimed[0].id) if claimed else None
-    except Exception:
+    except (ValueError, LookupError, TaskNotFoundError):
         logger.debug("Could not derive source_task_id", exc_info=True)
         task_id = None
     if created_by_agent or not resolved_session_id:
@@ -97,7 +99,7 @@ def derive_memory_create_provenance(
         session = SessionManager(db).get(resolved_session_id)
         source = getattr(session, "source", None) if session is not None else None
         return task_id, str(source) if source else None
-    except Exception:
+    except (ValueError, LookupError, TaskNotFoundError):
         logger.debug("Could not derive created_by_agent", exc_info=True)
         return task_id, None
 
@@ -234,23 +236,20 @@ def create_memory_registry(
 
             project_id = get_current_project_id() or PERSONAL_PROJECT_ID
 
-            # Resolve session_id to UUID before passing to storage layer
-            # (memories.source_session_id has FK constraint on sessions.id)
             resolved_session_id: str | None = None
             if session_id:
                 try:
                     from gobby.storage.session_resolution import resolve_session_reference
 
-                    resolved_session_id = resolve_session_reference(
-                        _memory_manager().db, session_id, project_id
+                    resolved_session_id = await asyncio.to_thread(
+                        resolve_session_reference,
+                        _memory_manager().db,
+                        session_id,
+                        project_id,
                     )
-                except Exception as e:
+                except ValueError as e:
                     logger.warning("Could not resolve session_id '%s': %s", session_id, e)
 
-            # Search for similar existing memories before creating: duplicates
-            # surface in the result, and near-duplicates are superseded
-            # atomically by the create (dream no longer merges, so unhandled
-            # duplicates are permanent).
             similar_existing: list[dict[str, Any]] = []
             auto_superseded: list[dict[str, Any]] = []
             try:
@@ -290,7 +289,8 @@ def create_memory_registry(
                     exc_info=True,
                 )
 
-            derived_task_id, derived_agent = derive_memory_create_provenance(
+            derived_task_id, derived_agent = await asyncio.to_thread(
+                derive_memory_create_provenance,
                 _memory_manager().db,
                 project_id=project_id,
                 resolved_session_id=resolved_session_id,

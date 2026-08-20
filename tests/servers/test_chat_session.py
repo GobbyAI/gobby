@@ -676,7 +676,7 @@ class TestHistoryInjection:
         first_entry = f"**User:** {first}"
         session_ref = "hist-session"
         omit_line = (
-            f"[omitted 1 messages to fit history budget; "
+            f"[omitted 2 messages to fit history budget; "
             f"get_session_messages session_id={session_ref}]"
         )
         leftover = 10
@@ -695,7 +695,7 @@ class TestHistoryInjection:
         result = await session._load_history_context(max_total_chars=max_total)
         assert result is not None
         assert first not in result
-        assert "omitted 1 messages" in result
+        assert "omitted 2 messages" in result
         assert f"get_session_messages session_id={session_ref}" in result
 
     @pytest.mark.asyncio

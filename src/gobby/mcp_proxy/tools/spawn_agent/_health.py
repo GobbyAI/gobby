@@ -166,7 +166,7 @@ async def _check_tmux_session_alive(
             output = None
         if not output or not output.strip():
             return False, None
-        return False, output.strip()
+        return False, _bounded_redacted_pane_output(output)
     except (TimeoutError, OSError, TmuxNotFoundError, TmuxSessionError):
         return True, None  # Timed out, assume alive
     except asyncio.CancelledError:
@@ -195,10 +195,11 @@ async def _deferred_tmux_health_check(
                 return
             error = "Agent process exited immediately after spawn"
             if pane_output:
-                redacted = _redacted_pane_output(pane_output)
-                tail = _intentional_pane_tail(redacted)
-                capture_id = _persist_health_pane_capture(runner.run_storage, run, run_id, redacted)
-                error = f"{error}\nPane output:\n{tail}"
+                safe_output = _bounded_redacted_pane_output(pane_output)
+                capture_id = _persist_health_pane_capture(
+                    runner.run_storage, run, run_id, safe_output
+                )
+                error = f"{error}\nPane output:\n{safe_output}"
                 if capture_id:
                     error = f"{error}\ncapture_id={capture_id}"
             logger.error("Agent %s tmux session %r: %s", run_id, tmux_session_name, error)

@@ -719,26 +719,14 @@ def _record_closed_ancestors(
     ancestor_ids: list[str],
     reason: str,
 ) -> list[dict[str, str]]:
+    del reason
     summaries: list[dict[str, str]] = []
-    closure_reason = reason.casefold()
     for ancestor_id in ancestor_ids:
         ancestor = ctx.task_manager.get_task(ancestor_id)
         if ancestor is None:
             continue
         ref = f"#{ancestor.seq_num}" if ancestor.seq_num else ancestor.id
         summaries.append({"id": ancestor.id, "ref": ref, "title": ancestor.title})
-        if ancestor.task_type == "epic" and closure_reason in {"completed", "obsolete"}:
-            from gobby.hooks.event_handlers._plan import on_epic_terminal
-
-            on_epic_terminal(
-                {
-                    "task_ref": ref,
-                    "project_id": ancestor.project_id,
-                    "status": "closed",
-                    "closure_reason": closure_reason,
-                },
-                db=ctx.task_manager.db,
-            )
         notify_parent_on_task_state_change(
             ctx.task_manager.db,
             ancestor.id,

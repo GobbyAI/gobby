@@ -507,13 +507,16 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                             )
                             merge_succeeded = True
                             merge_sha = ""
-                            sha_result = await run_thread_to_completion(
-                                git_manager.run_git_command,
-                                ["rev-parse", target_branch],
-                                cwd=git_manager.repo_path,
-                                timeout=10,
-                            )
-                            if sha_result.returncode == 0:
+                            try:
+                                sha_result = await run_thread_to_completion(
+                                    git_manager.run_git_command,
+                                    ["rev-parse", target_branch],
+                                    cwd=git_manager.repo_path,
+                                    timeout=10,
+                                )
+                            except (subprocess.TimeoutExpired, OSError):
+                                sha_result = None
+                            if sha_result is not None and sha_result.returncode == 0:
                                 merge_sha = sha_result.stdout.strip()
                             primary_result = {
                                 "success": True,

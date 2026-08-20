@@ -364,7 +364,9 @@ class TestCloseTaskTool:
         assert result["closed_ancestors"] == [
             {"id": ancestor.id, "ref": "#20555", "title": "Phase epic"}
         ]
-        archive.assert_called()
+        archive.assert_called_once()
+        event = archive.call_args.args[0]
+        assert event["task_ref"] == "#20557"
 
     @pytest.mark.asyncio
     async def test_close_task_with_commit_sha_links_after_evaluation(
@@ -601,7 +603,10 @@ class TestCloseTaskTool:
         mock_task_manager.get_task.return_value = mock_task
         mock_task_manager.list_tasks.return_value = []  # leaf task (no children)
 
-        def fake_run_git_command(command, cwd=None, timeout=5):
+        def fake_run_git_command(
+            command: list[str], cwd: str | None = None, timeout: int = 5
+        ) -> str | None:
+            del cwd, timeout
             if command[:2] == ["git", "check-ignore"]:
                 return None  # exit 1 => path is NOT gitignored (a real tracked file)
             return "abc123"
@@ -660,7 +665,10 @@ class TestCloseTaskTool:
         mock_task_manager.close_task.return_value = mock_task
         mock_task_manager.list_tasks.return_value = []  # leaf task (no children)
 
-        def fake_run_git_command(command, cwd=None, timeout=5):
+        def fake_run_git_command(
+            command: list[str], cwd: str | None = None, timeout: int = 5
+        ) -> str:
+            del cwd, timeout
             if command[:2] == ["git", "check-ignore"]:
                 return ""  # exit 0 => path IS gitignored
             return "abc123"

@@ -43,6 +43,15 @@ class TestLinuxEnableDisableRestart:
         res = enable_service_linux()
         assert res["success"] is False
 
+    @patch("gobby.cli.installers.service_linux._systemd_unit_path")
+    def test_enable_linux_unicode_error(self, mock_unit_path: MagicMock, tmp_path: Path) -> None:
+        unit_file = tmp_path / "gobby-daemon.service"
+        unit_file.write_bytes(b"\xff\xfe")
+        mock_unit_path.return_value = unit_file
+        res = enable_service_linux()
+        assert res["success"] is False
+        assert "cannot read service unit" in res["error"]
+
     @patch("gobby.cli.installers.service_linux.subprocess.run")
     @patch("gobby.cli.installers.service_linux._systemd_unit_path")
     def test_disable_linux(self, mock_unit_path, mock_run, tmp_path: Path) -> None:

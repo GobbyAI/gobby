@@ -125,7 +125,7 @@ def enable_service_linux() -> dict[str, Any]:
 
     try:
         text = unit_file.read_text(encoding="utf-8")
-    except OSError as exc:
+    except (OSError, UnicodeError) as exc:
         return {"success": False, "error": f"cannot read service unit: {exc}"}
     if not service_unit_has_launch_env(text):
         ctx = _resolve_install_context()
@@ -260,7 +260,7 @@ def _get_service_status_linux() -> dict[str, Any]:
     try:
         content = unit_file.read_text(encoding="utf-8")
         status["mode"] = "dev" if ".venv" in content else "installed"
-    except OSError:
+    except (OSError, UnicodeError):
         pass
 
     return status

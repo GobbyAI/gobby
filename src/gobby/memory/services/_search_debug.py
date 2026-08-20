@@ -13,6 +13,12 @@ from gobby.storage.memories import Memory
 logger = logging.getLogger(__name__)
 
 
+def _rationale_hash(rationale: str | None) -> str | None:
+    if not rationale:
+        return None
+    return hashlib.sha256(rationale.encode("utf-8")).hexdigest()
+
+
 def emit_search_debug(
     *,
     search_debug_sink: Callable[[SearchDebugSnapshot], None] | None,
@@ -68,7 +74,7 @@ def emit_search_debug(
                 ranking_mode=mem.ranking_mode,
                 graph_score=graph_scores.get(mem.id),
                 content_hash=hashlib.sha256(mem.content.encode("utf-8")).hexdigest(),
-                rationale=getattr(mem, "rationale", None),
+                rationale_hash=_rationale_hash(getattr(mem, "rationale", None)),
             )
             for rank, mem in enumerate(returned)
         ],

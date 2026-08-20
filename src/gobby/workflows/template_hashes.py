@@ -196,6 +196,14 @@ class TemplateHashCache:
 
     # ── Drift detection ──
 
+    def seed(self, kind: str, name: str, definition_json: str) -> str:
+        """Atomically store template JSON and its hash."""
+        digest = compute_definition_hash(definition_json)
+        key = (kind, name)
+        self._json_cache[key] = definition_json
+        self._hashes[key] = digest
+        return digest
+
     def get_hash(self, kind: str, name: str) -> str | None:
         """Get the cached hash for a template by domain kind and name."""
         return self._hashes.get((kind, name))

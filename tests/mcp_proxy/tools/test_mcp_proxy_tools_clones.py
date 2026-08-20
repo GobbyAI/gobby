@@ -27,8 +27,8 @@ from gobby.utils.git import get_checkout_mutation_lock
 
 pytestmark = pytest.mark.integration
 
-RECENT_TIMESTAMP = "2026-01-02T03:04:05+00:00"
-STALE_TIMESTAMP = "2025-01-02T03:04:05+00:00"
+RECENT_TIMESTAMP = datetime.fromisoformat("2026-01-02T03:04:05+00:00")
+STALE_TIMESTAMP = datetime.fromisoformat("2025-01-02T03:04:05+00:00")
 
 
 async def _let_cancellation_propagate(operation: asyncio.Task[Any]) -> None:
@@ -1294,6 +1294,33 @@ class TestMergeCloneToTarget:
         )
 
     @pytest.mark.asyncio
+    async def test_merge_clone_sha_timeout_still_returns_success(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """SHA lookup failure after merge leaves merge_sha empty."""
+        mock_clone_storage.get.return_value = _merge_test_clone()
+        mock_git_manager.merge_branch.return_value = MagicMock(
+            success=True,
+            has_conflicts=False,
+        )
+
+        def git_command(args: list[str], **_kwargs: object) -> MagicMock:
+            if args[:1] == ["rev-parse"]:
+                raise subprocess.TimeoutExpired(cmd=args, timeout=10)
+            return _git_result()
+
+        mock_git_manager.run_git_command.side_effect = git_command
+
+        result = await registry.call(
+            "merge_clone",
+            {"clone_id": "clone-123", "target_branch": "main"},
+        )
+
+        assert result["success"] is True
+        assert result["merge_sha"] == ""
+        mock_clone_storage.mark_merged.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_merge_clone_waits_for_checkout_mutation_lock(
         self,
         registry: Any,
@@ -1662,7 +1689,7 @@ class TestMergeCloneToTarget:
             _git_result(stdout=""),
             _git_result(),
             _git_result(stdout=""),
-            _git_result(),
+            _git_result(stdout="deadbeef"),
             OSError("cannot delete temporary branch"),
         ]
         mock_git_manager.merge_branch.return_value = MagicMock(success=True)
@@ -1734,6 +1761,7 @@ class TestMergeCloneToTarget:
                     "interleaved\x00On main: other-operation\nours\x00On main: test-stash-marker"
                 )
             ),
+            _git_result(stdout="deadbeef"),
             _git_result(),
             _git_result(),
             _git_result(stdout="stash@{0}\x00interleaved\nstash@{1}\x00ours"),
@@ -1761,6 +1789,7 @@ class TestMergeCloneToTarget:
             _git_result(stdout=""),
             _git_result(),
             _git_result(stdout="ours\x00On main: test-stash-marker"),
+            _git_result(stdout="deadbeef"),
             _git_result(),
             _git_result(),
             _git_result(stdout="stash@{0}\x00ours"),

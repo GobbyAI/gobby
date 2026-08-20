@@ -38,13 +38,11 @@ async def open_launch_async(
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> object:
-        task = asyncio.ensure_future(
-            asyncio.shield(asyncio.to_thread(cm.__exit__, exc_type, exc, tb))
-        )
+        task = asyncio.create_task(asyncio.to_thread(cm.__exit__, exc_type, exc, tb))
         try:
-            return await task
+            return await asyncio.shield(task)
         except asyncio.CancelledError:
-            await task
+            await asyncio.shield(task)
             raise
 
     try:

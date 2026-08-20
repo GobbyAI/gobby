@@ -2891,6 +2891,9 @@ def test_dream_prompt_judges_staleness_against_rationale() -> None:
     assert "`created_by_agent`" in prompt
     assert "Judge each candidate against its `rationale`" in prompt
     assert "must quote or paraphrase that rationale" in prompt
+    assert "explain what became stale" in prompt
+    assert "preserves or updates that rationale" in prompt
+    assert "Reserve “claim no longer holds”" in prompt
     assert "never justifies `delete` on its own" in prompt
 
 

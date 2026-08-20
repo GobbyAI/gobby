@@ -22,7 +22,7 @@ def test_provider_module_import_failure_has_actionable_public_reason(
     def fail_import(_module_name: str) -> Any:
         raise ImportError("runtime dependency unavailable")
 
-    monkeypatch.setattr(providers.importlib, "import_module", fail_import)
+    monkeypatch.setattr(providers, "import_module", fail_import)
 
     fields = providers.get_tts_provider_status(_enabled_config()).as_status_fields()
 
@@ -34,7 +34,7 @@ def test_missing_provider_class_has_actionable_public_reason(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        providers.importlib,
+        providers,
         "import_module",
         lambda _module_name: SimpleNamespace(),
     )
@@ -53,7 +53,7 @@ def test_unknown_provider_retains_existing_reason_without_importing(
     def unexpected_import(_module_name: str) -> Any:
         pytest.fail("unknown providers must not trigger runtime imports")
 
-    monkeypatch.setattr(providers.importlib, "import_module", unexpected_import)
+    monkeypatch.setattr(providers, "import_module", unexpected_import)
 
     status = providers.get_tts_provider_status(_enabled_config("unknown"))
 
@@ -71,7 +71,7 @@ def test_successful_provider_retains_factory_status(monkeypatch: pytest.MonkeyPa
             return expected
 
     monkeypatch.setattr(
-        providers.importlib,
+        providers,
         "import_module",
         lambda _module_name: SimpleNamespace(ChatterboxTurboProvider=FakeProvider),
     )
@@ -85,7 +85,7 @@ def test_disabled_tts_status_does_not_import_provider_runtime(
     def unexpected_import(_module_name: str) -> Any:
         pytest.fail("disabled TTS must not import provider runtimes")
 
-    monkeypatch.setattr(providers.importlib, "import_module", unexpected_import)
+    monkeypatch.setattr(providers, "import_module", unexpected_import)
 
     status = providers.get_tts_status_for_config(VoiceConfig(enabled=True, tts_enabled=False))
 

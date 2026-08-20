@@ -11,7 +11,6 @@ import pytest
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
-from gobby.storage.definitions._shared import compute_definition_hash
 from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
@@ -141,8 +140,7 @@ def test_list_annotates_template_drift_by_kind(
 ) -> None:
     row = _create_pipeline(pipe_manager, name="drifted-pipe")
     cache = TemplateHashCache()
-    cache._hashes[("pipeline", row.name)] = compute_definition_hash('{"name":"other"}')
-    cache._json_cache[("pipeline", row.name)] = '{"name":"other"}'
+    cache.seed("pipeline", row.name, '{"name":"other"}')
     from unittest.mock import patch
 
     with patch(
@@ -280,8 +278,7 @@ def test_restore_from_template_and_moves(
         sort_keys=True,
     )
     cache = TemplateHashCache()
-    cache._hashes[("pipeline", row.name)] = compute_definition_hash(template_json)
-    cache._json_cache[("pipeline", row.name)] = template_json
+    cache.seed("pipeline", row.name, template_json)
     from unittest.mock import patch
 
     with patch(

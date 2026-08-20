@@ -455,14 +455,37 @@ class TestServiceReservation:
         with pytest.raises(SingletonReservationError):
             reserve_service_start(pid_file, backend="launchd")
 
-    def test_second_reserve_succeeds_when_issuer_pid_is_dead(self, tmp_path: Path) -> None:
+    def test_second_reserve_refuses_when_issuer_pid_is_dead(self, tmp_path: Path) -> None:
         pid_file = tmp_path / "gobby.pid"
         with patch("gobby.runner_pid_file.os.getpid", return_value=999_999):
-            first = reserve_service_start(pid_file, backend="launchd")
-        with patch("gobby.runner_pid_file._pid_is_alive", return_value=False):
-            second = reserve_service_start(pid_file, backend="launchd")
-        assert second.nonce != first.nonce
-        assert Path(second.nonce_path).is_file()
+            reserve_service_start(pid_file, backend="launchd")
+        with (
+            patch("gobby.runner_pid_file._pid_is_alive", return_value=False),
+            pytest.raises(SingletonReservationError),
+        ):
+            reserve_service_start(pid_file, backend="launchd")
+
+    def test_convert_succeeds_when_issuer_exits_before_claim(self, tmp_path: Path) -> None:
+        pid_file = tmp_path / "gobby.pid"
+        with patch("gobby.runner_pid_file.os.getpid", return_value=999_999):
+            reservation = reserve_service_start(pid_file, backend="systemd")
+        with (
+            patch("gobby.runner_pid_file._pid_is_alive", return_value=False),
+            patch.dict(
+                os.environ,
+                {
+                    "GOBBY_SERVICE_LAUNCH": "1",
+                    "GOBBY_SERVICE_NONCE": reservation.nonce_path,
+                },
+                clear=False,
+            ),
+        ):
+            claim = convert_or_acquire_service_claim(pid_file)
+        assert claim.role == "daemon"
+        try:
+            assert probe_daemon_lock(pid_file).state is ProbeState.DAEMON
+        finally:
+            claim.release()
 
     def test_probe_reports_stale_reservation_without_clearing(self, tmp_path: Path) -> None:
         pid_file = tmp_path / "gobby.pid"

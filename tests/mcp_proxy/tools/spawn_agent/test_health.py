@@ -72,7 +72,7 @@ async def test_check_tmux_session_alive_rejects_dead_pane() -> None:
     ):
         result = await _check_tmux_session_alive("sess", socket_name="gobby")
 
-    assert result == (False, "/bin/bash: claude: command not found")
+    assert result == (False, _bounded_redacted_pane_output("/bin/bash: claude: command not found"))
     config = manager_cls.call_args.args[0]
     assert config.socket_name == "gobby"
     assert config.socket_path is None
@@ -100,9 +100,10 @@ async def test_check_tmux_session_alive_rejects_missing_pane_pid() -> None:
     ):
         result = await _check_tmux_session_alive("sess", socket_name="gobby")
 
-    assert result == (False, "x" * 5000)
+    assert result == (False, _bounded_redacted_pane_output("x" * 5000))
     assert result[1] is not None
-    assert len(result[1]) > 4096
+    assert len(result[1]) <= 1024
+    assert result[1].startswith("[truncated]\n")
     config = manager_cls.call_args.args[0]
     assert config.socket_name == "gobby"
     assert config.socket_path is None

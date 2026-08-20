@@ -180,6 +180,40 @@ async def test_create_memory_derives_task_and_agent_provenance(
         assert interactive_result["memory"]["created_by_agent"] == "claude"
 
 
+@pytest.mark.asyncio
+async def test_create_memory_provenance_db_error_does_not_create(
+    mock_memory_manager: MagicMock,
+) -> None:
+    import psycopg
+
+    registry = create_memory_registry(lambda: mock_memory_manager)
+    session_id = "11111111-1111-4111-8111-111111110042"
+    with (
+        patch(
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "11111111-1111-4111-8111-111111110001"},
+        ),
+        patch(
+            "gobby.storage.session_resolution.resolve_session_reference",
+            return_value=session_id,
+        ),
+        patch("gobby.storage.tasks.LocalTaskManager") as mock_task_manager_cls,
+    ):
+        mock_task_manager_cls.return_value.list_tasks.side_effect = psycopg.OperationalError(
+            "connection lost"
+        )
+        result = await registry.call(
+            "create_memory",
+            {
+                "content": "Always use psycopg %s placeholders in hub SQL.",
+                "rationale": _VALID_RATIONALE,
+                "session_id": session_id,
+            },
+        )
+    assert result["success"] is False
+    mock_memory_manager.create_memory.assert_not_called()
+
+
 @pytest.fixture
 def mock_memory_manager() -> MagicMock:
     """Create a mock memory manager."""

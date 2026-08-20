@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -23,6 +23,7 @@ from gobby.memory.recall_signal_log import (
 )
 from gobby.memory.services._search_debug import emit_search_debug
 from gobby.memory.services.search import SearchDebugHit, SearchDebugSnapshot
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories_models import Memory, MemoryType
 
 
@@ -170,7 +171,7 @@ def test_emit_search_debug_stamps_exact_content_identity_through_hub_write(
     db = _FakeHubDb()
     hub_sink = make_recall_signal_sink(
         MemoryConfig(recall_signal_hub=True, recall_signal_log_path=str(tmp_path / "signals")),
-        db,
+        cast(HubDatabase, db),
     )
     assert hub_sink is not None
     snapshots: list[SearchDebugSnapshot] = []
@@ -192,7 +193,7 @@ def test_emit_search_debug_stamps_exact_content_identity_through_hub_write(
         returned=[
             Memory(
                 id="memory-1",
-                memory_type="fact",
+                memory_type=MemoryType.FACT,
                 content=content,
                 created_at=now,
                 updated_at=now,
@@ -379,7 +380,7 @@ def test_make_recall_signal_sink_hub_dual_write(tmp_path: Path) -> None:
     path = tmp_path / "recall_signal.jsonl"
     sink = make_recall_signal_sink(
         MemoryConfig(recall_signal_hub=True, recall_signal_log_path=str(path)),
-        db,
+        cast(HubDatabase, db),
     )
     assert sink is not None
 
@@ -394,10 +395,11 @@ def test_make_recall_signal_sink_hub_dual_write(tmp_path: Path) -> None:
 
 def test_make_injection_outcome_recorder_default_off_and_records() -> None:
     db = _FakeHubDb()
-    assert make_injection_outcome_recorder(MemoryConfig(), db) is None
+    hub_db = cast(HubDatabase, db)
+    assert make_injection_outcome_recorder(MemoryConfig(), hub_db) is None
     assert make_injection_outcome_recorder(MemoryConfig(recall_signal_hub=True)) is None
 
-    recorder = make_injection_outcome_recorder(MemoryConfig(recall_signal_hub=True), db)
+    recorder = make_injection_outcome_recorder(MemoryConfig(recall_signal_hub=True), hub_db)
     assert recorder is not None
 
     recorder(
@@ -417,7 +419,9 @@ def test_make_injection_outcome_recorder_default_off_and_records() -> None:
     assert len(outcome_inserts) == 1
 
 
-def test_hit_event_logs_rationale() -> None:
+def test_hit_event_logs_rationale_hash() -> None:
+    rationale = "keep the TS convention for future sessions"
+    rationale_hash = hashlib.sha256(rationale.encode("utf-8")).hexdigest()
     populated = SearchDebugHit(
         memory_id="semantic",
         rank=0,
@@ -429,7 +433,7 @@ def test_hit_event_logs_rationale() -> None:
         ranking_mode="rrf",
         graph_score=None,
         content_hash="semantic-hash",
-        rationale="keep the TS convention for future sessions",
+        rationale_hash=rationale_hash,
     )
     legacy = SearchDebugHit(
         memory_id="graph",
@@ -461,9 +465,10 @@ def test_hit_event_logs_rationale() -> None:
         timestamp="2026-06-15T00:00:00+00:00",
         weighting={},
     )
-    assert event["hits"][0]["rationale"] == "keep the TS convention for future sessions"
-    assert "rationale" in event["hits"][1]
-    assert event["hits"][1]["rationale"] is None
+    assert event["hits"][0]["rationale_hash"] == rationale_hash
+    assert "rationale_hash" in event["hits"][1]
+    assert event["hits"][1]["rationale_hash"] is None
+    assert "rationale" not in event["hits"][0]
 
     snapshots: list[SearchDebugSnapshot] = []
     now = datetime.now(UTC)
@@ -496,5 +501,6 @@ def test_hit_event_logs_rationale() -> None:
         rrf_applied=False,
         constants_provenance="static",
     )
-    assert snapshots[0].returned_hits[0].rationale == ("keep the TS convention for future sessions")
-    assert snapshots[0].returned_hits[1].rationale is None
+    assert snapshots[0].returned_hits[0].rationale_hash == rationale_hash
+    assert snapshots[0].returned_hits[1].rationale_hash is None
+    assert snapshots[0].returned_hits[0].rationale_hash != rationale

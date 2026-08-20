@@ -6,6 +6,8 @@ the launchd, systemd, and Windows service backends.
 """
 
 import os
+import re
+import shlex
 import shutil
 import subprocess  # nosec B404 # subprocess needed for installer setup commands
 import sys
@@ -41,11 +43,32 @@ _XML_TEMPLATE_ENV = Environment(autoescape=True, **_TEMPLATE_OPTIONS)
 LAUNCHD_LABEL = "com.gobby.daemon"
 LAUNCHD_PLIST_NAME = f"{LAUNCHD_LABEL}.plist"
 SYSTEMD_UNIT_NAME = "gobby-daemon.service"
+_LAUNCH_ENV_NAMES = frozenset({"GOBBY_SERVICE_LAUNCH", "GOBBY_SERVICE_NONCE"})
+_SYSTEMD_ENVIRONMENT_LINE = re.compile(r"^Environment=(.*)$", re.MULTILINE)
+_PLIST_ENV_KEY = re.compile(r"<key>(GOBBY_SERVICE_LAUNCH|GOBBY_SERVICE_NONCE)</key>")
+_CMD_SET_ASSIGNMENT = re.compile(r'(?im)^set\s+"?(GOBBY_SERVICE_LAUNCH|GOBBY_SERVICE_NONCE)=')
+
+
+def _systemd_environment_keys(payload: str) -> set[str]:
+    try:
+        tokens = shlex.split(payload, posix=True)
+    except ValueError:
+        tokens = payload.split()
+    keys: set[str] = set()
+    for token in tokens:
+        name, sep, _value = token.partition("=")
+        if sep and name in _LAUNCH_ENV_NAMES:
+            keys.add(name)
+    return keys
 
 
 def service_unit_has_launch_env(text: str) -> bool:
-    """Return whether a service unit can consume a commanded start reservation."""
-    return "GOBBY_SERVICE_LAUNCH" in text and "GOBBY_SERVICE_NONCE" in text
+    """Return whether a service unit assigns the commanded-start env vars."""
+    assigned = set(_PLIST_ENV_KEY.findall(text))
+    assigned.update(_CMD_SET_ASSIGNMENT.findall(text))
+    for match in _SYSTEMD_ENVIRONMENT_LINE.finditer(text):
+        assigned.update(_systemd_environment_keys(match.group(1)))
+    return _LAUNCH_ENV_NAMES <= assigned
 
 
 def _render_template(template_name: str, **context: Any) -> str:

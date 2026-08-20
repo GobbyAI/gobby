@@ -83,6 +83,14 @@ def test_grok_protocol_metadata_records_are_suppressed(update_type: str) -> None
     assert parser.parse_lines([line]) == []
 
 
+def _parsed_messages(parser: GrokTranscriptParser, lines: list[str]) -> list[ParsedMessage]:
+    messages: list[ParsedMessage] = []
+    for item in parser.parse_lines(lines):
+        assert isinstance(item, ParsedMessage)
+        messages.append(item)
+    return messages
+
+
 def _turn_completed_record(
     *,
     prompt_id: str | None = "prompt-1",
@@ -216,7 +224,7 @@ def test_grok_updates_jsonl_parser_renders_message_and_tool_records() -> None:
         ),
     ]
 
-    messages = parser.parse_lines(lines)
+    messages = _parsed_messages(parser, lines)
 
     assert [message.role for message in messages] == [
         "user",
@@ -424,14 +432,49 @@ def test_grok_marathon_turn_sub_segmentation() -> None:
     assert messages == [
         {"role": "user", "content": "marathon prompt"},
         {"role": "assistant", "content": seg1_a + seg1_b},
-        {"role": "assistant", "content": oversized},
-        {"role": "assistant", "content": tail},
     ]
-    assert [len(msg["content"]) for msg in messages[1:]] == [4000, 5000, 2079]
+    assert [len(msg["content"]) for msg in messages[1:]] == [4000]
     assert _extract_digest_pairs(parser, turns) == [
         ("marathon prompt", seg1_a + seg1_b),
-        ("", oversized),
-        ("", tail),
+    ]
+
+
+def test_grok_turn_segments_split_on_type_field_turn_completed() -> None:
+    parser = GrokTranscriptParser(session_id="grok-session")
+    turns = [
+        _user_chunk("first"),
+        _agent_chunk("one"),
+        {
+            "timestamp": 1784250127,
+            "method": "_x.ai/session/update",
+            "params": {
+                "sessionId": "grok-session",
+                "update": {"type": "turn_completed", "stop_reason": "end_turn"},
+            },
+        },
+        _user_chunk("second"),
+        _agent_chunk("two"),
+    ]
+
+    assert parser.extract_last_messages(turns, num_pairs=1) == [
+        {"role": "user", "content": "second"},
+        {"role": "assistant", "content": "two"},
+    ]
+
+
+def test_grok_pair_budget_truncates_overflowing_chunk() -> None:
+    parser = GrokTranscriptParser(session_id="grok-session")
+    first = "a" * 3000
+    overflow = "b" * 2000
+    turns = [
+        _user_chunk("prompt"),
+        _agent_chunk(first),
+        _agent_chunk(overflow),
+    ]
+    messages = parser.extract_last_messages(turns, num_pairs=2)
+    assert messages == [
+        {"role": "user", "content": "prompt"},
+        {"role": "assistant", "content": first + ("b" * 1000)},
     ]
 
 

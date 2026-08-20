@@ -23,6 +23,7 @@ from gobby.cli.installers.service import (
     install_service,
     uninstall_service,
 )
+from gobby.cli.installers.service_common import service_unit_has_launch_env
 
 pytestmark = pytest.mark.unit
 
@@ -180,6 +181,30 @@ class TestTemplateRendering:
         assert "Environment=GOBBY_SERVICE_NONCE=/custom/gobby/home/gobby.pid.service-nonce" in (
             content
         )
+        assert service_unit_has_launch_env(content)
+
+
+class TestServiceUnitHasLaunchEnv:
+    def test_detects_systemd_environment_assignments_not_substrings(self) -> None:
+        assigned = (
+            "Environment=GOBBY_SERVICE_LAUNCH=1\n"
+            "Environment=GOBBY_SERVICE_NONCE=/tmp/gobby.pid.service-nonce\n"
+        )
+        quoted = (
+            'Environment="GOBBY_SERVICE_LAUNCH=1" '
+            '"GOBBY_SERVICE_NONCE=/tmp/gobby.pid.service-nonce"\n'
+        )
+        comment_only = (
+            "# Environment=GOBBY_SERVICE_LAUNCH=1\n# Environment=GOBBY_SERVICE_NONCE=/x\n"
+        )
+        description = "Description=GOBBY_SERVICE_LAUNCH and GOBBY_SERVICE_NONCE helper\n"
+        plist = "<plist><key>GOBBY_SERVICE_LAUNCH</key><key>GOBBY_SERVICE_NONCE</key></plist>"
+
+        assert service_unit_has_launch_env(assigned)
+        assert service_unit_has_launch_env(quoted)
+        assert service_unit_has_launch_env(plist)
+        assert not service_unit_has_launch_env(comment_only)
+        assert not service_unit_has_launch_env(description)
 
 
 class TestReservationHelperEntry:
@@ -346,7 +371,9 @@ class TestResolveInstallContext:
         """Python executable path is absolute."""
         with patch("gobby.cli.installers.service_common._is_dev_mode", return_value=False):
             ctx = _resolve_install_context()
-            assert Path(ctx["python_executable"]).is_absolute()
+            python_executable = ctx["python_executable"]
+            assert isinstance(python_executable, str)
+            assert Path(python_executable).is_absolute()
 
     def test_resolve_dev_mode_sets_project_root(self, tmp_path: Path) -> None:
         """Dev mode sets working directory to project root."""
@@ -394,7 +421,9 @@ class TestResolveInstallContext:
             ctx = _resolve_install_context()
             assert ctx["mode"] == "dev"
             assert ctx["working_directory"] == str(project_dir)
-            assert ".venv/bin/python3" in ctx["python_executable"]
+            python_executable = ctx["python_executable"]
+            assert isinstance(python_executable, str)
+            assert ".venv/bin/python3" in python_executable
 
     def test_resolve_installed_mode_uses_home(self) -> None:
         """Installed mode sets working directory to $HOME."""

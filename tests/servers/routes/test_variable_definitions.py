@@ -10,7 +10,6 @@ import pytest
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
-from gobby.storage.definitions._shared import compute_definition_hash
 from gobby.storage.definitions.variables import SessionVariableDefaultManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
@@ -87,8 +86,7 @@ def test_restore_from_template_uses_kind_cache(
     row = var_manager.create(name="tmpl_var", default_value="old", source="installed")
     template_json = '{"description": null, "value": "bundled", "variable": "tmpl_var"}'
     cache = TemplateHashCache()
-    cache._hashes[("variable", row.name)] = compute_definition_hash(template_json)
-    cache._json_cache[("variable", row.name)] = template_json
+    cache.seed("variable", row.name, template_json)
     with patch(
         "gobby.workflows.template_hashes.get_template_hash_cache",
         return_value=cache,

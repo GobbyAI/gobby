@@ -199,7 +199,12 @@ def _turn_segments(turns: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     for turn in turns:
         current.append(turn)
         update = _extract_update(turn)
-        if update is not None and str(update.get("sessionUpdate") or "") == _TURN_COMPLETED_UPDATE:
+        kind = (
+            str(update.get("sessionUpdate") or update.get("type") or "")
+            if update is not None
+            else ""
+        )
+        if kind == _TURN_COMPLETED_UPDATE:
             segments.append(current)
             current = []
     if current:
@@ -235,9 +240,10 @@ def _segment_pair_messages(segment: list[dict[str, Any]]) -> list[dict[str, str]
             text = _extract_text(update.get("content"))
             if not text:
                 continue
-            if accumulated and len(accumulated) + len(text) > _PAIR_RESPONSE_CHAR_BUDGET:
-                flush()
-            accumulated += text
+            remaining = _PAIR_RESPONSE_CHAR_BUDGET - len(accumulated)
+            if remaining <= 0:
+                continue
+            accumulated += text[:remaining]
             pending_user = False
     flush(empty_if_pending=True)
     return messages

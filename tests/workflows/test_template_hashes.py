@@ -68,9 +68,18 @@ def test_load_agents_hashes_nested_step_workflow(tmp_path: Path) -> None:
     assert compute_definition_hash(body.model_dump_json()) == cache.get_hash("agent", "coder")
 
 
+def test_seed_stores_json_and_hash_atomically() -> None:
+    cache = TemplateHashCache()
+    template_json = '{"name":"seeded"}'
+    digest = cache.seed("pipeline", "seeded", template_json)
+    assert digest == compute_definition_hash(template_json)
+    assert cache.get_hash("pipeline", "seeded") == digest
+    assert cache.get_template_json("pipeline", "seeded") == template_json
+
+
 def test_annotate_rows_keys_by_kind_not_workflow_type() -> None:
     cache = TemplateHashCache()
-    cache._hashes[("pipeline", "demo")] = compute_definition_hash('{"name":"demo"}')
+    cache.seed("pipeline", "demo", '{"name":"demo"}')
     kind_rows: list[dict[str, object]] = [
         {
             "name": "demo",
