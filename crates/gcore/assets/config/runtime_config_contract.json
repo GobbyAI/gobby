@@ -739,8 +739,8 @@
     {
       "activation": "live",
       "default": 1,
-      "description": "Maximum concurrent nightly full reindex commands",
-      "key": "code_index.nightly_full_reindex_concurrency",
+      "description": "Maximum concurrent nightly repair commands",
+      "key": "code_index.nightly_repair_concurrency",
       "machineExport": false,
       "namespace": "code_index",
       "secrecy": "none",
@@ -750,8 +750,8 @@
     {
       "activation": "live",
       "default": "0 2 * * *",
-      "description": "Cron expression for nightly full code-index reindex",
-      "key": "code_index.nightly_full_reindex_cron",
+      "description": "Cron expression for nightly code-index repair",
+      "key": "code_index.nightly_repair_cron",
       "machineExport": false,
       "namespace": "code_index",
       "secrecy": "none",
@@ -761,8 +761,8 @@
     {
       "activation": "live",
       "default": true,
-      "description": "Enable nightly full code-index reindex with projection sync",
-      "key": "code_index.nightly_full_reindex_enabled",
+      "description": "Enable nightly code-index repair and graph reconciliation",
+      "key": "code_index.nightly_repair_enabled",
       "machineExport": false,
       "namespace": "code_index",
       "secrecy": "none",
@@ -772,8 +772,8 @@
     {
       "activation": "live",
       "default": 28800,
-      "description": "Timeout for each nightly full gcode reindex command",
-      "key": "code_index.nightly_full_reindex_timeout_seconds",
+      "description": "Timeout for each nightly gcode repair command",
+      "key": "code_index.nightly_repair_timeout_seconds",
       "machineExport": false,
       "namespace": "code_index",
       "secrecy": "none",
@@ -783,8 +783,8 @@
     {
       "activation": "live",
       "default": null,
-      "description": "Timezone for nightly full code-index reindex; UTC when unset",
-      "key": "code_index.nightly_full_reindex_timezone",
+      "description": "Timezone for nightly code-index repair; UTC when unset",
+      "key": "code_index.nightly_repair_timezone",
       "machineExport": false,
       "namespace": "code_index",
       "secrecy": "none",
@@ -1335,6 +1335,17 @@
     },
     {
       "activation": "live",
+      "default": 10,
+      "description": "Daemon sweep threshold: sweep sessions whose turn_count exceeds the digest pair cursor by at least this many (default 10).",
+      "key": "digest.backlog_sweep_min_undigested",
+      "machineExport": false,
+      "namespace": "digest",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
       "default": [
         {
           "candidate": "codex/gpt-5.6-luna",
@@ -1353,6 +1364,17 @@
       "type": [
         "string"
       ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 5,
+      "description": "Maximum transcript pairs consumed per catch-up batch at turn start or by the backlog sweep (default 5).",
+      "key": "digest.catch_up_num_pairs",
+      "machineExport": false,
+      "namespace": "digest",
+      "secrecy": "none",
+      "type": "integer",
       "visibility": "public"
     },
     {
@@ -3259,8 +3281,8 @@
     },
     {
       "activation": "live",
-      "default": 0.0,
-      "description": "Minimum decayed semantic similarity for recall candidates. Applies only to hits carrying a numeric similarity; keyword/RRF-ranked hits pass through in direct hybrid-search order. Default 0.0 keeps the full score distribution flowing for adaptive tuning (#17099).",
+      "default": 0.45,
+      "description": "Minimum decayed semantic similarity for recall candidates. Applies only to hits carrying a numeric similarity; keyword/RRF-ranked hits pass through in direct hybrid-search order. Default 0.45 sits at the 10th percentile of the logged recall_signal similarity distribution (memory.recall caller, 2026-07 through 2026-08: p10=0.45, p25=0.50), trimming the low-signal tail that the transcript audit showed was injected but never referenced (#20447).",
       "key": "memory_recall.min_score",
       "machineExport": false,
       "namespace": "memory_recall",

@@ -49,11 +49,11 @@ const OWNED_PATHS: readonly string[] = [
   "code_index.enabled",
   "code_index.maintenance_interval_seconds",
   "code_index.maintenance_index_timeout_seconds",
-  "code_index.nightly_full_reindex_enabled",
-  "code_index.nightly_full_reindex_cron",
-  "code_index.nightly_full_reindex_timezone",
-  "code_index.nightly_full_reindex_timeout_seconds",
-  "code_index.nightly_full_reindex_concurrency",
+  "code_index.nightly_repair_enabled",
+  "code_index.nightly_repair_cron",
+  "code_index.nightly_repair_timezone",
+  "code_index.nightly_repair_timeout_seconds",
+  "code_index.nightly_repair_concurrency",
   "code_index.maintenance_log_file",
   "code_index.missing_root_purge_observations",
   "code_index.embedding_enabled",
@@ -301,36 +301,36 @@ function CodeIndexGroup({ fields }: { fields: SettingsSectionFields }) {
       />
       <SwitchConfigField
         fields={fields}
-        path="code_index.nightly_full_reindex_enabled"
-        label="Nightly full reindex"
-        ariaLabel="Nightly full reindex"
+        path="code_index.nightly_repair_enabled"
+        label="Nightly index repair"
+        ariaLabel="Nightly index repair"
       />
       <TextConfigField
         fields={fields}
-        path="code_index.nightly_full_reindex_cron"
-        label="Nightly full reindex cron"
-        ariaLabel="Nightly full reindex cron"
+        path="code_index.nightly_repair_cron"
+        label="Nightly index repair cron"
+        ariaLabel="Nightly index repair cron"
         placeholder="0 2 * * *"
       />
       <TextConfigField
         fields={fields}
-        path="code_index.nightly_full_reindex_timezone"
-        label="Nightly full reindex timezone"
-        ariaLabel="Nightly full reindex timezone"
+        path="code_index.nightly_repair_timezone"
+        label="Nightly index repair timezone"
+        ariaLabel="Nightly index repair timezone"
         placeholder="UTC"
         nullable
       />
       <NumberConfigField
         fields={fields}
-        path="code_index.nightly_full_reindex_timeout_seconds"
-        label="Nightly full reindex timeout (seconds)"
-        ariaLabel="Nightly full reindex timeout (seconds)"
+        path="code_index.nightly_repair_timeout_seconds"
+        label="Nightly index repair timeout (seconds)"
+        ariaLabel="Nightly index repair timeout (seconds)"
       />
       <NumberConfigField
         fields={fields}
-        path="code_index.nightly_full_reindex_concurrency"
-        label="Nightly full reindex concurrency"
-        ariaLabel="Nightly full reindex concurrency"
+        path="code_index.nightly_repair_concurrency"
+        label="Nightly index repair concurrency"
+        ariaLabel="Nightly index repair concurrency"
       />
       <TextConfigField
         fields={fields}

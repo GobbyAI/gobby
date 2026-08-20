@@ -1,4 +1,4 @@
-"""Tests for nightly full code-index reindex automation."""
+"""Tests for nightly code-index repair automation."""
 
 from __future__ import annotations
 
@@ -13,11 +13,11 @@ import pytest
 
 from gobby.code_index.gcode_gateway import GcodeCommandResult
 from gobby.code_index.models import IndexedProject
-from gobby.code_index.nightly_reindex import (
-    CODE_INDEX_NIGHTLY_REINDEX_HANDLER,
-    CODE_INDEX_NIGHTLY_REINDEX_JOB_NAME,
-    CodeIndexNightlyFullReindexer,
-    register_code_index_nightly_reindex_cron,
+from gobby.code_index.nightly_repair import (
+    CODE_INDEX_NIGHTLY_REPAIR_HANDLER,
+    CODE_INDEX_NIGHTLY_REPAIR_JOB_NAME,
+    CodeIndexNightlyRepairer,
+    register_code_index_nightly_repair_cron,
 )
 from gobby.config.code_index import CodeIndexConfig
 from gobby.runtime_grants.launch import ManagedLaunch
@@ -37,7 +37,7 @@ def _gcode_result(
     return GcodeCommandResult(
         command=command,
         returncode=returncode,
-        stdout='{"indexed_files": 1}',
+        stdout='{"mode": "repair"}',
         stderr=stderr,
         started_at="2026-01-01T00:00:00+00:00",
         completed_at="2026-01-01T00:00:01+00:00",
@@ -70,7 +70,7 @@ class NightlyGateway:
         self.started = asyncio.Event()
         self.release = asyncio.Event()
 
-    async def nightly_full_reindex(
+    async def nightly_repair(
         self,
         project_root: Path,
         *,
@@ -88,9 +88,7 @@ class NightlyGateway:
             return self.result or _gcode_result(
                 (
                     "/tmp/gcode",
-                    "index",
-                    "--full",
-                    "--sync-projections",
+                    "repair",
                     "--project",
                     str(project_root),
                     "--format",
@@ -136,8 +134,8 @@ class NightlyContext:
         self.gcode_gateway = gateway
         self.launch_factory = launch_factory
         self.config = SimpleNamespace(
-            nightly_full_reindex_concurrency=concurrency,
-            nightly_full_reindex_timeout_seconds=timeout,
+            nightly_repair_concurrency=concurrency,
+            nightly_repair_timeout_seconds=timeout,
             maintenance_log_file=str(log_file),
         )
 
@@ -155,7 +153,7 @@ def _project(project_id: str, root_path: Path) -> IndexedProject:
 
 
 @pytest.mark.asyncio
-async def test_nightly_reindex_runs_per_project_command_and_writes_log(
+async def test_nightly_repair_runs_per_project_command_and_writes_log(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "repo"
@@ -167,20 +165,20 @@ async def test_nightly_reindex_runs_per_project_command_and_writes_log(
         log_file=tmp_path / "maintenance.log",
         timeout=42,
     )
-    reindexer = CodeIndexNightlyFullReindexer(context)  # type: ignore[arg-type]
+    repairer = CodeIndexNightlyRepairer(context)  # type: ignore[arg-type]
 
-    result = await reindexer.run_once()
+    result = await repairer.run_once()
 
     assert "completed=1 failed=0 skipped=0" in result
     assert gateway.calls == [(root, 42)]
     log_text = (tmp_path / "maintenance.log").read_text(encoding="utf-8")
-    assert '"event": "nightly_full_reindex"' in log_text
+    assert '"event": "nightly_repair"' in log_text
     assert '"status": "completed"' in log_text
-    assert '"--sync-projections"' in log_text
+    assert '"repair"' in log_text
 
 
 @pytest.mark.asyncio
-async def test_nightly_reindex_single_flight_skips_concurrent_run(tmp_path: Path) -> None:
+async def test_nightly_repair_single_flight_skips_concurrent_run(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()
     gateway = NightlyGateway(delay=1)
@@ -189,28 +187,28 @@ async def test_nightly_reindex_single_flight_skips_concurrent_run(tmp_path: Path
         gateway=gateway,
         log_file=tmp_path / "maintenance.log",
     )
-    reindexer = CodeIndexNightlyFullReindexer(context)  # type: ignore[arg-type]
+    repairer = CodeIndexNightlyRepairer(context)  # type: ignore[arg-type]
 
-    first = asyncio.create_task(reindexer.run_once())
+    first = asyncio.create_task(repairer.run_once())
     await gateway.started.wait()
-    second = await reindexer.run_once()
+    second = await repairer.run_once()
     gateway.release.set()
     first_result = await first
 
-    assert second == "Code index nightly full reindex skipped: already running"
+    assert second == "Code index nightly repair skipped: already running"
     assert "completed=1" in first_result
     assert gateway.calls == [(root, 7200)]
 
 
 @pytest.mark.asyncio
-async def test_nightly_reindex_concurrency_and_timeout_failure(tmp_path: Path) -> None:
+async def test_nightly_repair_concurrency_and_timeout_failure(tmp_path: Path) -> None:
     root_one = tmp_path / "one"
     root_two = tmp_path / "two"
     root_one.mkdir()
     root_two.mkdir()
     gateway = NightlyGateway(
         result=_gcode_result(
-            ("/tmp/gcode", "index", "--full"),
+            ("/tmp/gcode", "repair"),
             returncode=None,
             stderr="timed out",
             timed_out=True,
@@ -223,9 +221,9 @@ async def test_nightly_reindex_concurrency_and_timeout_failure(tmp_path: Path) -
         concurrency=1,
         timeout=5,
     )
-    reindexer = CodeIndexNightlyFullReindexer(context)  # type: ignore[arg-type]
+    repairer = CodeIndexNightlyRepairer(context)  # type: ignore[arg-type]
 
-    result = await reindexer.run_once()
+    result = await repairer.run_once()
 
     assert "completed=0 failed=2 skipped=0" in result
     assert gateway.calls == [(root_one, 5), (root_two, 5)]
@@ -235,14 +233,14 @@ async def test_nightly_reindex_concurrency_and_timeout_failure(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
-async def test_nightly_reindex_isolates_per_project_exception(tmp_path: Path) -> None:
+async def test_nightly_repair_isolates_per_project_exception(tmp_path: Path) -> None:
     root_one = tmp_path / "one"
     root_two = tmp_path / "two"
     root_one.mkdir()
     root_two.mkdir()
 
     class FailingOnceGateway(NightlyGateway):
-        async def nightly_full_reindex(
+        async def nightly_repair(
             self,
             project_root: Path,
             *,
@@ -253,7 +251,7 @@ async def test_nightly_reindex_isolates_per_project_exception(tmp_path: Path) ->
             self.calls.append((project_root, timeout))
             if project_root == root_one:
                 raise RuntimeError("boom")
-            return _gcode_result(("/tmp/gcode", "index", "--full"), timeout_seconds=timeout)
+            return _gcode_result(("/tmp/gcode", "repair"), timeout_seconds=timeout)
 
     gateway = FailingOnceGateway()
     context = NightlyContext(
@@ -261,16 +259,16 @@ async def test_nightly_reindex_isolates_per_project_exception(tmp_path: Path) ->
         gateway=gateway,
         log_file=tmp_path / "maintenance.log",
     )
-    reindexer = CodeIndexNightlyFullReindexer(context)  # type: ignore[arg-type]
+    repairer = CodeIndexNightlyRepairer(context)  # type: ignore[arg-type]
 
-    result = await reindexer.run_once()
+    result = await repairer.run_once()
 
     assert "completed=1 failed=1 skipped=0" in result
     assert gateway.calls == [(root_one, 7200), (root_two, 7200)]
 
 
 @pytest.mark.asyncio
-async def test_nightly_reindex_does_not_call_gateway_without_launch_factory(
+async def test_nightly_repair_does_not_call_gateway_without_launch_factory(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "repo"
@@ -282,21 +280,21 @@ async def test_nightly_reindex_does_not_call_gateway_without_launch_factory(
         log_file=tmp_path / "maintenance.log",
         launch_factory=None,
     )
-    reindexer = CodeIndexNightlyFullReindexer(cast(Any, context))
+    repairer = CodeIndexNightlyRepairer(cast(Any, context))
 
-    result = await reindexer.run_once()
+    result = await repairer.run_once()
 
     assert "skipped: launch factory is not configured" in result
     assert gateway.calls == []
 
 
-def test_register_nightly_reindex_cron_creates_global_system_job() -> None:
+def test_register_nightly_repair_cron_creates_global_system_job() -> None:
     class CronStorage:
         def __init__(self) -> None:
             self.created: dict[str, Any] | None = None
 
         def get_job_by_name(self, name: str) -> None:
-            assert name == CODE_INDEX_NIGHTLY_REINDEX_JOB_NAME
+            assert name == CODE_INDEX_NIGHTLY_REPAIR_JOB_NAME
             return None
 
         def create_job(self, **kwargs: Any) -> None:
@@ -312,40 +310,42 @@ def test_register_nightly_reindex_cron_creates_global_system_job() -> None:
     storage = CronStorage()
     executor = CronExecutor()
     config = CodeIndexConfig()
-    reindexer = CodeIndexNightlyFullReindexer(
+    repairer = CodeIndexNightlyRepairer(
         NightlyContext(  # type: ignore[arg-type]
             projects=[], gateway=NightlyGateway(), log_file=Path("/tmp/log")
         )
     )
 
-    register_code_index_nightly_reindex_cron(
+    register_code_index_nightly_repair_cron(
         cron_storage=storage,  # type: ignore[arg-type]
         cron_executor=executor,
-        reindexer=reindexer,
+        repairer=repairer,
         config=config,
         project_id="personal",
     )
 
-    assert CODE_INDEX_NIGHTLY_REINDEX_HANDLER in executor.handlers
+    assert CODE_INDEX_NIGHTLY_REPAIR_JOB_NAME == "gobby:code-index-nightly-repair"
+    assert CODE_INDEX_NIGHTLY_REPAIR_HANDLER == "code-index:nightly-repair"
+    assert CODE_INDEX_NIGHTLY_REPAIR_HANDLER in executor.handlers
     assert storage.created is not None
-    assert storage.created["name"] == CODE_INDEX_NIGHTLY_REINDEX_JOB_NAME
+    assert storage.created["name"] == CODE_INDEX_NIGHTLY_REPAIR_JOB_NAME
     assert storage.created["schedule_type"] == "cron"
     assert storage.created["cron_expr"] == "0 2 * * *"
     # Unconfigured schedules read as host-local wall clock, not UTC.
     assert storage.created["timezone"] == resolve_local_timezone()
     assert storage.created["enabled"] is True
     assert storage.created["is_system"] is True
-    assert storage.created["action_config"]["handler"] == CODE_INDEX_NIGHTLY_REINDEX_HANDLER
+    assert storage.created["action_config"]["handler"] == CODE_INDEX_NIGHTLY_REPAIR_HANDLER
     assert storage.created["action_config"]["timeout_seconds"] == 8 * 60 * 60
 
 
-def test_register_nightly_reindex_cron_reconciles_timeout() -> None:
+def test_register_nightly_repair_cron_reconciles_timeout() -> None:
     class CronStorage:
         def __init__(self) -> None:
             self.reconciled: dict[str, Any] | None = None
 
         def get_job_by_name(self, name: str) -> SimpleNamespace:
-            assert name == CODE_INDEX_NIGHTLY_REINDEX_JOB_NAME
+            assert name == CODE_INDEX_NIGHTLY_REPAIR_JOB_NAME
             return SimpleNamespace(id="existing-job", is_system=True)
 
         def reconcile_system_job_definition(self, job_id: str, **kwargs: Any) -> None:
@@ -357,16 +357,16 @@ def test_register_nightly_reindex_cron_reconciles_timeout() -> None:
             pass
 
     storage = CronStorage()
-    reindexer = CodeIndexNightlyFullReindexer(
+    repairer = CodeIndexNightlyRepairer(
         NightlyContext(  # type: ignore[arg-type]
             projects=[], gateway=NightlyGateway(), log_file=Path("/tmp/log")
         )
     )
 
-    register_code_index_nightly_reindex_cron(
+    register_code_index_nightly_repair_cron(
         cron_storage=storage,  # type: ignore[arg-type]
         cron_executor=CronExecutor(),
-        reindexer=reindexer,
+        repairer=repairer,
         config=CodeIndexConfig(),
         project_id="personal",
     )

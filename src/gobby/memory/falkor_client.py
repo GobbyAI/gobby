@@ -141,6 +141,8 @@ class FalkorClient:
         graph_name: str = "gobby_kg",
         timeout: float = 15.0,
     ) -> None:
+        if timeout <= 1.0:
+            raise ValueError("FalkorDB timeout must be greater than 1 second")
         try:
             from falkordb.asyncio import FalkorDB
         except ModuleNotFoundError as exc:

@@ -510,7 +510,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
                 logger.exception("Failed to register memory dream cron handler")
 
         runner.code_index_pruner = None
-        runner.code_index_nightly_reindexer = None
+        runner.code_index_nightly_repairer = None
         if runner.code_indexer is not None:
             try:
                 from gobby.code_index.prune import (
@@ -532,27 +532,25 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
                 logger.exception("Failed to register code index prune cron handler: %s", e)
 
             try:
-                from gobby.code_index.nightly_reindex import (
-                    CodeIndexNightlyFullReindexer,
-                    register_code_index_nightly_reindex_cron,
+                from gobby.code_index.nightly_repair import (
+                    CodeIndexNightlyRepairer,
+                    register_code_index_nightly_repair_cron,
                 )
 
-                runner.code_index_nightly_reindexer = CodeIndexNightlyFullReindexer(
-                    runner.code_indexer
-                )
-                register_code_index_nightly_reindex_cron(
+                runner.code_index_nightly_repairer = CodeIndexNightlyRepairer(runner.code_indexer)
+                register_code_index_nightly_repair_cron(
                     cron_storage=runner.cron_storage,
                     cron_executor=cron_executor,
-                    reindexer=runner.code_index_nightly_reindexer,
+                    repairer=runner.code_index_nightly_repairer,
                     config=config.code_index,
                     project_id=runner.project_id,
                 )
-                logger.debug("Code index nightly full reindex cron handler registered")
+                logger.debug("Code index nightly repair cron handler registered")
             except Exception as e:
-                runner.code_index_nightly_reindexer = None
-                mark_service_degraded(runner, "code_index_nightly_reindexer")
+                runner.code_index_nightly_repairer = None
+                mark_service_degraded(runner, "code_index_nightly_repairer")
                 logger.exception(
-                    "Failed to register code index nightly full reindex cron handler: %s",
+                    "Failed to register code index nightly repair cron handler: %s",
                     e,
                 )
 

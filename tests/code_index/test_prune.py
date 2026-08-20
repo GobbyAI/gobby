@@ -264,7 +264,10 @@ async def test_global_prune_failure_leaves_project_dirty(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
-async def test_global_prune_force_and_retention_reach_prune_project(tmp_path: Path) -> None:
+async def test_global_prune_force_and_retention_reach_prune_project(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     live_root = tmp_path / "live"
     live_root.mkdir()
     storage = PruneStorage()
@@ -278,10 +281,25 @@ async def test_global_prune_force_and_retention_reach_prune_project(tmp_path: Pa
         skipped = await pruner.run_operator_global_prune(force=False)
         assert skipped["skipped"] == [{"project_id": "proj-live", "reason": "skipped_locked"}]
         assert gateway.targeted_roots == []
-    finally:
-        lock.release()
 
-    result = await pruner.prune_all_projects()
+        original_prune_project = pruner.prune_project
+        forced_prune_entered = asyncio.Event()
+
+        async def observed_prune_project(**kwargs: Any) -> str:
+            assert kwargs["force"] is True
+            assert kwargs["retention_days"] == 17
+            forced_prune_entered.set()
+            return await original_prune_project(**kwargs)
+
+        monkeypatch.setattr(pruner, "prune_project", observed_prune_project)
+        forced_prune = asyncio.create_task(pruner.prune_all_projects())
+        await forced_prune_entered.wait()
+        assert forced_prune.done() is False
+        lock.release()
+        result = await forced_prune
+    finally:
+        if lock.locked():
+            lock.release()
 
     assert result["success"] is True
     assert result["status"] == "completed"

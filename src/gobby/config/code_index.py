@@ -51,27 +51,27 @@ class CodeIndexConfig(BaseModel):
         ge=1,
         description="Timeout for each lightweight maintenance gcode index command",
     )
-    nightly_full_reindex_enabled: bool = Field(
+    nightly_repair_enabled: bool = Field(
         default=True,
-        description="Enable nightly full code-index reindex with projection sync",
+        description="Enable nightly code-index repair and graph reconciliation",
     )
-    nightly_full_reindex_cron: str = Field(
+    nightly_repair_cron: str = Field(
         default="0 2 * * *",
-        description="Cron expression for nightly full code-index reindex",
+        description="Cron expression for nightly code-index repair",
     )
-    nightly_full_reindex_timezone: str | None = Field(
+    nightly_repair_timezone: str | None = Field(
         default=None,
-        description="Timezone for nightly full code-index reindex; UTC when unset",
+        description="Timezone for nightly code-index repair; UTC when unset",
     )
-    nightly_full_reindex_timeout_seconds: int = Field(
+    nightly_repair_timeout_seconds: int = Field(
         default=8 * 60 * 60,
         ge=1,
-        description="Timeout for each nightly full gcode reindex command",
+        description="Timeout for each nightly gcode repair command",
     )
-    nightly_full_reindex_concurrency: int = Field(
+    nightly_repair_concurrency: int = Field(
         default=1,
         ge=1,
-        description="Maximum concurrent nightly full reindex commands",
+        description="Maximum concurrent nightly repair commands",
     )
     maintenance_log_file: str = Field(
         default="~/.gobby/logs/code-index-maintenance.log",
@@ -133,20 +133,20 @@ class CodeIndexConfig(BaseModel):
         description="Maximum vector-sync breaker backoff",
     )
 
-    @field_validator("nightly_full_reindex_cron")
+    @field_validator("nightly_repair_cron")
     @classmethod
-    def validate_nightly_full_reindex_cron(cls, value: str) -> str:
+    def validate_nightly_repair_cron(cls, value: str) -> str:
         if not croniter.is_valid(value):
-            raise ValueError("nightly_full_reindex_cron must be a valid cron expression")
+            raise ValueError("nightly_repair_cron must be a valid cron expression")
         return value
 
-    @field_validator("nightly_full_reindex_timezone")
+    @field_validator("nightly_repair_timezone")
     @classmethod
-    def validate_nightly_full_reindex_timezone(cls, value: str | None) -> str | None:
+    def validate_nightly_repair_timezone(cls, value: str | None) -> str | None:
         if value is None:
             return None
         try:
             ZoneInfo(value)
         except ZoneInfoNotFoundError as exc:
-            raise ValueError("nightly_full_reindex_timezone must be a valid IANA timezone") from exc
+            raise ValueError("nightly_repair_timezone must be a valid IANA timezone") from exc
         return value

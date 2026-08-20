@@ -69,11 +69,11 @@ def test_code_index_config_maintenance_defaults() -> None:
 
     assert config.maintenance_interval_seconds == 3600
     assert config.maintenance_index_timeout_seconds == 900
-    assert config.nightly_full_reindex_enabled is True
-    assert config.nightly_full_reindex_cron == "0 2 * * *"
-    assert config.nightly_full_reindex_timezone is None
-    assert config.nightly_full_reindex_timeout_seconds == 8 * 60 * 60
-    assert config.nightly_full_reindex_concurrency == 1
+    assert config.nightly_repair_enabled is True
+    assert config.nightly_repair_cron == "0 2 * * *"
+    assert config.nightly_repair_timezone is None
+    assert config.nightly_repair_timeout_seconds == 8 * 60 * 60
+    assert config.nightly_repair_concurrency == 1
     assert config.maintenance_log_file == "~/.gobby/logs/code-index-maintenance.log"
 
 
@@ -104,13 +104,18 @@ def test_wiki_config_rejects_malformed_codewiki_scope_config(kwargs: dict[str, o
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"nightly_full_reindex_cron": "not a cron"},
-        {"nightly_full_reindex_timezone": "Not/AZone"},
+        {"nightly_repair_cron": "not a cron"},
+        {"nightly_repair_timezone": "Not/AZone"},
     ],
 )
 def test_code_index_config_rejects_invalid_nightly_schedule(kwargs: dict[str, str]) -> None:
     with pytest.raises(ValidationError):
         CodeIndexConfig(**kwargs)
+
+
+def test_code_index_config_rejects_retired_nightly_full_reindex_keys() -> None:
+    with pytest.raises(ValidationError):
+        CodeIndexConfig.model_validate({"nightly_full_reindex_enabled": True})
 
 
 def write_secure_bootstrap(path: Path, content: str) -> None:

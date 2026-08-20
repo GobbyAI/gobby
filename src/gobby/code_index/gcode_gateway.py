@@ -485,7 +485,7 @@ class GcodeGateway:
             env=env,
         )
 
-    async def nightly_full_reindex(
+    async def nightly_repair(
         self,
         project_root: Path,
         *,
@@ -496,9 +496,7 @@ class GcodeGateway:
         return await self._run_command_result(
             [
                 binary,
-                "index",
-                "--full",
-                "--sync-projections",
+                "repair",
                 "--project",
                 str(project_root),
                 "--format",

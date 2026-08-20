@@ -293,20 +293,6 @@ class CodeIndexPruner:
                 "retried_projects": 0,
             }
 
-    async def _list_dirty_projects(self, *, page_size: int = 100) -> list[Any]:
-        dirty_projects: list[Any] = []
-        after: tuple[Any, Any, str] | None = None
-        while True:
-            page = await self._context.run_db(
-                self._context.storage.list_prune_dirty_projects,
-                page_size,
-                after,
-            )
-            dirty_projects.extend(page)
-            if len(page) < page_size:
-                return dirty_projects
-            after = _dirty_prune_cursor(page[-1])
-
     async def prune_project(
         self,
         *,

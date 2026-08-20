@@ -929,11 +929,11 @@ const CONFIG_VALUES = {
     enabled: true,
     maintenance_interval_seconds: 300,
     maintenance_index_timeout_seconds: 600,
-    nightly_full_reindex_enabled: true,
-    nightly_full_reindex_cron: "0 2 * * *",
-    nightly_full_reindex_timezone: null,
-    nightly_full_reindex_timeout_seconds: 3600,
-    nightly_full_reindex_concurrency: 4,
+    nightly_repair_enabled: true,
+    nightly_repair_cron: "0 2 * * *",
+    nightly_repair_timezone: null,
+    nightly_repair_timeout_seconds: 3600,
+    nightly_repair_concurrency: 4,
     maintenance_log_file: "~/.gobby/logs/code-index-maintenance.log",
     missing_root_purge_observations: 3,
     embedding_enabled: true,
@@ -1905,7 +1905,14 @@ function buildTabImplementations(): Record<string, Record<string, StateImpl>> {
               );
             await expect(async () => {
               const first = await boxes();
-              await page.waitForTimeout(300);
+              await page.evaluate(
+                () =>
+                  new Promise<void>((resolve) => {
+                    requestAnimationFrame(() =>
+                      requestAnimationFrame(() => resolve()),
+                    );
+                  }),
+              );
               const second = await boxes();
               if (!first || first !== second) {
                 throw new Error("terminal still fitting");

@@ -108,6 +108,14 @@ async def test_constructor_uses_async_falkordb_client(monkeypatch: pytest.Monkey
     assert fake_db.graph.timeouts == [8500]
 
 
+@pytest.mark.parametrize("timeout", [1.0, 0.5, 0.0])
+def test_constructor_rejects_timeout_without_query_headroom(timeout: float) -> None:
+    from gobby.memory.falkor_client import FalkorClient
+
+    with pytest.raises(ValueError, match="greater than 1 second"):
+        FalkorClient(host="127.0.0.1", port=16379, timeout=timeout)
+
+
 def test_public_surface_matches_neo4j_client_contract() -> None:
     """FalkorClient keeps the graph client methods callers already use."""
     from gobby.memory.falkor_client import FalkorClient

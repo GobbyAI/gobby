@@ -199,11 +199,11 @@ code_index:
   enabled: true
   maintenance_interval_seconds: 3600
   maintenance_index_timeout_seconds: 900
-  nightly_full_reindex_enabled: true
-  nightly_full_reindex_cron: "0 2 * * *"
-  nightly_full_reindex_timezone: null
-  nightly_full_reindex_timeout_seconds: 28800
-  nightly_full_reindex_concurrency: 1
+  nightly_repair_enabled: true
+  nightly_repair_cron: "0 2 * * *"
+  nightly_repair_timezone: null
+  nightly_repair_timeout_seconds: 28800
+  nightly_repair_concurrency: 1
   maintenance_log_file: ~/.gobby/logs/code-index-maintenance.log
   missing_root_purge_observations: 3
   embedding_enabled: true
@@ -218,8 +218,12 @@ code_index:
   sync_worker_batch_size: 50
   sync_worker_breaker_failure_threshold: 5
   sync_worker_breaker_backoff_seconds: 30.0
-  sync_worker_breaker_max_backoff_seconds: 900.0
+sync_worker_breaker_max_backoff_seconds: 900.0
 ```
+
+The nightly job runs `gcode repair`. Indexer-version changes trigger one full
+reindex; steady-state runs promote stranded local imports and queue graph drift
+for the daemon sync worker.
 
 gcode owns the built-in language and content-extension set described above.
 Extend its built-in path exclusions with `indexing.extra_excludes` in the main

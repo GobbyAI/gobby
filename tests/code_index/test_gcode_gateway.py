@@ -312,7 +312,7 @@ async def test_gateway_builds_vector_and_prune_args_with_timeouts(
         "output": "No stale projects found.",
     }
     maintenance_result = await gateway.maintenance_index(tmp_path, timeout=11)
-    nightly_result = await gateway.nightly_full_reindex(tmp_path, timeout=12)
+    nightly_result = await gateway.nightly_repair(tmp_path, timeout=12)
     targeted_prune_result = await gateway.prune_project_for_maintenance(
         tmp_path, retention_days=45, timeout=14
     )
@@ -372,9 +372,7 @@ async def test_gateway_builds_vector_and_prune_args_with_timeouts(
         ),
         (
             "/tmp/gcode",
-            "index",
-            "--full",
-            "--sync-projections",
+            "repair",
             "--project",
             str(tmp_path),
             "--format",

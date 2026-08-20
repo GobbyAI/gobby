@@ -95,11 +95,11 @@ function makeConfigValues(): Record<string, unknown> {
       enabled: true,
       maintenance_interval_seconds: 3600,
       maintenance_index_timeout_seconds: 900,
-      nightly_full_reindex_enabled: true,
-      nightly_full_reindex_cron: "0 2 * * *",
-      nightly_full_reindex_timezone: null,
-      nightly_full_reindex_timeout_seconds: 7200,
-      nightly_full_reindex_concurrency: 1,
+      nightly_repair_enabled: true,
+      nightly_repair_cron: "0 2 * * *",
+      nightly_repair_timezone: null,
+      nightly_repair_timeout_seconds: 7200,
+      nightly_repair_concurrency: 1,
       maintenance_log_file: "~/.gobby/logs/code-index-maintenance.log",
       missing_root_purge_observations: 3,
       embedding_enabled: true,
@@ -255,6 +255,15 @@ describe("RuntimeInfrastructureSection", () => {
     const profile = screen.getByLabelText("Code summary capability profile");
     expect(profile).toHaveValue("feature_low");
     expect(within(profile).getAllByRole("option")).toHaveLength(3);
+    expect(
+      screen.getByRole("switch", { name: "Nightly index repair" }),
+    ).toBeChecked();
+    expect(screen.getByLabelText("Nightly index repair cron")).toHaveValue(
+      "0 2 * * *",
+    );
+    expect(
+      screen.getByLabelText("Nightly index repair timeout (seconds)"),
+    ).toHaveValue(7200);
     expect(
       screen.queryByLabelText("Re-index on commit"),
     ).not.toBeInTheDocument();
