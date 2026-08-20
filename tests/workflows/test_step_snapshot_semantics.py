@@ -550,10 +550,11 @@ def test_fresh_snapshot_recovery_emits_structured_warning(
     row.step_workflow_id = LINEAGE
     session = SimpleNamespace(
         project_id=None,
-        parent_session_id=None,
-        agent_run_id=None,
-        agent_depth=0,
+        parent_session_id=S2,
+        agent_run_id="cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        agent_depth=1,
     )
+    variables = {"_agent_type": "alpha", "assigned_task_id": "#1"}
     with (
         patch(
             "gobby.workflows.agent_resolver.resolve_agent_with_row",
@@ -561,7 +562,7 @@ def test_fresh_snapshot_recovery_emits_structured_warning(
         ),
         caplog.at_level(logging.WARNING, logger="gobby.hooks.session_activation"),
     ):
-        created = _ensure_step_instance(snap_db, S1, {"_agent_type": "alpha"}, session)
+        created = _ensure_step_instance(snap_db, S1, variables, session)
     assert created is True
     recovered = AgentStepInstanceManager(snap_db).get_for_session(S1)
     assert recovered is not None
@@ -579,7 +580,7 @@ def test_fresh_snapshot_recovery_emits_structured_warning(
         "gobby.workflows.agent_resolver.resolve_agent_with_row",
         return_value=(agent, row),
     ):
-        assert _ensure_step_instance(snap_db, S1, {"_agent_type": "alpha"}, session) is False
+        assert _ensure_step_instance(snap_db, S1, variables, session) is False
     assert caplog.text.count(FRESH_SNAPSHOT_RECOVERY_MARKER) == 1
 
 
