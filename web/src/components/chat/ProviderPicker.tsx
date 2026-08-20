@@ -7,6 +7,7 @@ import {
 } from "../ui/Dialog";
 import { SourceIcon } from "../shared/SourceIcon";
 import { Button } from "../ui/Button";
+import { Chip } from "../ui/Chip";
 import { cn } from "../../lib/utils";
 import {
   fetchProviderModelCatalog,
@@ -14,15 +15,17 @@ import {
   getModelsForProvider,
   getProviderDisplayName,
   getProviderDisplayNameFromEntry,
+  inputModalityChips,
   isHiddenProvider,
   type ProviderModelEntry,
+  type ProviderModelOption,
 } from "../../lib/providerModels";
 
 function getVisibleModelsForProvider(
   catalog: ProviderModelEntry[],
   provider: string,
   currentModel: string,
-): { value: string; label: string }[] {
+): ProviderModelOption[] {
   const entry = catalog.find((candidate) => candidate.provider === provider);
   const models = getModelsForProvider(catalog, provider);
   if (models.length > 0) return models;
@@ -30,6 +33,20 @@ function getVisibleModelsForProvider(
   return [
     { value: currentModel || "default", label: currentModel || "Default" },
   ];
+}
+
+function CapabilityChips({ modalities }: { modalities?: string[] | null }) {
+  const chips = inputModalityChips(modalities);
+  if (chips.length === 0) return null;
+  return (
+    <span className="capability-chips" aria-hidden="true">
+      {chips.map((label) => (
+        <Chip key={label} className="capability-chip">
+          {label}
+        </Chip>
+      ))}
+    </span>
+  );
 }
 
 function getExecutionProvider(
@@ -300,6 +317,9 @@ export function ProviderPicker({
                           }
                         >
                           {model.label}
+                          <CapabilityChips
+                            modalities={model.input_modalities}
+                          />
                           {isSelected && (
                             <span className="ml-2 text-[length:var(--text-2xs)]">
                               ●

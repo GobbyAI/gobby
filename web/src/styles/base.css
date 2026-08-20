@@ -53,6 +53,19 @@ body {
   color: var(--text-primary);
 }
 
+/* Compact Text/Image capability chips — Chip primitive owns tone/geometry;
+   this is only the inline cluster so both themes inherit --text-muted. */
+.capability-chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-inline-start: 0.375rem;
+}
+
+.capability-chip {
+  flex: 0 0 auto;
+}
+
 .app {
   display: flex;
   flex-direction: column;

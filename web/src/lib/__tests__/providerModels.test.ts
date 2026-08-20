@@ -24,6 +24,7 @@ import {
   getReasoningOptionsForModel,
   resolveProviderModelPair,
   type ProviderModelEntry,
+  type ProviderModelOption,
 } from "../providerModels";
 
 const catalog: ProviderModelEntry[] = [
@@ -490,6 +491,67 @@ describe("providerModels", () => {
         "endpoint:openrouter/moonshotai/kimi-k3",
       ),
     ).toBe(false);
+  });
+
+  it("follows capability chips for image eligibility on endpoint-backed options", () => {
+    const mixedCatalog: ProviderModelEntry[] = [
+      {
+        provider: "codex",
+        available: true,
+        source: "live",
+        models: [
+          { value: "gpt-5.4", label: "GPT-5.4" },
+          {
+            value: "endpoint:openrouter/moonshotai/kimi-k3",
+            label: "OpenRouter: moonshotai/kimi-k3",
+            input_modalities: null,
+          } as ProviderModelOption,
+        ],
+      },
+      {
+        provider: "endpoint:generic",
+        execution_provider: "codex",
+        available: true,
+        source: "live",
+        models: [
+          {
+            value: "endpoint:generic/llama",
+            label: "Llama",
+          },
+        ],
+      },
+      {
+        provider: "endpoint:vllm",
+        execution_provider: "codex",
+        available: true,
+        source: "live",
+        models: [
+          {
+            value: "endpoint:vllm",
+            label: "Qwen2.5-VL",
+            is_default: true,
+            input_modalities: ["text", "image"],
+          },
+        ],
+      },
+    ];
+
+    expect(
+      modelSupportsImageInput(
+        mixedCatalog,
+        "codex",
+        "endpoint:openrouter/moonshotai/kimi-k3",
+      ),
+    ).toBe(false);
+    expect(modelSupportsImageInput(mixedCatalog, "codex", "gpt-5.4")).toBe(
+      true,
+    );
+    expect(
+      modelSupportsImageInput(mixedCatalog, "codex", "endpoint:generic/llama"),
+    ).toBe(false);
+    expect(
+      modelSupportsImageInput(mixedCatalog, "codex", "endpoint:vllm"),
+    ).toBe(true);
   });
 
   it("maps a source-less matrix response", async () => {

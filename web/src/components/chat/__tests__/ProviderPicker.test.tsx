@@ -89,10 +89,89 @@ function buildLocalEndpointCatalog(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function buildCapabilityCatalog() {
+  const catalog = buildCatalog();
+  return {
+    providers: [
+      ...catalog.providers,
+      {
+        provider: "endpoint:vllm",
+        execution_provider: "codex",
+        available: true,
+        display_name: "vLLM",
+        provider_type: "vllm",
+        supports_web_chat: true,
+        source: "live",
+        models: [
+          {
+            // Default alias after model: auto on a single-model endpoint —
+            // modalities copied from 1.2 resolution, not a literal id match.
+            value: "endpoint:vllm",
+            label: "Qwen2.5-VL",
+            is_default: true,
+            input_modalities: ["text", "image"],
+          },
+          {
+            value: "endpoint:vllm/llama-3",
+            label: "Llama 3",
+            canonical_id: "llama-3",
+          },
+        ],
+      },
+      {
+        provider: "endpoint:studio",
+        execution_provider: "codex",
+        available: true,
+        display_name: "LM Studio",
+        provider_type: "lmstudio",
+        supports_web_chat: true,
+        source: "live",
+        models: [
+          {
+            value: "endpoint:studio/qwen-vl",
+            label: "Qwen VL",
+            canonical_id: "qwen-vl",
+            input_modalities: ["text", "image"],
+          },
+        ],
+      },
+      {
+        provider: "endpoint:ollama",
+        execution_provider: "codex",
+        available: true,
+        display_name: "Ollama",
+        provider_type: "ollama",
+        supports_web_chat: true,
+        source: "live",
+        models: [
+          {
+            value: "endpoint:ollama/llava",
+            label: "Llava",
+            canonical_id: "llava",
+            input_modalities: ["text", "image"],
+          },
+          {
+            value: "endpoint:ollama/mistral",
+            label: "Mistral",
+            canonical_id: "mistral",
+          },
+        ],
+      },
+    ],
+  };
+}
+
 function getProviderHeader(displayName: string) {
   const header = screen.getByText(displayName).parentElement;
   if (!header) throw new Error(`Missing provider header for ${displayName}`);
   return within(header);
+}
+
+function capabilityChips(name: string | RegExp) {
+  const button = screen.getByRole("button", { name });
+  return [...button.querySelectorAll(".capability-chip")].map(
+    (element) => element.textContent,
+  );
 }
 
 describe("ProviderPicker", () => {
@@ -566,5 +645,35 @@ describe("ProviderPicker", () => {
     expect(onModelChange).toHaveBeenCalledWith("default");
     expect(onSwitchProvider).toHaveBeenCalledWith("qwen");
     nowSpy.mockRestore();
+  });
+
+  it("renders Text/Image chips from probe and advertised modalities, and none when modalities are absent", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => buildCapabilityCatalog(),
+    }) as typeof fetch;
+
+    render(
+      <ProviderPicker
+        open={true}
+        onClose={vi.fn()}
+        currentProvider="claude"
+        currentModel="opus"
+        availableProviders={["claude", "codex"]}
+        onModelChange={vi.fn()}
+        onProviderChange={vi.fn()}
+        hasMessages={false}
+      />,
+    );
+
+    await screen.findByText("vLLM");
+
+    expect(capabilityChips("Qwen2.5 VL")).toEqual(["Text", "Image"]);
+    expect(capabilityChips("Llama 3")).toEqual([]);
+    expect(capabilityChips("Qwen VL")).toEqual(["Text", "Image"]);
+    expect(capabilityChips("Llava")).toEqual(["Text", "Image"]);
+    expect(capabilityChips("Mistral")).toEqual([]);
+    expect(capabilityChips(/^Opus/)).toEqual([]);
+    expect(capabilityChips("GPT 5.4")).toEqual([]);
   });
 });

@@ -36,6 +36,54 @@ vi.mock("../../../../lib/providerModels", async (importOriginal) => {
         source: "static",
         models: [{ value: "gpt-5", label: "GPT-5" }],
       },
+      {
+        provider: "endpoint:vllm",
+        execution_provider: "codex",
+        available: true,
+        provider_type: "vllm",
+        source: "live",
+        models: [
+          {
+            value: "endpoint:vllm",
+            label: "Qwen2.5-VL",
+            is_default: true,
+            input_modalities: ["text", "image"],
+          },
+          {
+            value: "endpoint:vllm/llama-3",
+            label: "Llama 3",
+            canonical_id: "llama-3",
+          },
+        ],
+      },
+      {
+        provider: "endpoint:lmstudio",
+        execution_provider: "codex",
+        available: true,
+        provider_type: "lmstudio",
+        source: "live",
+        models: [
+          {
+            value: "endpoint:lmstudio/gemma",
+            label: "Gemma",
+            canonical_id: "gemma",
+            input_modalities: ["text"],
+          },
+        ],
+      },
+      {
+        provider: "endpoint:openrouter",
+        execution_provider: "codex",
+        available: true,
+        source: "live",
+        models: [
+          {
+            value: "endpoint:openrouter/gpt-4",
+            label: "GPT-4",
+            input_modalities: null,
+          },
+        ],
+      },
     ]),
   };
 });
@@ -324,7 +372,7 @@ describe("ProvidersModelsSection", () => {
     });
   });
 
-  it("degrades gracefully when client settings and provider selection are absent", () => {
+  it("degrades gracefully when client settings and provider selection are absent", async () => {
     renderSection(
       makeContext({ clientSettings: undefined, providerSelection: undefined }),
     );
@@ -336,6 +384,9 @@ describe("ProvidersModelsSection", () => {
     // The config-backed controls still render without the client surface.
     expect(screen.getByLabelText("Tool recommendation profile")).toHaveValue(
       "feature_mid",
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("Capabilities (vllm)")).toBeTruthy(),
     );
   });
 
@@ -481,5 +532,27 @@ describe("ProvidersModelsSection", () => {
       expect(endpoint).not.toHaveProperty("vision_extract");
     }
     expect(endpoints.lmstudio.model).toBe("gemma-2");
+  });
+
+  it("renders Text/Image chips on generation endpoint rows from catalog modalities", async () => {
+    renderSection(makeContext());
+    await waitForProviderCatalog();
+
+    const vllmChips = await waitFor(() => {
+      const group = screen.getByLabelText("Capabilities (vllm)");
+      return [...group.querySelectorAll(".capability-chip")].map(
+        (element) => element.textContent,
+      );
+    });
+    expect(vllmChips).toEqual(["Text", "Image"]);
+
+    const lmstudioChips = [
+      ...screen
+        .getByLabelText("Capabilities (lmstudio)")
+        .querySelectorAll(".capability-chip"),
+    ].map((element) => element.textContent);
+    expect(lmstudioChips).toEqual(["Text"]);
+
+    expect(screen.queryByLabelText("Capabilities (openrouter)")).toBeNull();
   });
 });

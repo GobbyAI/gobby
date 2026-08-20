@@ -11,12 +11,15 @@ import {
   KeyValueRowsField,
   StringListField,
 } from "../fields";
+import { Chip } from "../../ui/Chip";
 import {
   fetchProviderModelCatalog,
   getModelsForProvider,
   getOrderedProviders,
   getProviderDisplayName,
+  inputModalityChips,
   type ProviderModelEntry,
+  type ProviderModelOption,
 } from "../../../lib/providerModels";
 import type { UseSettingsReturn } from "../../../hooks/useSettings";
 import { SettingsSection, type SettingsSectionFields } from "./SettingsSection";
@@ -167,6 +170,49 @@ function endpointEnumOptions(
 
 function protocolForcesChatCompletions(protocol: string): boolean {
   return protocol !== OPENAI_COMPATIBLE_PROTOCOL;
+}
+
+function inputModalitiesForEndpoint(
+  catalog: ProviderModelEntry[],
+  slug: string,
+  configuredModel?: string,
+): string[] | null | undefined {
+  if (!slug) return undefined;
+  const groupName = `endpoint:${slug}`.toLowerCase();
+  const group = catalog.find(
+    (entry) => entry.provider.toLowerCase() === groupName,
+  );
+  const fromGroup = group?.models ?? [];
+  const fromScattered = catalog.flatMap((entry) =>
+    entry.models.filter((model) => {
+      const value = model.value.toLowerCase();
+      return value === groupName || value.startsWith(`${groupName}/`);
+    }),
+  );
+  const models: ProviderModelOption[] =
+    fromGroup.length > 0 ? fromGroup : fromScattered;
+  if (models.length === 0) return undefined;
+
+  const trimmed = configuredModel?.trim() ?? "";
+  const isAuto = trimmed === "" || trimmed.toLowerCase() === "auto";
+  if (isAuto) {
+    return (
+      models.find((model) => model.is_default) ??
+      models.find((model) => model.value.toLowerCase() === groupName)
+    )?.input_modalities;
+  }
+
+  const needle = trimmed.toLowerCase();
+  return models.find((model) => {
+    const value = model.value.toLowerCase();
+    const canonical = model.canonical_id?.toLowerCase();
+    return (
+      value === needle ||
+      canonical === needle ||
+      value === `${groupName}/${needle}` ||
+      value.endsWith(`/${needle}`)
+    );
+  })?.input_modalities;
 }
 
 function featurePromptPaths(spec: FeatureSpec): string[] {
@@ -320,20 +366,34 @@ function GenerationEndpointEditor({
   value,
   onChange,
   schema,
+  catalog,
 }: {
   slug: string;
   value: GenerationEndpoint;
   onChange: (next: GenerationEndpoint) => void;
   schema: Record<string, unknown> | null;
+  catalog: ProviderModelEntry[];
 }) {
   const name = slug || "new endpoint";
   const protocol = value.protocol ?? OPENAI_COMPATIBLE_PROTOCOL;
   const patch = (partial: Partial<GenerationEndpoint>) =>
     onChange(omitVisionExtract({ ...value, ...partial }));
   const wireApiVisible = !protocolForcesChatCompletions(protocol);
+  const chips = inputModalityChips(
+    inputModalitiesForEndpoint(catalog, slug, value.model),
+  );
 
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-3">
+      {chips.length > 0 ? (
+        <div className="capability-chips" aria-label={`Capabilities (${name})`}>
+          {chips.map((label) => (
+            <Chip key={label} className="capability-chip">
+              {label}
+            </Chip>
+          ))}
+        </div>
+      ) : null}
       <BoundedSelectField
         label="Protocol"
         ariaLabel={`Protocol (${name})`}
@@ -388,6 +448,18 @@ function GenerationEndpointEditor({
 }
 
 function GenerationGroup({ fields }: { fields: SettingsSectionFields }) {
+  const [catalog, setCatalog] = useState<ProviderModelEntry[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchProviderModelCatalog().then((entries) => {
+      if (!cancelled) setCatalog(entries);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <Subsection
       title="Generation"
@@ -425,6 +497,7 @@ function GenerationGroup({ fields }: { fields: SettingsSectionFields }) {
             value={endpoint}
             onChange={onValueChange}
             schema={fields.schema}
+            catalog={catalog}
           />
         )}
       />
