@@ -7,6 +7,7 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, TypeGuard
+from uuid import uuid4
 
 from gobby.hooks.context_limits import handoff_summary_inject_budget_for
 from gobby.sessions.compact_continuation import (
@@ -17,9 +18,20 @@ from gobby.sessions.compact_continuation import (
     schedule_compact_self_continuation,
 )
 from gobby.sessions.handoff_identity import terminal_process_contexts_match
-from gobby.storage.hub.protocol import HubDatabase, SessionLineageMutation, SessionVariableMutation
+from gobby.storage.hub.protocol import (
+    HubDatabase,
+    SessionLineageMutation,
+    SessionRegistration,
+    SessionSeqMutation,
+    SessionVariableMutation,
+    WebChatSessionBootstrap,
+)
 from gobby.storage.session_models import Session
 from gobby.storage.sessions._lineage_guard import sanitize_parent_session_id
+from gobby.storage.sessions._title_defaults import (
+    PROVISIONAL_TITLE_SOURCE,
+    format_provisional_session_title,
+)
 from gobby.utils.datetime import utc_now
 from gobby.utils.injected_context import INJECTED_CONTEXT_BEGIN, strip_injected_context
 from gobby.workflows.state_manager import SessionVariableManager
@@ -30,6 +42,7 @@ __all__ = [
     "ClearContinuationResolution",
     "build_clear_self_continue_prompt",
     "clear_failed_attempt",
+    "commit_web_chat_clear_successor",
     "resolve_clear_continuation",
     "schedule_clear_self_continuation",
     "seed_clear_handoff_variables",
@@ -244,9 +257,11 @@ def clear_failed_attempt(
     session_id: str,
     *,
     attempt_id: str,
-    prior_summary_state: dict[str, Any],
+    prior_summary_state: dict[str, Any] | None = None,
 ) -> bool:
     """Compare-and-clear an unconsumed marker and restore prior summary state."""
+    if prior_summary_state is None:
+        prior_summary_state = _capture_summary_state(db, session_id)
     try:
         with db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
             row = conn.execute(
@@ -308,14 +323,210 @@ def seed_clear_handoff_variables(
     predecessor: Any,
 ) -> None:
     """Seed successor injection variables after a successful atomic take."""
-    summary = strip_injected_context(getattr(predecessor, "summary_markdown", None) or "")
     SessionVariableManager(session_manager.db).merge_variables(
         successor_session_id,
-        {
-            "handoff_summary_injectable": _bound_clear_handoff_summary(summary, predecessor),
-            "clear_handoff_inject_pending": True,
-        },
+        _clear_handoff_seed_payload(predecessor),
     )
+
+
+class _ClearCommitAborted(Exception):
+    """Abort the web-chat clear commit without leaving partial row changes."""
+
+
+def commit_web_chat_clear_successor(
+    db: HubDatabase,
+    predecessor_id: str,
+    *,
+    attempt_id: str,
+) -> Session | None:
+    """Expire the predecessor and insert a force-new successor in one transaction."""
+    bootstrap_external_id = f"web-chat-bootstrap:{uuid4()}"
+    try:
+        predecessor_meta = db.fetchone(
+            "SELECT machine_id, source, project_id FROM sessions WHERE id = %s",
+            (predecessor_id,),
+        )
+        if predecessor_meta is None:
+            return None
+        machine_id = str(predecessor_meta["machine_id"])
+        source = str(predecessor_meta["source"])
+        project_id = str(predecessor_meta["project_id"])
+        with db.transaction_immediate(
+            WebChatSessionBootstrap(
+                external_id=bootstrap_external_id,
+                machine_id=machine_id,
+                source=source,
+                project_id=project_id,
+                session_type="web_chat",
+            )
+        ) as conn:
+            conn.acquire_additional_lock(
+                SessionRegistration(
+                    external_id=bootstrap_external_id,
+                    source=source,
+                    session_type="web_chat",
+                )
+            )
+            conn.acquire_additional_lock(SessionLineageMutation())
+            conn.acquire_additional_lock(SessionSeqMutation(project_id=project_id))
+            conn.acquire_additional_lock(SessionVariableMutation(session_id=predecessor_id))
+            return _commit_web_chat_clear_successor_rows(
+                conn,
+                predecessor_id=predecessor_id,
+                attempt_id=attempt_id,
+                bootstrap_external_id=bootstrap_external_id,
+                source=source,
+                project_id=project_id,
+                machine_id=machine_id,
+            )
+    except _ClearCommitAborted:
+        return None
+    except Exception:
+        logger.warning(
+            "Failed committing web-chat clear successor for predecessor %s attempt %s",
+            predecessor_id,
+            attempt_id,
+            exc_info=True,
+        )
+        return None
+
+
+def _commit_web_chat_clear_successor_rows(
+    conn: Any,
+    *,
+    predecessor_id: str,
+    attempt_id: str,
+    bootstrap_external_id: str,
+    source: str,
+    project_id: str,
+    machine_id: str,
+) -> Session:
+    pred_row = conn.execute(
+        "SELECT * FROM sessions WHERE id = %s FOR UPDATE",
+        (predecessor_id,),
+    ).fetchone()
+    if pred_row is None:
+        raise _ClearCommitAborted("predecessor missing")
+    predecessor = Session.from_row(pred_row)
+    if predecessor.status in {"expired", "deleted"}:
+        raise _ClearCommitAborted("predecessor is already terminal")
+
+    var_row = conn.execute(
+        "SELECT variables FROM session_variables WHERE session_id = %s FOR UPDATE",
+        (predecessor_id,),
+    ).fetchone()
+    if var_row is None:
+        raise _ClearCommitAborted("clear attempt missing")
+    variables = _load_variables(_row_variables(var_row))
+    marker = _marker_from_variables(variables)
+    if not _unconsumed_attempt(marker, attempt_id):
+        raise _ClearCommitAborted("clear attempt is not pending")
+
+    successor_id = str(uuid4())
+    sanitized_parent = sanitize_parent_session_id(
+        conn,
+        child_session_id=successor_id,
+        parent_session_id=predecessor_id,
+        context="web-chat clear successor",
+    )
+    if sanitized_parent is None:
+        raise _ClearCommitAborted("parentage rejected")
+
+    now = utc_now()
+    max_seq_row = conn.execute(
+        "SELECT MAX(seq_num) as max_seq FROM sessions WHERE project_id = %s",
+        (project_id,),
+    ).fetchone()
+    next_seq_num = ((max_seq_row["max_seq"] if max_seq_row else None) or 0) + 1
+    title = format_provisional_session_title(source)
+    conn.execute(
+        """
+        INSERT INTO sessions (
+            id, external_id, machine_id, source, project_id, title, title_source,
+            transcript_path, git_branch, parent_session_id,
+            agent_depth, spawned_by_agent_id, terminal_context,
+            workflow_name, session_type, is_local, sandbox_enabled, sandbox_policy_hash,
+            status, seq_num,
+            had_edits, message_count, turn_count, tool_call_count, last_assistant_content
+        )
+        VALUES (
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            'active', %s, FALSE, 0, 0, 0, NULL
+        )
+        """,
+        (
+            successor_id,
+            bootstrap_external_id,
+            machine_id,
+            source,
+            project_id,
+            title,
+            PROVISIONAL_TITLE_SOURCE,
+            None,
+            predecessor.git_branch,
+            sanitized_parent,
+            predecessor.agent_depth,
+            predecessor.spawned_by_agent_id,
+            json.dumps(predecessor.terminal_context) if predecessor.terminal_context else None,
+            predecessor.workflow_name,
+            "web_chat",
+            bool(predecessor.is_local),
+            predecessor.sandbox_enabled,
+            predecessor.sandbox_policy_hash,
+            next_seq_num,
+        ),
+    )
+    conn.execute(
+        """
+        UPDATE sessions
+           SET model = COALESCE(%s, model),
+               chat_mode = COALESCE(%s, chat_mode),
+               updated_at = %s
+         WHERE id = %s
+        """,
+        (predecessor.model, predecessor.chat_mode, now, successor_id),
+    )
+    conn.execute(
+        """
+        UPDATE sessions
+           SET status = 'expired', updated_at = %s
+         WHERE id = %s
+        """,
+        (now, predecessor_id),
+    )
+    taken = dict(marker)
+    taken["consumed_by"] = successor_id
+    variables[CLEAR_ATTEMPT_VARIABLE] = taken
+    conn.execute(
+        """
+        UPDATE session_variables
+           SET variables = %s, updated_at = %s
+         WHERE session_id = %s
+        """,
+        (json.dumps(variables), now.isoformat(), predecessor_id),
+    )
+    conn.execute(
+        """
+        INSERT INTO session_variables (session_id, variables, updated_at)
+        VALUES (%s, %s, %s)
+        """,
+        (successor_id, json.dumps(_clear_handoff_seed_payload(predecessor)), now.isoformat()),
+    )
+    succ_row = conn.execute(
+        "SELECT * FROM sessions WHERE id = %s",
+        (successor_id,),
+    ).fetchone()
+    if succ_row is None:
+        raise _ClearCommitAborted("successor disappeared after insert")
+    return Session.from_row(succ_row)
+
+
+def _clear_handoff_seed_payload(predecessor: Any) -> dict[str, Any]:
+    summary = strip_injected_context(getattr(predecessor, "summary_markdown", None) or "")
+    return {
+        "handoff_summary_injectable": _bound_clear_handoff_summary(summary, predecessor),
+        "clear_handoff_inject_pending": True,
+    }
 
 
 def build_clear_self_continue_prompt(*, predecessor_ref: str) -> str:
