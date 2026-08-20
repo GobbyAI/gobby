@@ -13,6 +13,7 @@ from gobby.ai import (
     CapabilityUnavailableError,
     build_daemon_ai_capability_registry,
 )
+from gobby.ai._tool_chat_builder import _local_client_factory
 from gobby.config.ai import AIConfig, GenerationConfig
 from gobby.config.app import DaemonConfig
 from gobby.config.persistence import EmbeddingsConfig
@@ -769,3 +770,107 @@ def test_text_bindings_drop_vision_extract_metadata() -> None:
     assert vision is not None
     assert vision.available is True
     assert "vision_extract" not in vision.metadata
+
+
+def test_tool_chat_clientless_unavailable() -> None:
+    config = DaemonConfig(
+        ai=AIConfig(
+            generation=GenerationConfig(
+                endpoints={
+                    "lm-studio": {
+                        "protocol": "lmstudio",
+                        "api_base": "http://localhost:1234/v1",
+                        "model": "gemma",
+                        "tool_chat": True,
+                    },
+                    "ollama": {
+                        "protocol": "ollama",
+                        "api_base": "http://localhost:11434/v1",
+                        "model": "llama3",
+                        "tool_chat": True,
+                    },
+                    "vllm-local": {
+                        "protocol": "vllm",
+                        "api_base": "http://localhost:8000/v1",
+                        "model": "qwen2.5-vl",
+                        "tool_chat": True,
+                    },
+                }
+            )
+        ),
+    )
+    registry = build_daemon_ai_capability_registry(
+        config,
+        provider_installed=lambda _entry: True,
+    )
+
+    for name in ("lm-studio", "ollama"):
+        binding = registry.binding(AICapability.TOOL_CHAT, f"endpoint:{name}")
+        assert binding is not None
+        assert binding.available is False
+        assert binding.reason is not None
+        with pytest.raises(CapabilityUnavailableError, match="unavailable"):
+            registry.select(AICapability.TOOL_CHAT, provider=f"endpoint:{name}")
+
+    vllm = registry.binding(AICapability.TOOL_CHAT, "endpoint:vllm-local")
+    assert vllm is not None
+    assert vllm.available is True
+    client = _local_client_factory(config)(vllm)
+    assert client is not None
+    assert getattr(client, "chat", None) is not None
+
+
+def test_tool_binding_probe_evidence_gate() -> None:
+    config = DaemonConfig(
+        ai=AIConfig(
+            generation=GenerationConfig(
+                endpoints={
+                    "vllm-failed": {
+                        "protocol": "vllm",
+                        "api_base": "http://localhost:8000/v1",
+                        "model": "qwen2.5-vl",
+                        "tool_chat": True,
+                        "probed_tools": False,
+                    },
+                    "vllm-fresh": {
+                        "protocol": "vllm",
+                        "api_base": "http://localhost:8001/v1",
+                        "model": "qwen2.5-vl",
+                        "tool_chat": True,
+                    },
+                    "lm-studio": {
+                        "protocol": "lmstudio",
+                        "api_base": "http://localhost:1234/v1",
+                        "model": "gemma",
+                        "tool_chat": True,
+                    },
+                }
+            )
+        ),
+    )
+    failed_endpoint = config.ai.generation.endpoints["vllm-failed"]
+    assert failed_endpoint.tool_chat is True
+    assert failed_endpoint.probed_tools is False
+
+    registry = build_daemon_ai_capability_registry(
+        config,
+        provider_installed=lambda _entry: True,
+    )
+
+    failed = registry.binding(AICapability.TOOL_CHAT, "endpoint:vllm-failed")
+    assert failed is not None
+    assert failed.available is False
+    assert failed.reason is not None
+    assert "probe" in failed.reason.lower()
+    assert failed_endpoint.tool_chat is True
+    assert failed_endpoint.probed_tools is False
+
+    fresh = registry.binding(AICapability.TOOL_CHAT, "endpoint:vllm-fresh")
+    assert fresh is not None
+    assert fresh.available is True
+
+    lm_studio = registry.binding(AICapability.TOOL_CHAT, "endpoint:lm-studio")
+    assert lm_studio is not None
+    assert lm_studio.available is False
+    assert lm_studio.reason is not None
+    assert "probe" not in lm_studio.reason.lower()

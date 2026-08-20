@@ -20,11 +20,13 @@ from gobby.ai.registry import (
     _normalize_binding_model,
     _normalize_provider,
 )
+from gobby.config.ai import GenerationEndpointConfig
 from gobby.config.feature_base import (
     candidate_labels,
     iter_feature_default_configs,
     parse_feature_candidate,
 )
+from gobby.llm.local_provider_adapters import create_local_provider_adapter
 from gobby.providers import AGY_UNAVAILABLE_REASON, ProviderMetadata, provider_metadata
 from gobby.servers.provider_model_defaults import AGY_MODELS
 
@@ -587,31 +589,62 @@ def _generation_endpoint_tool_bindings(
             continue
         provider = endpoint_provider(name)
         models = _generation_endpoint_models(provider, endpoint.model, feature_models_by_provider)
+        adapter_style = (
+            AIAdapterStyle.DAEMON
+            if endpoint.wire_api == "responses"
+            else AIAdapterStyle.OPENAI_COMPATIBLE
+        )
+        metadata: dict[str, object] = {
+            "display_name": name,
+            "api_base": endpoint.api_base,
+            "endpoint": name,
+            "execution_provider": ("codex" if endpoint.wire_api == "responses" else provider),
+            "protocol": endpoint.protocol,
+            "wire_api": endpoint.wire_api,
+            "supports_tools": True,
+        }
+        unavailable_reason = _tool_chat_endpoint_unavailable_reason(name, endpoint)
+        if unavailable_reason is not None:
+            metadata["supports_tools"] = False
+            bindings.append(
+                CapabilityBinding.unavailable(
+                    AICapability.TOOL_CHAT,
+                    provider,
+                    adapter_style=adapter_style,
+                    reason=unavailable_reason,
+                    models=models,
+                    metadata=metadata,
+                )
+            )
+            continue
         bindings.append(
             CapabilityBinding(
                 capability=AICapability.TOOL_CHAT,
                 provider=provider,
-                adapter_style=(
-                    AIAdapterStyle.DAEMON
-                    if endpoint.wire_api == "responses"
-                    else AIAdapterStyle.OPENAI_COMPATIBLE
-                ),
+                adapter_style=adapter_style,
                 available=True,
                 models=models,
-                metadata={
-                    "display_name": name,
-                    "api_base": endpoint.api_base,
-                    "endpoint": name,
-                    "execution_provider": (
-                        "codex" if endpoint.wire_api == "responses" else provider
-                    ),
-                    "protocol": endpoint.protocol,
-                    "wire_api": endpoint.wire_api,
-                    "supports_tools": True,
-                },
+                metadata=metadata,
             )
         )
     return tuple(bindings)
+
+
+def _tool_chat_endpoint_unavailable_reason(
+    name: str, endpoint: GenerationEndpointConfig
+) -> str | None:
+    # probed_tools=False is activation evidence; config.tool_chat is never mutated.
+    if endpoint.probed_tools is False:
+        return (
+            f"Tool-call probe failed for endpoint {name!r}; "
+            "tool_chat remains configured but unavailable until a successful activation."
+        )
+    if endpoint.wire_api == "responses":
+        return None
+    client = create_local_provider_adapter(endpoint).client
+    if client is None:
+        return f"Local client for endpoint {name!r} is unavailable"
+    return None
 
 
 def _vision_extract_adapter_style(provider: str) -> AIAdapterStyle | None:
