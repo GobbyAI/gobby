@@ -70,6 +70,7 @@ from gobby.config.sessions import (
 from gobby.config.skills import SkillsConfig
 from gobby.config.system_loops import SystemLoopsConfig
 from gobby.config.tasks import CompactHandoffConfig, GobbyTasksConfig, WorkflowConfig
+from gobby.config.terminals import TerminalConfig
 from gobby.config.tmux import TmuxConfig
 from gobby.config.ui import (
     ToolApprovalConfig,
@@ -392,6 +393,10 @@ class DaemonConfig(BaseModel):
     tmux: TmuxConfig = Field(
         default_factory=TmuxConfig,
         description="Tmux agent spawning configuration",
+    )
+    terminals: TerminalConfig = Field(
+        default_factory=TerminalConfig,
+        description="Backend-neutral terminal spawn and in-doubt configuration",
     )
     cron: CronConfig = Field(
         default_factory=CronConfig,

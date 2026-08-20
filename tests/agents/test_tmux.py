@@ -38,7 +38,6 @@ from gobby.agents.tmux.text_injection import (
 )
 from gobby.config.tmux import TmuxConfig
 from gobby.config.tmux import TmuxConfig as TmuxConfigCanonical
-from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -1584,7 +1583,6 @@ class TestTmuxSpawner:
 
             assert result.success is True
             assert result.pid == 456
-            assert result.terminal_id == "test-session"
             assert result.tmux_socket_name == "gobby"
             assert result.tmux_socket_path is None
 
@@ -2651,3 +2649,46 @@ class TestTmuxTargetProbe:
 
         assert probe.state is TmuxProbeState.INDETERMINATE
         assert not caplog.records
+
+
+@pytest.mark.asyncio
+async def test_session_manager_injection_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Existing injection byte sequences stay intact through TmuxTerminalRuntime."""
+    from gobby.storage.terminals import Terminal
+    from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
+    from tests.terminals.fakes import make_memory_terminal
+
+    commands: list[list[str]] = []
+    sleep = AsyncMock()
+
+    async def fake_exec(*args: str, **_kwargs: object) -> MagicMock:
+        commands.append(list(args))
+        proc = MagicMock()
+        proc.returncode = 0
+        proc.communicate = AsyncMock(return_value=(b"", b""))
+        return proc
+
+    monkeypatch.setattr(
+        "gobby.agents.tmux.text_injection.asyncio.create_subprocess_exec",
+        fake_exec,
+    )
+    monkeypatch.setattr("gobby.agents.tmux.text_injection.asyncio.sleep", sleep)
+    monkeypatch.setattr("gobby.terminals.tmux_runtime.asyncio.sleep", sleep)
+
+    sessions = TmuxSessionManager(
+        TmuxConfig(
+            command="/opt/tmux", socket_path="/tmp/tmux-501/gobby", config_file="/tmp/tmux.conf"
+        )
+    )
+    runtime = TmuxTerminalRuntime(sessions)
+    terminal: Terminal = make_memory_terminal()
+    await runtime.write_text(terminal, "-X message\n", submit=True)
+
+    tmux_cmd = ["/opt/tmux", "-S", "/tmp/tmux-501/gobby", "-f", "/tmp/tmux.conf"]
+    assert commands
+    assert commands[0][:5] == tmux_cmd
+    assert "set-buffer" in commands[0]
+    assert any(command[-1] == "Enter" for command in commands if "send-keys" in command)
+    assert not any("send-keys" in command and "-l" in command for command in commands)

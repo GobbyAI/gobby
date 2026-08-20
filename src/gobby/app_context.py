@@ -31,9 +31,12 @@ if TYPE_CHECKING:
     from gobby.agents.attention_metadata import AttentionMetadataStore
     from gobby.agents.detection.registry import DetectionManifestRegistry
     from gobby.config.runtime import ConfigRuntime
+    from gobby.config.terminals import TerminalConfig
     from gobby.events.wake import WakeDispatcher
     from gobby.mcp_proxy.manager import MCPClientManager
     from gobby.memory.dream.coordinator import MemoryDreamCoordinator
+    from gobby.storage.terminals import TerminalManager
+    from gobby.terminals import TerminalRuntimeRegistry
 
 
 @dataclass
@@ -92,6 +95,9 @@ class ServiceContainer:
     attention_manager: Any | None = None  # AttentionStateManager
     attention_metadata_store: AttentionMetadataStore | None = None
     detection_registry: DetectionManifestRegistry | None = None
+    terminal_manager: TerminalManager | None = None
+    terminal_runtime_registry: TerminalRuntimeRegistry | None = None
+    terminal_config: TerminalConfig | None = None
 
     # Communications
     communications_manager: Any | None = None  # CommunicationsManager

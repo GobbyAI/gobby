@@ -206,7 +206,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
         logger.warning("Failed to initialize workflow loader", exc_info=True)
 
     from gobby.agents.attention_metadata import AttentionMetadataStore
-    from gobby.agents.tmux import configure_tmux
+    from gobby.agents.tmux import configure_tmux, get_tmux_session_manager
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.events.wake import WakeDispatcher
     from gobby.storage.agents import LocalAgentRunManager
@@ -326,6 +326,15 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
     from gobby.storage.checkpoints import LocalCheckpointManager
 
     runner.detection_registry = DetectionManifestRegistry(runner.database)
+    from gobby.storage.terminals import TerminalManager
+    from gobby.terminals import TerminalRuntimeRegistry
+    from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
+
+    runner.terminal_manager = TerminalManager(runner.database)
+    runner.terminal_config = config.terminals
+    terminal_runtime_registry = TerminalRuntimeRegistry()
+    terminal_runtime_registry.register(TmuxTerminalRuntime(get_tmux_session_manager()))
+    runner.terminal_runtime_registry = terminal_runtime_registry
     try:
         runner.agent_lifecycle_monitor = AgentLifecycleMonitor(
             agent_run_manager=LocalAgentRunManager(runner.database),

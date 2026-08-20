@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
     from gobby.config.bootstrap import BootstrapConfig
     from gobby.config.runtime import ConfigRuntime
+    from gobby.config.terminals import TerminalConfig
     from gobby.daemon_lease import ActiveDaemonLease
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.events.wake import WakeDispatcher
@@ -68,9 +69,11 @@ if TYPE_CHECKING:
     from gobby.storage.skills import LocalSkillManager
     from gobby.storage.spans import SpanStorage
     from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.terminals import TerminalManager
     from gobby.storage.worktrees import LocalWorktreeManager
     from gobby.sync.memories import MemoryBackupManager
     from gobby.tasks.validation import TaskValidator
+    from gobby.terminals import TerminalRuntimeRegistry
     from gobby.wiki.watcher import WikiWatcher
     from gobby.workflows.pipeline_executor import PipelineExecutor
     from gobby.workflows.pipeline_loader import PipelineLoader
@@ -197,6 +200,9 @@ class GobbyRunner:
     agent_runner: AgentRunner | None
     agent_lifecycle_monitor: AgentLifecycleMonitor | None
     detection_registry: DetectionManifestRegistry
+    terminal_manager: TerminalManager
+    terminal_runtime_registry: TerminalRuntimeRegistry
+    terminal_config: TerminalConfig
     attention_manager: AttentionStateManager
     attention_metadata_store: AttentionMetadataStore
     lifecycle_manager: SessionLifecycleManager

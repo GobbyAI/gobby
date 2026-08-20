@@ -583,6 +583,26 @@ class TerminalManager:
             raise KeyError(terminal_id)
         return Terminal.from_row(row)
 
+    def clear_unresolved_write(self, terminal_id: str, action_key: str) -> Terminal:
+        """Drop one action_key from the durable unresolved-write map."""
+        current = self.get(terminal_id)
+        if current is None:
+            raise KeyError(terminal_id)
+        writes = dict(current.unresolved_writes)
+        writes.pop(action_key, None)
+        row = self.db.fetchone(
+            """
+            UPDATE terminals
+            SET unresolved_writes = %s, updated_at = now()
+            WHERE id = %s
+            RETURNING *
+            """,
+            (Jsonb(writes), str(UUID(terminal_id))),
+        )
+        if row is None:
+            raise KeyError(terminal_id)
+        return Terminal.from_row(row)
+
     def set_automatic_write_quarantine(self, terminal_id: str, action_key: str) -> Terminal:
         """Set both quarantine columns together."""
         row = self.db.fetchone(

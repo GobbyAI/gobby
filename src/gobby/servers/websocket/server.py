@@ -128,6 +128,9 @@ class WebSocketServer(
         self.hook_broadcaster: HookEventBroadcaster | None = None
         self.inter_session_msg_manager: InterSessionMessageManager | None = None
         self.web_chat_runtime_manager: Any | None = None
+        self.terminal_manager: Any | None = None
+        self.terminal_runtime_registry: Any | None = None
+        self.terminal_config: Any | None = None
 
         # Connected clients: {websocket: client_metadata}
         self.clients: dict[Any, dict[str, Any]] = {}
@@ -180,6 +183,17 @@ class WebSocketServer(
         self._server: Any = None
         self._serve_task: asyncio.Task[None] | None = None
         self._cleanup_task: asyncio.Task[None] | None = None
+
+    def configure_terminals(
+        self,
+        terminal_manager: Any,
+        runtime_registry: Any,
+        terminal_config: Any | None = None,
+    ) -> None:
+        """Attach composition-root terminal services after construction."""
+        self.terminal_manager = terminal_manager
+        self.terminal_runtime_registry = runtime_registry
+        self.terminal_config = terminal_config
 
     @property
     def daemon_config(self) -> DaemonConfig | None:

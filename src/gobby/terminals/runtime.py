@@ -1,0 +1,169 @@
+"""Backend-neutral TerminalRuntime contract (plan 2.2)."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Literal, Protocol
+from uuid import UUID
+
+from gobby.storage.terminals import AttachLocator, Terminal
+
+NamedKey = Literal[
+    "enter",
+    "escape",
+    "tab",
+    "up",
+    "down",
+    "left",
+    "right",
+    "kp0",
+    "kp1",
+    "kp2",
+    "kp3",
+    "kp4",
+    "kp5",
+    "kp6",
+    "kp7",
+    "kp8",
+    "kp9",
+    "kpdecimal",
+    "kpplus",
+    "kpminus",
+    "kpmul",
+    "kpdiv",
+    "kpenter",
+]
+
+MAX_INPUT_PAYLOAD_BYTES = 1024 * 1024
+
+
+@dataclass(frozen=True)
+class ProcessIdentity:
+    """Native process identity recorded after prepare_spawn."""
+
+    pgid: int
+    start_time: int
+
+
+@dataclass
+class PreparedSpawn:
+    """Staged handoff between backend effect and caller acknowledgements."""
+
+    terminal_id: UUID
+    spawn_key: str
+    locator: AttachLocator | None
+    process: ProcessIdentity | None
+    host_terminal_id: str | None
+    persist_acknowledged: bool = False
+    observer_bound: bool = False
+
+    def acknowledge_persist(self) -> None:
+        self.persist_acknowledged = True
+
+    def acknowledge_observer(self) -> None:
+        self.observer_bound = True
+
+
+@dataclass(frozen=True)
+class TerminalHandle:
+    """Committed terminal identity plus the backend locator."""
+
+    terminal_id: UUID
+    locator: AttachLocator
+
+
+@dataclass
+class TerminalSpawnRequest:
+    """Caller-allocated spawn identity plus command payload."""
+
+    terminal_id: UUID
+    spawn_key: str
+    command: list[str]
+    cwd: str | None = None
+    env: dict[str, str] | None = None
+    rows: int | None = None
+    cols: int | None = None
+    title: str | None = None
+    labels: dict[str, str] | None = None
+    reservation_id: str | None = None
+    reserve_key: str | None = None
+
+
+@dataclass(frozen=True)
+class SnapshotResult:
+    """Captured text plus UTF-8 byte counters; None means the backend cannot know."""
+
+    text: str
+    truncated: bool
+    dropped_bytes: int | None
+    total_bytes: int | None
+
+
+@dataclass(frozen=True)
+class Delivered:
+    """Write reached the backend and a definitive success reply arrived."""
+
+
+@dataclass(frozen=True)
+class IndeterminateWrite:
+    """Backend effect may have landed; the reply was lost or timed out."""
+
+    detail: str = ""
+
+
+WriteOutcome = Delivered | IndeterminateWrite
+
+
+class UnregisteredBackendError(KeyError):
+    """Raised when the runtime registry has no implementation for a backend."""
+
+    def __init__(self, backend: str) -> None:
+        super().__init__(backend)
+        self.backend = backend
+
+
+class CommitSpawnRefusedError(RuntimeError):
+    """commit_spawn called before the caller acknowledged persist."""
+
+
+class InputPayloadTooLargeError(ValueError):
+    """Write payload exceeded MAX_INPUT_PAYLOAD_BYTES."""
+
+
+class TerminalWriteError(RuntimeError):
+    """Typed write failure that did not lose its injection stage."""
+
+    def __init__(self, *, stage: Literal["none", "partial"]) -> None:
+        super().__init__(f"terminal write failed at stage {stage}")
+        self.stage = stage
+
+
+class TerminalRuntime(Protocol):
+    """Lifecycle, snapshot, input, resize, and attach-locator resolution.
+
+    Continuous output streaming is deliberately outside this contract.
+    """
+
+    backend: Literal["tmux", "native"]
+
+    async def prepare_spawn(self, request: TerminalSpawnRequest) -> PreparedSpawn: ...
+
+    async def commit_spawn(self, prepared: PreparedSpawn) -> TerminalHandle: ...
+
+    async def is_live(self, terminal: Terminal) -> bool: ...
+
+    async def snapshot(self, terminal: Terminal, lines: int = 50) -> SnapshotResult: ...
+
+    async def snapshot_full(self, terminal: Terminal) -> SnapshotResult: ...
+
+    async def write_text(self, terminal: Terminal, text: str, submit: bool) -> WriteOutcome: ...
+
+    async def write_key(self, terminal: Terminal, key: NamedKey) -> WriteOutcome: ...
+
+    async def write_paste(self, terminal: Terminal, text: str) -> WriteOutcome: ...
+
+    async def resize(self, terminal: Terminal, rows: int, cols: int) -> None: ...
+
+    async def terminate(self, terminal: Terminal, grace_seconds: float) -> None: ...
+
+    async def attach_locator(self, terminal: Terminal) -> AttachLocator: ...

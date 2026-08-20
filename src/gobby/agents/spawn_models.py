@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from gobby.providers.capabilities.apply import SpeedResultData
     from gobby.providers.capabilities.resolve import SpeedResolution
     from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.terminals import AttachLocator
 
 
 @dataclass
@@ -84,4 +85,6 @@ class SpawnResult:
     tmux_session_name: str | None = None
     tmux_socket_name: str | None = None
     tmux_socket_path: str | None = None
+    terminal_id: str | None = None
+    locator: AttachLocator | None = None
     speed: SpeedResultData | None = None

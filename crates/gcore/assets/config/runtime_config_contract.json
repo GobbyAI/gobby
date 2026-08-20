@@ -4076,6 +4076,28 @@
       "visibility": "public"
     },
     {
+      "activation": "live",
+      "default": "tmux",
+      "description": "Default TerminalRuntime backend for new Gobby-owned terminals.",
+      "key": "terminals.default_backend",
+      "machineExport": false,
+      "namespace": "terminals",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 150.0,
+      "description": "Age below which a pending spawn is in doubt, not dead. Defaults to the tmux init timeout (120s) plus a 30s margin.",
+      "key": "terminals.spawn_in_doubt_seconds",
+      "machineExport": false,
+      "namespace": "terminals",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
       "activation": "restart_required",
       "default": false,
       "description": "Run daemon in test mode (enables test endpoints)",
