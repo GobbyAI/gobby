@@ -19,7 +19,12 @@ if TYPE_CHECKING:
     from gobby.config.ai import GenerationEndpointConfig
     from gobby.storage.agents import LocalAgentRunManager
 
-__all__ = ["ensure_local_model", "LocalModelError", "resolve_vllm_served_model"]
+__all__ = [
+    "ensure_local_model",
+    "LocalModelError",
+    "resolve_vllm_served_model",
+    "select_vllm_served_model",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -368,6 +373,25 @@ def _format_served_models(served: list[str]) -> str:
     return ", ".join(served) if served else "(none)"
 
 
+def select_vllm_served_model(endpoint: GenerationEndpointConfig, served: list[str]) -> str:
+    """Apply the auto-exactly-one / explicit-present rule to a served catalog."""
+    requested = endpoint.model.strip()
+    if requested == "auto":
+        if len(served) == 1:
+            logger.info("Auto-detected vLLM model: %s", served[0])
+            return served[0]
+        raise LocalModelError(
+            "model: auto requires exactly one served vLLM model; "
+            f"found {len(served)}: {_format_served_models(served)}"
+        )
+    if requested in served:
+        return requested
+    raise LocalModelError(
+        f"vLLM endpoint at {endpoint.api_base} does not serve model {requested!r}. "
+        f"Served models: {_format_served_models(served)}"
+    )
+
+
 async def resolve_vllm_served_model(endpoint: GenerationEndpointConfig) -> str:
     """Resolve a vLLM endpoint's model id from GET {origin}/v1/models.
 
@@ -399,19 +423,4 @@ async def resolve_vllm_served_model(endpoint: GenerationEndpointConfig) -> str:
                 f"vLLM endpoint at {endpoint.api_base} returned invalid model catalog JSON"
             ) from e
 
-    served = _vllm_served_model_ids(payload)
-    requested = endpoint.model.strip()
-    if requested == "auto":
-        if len(served) == 1:
-            logger.info("Auto-detected vLLM model: %s", served[0])
-            return served[0]
-        raise LocalModelError(
-            "model: auto requires exactly one served vLLM model; "
-            f"found {len(served)}: {_format_served_models(served)}"
-        )
-    if requested in served:
-        return requested
-    raise LocalModelError(
-        f"vLLM endpoint at {endpoint.api_base} does not serve model {requested!r}. "
-        f"Served models: {_format_served_models(served)}"
-    )
+    return select_vllm_served_model(endpoint, _vllm_served_model_ids(payload))

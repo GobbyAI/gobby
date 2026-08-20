@@ -458,3 +458,182 @@ async def test_discovery_failure_falls_back_to_configured_default(
     assert group.source == "config"
     assert group.error
     assert group.models == []
+
+
+_VLLM_HEALTH_URL = "http://localhost:8000/health"
+_VLLM_MODELS_URL = "http://localhost:8000/v1/models"
+_VLLM_PROBED_ID = "Qwen/Qwen2.5-VL-7B-Instruct"
+_VLLM_OTHER_ID = "meta-llama/Llama-3.1-8B-Instruct"
+
+
+def _vllm_client(models_payload: dict[str, Any]) -> _FakeAsyncClient:
+    return _FakeAsyncClient(
+        {
+            _VLLM_HEALTH_URL: _FakeResponse(_VLLM_HEALTH_URL, {}),
+            _VLLM_MODELS_URL: _FakeResponse(_VLLM_MODELS_URL, models_payload),
+        }
+    )
+
+
+def _patch_discovery_client(monkeypatch: pytest.MonkeyPatch, fake_client: _FakeAsyncClient) -> None:
+    monkeypatch.setattr(
+        "gobby.servers.local_provider_models.httpx.AsyncClient",
+        lambda: fake_client,
+    )
+
+
+def _entry_by_canonical(models: list[dict[str, Any]], canonical_id: str) -> dict[str, Any]:
+    matches = [
+        entry
+        for entry in models
+        if entry.get("canonical_id") == canonical_id and entry.get("is_default") is not True
+    ]
+    assert len(matches) == 1, f"expected one served entry for {canonical_id!r}, got {matches!r}"
+    return matches[0]
+
+
+def _default_entry(models: list[dict[str, Any]]) -> dict[str, Any] | None:
+    defaults = [entry for entry in models if entry.get("is_default") is True]
+    assert len(defaults) <= 1
+    return defaults[0] if defaults else None
+
+
+def _two_vllm_models_payload() -> dict[str, Any]:
+    return {
+        "data": [
+            {"id": _VLLM_PROBED_ID, "max_model_len": 32768},
+            {"id": _VLLM_OTHER_ID, "max_model_len": 8192},
+        ]
+    }
+
+
+@pytest.mark.asyncio
+async def test_vllm_discovery_error_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    endpoint = GenerationEndpointConfig(
+        protocol="vllm",
+        api_base="http://localhost:8000/v1",
+        model=_VLLM_PROBED_ID,
+    )
+    fake_client = _FakeAsyncClient({})
+    _patch_discovery_client(monkeypatch, fake_client)
+
+    group = await discover_local_endpoint_model_group("vllm-local", endpoint)
+
+    assert fake_client.urls == [_VLLM_HEALTH_URL]
+    assert group.source == "config"
+    assert group.error
+    assert group.display_name == "Local: vLLM"
+    assert group.models == []
+
+
+@pytest.mark.asyncio
+async def test_vllm_modalities_probed_model_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    vision_modalities = ["text", "image"]
+    two_model_payload = _two_vllm_models_payload()
+
+    probed_default_client = _vllm_client(two_model_payload)
+    _patch_discovery_client(monkeypatch, probed_default_client)
+    probed_default = await discover_local_endpoint_model_group(
+        "vllm-local",
+        GenerationEndpointConfig(
+            protocol="vllm",
+            api_base="http://localhost:8000/v1",
+            model=_VLLM_PROBED_ID,
+            probed_model=_VLLM_PROBED_ID,
+            input_modalities=vision_modalities,
+        ),
+    )
+
+    assert probed_default_client.urls == [_VLLM_HEALTH_URL, _VLLM_MODELS_URL]
+    assert probed_default.source == "live"
+    assert probed_default.display_name == "Local: vLLM"
+    probed_entry = _entry_by_canonical(probed_default.models, _VLLM_PROBED_ID)
+    other_entry = _entry_by_canonical(probed_default.models, _VLLM_OTHER_ID)
+    default_entry = _default_entry(probed_default.models)
+    assert default_entry is not None
+    assert default_entry["value"] == "endpoint:vllm-local"
+    assert probed_entry["context_length"] == 32768
+    assert probed_entry["context_length_source"] == "provider_reported"
+    assert probed_entry["input_modalities"] == vision_modalities
+    assert other_entry["context_length"] == 8192
+    assert other_entry.get("input_modalities") is None
+    assert default_entry["input_modalities"] == vision_modalities
+
+    unprobed_default_client = _vllm_client(two_model_payload)
+    _patch_discovery_client(monkeypatch, unprobed_default_client)
+    unprobed_default = await discover_local_endpoint_model_group(
+        "vllm-local",
+        GenerationEndpointConfig(
+            protocol="vllm",
+            api_base="http://localhost:8000/v1",
+            model=_VLLM_OTHER_ID,
+            probed_model=_VLLM_PROBED_ID,
+            input_modalities=vision_modalities,
+        ),
+    )
+    unprobed_alias = _default_entry(unprobed_default.models)
+    assert unprobed_alias is not None
+    assert unprobed_alias["canonical_id"] == _VLLM_OTHER_ID
+    assert unprobed_alias.get("input_modalities") is None
+    assert _entry_by_canonical(unprobed_default.models, _VLLM_PROBED_ID)["input_modalities"] == (
+        vision_modalities
+    )
+    assert _entry_by_canonical(unprobed_default.models, _VLLM_OTHER_ID).get("input_modalities") is (
+        None
+    )
+
+    auto_single_client = _vllm_client({"data": [{"id": _VLLM_PROBED_ID, "max_model_len": 32768}]})
+    _patch_discovery_client(monkeypatch, auto_single_client)
+    auto_single = await discover_local_endpoint_model_group(
+        "vllm-local",
+        GenerationEndpointConfig(
+            protocol="vllm",
+            api_base="http://localhost:8000/v1",
+            model="auto",
+            probed_model=_VLLM_PROBED_ID,
+            input_modalities=vision_modalities,
+        ),
+    )
+    auto_default = _default_entry(auto_single.models)
+    assert auto_default is not None
+    assert auto_default["value"] == "endpoint:vllm-local"
+    assert auto_default["input_modalities"] == vision_modalities
+    assert _entry_by_canonical(auto_single.models, _VLLM_PROBED_ID)["input_modalities"] == (
+        vision_modalities
+    )
+
+    auto_multi_client = _vllm_client(two_model_payload)
+    _patch_discovery_client(monkeypatch, auto_multi_client)
+    auto_multi = await discover_local_endpoint_model_group(
+        "vllm-local",
+        GenerationEndpointConfig(
+            protocol="vllm",
+            api_base="http://localhost:8000/v1",
+            model="auto",
+            probed_model=_VLLM_PROBED_ID,
+            input_modalities=vision_modalities,
+        ),
+    )
+    assert _default_entry(auto_multi.models) is None
+    assert _entry_by_canonical(auto_multi.models, _VLLM_PROBED_ID)["input_modalities"] == (
+        vision_modalities
+    )
+    assert _entry_by_canonical(auto_multi.models, _VLLM_OTHER_ID).get("input_modalities") is None
+
+    stale_probe_client = _vllm_client(two_model_payload)
+    _patch_discovery_client(monkeypatch, stale_probe_client)
+    stale_probe = await discover_local_endpoint_model_group(
+        "vllm-local",
+        GenerationEndpointConfig(
+            protocol="vllm",
+            api_base="http://localhost:8000/v1",
+            model=_VLLM_OTHER_ID,
+            probed_model="missing-served-id",
+            input_modalities=vision_modalities,
+        ),
+    )
+    assert _entry_by_canonical(stale_probe.models, _VLLM_PROBED_ID).get("input_modalities") is None
+    assert _entry_by_canonical(stale_probe.models, _VLLM_OTHER_ID).get("input_modalities") is None
+    stale_default = _default_entry(stale_probe.models)
+    assert stale_default is not None
+    assert stale_default.get("input_modalities") is None
