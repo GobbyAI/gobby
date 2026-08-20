@@ -9,6 +9,10 @@ import pytest
 from gobby.agents import terminal_cleanup, terminal_delivery
 from gobby.agents.agent_cleanup import AgentCleanupHandler
 from gobby.storage.agents import AgentRun, AgentRunStatus, AgentRunTerminalReason
+from gobby.storage.terminals import Terminal
+from gobby.terminals import TerminalRuntimeRegistry
+from gobby.terminals.runtime import SnapshotResult
+from gobby.terminals.services import TerminalServices
 from tests.agents.cleanup_test_support import (
     AcknowledgingCompletionRegistry,
     RecordingDb,
@@ -18,7 +22,7 @@ from tests.agents.cleanup_test_support import (
     _stub_runtime_cleanup,
 )
 from tests.agents.test_capture import FakeCaptureStorage
-from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
+from tests.terminals.fakes import FakeRuntime, MemoryTerminalStore, make_memory_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -228,29 +232,36 @@ class _CaptureWrapperStorage(FakeCaptureStorage):
         return self._terminal(run_id, "success")
 
 
-class _FakeTmux:
-    def __init__(self, *, kill_succeeds: bool = True, alive: bool = True) -> None:
-        self.alive = alive
-        self.kill_succeeds = kill_succeeds
-        self.kills: list[str] = []
+class _StickyRuntime(FakeRuntime):
+    async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
+        del grace_seconds
+        name = terminal.session_name or terminal.spawn_key
+        if name is not None:
+            self.killed.append(name)
 
-    async def has_session(self, name: str) -> bool:
-        return self.alive
 
-    async def capture_full_pane(self, session_name: str) -> str | None:
-        return "pane output" if self.alive else None
-
-    async def kill_session(
-        self,
-        name: str,
-        *,
-        missing_ok: bool = False,
-        timeout: float = 5.0,
-    ) -> bool:
-        self.kills.append(name)
-        if self.kill_succeeds:
-            self.alive = False
-        return self.kill_succeeds
+def _capture_services(
+    *,
+    live: bool = True,
+    kill_succeeds: bool = True,
+) -> tuple[TerminalServices, FakeRuntime]:
+    terminal = make_memory_terminal(terminal_id="wf-live", session_name="wf-live")
+    if not live:
+        terminal.state = "exited"
+    store = MemoryTerminalStore(terminal)
+    runtime: FakeRuntime = FakeRuntime() if kill_succeeds else _StickyRuntime()
+    runtime.snapshot_text = "pane output"
+    runtime.snapshot_full_result = SnapshotResult(
+        text="pane output",
+        truncated=False,
+        dropped_bytes=0,
+        total_bytes=len(b"pane output"),
+    )
+    if live:
+        runtime.live_keys.add("wf-live")
+    registry = TerminalRuntimeRegistry()
+    registry.register(runtime)
+    return TerminalServices(manager=store, registry=registry), runtime
 
 
 def _tmux_run(status: AgentRunStatus = "running") -> AgentRun:
@@ -260,8 +271,11 @@ def _tmux_run(status: AgentRunStatus = "running") -> AgentRun:
     )
 
 
-def _wrapper_handler(storage: _CaptureWrapperStorage) -> tuple[AgentCleanupHandler, list[AgentRun]]:
-    handler = _handler(MagicMock(), agent_run_manager=storage)
+def _wrapper_handler(
+    storage: _CaptureWrapperStorage,
+    services: TerminalServices,
+) -> tuple[AgentCleanupHandler, list[AgentRun]]:
+    handler = _handler(MagicMock(), agent_run_manager=storage, terminal_services=services)
     cleanup_runs: list[AgentRun] = []
 
     async def post_terminal_cleanup(run: AgentRun, **kwargs: object) -> None:
@@ -273,17 +287,16 @@ def _wrapper_handler(storage: _CaptureWrapperStorage) -> tuple[AgentCleanupHandl
 
 async def test_terminalize_successful_run_captures_live_tmux_before_kill() -> None:
     storage = _CaptureWrapperStorage(_tmux_run())
-    tmux = _FakeTmux()
-    handler, cleanup_runs = _wrapper_handler(storage)
+    services, runtime = _capture_services()
+    handler, cleanup_runs = _wrapper_handler(storage, services)
 
-    with patch("gobby.agents.tmux.get_tmux_session_manager", return_value=tmux):
-        assert await handler.terminalize_successful_run(
-            "run-1",
-            notify_result={"status": "completed"},
-            message="done",
-        )
+    assert await handler.terminalize_successful_run(
+        "run-1",
+        notify_result={"status": "completed"},
+        message="done",
+    )
 
-    assert tmux.kills == ["wf-live"]
+    assert runtime.killed == ["wf-live"]
     stored = storage.get("run-1")
     assert stored is not None
     assert stored.status == "success"
@@ -294,15 +307,14 @@ async def test_terminalize_successful_run_captures_live_tmux_before_kill() -> No
 
 async def test_terminalize_successful_run_kill_failure_keeps_run_nonterminal() -> None:
     storage = _CaptureWrapperStorage(_tmux_run())
-    tmux = _FakeTmux(kill_succeeds=False)
-    handler, cleanup_runs = _wrapper_handler(storage)
+    services, _runtime = _capture_services(kill_succeeds=False)
+    handler, cleanup_runs = _wrapper_handler(storage, services)
 
-    with patch("gobby.agents.tmux.get_tmux_session_manager", return_value=tmux):
-        assert not await handler.terminalize_successful_run(
-            "run-1",
-            notify_result={"status": "completed"},
-            message="done",
-        )
+    assert not await handler.terminalize_successful_run(
+        "run-1",
+        notify_result={"status": "completed"},
+        message="done",
+    )
 
     stored = storage.get("run-1")
     assert stored is not None
@@ -314,16 +326,15 @@ async def test_terminalize_successful_run_kill_failure_keeps_run_nonterminal() -
 
 async def test_terminalize_cancelled_run_captures_live_tmux_before_kill() -> None:
     storage = _CaptureWrapperStorage(_tmux_run())
-    tmux = _FakeTmux()
-    handler, cleanup_runs = _wrapper_handler(storage)
+    services, runtime = _capture_services()
+    handler, cleanup_runs = _wrapper_handler(storage, services)
 
-    with patch("gobby.agents.tmux.get_tmux_session_manager", return_value=tmux):
-        assert await handler.terminalize_cancelled_run(
-            "run-1",
-            terminal_reason="user_cancelled",
-        )
+    assert await handler.terminalize_cancelled_run(
+        "run-1",
+        terminal_reason="user_cancelled",
+    )
 
-    assert tmux.kills == ["wf-live"]
+    assert runtime.killed == ["wf-live"]
     stored = storage.get("run-1")
     assert stored is not None
     assert stored.status == "cancelled"
@@ -333,17 +344,16 @@ async def test_terminalize_cancelled_run_captures_live_tmux_before_kill() -> Non
 
 async def test_terminalize_wrappers_skip_policy_when_session_absent() -> None:
     storage = _CaptureWrapperStorage(_tmux_run())
-    tmux = _FakeTmux(alive=False)
-    handler, cleanup_runs = _wrapper_handler(storage)
+    services, runtime = _capture_services(live=False)
+    handler, cleanup_runs = _wrapper_handler(storage, services)
 
-    with patch("gobby.agents.tmux.get_tmux_session_manager", return_value=tmux):
-        assert await handler.terminalize_successful_run(
-            "run-1",
-            notify_result={"status": "completed"},
-            message="done",
-        )
+    assert await handler.terminalize_successful_run(
+        "run-1",
+        notify_result={"status": "completed"},
+        message="done",
+    )
 
-    assert tmux.kills == []
+    assert runtime.killed == []
     assert not any(event.startswith("intent:") for event in storage.events)
     assert not any(event.startswith("persist:") for event in storage.events)
     stored = storage.get("run-1")

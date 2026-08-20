@@ -146,7 +146,7 @@ class TestPaneOwnershipLifecycle:
         manager.release_window_title_ownership = AsyncMock(return_value=TmuxReleaseOutcome.RELEASED)
 
         with patch(
-            "gobby.sessions.liveness_monitor.get_tmux_manager_for_context",
+            "gobby.sessions.liveness_monitor.manager_for_terminal_context",
             return_value=manager,
         ):
             await monitor._release_tmux_title(record)
@@ -170,7 +170,7 @@ class TestPaneOwnershipLifecycle:
         )
 
         with patch(
-            "gobby.sessions.liveness_monitor.get_tmux_manager_for_context",
+            "gobby.sessions.liveness_monitor.manager_for_terminal_context",
             return_value=manager,
         ):
             await monitor._release_tmux_title(record)

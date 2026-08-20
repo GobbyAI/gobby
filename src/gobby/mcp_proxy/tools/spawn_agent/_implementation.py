@@ -683,6 +683,7 @@ async def spawn_agent_impl(
             prepared_spawn=prepared_spawn,
             terminal_manager=getattr(runner, "terminal_manager", None),
             terminal_runtime_registry=getattr(runner, "terminal_runtime_registry", None),
+            write_coordinator=getattr(runner, "write_coordinator", None),
         )
         try:
             spawn_result = await execute_spawn(spawn_request)

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Literal, Protocol, TypeIs, get_args
 from uuid import UUID
 
 from gobby.storage.terminals import AttachLocator, Terminal
@@ -35,6 +36,11 @@ NamedKey = Literal[
 ]
 
 MAX_INPUT_PAYLOAD_BYTES = 1024 * 1024
+
+
+def is_named_key(value: str) -> TypeIs[NamedKey]:
+    """Narrow a write payload to the NamedKey contract."""
+    return value in get_args(NamedKey)
 
 
 @dataclass(frozen=True)
@@ -107,14 +113,38 @@ class Delivered:
     """Write reached the backend and a definitive success reply arrived."""
 
 
-@dataclass(frozen=True)
-class IndeterminateWrite:
+class IndeterminateWrite(Exception):
     """Backend effect may have landed; the reply was lost or timed out."""
 
-    detail: str = ""
+    def __init__(self, detail: str = "") -> None:
+        super().__init__(detail)
+        self.detail = detail
 
 
-WriteOutcome = Delivered | IndeterminateWrite
+@dataclass(frozen=True)
+class Suppressed:
+    """Automatic write skipped because this action_key is already unresolved."""
+
+    action_key: str
+    reason: str = "unresolved_write"
+
+
+@dataclass(frozen=True)
+class AutomaticWriteQuarantined:
+    """Automatic write refused because the terminal is quarantined."""
+
+    action_key: str
+    reason: str = "automatic_write_quarantined"
+
+
+@dataclass(frozen=True)
+class LoopMisuse:
+    """Sync bridge called on the runner loop thread; nothing was dispatched."""
+
+    code: Literal["loop_misuse"] = "loop_misuse"
+
+
+WriteOutcome = Delivered | IndeterminateWrite | Suppressed | AutomaticWriteQuarantined
 
 
 class UnregisteredBackendError(KeyError):
@@ -178,3 +208,15 @@ class TerminalRuntime(Protocol):
     async def terminate(self, terminal: Terminal, grace_seconds: float) -> None: ...
 
     async def attach_locator(self, terminal: Terminal) -> AttachLocator: ...
+
+
+class ObserverReservingRuntime(Protocol):
+    """Native runtimes that hold an observer slot before prepare_spawn."""
+
+    async def reserve_observer(self, terminal_id: UUID) -> Mapping[str, str]: ...
+
+
+def can_reserve_observer(runtime: object) -> TypeIs[ObserverReservingRuntime]:
+    """Narrow a runtime that implements native observer reservation."""
+    reserve = getattr(runtime, "reserve_observer", None)
+    return callable(reserve)

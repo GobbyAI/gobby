@@ -245,7 +245,7 @@ async def _reconcile_agent_runs_after_restart(
         runner,
         include_fenced=include_fenced,
     )
-    non_tmux_runs = [run for run in active_runs if not getattr(run, "tmux_session_name", None)]
+    non_tmux_runs = [run for run in active_runs if not getattr(run, "terminal_id", None)]
     for run in non_tmux_runs:
         mutex_refreshed = await _run_db(runner, _refresh_active_run_dispatch_mutex, runner, run)
         if mutex_refreshed:
@@ -253,14 +253,14 @@ async def _reconcile_agent_runs_after_restart(
         if resolved_run_ids is not None and (mutex_refreshed or not getattr(run, "task_id", None)):
             resolved_run_ids.add(str(run.id))
 
-    tmux_runs = [run for run in active_runs if getattr(run, "tmux_session_name", None)]
+    tmux_runs = [run for run in active_runs if getattr(run, "terminal_id", None)]
     if not tmux_runs:
         return reconciled
 
     try:
-        from gobby.agents.tmux import get_tmux_session_manager
+        from gobby.agents.tmux.session_manager import TmuxSessionManager
 
-        live_sessions = await get_tmux_session_manager().list_sessions()
+        live_sessions = await TmuxSessionManager().list_sessions()
     except Exception as e:
         logger.warning("Failed to list tmux sessions during agent restart reconciliation: %s", e)
         return reconciled
@@ -269,7 +269,9 @@ async def _reconcile_agent_runs_after_restart(
     output_reader: Any | None = None
     for run in tmux_runs:
         run_id = str(run.id)
-        session_name = str(run.tmux_session_name)
+        manager = getattr(runner, "terminal_manager", None)
+        row = None if manager is None else manager.get(str(run.terminal_id))
+        session_name = str(row.session_name or run.terminal_id) if row is not None else str(run.terminal_id)
         live_info = live_by_name.get(session_name)
         if live_info is None or getattr(live_info, "pane_dead", False):
             if await _cleanup_missing_tmux_agent_run(runner, run, session_name):
@@ -286,7 +288,7 @@ async def _reconcile_agent_runs_after_restart(
                 run_storage.update_runtime,
                 run_id,
                 pid=pane_pid,
-                tmux_session_name=session_name,
+                terminal_id=str(run.terminal_id),
             )
             reconciled += 1
 
@@ -395,7 +397,7 @@ async def _resolve_provisional_daemon_resume_row(
         )
 
     session_name = metadata.get("daemon_stop_resume_spawn_key") or getattr(
-        run, "tmux_session_name", None
+        run, "terminal_id", None
     )
     live_info = (
         _find_live_tmux_by_planned_name(live_by_name, session_name)
@@ -409,7 +411,7 @@ async def _resolve_provisional_daemon_resume_row(
             run_storage.update_runtime,
             run.id,
             pid=pane_pid,
-            tmux_session_name=live_info.name,
+            terminal_id=getattr(run, "terminal_id", None),
         )
         if phase == "launch_requested":
             await _run_db(
@@ -483,7 +485,7 @@ async def _resolve_provisional_daemon_resumes(
     if runner.agent_runner is None:
         return 0
 
-    from gobby.agents.tmux import get_tmux_session_manager
+    from gobby.agents.tmux.session_manager import TmuxSessionManager
 
     run_storage = runner.agent_runner.run_storage
     provisional = await _run_db(
@@ -495,7 +497,7 @@ async def _resolve_provisional_daemon_resumes(
     if not provisional:
         return 0
 
-    live_sessions = await get_tmux_session_manager().list_sessions()
+    live_sessions = await TmuxSessionManager().list_sessions()
     live_by_name = {session.name: session for session in live_sessions}
     resolved = 0
     for run in provisional:

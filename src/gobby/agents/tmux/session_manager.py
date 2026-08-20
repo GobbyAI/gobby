@@ -947,3 +947,15 @@ class TmuxSessionManager:
             return False
 
         return True
+
+    async def dispatch_keys(self, session_name: str, keys: str, *, literal: bool = True) -> bool:
+        """Backend-neutral alias used by plan-keystroke playback."""
+        return await self.send_keys(session_name, keys, literal=literal)
+
+    async def destroy_session(self, session_name: str, *, missing_ok: bool = False) -> bool:
+        """Backend-neutral alias for killing a tmux session by name."""
+        return await self.kill_session(session_name, missing_ok=missing_ok)
+
+    async def snapshot_lines(self, session_name: str, lines: int = 5) -> str | None:
+        """Backend-neutral alias for capturing the last N pane lines."""
+        return await self.capture_pane(session_name, lines=lines)

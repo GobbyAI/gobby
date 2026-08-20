@@ -250,7 +250,11 @@ class TmuxMixin:
                     agent_managed = False
                     agent_run_id = None
                     for run in active_runs:
-                        if run.tmux_session_name == s.name:
+                        row = None
+                        manager = getattr(self, "terminal_manager", None)
+                        if manager is not None and run.terminal_id:
+                            row = manager.get(run.terminal_id)
+                        if (row.session_name if row is not None else None) == s.name:
                             agent_managed = True
                             agent_run_id = run.id
                             break
@@ -471,7 +475,11 @@ class TmuxMixin:
                 for run in LocalAgentRunManager(session_mgr.db).list_active_for_machine(
                     require_machine_id()
                 ):
-                    if run.tmux_session_name == session_name:
+                    row = None
+                    manager = getattr(self, "terminal_manager", None)
+                    if manager is not None and run.terminal_id:
+                        row = manager.get(run.terminal_id)
+                    if (row.session_name if row is not None else None) == session_name:
                         await self._send_error(
                             websocket,
                             f"Session '{session_name}' is managed by agent {run.id}",
@@ -503,7 +511,7 @@ class TmuxMixin:
                     client_set.discard(sid)
 
         try:
-            success = await mgr.kill_session(session_name)
+            success = await mgr.destroy_session(session_name)
             expired_session_ids: list[str] = []
             if success:
                 expired_session_ids = await self._expire_gobby_sessions_for_tmux_kill(

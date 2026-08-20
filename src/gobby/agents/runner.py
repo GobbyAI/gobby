@@ -70,6 +70,7 @@ class AgentRunner:
         self.terminal_manager: object | None = None
         self.terminal_runtime_registry: object | None = None
         self.terminal_config: object | None = None
+        self.write_coordinator: object | None = None
 
     @property
     def workflow_handler(self) -> WorkflowHookHandler | None:

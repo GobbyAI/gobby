@@ -233,6 +233,9 @@ def init_servers(runner: GobbyRunner) -> None:
         native_plan_actions = NativePlanActionService(
             runner.session_manager,
             runner.detection_registry,
+            terminal_manager=getattr(runner, "terminal_manager", None),
+            terminal_runtime_registry=getattr(runner, "terminal_runtime_registry", None),
+            write_coordinator=getattr(runner, "write_coordinator", None),
         )
         runner.communications_manager.set_session_notification_service(
             SessionNotificationService(

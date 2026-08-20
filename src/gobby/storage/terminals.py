@@ -479,6 +479,33 @@ class TerminalManager:
         )
         return [Terminal.from_row(row) for row in rows]
 
+    def get_live_by_session_name(self, session_name: str) -> Terminal | None:
+        """Newest live or pending terminal with this session or spawn name."""
+        row = self.db.fetchone(
+            """
+            SELECT * FROM terminals
+            WHERE state IN ('pending', 'live')
+              AND (session_name = %s OR spawn_key = %s)
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            (session_name, session_name),
+        )
+        return None if row is None else Terminal.from_row(row)
+
+    def get_live_for_session(self, session_id: str) -> Terminal | None:
+        """Newest pending or live terminal linked to a session."""
+        row = self.db.fetchone(
+            """
+            SELECT * FROM terminals
+            WHERE session_id = %s AND state IN ('pending', 'live')
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            (str(UUID(session_id)),),
+        )
+        return None if row is None else Terminal.from_row(row)
+
     def list_live_by_machine(self, machine_id: str) -> list[Terminal]:
         """Live and pending terminals on a machine."""
         rows = self.db.fetchall(
@@ -621,6 +648,21 @@ class TerminalManager:
             RETURNING *
             """,
             (Jsonb(writes), str(UUID(terminal_id))),
+        )
+        if row is None:
+            raise KeyError(terminal_id)
+        return Terminal.from_row(row)
+
+    def clear_all_unresolved_writes(self, terminal_id: str) -> Terminal:
+        """Drop every action_key from the durable unresolved-write map."""
+        row = self.db.fetchone(
+            """
+            UPDATE terminals
+            SET unresolved_writes = '{}'::jsonb, updated_at = now()
+            WHERE id = %s
+            RETURNING *
+            """,
+            (str(UUID(terminal_id)),),
         )
         if row is None:
             raise KeyError(terminal_id)

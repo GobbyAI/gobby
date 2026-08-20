@@ -271,8 +271,8 @@ _CODEX_PROMPT_DELIVERY_TASKS: set[asyncio.Task[None]] = set()
 
 
 def schedule_codex_prompt_delivery(
-    tmux: Any,
-    session_name: str,
+    coordinator: Any,
+    terminal: Any,
     prompt: str,
     run_id: str,
 ) -> bool:
@@ -280,10 +280,10 @@ def schedule_codex_prompt_delivery(
 
     Returns True when a delivery task was scheduled.
     """
-    if not prompt:
+    if not prompt or coordinator is None or terminal is None:
         return False
     task = asyncio.get_running_loop().create_task(
-        _deliver_codex_prompt(tmux, session_name, prompt, run_id)
+        _deliver_codex_prompt(coordinator, terminal, prompt, run_id)
     )
     _CODEX_PROMPT_DELIVERY_TASKS.add(task)
     task.add_done_callback(_CODEX_PROMPT_DELIVERY_TASKS.discard)
@@ -291,22 +291,24 @@ def schedule_codex_prompt_delivery(
 
 
 async def _deliver_codex_prompt(
-    tmux: Any,
-    session_name: str,
+    coordinator: Any,
+    terminal: Any,
     prompt: str,
     run_id: str,
 ) -> None:
-    if tmux is None:
-        return
+    from gobby.terminals.runtime import IndeterminateWrite
+    from gobby.terminals.write_coordinator import SequenceDelay, WriteRequest
+
     try:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + _CODEX_COMPOSER_READY_TIMEOUT_SECONDS
         while True:
             try:
-                pane = await tmux.capture_pane(
-                    session_name,
-                    lines=_CODEX_COMPOSER_CAPTURE_LINES,
+                snapshot = await coordinator.runtime.snapshot(
+                    terminal,
+                    _CODEX_COMPOSER_CAPTURE_LINES,
                 )
+                pane = snapshot.text
             except Exception:
                 logger.debug(
                     "Failed to inspect Codex composer readiness for run %s",
@@ -327,17 +329,33 @@ async def _deliver_codex_prompt(
                 return
             await asyncio.sleep(_CODEX_COMPOSER_POLL_SECONDS)
         await asyncio.sleep(_CODEX_COMPOSER_SETTLE_SECONDS)
-        if not await tmux.send_keys(session_name, f"{prompt}\n", literal=True):
+        outcome = await coordinator.run_sequence(
+            terminal.id,
+            action_key=f"codex-prompt:{run_id}",
+            origin="automatic",
+            steps=[
+                WriteRequest(
+                    terminal_id=terminal.id,
+                    action_key=f"codex-prompt:{run_id}",
+                    origin="automatic",
+                    kind="text",
+                    payload=prompt,
+                ),
+                SequenceDelay(seconds=_CODEX_PROMPT_SUBMIT_RETRY_DELAY_SECONDS),
+                WriteRequest(
+                    terminal_id=terminal.id,
+                    action_key=f"codex-prompt:{run_id}",
+                    origin="automatic",
+                    kind="key",
+                    payload="enter",
+                ),
+            ],
+        )
+        if isinstance(outcome, IndeterminateWrite):
             logger.error(
-                "Failed to paste spawn prompt into Codex terminal for run %s",
+                "Codex spawn prompt write was indeterminate for run %s; Enter not sent",
                 run_id,
             )
-            return
-        # A composer still settling the bracketed paste can swallow the
-        # trailing Enter; this follow-up Enter submits in that case and is a
-        # no-op on an already-submitted composer.
-        await asyncio.sleep(_CODEX_PROMPT_SUBMIT_RETRY_DELAY_SECONDS)
-        await tmux.send_keys(session_name, "Enter", literal=False)
     except asyncio.CancelledError:
         raise
     except Exception:

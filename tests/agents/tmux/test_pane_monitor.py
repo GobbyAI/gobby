@@ -15,7 +15,6 @@ from gobby.agents.tmux.session_manager import TMUX_COMMAND_TIMEOUT_SECONDS, Tmux
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.storage.agents import AgentRun
 from tests.agents.detection_test_support import BundledDetectionRegistry
-from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 DETECTION_REGISTRY = BundledDetectionRegistry()
 pytestmark = pytest.mark.unit
@@ -52,6 +51,16 @@ def _make_session_obj(
     s.external_id = external_id
     s.source = source
     return s
+
+
+@pytest.fixture(autouse=True)
+def _terminal_rows_from_legacy_ids(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.terminals.fakes import make_memory_terminal
+
+    def get(_self: object, terminal_id: str) -> object:
+        return make_memory_terminal(terminal_id=terminal_id, session_name=terminal_id)
+
+    monkeypatch.setattr("gobby.storage.terminals.TerminalManager.get", get)
 
 
 def _make_monitor_with_db(callback: MagicMock) -> TmuxPaneMonitor:

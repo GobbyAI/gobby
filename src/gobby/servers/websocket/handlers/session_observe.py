@@ -39,7 +39,7 @@ from gobby.servers.websocket.handlers.session_observe_support import (
     _variable_value,
 )
 from gobby.sessions.terminal_kill import kill_terminal_session
-from gobby.sessions.tmux_context import get_tmux_manager_for_context
+from gobby.terminals.lookup import manager_for_terminal_context
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ __all__ = [
     "_variable_str",
     "_variable_value",
     "check_resume_blocked",
-    "get_tmux_manager_for_context",
+    "manager_for_terminal_context",
     "handle_attach_to_session",
     "handle_continue_in_chat",
     "handle_detach_from_session",

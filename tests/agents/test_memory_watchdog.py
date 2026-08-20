@@ -14,7 +14,19 @@ import pytest
 from gobby.agents.memory_watchdog import MemoryWatchdogHandler
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun
-from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
+from gobby.storage.terminals import Terminal
+from gobby.terminals import TerminalRuntimeRegistry
+from gobby.terminals.services import TerminalServices
+from tests.terminals.fakes import FakeRuntime, MemoryTerminalStore, make_memory_terminal
+
+
+class _StickyRuntime(FakeRuntime):
+    async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
+        del grace_seconds
+        name = terminal.session_name or terminal.spawn_key
+        if name is not None:
+            self.killed.append(name)
+
 
 GB = 1024**3
 OLD_TS = "2020-01-01T00:00:00+00:00"
@@ -76,6 +88,7 @@ def make_handler(
     virtual_memory: Any | None = None,
     process_iter: Any | None = None,
     monotonic_values: list[float] | None = None,
+    kill_succeeds: bool = True,
 ) -> tuple[MemoryWatchdogHandler, dict[str, Any]]:
     config = config or TmuxConfig()
     agent_run_manager = MagicMock()
@@ -116,6 +129,17 @@ def make_handler(
     vm = virtual_memory or SimpleNamespace(total=128 * GB, available=100 * GB)
     ticks = iter(monotonic_values or [float(i) * 1000 for i in range(100)])
 
+    store = MemoryTerminalStore()
+    for run in runs:
+        if run.terminal_id:
+            row = make_memory_terminal(
+                terminal_id=run.terminal_id,
+                session_name=run.terminal_id,
+            )
+            store.rows[row.id] = row
+    runtime: FakeRuntime = FakeRuntime() if kill_succeeds else _StickyRuntime()
+    registry = TerminalRuntimeRegistry()
+    registry.register(runtime)
     handler = MemoryWatchdogHandler(
         agent_run_manager=agent_run_manager,
         db=MagicMock(),
@@ -127,12 +151,14 @@ def make_handler(
         virtual_memory_fn=lambda: vm,
         process_iter_fn=process_iter or (lambda attrs: []),
         monotonic=lambda: next(ticks),
+        terminal_services=TerminalServices(manager=store, registry=registry),
     )
     mocks = {
         "agent_run_manager": agent_run_manager,
         "cleanup_handler": cleanup_handler,
         "kill_agent_fn": kill_agent_fn,
         "tmux": tmux,
+        "runtime": runtime,
     }
     return handler, mocks
 
@@ -159,7 +185,8 @@ async def test_kill_after_consecutive_breaches() -> None:
     assert handler._breach_counts["run-1"] == 1
 
     assert await handler.check_agent_memory() == 1
-    mocks["kill_agent_fn"].assert_awaited_once()
+    mocks["kill_agent_fn"].assert_not_awaited()
+    assert mocks["runtime"].killed
     mocks["agent_run_manager"].record_termination_intent.assert_called_once()
     mocks["agent_run_manager"].clear_terminal_id.assert_not_called()
     payload = mocks["cleanup_handler"].cleanup_agent.await_args.kwargs["terminal_payload"]
@@ -257,9 +284,8 @@ async def test_aggregate_budget_kills_largest_tree_only() -> None:
     )
     assert await handler.check_agent_memory() == 0  # breach 1/2
     assert await handler.check_agent_memory() == 1  # kills largest
-    mocks["kill_agent_fn"].assert_awaited_once()
-    killed_run = mocks["kill_agent_fn"].await_args.args[0]
-    assert killed_run.id == "run-1"
+    mocks["kill_agent_fn"].assert_not_awaited()
+    assert mocks["runtime"].killed == ["gobby-a"]
     payload = mocks["cleanup_handler"].cleanup_agent.await_args.kwargs["terminal_payload"]
     assert "Aggregate agent memory exceeded budget" in payload
 
@@ -291,8 +317,8 @@ async def test_critical_pressure_kills_largest_agent_tree() -> None:
         virtual_memory=SimpleNamespace(total=128 * GB, available=int(2 * GB)),
     )
     assert await handler.check_agent_memory() == 1
-    killed_run = mocks["kill_agent_fn"].await_args.args[0]
-    assert killed_run.id == "run-2"
+    mocks["kill_agent_fn"].assert_not_awaited()
+    assert mocks["runtime"].killed == ["gobby-b"]
     payload = mocks["cleanup_handler"].cleanup_agent.await_args.kwargs["terminal_payload"]
     assert "Critical system memory pressure" in payload
 
@@ -338,9 +364,8 @@ async def test_failed_kill_skips_cleanup() -> None:
     handler, mocks = make_handler(
         runs=[make_run()],
         trees={100: FakeProc(100, rss=20 * GB)},
+        kill_succeeds=False,
     )
-    mocks["kill_agent_fn"].side_effect = None
-    mocks["kill_agent_fn"].return_value = {"success": False, "error": "no such session"}
     await handler.check_agent_memory()
     killed = await handler.check_agent_memory()
     assert killed == 0

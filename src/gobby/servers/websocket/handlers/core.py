@@ -330,8 +330,9 @@ class HandlerMixin:
                     logger.warning("Failed to write to tmux bridge %s: %s", run_id, e)
                 return
 
-        # Look up agent run from DB to get tmux_session_name
         from gobby.storage.agents import LocalAgentRunManager
+        from gobby.storage.terminals import TerminalManager
+        from gobby.terminals.write_coordinator import WriteRequest
 
         db = getattr(self, "_db", None) or getattr(
             getattr(self, "session_manager", None), "db", None
@@ -342,19 +343,30 @@ class HandlerMixin:
 
         run = LocalAgentRunManager(db).get(run_id)
         if not run:
-            # Be silent on missing agent to avoid spamming errors if frontend is out of sync
-            # or if agent just died.
             return
 
-        # Route input to tmux session (all agents use tmux mode)
-        if run.tmux_session_name:
-            try:
-                from gobby.agents.tmux import get_tmux_session_manager
-
-                mgr = get_tmux_session_manager()
-                await mgr.send_keys(run.tmux_session_name, input_data)
-            except (OSError, RuntimeError) as e:
-                logger.warning("Failed to send keys to tmux agent %s: %s", run_id, e)
+        coordinator = getattr(self, "write_coordinator", None) or getattr(
+            getattr(self, "terminal_services", None), "coordinator", None
+        )
+        manager = getattr(self, "terminal_manager", None)
+        if manager is None:
+            manager = TerminalManager(db)
+        if not run.terminal_id:
+            logger.warning("Agent %s has no terminal - cannot route input", run_id)
             return
-
-        logger.warning("Agent %s has no tmux_session_name - cannot route input", run_id)
+        terminal = manager.get(run.terminal_id)
+        if terminal is None or coordinator is None:
+            logger.warning("Agent %s has no writable terminal - cannot route input", run_id)
+            return
+        try:
+            await coordinator.write(
+                WriteRequest(
+                    terminal_id=terminal.id,
+                    action_key=f"ws-input:{run_id}",
+                    origin="automatic",
+                    kind="text",
+                    payload=input_data,
+                )
+            )
+        except (OSError, RuntimeError) as e:
+            logger.warning("Failed to send keys to agent %s: %s", run_id, e)

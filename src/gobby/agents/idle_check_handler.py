@@ -54,11 +54,13 @@ class IdleCheckHandler:
         run_db: Callable[..., Awaitable[Any]] | None = None,
         attention_manager: AttentionStateManager | None = None,
         attention_metadata_store: AttentionMetadataStore | None = None,
+        terminal_services: Any | None = None,
     ) -> None:
         self._agent_run_manager = agent_run_manager
         self.db = db
         self._get_session_manager = get_session_manager
         self._tmux = tmux
+        self._terminal_services = terminal_services
         self._idle_detector = idle_detector
         self._prompt_detector = prompt_detector
         self._watchdog_readers = watchdog_readers
@@ -85,6 +87,7 @@ class IdleCheckHandler:
             transcript_resolver=self._transcript_resolver,
             run_db=self._run_db,
             task_manager=task_manager,
+            terminal_services=terminal_services,
         )
         self._attention_panes_for_idle: dict[str, str] = {}
 
@@ -134,11 +137,11 @@ class IdleCheckHandler:
         runs = await self._run_db(self._get_active_terminal_runs)
         checked = 0
         for run in runs:
-            tmux_name = run.tmux_session_name
-            if tmux_name is None:
+            if self._terminal_services is None or self._terminal_services.terminal_for(run) is None:
                 continue
             try:
-                pane_output = await self._tmux.capture_pane(tmux_name, lines=15)
+                snapshot = await self._terminal_services.snapshot(run, 15)
+                pane_output = None if snapshot is None else snapshot.text
                 if pane_output is None:
                     continue
                 await self._attention_tracker.sync(run, pane_output)
@@ -156,7 +159,7 @@ class IdleCheckHandler:
     def _get_active_terminal_runs(self) -> list[AgentRun]:
         """Get active terminal agent runs with tmux sessions from DB."""
         runs = self._agent_run_manager.list_active_for_machine(require_machine_id())
-        return [run for run in runs if run.tmux_session_name]
+        return [run for run in runs if run.terminal_id]
 
     def _idle_timeout_seconds_for_run(self, run: AgentRun) -> int:
         """Return the idle timeout window for a run."""
@@ -190,11 +193,14 @@ class IdleCheckHandler:
 
         run = latest_run
         prompt_detector = self._prompt_detector.for_provider(run.provider)
-        tmux_name = run.tmux_session_name
-        if tmux_name is None:
-            logger.warning("Skipping idle check for run %s: missing tmux name", run.id)
+        terminal = (
+            None if self._terminal_services is None else self._terminal_services.terminal_for(run)
+        )
+        if terminal is None:
+            logger.warning("Skipping idle check for run %s: missing terminal", run.id)
             idle_detector.reset_idle(run.id)
             return 0
+        tmux_name = terminal.session_name or terminal.id
         idle_timeout_seconds = self._idle_timeout_seconds_for_run(run)
 
         session_stale = False
@@ -232,7 +238,12 @@ class IdleCheckHandler:
             return 0
 
         if pane_output is None:
-            pane_output = await self._tmux.capture_pane(tmux_name, lines=15)
+            snapshot = (
+                None
+                if self._terminal_services is None
+                else await self._terminal_services.snapshot(run, 15)
+            )
+            pane_output = None if snapshot is None else snapshot.text
         if pane_output is None:
             return 0
         if not attention_synced:

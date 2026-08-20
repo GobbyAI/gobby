@@ -10,11 +10,14 @@ from typing import Literal, Protocol
 
 from gobby.storage.terminals import Terminal, UnresolvedWriteCapacityError
 from gobby.terminals.runtime import (
+    AutomaticWriteQuarantined,
     Delivered,
     IndeterminateWrite,
+    Suppressed,
     TerminalRuntime,
     TerminalWriteError,
     WriteOutcome,
+    is_named_key,
 )
 
 
@@ -33,6 +36,12 @@ class UnresolvedWriteStore(Protocol):
     ) -> Terminal: ...
 
     def clear_unresolved_write(self, terminal_id: str, action_key: str) -> Terminal: ...
+
+    def clear_all_unresolved_writes(self, terminal_id: str) -> Terminal: ...
+
+    def set_automatic_write_quarantine(self, terminal_id: str, action_key: str) -> Terminal: ...
+
+    def clear_automatic_write_quarantine(self, terminal_id: str) -> Terminal: ...
 
 
 @dataclass(frozen=True)
@@ -76,6 +85,10 @@ class WriteCoordinator:
         self._leases: dict[str, _Lease] = {}
         self._attention_gate: Callable[[Terminal], Awaitable[None]] | None = None
 
+    @property
+    def runtime(self) -> TerminalRuntime:
+        return self._runtime
+
     def set_attention_gate(self, gate: Callable[[Terminal], Awaitable[None]]) -> None:
         self._attention_gate = gate
 
@@ -110,9 +123,38 @@ class WriteCoordinator:
         lease.attachment_id = attachment_id
         return lease.generation
 
-    async def write(self, request: WriteRequest) -> WriteOutcome:
+    async def write(
+        self,
+        request: WriteRequest,
+        *,
+        on_dispatch: Callable[[], None] | None = None,
+    ) -> WriteOutcome:
         async with self._lock(request.terminal_id):
-            return await self._write_locked(request, latch=True)
+            blocked = self._blocked_automatic(
+                request.terminal_id, request.action_key, request.origin
+            )
+            if blocked is not None:
+                return blocked
+            return await self._write_locked(request, latch=True, on_dispatch=on_dispatch)
+
+    def observe_resolved(self, terminal_id: str, action_key: str) -> None:
+        """Positive observation of one logical action; clears only that key."""
+        self._clear(terminal_id, action_key)
+        terminal = self._store.get(terminal_id)
+        if terminal is not None and terminal.automatic_write_quarantine_action_key == action_key:
+            self._store.clear_automatic_write_quarantine(terminal_id)
+
+    def clear_on_exit(self, terminal_id: str) -> None:
+        """Terminal exit clears every unresolved key and the quarantine pair."""
+        self._store.clear_all_unresolved_writes(terminal_id)
+        self._store.clear_automatic_write_quarantine(terminal_id)
+
+    def quarantine(self, terminal_id: str, action_key: str) -> None:
+        self._store.set_automatic_write_quarantine(terminal_id, action_key)
+
+    def retain_unresolved(self, terminal_id: str, action_key: str, origin: str) -> None:
+        """Keep an action latched after a late Delivered settlement."""
+        self._persist(terminal_id, action_key, origin)
 
     async def run_sequence(
         self,
@@ -126,6 +168,9 @@ class WriteCoordinator:
     ) -> WriteOutcome:
         lock = self._lock(terminal_id)
         async with lock:
+            blocked = self._blocked_automatic(terminal_id, action_key, origin)
+            if blocked is not None:
+                return blocked
             dispatched = False
             in_flight: asyncio.Task[WriteOutcome] | None = None
             try:
@@ -170,7 +215,13 @@ class WriteCoordinator:
                     self._clear(terminal_id, action_key)
                 raise
 
-    async def _write_locked(self, request: WriteRequest, *, latch: bool) -> WriteOutcome:
+    async def _write_locked(
+        self,
+        request: WriteRequest,
+        *,
+        latch: bool,
+        on_dispatch: Callable[[], None] | None = None,
+    ) -> WriteOutcome:
         terminal = self._require(request.terminal_id)
         if request.origin == "attention" and self._attention_gate is not None:
             await self._attention_gate(terminal)
@@ -182,6 +233,8 @@ class WriteCoordinator:
             attachment_id=request.attachment_id,
             expected_generation=request.expected_lease_generation,
         )
+        if on_dispatch is not None:
+            on_dispatch()
         try:
             outcome = await self._dispatch(request)
         except TerminalWriteError as exc:
@@ -192,7 +245,27 @@ class WriteCoordinator:
             raise
         if isinstance(outcome, Delivered):
             self._clear(request.terminal_id, request.action_key)
+            if request.origin == "operator":
+                self._store.clear_automatic_write_quarantine(request.terminal_id)
         return outcome
+
+    def _blocked_automatic(
+        self,
+        terminal_id: str,
+        action_key: str,
+        origin: str,
+    ) -> WriteOutcome | None:
+        if origin != "automatic":
+            return None
+        terminal = self._require(terminal_id)
+        if (
+            terminal.automatic_write_quarantined_at is not None
+            and terminal.automatic_write_quarantine_action_key != action_key
+        ):
+            return AutomaticWriteQuarantined(action_key=action_key)
+        if action_key in terminal.unresolved_writes:
+            return Suppressed(action_key=action_key)
+        return None
 
     def _revalidate_lease(
         self,
@@ -230,5 +303,7 @@ class WriteCoordinator:
         if request.kind == "text":
             return await self._runtime.write_text(terminal, request.payload, request.submit)
         if request.kind == "key":
-            return await self._runtime.write_key(terminal, request.payload)  # type: ignore[arg-type]
+            if not is_named_key(request.payload):
+                raise TerminalWriteError(stage="none")
+            return await self._runtime.write_key(terminal, request.payload)
         return await self._runtime.write_paste(terminal, request.payload)

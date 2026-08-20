@@ -686,7 +686,7 @@ async def test_daemon_stop_resume_uses_terminal_id_and_spawn_key(
     written = identity_writes[-1]
     assert daemon_resume_keys.TERMINAL_ID_KEY in written
     assert daemon_resume_keys.SPAWN_KEY_KEY in written
-    assert "daemon_stop_resume_tmux_session_name" not in written
-    assert "daemon_stop_resume_planned_tmux_title" not in written
+    assert all("session_name" not in key for key in written)
+    assert all("planned" not in key for key in written)
     runtime_kwargs = storage.update_runtime.call_args.kwargs
     assert runtime_kwargs["terminal_id"] == written[daemon_resume_keys.TERMINAL_ID_KEY]

@@ -425,17 +425,17 @@ async def resume_agent_run(
         )
         return ResumeAgentResult(False, run_id=run_id, error=error)
 
-    if provider == "codex" and terminal_result.tmux_session_name:
-        runtime = None
-        registry = getattr(runner, "terminal_runtime_registry", None)
-        if registry is not None:
-            runtime = registry.resolve("tmux")
-        schedule_codex_prompt_delivery(
-            getattr(runtime, "_sessions", runtime),
-            terminal_result.tmux_session_name,
-            prompt,
-            run_id,
-        )
+    if provider == "codex" and terminal_result.terminal_id:
+        coordinator = getattr(runner, "write_coordinator", None)
+        manager = getattr(runner, "terminal_manager", None)
+        terminal = manager.get(terminal_result.terminal_id) if manager is not None else None
+        if coordinator is not None and terminal is not None:
+            schedule_codex_prompt_delivery(
+                coordinator,
+                terminal,
+                prompt,
+                run_id,
+            )
     runner.run_storage.merge_resume_metadata(
         run_id,
         {

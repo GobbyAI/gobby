@@ -762,6 +762,23 @@ async def _run_graceful_shutdown_sequence(
         "UI development server shutdown",
     )
     await _best_effort(shutdown_rule_allow_audit, "Rule allow audit drain")
+    from gobby.runner_lifecycle_terminal_effects import (
+        bridge_from_runner,
+        drain_terminal_effects,
+    )
+
+    timeout = 5.0
+    terminal_config = getattr(runner, "terminal_config", None)
+    if terminal_config is not None:
+        timeout = float(getattr(terminal_config, "hook_write_shutdown_timeout_seconds", timeout))
+    await _best_effort(
+        lambda: drain_terminal_effects(
+            bridge_from_runner(runner),
+            timeout_seconds=timeout,
+        ),
+        "Terminal effect drain",
+        timeout=timeout + 1.0,
+    )
     await _best_effort(
         lambda: _close_managers_and_storage(runner),
         "Manager and storage shutdown",

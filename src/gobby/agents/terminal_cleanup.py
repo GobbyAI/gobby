@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from gobby.agents import terminal_delivery
 from gobby.agents.srt_process_cleanup import reap_srt_runner_process_tree
@@ -218,45 +218,43 @@ class TerminalResourceCleaner:
                 )
 
     async def _close_tmux_session(self, run: AgentRun) -> bool:
-        tmux_session_name = run.tmux_session_name
-        if not tmux_session_name or self._kill_tmux_session is None:
-            return False
+        from gobby.storage.terminals import TerminalManager
 
+        if not run.terminal_id:
+            return False
         latest = await self._run_db(self._agent_run_manager.get, run.id)
-        if latest is None or latest.tmux_session_name != tmux_session_name:
+        if latest is None or latest.terminal_id != run.terminal_id:
             return False
-
+        manager = TerminalManager(self._agent_run_manager.db)
+        terminal = manager.get(run.terminal_id)
+        if terminal is None or terminal.state not in {"pending", "live"}:
+            return False
+        if self._kill_tmux_session is None or not terminal.session_name:
+            manager.mark_exited(run.terminal_id)
+            return True
         try:
-            killed = await self._kill_tmux_session(tmux_session_name)
+            killed = await self._kill_tmux_session(terminal.session_name)
         except Exception:
             logger.warning(
-                "Failed to close lingering tmux session %s for terminal agent %s",
-                tmux_session_name,
+                "Failed to close lingering terminal %s for agent %s",
+                run.terminal_id,
                 run.id,
                 exc_info=True,
             )
             return False
-
         if not killed:
             logger.warning(
-                "Tmux session %s for terminal agent %s was not closed",
-                tmux_session_name,
+                "Terminal %s for agent %s was not closed",
+                run.terminal_id,
                 run.id,
             )
             return False
-
-        cleared = await self._run_db(
-            self._agent_run_manager.clear_tmux_session_name,
+        logger.info(
+            "Closed lingering terminal %s for agent %s",
+            run.terminal_id,
             run.id,
-            tmux_session_name,
         )
-        if cleared:
-            logger.info(
-                "Closed lingering tmux session %s for terminal agent %s",
-                tmux_session_name,
-                run.id,
-            )
-        return cast(bool, cleared)
+        return True
 
     async def cleanup_terminal_tmux_sessions(self) -> int:
         """Close tmux sessions left behind for already-terminal agent runs."""

@@ -100,6 +100,20 @@ async def _done_stream() -> AsyncIterator[DoneEvent]:
     yield DoneEvent(tool_calls_count=0)
 
 
+def _alias_tmux(tmux_manager: MagicMock) -> MagicMock:
+    """Route runtime aliases through the send/capture doubles tests assert on."""
+
+    async def dispatch_keys(*args: Any, **kwargs: Any) -> Any:
+        return await tmux_manager.send_keys(*args, **kwargs)
+
+    async def snapshot_lines(*args: Any, **kwargs: Any) -> Any:
+        return await tmux_manager.capture_pane(*args, **kwargs)
+
+    tmux_manager.dispatch_keys = dispatch_keys
+    tmux_manager.snapshot_lines = snapshot_lines
+    return tmux_manager
+
+
 def _register_compact_self(
     session: MagicMock, tmux_send_keys_returns: bool = True
 ) -> tuple[_TestRegistry, MagicMock]:
@@ -115,6 +129,7 @@ def _register_compact_self(
     tmux_manager = MagicMock()
     tmux_manager.send_keys = AsyncMock(return_value=tmux_send_keys_returns)
     tmux_manager.capture_pane = AsyncMock(return_value="")
+    _alias_tmux(tmux_manager)
 
     with patch(
         "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
@@ -136,6 +151,7 @@ def _register_compact_self_with_manager(
     tmux_manager = MagicMock()
     tmux_manager.send_keys = AsyncMock(return_value=tmux_send_keys_returns)
     tmux_manager.capture_pane = AsyncMock(return_value="")
+    _alias_tmux(tmux_manager)
 
     with patch(
         "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
@@ -148,13 +164,14 @@ def _register_compact_self_with_manager(
 
 def _call_compact_self(registry: _TestRegistry, tmux_manager: MagicMock, **kwargs: Any) -> Any:
     """Invoke compact_self through the registry with tmux context patched."""
+    _alias_tmux(tmux_manager)
     compact_self = registry.get_tool("compact_self")
     assert compact_self is not None
     caller_session_id = kwargs.pop("session_id", "s1")
     with (
         session_context_for_test(caller_session_id),
         patch(
-            "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
+            "gobby.mcp_proxy.tools.sessions._terminal.manager_for_terminal_context",
             return_value=tmux_manager,
         ),
         patch("gobby.mcp_proxy.tools.sessions._terminal._CODEX_INTERRUPT_SETTLE_SECONDS", 0),
@@ -267,7 +284,7 @@ class TestCompactSelfTerminalPath:
     @pytest.mark.asyncio
     async def test_non_codex_interrupt_settles_before_marking_and_compacting(self) -> None:
         events: list[tuple[str, str | float]] = []
-        tmux = MagicMock()
+        tmux = _alias_tmux(MagicMock())
         tmux.capture_pane = AsyncMock(return_value="")
 
         async def send_keys(_target: str, keys: str, *, literal: bool) -> bool:
@@ -316,7 +333,7 @@ class TestCompactSelfTerminalPath:
     @pytest.mark.asyncio
     async def test_codex_marks_before_interrupt_and_compacts_after_one_attempt(self) -> None:
         events: list[str] = []
-        tmux = MagicMock()
+        tmux = _alias_tmux(MagicMock())
         tmux.capture_pane = AsyncMock(return_value="")
 
         async def send_keys(_target: str, keys: str, *, literal: bool) -> bool:
@@ -353,7 +370,7 @@ class TestCompactSelfTerminalPath:
     @pytest.mark.asyncio
     async def test_codex_retries_interrupt_until_abort_is_confirmed(self) -> None:
         observations = iter([False, True])
-        tmux = MagicMock()
+        tmux = _alias_tmux(MagicMock())
         tmux.capture_pane = AsyncMock(return_value="")
         tmux.send_keys = AsyncMock(return_value=True)
 
@@ -378,7 +395,7 @@ class TestCompactSelfTerminalPath:
 
     @pytest.mark.asyncio
     async def test_codex_exhausted_interrupt_retries_skip_compaction_and_readiness(self) -> None:
-        tmux = MagicMock()
+        tmux = _alias_tmux(MagicMock())
         tmux.capture_pane = AsyncMock(return_value="")
         tmux.send_keys = AsyncMock(return_value=True)
         clear_pending = MagicMock(return_value=True)
@@ -420,7 +437,7 @@ class TestCompactSelfTerminalPath:
         command_submission_started = asyncio.Event()
         finish_command_submission = asyncio.Event()
         readiness_started = asyncio.Event()
-        tmux = MagicMock()
+        tmux = _alias_tmux(MagicMock())
 
         async def capture_pane(_target: str, *, lines: int) -> str:
             events.append(f"capture:{lines}")
@@ -482,7 +499,7 @@ class TestCompactSelfTerminalPath:
     async def test_codex_readiness_schedule_failure_keeps_session_start_fallback(
         self,
     ) -> None:
-        tmux = MagicMock()
+        tmux = _alias_tmux(MagicMock())
         tmux.capture_pane = AsyncMock(return_value="before")
         tmux.send_keys = AsyncMock(return_value=True)
         clear_pending = MagicMock(return_value=True)
@@ -509,7 +526,7 @@ class TestCompactSelfTerminalPath:
 
     @pytest.mark.asyncio
     async def test_codex_compaction_interrupt_failure_returns_false(self) -> None:
-        tmux = MagicMock()
+        tmux = _alias_tmux(MagicMock())
         tmux.send_keys = AsyncMock(return_value=False)
         tmux.capture_pane = AsyncMock(return_value="")
 
@@ -909,7 +926,7 @@ class TestCompactSelfTerminalPath:
         agent_run_manager = MagicMock()
         agent_run_manager.get_by_session.return_value = None
 
-        tmux = MagicMock()
+        tmux = _alias_tmux(MagicMock())
         tmux.capture_pane = AsyncMock(return_value="")
 
         async def send_keys(_target: str, keys: str, *, literal: bool) -> bool:
@@ -932,7 +949,7 @@ class TestCompactSelfTerminalPath:
 
         with (
             patch(
-                "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
+                "gobby.mcp_proxy.tools.sessions._terminal.manager_for_terminal_context",
                 return_value=tmux,
             ),
             patch("gobby.mcp_proxy.tools.sessions._terminal._CODEX_INTERRUPT_SETTLE_SECONDS", 0),
@@ -1026,7 +1043,7 @@ class TestCompactSelfTerminalPath:
         agent_run_manager = MagicMock()
         agent_run_manager.get_by_session.return_value = None
 
-        tmux = MagicMock()
+        tmux = _alias_tmux(MagicMock())
         tmux.capture_pane = AsyncMock(return_value="")
 
         async def send_keys(_target: str, keys: str, *, literal: bool) -> bool:
@@ -1049,7 +1066,7 @@ class TestCompactSelfTerminalPath:
 
         with (
             patch(
-                "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
+                "gobby.mcp_proxy.tools.sessions._terminal.manager_for_terminal_context",
                 return_value=tmux,
             ),
             patch("gobby.mcp_proxy.tools.sessions._terminal._CODEX_INTERRUPT_SETTLE_SECONDS", 0),
@@ -1138,7 +1155,7 @@ class TestCompactSelfTerminalPath:
         registry = _TestRegistry(name="test", description="test")
         agent_run_manager = MagicMock()
         agent_run_manager.get_by_session.return_value = None
-        tmux = MagicMock()
+        tmux = _alias_tmux(MagicMock())
         tmux.capture_pane = AsyncMock(return_value="")
         tmux.send_keys = AsyncMock(return_value=True)
         pending_refreshes: list[Any] = []
@@ -1170,7 +1187,7 @@ class TestCompactSelfTerminalPath:
 
         with (
             patch(
-                "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
+                "gobby.mcp_proxy.tools.sessions._terminal.manager_for_terminal_context",
                 return_value=tmux,
             ),
             patch("gobby.mcp_proxy.tools.sessions._terminal._CODEX_INTERRUPT_SETTLE_SECONDS", 0),
@@ -1278,7 +1295,7 @@ class TestCompactSelfTerminalPath:
         agent_run_manager = MagicMock()
         agent_run_manager.get_by_session.return_value = None
 
-        tmux = MagicMock()
+        tmux = _alias_tmux(MagicMock())
         tmux.capture_pane = AsyncMock(return_value="")
 
         async def send_keys(_target: str, keys: str, *, literal: bool) -> bool:
@@ -1301,7 +1318,7 @@ class TestCompactSelfTerminalPath:
 
         with (
             patch(
-                "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
+                "gobby.mcp_proxy.tools.sessions._terminal.manager_for_terminal_context",
                 return_value=tmux,
             ),
             patch("gobby.mcp_proxy.tools.sessions._terminal._CODEX_INTERRUPT_SETTLE_SECONDS", 0),

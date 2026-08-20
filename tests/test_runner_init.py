@@ -342,27 +342,22 @@ class TestWakeTmuxSenders:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        calls: list[tuple[str, str, bool]] = []
+        from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
+        from tests.terminals.fakes import FakeRuntime, MemoryTerminalStore, make_memory_terminal
 
-        class FakeTmuxManager:
-            async def send_keys(
-                self,
-                target: str,
-                keys: str,
-                *,
-                literal: bool = True,
-            ) -> bool:
-                calls.append((target, keys, literal))
-                return True
+        terminal = make_memory_terminal(session_name="gobby-agent-abc")
+        store = MemoryTerminalStore(terminal)
+        runtime = FakeRuntime()
+        coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime)
 
         async def fake_sleep(_seconds: float) -> None:
             return None
 
         monkeypatch.setattr(
-            "gobby.agents.tmux.get_tmux_session_manager",
-            lambda: FakeTmuxManager(),
+            "gobby.runner_init.orchestration._wake_write_services",
+            lambda: (store, coordinator),
         )
-        monkeypatch.setattr("gobby.runner_init.orchestration.asyncio.sleep", fake_sleep)
+        monkeypatch.setattr("gobby.terminals.write_coordinator.asyncio.sleep", fake_sleep)
 
         await _send_tmux_session_wake(
             "gobby-agent-abc",
@@ -371,15 +366,46 @@ class TestWakeTmuxSenders:
             escape_before_submit=True,
         )
 
-        assert calls == [
-            ("gobby-agent-abc", "Escape", False),
-            (
-                "gobby-agent-abc",
-                "Message from Gobby daemon: New activity available.",
-                True,
-            ),
-            ("gobby-agent-abc", "Enter", False),
+        assert runtime.write_log == [
+            ("key", "escape"),
+            ("text", "Message from Gobby daemon: New activity available."),
+            ("key", "enter"),
         ]
+
+    @pytest.mark.asyncio
+    async def test_wake_send_aborts_on_indeterminate_write_without_recording_delivery(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.runner_init.orchestration import _send_tmux_session_wake
+        from gobby.terminals.runtime import Delivered, IndeterminateWrite
+        from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
+        from tests.terminals.fakes import FakeRuntime, MemoryTerminalStore, make_memory_terminal
+
+        terminal = make_memory_terminal()
+        store = MemoryTerminalStore(terminal)
+        runtime = FakeRuntime()
+        runtime.outcomes = [Delivered(), IndeterminateWrite(detail="lost")]
+        coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime)
+
+        async def fake_sleep(_seconds: float) -> None:
+            return None
+
+        monkeypatch.setattr(
+            "gobby.runner_init.orchestration._wake_write_services",
+            lambda: (store, coordinator),
+        )
+        monkeypatch.setattr("gobby.terminals.write_coordinator.asyncio.sleep", fake_sleep)
+        with pytest.raises(IndeterminateWrite):
+            await _send_tmux_session_wake(
+                terminal.id,
+                "Message from Gobby daemon: New activity available.",
+                submit=True,
+                escape_before_submit=True,
+            )
+        kinds = [kind for kind, _payload in runtime.write_log]
+        assert kinds != ["key", "text", "key"]
+        assert "enter" not in [payload for _kind, payload in runtime.write_log]
 
     @pytest.mark.asyncio
     async def test_pane_wake_forwards_escape_before_submit(

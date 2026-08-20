@@ -7,7 +7,6 @@ import logging
 import shutil
 from dataclasses import replace
 from datetime import datetime
-from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
@@ -50,10 +49,12 @@ from gobby.terminals.runtime import (
     TerminalRuntime,
     TerminalSpawnFailed,
     TerminalSpawnRequest,
+    can_reserve_observer,
 )
 from gobby.terminals.runtime import (
     PreparedSpawn as RuntimePreparedSpawn,
 )
+from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
     from gobby.agents.tmux.session_manager import TmuxSessionManager
@@ -211,14 +212,17 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
                 plan.child_session_id,
                 {"_agent_context_injected": True},
             )
-        sessions = _tmux_sessions_from_request(request)
-        if result.tmux_session_name:
-            schedule_codex_prompt_delivery(
-                sessions,
-                result.tmux_session_name,
-                plan.codex_prompt,
-                plan.agent_run_id,
-            )
+        coordinator = request.write_coordinator
+        manager = request.terminal_manager
+        if result.terminal_id and coordinator is not None and manager is not None:
+            terminal = manager.get(result.terminal_id)
+            if terminal is not None:
+                schedule_codex_prompt_delivery(
+                    coordinator,
+                    terminal,
+                    plan.codex_prompt,
+                    plan.agent_run_id,
+                )
     return result
 
 
@@ -332,19 +336,6 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
             terminal_id=terminal_id,
         )
 
-    if backend == "native":
-        reserve = getattr(runtime, "reserve_observer", None)
-        if not callable(reserve):
-            manager.fail_pending(terminal_id)
-            return SpawnResult(
-                success=False,
-                run_id=plan.agent_run_id,
-                child_session_id=plan.child_session_id,
-                status="failed",
-                error="native_reserve_unavailable",
-                terminal_id=terminal_id,
-            )
-
     spawn_request = TerminalSpawnRequest(
         terminal_id=UUID(terminal_id),
         spawn_key=spawn_key,
@@ -355,7 +346,17 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
         auth_cli=plan.auth_cli,
     )
     if backend == "native":
-        reservation = await runtime.reserve_observer(UUID(terminal_id))  # type: ignore[attr-defined]
+        if not can_reserve_observer(runtime):
+            manager.fail_pending(terminal_id)
+            return SpawnResult(
+                success=False,
+                run_id=plan.agent_run_id,
+                child_session_id=plan.child_session_id,
+                status="failed",
+                error="native_reserve_unavailable",
+                terminal_id=terminal_id,
+            )
+        reservation = await runtime.reserve_observer(UUID(terminal_id))
         spawn_request.reservation_id = reservation.get("reservation_id")
         spawn_request.reserve_key = reservation.get("reserve_key")
 
@@ -367,7 +368,7 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
         else:
             prepared = await asyncio.shield(prepare_task)
     except TimeoutError:
-        await _kill_spawn_key(runtime, spawn_key)
+        await _kill_spawn_key(runtime, spawn_key, pending=manager.get(terminal_id))
         return SpawnResult(
             success=False,
             run_id=plan.agent_run_id,
@@ -467,7 +468,7 @@ async def _promote_prepared(
         if _same_live_identity(current, backend, locator_key):
             promoted = current
         else:
-            await _kill_spawn_key(runtime, spawn_key)
+            await _kill_spawn_key(runtime, spawn_key, pending=current)
             return SpawnResult(
                 success=False,
                 run_id=plan.agent_run_id,
@@ -516,10 +517,40 @@ def _same_live_identity(
     return current.backend == backend and current.locator_key == locator_key
 
 
-async def _kill_spawn_key(runtime: TerminalRuntime, spawn_key: str) -> None:
-    stub = SimpleNamespace(session_name=spawn_key, spawn_key=spawn_key)
+def _terminal_for_spawn_key(
+    backend: str,
+    spawn_key: str,
+    pending: Terminal | None,
+) -> Terminal:
+    if pending is not None and pending.spawn_key == spawn_key and pending.state == "pending":
+        return pending
+    now = utc_now()
+    return Terminal(
+        id=str(uuid4()),
+        backend=backend,
+        ownership="gobby",
+        state="pending",
+        machine_id=str(uuid4()),
+        project_id=str(uuid4()),
+        created_at=now,
+        updated_at=now,
+        attempt_generation=1,
+        attempt_started_at=now,
+        unresolved_writes={},
+        spawn_key=spawn_key,
+        session_name=spawn_key if backend == "tmux" else None,
+    )
+
+
+async def _kill_spawn_key(
+    runtime: TerminalRuntime,
+    spawn_key: str,
+    *,
+    pending: Terminal | None,
+) -> None:
+    terminal = _terminal_for_spawn_key(runtime.backend, spawn_key, pending)
     try:
-        await runtime.terminate(stub, 1.0)  # type: ignore[arg-type]
+        await runtime.terminate(terminal, 1.0)
     except Exception:
         logger.debug("spawn_key terminate failed for %s", spawn_key, exc_info=True)
 
@@ -540,13 +571,8 @@ async def reap_stale_pending_terminals(
     reaped: list[str] = []
     for row in manager.list_stale_pending(in_doubt_seconds):
         if row.spawn_key:
-            stub = SimpleNamespace(
-                session_name=row.spawn_key,
-                spawn_key=row.spawn_key,
-                state=row.state,
-            )
             try:
-                if await runtime.is_live(stub):  # type: ignore[arg-type]
+                if await runtime.is_live(row):
                     continue
             except Exception:
                 logger.debug("is_live failed during reap of %s", row.id, exc_info=True)

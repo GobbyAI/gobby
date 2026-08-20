@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
+
+if TYPE_CHECKING:
+    from gobby.storage.terminals import Terminal
+    from gobby.terminals.runtime import SnapshotResult, TerminalRuntime
 
 from gobby.storage.agents import AgentRun, AgentRunTerminalReason, TerminalAction
 
@@ -134,8 +139,68 @@ def _capture_end_marker(capture_id: str) -> str:
     return f"--- END GOBBY TMUX CAPTURE {capture_id} ---"
 
 
-def _capture_slot(capture_id: str, capture: str) -> str:
-    return f"{_capture_marker(capture_id)}\n{capture}\n{_capture_end_marker(capture_id)}"
+def _capture_slot(
+    capture_id: str,
+    capture: str,
+    *,
+    truncated: bool = False,
+    dropped_bytes: int | None = 0,
+    total_bytes: int | None = None,
+) -> str:
+    meta = json.dumps(
+        {
+            "truncated": truncated,
+            "dropped_bytes": dropped_bytes,
+            "total_bytes": total_bytes,
+        },
+        separators=(",", ":"),
+    )
+    return f"{_capture_marker(capture_id)}\n{meta}\n{capture}\n{_capture_end_marker(capture_id)}"
+
+
+@dataclass(frozen=True)
+class ParsedCaptureSlot:
+    """Captured text plus the 2.2 truncation counters persisted beside it."""
+
+    text: str
+    truncated: bool
+    dropped_bytes: int | None
+    total_bytes: int | None
+
+
+def parse_capture_slot(result: str) -> ParsedCaptureSlot:
+    """Read truncation metadata from a stored capture-before-kill artifact."""
+    start = result.find("--- GOBBY TMUX CAPTURE ")
+    if start < 0:
+        return ParsedCaptureSlot(text=result, truncated=False, dropped_bytes=0, total_bytes=None)
+    body_start = result.find("\n", start)
+    if body_start < 0:
+        return ParsedCaptureSlot(text=result, truncated=False, dropped_bytes=0, total_bytes=None)
+    rest = result[body_start + 1 :]
+    end = rest.find("--- END GOBBY TMUX CAPTURE ")
+    payload = rest if end < 0 else rest[:end]
+    first, _, remainder = payload.partition("\n")
+    try:
+        meta = json.loads(first)
+    except json.JSONDecodeError:
+        text = payload.strip("\n")
+        return ParsedCaptureSlot(
+            text=text,
+            truncated=False,
+            dropped_bytes=0,
+            total_bytes=len(text.encode("utf-8")),
+        )
+    text = remainder.strip("\n")
+    if not isinstance(meta, dict):
+        return ParsedCaptureSlot(text=text, truncated=False, dropped_bytes=0, total_bytes=None)
+    dropped = meta.get("dropped_bytes")
+    total = meta.get("total_bytes")
+    return ParsedCaptureSlot(
+        text=text,
+        truncated=bool(meta.get("truncated")),
+        dropped_bytes=None if dropped is None else int(dropped),
+        total_bytes=None if total is None else int(total),
+    )
 
 
 def _capture_failure(reason: str) -> str:
@@ -516,6 +581,82 @@ async def capture_then_kill_async(
         lock.release()
 
 
+class _SnapshotCaptureStorage:
+    """Rewrite capture slots so truncation counters persist beside the text."""
+
+    def __init__(self, inner: CaptureStorage, snapshot: SnapshotResult) -> None:
+        self._inner = inner
+        self._snapshot = snapshot
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    def replace_capture_slot(
+        self,
+        run_id: str,
+        *,
+        capture_id: str,
+        expected_revision: int,
+        marker: str,
+        slot_content: str,
+    ) -> AgentRun | None:
+        del slot_content
+        return self._inner.replace_capture_slot(
+            run_id,
+            capture_id=capture_id,
+            expected_revision=expected_revision,
+            marker=marker,
+            slot_content=_capture_slot(
+                capture_id,
+                self._snapshot.text,
+                truncated=self._snapshot.truncated,
+                dropped_bytes=self._snapshot.dropped_bytes,
+                total_bytes=self._snapshot.total_bytes,
+            ),
+        )
+
+
+async def terminate_managed_runtime_async(
+    *,
+    storage: CaptureStorage,
+    run: AgentRun,
+    terminal: Terminal,
+    runtime: TerminalRuntime,
+    action: TerminalAction,
+    reason: str | None = None,
+    result_prefix: str | None = None,
+    terminalize: AsyncTerminalCallback | None = None,
+    lock_timeout: float = _DEFAULT_LOCK_TIMEOUT_SECONDS,
+) -> CaptureTerminationResult:
+    """Capture-before-kill against a TerminalRuntime snapshot."""
+    snapshot = await runtime.snapshot_full(terminal)
+    wrapped = _SnapshotCaptureStorage(storage, snapshot)
+
+    async def session_alive() -> bool:
+        return await runtime.is_live(terminal)
+
+    async def capture() -> str:
+        return snapshot.text
+
+    async def kill() -> bool:
+        await runtime.terminate(terminal, grace_seconds=5.0)
+        return not await runtime.is_live(terminal)
+
+    return await capture_then_kill_async(
+        storage=wrapped,
+        run_id=run.id,
+        session_name=terminal.id,
+        action=action,
+        reason=reason,
+        result_prefix=result_prefix,
+        terminalize=terminalize,
+        session_alive=session_alive,
+        capture=capture,
+        kill=kill,
+        lock_timeout=lock_timeout,
+    )
+
+
 async def terminate_managed_tmux_async(
     *,
     storage: CaptureStorage,
@@ -526,25 +667,25 @@ async def terminate_managed_tmux_async(
     result_prefix: str | None = None,
     terminalize: AsyncTerminalCallback | None = None,
     lock_timeout: float = _DEFAULT_LOCK_TIMEOUT_SECONDS,
+    terminal: Terminal | None = None,
+    runtime: TerminalRuntime | None = None,
 ) -> CaptureTerminationResult:
-    """Apply the policy using the standard async tmux manager operations."""
-    session_name = run.tmux_session_name
-    if not session_name:
+    """Compatibility wrapper; prefer terminate_managed_runtime_async."""
+    del tmux
+    if terminal is None or runtime is None:
         return _failure(
             TerminationErrorCode.KILL_FAILED,
-            "agent run has no tmux session name",
+            "agent run has no terminal runtime",
             run,
         )
-    return await capture_then_kill_async(
+    return await terminate_managed_runtime_async(
         storage=storage,
-        run_id=run.id,
-        session_name=session_name,
+        run=run,
+        terminal=terminal,
+        runtime=runtime,
         action=action,
         reason=reason,
         result_prefix=result_prefix,
         terminalize=terminalize,
-        session_alive=lambda: tmux.has_session(session_name),
-        capture=lambda: tmux.capture_full_pane(session_name),
-        kill=lambda: tmux.kill_session(session_name, missing_ok=True),
         lock_timeout=lock_timeout,
     )

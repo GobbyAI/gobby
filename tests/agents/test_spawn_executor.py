@@ -38,6 +38,7 @@ from gobby.agents.spawn_executor_support import (
 from gobby.mcp_proxy.server import GobbyDaemonTools
 from gobby.storage.terminals import TerminalManager
 from tests.agents.prepared_spawn import prepared_spawn
+from gobby.terminals.runtime import Delivered
 from tests.terminals.fakes import FakeRuntime, MemoryTerminalStore
 
 pytestmark = pytest.mark.unit
@@ -850,10 +851,10 @@ class TestExecuteSpawn:
             # startup. It is typed into the composer post-launch instead.
             assert request.prompt not in command
             mock_codex_prompt_delivery.assert_called_once()
-            delivery = mock_codex_prompt_delivery.call_args.args
-            assert delivery[1] == result.tmux_session_name
-            assert delivery[2] == "Test"
-            assert delivery[3] == "run-abc123def456"
+            _coordinator, terminal, prompt, run_id = mock_codex_prompt_delivery.call_args.args
+            assert terminal.id == result.terminal_id
+            assert prompt == "Test"
+            assert run_id == "run-abc123def456"
 
             # SpawnResult.run_id is the caller-minted id (no fabricated
             # `codex-xxxxxxxx` substitute).
@@ -1892,7 +1893,10 @@ class TestExecuteSpawnErrorPaths:
             result = await execute_spawn(request)
 
         assert result.terminal_id is not None
-        assert result.tmux_session_name == f"gobby-{result.terminal_id}"
+        row = _manager_of(request).get(result.terminal_id)
+        assert row is not None
+        assert row.spawn_key == f"gobby-{result.terminal_id}"
+        assert row.session_name == f"gobby-{result.terminal_id}"
         assert result.success is True
         assert result.pid == 12345
 
@@ -2163,80 +2167,116 @@ class TestCodexPromptDelivery:
 
     @pytest.mark.asyncio
     async def test_delivers_prompt_once_composer_renders(self) -> None:
-        tmux = MagicMock()
-        tmux.capture_pane = AsyncMock(side_effect=[None, "› Ask Codex anything"])
-        tmux.send_keys = AsyncMock(return_value=True)
+        from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
+        from tests.terminals.fakes import make_memory_terminal
+
+        terminal = make_memory_terminal()
+        store = MemoryTerminalStore(terminal)
+        runtime = FakeRuntime()
+        runtime.snapshot_text = "› Ask Codex anything"
+        coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime)
 
         with (
             patch.object(spawn_executor_support, "_CODEX_COMPOSER_POLL_SECONDS", 0.0),
             patch.object(spawn_executor_support, "_CODEX_COMPOSER_SETTLE_SECONDS", 0.0),
             patch.object(spawn_executor_support, "_CODEX_PROMPT_SUBMIT_RETRY_DELAY_SECONDS", 0.0),
         ):
-            await _deliver_codex_prompt(tmux, "sess", "Do the task", "run-1")
+            await _deliver_codex_prompt(coordinator, terminal, "Do the task", "run-1")
 
-        assert tmux.capture_pane.await_count == 2
-        assert tmux.send_keys.await_args_list == [
-            call("sess", "Do the task\n", literal=True),
-            call("sess", "Enter", literal=False),
-        ]
+        assert runtime.write_log == [("text", "Do the task"), ("key", "enter")]
 
     @pytest.mark.asyncio
     async def test_never_types_into_a_pane_without_a_composer(self) -> None:
         """A dead CLI can leave a shell pane; the watchdog owns that failure."""
-        tmux = MagicMock()
-        tmux.capture_pane = AsyncMock(return_value="zsh: command not found: codex")
-        tmux.send_keys = AsyncMock()
+        from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
+        from tests.terminals.fakes import make_memory_terminal
+
+        terminal = make_memory_terminal()
+        store = MemoryTerminalStore(terminal)
+        runtime = FakeRuntime()
+        runtime.snapshot_text = "zsh: command not found: codex"
+        coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime)
 
         with patch.object(spawn_executor_support, "_CODEX_COMPOSER_READY_TIMEOUT_SECONDS", 0.0):
-            await _deliver_codex_prompt(tmux, "sess", "Do the task", "run-1")
+            await _deliver_codex_prompt(coordinator, terminal, "Do the task", "run-1")
 
-        assert tmux.send_keys.await_count == 0
-        assert tmux.capture_pane.await_count >= 1
+        assert runtime.write_log == []
 
     @pytest.mark.asyncio
     async def test_failed_paste_skips_follow_up_enter(self) -> None:
-        tmux = MagicMock()
-        tmux.capture_pane = AsyncMock(return_value="› ")
-        tmux.send_keys = AsyncMock(return_value=False)
+        from gobby.terminals.runtime import TerminalWriteError
+        from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
+        from tests.terminals.fakes import make_memory_terminal
+
+        terminal = make_memory_terminal()
+        store = MemoryTerminalStore(terminal)
+        runtime = FakeRuntime()
+        runtime.snapshot_text = "› "
+        runtime.raise_on_write = TerminalWriteError(stage="none")
+        coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime)
 
         with (
             patch.object(spawn_executor_support, "_CODEX_COMPOSER_SETTLE_SECONDS", 0.0),
             patch.object(spawn_executor_support, "_CODEX_PROMPT_SUBMIT_RETRY_DELAY_SECONDS", 0.0),
         ):
-            await _deliver_codex_prompt(tmux, "sess", "Do the task", "run-1")
+            await _deliver_codex_prompt(coordinator, terminal, "Do the task", "run-1")
 
-        assert tmux.send_keys.await_count == 1
-        assert tmux.send_keys.await_args_list == [
-            call("sess", "Do the task\n", literal=True),
-        ]
+        assert runtime.write_log == []
 
     @pytest.mark.asyncio
     async def test_schedule_skips_empty_prompt(self) -> None:
-        tmux = MagicMock()
-
-        assert schedule_codex_prompt_delivery(tmux, "sess", "", "run-1") is False
+        assert schedule_codex_prompt_delivery(object(), object(), "", "run-1") is False
 
         assert not spawn_executor_support._CODEX_PROMPT_DELIVERY_TASKS
 
     @pytest.mark.asyncio
     async def test_schedule_tracks_and_releases_the_delivery_task(self) -> None:
-        tmux = MagicMock()
+        coordinator = object()
+        terminal = object()
 
         with patch.object(
             spawn_executor_support, "_deliver_codex_prompt", new=AsyncMock()
         ) as deliver:
-            assert schedule_codex_prompt_delivery(tmux, "sess", "Go", "run-1") is True
+            assert schedule_codex_prompt_delivery(coordinator, terminal, "Go", "run-1") is True
             pending = list(spawn_executor_support._CODEX_PROMPT_DELIVERY_TASKS)
             assert pending
             await asyncio.gather(*pending)
 
-        deliver.assert_awaited_once_with(tmux, "sess", "Go", "run-1")
+        deliver.assert_awaited_once_with(coordinator, terminal, "Go", "run-1")
         assert not spawn_executor_support._CODEX_PROMPT_DELIVERY_TASKS
+
+    @pytest.mark.asyncio
+    async def test_codex_prompt_aborts_on_indeterminate_without_enter(self) -> None:
+        from gobby.terminals.runtime import IndeterminateWrite
+        from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
+        from tests.terminals.fakes import make_memory_terminal
+
+        terminal = make_memory_terminal()
+        store = MemoryTerminalStore(terminal)
+        runtime = FakeRuntime()
+        runtime.outcomes = [IndeterminateWrite(detail="lost"), Delivered()]
+        coordinator = WriteCoordinator(cast(UnresolvedWriteStore, store), runtime)
+        runtime.snapshot_text = "› Ask Codex anything"
+
+        with (
+            patch.object(spawn_executor_support, "_CODEX_COMPOSER_POLL_SECONDS", 0.0),
+            patch.object(spawn_executor_support, "_CODEX_COMPOSER_SETTLE_SECONDS", 0.0),
+            patch.object(spawn_executor_support, "_CODEX_PROMPT_SUBMIT_RETRY_DELAY_SECONDS", 0.0),
+        ):
+            await _deliver_codex_prompt(
+                coordinator,
+                terminal,
+                "Do the task",
+                "run-1",
+            )
+
+        kinds = [kind for kind, _payload in runtime.write_log]
+        assert "enter" not in kinds
+        assert kinds == ["text"]
 
 
 @pytest.mark.asyncio
 async def test_one_terminal_row_per_attempt_all_outcomes() -> None:
-
     mock_session_manager = MagicMock()
     mock_session_manager._storage.db = MagicMock()
 
@@ -2453,7 +2493,6 @@ async def test_cancel_windows_pre_and_post_dispatch() -> None:
 
 @pytest.mark.asyncio
 async def test_retry_generation_fences_the_reaper() -> None:
-
     request = SpawnRequest(
         prompt="Test",
         cwd="/path",

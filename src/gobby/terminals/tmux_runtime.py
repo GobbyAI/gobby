@@ -105,13 +105,17 @@ class TmuxTerminalRuntime:
     def _cmd(self) -> list[str]:
         return self._sessions.base_args()
 
+    def _tmux_name(self, terminal: Terminal) -> str:
+        return terminal.session_name or terminal.spawn_key or ""
+
     def _target(self, terminal: Terminal) -> str:
         locator = terminal.locator or {}
         pane_id = locator.get("pane_id")
         if isinstance(pane_id, str) and pane_id:
             return pane_id
-        if terminal.session_name:
-            return f"={terminal.session_name}:"
+        name = self._tmux_name(terminal)
+        if name:
+            return f"={name}:"
         raise TerminalWriteError(stage="none")
 
     async def _run(self, *args: str) -> tuple[int, str, str]:
@@ -200,17 +204,25 @@ class TmuxTerminalRuntime:
         return TerminalHandle(terminal_id=prepared.terminal_id, locator=locator)
 
     async def is_live(self, terminal: Terminal) -> bool:
-        if not terminal.session_name:
+        name = self._tmux_name(terminal)
+        if not name:
             return False
-        return await self._sessions.has_session(terminal.session_name)
+        return await self._sessions.has_session(name)
 
     async def snapshot(self, terminal: Terminal, lines: int = 50) -> SnapshotResult:
-        text = await self._sessions.capture_pane(terminal.session_name or "", lines=lines)
+        text = await self._sessions.capture_pane(self._capture_name(terminal), lines=lines)
         return await self._snapshot_result(terminal, text or "")
 
     async def snapshot_full(self, terminal: Terminal) -> SnapshotResult:
-        text = await self._sessions.capture_full_pane(terminal.session_name or "")
+        text = await self._sessions.capture_full_pane(self._capture_name(terminal))
         return await self._snapshot_result(terminal, text or "")
+
+    def _capture_name(self, terminal: Terminal) -> str:
+        locator = terminal.locator or {}
+        pane_id = locator.get("pane_id")
+        if isinstance(pane_id, str) and pane_id:
+            return pane_id
+        return self._tmux_name(terminal)
 
     async def _snapshot_result(self, terminal: Terminal, text: str) -> SnapshotResult:
         size, limit = await self._history_bounds(terminal)
@@ -327,8 +339,9 @@ class TmuxTerminalRuntime:
         )
 
     async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
-        if terminal.session_name:
-            await self._sessions.kill_session(terminal.session_name, timeout=grace_seconds)
+        name = self._tmux_name(terminal)
+        if name:
+            await self._sessions.kill_session(name, timeout=grace_seconds)
 
     async def attach_locator(self, terminal: Terminal) -> AttachLocator:
         locator = terminal.locator or {}

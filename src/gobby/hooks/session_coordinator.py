@@ -97,6 +97,10 @@ class SessionCoordinator:
         worktree_manager: LocalWorktreeManager | None = None,
         logger: logging.Logger | None = None,
         completion_registry: Any | None = None,
+        terminal_manager: Any | None = None,
+        terminal_runtime_registry: Any | None = None,
+        write_coordinator: Any | None = None,
+        terminal_effect_bridge: Any | None = None,
     ) -> None:
         """
         Initialize SessionCoordinator.
@@ -115,6 +119,10 @@ class SessionCoordinator:
         self._worktree_manager = worktree_manager
         self.logger = logger or logging.getLogger(__name__)
         self._completion_registry = completion_registry
+        self._terminal_manager = terminal_manager
+        self._terminal_runtime_registry = terminal_runtime_registry
+        self._write_coordinator = write_coordinator
+        self._terminal_effect_bridge = terminal_effect_bridge
 
         # Session registration tracking (to avoid noisy logs)
         # Tracks which sessions have been registered with daemon
@@ -454,8 +462,8 @@ class SessionCoordinator:
                 turns_used=turns_used,
             )
 
-        tmux_session_name = agent_run.tmux_session_name
-        if not isinstance(tmux_session_name, str) or not tmux_session_name:
+        terminal_id = agent_run.terminal_id
+        if not isinstance(terminal_id, str) or not terminal_id:
             if action == "complete":
                 updated = manager.complete(
                     run_id=run_id,
@@ -478,7 +486,26 @@ class SessionCoordinator:
 
         from gobby.agents.tmux import get_configured_tmux_command_prefix
 
-        target = f"={tmux_session_name}"
+        row = None if self._terminal_manager is None else self._terminal_manager.get(terminal_id)
+        session_name = None if row is None else row.session_name
+        if not isinstance(session_name, str) or not session_name:
+            if action == "complete":
+                updated = manager.complete(
+                    run_id=run_id,
+                    result=result_prefix or None,
+                    tool_calls_count=tool_calls_count,
+                    turns_used=turns_used,
+                )
+            else:
+                updated = manager.fail(
+                    run_id=run_id,
+                    error=reason or "Agent failed",
+                    result=result_prefix or None,
+                    tool_calls_count=tool_calls_count,
+                    turns_used=turns_used,
+                )
+            return finish_followups(updated or manager.get(run_id))
+        target = f"={session_name}"
 
         def session_alive() -> bool:
             cmd = get_configured_tmux_command_prefix()
@@ -516,7 +543,7 @@ class SessionCoordinator:
         result = capture_then_kill_sync(
             storage=manager,
             run_id=run_id,
-            session_name=tmux_session_name,
+            session_name=session_name,
             action=action,
             reason=reason,
             result_prefix=result_prefix or None,

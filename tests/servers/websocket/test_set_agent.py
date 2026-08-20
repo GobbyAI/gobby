@@ -318,9 +318,10 @@ class TestSetAgentAttachedSession:
 
         tmux_manager = MagicMock()
         tmux_manager.send_keys = AsyncMock(return_value=True)
+        tmux_manager.dispatch_keys = tmux_manager.send_keys
 
         with patch(
-            "gobby.servers.websocket.handlers.session_config.get_tmux_manager_for_context",
+            "gobby.servers.websocket.handlers.session_config.manager_for_terminal_context",
             return_value=tmux_manager,
         ) as get_tmux_manager:
             await server._handle_set_agent(

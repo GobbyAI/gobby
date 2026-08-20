@@ -18,7 +18,6 @@ from gobby.agents.capture import (
     capture_then_kill_sync,
 )
 from gobby.storage.agents import AgentRun, AgentRunStatus
-from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 
 def _run(run_id: str, *, result: str | None = None) -> AgentRun:
@@ -520,3 +519,56 @@ async def test_async_intent_rejection_reports_missing_run() -> None:
     assert result.error_code == TerminationErrorCode.CAPTURE_PERSIST_FAILED
     assert result.error == "agent run not found"
     assert result.run is None
+
+
+@pytest.mark.asyncio
+async def test_truncation_metadata_is_persisted() -> None:
+    from gobby.agents.capture import parse_capture_slot, terminate_managed_runtime_async
+    from gobby.terminals.runtime import SnapshotResult
+    from tests.terminals.fakes import FakeRuntime, make_memory_terminal
+
+    storage = FakeCaptureStorage(_run("trunc"))
+    terminal = make_memory_terminal()
+    runtime = FakeRuntime()
+    runtime.snapshot_full_result = SnapshotResult(
+        text="tail",
+        truncated=True,
+        dropped_bytes=None,
+        total_bytes=None,
+    )
+
+    result = await terminate_managed_runtime_async(
+        storage=storage,
+        run=storage.runs["trunc"],
+        terminal=terminal,
+        runtime=runtime,
+        action="fail",
+        reason="killed",
+    )
+    assert result.success
+    parsed = parse_capture_slot(storage.runs["trunc"].result or "")
+    assert parsed.truncated is True
+    assert parsed.dropped_bytes is None
+    assert parsed.total_bytes is None
+    assert parsed.text == "tail"
+
+    storage = FakeCaptureStorage(_run("full"))
+    runtime.snapshot_full_result = SnapshotResult(
+        text="whole",
+        truncated=False,
+        dropped_bytes=0,
+        total_bytes=5,
+    )
+    result = await terminate_managed_runtime_async(
+        storage=storage,
+        run=storage.runs["full"],
+        terminal=terminal,
+        runtime=runtime,
+        action="complete",
+    )
+    assert result.success
+    parsed = parse_capture_slot(storage.runs["full"].result or "")
+    assert parsed.truncated is False
+    assert parsed.dropped_bytes == 0
+    assert parsed.total_bytes == 5
+    assert parsed.text == "whole"

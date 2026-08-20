@@ -22,3 +22,15 @@ class TerminalConfig(BaseModel):
             "Defaults to the tmux init timeout (120s) plus a 30s margin."
         ),
     )
+    hook_write_timeout_seconds: float = Field(
+        default=5.0,
+        ge=0.1,
+        le=30.0,
+        description="How long a hook thread waits for a coordinator write to dispatch.",
+    )
+    hook_write_shutdown_timeout_seconds: float = Field(
+        default=5.0,
+        ge=0.1,
+        le=30.0,
+        description="How long shutdown drains in-flight TerminalEffectBridge tasks.",
+    )

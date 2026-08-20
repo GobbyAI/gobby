@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.terminals import AttachLocator, TerminalManager
     from gobby.terminals import TerminalRuntimeRegistry
+    from gobby.terminals.write_coordinator import WriteCoordinator
 
 
 @dataclass
@@ -71,6 +72,7 @@ class SpawnRequest:
     prepared_spawn: PreparedSpawn
     terminal_manager: TerminalManager | None = None
     terminal_runtime_registry: TerminalRuntimeRegistry | None = None
+    write_coordinator: WriteCoordinator | None = None
     backend: Literal["tmux", "native"] | None = None
     retry_terminal_id: str | None = None
     cancel_event: asyncio.Event | None = None

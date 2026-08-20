@@ -21,7 +21,6 @@ from gobby.runner_pid_file import FailOpenPidOwnership
 from gobby.shutdown_intent import ShutdownIntent
 from tests.hooks._event_handler_helpers import make_event
 from tests.runner_helpers import create_base_patches
-from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("fast_stop_hook_grace_window")]
 
@@ -1361,3 +1360,38 @@ class TestStopShutdownAgentPreservation:
         assert "preserve" in events
         assert "telemetry" in events
         assert events[-2:] == ["telemetry", "executor"]
+
+
+@pytest.mark.asyncio
+async def test_shutdown_drains_terminal_effects_before_storage_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    async def drain(_bridge: object, *, timeout_seconds: float) -> None:
+        del timeout_seconds
+        events.append("drain")
+
+    async def close_storage(_runner: object) -> None:
+        events.append("close")
+
+    monkeypatch.setattr(
+        "gobby.runner_lifecycle_terminal_effects.drain_terminal_effects",
+        drain,
+    )
+    monkeypatch.setattr(
+        runner_lifecycle_shutdown,
+        "_close_managers_and_storage",
+        close_storage,
+    )
+    source = (
+        Path(__file__).resolve().parents[1] / "src/gobby/runner_lifecycle_shutdown.py"
+    ).read_text(encoding="utf-8")
+    start = source.find("async def _run_graceful_shutdown_sequence")
+    assert start != -1
+    chunk = source[start:]
+    drain_at = chunk.find("drain_terminal_effects")
+    close_at = chunk.find("_close_managers_and_storage")
+    assert drain_at != -1
+    assert close_at != -1
+    assert drain_at < close_at

@@ -31,34 +31,100 @@ class _CronDependencyUnavailable(Exception):
     """Stop cron setup after a required dependency already logged its failure."""
 
 
+class _WakeWriteServices:
+    manager: Any = None
+    coordinator: Any = None
+
+
+_WAKE_WRITE_SERVICES = _WakeWriteServices()
+
+
+def _wake_write_services() -> tuple[Any, Any]:
+    if _WAKE_WRITE_SERVICES.manager is None or _WAKE_WRITE_SERVICES.coordinator is None:
+        raise RuntimeError("wake write services are not bound")
+    return _WAKE_WRITE_SERVICES.manager, _WAKE_WRITE_SERVICES.coordinator
+
+
+def bind_wake_write_services(manager: Any, coordinator: Any) -> None:
+    """Bind composition-root write services for daemon wake delivery."""
+    _WAKE_WRITE_SERVICES.manager = manager
+    _WAKE_WRITE_SERVICES.coordinator = coordinator
+
+
 async def _send_tmux_session_wake(
-    session_name: str,
+    identity: str,
     message: str,
     *,
     submit: bool = False,
     escape_before_submit: bool = False,
 ) -> None:
-    from gobby.agents.tmux import get_tmux_session_manager
     from gobby.agents.tmux.text_injection import TMUX_TEXT_ENTER_DELAY_SECONDS
+    from gobby.terminals.runtime import Delivered, IndeterminateWrite
+    from gobby.terminals.write_coordinator import SequenceDelay, WriteRequest
 
-    mgr = get_tmux_session_manager()
+    manager, coordinator = _wake_write_services()
+    terminal = manager.get(identity)
+    if terminal is None and hasattr(manager, "get_live_for_session"):
+        terminal = manager.get_live_for_session(identity)
+    if terminal is None and hasattr(manager, "get_live_by_session_name"):
+        terminal = manager.get_live_by_session_name(identity)
+    if terminal is None:
+        raise RuntimeError(f"no terminal for wake identity {identity}")
+    steps: list[WriteRequest | SequenceDelay] = []
     if not submit:
-        if not await mgr.send_keys(session_name, message):
-            raise RuntimeError(f"tmux send-keys to {session_name} failed")
-        return
-
-    literal_text = message.rstrip("\n")
-    if escape_before_submit:
-        if not await mgr.send_keys(session_name, "Escape", literal=False):
-            raise RuntimeError(f"tmux send-keys to {session_name} failed")
+        steps.append(
+            WriteRequest(
+                terminal_id=terminal.id,
+                action_key=f"wake:{terminal.id}",
+                origin="automatic",
+                kind="text",
+                payload=message,
+            )
+        )
+    else:
+        literal_text = message.rstrip("\n")
+        if escape_before_submit:
+            steps.append(
+                WriteRequest(
+                    terminal_id=terminal.id,
+                    action_key=f"wake:{terminal.id}",
+                    origin="automatic",
+                    kind="key",
+                    payload="escape",
+                )
+            )
+            if literal_text:
+                steps.append(SequenceDelay(seconds=TMUX_TEXT_ENTER_DELAY_SECONDS))
         if literal_text:
-            await asyncio.sleep(TMUX_TEXT_ENTER_DELAY_SECONDS)
-    if literal_text and not await mgr.send_keys(session_name, literal_text):
-        raise RuntimeError(f"tmux send-keys to {session_name} failed")
-    if literal_text:
-        await asyncio.sleep(TMUX_TEXT_ENTER_DELAY_SECONDS)
-    if not await mgr.send_keys(session_name, "Enter", literal=False):
-        raise RuntimeError(f"tmux send-keys to {session_name} failed")
+            steps.append(
+                WriteRequest(
+                    terminal_id=terminal.id,
+                    action_key=f"wake:{terminal.id}",
+                    origin="automatic",
+                    kind="text",
+                    payload=literal_text,
+                )
+            )
+            steps.append(SequenceDelay(seconds=TMUX_TEXT_ENTER_DELAY_SECONDS))
+        steps.append(
+            WriteRequest(
+                terminal_id=terminal.id,
+                action_key=f"wake:{terminal.id}",
+                origin="automatic",
+                kind="key",
+                payload="enter",
+            )
+        )
+    outcome = await coordinator.run_sequence(
+        terminal.id,
+        action_key=f"wake:{terminal.id}",
+        origin="automatic",
+        steps=steps,
+    )
+    if isinstance(outcome, IndeterminateWrite):
+        raise outcome
+    if not isinstance(outcome, Delivered):
+        raise RuntimeError(f"wake write to {identity} failed")
 
 
 async def _send_tmux_pane_wake(
@@ -206,7 +272,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
         logger.warning("Failed to initialize workflow loader", exc_info=True)
 
     from gobby.agents.attention_metadata import AttentionMetadataStore
-    from gobby.agents.tmux import configure_tmux, get_tmux_session_manager
+    from gobby.agents.tmux import configure_tmux
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.events.wake import WakeDispatcher
     from gobby.storage.agents import LocalAgentRunManager
@@ -333,12 +399,36 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
     runner.terminal_manager = TerminalManager(runner.database)
     runner.terminal_config = config.terminals
     terminal_runtime_registry = TerminalRuntimeRegistry()
-    terminal_runtime_registry.register(TmuxTerminalRuntime(get_tmux_session_manager()))
+    from gobby.agents.tmux.session_manager import TmuxSessionManager
+
+    terminal_runtime_registry.register(TmuxTerminalRuntime(TmuxSessionManager()))
     runner.terminal_runtime_registry = terminal_runtime_registry
+    from gobby.terminals.services import TerminalServices
+    from gobby.terminals.sync_bridge import TerminalEffectBridge
+    from gobby.terminals.write_coordinator import WriteCoordinator
+
+    tmux_runtime = terminal_runtime_registry.resolve("tmux")
+    runner.write_coordinator = WriteCoordinator(runner.terminal_manager, tmux_runtime)
+    bind_wake_write_services(runner.terminal_manager, runner.write_coordinator)
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    runner.terminal_effect_bridge = (
+        None
+        if loop is None
+        else TerminalEffectBridge(
+            loop,
+            runner.write_coordinator,
+            timeout_seconds=config.terminals.hook_write_timeout_seconds,
+            shutdown_timeout_seconds=config.terminals.hook_write_shutdown_timeout_seconds,
+        )
+    )
     if runner.agent_runner is not None:
         runner.agent_runner.terminal_manager = runner.terminal_manager
         runner.agent_runner.terminal_runtime_registry = runner.terminal_runtime_registry
         runner.agent_runner.terminal_config = runner.terminal_config
+        runner.agent_runner.write_coordinator = runner.write_coordinator
     try:
         runner.agent_lifecycle_monitor = AgentLifecycleMonitor(
             agent_run_manager=LocalAgentRunManager(runner.database),
@@ -358,6 +448,11 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
             run_db=runner.db_executor.run,
             attention_manager=runner.attention_manager,
             attention_metadata_store=runner.attention_metadata_store,
+            terminal_services=TerminalServices(
+                manager=runner.terminal_manager,
+                registry=runner.terminal_runtime_registry,
+                coordinator=runner.write_coordinator,
+            ),
         )
     except Exception:
         mark_service_degraded(runner, "agent_lifecycle_monitor")

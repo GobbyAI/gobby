@@ -226,7 +226,7 @@ def register_agent_lifecycle_tools(
             return {"success": False, "error": f"Agent run {resolved_run_id} not found"}
 
         agent_session_id = db_run.child_session_id or resolved_session_id
-        tmux_session_name = db_run.tmux_session_name
+        terminal_id = db_run.terminal_id
 
         is_self_termination = False
         if agent_session_id:
@@ -297,7 +297,7 @@ def register_agent_lifecycle_tools(
                 await agents._cleanup_terminal_artifacts(
                     run_id=resolved_run_id,
                     db=kill_db,
-                    tmux_session_name=tmux_session_name,
+                    terminal_id=terminal_id,
                     agent_session_id=agent_session_id,
                     debug=debug,
                     session_manager=ctx.session_manager,

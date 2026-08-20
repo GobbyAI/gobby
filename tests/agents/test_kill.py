@@ -20,7 +20,6 @@ from gobby.agents.kill import (
 from gobby.agents.tmux import configure_tmux
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun
-from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -428,6 +427,7 @@ class TestKillAgent:
             terminal_action="cancel",
             terminal_reason="user_cancelled",
             timeout=5.0,
+            terminal_services=None,
         )
         mock_close_window.assert_not_called()
         mock_kill.assert_not_called()
@@ -460,6 +460,7 @@ class TestKillAgent:
             terminal_action="cancel",
             terminal_reason="user_cancelled",
             timeout=5.0,
+            terminal_services=None,
         )
         mock_close_window.assert_called_once()
 

@@ -64,6 +64,7 @@ class WatchdogRecoveryCoordinator:
         transcript_resolver: WatchdogTranscriptResolver,
         run_db: Callable[..., Awaitable[Any]],
         task_manager: LocalTaskManager | None = None,
+        terminal_services: Any | None = None,
     ) -> None:
         self._agent_run_manager = agent_run_manager
         self.db = db
@@ -76,6 +77,7 @@ class WatchdogRecoveryCoordinator:
         self._transcript_resolver = transcript_resolver
         self._run_db = run_db
         self._task_manager = task_manager
+        self._terminal_services = terminal_services
         self._capacity_recovery: dict[str, CapacityRecoveryState] = {}
         self._completed_turn_recovery: dict[str, CompletedTurnRecoveryState] = {}
 
@@ -209,20 +211,46 @@ class WatchdogRecoveryCoordinator:
         )
 
     async def _recover_failed_reprompt_clear(self, run: AgentRun, tmux_name: str) -> bool:
-        if not await self._tmux.has_session(tmux_name):
+        del tmux_name
+        if self._terminal_services is None or not await self._terminal_services.is_live(run):
             logger.warning(
-                "Cannot recover failed idle prompt clear for agent %s: tmux gone",
+                "Cannot recover failed idle prompt clear for agent %s: terminal gone",
                 run.id,
             )
             return False
-        if not await self._tmux.send_keys(tmux_name, "C-c", literal=False):
+        from gobby.terminals.runtime import Delivered
+        from gobby.terminals.write_coordinator import WriteRequest
+
+        terminal = self._terminal_services.terminal_for(run)
+        coordinator = self._terminal_services.coordinator
+        if terminal is None or coordinator is None:
+            return False
+        outcome = await coordinator.run_sequence(
+            terminal.id,
+            action_key=f"watchdog-interrupt:{run.id}",
+            origin="automatic",
+            steps=[
+                WriteRequest(
+                    terminal_id=terminal.id,
+                    action_key=f"watchdog-interrupt:{run.id}",
+                    origin="automatic",
+                    kind="text",
+                    payload="\x03",
+                ),
+                WriteRequest(
+                    terminal_id=terminal.id,
+                    action_key=f"watchdog-interrupt:{run.id}",
+                    origin="automatic",
+                    kind="key",
+                    payload="enter",
+                ),
+            ],
+        )
+        if not isinstance(outcome, Delivered):
             logger.warning("Failed to interrupt queued prompt while recovering agent %s", run.id)
             return False
-        if not await self._tmux.send_keys(tmux_name, "Enter", literal=False):
-            logger.warning("Failed to submit interrupt while recovering agent %s", run.id)
-            return False
-        if not await self._tmux.has_session(tmux_name):
-            logger.warning("Cannot reprompt agent %s after recovery: tmux gone", run.id)
+        if not await self._terminal_services.is_live(run):
+            logger.warning("Cannot reprompt agent %s after recovery: terminal gone", run.id)
             return False
         return True
 
@@ -235,18 +263,51 @@ class WatchdogRecoveryCoordinator:
     ) -> bool:
         if reprompt_message is None:
             reprompt_message = await self._idle_reprompt_message(run)
-        cleared = await self._tmux.send_keys(tmux_name, "Escape", literal=False)
-        if not cleared:
-            logger.warning("Failed to clear queued prompt before reprompting agent %s", run.id)
+        from gobby.terminals.runtime import Delivered, IndeterminateWrite
+        from gobby.terminals.write_coordinator import WriteRequest
+
+        terminal = (
+            None
+            if self._terminal_services is None
+            else self._terminal_services.terminal_for(run)
+        )
+        coordinator = None if self._terminal_services is None else self._terminal_services.coordinator
+        if terminal is None or coordinator is None:
+            return False
+        outcome = await coordinator.run_sequence(
+            terminal.id,
+            action_key=f"idle-reprompt:{run.id}",
+            origin="automatic",
+            steps=[
+                WriteRequest(
+                    terminal_id=terminal.id,
+                    action_key=f"idle-reprompt:{run.id}",
+                    origin="automatic",
+                    kind="key",
+                    payload="escape",
+                ),
+                WriteRequest(
+                    terminal_id=terminal.id,
+                    action_key=f"idle-reprompt:{run.id}",
+                    origin="automatic",
+                    kind="text",
+                    payload=reprompt_message,
+                ),
+                WriteRequest(
+                    terminal_id=terminal.id,
+                    action_key=f"idle-reprompt:{run.id}",
+                    origin="automatic",
+                    kind="key",
+                    payload="enter",
+                ),
+            ],
+        )
+        if isinstance(outcome, IndeterminateWrite):
+            return False
+        if not isinstance(outcome, Delivered):
+            logger.warning("Failed to send idle reprompt to agent %s", run.id)
             if not await self._recover_failed_reprompt_clear(run, tmux_name):
                 return False
-        sent = await self._tmux.send_keys(tmux_name, reprompt_message)
-        if not sent:
-            logger.warning("Failed to send idle reprompt text to agent %s", run.id)
-            return False
-        submitted = await self._tmux.send_keys(tmux_name, "Enter", literal=False)
-        if not submitted:
-            logger.warning("Failed to submit idle reprompt for agent %s", run.id)
             return False
         self._idle_detector.for_provider(run.provider).record_reprompt(run.id)
         return True
@@ -346,19 +407,54 @@ class WatchdogRecoveryCoordinator:
             json.dumps(snapshot.to_log_dict(), ensure_ascii=True),
         )
 
-        interrupted = await self._tmux.send_keys(tmux_name, "C-c", literal=False)
-        if not interrupted:
-            return False
+        from gobby.terminals.runtime import Delivered
+        from gobby.terminals.write_coordinator import SequenceDelay, WriteRequest
 
+        terminal = (
+            None
+            if self._terminal_services is None
+            else self._terminal_services.terminal_for(run)
+        )
+        coordinator = None if self._terminal_services is None else self._terminal_services.coordinator
+        if terminal is None or coordinator is None:
+            return False
         settle_seconds = self._tmux_config.reasoning_watchdog_settle_seconds
+        steps: list[WriteRequest | SequenceDelay] = [
+            WriteRequest(
+                terminal_id=terminal.id,
+                action_key=f"reasoning-interrupt:{run.id}",
+                origin="automatic",
+                kind="text",
+                payload="\x03",
+            )
+        ]
         if settle_seconds:
-            await asyncio.sleep(settle_seconds)
-
-        sent = await self._tmux.send_keys(tmux_name, REASONING_WATCHDOG_CONTINUATION)
-        if not sent:
-            return False
-        submitted = await self._tmux.send_keys(tmux_name, "Enter", literal=False)
-        if not submitted:
+            steps.append(SequenceDelay(seconds=settle_seconds))
+        steps.extend(
+            [
+                WriteRequest(
+                    terminal_id=terminal.id,
+                    action_key=f"reasoning-interrupt:{run.id}",
+                    origin="automatic",
+                    kind="text",
+                    payload=REASONING_WATCHDOG_CONTINUATION,
+                ),
+                WriteRequest(
+                    terminal_id=terminal.id,
+                    action_key=f"reasoning-interrupt:{run.id}",
+                    origin="automatic",
+                    kind="key",
+                    payload="enter",
+                ),
+            ]
+        )
+        outcome = await coordinator.run_sequence(
+            terminal.id,
+            action_key=f"reasoning-interrupt:{run.id}",
+            origin="automatic",
+            steps=steps,
+        )
+        if not isinstance(outcome, Delivered):
             return False
 
         self._idle_detector.for_provider(run.provider).record_reprompt(run.id)
@@ -424,7 +520,7 @@ class WatchdogRecoveryCoordinator:
 
     async def _fail_idle_agent(self, run: AgentRun, reason: str) -> None:
         """Fail an agent that is irrecoverably idle."""
-        if run.tmux_session_name:
+        if run.terminal_id:
 
             async def terminalize(
                 _action: TerminalAction,
@@ -496,7 +592,7 @@ class WatchdogRecoveryCoordinator:
     async def _complete_idle_agent(self, run: AgentRun, reason: str) -> None:
         """Complete an idle agent whose step workflow already finished."""
         payload = f"Agent completed by watchdog: {reason}"
-        if run.tmux_session_name:
+        if run.terminal_id:
 
             async def terminalize(
                 _action: TerminalAction,

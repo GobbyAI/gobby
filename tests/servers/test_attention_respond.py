@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -358,17 +358,18 @@ def test_attention_router_is_registered_in_real_app(temp_db: HubDatabase) -> Non
 
 def test_attention_router_composes_session_pane_dependencies(
     temp_db: HubDatabase,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from gobby.terminals import TerminalRuntimeRegistry
+    from tests.terminals.fakes import FakeRuntime, MemoryTerminalStore, make_memory_terminal
+
     manager = _manager(temp_db)
     state = _open_prompt(manager)
-    tmux = MagicMock()
-    tmux._base_args.return_value = ["tmux", "-L", "gobby"]
-    tmux.capture_pane = AsyncMock(return_value=APPROVAL_PROMPT)
-    session_manager = MagicMock()
-    session_manager.get.return_value = SimpleNamespace(
-        terminal_context={"tmux_pane": "%42", "tmux_socket_name": "gobby"}
-    )
+    row = make_memory_terminal()
+    row.session_id = "session-1"
+    store = MemoryTerminalStore(row)
+    runtime = FakeRuntime(snapshot_text=APPROVAL_PROMPT)
+    registry = TerminalRuntimeRegistry()
+    registry.register(runtime)
     injected: list[AttentionAnswer] = []
 
     async def run_db(function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -377,20 +378,18 @@ def test_attention_router_composes_session_pane_dependencies(
     async def inject(_pane: AttentionPane, answer: AttentionAnswer) -> None:
         injected.append(answer)
 
-    monkeypatch.setattr(
-        "gobby.sessions.tmux_context.get_tmux_manager_for_context",
-        lambda _context: tmux,
-    )
     server = SimpleNamespace(
         services=SimpleNamespace(
             attention_manager=manager,
             agent_lifecycle_monitor=SimpleNamespace(
                 prompt_detector=PromptDetector(DETECTION_REGISTRY, "claude")
             ),
-            session_manager=session_manager,
+            session_manager=MagicMock(),
             agent_runner=None,
             config=None,
             run_db=run_db,
+            terminal_manager=store,
+            terminal_runtime_registry=registry,
         )
     )
     app = FastAPI()
@@ -403,8 +402,6 @@ def test_attention_router_composes_session_pane_dependencies(
         )
 
     assert response.status_code == 200
-    session_manager.get.assert_called_once_with("session-1")
-    tmux.capture_pane.assert_awaited_once_with("%42", lines=15)
     assert injected[-1].option == 1
 
 

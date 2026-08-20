@@ -24,7 +24,6 @@ from typing import TYPE_CHECKING, Any
 from gobby.agents.tmux.session_manager import TmuxReleaseOutcome
 from gobby.config.tmux import TmuxConfig
 from gobby.sessions.tmux_context import (
-    get_tmux_manager_for_context,
     get_tmux_session_name,
     get_tmux_socket_name,
     get_tmux_window_id,
@@ -38,6 +37,7 @@ from gobby.terminal_ownership import (
     resolve_pane_ownership,
     terminal_session_identity,
 )
+from gobby.terminals.lookup import manager_for_terminal_context
 from gobby.utils.logging import ThrottledLogger
 
 if TYPE_CHECKING:
@@ -287,7 +287,7 @@ class SessionLivenessMonitor:
         target = record.tmux_pane or record.tmux_window_id
         if context is None or target is None:
             return
-        manager = get_tmux_manager_for_context(context)
+        manager = manager_for_terminal_context(context)
         for _attempt in range(2):
             try:
                 outcome = await manager.release_window_title_ownership(target)

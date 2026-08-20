@@ -53,8 +53,8 @@ Send the compact command and watch for the provider's completion marker.
     agent_run_manager = MagicMock()
     agent_run_manager.get_by_session.return_value = None
     tmux = MagicMock()
-    tmux.send_keys = AsyncMock(return_value=True)
-    tmux.capture_pane = AsyncMock(return_value="")
+    tmux.dispatch_keys = AsyncMock(return_value=True)
+    tmux.snapshot_lines = AsyncMock(return_value="")
     db = MagicMock()
 
     with patch(
@@ -74,7 +74,7 @@ Send the compact command and watch for the provider's completion marker.
             return_value=cursor,
         ),
         patch(
-            "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
+            "gobby.mcp_proxy.tools.sessions._terminal.manager_for_terminal_context",
             return_value=tmux,
         ),
         patch("gobby.mcp_proxy.tools.sessions._terminal._CODEX_INTERRUPT_SETTLE_SECONDS", 0),

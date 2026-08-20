@@ -30,7 +30,6 @@ import pytest
 from gobby.hooks.session_coordinator import SessionCoordinator
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
-from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -1428,3 +1427,19 @@ class TestInlineTerminalizationAlreadyTerminal:
             "(agent run already terminal (status=success))"
         ]
         assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
+
+
+def test_coordinator_receives_composition_root_terminal_services() -> None:
+    from tests.terminals.fakes import FakeRuntime, MemoryTerminalStore, make_memory_terminal
+
+    store = MemoryTerminalStore(make_memory_terminal())
+    runtime = FakeRuntime()
+    bridge = object()
+    coordinator = SessionCoordinator(
+        terminal_manager=store,
+        terminal_runtime_registry=runtime,
+        write_coordinator=object(),
+        terminal_effect_bridge=bridge,
+    )
+    assert coordinator._terminal_manager is store
+    assert coordinator._terminal_effect_bridge is bridge

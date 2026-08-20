@@ -7,7 +7,7 @@ import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
 from gobby.storage.terminals import (
@@ -16,6 +16,7 @@ from gobby.storage.terminals import (
     UNRESOLVED_WRITE_MAX_SERIALIZED_BYTES,
     AttachLocator,
     Terminal,
+    TerminalManager,
     UnresolvedWriteCapacityError,
     tmux_locator_key,
 )
@@ -195,6 +196,23 @@ class MemoryTerminalStore:
         current.process = dict(process)
         return current
 
+    def get_live_by_session_name(self, session_name: str) -> Terminal | None:
+        matches = [
+            row
+            for row in self.rows.values()
+            if row.state in {"pending", "live"}
+            and (row.session_name == session_name or row.spawn_key == session_name)
+        ]
+        return matches[-1] if matches else None
+
+    def get_live_for_session(self, session_id: str) -> Terminal | None:
+        matches = [
+            row
+            for row in self.rows.values()
+            if row.session_id == session_id and row.state in {"pending", "live"}
+        ]
+        return matches[-1] if matches else None
+
     def list_stale_pending(self, max_age_seconds: float) -> list[Terminal]:
         now = datetime.now(UTC)
         stale: list[Terminal] = []
@@ -237,6 +255,25 @@ class MemoryTerminalStore:
         current.unresolved_writes = writes
         return current
 
+    def clear_all_unresolved_writes(self, terminal_id: str) -> Terminal:
+        current = self.rows[terminal_id]
+        current.unresolved_writes = {}
+        return current
+
+    def set_automatic_write_quarantine(self, terminal_id: str, action_key: str) -> Terminal:
+        current = self.rows[terminal_id]
+        current.automatic_write_quarantined_at = datetime.now(UTC)
+        current.automatic_write_quarantine_action_key = action_key
+        current.updated_at = datetime.now(UTC)
+        return current
+
+    def clear_automatic_write_quarantine(self, terminal_id: str) -> Terminal:
+        current = self.rows[terminal_id]
+        current.automatic_write_quarantined_at = None
+        current.automatic_write_quarantine_action_key = None
+        current.updated_at = datetime.now(UTC)
+        return current
+
 
 @dataclass
 class FakeRuntime:
@@ -247,6 +284,9 @@ class FakeRuntime:
     hold: asyncio.Event | None = None
     release: asyncio.Event | None = None
     outcome: WriteOutcome = field(default_factory=Delivered)
+    outcomes: list[WriteOutcome] = field(default_factory=list)
+    snapshot_text: str = ""
+    snapshot_full_result: SnapshotResult | None = None
     raise_on_write: BaseException | None = None
     started: asyncio.Event = field(default_factory=asyncio.Event)
     create_calls: int = 0
@@ -260,6 +300,7 @@ class FakeRuntime:
     spawn_hold: asyncio.Event | None = None
     live_keys: set[str] = field(default_factory=set)
     killed: list[str] = field(default_factory=list)
+    killed_ids: set[str] = field(default_factory=set)
     writes_row: bool = False
 
     async def prepare_spawn(self, request: TerminalSpawnRequest) -> PreparedSpawn:
@@ -312,16 +353,38 @@ class FakeRuntime:
         )
 
     async def is_live(self, terminal: Terminal) -> bool:
-        spawn_key = getattr(terminal, "spawn_key", None) or getattr(terminal, "session_name", None)
+        if terminal.id in self.killed_ids:
+            return False
+        spawn_key = terminal.spawn_key or terminal.session_name
         if spawn_key in self.live_keys:
             return True
-        return getattr(terminal, "state", None) == "live"
+        return terminal.state == "live"
 
     async def snapshot(self, terminal: Terminal, lines: int = 50) -> SnapshotResult:
-        return SnapshotResult(text="", truncated=False, dropped_bytes=0, total_bytes=0)
+        del lines
+        if self.snapshot_full_result is not None:
+            return SnapshotResult(
+                text=self.snapshot_full_result.text,
+                truncated=False,
+                dropped_bytes=0,
+                total_bytes=len(self.snapshot_full_result.text.encode("utf-8")),
+            )
+        return SnapshotResult(
+            text=self.snapshot_text,
+            truncated=False,
+            dropped_bytes=0,
+            total_bytes=len(self.snapshot_text.encode("utf-8")),
+        )
 
     async def snapshot_full(self, terminal: Terminal) -> SnapshotResult:
-        return SnapshotResult(text="", truncated=False, dropped_bytes=0, total_bytes=0)
+        if self.snapshot_full_result is not None:
+            return self.snapshot_full_result
+        return SnapshotResult(
+            text=self.snapshot_text,
+            truncated=False,
+            dropped_bytes=0,
+            total_bytes=len(self.snapshot_text.encode("utf-8")),
+        )
 
     async def write_text(self, terminal: Terminal, text: str, submit: bool) -> WriteOutcome:
         suffix = "\n" if submit else ""
@@ -338,8 +401,9 @@ class FakeRuntime:
 
     async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
         del grace_seconds
-        name = getattr(terminal, "session_name", None) or getattr(terminal, "spawn_key", None)
-        if isinstance(name, str):
+        self.killed_ids.add(terminal.id)
+        name = terminal.session_name or terminal.spawn_key
+        if name is not None:
             self.killed.append(name)
             self.live_keys.discard(name)
 
@@ -357,6 +421,8 @@ class FakeRuntime:
         if self.raise_on_write is not None:
             raise self.raise_on_write
         self.write_log.append((kind, payload))
+        if self.outcomes:
+            return self.outcomes.pop(0)
         return self.outcome
 
 
@@ -366,12 +432,17 @@ def uuid_of(terminal: Terminal) -> UUID:
 
 def bind_spawn_runtime(request: object) -> tuple[MemoryTerminalStore, FakeRuntime]:
     """Attach an in-memory manager and FakeRuntime to a SpawnRequest."""
+    from gobby.agents.spawn_models import SpawnRequest
     from gobby.terminals import TerminalRuntimeRegistry
+    from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
+
+    spawn = cast(SpawnRequest, request)
 
     manager = MemoryTerminalStore()
     runtime = FakeRuntime()
     registry = TerminalRuntimeRegistry()
     registry.register(runtime)
-    request.terminal_manager = manager  # type: ignore[attr-defined]
-    request.terminal_runtime_registry = registry  # type: ignore[attr-defined]
+    spawn.terminal_manager = cast(TerminalManager, manager)
+    spawn.terminal_runtime_registry = registry
+    spawn.write_coordinator = WriteCoordinator(cast(UnresolvedWriteStore, manager), runtime)
     return manager, runtime

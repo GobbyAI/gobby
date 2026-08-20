@@ -1,10 +1,93 @@
-"""Ownership-slice inventory: 2.1 must not mention tmux_session_name."""
+"""Ownership-slice inventory: 2.1 and 2.4 tmux-field/call sweeps."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+
+_MONITOR_PATHS = (
+    ROOT / "src/gobby/agents/agent_health.py",
+    ROOT / "src/gobby/agents/lifecycle_monitor.py",
+    ROOT / "src/gobby/agents/idle_check_handler.py",
+    ROOT / "src/gobby/agents/terminal_prompt_monitor.py",
+    ROOT / "src/gobby/agents/agent_cleanup.py",
+    ROOT / "src/gobby/agents/kill.py",
+    ROOT / "src/gobby/agents/capture.py",
+    ROOT / "src/gobby/agents/memory_watchdog.py",
+    ROOT / "src/gobby/agents/tmux/pane_monitor.py",
+)
+
+_OWNED_CONSUMER_PATHS = _MONITOR_PATHS + (
+    ROOT / "src/gobby/events/wake.py",
+    ROOT / "src/gobby/hooks/session_coordinator.py",
+    ROOT / "src/gobby/hooks/factory.py",
+    ROOT / "src/gobby/hooks/hook_manager.py",
+    ROOT / "src/gobby/hooks/event_handlers/__init__.py",
+    ROOT / "src/gobby/mcp_proxy/tools/agent_cancellation.py",
+    ROOT / "src/gobby/mcp_proxy/tools/agents_lifecycle_tools.py",
+    ROOT / "src/gobby/mcp_proxy/tools/agents_query_tools.py",
+    ROOT / "src/gobby/mcp_proxy/tools/agents_termination.py",
+    ROOT / "src/gobby/servers/routes/attention.py",
+    ROOT / "src/gobby/servers/websocket/handlers/core.py",
+    ROOT / "src/gobby/servers/websocket/tmux.py",
+    ROOT / "src/gobby/agents/task_recovery.py",
+    ROOT / "src/gobby/agents/terminal_cleanup.py",
+    ROOT / "src/gobby/agents/watchdog/recovery.py",
+    ROOT / "src/gobby/agents/lifecycle_reconciliation.py",
+    ROOT / "src/gobby/mcp_proxy/tools/sessions/_terminal.py",
+    ROOT / "src/gobby/mcp_proxy/tools/sessions/_terminal_tmux.py",
+    ROOT / "src/gobby/mcp_proxy/tools/sessions/_factory.py",
+    ROOT / "src/gobby/mcp_proxy/registries.py",
+    ROOT / "src/gobby/servers/http.py",
+    ROOT / "src/gobby/mcp_proxy/stdio.py",
+    ROOT / "src/gobby/mcp_proxy/stdio_server.py",
+    ROOT / "src/gobby/adapters/plan_keystrokes.py",
+    ROOT / "src/gobby/servers/websocket/handlers/plan_approval.py",
+    ROOT / "src/gobby/servers/websocket/handlers/session_config.py",
+    ROOT / "src/gobby/servers/websocket/handlers/session_observe.py",
+    ROOT / "src/gobby/servers/websocket/handlers/session_observe_proxy.py",
+    ROOT / "src/gobby/sessions/compact_continuation.py",
+    ROOT / "src/gobby/runner_init/orchestration.py",
+    ROOT / "src/gobby/communications/native_plan_actions.py",
+    ROOT / "src/gobby/communications/session_notifications.py",
+    ROOT / "src/gobby/communications/telegram_actions.py",
+    ROOT / "src/gobby/runner_init/servers.py",
+    ROOT / "src/gobby/agents/spawn_executor_support.py",
+    ROOT / "src/gobby/runner_lifecycle_shutdown.py",
+    ROOT / "src/gobby/runner_lifecycle_agents.py",
+)
+
+_WRITE_PATH_CONSUMERS = (
+    ROOT / "src/gobby/adapters/plan_keystrokes.py",
+    ROOT / "src/gobby/servers/websocket/handlers/plan_approval.py",
+    ROOT / "src/gobby/servers/websocket/handlers/session_config.py",
+    ROOT / "src/gobby/servers/websocket/handlers/session_observe_proxy.py",
+    ROOT / "src/gobby/sessions/compact_continuation.py",
+)
+
+_TEST_SEAM_PATHS = (
+    ROOT / "tests/mcp_proxy/tools/sessions/test_compact_self_readiness.py",
+    ROOT / "tests/servers/test_attention_respond.py",
+    ROOT / "tests/servers/test_session_control.py",
+    ROOT / "tests/servers/websocket/test_voice_warmup.py",
+    ROOT / "tests/sessions/test_liveness_monitor.py",
+    ROOT / "tests/agents/test_attention_state.py",
+)
+
+_ALLOWED_FIELD_REMAINING = {
+    "src/gobby/runner_broadcasting.py",
+    "src/gobby/runner_lifecycle_processes.py",
+}
+
+_DIRECT_CALL_NEEDLES = (
+    ".send_keys(",
+    ".capture_pane(",
+    ".capture_full_pane(",
+    ".kill_session(",
+    "get_tmux_manager_for_context",
+    "get_tmux_session_manager(",
+)
 
 _SLICE_PATHS = (
     ROOT / "src/gobby/storage/agents",
@@ -69,3 +152,45 @@ def test_storage_slice_inventory_is_fully_assigned() -> None:
             if "tmux_session_name" in text:
                 hits.append(str(path.relative_to(ROOT)))
     assert hits == [], f"tmux_session_name remains in 2.1 slice: {hits}"
+
+
+def _direct_hits(paths: tuple[Path, ...]) -> list[str]:
+    hits: list[str] = []
+    for root in paths:
+        for path in _iter_files(root):
+            text = path.read_text(encoding="utf-8")
+            rel = str(path.relative_to(ROOT))
+            if "tmux_session_name" in text:
+                hits.append(f"{rel}:tmux_session_name")
+            for needle in _DIRECT_CALL_NEEDLES:
+                if needle in text:
+                    hits.append(f"{rel}:{needle}")
+    return hits
+
+
+def test_monitors_use_runtime() -> None:
+    hits = _direct_hits(_MONITOR_PATHS)
+    assert hits == [], f"monitor/cleanup/kill/capture still use tmux directly: {hits}"
+
+
+def test_owned_consumers_are_backend_neutral() -> None:
+    hits = _direct_hits(_OWNED_CONSUMER_PATHS)
+    assert hits == [], f"2.4-owned consumers still use tmux directly: {hits}"
+
+
+def test_write_path_consumers_are_backend_neutral() -> None:
+    hits = _direct_hits(_WRITE_PATH_CONSUMERS)
+    leftover: list[str] = []
+    for path in (ROOT / "src").rglob("*.py"):
+        rel = str(path.relative_to(ROOT))
+        if rel.startswith("src/gobby/agents/tmux/"):
+            continue
+        if ".send_keys(" in path.read_text(encoding="utf-8"):
+            leftover.append(rel)
+    assert hits == [], f"call-sweep consumers still send through tmux: {hits}"
+    assert leftover == [], f"send_keys remains outside tmux backend: {leftover}"
+
+
+def test_remaining_runtime_test_seams_are_owned() -> None:
+    hits = _direct_hits(_TEST_SEAM_PATHS)
+    assert hits == [], f"named test seams still patch tmux managers: {hits}"

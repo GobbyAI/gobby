@@ -67,7 +67,7 @@ from gobby.sessions.compact_continuation import (
     persist_compact_resume_required_skills,
     schedule_codex_compact_self_continuation_readiness,
 )
-from gobby.sessions.tmux_context import get_tmux_manager_for_context
+from gobby.terminals.lookup import manager_for_terminal_context
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.session_activity import reconcile_compact_session_activity
 from gobby.terminal_context import parse_terminal_context_value, terminal_context_has_tmux_target
@@ -117,7 +117,7 @@ __all__ = [
     "_send_tmux_keys",
     "_valid_existing_summary_markdown",
     "asyncio",
-    "get_tmux_manager_for_context",
+    "manager_for_terminal_context",
     "LocalAgentRunManager",
     "register_terminal_tools",
 ]
@@ -133,7 +133,7 @@ def _resolve_tmux_target(
         session_id,
         session_manager,
         agent_run_manager,
-        tmux_manager_factory=get_tmux_manager_for_context,
+        tmux_manager_factory=manager_for_terminal_context,
     )
 
 
@@ -348,6 +348,9 @@ def register_terminal_tools(
     compact_handoff_config: CompactHandoffConfig | None = None,
     config_resolver: Callable[[], DaemonConfig | None] | None = None,
     web_chat_session_registry: WebChatSessionRegistry | None = None,
+    terminal_manager: Any | None = None,
+    terminal_runtime_registry: Any | None = None,
+    write_coordinator: Any | None = None,
 ) -> None:
     """Register send_keys and capture_output tools."""
 
@@ -378,6 +381,41 @@ def register_terminal_tools(
             return authorization_error
 
         assert resolved_session_id is not None
+        if write_coordinator is not None and terminal_manager is not None:
+            from gobby.terminals.runtime import Delivered, IndeterminateWrite, is_named_key
+            from gobby.terminals.write_coordinator import WriteRequest
+
+            terminal = terminal_manager.get_live_for_session(resolved_session_id)
+            if terminal is not None:
+                kind = "text"
+                payload = keys
+                submit = False
+                if literal:
+                    if keys.endswith("\n"):
+                        payload = keys.rstrip("\n")
+                        submit = True
+                elif is_named_key(keys.lower()):
+                    kind = "key"
+                    payload = keys.lower()
+                outcome = await write_coordinator.write(
+                    WriteRequest(
+                        terminal_id=terminal.id,
+                        action_key=f"mcp-send-keys:{resolved_session_id}",
+                        origin="operator",
+                        kind=kind,
+                        payload=payload,
+                        submit=submit,
+                    )
+                )
+                if isinstance(outcome, IndeterminateWrite):
+                    return {
+                        "success": False,
+                        "indeterminate": True,
+                        "error": outcome.detail or "send_keys write was indeterminate",
+                    }
+                if not isinstance(outcome, Delivered):
+                    return {"success": False, "error": "send_keys failed"}
+                return {"success": True}
         target, tmux, error = _resolve_tmux_target(
             resolved_session_id,
             session_manager,
@@ -388,7 +426,7 @@ def register_terminal_tools(
 
         assert target is not None
         assert tmux is not None
-        ok = await tmux.send_keys(target, keys, literal=literal)
+        ok = await tmux.dispatch_keys(target, keys, literal=literal)
         if not ok:
             return {
                 "success": False,
@@ -502,7 +540,7 @@ def register_terminal_tools(
         assert tmux is not None
 
         try:
-            pane_probe = await tmux.capture_pane(target, lines=1)
+            pane_probe = await tmux.snapshot_lines(target, lines=1)
         except Exception as exc:
             logger.warning(
                 "Failed verifying compact_self tmux target %s for session %s",
@@ -703,6 +741,19 @@ def register_terminal_tools(
         session_id: str,
         lines: int = 50,
     ) -> dict[str, Any]:
+        if terminal_manager is not None and terminal_runtime_registry is not None:
+            terminal = terminal_manager.get_live_for_session(session_id)
+            if terminal is not None:
+                runtime = terminal_runtime_registry.resolve(terminal.backend)
+                snapshot = await runtime.snapshot(terminal, lines)
+                return {
+                    "success": True,
+                    "output": snapshot.text,
+                    "via": terminal.backend,
+                    "truncated": snapshot.truncated,
+                    "dropped_bytes": snapshot.dropped_bytes,
+                    "total_bytes": snapshot.total_bytes,
+                }
         target, tmux, error = _resolve_tmux_target(session_id, session_manager, agent_run_manager)
         if error:
             fallback, transcript_error = await _capture_transcript_tail(
@@ -723,7 +774,7 @@ def register_terminal_tools(
 
         assert target is not None
         assert tmux is not None
-        output = await tmux.capture_pane(target, lines)
+        output = await tmux.snapshot_lines(target, lines)
         if output is None:
             return {
                 "success": False,

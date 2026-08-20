@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 from gobby.agents.agent_cleanup import AgentCleanupHandler
 from gobby.agents.agent_health import AgentHealthMonitor
-from gobby.agents.capture import terminate_managed_tmux_async
 from gobby.agents.checkpoint_manager import CheckpointManager
 from gobby.agents.idle_check_handler import IdleCheckHandler
 from gobby.agents.idle_detector import IdleDetector
@@ -91,6 +90,7 @@ class AgentLifecycleMonitor:
         run_db: Callable[..., Awaitable[Any]] | None = None,
         attention_manager: AttentionStateManager | None = None,
         attention_metadata_store: AttentionMetadataStore | None = None,
+        terminal_services: Any | None = None,
     ) -> None:
         self._agent_run_manager = agent_run_manager
         self._db = db
@@ -108,6 +108,23 @@ class AgentLifecycleMonitor:
             tmux_config = get_configured_tmux_config()
         self._tmux_config = tmux_config
         self._tmux = TmuxSessionManager(config=self._tmux_config)
+        if terminal_services is None:
+            from gobby.storage.terminals import TerminalManager
+            from gobby.terminals import TerminalRuntimeRegistry
+            from gobby.terminals.services import TerminalServices
+            from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
+            from gobby.terminals.write_coordinator import WriteCoordinator
+
+            manager = TerminalManager(db)
+            runtime = TmuxTerminalRuntime(self._tmux)
+            registry = TerminalRuntimeRegistry()
+            registry.register(runtime)
+            terminal_services = TerminalServices(
+                manager=manager,
+                registry=registry,
+                coordinator=WriteCoordinator(manager, runtime),
+            )
+        self._terminal_services = terminal_services
         self._idle_detector = IdleDetector(detection_registry)
         self._prompt_detector = PromptDetector(detection_registry)
         self._stall_classifier = StallClassifier(detection_registry)
@@ -142,6 +159,7 @@ class AgentLifecycleMonitor:
                 run
             ),
             run_db=run_db,
+            terminal_services=self._terminal_services,
         )
         self._cleanup_handler = AgentCleanupHandler(
             agent_run_manager=agent_run_manager,
@@ -156,9 +174,10 @@ class AgentLifecycleMonitor:
             stall_classifier=self._stall_classifier,
             loop_tracker=self._loop_tracker,
             master_fds=self._master_fds,
-            kill_tmux_session=lambda name: self._tmux.kill_session(name, missing_ok=True),
+            kill_tmux_session=None,
             run_db=run_db,
             attention_manager=attention_manager,
+            terminal_services=self._terminal_services,
         )
         self._reconciliation = LifecycleReconciliation(
             agent_run_manager=agent_run_manager,
@@ -166,6 +185,9 @@ class AgentLifecycleMonitor:
             tmux=self._tmux,
             cleanup_handler=self._cleanup_handler,
             run_db=self._run_db,
+            terminal_manager=self._terminal_services.manager,
+            runtime_registry=self._terminal_services.registry,
+            spawn_in_doubt_seconds=150.0,
         )
         self._health_monitor = AgentHealthMonitor(
             agent_run_manager=agent_run_manager,
@@ -177,6 +199,7 @@ class AgentLifecycleMonitor:
             tmux_config=self._tmux_config,
             run_db=run_db,
             checkpoint_agent_work=lambda run: self._checkpoint_agent_work(run),
+            terminal_services=self._terminal_services,
         )
         self._memory_watchdog = MemoryWatchdogHandler(
             agent_run_manager=agent_run_manager,
@@ -185,6 +208,7 @@ class AgentLifecycleMonitor:
             cleanup_handler=self._cleanup_handler,
             tmux_config=self._tmux_config,
             run_db=run_db,
+            terminal_services=self._terminal_services,
         )
         self._idle_check_handler = IdleCheckHandler(
             agent_run_manager=agent_run_manager,
@@ -201,6 +225,7 @@ class AgentLifecycleMonitor:
             prompt_detector=self._prompt_detector,
             stall_classifier=self._stall_classifier,
             watchdog_readers=self._watchdog_readers,
+            terminal_services=self._terminal_services,
         )
 
         self._checkpoint_manager = (
@@ -403,7 +428,7 @@ class AgentLifecycleMonitor:
         from gobby.agents.recovery_state import is_recovery_protected
 
         runs = self._agent_run_manager.list_active_for_machine(require_machine_id())
-        return [r for r in runs if r.tmux_session_name and not is_recovery_protected(r)]
+        return [r for r in runs if r.terminal_id and not is_recovery_protected(r)]
 
     async def expire_terminal_run_sessions(self) -> int:
         """Expire sessions whose agent run is already in a terminal state."""
@@ -599,8 +624,13 @@ class AgentLifecycleMonitor:
                     run,
                     terminal_payload=f"autonomous stuck: {result.reason or result.layer}",
                 )
-            elif run.tmux_session_name:
-                await self._tmux.send_keys(run.tmux_session_name, "Enter", literal=True)
+            elif run.terminal_id and self._terminal_services is not None:
+                await self._terminal_services.write(
+                    run,
+                    action_key=f"stuck-enter:{run.id}",
+                    kind="key",
+                    payload="enter",
+                )
 
         if handled:
             inc_counter("agent_lifecycle_autonomous_stuck_detected_total", handled)
@@ -677,7 +707,8 @@ class AgentLifecycleMonitor:
         threshold = self._loop_tracker.threshold
         reason = f"doom loop: dismissed loop prompt {threshold}+ times"
 
-        if run.tmux_session_name:
+        terminal = self._terminal_services.terminal_for(run)
+        if terminal is not None:
 
             async def terminalize(
                 _action: TerminalAction,
@@ -692,10 +723,13 @@ class AgentLifecycleMonitor:
                     await self._run_db(self._agent_run_manager.get, run.id),
                 )
 
-            result = await terminate_managed_tmux_async(
+            from gobby.agents.capture import terminate_managed_runtime_async
+
+            result = await terminate_managed_runtime_async(
                 storage=self._agent_run_manager,
                 run=run,
-                tmux=self._tmux,
+                terminal=terminal,
+                runtime=self._terminal_services.runtime_for(terminal),
                 action="fail",
                 reason=reason,
                 terminalize=terminalize,

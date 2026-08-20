@@ -203,6 +203,8 @@ class GobbyRunner:
     terminal_manager: TerminalManager
     terminal_runtime_registry: TerminalRuntimeRegistry
     terminal_config: TerminalConfig
+    write_coordinator: Any
+    terminal_effect_bridge: Any
     attention_manager: AttentionStateManager
     attention_metadata_store: AttentionMetadataStore
     lifecycle_manager: SessionLifecycleManager

@@ -80,6 +80,9 @@ def setup_internal_registries(
     coverage_executor: CoverageExecutor | None = None,
     detection_registry: DetectionManifestRegistry | None = None,
     dream_coordinator_resolver: Callable[[], Any | None] | None = None,
+    terminal_manager: Any | None = None,
+    terminal_runtime_registry: Any | None = None,
+    write_coordinator: Any | None = None,
 ) -> InternalRegistryManager:
     """
     Setup internal MCP registries (tasks, messages, memory, metrics, agents, worktrees).
@@ -228,6 +231,9 @@ def setup_internal_registries(
             inter_session_message_manager=inter_session_message_manager,
             transcript_reader=transcript_reader,
             web_chat_session_registry=web_chat_session_registry,
+            terminal_manager=terminal_manager,
+            terminal_runtime_registry=terminal_runtime_registry,
+            write_coordinator=write_coordinator,
         )
         manager.add_registry(session_messages_registry)
         logger.debug("Sessions registry initialized")

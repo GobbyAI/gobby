@@ -1453,7 +1453,8 @@ class TestTmuxSpawner:
         mock_create.assert_called_once()
         assert mock_create.call_args.kwargs["name"] == "gobby-caller-key"
         assert isinstance(result.locator, AttachLocator)
-        assert result.tmux_session_name is None
+        assert result.locator.pane_id == "%7"
+        assert result.locator.backend == "tmux"
         with pytest.raises(InvalidSpawnKeyError):
             await spawner._async_spawn(
                 command=["echo", "hello"],

@@ -4088,6 +4088,28 @@
     },
     {
       "activation": "live",
+      "default": 5.0,
+      "description": "How long shutdown drains in-flight TerminalEffectBridge tasks.",
+      "key": "terminals.hook_write_shutdown_timeout_seconds",
+      "machineExport": false,
+      "namespace": "terminals",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 5.0,
+      "description": "How long a hook thread waits for a coordinator write to dispatch.",
+      "key": "terminals.hook_write_timeout_seconds",
+      "machineExport": false,
+      "namespace": "terminals",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
       "default": 150.0,
       "description": "Age below which a pending spawn is in doubt, not dead. Defaults to the tmux init timeout (120s) plus a 30s margin.",
       "key": "terminals.spawn_in_doubt_seconds",
