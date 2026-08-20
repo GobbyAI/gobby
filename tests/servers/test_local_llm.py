@@ -40,7 +40,7 @@ class TestGenerationEndpointConfig:
         assert cfg.endpoints["lm-studio"].protocol == "openai-compatible"
         assert cfg.endpoints["lm-studio"].model == "qwen-coder"
         assert cfg.endpoints["lm-studio"].api_key == "local-key"
-        assert cfg.endpoints["lm-studio"].vision_extract is False
+        assert cfg.endpoints["lm-studio"].input_modalities is None
         assert cfg.endpoints["ollama"].model == "qwen2.5-coder"
 
     @pytest.mark.parametrize("protocol", ["openai-compatible", "lmstudio", "ollama"])

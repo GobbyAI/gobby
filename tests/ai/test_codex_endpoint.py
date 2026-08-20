@@ -23,7 +23,6 @@ def _endpoint(api_key: str = "sk-test-secret") -> GenerationEndpointConfig:
         api_key=api_key,
         model="moonshotai/kimi-k3",
         tool_chat=True,
-        vision_extract=True,
     )
 
 

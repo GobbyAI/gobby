@@ -95,7 +95,8 @@ def server_with_llm() -> MagicMock:
                     "lm-studio": {
                         "api_base": "http://localhost:1234/v1",
                         "model": "llava",
-                        "vision_extract": True,
+                        "probed_model": "llava",
+                        "input_modalities": ["text", "image"],
                     }
                 }
             )

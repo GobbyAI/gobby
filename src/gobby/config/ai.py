@@ -68,14 +68,38 @@ class GenerationEndpointConfig(BaseModel):
         repr=False,
         description="API key for the endpoint. Use $secret:NAME for encrypted storage.",
     )
-    vision_extract: bool = Field(
-        default=False,
-        description="Whether this endpoint's model supports daemon vision_extract requests.",
-    )
     tool_chat: bool = Field(
         default=False,
         description="Whether this endpoint's model supports daemon tool_chat requests.",
     )
+    probed_model: str | None = Field(
+        default=None,
+        description="Resolved served-model id from the last activation probe.",
+    )
+    input_modalities: list[str] | None = Field(
+        default=None,
+        description="Activation-owned modalities for probed_model; None means unknown.",
+    )
+    probed_json: bool | None = Field(
+        default=None,
+        description="Whether the last activation JSON-mode probe succeeded.",
+    )
+    probed_tools: bool | None = Field(
+        default=None,
+        description=(
+            "Whether the last activation tool-call probe succeeded. None when skipped "
+            "because tool_chat is false."
+        ),
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def strip_removed_vision_extract(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "vision_extract" in value:
+            stripped = dict(value)
+            stripped.pop("vision_extract")
+            return stripped
+        return value
 
     @model_validator(mode="after")
     def validate_endpoint(self) -> GenerationEndpointConfig:

@@ -23,6 +23,7 @@ from gobby.config.runtime import ConfigSnapshot
 from gobby.config.secret_mask import MASKED_SECRET
 from gobby.config.values import (
     ConfigValuesError,
+    clear_stale_generation_endpoint_probe_evidence,
     reject_unprobed_responses_endpoints,
 )
 from gobby.config.voice_secrets import (
@@ -248,6 +249,15 @@ class ConfigDocumentsService:
             if key not in snapshot.desired_values or snapshot.desired_values[key] != value
         }
         omitted = frozenset(set(snapshot.desired_values) - set(wire_values))
+        cleared = clear_stale_generation_endpoint_probe_evidence(
+            values,
+            desired=snapshot.desired,
+            secret_keys=secrets,
+            probe_verified=False,
+        )
+        for key in cleared:
+            validation_values[key] = None
+            wire_values[key] = None
         reject_unprobed_responses_endpoints(
             changed_values,
             omitted,

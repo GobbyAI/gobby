@@ -410,7 +410,8 @@ def test_daemon_registry_reports_only_proven_vision_extract_bindings_available()
                         "lm-studio": {
                             "api_base": "http://localhost:1234/v1",
                             "model": "llava",
-                            "vision_extract": True,
+                            "probed_model": "llava",
+                            "input_modalities": ["text", "image"],
                         }
                     }
                 )
@@ -737,3 +738,34 @@ def test_daemon_registry_reprobes_provider_installation_after_startup(
     )
     assert route_binding["available"] is True
     assert "codex" in service.enabled_providers
+
+
+def test_text_bindings_drop_vision_extract_metadata() -> None:
+    registry = build_daemon_ai_capability_registry(
+        DaemonConfig(
+            ai=AIConfig(
+                generation=GenerationConfig(
+                    endpoints={
+                        "lm-studio": {
+                            "api_base": "http://localhost:1234/v1",
+                            "model": "llava",
+                            "probed_model": "llava",
+                            "input_modalities": ["text", "image"],
+                            "probed_json": True,
+                            "probed_tools": False,
+                        }
+                    }
+                )
+            ),
+        ),
+        provider_installed=lambda _entry: True,
+    )
+
+    text = registry.binding(AICapability.TEXT_GENERATE, "endpoint:lm-studio")
+    vision = registry.binding(AICapability.VISION_EXTRACT, "endpoint:lm-studio")
+
+    assert text is not None
+    assert "vision_extract" not in text.metadata
+    assert vision is not None
+    assert vision.available is True
+    assert "vision_extract" not in vision.metadata

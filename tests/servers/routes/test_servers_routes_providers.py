@@ -659,7 +659,6 @@ class TestProviderModelsRoute:
                             "api_key": "$secret:OPENROUTER_API_KEY",
                             "model": "moonshotai/kimi-k3",
                             "tool_chat": True,
-                            "vision_extract": False,
                         }
                     }
                 )
@@ -679,7 +678,7 @@ class TestProviderModelsRoute:
         assert providers["codex"]["execution_provider"] == "codex"
         assert kimi["execution_provider"] == "codex"
         assert kimi["supports_tools"] is True
-        assert kimi["input_modalities"] == ["text"]
+        assert kimi["input_modalities"] is None
 
     def test_generic_local_generation_provider_is_disabled_for_web_chat(self) -> None:
         app = FastAPI()

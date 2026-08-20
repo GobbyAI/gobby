@@ -223,7 +223,7 @@ def _daemon_vision_extract_adapters(config: DaemonConfig) -> dict[str, VisionExt
         "claude": ClaudeVisionExtractAdapter(config),
     }
     for name, endpoint in config.ai.generation.endpoints.items():
-        if endpoint.vision_extract:
+        if endpoint.input_modalities is not None and "image" in endpoint.input_modalities:
             adapter: VisionExtractAdapter
             if endpoint.wire_api == "responses":
                 adapter = CodexEndpointVisionExtractAdapter(config, name)

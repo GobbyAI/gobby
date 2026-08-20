@@ -228,14 +228,23 @@ def image_transport_eligible(binding: CapabilityBinding) -> bool:
     return wire_api != "responses"
 
 
-def image_candidate_eligible(binding: CapabilityBinding) -> bool:
+def image_candidate_eligible(
+    binding: CapabilityBinding,
+    *,
+    model: str | None = None,
+) -> bool:
     """Return whether a binding may be selected for an image-bearing request."""
     if not image_transport_eligible(binding):
         return False
     if binding.provider == "claude":
         return True
     modalities = _binding_input_modalities(binding)
-    return modalities is not None and "image" in modalities
+    if modalities is None or "image" not in modalities:
+        return False
+    probed_model = binding.metadata.get("probed_model")
+    if isinstance(probed_model, str) and probed_model and model is not None:
+        return model == probed_model
+    return True
 
 
 def _image_modality_diagnostic(binding: CapabilityBinding, model: str | None) -> str:
@@ -802,7 +811,7 @@ class TextGenerationService:
             except Exception:
                 eligible.append(candidate)
                 continue
-            if image_candidate_eligible(binding):
+            if image_candidate_eligible(binding, model=candidate.model):
                 eligible.append(candidate)
             else:
                 rejected.append((candidate, binding))

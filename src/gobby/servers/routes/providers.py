@@ -12,6 +12,7 @@ from fastapi import APIRouter
 
 from gobby.agents.codex_oss import CODEX_OSS_LOCAL_PROVIDERS
 from gobby.ai.codex_endpoint import codex_endpoint_display_name
+from gobby.ai.endpoint_activation import modalities_for_served_model
 from gobby.ai.endpoints import endpoint_provider
 from gobby.providers import provider_metadata
 from gobby.providers.capabilities.models import ModelCapability, ProviderSnapshot
@@ -301,7 +302,7 @@ def _configured_endpoint_provider_entries(server: HTTPServer | None) -> list[dic
 def _responses_endpoint_models(server: HTTPServer | None) -> list[dict[str, Any]]:
     models: list[dict[str, Any]] = []
     for endpoint_name, endpoint in _configured_endpoints(server, "responses"):
-        modalities = ["text", "image"] if endpoint.vision_extract else ["text"]
+        modalities = modalities_for_served_model(endpoint, endpoint.model)
         models.append(
             {
                 "value": f"{endpoint_provider(endpoint_name)}/{endpoint.model}",

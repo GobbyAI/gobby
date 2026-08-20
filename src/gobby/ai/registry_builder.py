@@ -363,7 +363,12 @@ def _generation_endpoint_text_bindings(
                     ),
                     "protocol": endpoint.protocol,
                     "wire_api": endpoint.wire_api,
-                    "vision_extract": endpoint.vision_extract,
+                    "probed_model": endpoint.probed_model,
+                    "input_modalities": (
+                        list(endpoint.input_modalities)
+                        if endpoint.input_modalities is not None
+                        else None
+                    ),
                 },
             )
         )
@@ -431,7 +436,7 @@ def _generation_endpoint_vision_bindings(
     endpoints = config.ai.generation.endpoints
     bindings: list[CapabilityBinding] = []
     for name, endpoint in endpoints.items():
-        if not endpoint.vision_extract:
+        if endpoint.input_modalities is None or "image" not in endpoint.input_modalities:
             continue
         provider = endpoint_provider(name)
         bindings.append(
@@ -458,7 +463,8 @@ def _generation_endpoint_vision_bindings(
                     ),
                     "protocol": endpoint.protocol,
                     "wire_api": endpoint.wire_api,
-                    "vision_extract": True,
+                    "probed_model": endpoint.probed_model,
+                    "input_modalities": list(endpoint.input_modalities),
                 },
             )
         )

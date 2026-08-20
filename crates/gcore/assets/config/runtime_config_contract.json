@@ -5815,10 +5815,46 @@
             "null"
           ]
         },
+        "input_modalities": {
+          "default": null,
+          "identity": false,
+          "secrecy": "none",
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "model": {
           "identity": false,
           "secrecy": "none",
           "type": "string"
+        },
+        "probed_json": {
+          "default": null,
+          "identity": false,
+          "secrecy": "none",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "probed_model": {
+          "default": null,
+          "identity": false,
+          "secrecy": "none",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "probed_tools": {
+          "default": null,
+          "identity": false,
+          "secrecy": "none",
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "protocol": {
           "default": "openai-compatible",
@@ -5827,12 +5863,6 @@
           "type": "string"
         },
         "tool_chat": {
-          "default": false,
-          "identity": false,
-          "secrecy": "none",
-          "type": "boolean"
-        },
-        "vision_extract": {
           "default": false,
           "identity": false,
           "secrecy": "none",

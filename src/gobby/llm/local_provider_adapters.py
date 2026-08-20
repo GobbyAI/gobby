@@ -74,6 +74,7 @@ class LocalProviderAdapter(Protocol):
         model: str,
         max_tokens: int | None = None,
         reasoning_effort: str | None = None,
+        allow_fallback: bool = True,
     ) -> dict[str, Any]:
         """Generate and parse JSON."""
 
@@ -289,6 +290,7 @@ class OpenAICompatibleLocalProviderAdapter:
         model: str,
         max_tokens: int | None = None,
         reasoning_effort: str | None = None,
+        allow_fallback: bool = True,
     ) -> dict[str, Any]:
         if not self._client:
             raise RuntimeError("Local LLM client not initialised")
@@ -313,7 +315,7 @@ class OpenAICompatibleLocalProviderAdapter:
         try:
             response = await self._client.chat.completions.create(**request)
         except BadRequestError as json_mode_err:
-            if not _is_unsupported_json_mode_error(json_mode_err):
+            if not allow_fallback or not _is_unsupported_json_mode_error(json_mode_err):
                 raise
             logger.debug(
                 "json_object mode rejected (%s), retrying without response_format",
@@ -379,7 +381,9 @@ class LMStudioLocalProviderAdapter:
         model: str,
         max_tokens: int | None = None,
         reasoning_effort: str | None = None,
+        allow_fallback: bool = True,
     ) -> dict[str, Any]:
+        del allow_fallback
         result = await self.generate_text_result(
             prompt,
             system_prompt=system_prompt
@@ -449,7 +453,9 @@ class OllamaLocalProviderAdapter:
         model: str,
         max_tokens: int | None = None,
         reasoning_effort: str | None = None,
+        allow_fallback: bool = True,
     ) -> dict[str, Any]:
+        del reasoning_effort, allow_fallback
         payload = _ollama_chat_payload(
             prompt,
             system_prompt=system_prompt

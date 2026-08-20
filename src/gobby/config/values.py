@@ -8,6 +8,7 @@ from typing import Protocol
 
 from pydantic_core import to_jsonable_python
 
+from gobby.config.ai import GenerationEndpointConfig
 from gobby.config.app import DaemonConfig
 from gobby.config.registry import (
     CONFIG_REGISTRY,
@@ -21,6 +22,7 @@ from gobby.config.registry import (
     config_structured_identity_field,
     config_structured_reference_fields,
     decode_dynamic_segment,
+    encode_dynamic_segment,
 )
 from gobby.config.runtime import ConfigSnapshot
 from gobby.config.secret_mask import MASKED_SECRET
@@ -40,6 +42,13 @@ from gobby.storage.config_mutations import (
 from gobby.storage.config_store import unflatten_config
 
 _GENERATION_ENDPOINT_PREFIX = "ai.generation.endpoints."
+_GENERATION_ENDPOINT_IDENTITY_FIELDS = ("protocol", "wire_api", "api_base", "model")
+_GENERATION_ENDPOINT_EVIDENCE_FIELDS = (
+    "probed_model",
+    "input_modalities",
+    "probed_json",
+    "probed_tools",
+)
 
 
 class ConfigRuntimeReader(Protocol):
@@ -151,6 +160,70 @@ def reject_unprobed_responses_endpoints(
             (path_root, *path),
             action=action,
         )
+
+
+def clear_stale_generation_endpoint_probe_evidence(
+    values: dict[str, object],
+    *,
+    desired: DaemonConfig,
+    unset: Collection[str] = (),
+    secret_keys: Collection[str] = (),
+    probe_verified: bool = False,
+) -> tuple[str, ...]:
+    """Clear persisted probe evidence when a non-probe mutation changes identity.
+
+    Identity is previous-versus-next after secret handling, never payload-key
+    presence: a resubmitted ``MASKED_SECRET`` api_key is not a change. Returns
+    the evidence keys that were cleared so callers can keep validation/wire
+    views in sync.
+    """
+    if probe_verified:
+        return ()
+    unset_set = set(unset)
+    secret_set = set(secret_keys)
+    cleared: list[str] = []
+    for name, endpoint in desired.ai.generation.endpoints.items():
+        prefix = f"{_GENERATION_ENDPOINT_PREFIX}{encode_dynamic_segment(name)}."
+        if not _generation_endpoint_identity_changed(
+            endpoint,
+            prefix,
+            values,
+            unset_set,
+            secret_set,
+        ):
+            continue
+        for field in _GENERATION_ENDPOINT_EVIDENCE_FIELDS:
+            key = f"{prefix}{field}"
+            values[key] = None
+            cleared.append(key)
+    return tuple(cleared)
+
+
+def _generation_endpoint_identity_changed(
+    endpoint: GenerationEndpointConfig,
+    prefix: str,
+    values: Mapping[str, object],
+    unset: set[str],
+    secret_keys: set[str],
+) -> bool:
+    previous = {
+        "protocol": endpoint.protocol,
+        "wire_api": endpoint.wire_api,
+        "api_base": endpoint.api_base,
+        "model": endpoint.model,
+    }
+    for field in _GENERATION_ENDPOINT_IDENTITY_FIELDS:
+        key = f"{prefix}{field}"
+        if key in unset:
+            return True
+        if key in values and values[key] != previous[field]:
+            return True
+    api_key = f"{prefix}api_key"
+    if api_key in unset or api_key in secret_keys:
+        return True
+    if api_key in values and values[api_key] != endpoint.api_key:
+        return True
+    return False
 
 
 class ConfigValuesService:
@@ -276,6 +349,13 @@ class ConfigValuesService:
                 resolved_paths,
                 expected_revision=expected_revision,
             )
+        clear_stale_generation_endpoint_probe_evidence(
+            value_updates,
+            desired=self._anchored_snapshot(expected_revision).desired,
+            unset=unset,
+            secret_keys=secret_updates,
+            probe_verified=probe_verified,
+        )
 
         patch = ConfigPatch(
             values=value_updates,
@@ -545,4 +625,9 @@ async def _run_in_thread[T](operation: Callable[[], T]) -> T:
     return await asyncio.to_thread(operation)
 
 
-__all__ = ["ConfigValuesError", "ConfigValuesService"]
+__all__ = [
+    "ConfigValuesError",
+    "ConfigValuesService",
+    "clear_stale_generation_endpoint_probe_evidence",
+    "reject_unprobed_responses_endpoints",
+]
