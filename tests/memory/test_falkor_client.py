@@ -23,9 +23,16 @@ class FakeGraph:
         self.results: list[Any] = []
         self.next_error: Exception | None = None
         self.queries: list[tuple[str, dict[str, Any] | None]] = []
+        self.timeouts: list[int | None] = []
 
-    async def query(self, cypher: str, params: dict[str, Any] | None = None) -> Any:
+    async def query(
+        self,
+        cypher: str,
+        params: dict[str, Any] | None = None,
+        timeout: int | None = None,
+    ) -> Any:
         self.queries.append((cypher, params))
+        self.timeouts.append(timeout)
         if self.next_error is not None:
             raise self.next_error
         if self.results:
@@ -82,7 +89,7 @@ def _client(monkeypatch: pytest.MonkeyPatch) -> Any:
     )
 
 
-def test_constructor_uses_async_falkordb_client(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_constructor_uses_async_falkordb_client(monkeypatch: pytest.MonkeyPatch) -> None:
     """Constructor should select the configured graph without opening HTTP state."""
     client = _client(monkeypatch)
 
@@ -96,6 +103,9 @@ def test_constructor_uses_async_falkordb_client(monkeypatch: pytest.MonkeyPatch)
     }
     assert fake_db.graph_name == "gobby_kg"
     assert client.base_url == "redis://127.0.0.1:16379"
+
+    await client.query("RETURN 1")
+    assert fake_db.graph.timeouts == [8500]
 
 
 def test_public_surface_matches_neo4j_client_contract() -> None:
@@ -218,6 +228,45 @@ async def test_query_maps_auth_response_error_to_connection_error(
 
     with pytest.raises(FalkorConnectionError):
         await client.query("RETURN 1")
+
+
+async def test_query_maps_redis_timeout_error_to_falkor_timeout_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _client(monkeypatch)
+
+    import redis.exceptions
+
+    fake_db = FakeFalkorDB.last_instance
+    assert fake_db is not None
+    fake_db.graph.next_error = redis.exceptions.TimeoutError("Timeout reading from 127.0.0.1:16379")
+
+    from gobby.memory.falkor_client import FalkorConnectionError, FalkorTimeoutError
+
+    with pytest.raises(FalkorTimeoutError) as exc_info:
+        await client.query("RETURN 1")
+
+    assert "read timed out after" in str(exc_info.value)
+    assert isinstance(exc_info.value, FalkorConnectionError)
+
+
+async def test_query_maps_query_timed_out_response_to_falkor_timeout_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _client(monkeypatch)
+
+    import redis.exceptions
+
+    fake_db = FakeFalkorDB.last_instance
+    assert fake_db is not None
+    fake_db.graph.next_error = redis.exceptions.ResponseError("Query timed out")
+
+    from gobby.memory.falkor_client import FalkorTimeoutError
+
+    with pytest.raises(FalkorTimeoutError) as exc_info:
+        await client.query("UNWIND range(1, 2) AS i CREATE (:Probe)")
+
+    assert "FalkorDB query timed out" in str(exc_info.value)
 
 
 async def test_ensure_memory_graph_schema_gates_unique_constraints_with_indexes(

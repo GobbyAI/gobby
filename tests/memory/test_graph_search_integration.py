@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.config.persistence import MemoryKnowledgeGraphConfig
-from gobby.memory.falkor_client import FalkorConnectionError
+from gobby.memory.falkor_client import FalkorConnectionError, FalkorTimeoutError
 from gobby.memory.identity import entity_key
 from gobby.memory.services.knowledge_graph import (
     KnowledgeGraphService,
@@ -372,6 +372,31 @@ class TestFindRelatedMemoryIds:
         assert "m.project_id = $project_id" in memory_cypher
         assert neighbor_params["project_id"] == "proj-A"
         assert memory_params["project_id"] == "proj-A"
+
+    async def test_circuit_breaker_counts_socket_timeouts(
+        self,
+        service: KnowledgeGraphService,
+        mock_falkor: AsyncMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mock_falkor.query = AsyncMock(
+            side_effect=FalkorTimeoutError("FalkorDB read timed out after 15s: socket")
+        )
+        logger_name = "gobby.memory.services.knowledge_graph.reader"
+
+        with caplog.at_level(logging.WARNING, logger=logger_name):
+            result = await service.find_related_memory_ids(
+                entity_keys=[entity_key(PERSONAL_PROJECT_ID, "Python")]
+            )
+
+        assert result.memory_ids == []
+        warnings = [
+            record
+            for record in caplog.records
+            if record.name == logger_name and "graph traversal timed out" in record.getMessage()
+        ]
+        assert len(warnings) == 1
+        assert warnings[0].__dict__["consecutive_timeouts"] == 1
 
     async def test_circuit_breaker_skips_after_repeated_query_timeouts(
         self,

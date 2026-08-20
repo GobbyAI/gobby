@@ -22,6 +22,10 @@ class FalkorConnectionError(Exception):
     """Raised when unable to connect to FalkorDB."""
 
 
+class FalkorTimeoutError(FalkorConnectionError):
+    """Socket read or server-side query timeout; transient and retry-safe."""
+
+
 class FalkorQueryError(Exception):
     """Raised when a Cypher query returns an error."""
 
@@ -50,9 +54,15 @@ def _is_auth_response_error(exc: BaseException) -> bool:
     return message.startswith(_AUTH_ERROR_PREFIXES)
 
 
+def _query_timeout_ms(socket_timeout: float) -> int:
+    return max(1, int((socket_timeout - 1.0) * 1000))
+
+
 def _raise_mapped_response_error(exc: redis.exceptions.ResponseError) -> NoReturn:
     if _is_auth_response_error(exc):
         raise FalkorConnectionError(f"FalkorDB authentication failed: {exc}") from exc
+    if "query timed out" in str(exc).lower():
+        raise FalkorTimeoutError(f"FalkorDB query timed out: {exc}") from exc
     raise FalkorQueryError(message=str(exc), response_body=exc.args) from exc
 
 
@@ -139,6 +149,8 @@ class FalkorClient:
         self._host = host
         self._port = port
         self._graph_name = graph_name
+        self._timeout = timeout
+        self._query_timeout_ms = _query_timeout_ms(timeout)
         self._db: Any = FalkorDB(
             host=host,
             port=port,
@@ -176,8 +188,12 @@ class FalkorClient:
     ) -> list[dict[str, Any]]:
         """Execute a Cypher query and return rows as flat dictionaries."""
         try:
-            result = await self._graph.query(cypher, params)
-        except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as exc:
+            result = await self._graph.query(cypher, params, timeout=self._query_timeout_ms)
+        except redis.exceptions.TimeoutError as exc:
+            raise FalkorTimeoutError(
+                f"FalkorDB read timed out after {self._timeout:g}s: {exc}"
+            ) from exc
+        except redis.exceptions.ConnectionError as exc:
             raise FalkorConnectionError(f"FalkorDB connection failed: {exc}") from exc
         except redis.exceptions.ResponseError as exc:
             _raise_mapped_response_error(exc)
@@ -318,7 +334,11 @@ class FalkorClient:
                 1,
                 prop,
             )
-        except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as exc:
+        except redis.exceptions.TimeoutError as exc:
+            raise FalkorTimeoutError(
+                f"FalkorDB read timed out after {self._timeout:g}s: {exc}"
+            ) from exc
+        except redis.exceptions.ConnectionError as exc:
             raise FalkorConnectionError(f"FalkorDB connection failed: {exc}") from exc
         except redis.exceptions.ResponseError as exc:
             if not _is_already_exists_error(exc):

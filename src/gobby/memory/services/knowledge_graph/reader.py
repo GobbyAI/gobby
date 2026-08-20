@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypedDict
 
-from gobby.memory.falkor_client import FalkorConnectionError
+from gobby.memory.falkor_client import FalkorConnectionError, FalkorTimeoutError
 from gobby.memory.scoring import temporal_decay
 
 from .clustering import EntityVector
@@ -267,6 +267,8 @@ class KnowledgeGraphReader:
 
     @staticmethod
     def _is_query_timeout_error(error: BaseException) -> bool:
+        if isinstance(error, FalkorTimeoutError):
+            return True
         message = str(error).lower()
         response_body = getattr(error, "response_body", None)
         if response_body is not None:
