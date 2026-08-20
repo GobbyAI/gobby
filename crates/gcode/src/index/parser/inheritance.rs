@@ -5,7 +5,9 @@ use streaming_iterator::StreamingIterator;
 use tree_sitter::{Query, QueryCursor};
 
 use crate::index::languages;
-use crate::models::{CallTargetKind, HeritageKind, InheritanceRelation, Symbol};
+use crate::models::{
+    CallTargetKind, HeritageKind, InheritanceRelation, LOCAL_IMPORT_CANDIDATE_SEP, Symbol,
+};
 
 use super::calls::{
     CallExtractionContext, CallSite, CallSyntaxKind, materialize_call, split_qualified_callee,
@@ -201,11 +203,21 @@ fn resolve_endpoint(
         },
         None,
     )?;
+    // Heritage endpoints carry candidate files only; call-side resolution
+    // markers (default export, type member) never apply to a base type.
+    let carrier = if call.callee_target_kind == CallTargetKind::LocalImport {
+        Some(
+            call.local_import_candidate_files()
+                .join(LOCAL_IMPORT_CANDIDATE_SEP),
+        )
+    } else {
+        call.callee_external_module
+    };
     Ok((
         call.callee_symbol_id.filter(|id| !id.is_empty()),
         call.callee_name,
         call.callee_target_kind,
-        call.callee_external_module,
+        carrier,
     ))
 }
 

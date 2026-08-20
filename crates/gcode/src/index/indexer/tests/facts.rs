@@ -222,13 +222,15 @@ mod serial_db {
     use super::super::super::IndexOutcome;
     use super::super::super::file::write_parsed_file_facts;
     use super::super::super::local_imports::{
-        resolve_local_import_inheritance, resolve_project_local_import_inheritance,
+        resolve_local_import_calls, resolve_local_import_inheritance,
+        resolve_project_local_import_inheritance,
     };
     use super::super::super::sink::PostgresCodeFactSink;
     use crate::db;
     use crate::index::api;
     use crate::models::{
-        CallTargetKind, HeritageKind, IndexedProject, InheritanceRelation, ParseResult, Symbol,
+        CallRelation, CallTargetKind, HeritageKind, IndexedProject, InheritanceRelation,
+        ParseResult, Symbol,
     };
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -509,6 +511,55 @@ mod serial_db {
         let row = inheritance_row(&mut conn, &project_id);
         assert_eq!(row.target_kind, "local_import");
         assert_eq!(row.target_module.as_deref(), Some("pkg/__init__.py"));
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    fn call_through_imported_type_promotes_to_its_method() {
+        let (mut conn, project_id, _cleanup) = seeded_project("gcode-type-member-hit");
+        let bar = foo_symbol(&project_id, "Bar", 0, "type", None);
+        let mut bar_new = foo_symbol(&project_id, "new", 20, "method", Some(&bar));
+        bar_new.qualified_name = "Bar::new".to_string();
+        let method_id = bar_new.id.clone();
+        write_foo_symbols(&mut conn, &project_id, vec![bar, bar_new]);
+        write_type_member_call(&mut conn, &project_id);
+
+        let resolved =
+            resolve_local_import_calls(&mut conn, &project_id, &["src/app.rs".to_string()])
+                .expect("promote Bar::new");
+        assert_eq!(resolved, 1);
+        let row = call_row(&mut conn, &project_id, "new");
+        assert_eq!(row.target_kind, "symbol");
+        assert_eq!(row.symbol_id.map(|id| id.to_string()), Some(method_id));
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    fn call_through_imported_type_never_binds_free_function_or_other_type() {
+        let (mut conn, project_id, _cleanup) = seeded_project("gcode-type-member-miss");
+        let bar = foo_symbol(&project_id, "Bar", 0, "type", None);
+        let free_new = foo_symbol(&project_id, "new", 20, "function", None);
+        let baz = foo_symbol(&project_id, "Baz", 40, "type", None);
+        let mut baz_new = foo_symbol(&project_id, "new", 60, "method", Some(&baz));
+        baz_new.qualified_name = "Baz::new".to_string();
+        write_foo_symbols(&mut conn, &project_id, vec![bar, free_new, baz, baz_new]);
+        write_type_member_call(&mut conn, &project_id);
+
+        let resolved =
+            resolve_local_import_calls(&mut conn, &project_id, &["src/app.rs".to_string()])
+                .expect("resolve Bar::new miss");
+        assert_eq!(resolved, 0);
+        let row = call_row(&mut conn, &project_id, "new");
+        assert_eq!(row.target_kind, "unresolved");
+        assert!(row.symbol_id.is_none());
     }
 
     #[test]
@@ -891,6 +942,75 @@ mod serial_db {
             source: seed.source.to_vec(),
         };
         write_facts(conn, project_id, seed.rel, seed.language, seed.hash, parse);
+    }
+
+    const FOO_REL: &str = "src/foo.rs";
+    const FOO_HASH: &str = "hash-foo";
+
+    fn foo_symbol(
+        project_id: &str,
+        name: &str,
+        byte_start: usize,
+        kind: &str,
+        parent: Option<&Symbol>,
+    ) -> Symbol {
+        let mut symbol = type_symbol(
+            project_id, FOO_REL, FOO_HASH, name, byte_start, "rust", kind,
+        );
+        symbol.parent_symbol_id = parent.map(|parent| parent.id.clone());
+        symbol
+    }
+
+    fn write_foo_symbols(conn: &mut postgres::Client, project_id: &str, symbols: Vec<Symbol>) {
+        let parse = ParseResult {
+            symbols,
+            imports: Vec::new(),
+            calls: Vec::new(),
+            inheritance: Vec::new(),
+            source: b"pub struct Bar;\nimpl Bar { pub fn new() -> Self { Bar } }\n".to_vec(),
+        };
+        write_facts(conn, project_id, FOO_REL, "rust", FOO_HASH, parse);
+    }
+
+    /// `src/app.rs` calling `Bar::new()` through `use crate::foo::Bar;`.
+    fn write_type_member_call(conn: &mut postgres::Client, project_id: &str) {
+        let rel = "src/app.rs";
+        let hash = "hash-app";
+        let go = type_symbol(project_id, rel, hash, "go", 0, "rust", "function");
+        let call = CallRelation::new(go.id.clone(), "new".to_string(), rel.to_string(), 4)
+            .with_local_type_member_target(
+                "new".to_string(),
+                "Bar",
+                vec!["src/foo.rs".to_string(), "src/foo/mod.rs".to_string()],
+            );
+        let parse = ParseResult {
+            symbols: vec![go],
+            imports: Vec::new(),
+            calls: vec![call],
+            inheritance: Vec::new(),
+            source: b"use crate::foo::Bar;\nfn go() {\n    Bar::new();\n}\n".to_vec(),
+        };
+        write_facts(conn, project_id, rel, "rust", hash, parse);
+    }
+
+    struct CallRow {
+        target_kind: String,
+        symbol_id: Option<uuid::Uuid>,
+    }
+
+    fn call_row(conn: &mut postgres::Client, project_id: &str, callee_name: &str) -> CallRow {
+        let project_uuid = db::id_param(project_id).expect("uuid");
+        let row = conn
+            .query_one(
+                "SELECT callee_target_kind, callee_symbol_id
+                 FROM code_calls WHERE project_id = $1 AND callee_name = $2",
+                &[&project_uuid, &callee_name],
+            )
+            .expect("load call");
+        CallRow {
+            target_kind: row.get(0),
+            symbol_id: row.get(1),
+        }
     }
 
     fn write_base_symbol(conn: &mut postgres::Client, project_id: &str, hash: &str) {

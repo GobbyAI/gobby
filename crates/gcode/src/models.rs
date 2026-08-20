@@ -427,6 +427,42 @@ impl CallRelation {
         self
     }
 
+    /// Rust `Type::assoc()` through an imported type. The carrier leads with an
+    /// internal marker naming the type so post-write resolution matches the
+    /// method `Type::assoc` inside the candidate files.
+    pub fn with_local_type_member_target(
+        mut self,
+        callee_name: String,
+        qualifier: &str,
+        candidate_files: Vec<String>,
+    ) -> Self {
+        self.callee_name = callee_name;
+        self.callee_target_kind = CallTargetKind::LocalImport;
+        self.callee_symbol_id = None;
+        let encoded = std::iter::once(format!(
+            "{LOCAL_IMPORT_TYPE_MEMBER_MARKER_PREFIX}{qualifier}"
+        ))
+        .chain(candidate_files)
+        .collect::<Vec<_>>()
+        .join(LOCAL_IMPORT_CANDIDATE_SEP);
+        self.callee_external_module = Some(encoded);
+        self
+    }
+
+    /// The type named by a `with_local_type_member_target` carrier.
+    pub fn local_import_type_member_qualifier(&self) -> Option<String> {
+        if self.callee_target_kind != CallTargetKind::LocalImport {
+            return None;
+        }
+        self.callee_external_module
+            .as_deref()?
+            .split(LOCAL_IMPORT_CANDIDATE_SEP)
+            .next()?
+            .strip_prefix(LOCAL_IMPORT_TYPE_MEMBER_MARKER_PREFIX)
+            .filter(|qualifier| !qualifier.is_empty())
+            .map(ToOwned::to_owned)
+    }
+
     pub fn local_import_uses_default_export_fallback(&self) -> bool {
         self.callee_target_kind == CallTargetKind::LocalImport
             && self
@@ -502,6 +538,7 @@ impl InheritanceRelation {
 /// `target_external_module`.
 pub const LOCAL_IMPORT_CANDIDATE_SEP: &str = "\n";
 const LOCAL_IMPORT_DEFAULT_EXPORT_MARKER: &str = "__gcode_local_import_default_export__";
+const LOCAL_IMPORT_TYPE_MEMBER_MARKER_PREFIX: &str = "__gcode_local_import_type_member__:";
 
 fn local_import_candidates(kind: CallTargetKind, carrier: Option<&str>) -> Vec<String> {
     if kind != CallTargetKind::LocalImport {
@@ -511,7 +548,11 @@ fn local_import_candidates(kind: CallTargetKind, carrier: Option<&str>) -> Vec<S
         .map(|joined| {
             joined
                 .split(LOCAL_IMPORT_CANDIDATE_SEP)
-                .filter(|part| !part.is_empty() && *part != LOCAL_IMPORT_DEFAULT_EXPORT_MARKER)
+                .filter(|part| {
+                    !part.is_empty()
+                        && *part != LOCAL_IMPORT_DEFAULT_EXPORT_MARKER
+                        && !part.starts_with(LOCAL_IMPORT_TYPE_MEMBER_MARKER_PREFIX)
+                })
                 .map(ToOwned::to_owned)
                 .collect()
         })
@@ -668,6 +709,39 @@ pub struct ContentSearchHit {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_type_member_carrier_round_trips_qualifier_and_files() {
+        let call = CallRelation::new(
+            "caller".to_string(),
+            "new".to_string(),
+            "src/app.rs".to_string(),
+            3,
+        )
+        .with_local_type_member_target(
+            "new".to_string(),
+            "Bar",
+            vec!["src/foo.rs".to_string(), "src/foo/mod.rs".to_string()],
+        );
+        assert_eq!(
+            call.local_import_type_member_qualifier().as_deref(),
+            Some("Bar")
+        );
+        assert_eq!(
+            call.local_import_candidate_files(),
+            vec!["src/foo.rs", "src/foo/mod.rs"]
+        );
+        assert!(!call.local_import_uses_default_export_fallback());
+
+        let plain = CallRelation::new(
+            "caller".to_string(),
+            "new".to_string(),
+            "src/app.rs".to_string(),
+            3,
+        )
+        .with_local_import_target("new".to_string(), vec!["src/foo.rs".to_string()]);
+        assert_eq!(plain.local_import_type_member_qualifier(), None);
+    }
 
     #[test]
     fn symbol_make_id_matches_python_uuid5_golden_vectors() {

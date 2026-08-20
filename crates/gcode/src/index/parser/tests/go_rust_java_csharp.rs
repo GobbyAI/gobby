@@ -479,6 +479,83 @@ name = "app"
 }
 
 #[test]
+fn imported_type_assoc_call_carries_type_member_qualifier() {
+    let parsed = parse_rust(
+        r#"
+use crate::foo::Bar;
+use crate::foo::Baz as Renamed;
+
+fn go() {
+    Bar::new();
+    Renamed::build();
+}
+"#,
+        &[(
+            "Cargo.toml",
+            r#"[package]
+name = "app"
+"#,
+        )],
+    );
+    assert_rust_local_import!(&parsed, "new", "src/foo.rs");
+    assert_rust_local_import!(&parsed, "new", "src/foo/mod.rs");
+    let new_call = parsed
+        .calls
+        .iter()
+        .find(|call| call.callee_name == "new")
+        .expect("Bar::new call");
+    assert_eq!(
+        new_call.local_import_type_member_qualifier().as_deref(),
+        Some("Bar")
+    );
+
+    let build_call = parsed
+        .calls
+        .iter()
+        .find(|call| call.callee_name == "build")
+        .expect("Renamed::build call");
+    assert_eq!(build_call.callee_target_kind.as_str(), "local_import");
+    assert_eq!(
+        build_call.local_import_type_member_qualifier().as_deref(),
+        Some("Baz"),
+        "aliased imports carry the original type name"
+    );
+    assert_eq!(
+        build_call.local_import_candidate_files(),
+        vec!["src/foo.rs", "src/foo/mod.rs"]
+    );
+}
+
+#[test]
+fn module_alias_heritage_target_carries_plain_candidates() {
+    let parsed = parse_rust(
+        r#"
+use crate::search;
+
+struct S;
+impl search::Trait for S {}
+"#,
+        &[(
+            "Cargo.toml",
+            r#"[package]
+name = "app"
+"#,
+        )],
+    );
+    let row = parsed
+        .inheritance
+        .iter()
+        .find(|row| row.target_name == "Trait")
+        .expect("Trait heritage");
+    assert_eq!(row.target_kind.as_str(), "local_import");
+    assert_eq!(
+        row.target_external_module.as_deref(),
+        Some("src/search.rs\nsrc/search/mod.rs"),
+        "heritage carriers hold candidate files only"
+    );
+}
+
+#[test]
 fn records_rust_self_crate_import_and_leaves_glob_unresolved() {
     let parsed = parse_rust(
         r#"

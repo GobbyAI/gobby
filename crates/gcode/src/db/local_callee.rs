@@ -57,6 +57,47 @@ pub fn resolve_local_callee_symbol_id(
     Ok(select_local_callee_candidate_id(&subtree))
 }
 
+/// Resolve a Rust `Type::assoc()` call whose UpperCamelCase qualifier came from a
+/// local item import (`use crate::foo::Bar; Bar::new()`), searching the files
+/// import resolution attributed to `qualifier`. Only a method whose
+/// `qualified_name` is `"{qualifier}::{name}"` matches (cross-file `impl` blocks
+/// keep that name, see `parser::collapse_rust_impl_symbols`), and it must be
+/// unique — a free `fn new` or another type's `new` never binds.
+pub fn resolve_local_type_member_symbol_id(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    target_files: &[String],
+    qualifier: &str,
+    name: &str,
+) -> anyhow::Result<Option<String>> {
+    if target_files.is_empty() || qualifier.is_empty() || name.is_empty() {
+        return Ok(None);
+    }
+    let machine_id = id_param(&gobby_core::machine::read_local_machine_id()?)?;
+    let project_id = id_param(project_id)?;
+    let qualified_name = format!("{qualifier}::{name}");
+    let sql = format!(
+        "SELECT s.id, s.kind, s.parent_symbol_id{LOCAL_CALLEE_FROM}
+          AND s.file_path = ANY($3)
+          AND s.qualified_name = $5
+          AND s.kind = 'method'
+         ORDER BY s.file_path, s.byte_start"
+    );
+    let rows = conn.query(
+        &sql,
+        &[
+            &machine_id,
+            &project_id,
+            &target_files,
+            &name,
+            &qualified_name,
+        ],
+    )?;
+    let candidates = candidates_from_rows(&rows)?;
+    let ids: Vec<&String> = candidates.iter().map(|candidate| &candidate.id).collect();
+    Ok(unique_id(&ids))
+}
+
 pub fn resolve_default_import_symbol_id(
     conn: &mut impl GenericClient,
     project_id: &str,

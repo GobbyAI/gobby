@@ -455,8 +455,46 @@ pub(crate) fn resolve_rust_local_qualified_callee(
         return None;
     }
     let qualifier_path = qualifier_path?;
+    if let Some(binding) =
+        rust_imported_type_member(import_bindings, symbols, qualifier_path, callee_name)
+    {
+        return Some(binding);
+    }
     let rewritten = rewrite_rust_local_module_qualifier(import_bindings, symbols, qualifier_path);
     import_context.rust_qualified_candidate(rel_path, &rewritten, callee_name)
+}
+
+/// `Bar::new()` after `use crate::foo::Bar;`: a single UpperCamelCase qualifier
+/// bound by a local item import names a type, and the import's candidate files
+/// are where that type is defined. The post-write pass matches the method
+/// `Bar::new` there, so a free `fn new` or another type's `new` can never bind.
+/// snake_case qualifiers are modules and keep the path rewrite below.
+fn rust_imported_type_member(
+    import_bindings: &ImportBindings,
+    symbols: &[Symbol],
+    qualifier_path: &str,
+    callee_name: &str,
+) -> Option<LocalCallBinding> {
+    if qualifier_path.starts_with("::") {
+        return None;
+    }
+    let mut segments = qualifier_path.split("::").filter(|part| !part.is_empty());
+    let root = segments.next()?;
+    if segments.next().is_some()
+        || !root.chars().next().is_some_and(char::is_uppercase)
+        || top_level_symbol_named(symbols, root)
+    {
+        return None;
+    }
+    let binding = import_bindings.local_bare.get(root)?;
+    if binding.is_default_export() {
+        return None;
+    }
+    Some(LocalCallBinding::type_member(
+        binding.candidate_files.clone(),
+        binding.callee_name.clone(),
+        callee_name.to_string(),
+    ))
 }
 
 fn rewrite_rust_local_module_qualifier(
