@@ -4,14 +4,19 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace, TracebackType
-from typing import Any
+from typing import Any, get_args
 from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
 from openai import APIConnectionError, AuthenticationError, BadRequestError
+from pydantic import ValidationError
 
-from gobby.config.ai import GenerationEndpointConfig
+from gobby.config.ai import (
+    GenerationConfig,
+    GenerationEndpointConfig,
+    GenerationEndpointProtocol,
+)
 from gobby.llm import local_provider_adapters as adapters
 from gobby.llm.base import (
     LLMProviderError,
@@ -23,6 +28,7 @@ from gobby.llm.local_provider_adapters import (
     LMStudioLocalProviderAdapter,
     OllamaLocalProviderAdapter,
     OpenAICompatibleLocalProviderAdapter,
+    create_local_provider_adapter,
 )
 
 pytestmark = pytest.mark.unit
@@ -118,6 +124,54 @@ def test_openai_compatible_adapter_uses_openai_sdk() -> None:
     assert timeout.write == 30.0
     assert timeout.pool == 5.0
     assert adapters._LOCAL_OPENAI_OVERALL_TIMEOUT_SECONDS == 120.0
+
+
+def test_create_adapter_vllm() -> None:
+    assert "vllm" in get_args(GenerationEndpointProtocol)
+    config = GenerationConfig(
+        endpoints={
+            "local-vllm": GenerationEndpointConfig(
+                protocol="vllm",
+                api_base="http://127.0.0.1:8000/v1",
+                model="qwen2.5-vl",
+                api_key="test-key",
+            )
+        }
+    )
+    endpoint = config.endpoints["local-vllm"]
+    assert endpoint.protocol == "vllm"
+
+    with patch("openai.AsyncOpenAI") as mock_cls:
+        adapter = create_local_provider_adapter(endpoint)
+
+    assert isinstance(adapter, OpenAICompatibleLocalProviderAdapter)
+    assert adapter.client is mock_cls.return_value
+    assert adapter.client is not None
+    vllm_adapter_classes = [
+        name
+        for name, value in vars(adapters).items()
+        if isinstance(value, type) and "vllm" in name.lower()
+    ]
+    assert vllm_adapter_classes == []
+    mock_cls.assert_called_once_with(
+        base_url="http://127.0.0.1:8000/v1",
+        api_key="test-key",
+        timeout=adapters._LOCAL_OPENAI_TIMEOUT,
+        max_retries=0,
+    )
+
+
+def test_vllm_rejects_responses_wire() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="wire_api='responses' requires protocol='openai-compatible'",
+    ):
+        GenerationEndpointConfig(
+            protocol="vllm",
+            wire_api="responses",
+            api_base="http://127.0.0.1:8000/v1",
+            model="qwen2.5-vl",
+        )
 
 
 @pytest.mark.asyncio

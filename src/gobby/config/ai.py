@@ -25,7 +25,7 @@ from gobby.config.url_validation import validate_endpoint_url
 logger = logging.getLogger(__name__)
 
 _GENERATION_ENDPOINT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
-GenerationEndpointProtocol = Literal["openai-compatible", "lmstudio", "ollama"]
+GenerationEndpointProtocol = Literal["openai-compatible", "lmstudio", "ollama", "vllm"]
 GenerationWireAPI = Literal["chat-completions", "responses"]
 
 
@@ -51,7 +51,7 @@ class GenerationEndpointConfig(BaseModel):
 
     protocol: GenerationEndpointProtocol = Field(
         default="openai-compatible",
-        description="Endpoint protocol adapter: openai-compatible, lmstudio, or ollama.",
+        description="Endpoint protocol adapter: openai-compatible, lmstudio, ollama, or vllm.",
     )
     wire_api: GenerationWireAPI = Field(
         default="chat-completions",

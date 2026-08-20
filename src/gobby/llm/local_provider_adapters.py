@@ -94,7 +94,7 @@ def create_local_provider_adapter(
     endpoint: GenerationEndpointConfig,
 ) -> LocalProviderAdapter:
     """Build the configured local provider adapter."""
-    if endpoint.protocol == "openai-compatible":
+    if endpoint.protocol in {"openai-compatible", "vllm"}:
         return OpenAICompatibleLocalProviderAdapter(endpoint)
     if endpoint.protocol == "lmstudio":
         return LMStudioLocalProviderAdapter(endpoint)
