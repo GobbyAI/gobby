@@ -92,10 +92,11 @@ pub(crate) fn seed_import_bindings(
     language: &str,
     import_context: &ImportResolutionContext,
     bindings: &mut ImportBindings,
+    rel_path: &str,
 ) {
     match language {
         "rust" => {
-            for root in rust_external_roots(import_context) {
+            for root in rust_external_roots(import_context, rel_path) {
                 bindings.external_roots.insert(
                     root.clone(),
                     ExternalRootBinding {
@@ -177,7 +178,7 @@ pub(crate) fn resolve_external_callee(
     }
 
     let root_alias = root_alias?;
-    if symbols.iter().any(|symbol| symbol.name == root_alias) {
+    if top_level_symbol_named(symbols, root_alias) {
         return None;
     }
     if let Some(module) = import_bindings.member.get(root_alias) {
@@ -207,7 +208,10 @@ pub(crate) fn resolve_external_callee(
         .unwrap_or((root_alias, qualifier_path));
     let root_binding = import_bindings.external_roots.get(root_alias)?;
     let module = if root_binding.module_from_qualifier {
-        qualifier_path.to_string()
+        qualifier_path
+            .strip_prefix("::")
+            .unwrap_or(qualifier_path)
+            .to_string()
     } else {
         root_binding.module.clone()
     };
@@ -440,6 +444,8 @@ pub(crate) fn resolve_elixir_local_callee(
 
 pub(crate) fn resolve_rust_local_qualified_callee(
     import_context: &ImportResolutionContext,
+    import_bindings: &ImportBindings,
+    symbols: &[Symbol],
     rel_path: &str,
     callee_name: &str,
     qualifier_path: Option<&str>,
@@ -449,7 +455,81 @@ pub(crate) fn resolve_rust_local_qualified_callee(
         return None;
     }
     let qualifier_path = qualifier_path?;
-    import_context.rust_qualified_candidate(rel_path, qualifier_path, callee_name)
+    if let Some(binding) =
+        rust_imported_type_member(import_bindings, symbols, qualifier_path, callee_name)
+    {
+        return Some(binding);
+    }
+    let rewritten = rewrite_rust_local_module_qualifier(import_bindings, symbols, qualifier_path);
+    import_context.rust_qualified_candidate(rel_path, &rewritten, callee_name)
+}
+
+/// `Bar::new()` after `use crate::foo::Bar;`: a single UpperCamelCase qualifier
+/// bound by a local item import names a type, and the import's candidate files
+/// are where that type is defined. The post-write pass matches the method
+/// `Bar::new` there, so a free `fn new` or another type's `new` can never bind.
+/// snake_case qualifiers are modules and keep the path rewrite below.
+fn rust_imported_type_member(
+    import_bindings: &ImportBindings,
+    symbols: &[Symbol],
+    qualifier_path: &str,
+    callee_name: &str,
+) -> Option<LocalCallBinding> {
+    if qualifier_path.starts_with("::") {
+        return None;
+    }
+    let mut segments = qualifier_path.split("::").filter(|part| !part.is_empty());
+    let root = segments.next()?;
+    if segments.next().is_some()
+        || !root.chars().next().is_some_and(char::is_uppercase)
+        || top_level_symbol_named(symbols, root)
+    {
+        return None;
+    }
+    let binding = import_bindings.local_bare.get(root)?;
+    if binding.is_default_export() {
+        return None;
+    }
+    Some(LocalCallBinding::type_member(
+        binding.candidate_files.clone(),
+        binding.callee_name.clone(),
+        callee_name.to_string(),
+    ))
+}
+
+fn rewrite_rust_local_module_qualifier(
+    import_bindings: &ImportBindings,
+    symbols: &[Symbol],
+    qualifier_path: &str,
+) -> String {
+    if qualifier_path.starts_with("::") {
+        return qualifier_path.to_string();
+    }
+    let mut segments: Vec<&str> = qualifier_path
+        .split("::")
+        .filter(|part| !part.is_empty())
+        .collect();
+    let Some(first) = segments.first().copied() else {
+        return qualifier_path.to_string();
+    };
+    let Some(stored) = import_bindings.rust_local_modules.get(first) else {
+        return qualifier_path.to_string();
+    };
+    if top_level_symbol_named(symbols, first) {
+        return qualifier_path.to_string();
+    }
+    segments.remove(0);
+    if segments.is_empty() {
+        stored.clone()
+    } else {
+        format!("{}::{}", stored, segments.join("::"))
+    }
+}
+
+fn top_level_symbol_named(symbols: &[Symbol], name: &str) -> bool {
+    symbols
+        .iter()
+        .any(|symbol| symbol.parent_symbol_id.is_none() && symbol.name == name)
 }
 
 /// Resolve a C# member call against a locally-declared type's file(s).

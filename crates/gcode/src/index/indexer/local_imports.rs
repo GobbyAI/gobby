@@ -8,7 +8,8 @@
 //! the target up by `(candidate files, original name)` and rewrites the row to a
 //! `Symbol` target on a hit or `Unresolved` on a miss. JavaScript default
 //! imports use a conservative fallback: exactly one top-level callable/type
-//! symbol in the candidate files.
+//! symbol in the candidate files. Rust `Type::assoc()` calls through an imported
+//! type match the method `Type::assoc` by qualified name.
 //!
 //! Because the rewrite uses the real indexed symbol id (never a recomputed
 //! UUID), a phantom `CALLS` edge to a non-existent symbol is structurally
@@ -69,6 +70,14 @@ fn resolve_pending_local_import_calls(
         let candidate_files = call.local_import_candidate_files();
         let resolved_id = if call.local_import_uses_default_export_fallback() {
             db::resolve_default_import_symbol_id(conn, project_id, &candidate_files)?
+        } else if let Some(qualifier) = call.local_import_type_member_qualifier() {
+            db::resolve_local_type_member_symbol_id(
+                conn,
+                project_id,
+                &candidate_files,
+                &qualifier,
+                &call.callee_name,
+            )?
         } else {
             db::resolve_local_callee_symbol_id(
                 conn,
