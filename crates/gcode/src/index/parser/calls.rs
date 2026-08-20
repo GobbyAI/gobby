@@ -127,6 +127,8 @@ pub(in crate::index::parser) fn materialize_call(
         if local_target.is_none() && external_target.is_none() && !external_shadowed {
             import_resolution::resolve_rust_local_qualified_callee(
                 ctx.import_context,
+                ctx.import_bindings,
+                ctx.symbols,
                 ctx.rel_path,
                 &site.callee_name,
                 qualifier_path,

@@ -87,6 +87,12 @@ pub(crate) struct ImportBindings {
     /// post-write; Objective-C message sends use `local_member` by receiver
     /// type when the imported file declares an `@interface`/`@protocol`.
     pub(crate) objc_import_files: Vec<String>,
+    /// Local Rust `use` alias → the normalized use path it binds
+    /// (`use crate::search;` → `"search"` → `"crate::search"`;
+    /// `use crate::x as y;` → `"y"` → `"crate::x"`). `{self}` groups collapse
+    /// to the prefix before registration, so `use crate::search::{self, bm25}`
+    /// records both `"search"` and `"bm25"`.
+    pub(crate) rust_local_modules: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone)]

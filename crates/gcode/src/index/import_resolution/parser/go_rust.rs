@@ -102,7 +102,7 @@ pub(crate) fn parse_rust_import_statement(
     extracted: &mut ExtractedImports,
 ) {
     let trimmed = text.trim();
-    let Some(rest) = trimmed.strip_prefix("use ") else {
+    let Some(rest) = strip_leading_rust_visibility(trimmed).strip_prefix("use ") else {
         return;
     };
     let rest = rest.trim().trim_end_matches(';').trim();
@@ -180,6 +180,10 @@ fn register_rust_path_import(
             extracted.bindings.bare.remove(&local_alias);
             extracted
                 .bindings
+                .rust_local_modules
+                .insert(local_alias.clone(), path.to_string());
+            extracted
+                .bindings
                 .local_bare
                 .insert(local_alias, local_target);
         }
@@ -226,6 +230,22 @@ fn register_rust_path_import(
         .bindings
         .member
         .insert(local_alias.to_string(), path.to_string());
+}
+
+/// Strip `pub`, `pub(crate)`, `pub(super)`, and `pub(in …)` so `pub use`
+/// seeds the same bindings as a private `use`.
+fn strip_leading_rust_visibility(trimmed: &str) -> &str {
+    let Some(after_pub) = trimmed.strip_prefix("pub") else {
+        return trimmed;
+    };
+    let after_pub = after_pub.trim_start();
+    let Some(after_paren) = after_pub.strip_prefix('(') else {
+        return after_pub;
+    };
+    let Some(close) = after_paren.find(')') else {
+        return trimmed;
+    };
+    after_paren[close + 1..].trim_start()
 }
 
 #[cfg(test)]

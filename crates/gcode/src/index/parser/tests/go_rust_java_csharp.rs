@@ -267,6 +267,214 @@ serde_json = { version = "1" }
 }
 
 #[test]
+fn impl_display_method_does_not_shadow_fmt_module_alias() {
+    let parsed = parse_rust(
+        r#"
+use std::fmt;
+
+struct CliError;
+
+impl fmt::Display for CliError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let _ = f;
+        Ok(())
+    }
+}
+"#,
+        &[(
+            "Cargo.toml",
+            r#"[package]
+name = "app"
+"#,
+        )],
+    );
+
+    let row = parsed
+        .inheritance
+        .iter()
+        .find(|row| row.target_name == "Display")
+        .expect("Display heritage");
+    assert_eq!(row.target_kind.as_str(), "external");
+    assert_eq!(row.target_external_module.as_deref(), Some("std::fmt"));
+    assert!(
+        !parsed.inheritance.iter().any(|row| {
+            row.target_local_import_candidate_files()
+                .iter()
+                .any(|file| file.ends_with("fmt.rs"))
+                || row
+                    .source_local_import_candidate_files()
+                    .iter()
+                    .any(|file| file.ends_with("fmt.rs"))
+                || row
+                    .target_external_module
+                    .as_deref()
+                    .is_some_and(|module| module.ends_with("fmt.rs"))
+        }),
+        "fmt.rs candidate leaked: {:?}",
+        parsed.inheritance
+    );
+}
+
+#[test]
+fn qualified_path_through_local_module_alias_resolves_under_alias_module() {
+    let trait_impl = parse_rust(
+        r#"
+use crate::search;
+
+struct S;
+impl search::bm25::Trait for S {}
+"#,
+        &[(
+            "Cargo.toml",
+            r#"[package]
+name = "app"
+"#,
+        )],
+    );
+    let row = trait_impl
+        .inheritance
+        .iter()
+        .find(|row| row.target_name == "Trait")
+        .expect("Trait heritage");
+    assert_eq!(row.target_kind.as_str(), "local_import");
+    let candidates = row.target_local_import_candidate_files();
+    assert!(
+        candidates.iter().any(|file| file == "src/search/bm25.rs"),
+        "candidates {candidates:?} missing src/search/bm25.rs"
+    );
+    assert!(
+        candidates
+            .iter()
+            .any(|file| file == "src/search/bm25/mod.rs"),
+        "candidates {candidates:?} missing src/search/bm25/mod.rs"
+    );
+
+    let aliased = parse_rust(
+        r#"
+use crate::x as y;
+
+fn go() {
+    y::Z();
+}
+"#,
+        &[(
+            "Cargo.toml",
+            r#"[package]
+name = "app"
+"#,
+        )],
+    );
+    assert_rust_local_import!(&aliased, "Z", "src/x.rs");
+    assert_rust_local_import!(&aliased, "Z", "src/x/mod.rs");
+}
+
+#[test]
+fn self_and_leading_colon_paths_do_not_invent_local_modules() {
+    let parsed = parse_rust(
+        r#"
+struct S;
+
+impl S {
+    fn new() -> Self {
+        S
+    }
+}
+
+fn run() {
+    Self::new();
+}
+
+impl ::std::fmt::Display for S {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        let _ = f;
+        Ok(())
+    }
+}
+"#,
+        &[(
+            "Cargo.toml",
+            r#"[package]
+name = "app"
+"#,
+        )],
+    );
+
+    let display = parsed
+        .inheritance
+        .iter()
+        .find(|row| row.target_name == "Display")
+        .expect("Display heritage");
+    assert_eq!(display.target_kind.as_str(), "external");
+    assert_eq!(display.target_external_module.as_deref(), Some("std::fmt"));
+
+    let invented = parsed.calls.iter().any(|call| {
+        call.local_import_candidate_files().iter().any(|file| {
+            file.ends_with("Self.rs") || file.ends_with("/Self/mod.rs")
+        })
+    }) || parsed.inheritance.iter().any(|row| {
+        row.target_local_import_candidate_files()
+            .iter()
+            .any(|file| file.ends_with("Self.rs") || file.contains("/Self/"))
+    });
+    assert!(!invented, "Self.rs local candidate leaked: {:?}", parsed.calls);
+}
+
+#[test]
+fn multi_level_super_import_resolves_to_ancestor_module() {
+    let parsed = parse_source(
+        "src/a/b/c.rs",
+        r#"
+use super::super::sink::CodeFactSink;
+
+struct S;
+impl CodeFactSink for S {}
+"#,
+        &[(
+            "Cargo.toml",
+            r#"[package]
+name = "app"
+"#,
+        )],
+    );
+    let row = parsed
+        .inheritance
+        .iter()
+        .find(|row| row.target_name == "CodeFactSink")
+        .expect("CodeFactSink heritage");
+    assert_eq!(row.target_kind.as_str(), "local_import");
+    let candidates = row.target_local_import_candidate_files();
+    assert!(
+        candidates.iter().any(|file| file == "src/a/sink.rs"),
+        "candidates {candidates:?} missing src/a/sink.rs"
+    );
+    assert!(
+        candidates.iter().any(|file| file == "src/a/sink/mod.rs"),
+        "candidates {candidates:?} missing src/a/sink/mod.rs"
+    );
+}
+
+#[test]
+fn pub_use_seeds_bindings_for_qualified_calls() {
+    let parsed = parse_rust(
+        r#"
+pub use crate::x;
+
+fn go() {
+    x::Y();
+}
+"#,
+        &[(
+            "Cargo.toml",
+            r#"[package]
+name = "app"
+"#,
+        )],
+    );
+    assert_rust_local_import!(&parsed, "Y", "src/x.rs");
+    assert_rust_local_import!(&parsed, "Y", "src/x/mod.rs");
+}
+
+#[test]
 fn records_rust_self_crate_import_and_leaves_glob_unresolved() {
     let parsed = parse_rust(
         r#"

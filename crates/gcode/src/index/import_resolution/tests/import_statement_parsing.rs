@@ -32,6 +32,75 @@ fn rust_grouped_imports_register_named_bare_bindings() {
 }
 
 #[test]
+fn rust_local_use_registers_module_alias_path() {
+    let mut extracted = ExtractedImports::default();
+
+    parse_import_statement(
+        "rust",
+        "use crate::search;",
+        "src/lib.rs",
+        &ImportResolutionContext::default(),
+        &mut extracted,
+    )
+    .expect("parse local Rust use");
+
+    assert_eq!(
+        extracted
+            .bindings
+            .rust_local_modules
+            .get("search")
+            .map(String::as_str),
+        Some("crate::search")
+    );
+}
+
+#[test]
+fn rust_pub_use_registers_local_bindings() {
+    let mut extracted = ExtractedImports::default();
+
+    parse_import_statement(
+        "rust",
+        "pub use crate::x;",
+        "src/lib.rs",
+        &ImportResolutionContext::default(),
+        &mut extracted,
+    )
+    .expect("parse pub use");
+
+    assert!(
+        extracted.bindings.local_bare.contains_key("x"),
+        "pub use should seed a local binding for x: {:?}",
+        extracted.bindings.local_bare.keys().collect::<Vec<_>>()
+    );
+    assert_eq!(
+        extracted
+            .bindings
+            .rust_local_modules
+            .get("x")
+            .map(String::as_str),
+        Some("crate::x")
+    );
+
+    let mut crate_vis = ExtractedImports::default();
+    parse_import_statement(
+        "rust",
+        "pub(crate) use crate::y;",
+        "src/lib.rs",
+        &ImportResolutionContext::default(),
+        &mut crate_vis,
+    )
+    .expect("parse pub(crate) use");
+    assert_eq!(
+        crate_vis
+            .bindings
+            .rust_local_modules
+            .get("y")
+            .map(String::as_str),
+        Some("crate::y")
+    );
+}
+
+#[test]
 fn rust_glob_imports_do_not_register_individual_bare_bindings() {
     let mut extracted = ExtractedImports::default();
 

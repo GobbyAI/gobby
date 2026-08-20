@@ -103,6 +103,7 @@ fn rust_module_for_segments(
         "crate" => Some(rest.join("::")),
         "self" => Some(join_rust_module(&context.module, rest)),
         "super" => Some(rust_super_module(&context.module, rest)),
+        "Self" => None,
         root if Some(root) == self_crate_name => Some(rest.join("::")),
         root if STANDARD_RUST_CRATES.contains(&root) => None,
         root if rust_external_crates.contains(root) => None,
@@ -115,8 +116,11 @@ fn rust_super_module(current_module: &str, rest: &[&str]) -> String {
         .split("::")
         .filter(|part| !part.is_empty())
         .collect();
-    if !base.is_empty() {
+    base.pop();
+    let mut rest = rest;
+    while let Some((&"super", tail)) = rest.split_first() {
         base.pop();
+        rest = tail;
     }
     base.extend(rest.iter().copied());
     base.join("::")
@@ -213,5 +217,48 @@ mod tests {
         assert_eq!(target.source_root, "src");
         assert_eq!(target.module, "foo");
         assert_eq!(target.name, "bar");
+    }
+
+    #[test]
+    fn import_target_resolves_multi_level_super() {
+        let external_crates = HashSet::new();
+        let from_file = rust_import_target(
+            "src/a/b/c.rs",
+            Some("app"),
+            &external_crates,
+            "super::super::sink::CodeFactSink",
+        )
+        .unwrap();
+        assert_eq!(from_file.source_root, "src");
+        assert_eq!(from_file.module, "a::sink");
+        assert_eq!(from_file.name, "CodeFactSink");
+
+        let from_mod = rust_import_target(
+            "src/a/b/mod.rs",
+            Some("app"),
+            &external_crates,
+            "super::super::sink::CodeFactSink",
+        )
+        .unwrap();
+        assert_eq!(from_mod.source_root, "src");
+        assert_eq!(from_mod.module, "sink");
+        assert_eq!(from_mod.name, "CodeFactSink");
+
+        let from_nested_tests = rust_import_target(
+            "src/index/indexer/tests/facts.rs",
+            Some("app"),
+            &external_crates,
+            "super::super::sink::CodeFactSink",
+        )
+        .unwrap();
+        assert_eq!(from_nested_tests.module, "index::indexer::sink");
+    }
+
+    #[test]
+    fn qualified_call_rejects_self_type_qualifier() {
+        assert!(
+            rust_qualified_call_target("src/lib.rs", Some("app"), &HashSet::new(), "Self", "new")
+                .is_none()
+        );
     }
 }
