@@ -211,3 +211,138 @@ async def test_ollama_preflight_swaps_models_with_keep_alive(
             },
         ),
     ]
+
+
+def _openai_models_response(url: str, model_ids: list[str]) -> _FakeResponse:
+    return _FakeResponse(
+        "GET",
+        url,
+        json_data={
+            "object": "list",
+            "data": [{"id": model_id, "object": "model"} for model_id in model_ids],
+        },
+    )
+
+
+def _patch_httpx_client(monkeypatch: pytest.MonkeyPatch, fake_client: _FakeAsyncClient) -> None:
+    monkeypatch.setattr(httpx, "AsyncClient", lambda: fake_client)
+
+
+def _assert_vllm_discovery_only(fake_client: _FakeAsyncClient, models_url: str) -> None:
+    assert fake_client.calls, "expected GET /v1/models before any other vllm wire traffic"
+    assert all(method == "GET" for method, _url, _kwargs in fake_client.calls)
+    assert all(url == models_url for _method, url, _kwargs in fake_client.calls)
+    for _method, url, kwargs in fake_client.calls:
+        assert "/v1/v1/" not in url
+        assert kwargs.get("json") is None
+        assert "auto" not in url
+
+
+@pytest.mark.asyncio
+async def test_vllm_auto_resolves_before_wire(monkeypatch: pytest.MonkeyPatch) -> None:
+    models_url = "http://localhost:8000/v1/models"
+    served = "Qwen/Qwen2.5-VL-7B-Instruct"
+    fake_client = _FakeAsyncClient(
+        {("GET", models_url): [_openai_models_response(models_url, [served])]}
+    )
+    _patch_httpx_client(monkeypatch, fake_client)
+    endpoint = GenerationEndpointConfig(
+        protocol="vllm",
+        api_base="http://localhost:8000/v1",
+        model="auto",
+        api_key="token",
+    )
+
+    resolved = await local_model.ensure_local_model(endpoint)
+
+    assert resolved == served
+    assert resolved != "auto"
+    assert fake_client.calls == [
+        (
+            "GET",
+            models_url,
+            {
+                "headers": {
+                    "Content-Type": "application/json",
+                    "Authorization": "Bearer token",
+                },
+                "timeout": 10.0,
+            },
+        )
+    ]
+    _assert_vllm_discovery_only(fake_client, models_url)
+
+    shared_client = _FakeAsyncClient(
+        {("GET", models_url): [_openai_models_response(models_url, [served])]}
+    )
+    _patch_httpx_client(monkeypatch, shared_client)
+    assert await local_model.resolve_vllm_served_model(endpoint) == served
+    _assert_vllm_discovery_only(shared_client, models_url)
+
+    multi_client = _FakeAsyncClient(
+        {("GET", models_url): [_openai_models_response(models_url, ["model-a", "model-b"])]}
+    )
+    _patch_httpx_client(monkeypatch, multi_client)
+    with pytest.raises(local_model.LocalModelError, match="model-a") as multi_error:
+        await local_model.ensure_local_model(endpoint)
+    assert "model-b" in str(multi_error.value)
+    _assert_vllm_discovery_only(multi_client, models_url)
+
+    empty_client = _FakeAsyncClient(
+        {("GET", models_url): [_openai_models_response(models_url, [])]}
+    )
+    _patch_httpx_client(monkeypatch, empty_client)
+    with pytest.raises(local_model.LocalModelError, match="auto"):
+        await local_model.ensure_local_model(endpoint)
+    _assert_vllm_discovery_only(empty_client, models_url)
+
+    explicit_client = _FakeAsyncClient(
+        {("GET", models_url): [_openai_models_response(models_url, [served, "other-model"])]}
+    )
+    _patch_httpx_client(monkeypatch, explicit_client)
+    explicit = GenerationEndpointConfig(
+        protocol="vllm",
+        api_base="http://localhost:8000/v1",
+        model=served,
+    )
+    assert await local_model.ensure_local_model(explicit) == served
+    _assert_vllm_discovery_only(explicit_client, models_url)
+
+    missing_client = _FakeAsyncClient(
+        {("GET", models_url): [_openai_models_response(models_url, ["other-model"])]}
+    )
+    _patch_httpx_client(monkeypatch, missing_client)
+    missing = GenerationEndpointConfig(
+        protocol="vllm",
+        api_base="http://localhost:8000/v1",
+        model=served,
+    )
+    with pytest.raises(local_model.LocalModelError, match=r"Qwen/Qwen2\.5-VL-7B-Instruct"):
+        await local_model.ensure_local_model(missing)
+    _assert_vllm_discovery_only(missing_client, models_url)
+
+
+@pytest.mark.asyncio
+async def test_vllm_models_url_normalization(monkeypatch: pytest.MonkeyPatch) -> None:
+    models_url = "http://localhost:8000/v1/models"
+    api_bases = (
+        "http://localhost:8000",
+        "http://localhost:8000/",
+        "http://localhost:8000/v1",
+        "http://localhost:8000/v1/",
+    )
+    for api_base in api_bases:
+        fake_client = _FakeAsyncClient(
+            {("GET", models_url): [_openai_models_response(models_url, ["only-model"])]}
+        )
+        _patch_httpx_client(monkeypatch, fake_client)
+        endpoint = GenerationEndpointConfig(
+            protocol="vllm",
+            api_base=api_base,
+            model="auto",
+        )
+
+        resolved = await local_model.resolve_vllm_served_model(endpoint)
+
+        assert resolved == "only-model"
+        _assert_vllm_discovery_only(fake_client, models_url)
