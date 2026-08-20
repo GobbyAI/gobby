@@ -342,6 +342,31 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
                 self._active_reasoning_effort = None
                 logger.debug("ChatSession %s stopped", self.conversation_id)
 
+    async def clear_context(self) -> bool:
+        """Drop SDK resume identifiers and start a fresh Claude session."""
+        selected_model = self.model
+        preserved_mode = self.chat_mode
+        try:
+            await self.stop()
+        except Exception:
+            logger.exception(
+                "Failed to stop Claude session before context clear conversation=%s",
+                self.conversation_id,
+            )
+            return False
+        self.resume_session_id = None
+        self.sdk_session_id = None
+        try:
+            await self.start(model=selected_model)
+        except Exception:
+            logger.exception(
+                "Failed to start Claude session after context clear conversation=%s",
+                self.conversation_id,
+            )
+            return False
+        self.chat_mode = preserved_mode
+        return True
+
     @property
     def model(self) -> str | None:
         """The current model for this session."""

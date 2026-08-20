@@ -706,21 +706,26 @@ class CodexWebChatBackend:
             logger.warning("Codex clear-context requested while backend unavailable")
             return False
         old_thread_id = session._thread_id
-        await self.detach_session(session)
-        session._thread_id = None
-        session._turn_id = None
-        session._transcript_path = None
-        if old_thread_id:
-            try:
-                await self._client.archive_thread(old_thread_id)
-            except Exception:
-                logger.debug(
-                    "Failed to archive Codex thread %s during context clear",
-                    old_thread_id,
-                    exc_info=True,
-                )
-        requested_model = session._model_selector or session._model
-        await self.attach_session(session, model=requested_model)
+        try:
+            await self.detach_session(session)
+            session._reset_continuation_state()
+            if old_thread_id:
+                try:
+                    await self._client.archive_thread(old_thread_id)
+                except Exception:
+                    logger.debug(
+                        "Failed to archive Codex thread %s during context clear",
+                        old_thread_id,
+                        exc_info=True,
+                    )
+            requested_model = session._model_selector or session._model
+            await self.attach_session(session, model=requested_model)
+        except Exception:
+            logger.exception(
+                "Failed to clear Codex context for conversation=%s",
+                session.conversation_id,
+            )
+            return False
         return True
 
 
