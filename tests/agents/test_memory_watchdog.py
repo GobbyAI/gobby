@@ -14,6 +14,7 @@ import pytest
 from gobby.agents.memory_watchdog import MemoryWatchdogHandler
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun
+from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 GB = 1024**3
 OLD_TS = "2020-01-01T00:00:00+00:00"
@@ -50,7 +51,7 @@ class FakeProc:
 def make_run(
     run_id: str = "run-1",
     *,
-    tmux_session_name: str | None = "gobby-test",
+    terminal_id: str | None = "gobby-test",
     started_at: str | None = OLD_TS,
 ) -> AgentRun:
     return AgentRun(
@@ -61,7 +62,7 @@ def make_run(
         status="running",
         created_at=OLD_TS,
         updated_at=OLD_TS,
-        tmux_session_name=tmux_session_name,
+        terminal_id=terminal_id,
         started_at=started_at,
     )
 
@@ -79,7 +80,7 @@ def make_handler(
     config = config or TmuxConfig()
     agent_run_manager = MagicMock()
     agent_run_manager.list_active_for_machine.return_value = runs
-    agent_run_manager.clear_tmux_session_name = MagicMock()
+    agent_run_manager.clear_terminal_id = MagicMock()
     runs_by_id = {run.id: run for run in runs}
     agent_run_manager.get.side_effect = runs_by_id.get
     agent_run_manager.record_termination_intent.side_effect = (
@@ -160,7 +161,7 @@ async def test_kill_after_consecutive_breaches() -> None:
     assert await handler.check_agent_memory() == 1
     mocks["kill_agent_fn"].assert_awaited_once()
     mocks["agent_run_manager"].record_termination_intent.assert_called_once()
-    mocks["agent_run_manager"].clear_tmux_session_name.assert_not_called()
+    mocks["agent_run_manager"].clear_terminal_id.assert_not_called()
     payload = mocks["cleanup_handler"].cleanup_agent.await_args.kwargs["terminal_payload"]
     assert "exceeded memory limit" in payload
     assert "pid=101" in payload
@@ -227,9 +228,9 @@ async def test_disabled_watchdog_is_inert() -> None:
 @pytest.mark.asyncio
 async def test_missing_pane_pid_and_dead_process_tolerated() -> None:
     runs = [
-        make_run("run-1", tmux_session_name="gobby-a"),
-        make_run("run-2", tmux_session_name="gobby-b"),
-        make_run("run-3", tmux_session_name=None),
+        make_run("run-1", terminal_id="gobby-a"),
+        make_run("run-2", terminal_id="gobby-b"),
+        make_run("run-3", terminal_id=None),
     ]
     # run-1 has no pane pid; run-2's pid raises NoSuchProcess in the factory.
     handler, mocks = make_handler(
@@ -244,8 +245,8 @@ async def test_missing_pane_pid_and_dead_process_tolerated() -> None:
 @pytest.mark.asyncio
 async def test_aggregate_budget_kills_largest_tree_only() -> None:
     runs = [
-        make_run("run-1", tmux_session_name="gobby-a"),
-        make_run("run-2", tmux_session_name="gobby-b"),
+        make_run("run-1", terminal_id="gobby-a"),
+        make_run("run-2", terminal_id="gobby-b"),
     ]
     config = TmuxConfig(agent_memory_limit_gb=16.0, agent_memory_total_limit_gb=10.0)
     handler, mocks = make_handler(
@@ -280,8 +281,8 @@ async def test_aggregate_auto_budget_is_half_of_physical() -> None:
 @pytest.mark.asyncio
 async def test_critical_pressure_kills_largest_agent_tree() -> None:
     runs = [
-        make_run("run-1", tmux_session_name="gobby-a"),
-        make_run("run-2", tmux_session_name="gobby-b"),
+        make_run("run-1", terminal_id="gobby-a"),
+        make_run("run-2", terminal_id="gobby-b"),
     ]
     handler, mocks = make_handler(
         runs=runs,
@@ -344,4 +345,4 @@ async def test_failed_kill_skips_cleanup() -> None:
     killed = await handler.check_agent_memory()
     assert killed == 0
     mocks["cleanup_handler"].cleanup_agent.assert_not_awaited()
-    mocks["agent_run_manager"].clear_tmux_session_name.assert_not_called()
+    mocks["agent_run_manager"].clear_terminal_id.assert_not_called()

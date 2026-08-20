@@ -29,7 +29,7 @@ def test_build_spawn_success_response_serializes_paths_and_omits_null_reasoning(
             cwd=Path("/tmp/worktree"),
         ),
         base_commit_sha="abc123",
-        tmux_session_name=None,
+        terminal_id=None,
         tmux_socket_name=None,
         tmux_socket_path=None,
         code_index_preflight_warning=None,

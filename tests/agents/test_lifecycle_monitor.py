@@ -34,14 +34,15 @@ from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.sessions import activity as session_activity
 from gobby.sessions.status_events import SessionStatusTransition
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._stage_states import StageManifestSpec
-from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.workflows.step_instances import AgentStepInstanceManager
+from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 from tests.workflows.step_instance_fixtures import make_step_instance
 
 from .detection_test_support import BundledDetectionRegistry
@@ -77,12 +78,12 @@ def test_monitor_ignores_other_machines_runs(
     local = replace(
         _metadata_run(_rid("machine-local"), None),
         machine_id=LOCAL_MACHINE_ID,
-        tmux_session_name="gobby-local",
+        terminal_id="gobby-local",
     )
     remote = replace(
         _metadata_run(_rid("machine-remote"), None),
         machine_id=REMOTE_MACHINE_ID,
-        tmux_session_name="gobby-remote",
+        terminal_id="gobby-remote",
     )
     run_manager = MagicMock()
     run_manager.list_active_for_machine.return_value = [local, remote]
@@ -165,6 +166,55 @@ def sample_session(
         project_id=sample_project["id"],
     )
     return session.to_dict()
+
+
+def test_terminal_fixture_migration_preserves_assertions(
+    agent_run_manager: LocalAgentRunManager,
+    sample_session: dict[str, Any],
+) -> None:
+    never_started = agent_run_manager.create(
+        parent_session_id=sample_session["id"],
+        provider="claude",
+        prompt="never started",
+    )
+    started = agent_run_manager.create(
+        parent_session_id=sample_session["id"],
+        provider="claude",
+        prompt="started",
+    )
+    agent_run_manager.start(started.id)
+    pending = make_pending_terminal(never_started, db=agent_run_manager.db)
+    live = make_live_terminal(started, db=agent_run_manager.db, session_name="gobby-started")
+    assert pending.state == "pending"
+    assert live.state == "live"
+    from gobby.storage.terminals import TerminalManager, tmux_locator_key
+
+    manager = TerminalManager(agent_run_manager.db)
+    reuse = manager.upsert_external(
+        machine_id=started.machine_id,
+        project_id=live.project_id,
+        backend="tmux",
+        locator={
+            "socket_path": "/private/tmp/tmux-501/default",
+            "server_pid": 1658,
+            "server_start_time": 1784599999,
+            "pane_id": "%1",
+        },
+        locator_key=tmux_locator_key(
+            socket_path="/private/tmp/tmux-501/default",
+            server_pid=1658,
+            server_start_time=1784599999,
+            pane_id="%1",
+        ),
+        session_name="gobby-started",
+        window_id="@1",
+        title="reused-pid",
+    )
+    assert reuse.id != live.id
+    agent_run_manager.complete(started.id, result="ok")
+    after = manager.get(live.id)
+    assert after is not None
+    assert after.state not in {"pending", "live"}
 
 
 @pytest.mark.parametrize(
@@ -295,7 +345,7 @@ async def test_check_autonomous_stuck_agents_nudges_change_approach(
         agent_run_manager,
         sample_session,
         child_session_id=child.id,
-        tmux_session_name="gobby-test",
+        terminal_id="gobby-test",
     )
     monitor._tmux.send_keys = AsyncMock(return_value=True)
 
@@ -443,7 +493,7 @@ async def test_refresh_active_run_dispatch_mutexes_extends_expired_attached_mute
         parent_session_id=sample_session["id"],
         child_session_id=child.id,
         run_id=_rid("run-refresh-dispatch-mutex"),
-        tmux_session_name="gobby-refresh-dispatch-mutex",
+        terminal_id="gobby-refresh-dispatch-mutex",
     )
     past = datetime.now(UTC) - timedelta(minutes=10)
     assert mutexes.acquire_mutex(
@@ -499,7 +549,7 @@ async def test_refresh_active_run_dispatch_mutexes_extends_spawn_held_mutex(
         parent_session_id=sample_session["id"],
         child_session_id=child.id,
         run_id=_rid("run-refresh-spawn-mutex"),
-        tmux_session_name="gobby-refresh-spawn-mutex",
+        terminal_id="gobby-refresh-spawn-mutex",
     )
     spawn_holder = "spawn-agent:0a5c9b1ed2f34cd6:11111111-2222-3333-4444-555555555555"
     past = datetime.now(UTC) - timedelta(minutes=10)
@@ -557,7 +607,7 @@ async def test_refresh_active_run_dispatch_mutexes_skips_mutex_bound_to_other_ru
         parent_session_id=sample_session["id"],
         child_session_id=child.id,
         run_id=_rid("run-refresh-foreign-mutex"),
-        tmux_session_name="gobby-refresh-foreign-mutex",
+        terminal_id="gobby-refresh-foreign-mutex",
     )
     other_run_id = _rid("run-foreign-mutex-holder")
     past = datetime.now(UTC) - timedelta(minutes=10)
@@ -611,7 +661,7 @@ async def test_refresh_active_run_dispatch_mutexes_restores_missing_mutex(
         parent_session_id=sample_session["id"],
         child_session_id=child.id,
         run_id=_rid("run-restore-dispatch-mutex"),
-        tmux_session_name="gobby-restore-dispatch-mutex",
+        terminal_id="gobby-restore-dispatch-mutex",
     )
     assert mutexes.clear_by_run_id(run.id) == 1
     assert mutexes.get_mutex(task.id) is None
@@ -697,7 +747,7 @@ def _make_terminal_run(
     agent_run_manager: LocalAgentRunManager,
     sample_session: dict,
     run_id: str = _rid("run-abc123"),
-    tmux_session_name: str = "gobby-1234567890-abc123",
+    terminal_id: str = "gobby-1234567890-abc123",
     pid: int | None = None,
     timeout_seconds: float | None = None,
     child_session_id: str | None = None,
@@ -723,8 +773,14 @@ def _make_terminal_run(
     agent_run_manager.update_runtime(
         run.id,
         pid=pid,
-        tmux_session_name=tmux_session_name,
         clone_id=clone_id,
+    )
+    stored_run = agent_run_manager.get(run.id)
+    assert stored_run is not None
+    make_live_terminal(
+        stored_run,
+        db=agent_run_manager.db,
+        session_name=terminal_id,
     )
     stored_run = agent_run_manager.get(run.id)
     assert stored_run is not None
@@ -740,7 +796,7 @@ def _make_dispatched_stage_run(
     parent_session_id: str,
     child_session_id: str,
     run_id: str,
-    tmux_session_name: str,
+    terminal_id: str,
     provider: str = "codex",
 ) -> tuple[Any, AgentRun, TaskDispatchMutexManager]:
     task = task_manager.create_task(
@@ -775,7 +831,11 @@ def _make_dispatched_stage_run(
         child_session_id=child_session_id,
     )
     agent_run_manager.start(run.id)
-    agent_run_manager.update_runtime(run.id, tmux_session_name=tmux_session_name)
+    agent_run_manager.update_runtime(run.id)
+    _live_run = agent_run_manager.get(run.id)
+    assert _live_run is not None
+    make_live_terminal(_live_run, db=agent_run_manager.db, session_name=terminal_id)
+
     agent_run_manager.update_resume_metadata(
         run.id,
         {"stage_name": "development", "stage_state": "in_progress"},
@@ -838,7 +898,7 @@ async def test_reconcile_pending_termination_captures_kills_and_terminalizes(
         agent_run_manager,
         sample_session,
         run_id=_rid("run-reconcile-termination"),
-        tmux_session_name="gobby-reconcile-termination",
+        terminal_id="gobby-reconcile-termination",
     )
     agent_run_manager.record_termination_intent(
         run.id,
@@ -874,7 +934,7 @@ async def test_reconcile_pending_termination_captures_kills_and_terminalizes(
     assert updated.status == "timeout"
     assert "complete pane history" in (updated.result or "")
     assert updated.pending_terminal_action is None
-    assert updated.tmux_session_name is None
+    assert updated.terminal_id is None
 
 
 class TestCheckDeadAgents:
@@ -892,7 +952,7 @@ class TestCheckDeadAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-dead"),
-            tmux_session_name="gobby-dead",
+            terminal_id="gobby-dead",
             pid=999999,
         )
 
@@ -918,7 +978,7 @@ class TestCheckDeadAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-dead-no-pid"),
-            tmux_session_name="gobby-dead-no-pid",
+            terminal_id="gobby-dead-no-pid",
             pid=None,
         )
 
@@ -938,7 +998,7 @@ class TestCheckDeadAgents:
         updated = agent_run_manager.get(_rid("run-dead-no-pid"))
         assert updated is not None
         assert updated.status == "error"
-        assert updated.tmux_session_name is None
+        assert updated.terminal_id is None
         assert "tmux session died" in (updated.error or "")
 
     @pytest.mark.asyncio
@@ -953,7 +1013,7 @@ class TestCheckDeadAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-alive"),
-            tmux_session_name="gobby-alive",
+            terminal_id="gobby-alive",
         )
 
         with patch.object(monitor._tmux, "has_session", new_callable=AsyncMock, return_value=True):
@@ -977,7 +1037,7 @@ class TestCheckDeadAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-live-tmux-reused-pid"),
-            tmux_session_name="gobby-live-tmux-reused-pid",
+            terminal_id="gobby-live-tmux-reused-pid",
             pid=999,
         )
 
@@ -1057,7 +1117,7 @@ class TestCheckDeadAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-err"),
-            tmux_session_name="gobby-err",
+            terminal_id="gobby-err",
         )
 
         with patch.object(
@@ -1102,7 +1162,7 @@ class TestCheckDeadAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-wt"),
-            tmux_session_name="gobby-wt",
+            terminal_id="gobby-wt",
             child_session_id=child_session.id,
             pid=999999,
         )
@@ -1195,7 +1255,7 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-active"),
-            tmux_session_name="gobby-active",
+            terminal_id="gobby-active",
         )
 
         with patch.object(
@@ -1222,7 +1282,7 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-idle"),
-            tmux_session_name="gobby-idle",
+            terminal_id="gobby-idle",
         )
 
         # Pre-set idle state to simulate timeout elapsed
@@ -1260,7 +1320,7 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-unsubmitted-input"),
-            tmux_session_name="gobby-unsubmitted-input",
+            terminal_id="gobby-unsubmitted-input",
         )
 
         state = idle_monitor._idle_detector.get_state(run.id)
@@ -1297,7 +1357,7 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-idle-delay"),
-            tmux_session_name="gobby-idle-delay",
+            terminal_id="gobby-idle-delay",
         )
         state = idle_monitor._idle_detector.get_state(run.id)
         state.first_idle_at = time.monotonic() - 120
@@ -1325,7 +1385,7 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-exhausted"),
-            tmux_session_name="gobby-exhausted",
+            terminal_id="gobby-exhausted",
         )
 
         # Set reprompt count at max
@@ -1360,7 +1420,7 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-queued-continuation"),
-            tmux_session_name="gobby-queued-continuation",
+            terminal_id="gobby-queued-continuation",
         )
         state = idle_monitor._idle_detector.get_state(run.id)
         state.reprompt_count = 2
@@ -1404,7 +1464,7 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-queued-continuation-delayed"),
-            tmux_session_name="gobby-queued-continuation-delayed",
+            terminal_id="gobby-queued-continuation-delayed",
         )
         state = idle_monitor._idle_detector.get_state(run.id)
         state.first_idle_at = time.monotonic() - 360
@@ -1449,7 +1509,7 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-reprompt-enter-fails"),
-            tmux_session_name="gobby-reprompt-enter-fails",
+            terminal_id="gobby-reprompt-enter-fails",
         )
         state = idle_monitor._idle_detector.get_state(run.id)
         state.first_idle_at = time.monotonic() - 360
@@ -1493,7 +1553,7 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-reprompt-escape-fails"),
-            tmux_session_name="gobby-reprompt-escape-fails",
+            terminal_id="gobby-reprompt-escape-fails",
         )
         state = idle_monitor._idle_detector.get_state(run.id)
         state.first_idle_at = time.monotonic() - 360
@@ -1544,7 +1604,7 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-truncated-queued-prompt"),
-            tmux_session_name="gobby-truncated-queued-prompt",
+            terminal_id="gobby-truncated-queued-prompt",
         )
         state = idle_monitor._idle_detector.get_state(run.id)
         state.reprompt_count = 2
@@ -1586,7 +1646,7 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-ctx-full"),
-            tmux_session_name="gobby-ctx",
+            terminal_id="gobby-ctx",
         )
 
         with (
@@ -1629,7 +1689,7 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-skip"),
-            tmux_session_name="gobby-skip",
+            terminal_id="gobby-skip",
         )
 
         handled = await mon.check_idle_agents()
@@ -1647,7 +1707,7 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-no-capture"),
-            tmux_session_name="gobby-nocap",
+            terminal_id="gobby-nocap",
         )
         state = idle_monitor._idle_detector.get_state(_rid("run-no-capture"))
         state.reprompt_count = 2
@@ -1706,7 +1766,7 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-session-active"),
-            tmux_session_name="gobby-session-active",
+            terminal_id="gobby-session-active",
             child_session_id=child.id,
         )
 
@@ -1757,7 +1817,7 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-hook-active"),
-            tmux_session_name="gobby-hook-active",
+            terminal_id="gobby-hook-active",
             child_session_id=child.id,
         )
 
@@ -1807,7 +1867,7 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-pane-active"),
-            tmux_session_name="gobby-pane-active",
+            terminal_id="gobby-pane-active",
             child_session_id=child.id,
         )
         state = mon._idle_detector.get_state(run.id)
@@ -1879,7 +1939,7 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-session-stale"),
-            tmux_session_name="gobby-session-stale",
+            terminal_id="gobby-session-stale",
             child_session_id=child.id,
         )
 
@@ -1969,7 +2029,7 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-planner-step-idle"),
-            tmux_session_name="gobby-planner-step-idle",
+            terminal_id="gobby-planner-step-idle",
             child_session_id=child.id,
         )
         mon._idle_detector.get_state(run.id).first_idle_at = time.monotonic() - 360
@@ -2033,7 +2093,7 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-session-naive-stale"),
-            tmux_session_name="gobby-session-naive-stale",
+            terminal_id="gobby-session-naive-stale",
             child_session_id=child.id,
         )
         mon._idle_detector.get_state(run.id).first_idle_at = time.monotonic() - 360
@@ -2098,7 +2158,7 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-xhigh-scaled-active"),
-            tmux_session_name="gobby-xhigh-scaled-active",
+            terminal_id="gobby-xhigh-scaled-active",
             child_session_id=child.id,
             requested_reasoning_effort=" XHIGH ",
         )
@@ -2166,7 +2226,7 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-high-base-stale"),
-            tmux_session_name="gobby-high-base-stale",
+            terminal_id="gobby-high-base-stale",
             child_session_id=child.id,
             requested_reasoning_effort="high",
         )
@@ -2233,7 +2293,7 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-xhigh-scaled-stale"),
-            tmux_session_name="gobby-xhigh-scaled-stale",
+            terminal_id="gobby-xhigh-scaled-stale",
             child_session_id=child.id,
             requested_reasoning_effort="xhigh",
         )
@@ -2296,7 +2356,7 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-stale-active-pane"),
-            tmux_session_name="gobby-stale-active",
+            terminal_id="gobby-stale-active",
             child_session_id=child.id,
         )
 
@@ -2339,7 +2399,7 @@ class TestCheckTrustPrompts:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-trust"),
-            tmux_session_name="gobby-trust",
+            terminal_id="gobby-trust",
         )
 
         trust_output = (
@@ -2377,7 +2437,7 @@ class TestCheckTrustPrompts:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-normal"),
-            tmux_session_name="gobby-normal",
+            terminal_id="gobby-normal",
         )
 
         with (
@@ -2406,7 +2466,7 @@ class TestCheckTrustPrompts:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-once"),
-            tmux_session_name="gobby-once",
+            terminal_id="gobby-once",
         )
 
         trust_output = "Do you trust the files in this folder?\n"
@@ -2461,7 +2521,7 @@ class TestCheckTrustPrompts:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-nocap"),
-            tmux_session_name="gobby-nocap",
+            terminal_id="gobby-nocap",
         )
 
         with patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value=None):
@@ -2490,7 +2550,7 @@ class TestCheckTrustPrompts:
             agent_run_manager,
             sample_session,
             run_id=_rid(f"run-probe-{type(error).__name__}"),
-            tmux_session_name="gobby-probe-race",
+            terminal_id="gobby-probe-race",
         )
         caplog.set_level("DEBUG", logger="gobby.agents.terminal_prompt_monitor")
 
@@ -2525,7 +2585,7 @@ class TestCheckTrustPrompts:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-probe-unexpected"),
-            tmux_session_name="gobby-probe-unexpected",
+            terminal_id="gobby-probe-unexpected",
         )
         caplog.set_level("DEBUG", logger="gobby.agents.terminal_prompt_monitor")
 
@@ -2561,7 +2621,7 @@ class TestCheckTrustPrompts:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-cleanup"),
-            tmux_session_name="gobby-cleanup",
+            terminal_id="gobby-cleanup",
             pid=999999,
         )
 
@@ -2604,7 +2664,7 @@ class TestCheckExpiredAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-no-timeout"),
-            tmux_session_name="gobby-no-timeout",
+            terminal_id="gobby-no-timeout",
             timeout_seconds=None,
         )
         with patch.object(monitor._tmux, "has_session", new_callable=AsyncMock, return_value=True):
@@ -2624,7 +2684,7 @@ class TestCheckExpiredAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-not-expired"),
-            tmux_session_name="gobby-not-expired",
+            terminal_id="gobby-not-expired",
             timeout_seconds=3600,
         )
         with patch.object(monitor._tmux, "has_session", new_callable=AsyncMock, return_value=True):
@@ -2648,10 +2708,11 @@ class TestCheckExpiredAgents:
             timeout_seconds=300,
         )
         agent_run_manager.start(run.id)
-        agent_run_manager.update_runtime(
-            run.id,
-            tmux_session_name="gobby-expired",
-        )
+        agent_run_manager.update_runtime(run.id)
+        _live_run = agent_run_manager.get(run.id)
+        assert _live_run is not None
+        make_live_terminal(_live_run, db=agent_run_manager.db, session_name="gobby-expired")
+
         # Backdate started_at to simulate expiration
         now = datetime.now(UTC)
         past = (now - timedelta(seconds=600)).isoformat()
@@ -2702,7 +2763,7 @@ class TestCheckExpiredAgents:
             parent_session_id=sample_session["id"],
             child_session_id=child.id,
             run_id=_rid("run-timeout-kill-before-release"),
-            tmux_session_name="gobby-timeout-kill-before-release",
+            terminal_id="gobby-timeout-kill-before-release",
         )
         past = (datetime.now(UTC) - timedelta(seconds=180)).isoformat()
         temp_db.execute(
@@ -2834,7 +2895,7 @@ class TestCheckExpiredAgents:
             parent_session_id=sample_session["id"],
             child_session_id=child.id,
             run_id=_rid("run-zero-accounting"),
-            tmux_session_name="gobby-zero-accounting",
+            terminal_id="gobby-zero-accounting",
             provider="claude",
         )
         past = (datetime.now(UTC) - timedelta(seconds=180)).isoformat()
@@ -2910,7 +2971,7 @@ class TestCheckExpiredAgents:
             parent_session_id=sample_session["id"],
             child_session_id=child.id,
             run_id=_rid("run-zero-accounting-cap"),
-            tmux_session_name="gobby-zero-accounting-cap",
+            terminal_id="gobby-zero-accounting-cap",
             provider="claude",
         )
         task_manager.update_task(task.id, dispatch_failure_count=2)
@@ -2981,10 +3042,11 @@ class TestCheckExpiredAgents:
             agent_run_id=run.id,
         )
         agent_run_manager.start(run.id)
-        agent_run_manager.update_runtime(
-            run.id,
-            tmux_session_name="gobby-expire-child",
-        )
+        agent_run_manager.update_runtime(run.id)
+        _live_run = agent_run_manager.get(run.id)
+        assert _live_run is not None
+        make_live_terminal(_live_run, db=agent_run_manager.db, session_name="gobby-expire-child")
+
         past = (datetime.now(UTC) - timedelta(seconds=600)).isoformat()
         temp_db.execute(
             "UPDATE agent_runs SET started_at = %s WHERE id = %s",
@@ -3079,8 +3141,13 @@ class TestCheckExpiredAgents:
         agent_run_manager.update_runtime(
             run.id,
             pid=10494,
-            tmux_session_name="gobby-terminal-lingering-tmux",
         )
+        _live_run = agent_run_manager.get(run.id)
+        assert _live_run is not None
+        make_live_terminal(
+            _live_run, db=agent_run_manager.db, session_name="gobby-terminal-lingering-tmux"
+        )
+
         completed_at = datetime.now(UTC).isoformat()
         temp_db.execute(
             """
@@ -3108,7 +3175,7 @@ class TestCheckExpiredAgents:
         assert updated is not None
         assert updated.status == "success"
         assert updated.pid is None
-        assert updated.tmux_session_name is None
+        assert updated.terminal_id is None
         assert session_manager.get(child_session.id).status == "expired"
 
     @pytest.mark.asyncio
@@ -3137,13 +3204,13 @@ class TestCheckExpiredAgents:
             parent_session_id=sample_session["id"],
             child_session_id=child.id,
             run_id=_rid("run-terminal-error-recovery"),
-            tmux_session_name="gobby-terminal-error-recovery",
+            terminal_id="gobby-terminal-error-recovery",
         )
         completed_at = datetime.now(UTC).isoformat()
         temp_db.execute(
             """
             UPDATE agent_runs
-            SET status = 'error', error = %s, pid = %s, tmux_session_name = NULL,
+            SET status = 'error', error = %s, pid = %s, terminal_id = NULL,
                 completed_at = %s, updated_at = %s
             WHERE id = %s
             """,
@@ -3213,7 +3280,7 @@ class TestCheckExpiredAgents:
             parent_session_id=sample_session["id"],
             child_session_id=child.id,
             run_id=_rid("run-terminal-error-recovery-mutex"),
-            tmux_session_name="gobby-terminal-error-recovery-mutex",
+            terminal_id="gobby-terminal-error-recovery-mutex",
         )
         completed_at = datetime.now(UTC).isoformat()
         temp_db.execute(
@@ -3305,7 +3372,7 @@ class TestCheckExpiredAgents:
             parent_session_id=sample_session["id"],
             child_session_id=child.id,
             run_id=_rid("run-terminal-cancel-recovery"),
-            tmux_session_name="gobby-terminal-cancel-recovery",
+            terminal_id="gobby-terminal-cancel-recovery",
         )
         completed_at = datetime.now(UTC).isoformat()
         temp_db.execute(
@@ -3383,10 +3450,11 @@ class TestCheckExpiredAgents:
             agent_run_id=run.id,
         )
         agent_run_manager.start(run.id)
-        agent_run_manager.update_runtime(
-            run.id,
-            tmux_session_name="gobby-exp-wt",
-        )
+        agent_run_manager.update_runtime(run.id)
+        _live_run = agent_run_manager.get(run.id)
+        assert _live_run is not None
+        make_live_terminal(_live_run, db=agent_run_manager.db, session_name="gobby-exp-wt")
+
         # Backdate started_at
         past = (datetime.now(UTC) - timedelta(seconds=600)).isoformat()
         temp_db.execute(
@@ -3435,9 +3503,12 @@ class TestCheckExpiredAgents:
         agent_run_manager.start(run.id)
         agent_run_manager.update_runtime(
             run.id,
-            tmux_session_name="gobby-exp-cl",
             clone_id="cccccccc-cccc-4ccc-8ccc-cccccccc0456",
         )
+        _live_run = agent_run_manager.get(run.id)
+        assert _live_run is not None
+        make_live_terminal(_live_run, db=agent_run_manager.db, session_name="gobby-exp-cl")
+
         # Backdate started_at
         past = (datetime.now(UTC) - timedelta(seconds=600)).isoformat()
         temp_db.execute(
@@ -3484,7 +3555,7 @@ class TestCheckProviderStalls:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-healthy"),
-            tmux_session_name="gobby-healthy",
+            terminal_id="gobby-healthy",
         )
 
         with patch.object(
@@ -3509,7 +3580,7 @@ class TestCheckProviderStalls:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-stall-err"),
-            tmux_session_name="gobby-stall-err",
+            terminal_id="gobby-stall-err",
         )
 
         with patch.object(
@@ -3538,7 +3609,7 @@ class TestCheckProviderStallsKillsAgent:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-stall-kill"),
-            tmux_session_name="gobby-stall-kill",
+            terminal_id="gobby-stall-kill",
         )
 
         rate_limit_output = "Error: 429 Too Many Requests - rate limit exceeded\n"
@@ -3583,7 +3654,7 @@ class TestCheckProviderStallsKillsAgent:
             # Second check: consecutive_hits=2, confirms PROVIDER_STALL → kill
             stalled = await monitor.check_provider_stalls()
             assert stalled == 1
-            assert mock_kill.await_args.args[0].tmux_session_name == "gobby-stall-kill"
+            assert mock_kill.await_args.args[0].terminal_id == "gobby-stall-kill"
 
         updated = agent_run_manager.get(_rid("run-stall-kill"))
         assert updated is not None
@@ -3603,7 +3674,7 @@ class TestCheckProviderStallsKillsAgent:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-stall-checkpoint-order"),
-            tmux_session_name="gobby-stall-checkpoint-order",
+            terminal_id="gobby-stall-checkpoint-order",
         )
         events: list[tuple[str, str]] = []
 
@@ -3611,7 +3682,7 @@ class TestCheckProviderStallsKillsAgent:
             events.append(("checkpoint", checkpoint_run.id))
 
         async def terminate_run(run: AgentRun, **_kwargs: object) -> bool:
-            events.append(("kill", run.tmux_session_name or ""))
+            events.append(("kill", run.terminal_id or ""))
             return True
 
         with (
@@ -3671,7 +3742,7 @@ class TestCheckProviderStallsKillsAgent:
             parent_session_id=sample_session["id"],
             child_session_id=child.id,
             run_id=_rid("run-stall-stage-reset"),
-            tmux_session_name="gobby-stall-stage-reset",
+            terminal_id="gobby-stall-stage-reset",
         )
         monitor = AgentLifecycleMonitor(
             detection_registry=DETECTION_REGISTRY,
@@ -3726,7 +3797,7 @@ class TestCheckProviderStallsKillsAgent:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-stall-pattern"),
-            tmux_session_name="gobby-stall-pattern",
+            terminal_id="gobby-stall-pattern",
         )
 
         import time
@@ -3787,7 +3858,7 @@ class TestCheckInitializationTimeout:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-uninit"),
-            tmux_session_name="gobby-uninit",
+            terminal_id="gobby-uninit",
             child_session_id=child.id,
         )
 
@@ -3808,7 +3879,7 @@ class TestCheckInitializationTimeout:
             killed = await monitor.check_initialization_timeout()
 
         assert killed == 1
-        assert mock_kill.await_args.args[0].tmux_session_name == "gobby-uninit"
+        assert mock_kill.await_args.args[0].terminal_id == "gobby-uninit"
 
         updated = agent_run_manager.get(_rid("run-uninit"))
         assert updated is not None
@@ -3894,7 +3965,7 @@ class TestCheckInitializationTimeout:
             parent_session_id=sample_session["id"],
             child_session_id=child.id,
             run_id=_rid("run-init-timeout-stage"),
-            tmux_session_name="gobby-init-timeout-stage",
+            terminal_id="gobby-init-timeout-stage",
         )
 
         backdated = (datetime.now(UTC) - timedelta(seconds=200)).isoformat()
@@ -3951,7 +4022,7 @@ class TestCheckInitializationTimeout:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-init"),
-            tmux_session_name="gobby-init",
+            terminal_id="gobby-init",
             child_session_id=child.id,
         )
 
@@ -4008,7 +4079,7 @@ class TestCheckInitializationTimeout:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-young"),
-            tmux_session_name="gobby-young",
+            terminal_id="gobby-young",
             child_session_id=child.id,
         )
         # started_at is "now" by default — well under 120s
@@ -4045,7 +4116,7 @@ class TestCheckInitializationTimeout:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-naive-uninit"),
-            tmux_session_name="gobby-naive-uninit",
+            terminal_id="gobby-naive-uninit",
             child_session_id=child.id,
         )
         started = (datetime.now(UTC) - timedelta(seconds=200)).replace(tzinfo=None).isoformat()
@@ -4068,7 +4139,7 @@ class TestCheckInitializationTimeout:
             killed = await monitor.check_initialization_timeout()
 
         assert killed == 1
-        assert mock_kill.await_args.args[0].tmux_session_name == "gobby-naive-uninit"
+        assert mock_kill.await_args.args[0].terminal_id == "gobby-naive-uninit"
 
     @pytest.mark.asyncio
     async def test_error_matches_provider_pattern(
@@ -4093,7 +4164,7 @@ class TestCheckInitializationTimeout:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-pattern"),
-            tmux_session_name="gobby-pattern",
+            terminal_id="gobby-pattern",
             child_session_id=child.id,
         )
 
@@ -4131,7 +4202,7 @@ class TestCheckInitializationTimeout:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-nosm"),
-            tmux_session_name="gobby-nosm",
+            terminal_id="gobby-nosm",
         )
 
         backdated = (datetime.now(UTC) - timedelta(seconds=200)).isoformat()
@@ -4160,7 +4231,7 @@ class TestCheckLoopPrompts:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-loop"),
-            tmux_session_name="gobby-loop",
+            terminal_id="gobby-loop",
         )
 
         loop_output = "It looks like you may be stuck in a loop. Continue? (y/n)\n"
@@ -4198,7 +4269,7 @@ class TestCheckLoopPrompts:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-noloop"),
-            tmux_session_name="gobby-noloop",
+            terminal_id="gobby-noloop",
         )
 
         with (
@@ -4244,7 +4315,7 @@ class TestCheckLoopPrompts:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-loop-err"),
-            tmux_session_name="gobby-loop-err",
+            terminal_id="gobby-loop-err",
         )
 
         with patch.object(
@@ -4340,7 +4411,10 @@ async def test_lifecycle_monitor_db_paths_stay_on_bounded_executor(
         task_id=task.id,
     )
     agent_run_manager.start(run.id)
-    agent_run_manager.update_runtime(run.id, tmux_session_name="gobby-bounded-db")
+    agent_run_manager.update_runtime(run.id)
+    _live_run = agent_run_manager.get(run.id)
+    assert _live_run is not None
+    make_live_terminal(_live_run, db=agent_run_manager.db, session_name="gobby-bounded-db")
 
     monitor = AgentLifecycleMonitor(
         detection_registry=DETECTION_REGISTRY,
@@ -4430,7 +4504,7 @@ class TestDeadAgentCompletionEvent:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-dead-cr"),
-            tmux_session_name="gobby-dead-cr",
+            terminal_id="gobby-dead-cr",
             pid=999999,
         )
 
@@ -4477,7 +4551,7 @@ class TestDeadAgentCompletionEvent:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-dead-clone"),
-            tmux_session_name="gobby-dead-clone",
+            terminal_id="gobby-dead-clone",
             clone_id="cccccccc-cccc-4ccc-8ccc-cccccccc0789",
             pid=999999,
         )
@@ -4505,7 +4579,7 @@ class TestDeadAgentKillsOrphanedProcess:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-orphan-pid"),
-            tmux_session_name="gobby-orphan-pid",
+            terminal_id="gobby-orphan-pid",
             pid=999999,  # Non-existent PID
         )
 
@@ -4546,7 +4620,7 @@ class TestSessionExpirationOnCleanup:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-expire-sess"),
-            tmux_session_name="gobby-expire-sess",
+            terminal_id="gobby-expire-sess",
             child_session_id=child_session.id,
             pid=999999,
         )
@@ -4580,7 +4654,7 @@ class TestSessionExpirationOnCleanup:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-no-sm"),
-            tmux_session_name="gobby-no-sm",
+            terminal_id="gobby-no-sm",
             pid=999999,
         )
 
@@ -4610,7 +4684,7 @@ class TestCleanupAgentFdClose:
                 agent_run_manager,
                 sample_session,
                 run_id=_rid("run-fd-test"),
-                tmux_session_name="gobby-fd-test",
+                terminal_id="gobby-fd-test",
             )
             monitor.register_master_fd(_rid("run-fd-test"), r_fd)
 
@@ -4637,7 +4711,7 @@ class TestCleanupAgentFdClose:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-no-fd"),
-            tmux_session_name="gobby-no-fd",
+            terminal_id="gobby-no-fd",
         )
 
         result = await monitor._cleanup_agent(run, terminal_payload="test cleanup", is_success=True)
@@ -4811,14 +4885,14 @@ class TestReapDaemonStopOrphans:
         self,
         temp_db: HubDatabase,
     ) -> None:
-        live = replace(_metadata_run(_rid("live-run"), None), tmux_session_name="gobby-live")
+        live = replace(_metadata_run(_rid("live-run"), None), terminal_id="gobby-live")
         fenced = replace(
             _metadata_run(_rid("fenced-run"), {"reconciliation_pending": True}),
-            tmux_session_name="gobby-fenced",
+            terminal_id="gobby-fenced",
         )
         provisional = replace(
             _metadata_run(_rid("provisional-run"), {"daemon_stop_resume_phase": "prepared"}),
-            tmux_session_name="gobby-provisional",
+            terminal_id="gobby-provisional",
         )
         no_tmux = _metadata_run(_rid("no-tmux-run"), None)
         run_manager = MagicMock()

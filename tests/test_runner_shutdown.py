@@ -21,6 +21,7 @@ from gobby.runner_pid_file import FailOpenPidOwnership
 from gobby.shutdown_intent import ShutdownIntent
 from tests.hooks._event_handler_helpers import make_event
 from tests.runner_helpers import create_base_patches
+from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("fast_stop_hook_grace_window")]
 
@@ -1236,7 +1237,7 @@ class TestStopShutdownAgentPreservation:
         run = SimpleNamespace(
             id="run-preserved",
             pid=4242,
-            tmux_session_name=None,
+            terminal_id=None,
             resume_metadata_json=None,
         )
         run_storage = MagicMock()

@@ -20,6 +20,7 @@ from gobby.agents.kill import (
 from gobby.agents.tmux import configure_tmux
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun
+from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -409,11 +410,11 @@ class TestKillAgent:
         mock_db,
     ):
         agent_run.pid = 999
-        agent_run.tmux_session_name = "gobby-run-123"
+        agent_run.terminal_id = "gobby-run-123"
         mock_close_tmux.return_value = {
             "success": True,
             "method": "tmux_kill_session",
-            "tmux_session_name": "gobby-run-123",
+            "terminal_id": "gobby-run-123",
         }
 
         res = await kill_agent(agent_run, mock_db, close_terminal=True)
@@ -444,7 +445,7 @@ class TestKillAgent:
         mock_db,
     ):
         agent_run.pid = 999
-        agent_run.tmux_session_name = "gobby-run-123"
+        agent_run.terminal_id = "gobby-run-123"
         mock_kill.side_effect = ProcessLookupError("already dead")
         mock_close_tmux.return_value = {"success": False, "error": "missing"}
         mock_close_window.return_value = {"success": True, "method": "tmux_kill_pane"}

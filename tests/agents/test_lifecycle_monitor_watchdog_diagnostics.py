@@ -21,6 +21,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 
 from .detection_test_support import BundledDetectionRegistry
+from tests.agents.terminal_fixtures import make_live_terminal
 
 DETECTION_REGISTRY = cast(DetectionManifestRegistry, BundledDetectionRegistry())
 pytestmark = pytest.mark.unit
@@ -45,7 +46,7 @@ def _make_terminal_run(
     *,
     child_session_id: str,
     run_id: str,
-    tmux_session_name: str,
+    terminal_id: str,
     task_id: str | None = None,
     agent_name: str | None = None,
 ) -> AgentRun:
@@ -59,7 +60,12 @@ def _make_terminal_run(
         agent_name=agent_name,
     )
     agent_run_manager.start(run.id)
-    agent_run_manager.update_runtime(run.id, tmux_session_name=tmux_session_name)
+    agent_run_manager.update_runtime(run.id)
+    _live_run = agent_run_manager.get(run.id)
+    assert _live_run is not None
+    make_live_terminal(_live_run, db=agent_run_manager.db, session_name=terminal_id)
+
+
     stored_run = agent_run_manager.get(run.id)
     assert stored_run is not None
     return stored_run
@@ -177,7 +183,7 @@ async def test_idle_reprompt_logs_watchdog_snapshot(
         parent.to_dict(),
         child_session_id=child.id,
         run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1002",
-        tmux_session_name="gobby-codex-idle",
+        terminal_id="gobby-codex-idle",
     )
     state = monitor._idle_detector.get_state(run.id)
     state.first_idle_at = time.monotonic() - 360
@@ -260,7 +266,7 @@ async def test_idle_reasoning_watchdog_interrupts_supported_reader_and_records_t
         parent.to_dict(),
         child_session_id=child.id,
         run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1003",
-        tmux_session_name="gobby-codex-reasoning",
+        terminal_id="gobby-codex-reasoning",
         task_id=task.id,
         agent_name="qa-reviewer",
     )
@@ -391,7 +397,7 @@ async def test_idle_failure_logs_watchdog_snapshot(
         parent.to_dict(),
         child_session_id=child.id,
         run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1004",
-        tmux_session_name="gobby-codex-fail",
+        terminal_id="gobby-codex-fail",
     )
     state = monitor._idle_detector.get_state(run.id)
     state.reprompt_count = 2

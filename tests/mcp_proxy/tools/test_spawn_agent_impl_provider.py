@@ -15,6 +15,7 @@ from gobby.agents.isolation import IsolationContext
 from gobby.config.app import DaemonConfig
 from gobby.workflows.definitions import AgentDefinitionBody
 from tests.agents.prepared_spawn import prepared_spawn
+from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -47,7 +48,7 @@ def _make_execute_spawn_result() -> MagicMock:
     result.child_session_id = "child-session-abc"
     result.pid = 12345
     result.terminal_type = "tmux"
-    result.tmux_session_name = None
+    result.terminal_id = None
     result.status = "running"
     result.message = None
     result.error = None

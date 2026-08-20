@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager, Task
 
 from tests.agents.prepared_spawn import prepared_spawn
+from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -429,7 +430,7 @@ class TestSpawnAgentStepVariables:
                 status="pending",
                 pid=None,
                 terminal_type=None,
-                tmux_session_name=None,
+                terminal_id=None,
                 process=None,
                 error=None,
                 message=None,
@@ -557,7 +558,7 @@ class TestSpawnAgentStepVariables:
                 status="pending",
                 pid=None,
                 terminal_type=None,
-                tmux_session_name=None,
+                terminal_id=None,
                 process=None,
                 error=None,
                 message=None,
@@ -887,7 +888,7 @@ class TestDispatchBatchIsolationParity:
             spawn_result.status = "pending"
             spawn_result.pid = None
             spawn_result.terminal_type = None
-            spawn_result.tmux_session_name = None
+            spawn_result.terminal_id = None
             spawn_result.process = None
             spawn_result.error = None
             spawn_result.message = None
@@ -953,7 +954,7 @@ class TestDispatchBatchIsolationParity:
             spawn_result.status = "pending"
             spawn_result.pid = None
             spawn_result.terminal_type = None
-            spawn_result.tmux_session_name = None
+            spawn_result.terminal_id = None
             spawn_result.process = None
             spawn_result.error = None
             spawn_result.message = None

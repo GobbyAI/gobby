@@ -15,6 +15,7 @@ from gobby.agents.srt_runtime import SandboxLaunch
 from gobby.config.app import DaemonConfig
 from gobby.storage.agents import AgentRun
 from tests.agents.prepared_spawn import prepared_spawn
+from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -86,7 +87,7 @@ def _spawn_result(*, success: bool = True) -> SimpleNamespace:
     return SimpleNamespace(
         success=success,
         pid=123,
-        tmux_session_name="gobby-resume-successor",
+        terminal_id="gobby-resume-successor",
         tmux_socket_name="gobby",
         tmux_socket_path="/tmp/gobby.sock",
         error=None if success else "spawn failed",
@@ -607,7 +608,7 @@ async def test_successor_metadata_strips_inherited_protocol_keys(
             "daemon_stop_resume_consumed_by_run_id": "stale-successor",
             "daemon_stop_resume_failure_count": 2,
             "daemon_stop_resume_finalized_at": "2026-05-30T00:00:00+00:00",
-            "daemon_stop_resume_tmux_session_name": "stale-tmux",
+            "daemon_stop_resume_terminal_id": "stale-tmux",
             "daemon_stop_resume_planned_tmux_title": "stale-title",
             "daemon_stop_orphan_reap_started_at": "2026-05-30T00:00:00+00:00",
             "daemon_stop_orphan_reap_requested_at": "2026-05-30T00:00:00+00:00",

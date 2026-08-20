@@ -371,6 +371,27 @@ fn fresh_baseline_creates_embedding_coordination_state() -> anyhow::Result<()> {
 }
 
 #[test]
+fn fresh_baseline_grants_terminals_to_daemon_runtime() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+
+    install_baseline(&mut client)?;
+    assert_runtime_crud_privileges(&mut client, "terminals")?;
+    let gcode_select: bool = client
+        .query_one(
+            "SELECT has_table_privilege('gobby_gcode_capability', 'terminals', 'SELECT')",
+            &[],
+        )?
+        .get(0);
+    assert!(!gcode_select, "scoped gcode must not SELECT terminals");
+    Ok(())
+}
+
+#[test]
 fn obsolete_baseline_receipt_is_rejected_without_mutation() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()

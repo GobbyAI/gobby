@@ -24,6 +24,7 @@ from gobby.tasks.expansion._plan_gate import (
     validate_plan_for_agent_spawn,
 )
 from tests.agents.prepared_spawn import prepared_spawn
+from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -386,7 +387,7 @@ async def test_spawn_agent_impl_injects_symbol_repair_diagnostics(tmp_path: Path
         child_session_id="child-1",
         status="running",
         terminal_type="process",
-        tmux_session_name=None,
+        terminal_id=None,
         tmux_socket_name=None,
         tmux_socket_path=None,
         pid=123,

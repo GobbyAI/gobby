@@ -27,6 +27,7 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from tests.agents.terminal_fixtures import make_live_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -139,7 +140,7 @@ class TestAgentRestartReconciliation:
     def test_list_active_agent_runs_paginates_offsets(self) -> None:
         page_size = _RUN_REPLAY_PAGE_SIZE
         runs = [
-            SimpleNamespace(id=f"run-{index}", tmux_session_name=None)
+            SimpleNamespace(id=f"run-{index}", terminal_id=None)
             for index in range(page_size + 2)
         ]
         list_active_for_machine = MagicMock(
@@ -159,7 +160,7 @@ class TestAgentRestartReconciliation:
     async def test_reconcile_live_tmux_run_refreshes_pid_and_reader(self) -> None:
         run = SimpleNamespace(
             id="ac314d27-4314-5fe3-a0ab-01645086e137",
-            tmux_session_name="gobby-run-1",
+            terminal_id="gobby-run-1",
             pid=111,
             continuation_prompt="continue later",
         )
@@ -186,7 +187,7 @@ class TestAgentRestartReconciliation:
         # One live tmux-backed run performs three recovery actions: completion
         # registry hydration, runtime PID refresh, and output-reader restart.
         assert reconciled == 3
-        assert run.tmux_session_name == "gobby-run-1"
+        assert run.terminal_id == "gobby-run-1"
         runner.completion_registry.register.assert_called_once_with(
             "ac314d27-4314-5fe3-a0ab-01645086e137",
             subscribers=[],
@@ -195,7 +196,7 @@ class TestAgentRestartReconciliation:
         run_storage.update_runtime.assert_called_once_with(
             "ac314d27-4314-5fe3-a0ab-01645086e137",
             pid=222,
-            tmux_session_name="gobby-run-1",
+            terminal_id="gobby-run-1",
         )
         output_reader.start_reader.assert_awaited_once_with(
             "ac314d27-4314-5fe3-a0ab-01645086e137", "gobby-run-1"
@@ -210,7 +211,7 @@ class TestAgentRestartReconciliation:
             socket_path=str(tmp_path / "gobby-test-reconcile-configured.sock"),
         )
         run = SimpleNamespace(
-            id="ac314d27-4314-5fe3-a0ab-01645086e137", tmux_session_name="gobby-run-1", pid=111
+            id="ac314d27-4314-5fe3-a0ab-01645086e137", terminal_id="gobby-run-1", pid=111
         )
         run_storage = SimpleNamespace(
             list_active_for_machine=MagicMock(return_value=[run]),
@@ -250,7 +251,7 @@ class TestAgentRestartReconciliation:
     async def test_reconcile_missing_tmux_session_parks_and_resumes_run(self) -> None:
         run = SimpleNamespace(
             id="ac314d27-4314-5fe3-a0ab-01645086e137",
-            tmux_session_name="gobby-run-1",
+            terminal_id="gobby-run-1",
             pid=111,
             resume_metadata_json={},
             child_session_id="child-1",
@@ -295,7 +296,7 @@ class TestAgentRestartReconciliation:
     async def test_reconcile_dead_tmux_pane_parks_and_resumes_run(self) -> None:
         run = SimpleNamespace(
             id="ac314d27-4314-5fe3-a0ab-01645086e137",
-            tmux_session_name="gobby-run-1",
+            terminal_id="gobby-run-1",
             pid=111,
             resume_metadata_json={},
             child_session_id="child-1",
@@ -336,7 +337,7 @@ class TestAgentRestartReconciliation:
     async def test_reconcile_active_non_tmux_run_only_hydrates_completion(self) -> None:
         run = SimpleNamespace(
             id="ac314d27-4314-5fe3-a0ab-01645086e137",
-            tmux_session_name=None,
+            terminal_id=None,
             continuation_prompt=None,
         )
         run_storage = SimpleNamespace(list_active_for_machine=MagicMock(return_value=[run]))
@@ -427,7 +428,12 @@ class TestAgentRestartReconciliation:
             task_id=task.id,
         )
         run_storage.start(run.id)
-        run_storage.update_runtime(run.id, pid=111, tmux_session_name="gobby-run-1")
+        run_storage.update_runtime(run.id, pid=111)
+        _live_run = run_storage.get(run.id, pid=111)
+        assert _live_run is not None
+        make_live_terminal(_live_run, db=run_storage.db, session_name="gobby-run-1")
+
+
         past = datetime.now(UTC) - timedelta(minutes=20)
         mutexes = TaskDispatchMutexManager(temp_db)
         mutexes.acquire_mutex(
@@ -453,7 +459,7 @@ class TestAgentRestartReconciliation:
         assert mutex is not None
         assert mutex.lease_until is not None
         assert mutex.lease_until < datetime.now(UTC)
-        assert run_storage.get(run.id).tmux_session_name == "gobby-run-1"
+        assert run_storage.get(run.id).terminal_id == "gobby-run-1"
 
     def test_list_active_agent_runs_requires_agent_runner(self) -> None:
         runner = SimpleNamespace(agent_runner=None)

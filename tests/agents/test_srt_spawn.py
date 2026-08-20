@@ -18,6 +18,7 @@ from gobby.agents.spawn_models import SpawnRequest
 from gobby.agents.srt_runtime import SandboxLaunch, SrtRuntimeError
 from gobby.agents.tmux.spawner import _infer_auth_cli
 from tests.agents.prepared_spawn import prepared_spawn
+from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -143,7 +144,7 @@ async def test_droid_command_is_wrapped_once_after_srt_preflight() -> None:
         success=True,
         pid=123,
         terminal_type="tmux",
-        tmux_session_name="gobby-agent",
+        terminal_id="gobby-agent",
         tmux_socket_name="gobby",
         tmux_socket_path="/tmp/gobby.sock",
         error=None,

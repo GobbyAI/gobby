@@ -10,6 +10,7 @@ import pytest
 from gobby.agents.terminal_prompt_monitor import TerminalPromptMonitor
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun
+from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -23,7 +24,7 @@ def _run() -> AgentRun:
         status="running",
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
         updated_at=datetime(2026, 1, 1, tzinfo=UTC),
-        tmux_session_name="agent-run-1",
+        terminal_id="agent-run-1",
     )
 
 

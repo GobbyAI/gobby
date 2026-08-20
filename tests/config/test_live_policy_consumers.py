@@ -35,6 +35,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
+from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 
 def _snapshot(
@@ -229,7 +230,7 @@ async def test_voice_and_route_consumers_use_runtime(monkeypatch: pytest.MonkeyP
     )
     payload = _run_tmux_payload(
         attention_server,
-        SimpleNamespace(tmux_session_name="agent-session", pid=42),
+        SimpleNamespace(terminal_id="agent-session", pid=42),
     )
 
     assert payload == {

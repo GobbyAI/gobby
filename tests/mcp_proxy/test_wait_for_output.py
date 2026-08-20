@@ -13,15 +13,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.mcp_proxy.tools.agents import create_agents_registry
+from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 pytestmark = pytest.mark.unit
 
 
-def _run(*, status: str = "running", tmux_session_name: str | None = "agent-test") -> Any:
+def _run(*, status: str = "running", terminal_id: str | None = "agent-test") -> Any:
     return SimpleNamespace(
         id="run-1",
         status=status,
-        tmux_session_name=tmux_session_name,
+        terminal_id=terminal_id,
     )
 
 
@@ -103,7 +104,7 @@ async def test_wait_for_output_returns_terminal_status() -> None:
     ("run", "pattern", "timeout_seconds", "poll_interval_seconds", "error"),
     [
         (None, "(", float("nan"), 2.0, "invalid_run"),
-        (_run(tmux_session_name=None), "(", float("nan"), 2.0, "no_terminal"),
+        (_run(terminal_id=None), "(", float("nan"), 2.0, "no_terminal"),
         (_run(), "(", float("nan"), 2.0, "invalid_pattern"),
         (_run(), "READY", float("nan"), 2.0, "invalid_argument"),
         (_run(), "READY", 1.0, float("inf"), "invalid_argument"),

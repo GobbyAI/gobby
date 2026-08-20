@@ -18,6 +18,7 @@ from gobby.mcp_proxy.tools.spawn_agent._health import (
     schedule_tmux_health_check,
 )
 from tests.completion_delivery_helpers import record_removals
+from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -229,7 +230,7 @@ async def test_deferred_health_check_does_not_fail_terminal_run() -> None:
         await _deferred_tmux_health_check(
             runner,
             run_id="run-123",
-            tmux_session_name="tmux-run",
+            terminal_id="tmux-run",
             socket_name=None,
             socket_path=None,
             delay=0,
@@ -278,7 +279,7 @@ async def test_deferred_health_failure_reports_available_pane_output(
         await _deferred_tmux_health_check(
             runner,
             run_id="run-123",
-            tmux_session_name="tmux-run",
+            terminal_id="tmux-run",
             socket_name=None,
             socket_path=None,
             delay=0,
@@ -312,7 +313,7 @@ async def test_deferred_health_delivery_failure_is_logged(
         await _deferred_tmux_health_check(
             runner,
             run_id="run-123",
-            tmux_session_name="tmux-run",
+            terminal_id="tmux-run",
             socket_name=None,
             socket_path=None,
             delay=0,
@@ -329,7 +330,7 @@ async def test_scheduled_health_check_does_not_create_a_sleeping_task() -> None:
     handle = schedule_tmux_health_check(
         runner=runner,
         run_id="run-1",
-        tmux_session_name="session-1",
+        terminal_id="session-1",
         socket_name=None,
         socket_path=None,
         delay=60,
@@ -346,7 +347,7 @@ async def test_cancel_health_checks_cancels_pending_timer_before_callback() -> N
         handle = schedule_tmux_health_check(
             runner=runner,
             run_id="run-1",
-            tmux_session_name="session-1",
+            terminal_id="session-1",
             socket_name=None,
             socket_path=None,
             delay=60,

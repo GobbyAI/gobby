@@ -12,6 +12,7 @@ from gobby.agents.worktree_reuse import ReusedWorktreeSyncResult
 from gobby.storage.tasks import LocalTaskManager, TaskArtifactManager
 from tests.agents.prepared_spawn import prepared_spawn
 from tests.completion_delivery_helpers import record_removals
+from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -419,7 +420,7 @@ class TestSpawnAgentImplErrorBranches:
                 status="ok",
                 pid=1,
                 terminal_type=None,
-                tmux_session_name=None,
+                terminal_id=None,
                 message="ok",
                 process=None,
             )
@@ -506,7 +507,7 @@ test"""
                 status="ok",
                 pid=1,
                 terminal_type=None,
-                tmux_session_name=None,
+                terminal_id=None,
                 message="ok",
                 process=None,
             )
@@ -609,7 +610,7 @@ test"""
                 status="ok",
                 pid=1,
                 terminal_type=None,
-                tmux_session_name=None,
+                terminal_id=None,
                 message="ok",
                 process=None,
             )
@@ -704,7 +705,7 @@ test"""
                     status="ok",
                     pid=1,
                     terminal_type=None,
-                    tmux_session_name=None,
+                    terminal_id=None,
                     message="ok",
                     process=None,
                 )
@@ -798,7 +799,7 @@ test"""
                 status="ok",
                 pid=1,
                 terminal_type=None,
-                tmux_session_name=None,
+                terminal_id=None,
                 message="ok",
                 process=None,
             )
@@ -848,7 +849,7 @@ test"""
             child_session_id="child-1",
             status="running",
             terminal_type="process",
-            tmux_session_name=None,
+            terminal_id=None,
             tmux_socket_name=None,
             tmux_socket_path=None,
             pid=123,
@@ -969,7 +970,7 @@ test"""
             child_session_id="child-1",
             status="running",
             terminal_type="process",
-            tmux_session_name=None,
+            terminal_id=None,
             tmux_socket_name=None,
             tmux_socket_path=None,
             pid=123,
@@ -1130,7 +1131,7 @@ test"""
                 status="ok",
                 pid=1,
                 terminal_type=None,
-                tmux_session_name=None,
+                terminal_id=None,
                 message="ok",
                 process=None,
             )

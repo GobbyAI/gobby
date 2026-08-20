@@ -42,6 +42,7 @@ from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
 from gobby.utils.session_context import session_context_for_test
 from tests.completion_delivery_helpers import DeliveryRegistry, record_removals
+from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -71,7 +72,7 @@ def _make_mock_agent_run(
     run.provider = provider
     run.task_id = kwargs.get("task_id")
     run.started_at = kwargs.get("started_at")
-    run.tmux_session_name = kwargs.get("tmux_session_name")
+    run.terminal_id = kwargs.get("terminal_id")
     run.worktree_id = kwargs.get("worktree_id")
     run.clone_id = kwargs.get("clone_id")
     run.workflow_name = kwargs.get("workflow_name")
@@ -1833,7 +1834,7 @@ class TestCompleteSelfTerminatedRunSignoffMessage:
         run = MagicMock(
             id="run-ordered-cleanup",
             child_session_id=None,
-            tmux_session_name=None,
+            terminal_id=None,
         )
         runner = MagicMock()
 
@@ -1882,7 +1883,7 @@ class TestCompleteSelfTerminatedRunSignoffMessage:
             session_id=None,
             status="running",
         )
-        run.tmux_session_name = None
+        run.terminal_id = None
         terminal_run = _make_mock_agent_run(
             run_id=_WAIT_RUN_ID,
             session_id=None,
@@ -1930,7 +1931,7 @@ class TestCompleteSelfTerminatedRunSignoffMessage:
         run = MagicMock()
         run.id = "run-xyz"
         run.child_session_id = "child-sess-1"
-        run.tmux_session_name = None
+        run.terminal_id = None
         runner = MagicMock()
         kill_db = MagicMock()
         completion_registry = MagicMock()
@@ -1986,7 +1987,7 @@ class TestCompleteSelfTerminatedRunSignoffMessage:
         run = MagicMock()
         run.id = "run-abc"
         run.child_session_id = "child-sess-2"
-        run.tmux_session_name = None
+        run.terminal_id = None
         runner = MagicMock()
         kill_db = MagicMock()
 

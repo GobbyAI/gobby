@@ -18,6 +18,7 @@ from gobby.agents.capture import (
     capture_then_kill_sync,
 )
 from gobby.storage.agents import AgentRun, AgentRunStatus
+from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 
 def _run(run_id: str, *, result: str | None = None) -> AgentRun:
@@ -31,7 +32,7 @@ def _run(run_id: str, *, result: str | None = None) -> AgentRun:
         created_at=now,
         updated_at=now,
         result=result,
-        tmux_session_name="shared-session",
+        terminal_id="shared-session",
     )
 
 
@@ -135,7 +136,7 @@ class FakeCaptureStorage:
             status=status,
             pending_terminal_action=None,
             pending_terminal_reason=None,
-            tmux_session_name=None,
+            terminal_id=None,
         )
         self.runs[run_id] = updated
         return updated

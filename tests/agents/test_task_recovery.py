@@ -11,6 +11,7 @@ from gobby.agents.task_recovery import TaskRecoveryHandler
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 
@@ -33,7 +34,7 @@ class _Run:
     provider: str = "codex"
     error: str | None = "failed"
     pid: int | None = None
-    tmux_session_name: str | None = None
+    terminal_id: str | None = None
 
 
 class _RunManager:

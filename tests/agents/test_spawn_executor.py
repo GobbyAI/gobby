@@ -37,6 +37,7 @@ from gobby.agents.spawn_executor_support import (
 )
 from gobby.mcp_proxy.server import GobbyDaemonTools
 from tests.agents.prepared_spawn import prepared_spawn
+from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -772,7 +773,7 @@ class TestExecuteSpawn:
             success=True,
             pid=12345,
             terminal_type="tmux",
-            tmux_session_name="agent-run-abc123def456",
+            terminal_id="agent-run-abc123def456",
         )
 
         with (
@@ -880,7 +881,7 @@ class TestExecuteSpawn:
             success=True,
             pid=12345,
             terminal_type="tmux",
-            tmux_session_name="agent-run-abc123def456",
+            terminal_id="agent-run-abc123def456",
         )
         agent_body = MagicMock()
         agent_body.build_prompt_preamble.return_value = "## Persona\nYou are the QA reviewer."
@@ -936,7 +937,7 @@ class TestExecuteSpawn:
             success=True,
             pid=12345,
             terminal_type="tmux",
-            tmux_session_name="agent-run-local123456",
+            terminal_id="agent-run-local123456",
         )
 
         with (
@@ -1051,7 +1052,7 @@ class TestExecuteSpawn:
             success=True,
             pid=12345,
             terminal_type="tmux",
-            tmux_session_name="agent-run-xyz",
+            terminal_id="agent-run-xyz",
         )
 
         with (
@@ -1197,7 +1198,7 @@ class TestExecuteSpawn:
             success=True,
             pid=12345,
             terminal_type="tmux",
-            tmux_session_name="agent-run-grok123",
+            terminal_id="agent-run-grok123",
         )
 
         with (
@@ -1757,7 +1758,7 @@ class TestExecuteSpawnErrorPaths:
             success=True,
             pid=12345,
             terminal_type="tmux",
-            tmux_session_name="gobby-test",
+            terminal_id="gobby-test",
         )
 
         with (
@@ -1881,8 +1882,8 @@ class TestExecuteSpawnErrorPaths:
         assert command.index("--dangerously-skip-permissions") < command.index("Test")
 
     @pytest.mark.asyncio
-    async def test_claude_terminal_tmux_session_name_in_result(self) -> None:
-        """Test that tmux_session_name is propagated to SpawnResult."""
+    async def test_claude_terminal_terminal_id_in_result(self) -> None:
+        """Test that terminal_id is propagated to SpawnResult."""
         mock_session_manager = MagicMock()
         request = SpawnRequest(
             prompt="Test",
@@ -1907,7 +1908,7 @@ class TestExecuteSpawnErrorPaths:
             success=True,
             pid=99,
             terminal_type="tmux",
-            tmux_session_name="gobby-abc",
+            terminal_id="gobby-abc",
         )
 
         with (
@@ -1923,7 +1924,7 @@ class TestExecuteSpawnErrorPaths:
             request.prepared_spawn = mock_spawn_context
             result = await execute_spawn(request)
 
-        assert result.tmux_session_name == "gobby-abc"
+        assert result.terminal_id == "gobby-abc"
         assert result.success is True
         assert result.pid == 99
 

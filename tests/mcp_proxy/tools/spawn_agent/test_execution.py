@@ -15,6 +15,7 @@ from gobby.agents.session import ChildSessionManager
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -593,7 +594,7 @@ class TestSpawnAgentPreRegistration:
                 status="pending",
                 pid=12345,
                 terminal_type="ghostty",
-                tmux_session_name=None,
+                terminal_id=None,
                 message="Spawned",
             )
 
@@ -906,7 +907,7 @@ class TestSpawnAgentPreRegistration:
                 status="pending",
                 pid=12345,
                 terminal_type="ghostty",
-                tmux_session_name="agent-run-canonical",
+                terminal_id="agent-run-canonical",
                 message="Spawned",
             )
 
@@ -963,7 +964,7 @@ class TestSpawnAgentPreRegistration:
                 status="pending",
                 pid=12345,
                 terminal_type="ghostty",
-                tmux_session_name="agent-run-canonical",
+                terminal_id="agent-run-canonical",
                 message="Spawned",
             )
 
@@ -1019,7 +1020,7 @@ class TestSpawnAgentPreRegistration:
                 status="pending",
                 pid=12345,
                 terminal_type="ghostty",
-                tmux_session_name="agent-run-canonical",
+                terminal_id="agent-run-canonical",
                 message="Spawned",
             )
 
@@ -1083,7 +1084,7 @@ class TestSpawnAgentPreRegistration:
                 status="pending",
                 pid=12345,
                 terminal_type="tmux",
-                tmux_session_name="gobby-agent",
+                terminal_id="gobby-agent",
                 tmux_socket_name="gobby",
                 tmux_socket_path="/tmp/tmux-1000/gobby",
                 message="Spawned",
@@ -1096,7 +1097,7 @@ class TestSpawnAgentPreRegistration:
 
         _health_check_tasks.discard(health_task)
         assert result["success"] is True
-        assert result["tmux_session_name"] == "gobby-agent"
+        assert result["terminal_id"] == "gobby-agent"
         assert result["tmux_socket_name"] == "gobby"
         assert result["tmux_socket_path"] == "/tmp/tmux-1000/gobby"
         mock_runner.run_storage.start.assert_called_once()
@@ -1168,7 +1169,7 @@ class TestSpawnAgentPreRegistration:
                 status="pending",
                 pid=12345,
                 terminal_type="tmux",
-                tmux_session_name="gobby-agent-timeout",
+                terminal_id="gobby-agent-timeout",
                 tmux_socket_name="gobby",
                 tmux_socket_path=None,
                 message="Spawned",
@@ -1187,7 +1188,7 @@ class TestSpawnAgentPreRegistration:
             mock_runner.run_storage.update_runtime.assert_called_once_with(
                 ANY,
                 pid=12345,
-                tmux_session_name="gobby-agent-timeout",
+                terminal_id="gobby-agent-timeout",
                 worktree_id=None,
                 clone_id=None,
             )

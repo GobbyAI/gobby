@@ -128,7 +128,11 @@ class _AgentRunTerminationMixin:
               AND (
                   ar.pending_terminal_action IS NOT NULL
                   OR (
-                      ar.tmux_session_name IS NOT NULL
+                      EXISTS (
+                          SELECT 1 FROM terminals live_terminal
+                          WHERE live_terminal.id = ar.terminal_id
+                            AND live_terminal.state IN ('pending', 'live')
+                      )
                       AND EXISTS (
                           SELECT 1
                           FROM sessions terminal_session

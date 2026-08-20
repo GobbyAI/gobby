@@ -38,6 +38,7 @@ from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_instances import AgentStepInstanceManager
 from tests._timing import wait_for_async_condition
 from tests.agents.detection_test_support import BundledDetectionRegistry
+from tests.agents.terminal_fixtures import make_live_terminal
 from tests.config_runtime_helpers import static_runtime_capture
 from tests.storage.tasks._stage_test_helpers import stage_row
 from tests.workflows.step_instance_fixtures import make_step_instance
@@ -958,7 +959,11 @@ async def test_idle_planner_stage_agent_keeps_periodic_enter_and_gets_handoff_re
         run_id=idle_run_id,
     )
     run_manager.start(run.id)
-    run_manager.update_runtime(run.id, tmux_session_name="gobby-idle-planner", pid=12345)
+    run_manager.update_runtime(run.id, pid=12345)
+    _live_run = run_manager.get(run.id)
+    assert _live_run is not None
+    make_live_terminal(_live_run, db=run_manager.db, session_name="gobby-idle-planner")
+
     stored_run = run_manager.get(run.id)
     assert stored_run is not None
 

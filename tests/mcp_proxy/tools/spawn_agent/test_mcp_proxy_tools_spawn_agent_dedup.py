@@ -343,7 +343,7 @@ class TestSpawnAgentDedup:
                 status="pending",
                 pid=1234,
                 terminal_type="ghostty",
-                tmux_session_name=None,
+                terminal_id=None,
                 message="Spawned",
             )
 

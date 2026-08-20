@@ -15,6 +15,7 @@ from gobby.providers.capabilities.models import ActivationDescriptor, SpeedMode
 from gobby.providers.capabilities.resolve import SpeedResolution, SpeedStatus
 from gobby.workflows.definitions import AgentDefinitionBody
 from tests.agents.prepared_spawn import prepared_spawn
+from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -79,7 +80,7 @@ async def _spawn_fast() -> tuple[dict[str, Any], SpawnRequest]:
             child_session_id="child-session-abc",
             pid=12345,
             terminal_type="tmux",
-            tmux_session_name=None,
+            terminal_id=None,
             tmux_socket_name=None,
             tmux_socket_path=None,
             status="running",

@@ -18,6 +18,7 @@ from tests.agents.cleanup_test_support import (
     _stub_runtime_cleanup,
 )
 from tests.agents.test_capture import FakeCaptureStorage
+from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -255,7 +256,7 @@ class _FakeTmux:
 def _tmux_run(status: AgentRunStatus = "running") -> AgentRun:
     return replace(
         _run(task_id=None, child_session_id=None, status=status),
-        tmux_session_name="wf-live",
+        terminal_id="wf-live",
     )
 
 

@@ -17,6 +17,7 @@ from gobby.sessions.lifecycle import SessionLifecycleManager
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
+    from gobby.events.wake import TmuxSender
     from gobby.projects.purge import GraphCleaner, VectorCleaner
     from gobby.runner import GobbyRunner
     from gobby.system_automation import PipelineHeartbeatService
@@ -31,7 +32,7 @@ class _CronDependencyUnavailable(Exception):
 
 
 async def _send_tmux_session_wake(
-    tmux_session_name: str,
+    session_name: str,
     message: str,
     *,
     submit: bool = False,
@@ -42,22 +43,22 @@ async def _send_tmux_session_wake(
 
     mgr = get_tmux_session_manager()
     if not submit:
-        if not await mgr.send_keys(tmux_session_name, message):
-            raise RuntimeError(f"tmux send-keys to {tmux_session_name} failed")
+        if not await mgr.send_keys(session_name, message):
+            raise RuntimeError(f"tmux send-keys to {session_name} failed")
         return
 
     literal_text = message.rstrip("\n")
     if escape_before_submit:
-        if not await mgr.send_keys(tmux_session_name, "Escape", literal=False):
-            raise RuntimeError(f"tmux send-keys to {tmux_session_name} failed")
+        if not await mgr.send_keys(session_name, "Escape", literal=False):
+            raise RuntimeError(f"tmux send-keys to {session_name} failed")
         if literal_text:
             await asyncio.sleep(TMUX_TEXT_ENTER_DELAY_SECONDS)
-    if literal_text and not await mgr.send_keys(tmux_session_name, literal_text):
-        raise RuntimeError(f"tmux send-keys to {tmux_session_name} failed")
+    if literal_text and not await mgr.send_keys(session_name, literal_text):
+        raise RuntimeError(f"tmux send-keys to {session_name} failed")
     if literal_text:
         await asyncio.sleep(TMUX_TEXT_ENTER_DELAY_SECONDS)
-    if not await mgr.send_keys(tmux_session_name, "Enter", literal=False):
-        raise RuntimeError(f"tmux send-keys to {tmux_session_name} failed")
+    if not await mgr.send_keys(session_name, "Enter", literal=False):
+        raise RuntimeError(f"tmux send-keys to {session_name} failed")
 
 
 async def _send_tmux_pane_wake(
@@ -284,7 +285,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
     runner.wake_dispatcher = WakeDispatcher(
         session_manager=runner.session_manager,
         ism_manager=ism_manager,
-        tmux_sender=_send_tmux_session_wake,
+        tmux_sender=cast("TmuxSender", _send_tmux_session_wake),
         tmux_pane_sender=_send_tmux_pane_wake,
         agent_run_manager=agent_run_manager,
         run_db=runner.db_executor.run,

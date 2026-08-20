@@ -14,6 +14,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
+from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -220,7 +221,7 @@ def test_agent_run_row_preserves_null_flag_without_legacy_reclassification() -> 
         "continuation_prompt": None,
         "task_id": None,
         "pid": None,
-        "tmux_session_name": None,
+        "terminal_id": None,
         "worktree_id": None,
         "clone_id": None,
         "timeout_seconds": None,

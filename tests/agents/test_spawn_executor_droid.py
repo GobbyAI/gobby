@@ -21,6 +21,7 @@ from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.spawn_executor import SpawnRequest, SpawnResult, execute_spawn
 from gobby.utils.daemon_client import DaemonClient
 from tests.agents.prepared_spawn import prepared_spawn
+from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -128,7 +129,7 @@ class TestExecuteSpawnDroid:
             success=True,
             pid=12345,
             terminal_type="tmux",
-            tmux_session_name="agent-run-droid",
+            terminal_id="agent-run-droid",
             tmux_socket_name="sock",
             tmux_socket_path="/tmp/sock",
         )
@@ -179,7 +180,7 @@ class TestExecuteSpawnDroid:
         assert result.success is True
         assert result.run_id == "run-droid"
         assert result.child_session_id == "gobby-sess-123"
-        assert result.tmux_session_name == "agent-run-droid"
+        assert result.terminal_id == "agent-run-droid"
         assert result.message == "Droid agent spawned in terminal with session gobby-sess-123"
 
     @pytest.mark.asyncio

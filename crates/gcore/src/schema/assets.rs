@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 pub const RUNNER_PROTOCOL_VERSION: u32 = 1;
 pub const BASELINE_VERSION: i32 = 375;
 pub const BASELINE_CHECKSUM: &str =
-    "8467fc42e29fec1f58986e7ac141c3cdcf8c6a417c61c73ff3cca63241e2a2cf";
+    "30eb60a384d201dc42bb4ffb78d18eb2ce6209200ac1f47708e48ac21a792944";
 pub const BASELINE_SQL: &str = include_str!("../../assets/schema/baseline.sql");
 pub const SEED_MANIFEST_JSON: &str = include_str!("../../assets/schema/seed.manifest.json");
 pub const CATALOG_MANIFEST_JSON: &str = include_str!("../../assets/schema/catalog.manifest.json");

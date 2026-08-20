@@ -38,6 +38,7 @@ from gobby.agents.tmux.text_injection import (
 )
 from gobby.config.tmux import TmuxConfig
 from gobby.config.tmux import TmuxConfig as TmuxConfigCanonical
+from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -1583,7 +1584,7 @@ class TestTmuxSpawner:
 
             assert result.success is True
             assert result.pid == 456
-            assert result.tmux_session_name == "test-session"
+            assert result.terminal_id == "test-session"
             assert result.tmux_socket_name == "gobby"
             assert result.tmux_socket_path is None
 

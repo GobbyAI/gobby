@@ -30,6 +30,7 @@ import pytest
 from gobby.hooks.session_coordinator import SessionCoordinator
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
+from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -477,7 +478,7 @@ class TestAgentRunCompletion:
             capture_id=None,
             capture_revision=0,
             status="running",
-            tmux_session_name="agent-run",
+            terminal_id="agent-run",
         )
         persisted = SimpleNamespace(**{**vars(running), "result": large_output})
         mock_agent_run_manager.get.return_value = running
@@ -508,7 +509,7 @@ class TestAgentRunCompletion:
     async def test_complete_agent_run_flushes_stats_before_refresh(self) -> None:
         """A short run uses stats and result persisted by the awaited flush."""
         agent_run_manager = MagicMock()
-        agent_run_manager.get.return_value = MagicMock(status="running", tmux_session_name=None)
+        agent_run_manager.get.return_value = MagicMock(status="running", terminal_id=None)
         agent_run_manager.db.fetchone.return_value = None
         message_processor = MagicMock()
         stale_processor = MagicMock()
@@ -617,7 +618,7 @@ class TestAgentRunCompletion:
         )
         mock_agent_run_manager = MagicMock(db=temp_db)
         mock_agent_run_manager.get.return_value = MagicMock(
-            status="running", tmux_session_name=None
+            status="running", terminal_id=None
         )
         coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
         session = SimpleNamespace(
@@ -635,7 +636,7 @@ class TestAgentRunCompletion:
 
     def test_complete_agent_run_notifies_stored_status_when_complete_loses_race(self) -> None:
         mock_agent_run_manager = MagicMock()
-        running_run = MagicMock(status="running", tmux_session_name=None)
+        running_run = MagicMock(status="running", terminal_id=None)
         terminal_run = MagicMock(status="cancelled")
         mock_agent_run_manager.get.side_effect = [running_run, terminal_run]
         mock_agent_run_manager.complete.return_value = None
@@ -660,7 +661,7 @@ class TestAgentRunCompletion:
 
     def test_complete_agent_run_notifies_stored_status_when_fail_loses_race(self) -> None:
         mock_agent_run_manager = MagicMock()
-        running_run = MagicMock(status="running", tmux_session_name=None)
+        running_run = MagicMock(status="running", terminal_id=None)
         terminal_run = MagicMock(status="success")
         mock_agent_run_manager.get.side_effect = [running_run, terminal_run]
         mock_agent_run_manager.fail.return_value = None
@@ -713,7 +714,7 @@ class TestAgentRunCompletion:
         ):
             result = coordinator._terminate_agent_run(
                 run_id="run-123",
-                agent_run=MagicMock(tmux_session_name=None),
+                agent_run=MagicMock(terminal_id=None),
                 action="complete",
                 reason=None,
                 result_prefix="result",
@@ -1395,7 +1396,7 @@ class TestInlineTerminalizationAlreadyTerminal:
             created_at=now,
             updated_at=now,
             result="done",
-            tmux_session_name="gobby-test-inline",
+            terminal_id="gobby-test-inline",
         )
         storage = _AlreadyTerminalRunStorage(run)
         coordinator = SessionCoordinator(

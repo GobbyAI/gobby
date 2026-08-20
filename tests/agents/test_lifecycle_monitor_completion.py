@@ -10,6 +10,7 @@ from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.config.tmux import TmuxConfig
 
 from .detection_test_support import BundledDetectionRegistry
+from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 DETECTION_REGISTRY = BundledDetectionRegistry()
 pytestmark = pytest.mark.unit
@@ -34,7 +35,7 @@ class TestCompletedRunIdleGuard:
         stale_run = MagicMock(
             id="run-123",
             status="running",
-            tmux_session_name="gobby-run-123",
+            terminal_id="gobby-run-123",
             child_session_id="child-123",
             parent_session_id="parent-123",
         )
