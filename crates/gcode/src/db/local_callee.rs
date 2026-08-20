@@ -1,6 +1,21 @@
 use postgres::GenericClient;
+use uuid::Uuid;
 
 use super::ids::{id_param, id_string, opt_id_string};
+
+const MODULE_ROOT_FILES: &[&str] = &[
+    "mod.rs",
+    "lib.rs",
+    "main.rs",
+    "__init__.py",
+    "__init__.pyi",
+    "index.js",
+    "index.jsx",
+    "index.ts",
+    "index.tsx",
+    "index.mjs",
+    "index.cjs",
+];
 
 /// Resolve a cross-file local-import call target to its canonical `code_symbols`
 /// id by `(candidate files, original name)`. Returns the real indexed id (no
@@ -15,6 +30,10 @@ use super::ids::{id_param, id_string, opt_id_string};
 ///
 /// The best non-empty tier must contain exactly one symbol; otherwise the call
 /// degrades to unresolved rather than risk a wrong edge.
+///
+/// When the exact-file query misses, module-root candidates (`mod.rs`, `lib.rs`,
+/// `main.rs`, `__init__.py[i]`, `index.{js,jsx,ts,tsx,mjs,cjs}`) fall back to a
+/// unique top-level `function`/`class`/`type` under that directory.
 pub fn resolve_local_callee_symbol_id(
     conn: &mut impl GenericClient,
     project_id: &str,
@@ -26,34 +45,16 @@ pub fn resolve_local_callee_symbol_id(
     }
     let machine_id = id_param(&gobby_core::machine::read_local_machine_id()?)?;
     let project_id = id_param(project_id)?;
-    let rows = conn.query(
-        "SELECT s.id, s.kind, s.parent_symbol_id
-         FROM code_symbols s
-         JOIN code_indexed_file_states cifs
-           ON cifs.project_id = s.project_id
-          AND cifs.file_path = s.file_path
-          AND cifs.content_hash = s.file_content_hash
-          AND cifs.machine_id = $1
-         WHERE s.project_id = $2 AND s.file_path = ANY($3) AND s.name = $4
-         ORDER BY s.file_path, s.byte_start",
-        &[&machine_id, &project_id, &target_files, &name],
-    )?;
-
-    let candidates: Vec<LocalCalleeCandidate> = rows
-        .iter()
-        .map(|row| {
-            let id = id_string(row, "id")?;
-            let kind: String = row.try_get("kind")?;
-            let parent_symbol_id = opt_id_string(row, "parent_symbol_id")?;
-            Ok::<_, anyhow::Error>(LocalCalleeCandidate {
-                id,
-                kind,
-                parent_symbol_id,
-            })
-        })
-        .collect::<Result<_, _>>()?;
-
-    Ok(select_local_callee_candidate_id(&candidates))
+    let exact = query_exact_file_candidates(conn, &machine_id, &project_id, target_files, name)?;
+    if !exact.is_empty() {
+        return Ok(select_local_callee_candidate_id(&exact));
+    }
+    let prefixes = module_root_like_prefixes(target_files);
+    if prefixes.is_empty() {
+        return Ok(None);
+    }
+    let subtree = query_module_prefix_candidates(conn, &machine_id, &project_id, &prefixes, name)?;
+    Ok(select_local_callee_candidate_id(&subtree))
 }
 
 pub fn resolve_default_import_symbol_id(
@@ -75,22 +76,95 @@ pub fn resolve_default_import_symbol_id(
          ORDER BY file_path, byte_start",
         &[&project_id, &target_files, &target_kinds.as_slice()],
     )?;
+    Ok(select_default_import_candidate_id(&candidates_from_rows(
+        &rows,
+    )?))
+}
 
-    let candidates: Vec<LocalCalleeCandidate> = rows
-        .iter()
+const LOCAL_CALLEE_FROM: &str = "
+         FROM code_symbols s
+         JOIN code_indexed_file_states cifs
+           ON cifs.project_id = s.project_id
+          AND cifs.file_path = s.file_path
+          AND cifs.content_hash = s.file_content_hash
+          AND cifs.machine_id = $1
+         WHERE s.project_id = $2 AND s.name = $4";
+
+fn query_exact_file_candidates(
+    conn: &mut impl GenericClient,
+    machine_id: &Uuid,
+    project_id: &Uuid,
+    target_files: &[String],
+    name: &str,
+) -> anyhow::Result<Vec<LocalCalleeCandidate>> {
+    let sql = format!(
+        "SELECT s.id, s.kind, s.parent_symbol_id{LOCAL_CALLEE_FROM}
+          AND s.file_path = ANY($3)
+         ORDER BY s.file_path, s.byte_start"
+    );
+    let rows = conn.query(&sql, &[machine_id, project_id, &target_files, &name])?;
+    candidates_from_rows(&rows)
+}
+
+fn query_module_prefix_candidates(
+    conn: &mut impl GenericClient,
+    machine_id: &Uuid,
+    project_id: &Uuid,
+    prefixes: &[String],
+    name: &str,
+) -> anyhow::Result<Vec<LocalCalleeCandidate>> {
+    let kinds = ["function", "class", "type"];
+    let sql = format!(
+        "SELECT s.id, s.kind, s.parent_symbol_id{LOCAL_CALLEE_FROM}
+          AND s.file_path LIKE ANY($3) ESCAPE '#'
+          AND s.parent_symbol_id IS NULL
+          AND s.kind = ANY($5)
+         ORDER BY s.file_path, s.byte_start"
+    );
+    let rows = conn.query(
+        &sql,
+        &[machine_id, project_id, &prefixes, &name, &kinds.as_slice()],
+    )?;
+    candidates_from_rows(&rows)
+}
+
+fn candidates_from_rows(rows: &[postgres::Row]) -> anyhow::Result<Vec<LocalCalleeCandidate>> {
+    rows.iter()
         .map(|row| {
             let id = id_string(row, "id")?;
             let kind: String = row.try_get("kind")?;
             let parent_symbol_id = opt_id_string(row, "parent_symbol_id")?;
-            Ok::<_, anyhow::Error>(LocalCalleeCandidate {
+            Ok(LocalCalleeCandidate {
                 id,
                 kind,
                 parent_symbol_id,
             })
         })
-        .collect::<Result<_, _>>()?;
+        .collect()
+}
 
-    Ok(select_default_import_candidate_id(&candidates))
+fn module_root_like_prefixes(target_files: &[String]) -> Vec<String> {
+    let mut prefixes = Vec::new();
+    for path in target_files {
+        let Some(dir) = module_root_dir(path) else {
+            continue;
+        };
+        let prefix = like_prefix(dir);
+        if !prefixes.contains(&prefix) {
+            prefixes.push(prefix);
+        }
+    }
+    prefixes
+}
+
+fn module_root_dir(path: &str) -> Option<&str> {
+    let (dir, name) = path.rsplit_once('/')?;
+    MODULE_ROOT_FILES.contains(&name).then_some(dir)
+}
+
+fn like_prefix(dir: &str) -> String {
+    let escaped = dir.replace('#', "##").replace('%', "#%").replace('_', "#_");
+    format!("{escaped}/%")
 }
 
 #[derive(Debug)]
@@ -239,5 +313,24 @@ mod tests {
         ];
 
         assert_eq!(select_default_import_candidate_id(&candidates), None);
+    }
+
+    #[test]
+    fn module_root_dir_maps_known_roots_and_ignores_plain_files() {
+        assert_eq!(module_root_dir("pkg/__init__.py"), Some("pkg"));
+        assert_eq!(module_root_dir("store/mod.rs"), Some("store"));
+        assert_eq!(
+            module_root_dir("crates/app/src/lib.rs"),
+            Some("crates/app/src")
+        );
+        assert_eq!(module_root_dir("pkg/api.py"), None);
+        assert_eq!(module_root_dir("index/api.rs"), None);
+    }
+
+    #[test]
+    fn like_prefix_escapes_like_wildcards() {
+        assert_eq!(like_prefix("pkg"), "pkg/%");
+        assert_eq!(like_prefix("foo_bar"), "foo#_bar/%");
+        assert_eq!(like_prefix("a%b#c"), "a#%b##c/%");
     }
 }
