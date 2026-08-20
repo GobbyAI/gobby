@@ -8,6 +8,7 @@ on:
       - ".github/workflows/rust-ci.yml"
       - ".github/workflows/release-gcode.yml"
       - ".github/workflows/release-gcore.yml"
+      - ".github/workflows/release-gdaemon.yml"
       - ".github/workflows/release-ghook.yml"
       - ".github/workflows/release-gwiki.yml"
       - "Cargo.lock"
@@ -22,6 +23,7 @@ on:
       - ".github/workflows/rust-ci.yml"
       - ".github/workflows/release-gcode.yml"
       - ".github/workflows/release-gcore.yml"
+      - ".github/workflows/release-gdaemon.yml"
       - ".github/workflows/release-ghook.yml"
       - ".github/workflows/release-gwiki.yml"
       - "Cargo.lock"
@@ -121,6 +123,38 @@ jobs:
 
       - name: Test (gcode effective_config with ai)
         run: cargo nextest run --profile ci -p gobby-code --features ai --test effective_config
+
+      # gobby-daemon: schema CLI (release workflow is also a rust-ci path trigger)
+      - name: Clippy (gobby-daemon)
+        run: cargo clippy -p gobby-daemon --all-targets -- -D warnings
+
+      - name: Test (gobby-daemon)
+        run: cargo nextest run --profile ci -p gobby-daemon
+
+      # gobby-terminal: Zig-free default-features gate, then vt-engine + Windows cross
+      - name: Clippy (gobby-terminal)
+        run: cargo clippy -p gobby-terminal --all-targets -- -D warnings
+
+      - name: Test (gobby-terminal)
+        run: cargo nextest run --profile ci -p gobby-terminal
+
+      - name: Setup Zig 0.15.2
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
+        with:
+          version: 0.15.2
+
+      - name: Clippy (gobby-terminal, vt-engine)
+        run: cargo clippy -p gobby-terminal --features vt-engine --all-targets -- -D warnings
+
+      - name: Test (gobby-terminal, vt-engine)
+        run: cargo nextest run --profile ci -p gobby-terminal --features vt-engine
+
+      - name: Clippy (gobby-terminal, Windows cross)
+        env:
+          LIBGHOSTTY_VT_SIMD: "false"
+        run: |
+          rustup target add x86_64-pc-windows-msvc
+          cargo clippy -p gobby-terminal --target x86_64-pc-windows-msvc --features vt-engine --all-targets -- -D warnings
 
       - name: Test workspace (no default features)
         run: cargo nextest run --profile ci --workspace --no-default-features

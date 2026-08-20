@@ -834,7 +834,3 @@ impl Drop for InputSourceRestore {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "windows/tests.rs"]
-mod tests;

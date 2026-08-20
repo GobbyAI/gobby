@@ -4,8 +4,20 @@ The former `gobby-cli` repo now lives here — Gobby is a monorepo. The Rust cod
 a Cargo workspace (`Cargo.toml`, `Cargo.lock`, and `rust-toolchain.toml` at the
 repo root). Use `cargo` for all Rust operations, respect `rust-toolchain.toml`,
 and load the `rust` skill before editing Rust. Rust-specific conventions are
-defined in this file. Shared architecture facts (crate-to-binary mappings and
-the rebuild/reinstall new-inode requirement) live in `AGENTS.md`.
+defined in this file.
+
+Crate → binary map (installed to `~/.gobby/bin/`):
+
+- `gobby-code` → `gcode`
+- `gobby-daemon` → `gdaemon`
+- `gobby-hooks` → `ghook`
+- `gobby-wiki` → `gwiki`
+- `gobby-terminal` → `gterm`
+- `gobby-client` → `gclient`
+
+A crate change is live only after rebuild and reinstall via a new inode (`cp` to
+a dotfile, then `mv -f` over the name): macOS kills processes that exec an
+in-place-overwritten signed binary.
 
 ```bash
 # Build / check a specific crate (use -p; avoid whole-workspace builds unless needed)
@@ -34,4 +46,4 @@ mod tests;
 ```
 
 The crate → binary map and the rebuild-and-reinstall requirement (including the
-new-inode install step macOS needs) live in `AGENTS.md` under Architecture Facts.
+new-inode install step macOS needs) are documented at the top of this file.

@@ -99,6 +99,39 @@ fn explicit_file_routes_follow_respect_gitignore_setting() {
 }
 
 #[test]
+fn vendor_directory_is_skipped_for_discovery_and_explicit_routes() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    write_file(root, "vendor/ghostty.rs", b"fn vendored() {}\n");
+    write_file(root, "src/lib.rs", b"fn visible() {}\n");
+
+    let excludes = DEFAULT_EXCLUDES;
+
+    assert_eq!(
+        explicit_file_route(root, &root.join("vendor/ghostty.rs"), excludes),
+        ExplicitFileRoute::Skip
+    );
+    assert_eq!(
+        explicit_file_route(root, &root.join("src/lib.rs"), excludes),
+        ExplicitFileRoute::Ast
+    );
+
+    let (ast, content_only) = walker::discover_files(root, excludes);
+    let mut rels: Vec<String> = ast
+        .into_iter()
+        .chain(content_only)
+        .map(|path| {
+            path.strip_prefix(root)
+                .expect("path under root")
+                .to_string_lossy()
+                .replace('\\', "/")
+        })
+        .collect();
+    rels.sort();
+    assert_eq!(rels, vec!["src/lib.rs"]);
+}
+
+#[test]
 fn configured_excludes_extend_built_in_excludes() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();

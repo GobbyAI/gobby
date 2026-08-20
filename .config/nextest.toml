@@ -11,6 +11,7 @@ fail-fast = false
 [test-groups]
 ghook-process = { max-threads = 2 }
 serial-db = { max-threads = 1 }
+gterm-pty = { max-threads = 1 }
 
 [[profile.default.overrides]]
 filter = 'package(gobby-hooks)'
@@ -23,3 +24,7 @@ test-group = 'serial-db'
 [[profile.default.overrides]]
 filter = 'package(gobby-wiki) & (test(::serial_db::) | test(serial_db::))'
 test-group = 'serial-db'
+
+[[profile.default.overrides]]
+filter = 'package(gobby-terminal) & (test(::pty::) | test(pty::) | test(frame_producer))'
+test-group = 'gterm-pty'
