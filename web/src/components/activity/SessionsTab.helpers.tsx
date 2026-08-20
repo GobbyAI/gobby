@@ -57,6 +57,7 @@ export const HIDDEN_SOURCES = new Set(["pipeline", "cron", "system"]);
 const LOCAL_LEGACY_PROVIDERS = new Set([
   "lmstudio",
   "ollama",
+  "vllm",
   "llamacpp",
   "local",
 ]);

@@ -48,7 +48,8 @@ body {
 .source-icon-codex,
 .source-icon-grok,
 .source-icon-lmstudio,
-.source-icon-ollama {
+.source-icon-ollama,
+.source-icon-vllm {
   color: var(--text-primary);
 }
 
