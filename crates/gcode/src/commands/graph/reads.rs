@@ -16,7 +16,7 @@ const USAGES_TOKEN_BUDGET_REFINE_HINT: &str =
 const BLAST_RADIUS_TOKEN_BUDGET_REFINE_HINT: &str =
     "`--depth`, a more specific symbol query, or a symbol UUID";
 
-fn hint_for(ctx: &Context) -> Option<String> {
+pub(super) fn hint_for(ctx: &Context) -> Option<String> {
     if ctx.falkordb.is_none() {
         Some(GRAPH_BACKEND_HINT.to_string())
     } else {
@@ -24,7 +24,7 @@ fn hint_for(ctx: &Context) -> Option<String> {
     }
 }
 
-fn hint_for_error(ctx: &Context, error: &anyhow::Error) -> Option<String> {
+pub(super) fn hint_for_error(ctx: &Context, error: &anyhow::Error) -> Option<String> {
     match error.downcast_ref::<code_graph::GraphReadError>() {
         Some(code_graph::GraphReadError::NotConfigured) => hint_for(ctx),
         Some(code_graph::GraphReadError::Unreachable { message }) => Some(format!(
@@ -251,7 +251,7 @@ fn print_symbol_path_response(
     }
 }
 
-fn resolve_symbol_with_connection(
+pub(super) fn resolve_symbol_with_connection(
     conn: &mut postgres::Client,
     project_id: &str,
     input: &str,
@@ -293,7 +293,10 @@ fn print_symbol_resolution_failure(input: &str, suggestions: &[String]) {
 
 /// Resolve user input to a canonical symbol id, printing suggestions on ambiguity.
 /// Returns None and prints an error message if no match found.
-fn resolve_symbol(ctx: &Context, input: &str) -> anyhow::Result<Option<ResolvedGraphSymbol>> {
+pub(super) fn resolve_symbol(
+    ctx: &Context,
+    input: &str,
+) -> anyhow::Result<Option<ResolvedGraphSymbol>> {
     let (resolved, suggestions) = resolve_symbol_candidates(ctx, input)?;
     if resolved.is_none() {
         print_symbol_resolution_failure(input, &suggestions);

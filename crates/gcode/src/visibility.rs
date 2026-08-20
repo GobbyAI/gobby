@@ -496,7 +496,7 @@ pub fn filter_visible_graph_results(
         .collect())
 }
 
-fn visible_graph_paths(
+pub(crate) fn visible_graph_paths(
     conn: &mut Client,
     ctx: &Context,
     file_paths: &[String],

@@ -378,6 +378,32 @@ pub fn contract() -> CliContract {
                 )
             },
             CommandContract {
+                positionals: vec![PositionalContract {
+                    name: "SEED",
+                    required: true,
+                    repeatable: false,
+                }],
+                flags: vec![
+                    FlagContract {
+                        name: "--view",
+                        takes_value: true,
+                        value_name: Some("fcg|mcg|class-hierarchy"),
+                        allowed_values: vec!["fcg", "mcg", "class-hierarchy"],
+                        required: true,
+                        repeatable: false,
+                    },
+                    FlagContract::value("--depth", "N"),
+                    FlagContract::value("--incoming-limit", "N"),
+                    FlagContract::value("--outgoing-limit", "N"),
+                    format_flag(),
+                ],
+                json_output_keys: graph_view_output_keys(),
+                ..CommandContract::new(
+                    "graph view",
+                    "Render a scoped fcg, mcg, or class-hierarchy graph view.",
+                )
+            },
+            CommandContract {
                 daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![
@@ -740,6 +766,23 @@ fn contract_keys() -> Vec<&'static str> {
 
 fn graph_payload_keys() -> Vec<&'static str> {
     vec!["nodes", "links", "summary"]
+}
+
+fn graph_view_output_keys() -> Vec<&'static str> {
+    vec![
+        "project_id",
+        "project_root",
+        "view",
+        "seed",
+        "depth",
+        "incoming_truncated",
+        "outgoing_truncated",
+        "hint",
+        "nodes",
+        "edges",
+        "communities",
+        "mermaid",
+    ]
 }
 
 fn graph_lifecycle_keys() -> Vec<&'static str> {

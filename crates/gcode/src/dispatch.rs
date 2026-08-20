@@ -429,6 +429,12 @@ fn run() -> anyhow::Result<()> {
                 format,
             )
         }
+        Command::Graph {
+            command: GraphCommand::View(args),
+        } => {
+            ensure_project_fresh(&ctx, cli.allow_stale)?;
+            commands::graph::view(&ctx, &args, format)
+        }
 
         Command::Search {
             query,

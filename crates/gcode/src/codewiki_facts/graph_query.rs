@@ -4,7 +4,7 @@
 //! small scope cannot be starved by a project-wide sample. Large identifier
 //! lists are chunked so Cypher payloads stay bounded.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::graph::typed_query;
 
@@ -94,6 +94,7 @@ pub struct EdgeQueryPlan {
     pub keys: ScopeKeys,
     pub peer_keys: ScopeKeys,
     pub limit: usize,
+    pub after: Option<(String, String)>,
 }
 
 #[cfg(test)]
@@ -121,7 +122,13 @@ impl EdgeQueryPlan {
             keys: keys.clone(),
             peer_keys: keys,
             limit: clamp_declared_limit(limit),
+            after: None,
         }
+    }
+
+    pub fn with_after(mut self, after: Option<(String, String)>) -> Self {
+        self.after = after;
+        self
     }
 
     fn with_peer_keys(mut self, peer_keys: ScopeKeys) -> Self {
@@ -142,18 +149,26 @@ impl EdgeQueryPlan {
         };
         let query = format!(
             "{match_clause}{where_clause} {return_clause} \
-             ORDER BY source, target LIMIT {limit}",
+             ORDER BY source, target, rel LIMIT {limit}",
             match_clause = match_clause(self.kind),
             return_clause = return_clause(self.kind),
             limit = self.fetch_limit(),
         );
-        (
-            query,
-            HashMap::from([(
-                "project".to_string(),
-                typed_query::cypher_string_literal(project_id),
-            )]),
-        )
+        let mut params = HashMap::from([(
+            "project".to_string(),
+            typed_query::cypher_string_literal(project_id),
+        )]);
+        if let Some((after_source, after_target)) = &self.after {
+            params.insert(
+                "after_source".to_string(),
+                typed_query::cypher_string_literal(after_source),
+            );
+            params.insert(
+                "after_target".to_string(),
+                typed_query::cypher_string_literal(after_target),
+            );
+        }
+        (query, params)
     }
 
     #[cfg(test)]
@@ -175,21 +190,32 @@ impl EdgeQueryPlan {
     fn keeps(&self, edge: &SampleGraphEdge) -> bool {
         let source_in = endpoint_in_scope(&self.keys, &edge.source, &edge.source_file);
         let target_in = endpoint_in_scope(&self.peer_keys, &edge.target, &edge.target_file);
+        let source_in_frontier =
+            endpoint_in_scope(&self.peer_keys, &edge.source, &edge.source_file);
         match (self.direction, self.mode) {
             (GraphDirection::Outgoing, GraphScopeMode::Closed) => source_in && target_in,
             (GraphDirection::Outgoing, GraphScopeMode::Incident) => source_in,
             (GraphDirection::Incoming, GraphScopeMode::Closed) => source_in && target_in,
-            (GraphDirection::Incoming, GraphScopeMode::Incident) => target_in && !source_in,
+            (GraphDirection::Incoming, GraphScopeMode::Incident) => {
+                target_in && !source_in_frontier
+            }
         }
     }
 
     fn predicates(&self) -> Vec<String> {
-        match &self.keys {
+        let mut predicates = match &self.keys {
             ScopeKeys::All => Vec::new(),
             keys if keys.is_empty() || self.peer_keys.is_empty() => vec!["false".to_string()],
             ScopeKeys::Files(files) => self.list_predicates(files, false),
             ScopeKeys::Symbols(ids) => self.list_predicates(ids, true),
+        };
+        if self.after.is_some() && predicates.first().map(String::as_str) != Some("false") {
+            predicates.push(
+                "(source > $after_source OR (source = $after_source AND target > $after_target))"
+                    .to_string(),
+            );
         }
+        predicates
     }
 
     fn list_predicates(&self, values: &[String], symbols: bool) -> Vec<String> {
@@ -212,16 +238,161 @@ impl EdgeQueryPlan {
             (GraphDirection::Outgoing, GraphScopeMode::Incident) => {
                 vec![format!("{source_field} IN [{listed}]")]
             }
-            (GraphDirection::Incoming, GraphScopeMode::Incident) => vec![
-                format!("{target_field} IN [{listed}]"),
-                format!("NOT {source_field} IN [{listed}]"),
-            ],
+            (GraphDirection::Incoming, GraphScopeMode::Incident) => {
+                let mut predicates = vec![format!("{target_field} IN [{listed}]")];
+                if self.can_push_frontier_exclusion() {
+                    let frontier_listed = match &self.peer_keys {
+                        ScopeKeys::Files(peer) | ScopeKeys::Symbols(peer) => {
+                            typed_query::id_list_literal(peer)
+                        }
+                        ScopeKeys::All => listed.clone(),
+                    };
+                    predicates.push(format!("NOT {source_field} IN [{frontier_listed}]"));
+                }
+                predicates
+            }
+        }
+    }
+
+    fn can_push_frontier_exclusion(&self) -> bool {
+        match &self.peer_keys {
+            ScopeKeys::All => false,
+            ScopeKeys::Files(values) | ScopeKeys::Symbols(values) => {
+                !values.is_empty() && values.len() <= SCOPE_CHUNK_LEN
+            }
         }
     }
 }
 
 pub fn clamp_declared_limit(limit: usize) -> usize {
     limit.min(MAX_DECLARED_EDGE_LIMIT)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct PublicEdge {
+    pub source: String,
+    pub target: String,
+    pub rel: String,
+}
+
+impl PublicEdge {
+    pub fn new(
+        source: impl Into<String>,
+        target: impl Into<String>,
+        rel: impl Into<String>,
+    ) -> Self {
+        Self {
+            source: source.into(),
+            target: target.into(),
+            rel: rel.into(),
+        }
+    }
+}
+
+pub fn default_rel(kind: GraphEdgeKind) -> &'static str {
+    match kind {
+        GraphEdgeKind::Call => "CALLS",
+        GraphEdgeKind::Import => "IMPORTS",
+        GraphEdgeKind::Inheritance => "INHERITS",
+    }
+}
+
+pub fn edge_is_excluded(exclude: &HashSet<PublicEdge>, edge: &PublicEdge) -> bool {
+    exclude.contains(edge)
+}
+
+pub fn incident_incoming_source_in_frontier(
+    plan: &EdgeQueryPlan,
+    source: &str,
+    source_file: &str,
+) -> bool {
+    plan.direction == GraphDirection::Incoming
+        && plan.mode == GraphScopeMode::Incident
+        && endpoint_in_scope(&plan.peer_keys, source, source_file)
+}
+
+#[cfg(test)]
+impl SampleGraphEdge {
+    fn rel(&self) -> &'static str {
+        default_rel(self.kind)
+    }
+}
+
+#[cfg(test)]
+pub fn collect_scoped_pairs(
+    edges: &[SampleGraphEdge],
+    kind: GraphEdgeKind,
+    bounds: GraphBounds,
+    mode: GraphScopeMode,
+    keys: ScopeKeys,
+    exclude: &HashSet<PublicEdge>,
+) -> (Vec<PublicEdge>, bool, bool) {
+    let plans = match plans_for(kind, bounds, mode, keys) {
+        QueryPlans::Ready(plans) => plans,
+        QueryPlans::ClosedScopeTooLarge { .. } => {
+            return (
+                Vec::new(),
+                bounds.incoming_limit > 0,
+                bounds.outgoing_limit > 0,
+            );
+        }
+    };
+    let mut incoming = Vec::new();
+    let mut outgoing = Vec::new();
+    for plan in plans {
+        let mut seen = HashSet::new();
+        let mut eligible = Vec::new();
+        let mut ranked = edges
+            .iter()
+            .filter(|edge| edge.kind == plan.kind && plan.keeps(edge))
+            .collect::<Vec<_>>();
+        ranked.sort_by(|left, right| {
+            left.source
+                .cmp(&right.source)
+                .then_with(|| left.target.cmp(&right.target))
+                .then_with(|| left.rel().cmp(right.rel()))
+        });
+        for edge in ranked {
+            let pair = PublicEdge::new(edge.source.clone(), edge.target.clone(), edge.rel());
+            if !seen.insert(pair.clone()) {
+                continue;
+            }
+            if edge_is_excluded(exclude, &pair) {
+                continue;
+            }
+            eligible.push(pair);
+            if eligible.len() == plan.fetch_limit() {
+                break;
+            }
+        }
+        match plan.direction {
+            GraphDirection::Incoming => incoming.extend(eligible),
+            GraphDirection::Outgoing => outgoing.extend(eligible),
+        }
+    }
+    incoming.sort();
+    incoming.dedup();
+    outgoing.sort();
+    outgoing.dedup();
+    let incoming_limit = clamp_declared_limit(bounds.incoming_limit);
+    let outgoing_limit = clamp_declared_limit(bounds.outgoing_limit);
+    let incoming_truncated = incoming_limit > 0 && incoming.len() > incoming_limit;
+    let outgoing_truncated = outgoing_limit > 0 && outgoing.len() > outgoing_limit;
+    if incoming_limit > 0 {
+        incoming.truncate(incoming_limit);
+    } else {
+        incoming.clear();
+    }
+    if outgoing_limit > 0 {
+        outgoing.truncate(outgoing_limit);
+    } else {
+        outgoing.clear();
+    }
+    let mut rows = outgoing;
+    rows.extend(incoming);
+    rows.sort();
+    rows.dedup();
+    (rows, incoming_truncated, outgoing_truncated)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -286,7 +457,9 @@ fn chunked_plans(
     }
     chunks
         .into_iter()
-        .map(|chunk| EdgeQueryPlan::new(kind, direction, mode, chunk, limit))
+        .map(|chunk| {
+            EdgeQueryPlan::new(kind, direction, mode, chunk, limit).with_peer_keys(keys.clone())
+        })
         .collect()
 }
 
@@ -303,11 +476,11 @@ fn chunk_values(values: &[String], chunk_len: usize) -> Vec<Vec<String>> {
 fn match_clause(kind: GraphEdgeKind) -> &'static str {
     match kind {
         GraphEdgeKind::Call => {
-            "MATCH (source:CodeSymbol {project: $project})-[:CALLS]->\
+            "MATCH (source:CodeSymbol {project: $project})-[r:CALLS]->\
              (target:CodeSymbol {project: $project})"
         }
         GraphEdgeKind::Import => {
-            "MATCH (source:CodeFile {project: $project})-[:IMPORTS]->\
+            "MATCH (source:CodeFile {project: $project})-[r:IMPORTS]->\
              (target:CodeModule {project: $project})"
         }
         GraphEdgeKind::Inheritance => {
@@ -320,9 +493,13 @@ fn match_clause(kind: GraphEdgeKind) -> &'static str {
 fn return_clause(kind: GraphEdgeKind) -> &'static str {
     match kind {
         GraphEdgeKind::Call | GraphEdgeKind::Inheritance => {
-            "RETURN source.id AS source, target.id AS target"
+            "RETURN DISTINCT source.id AS source, target.id AS target, type(r) AS rel, \
+             source.file_path AS source_file, target.file_path AS target_file"
         }
-        GraphEdgeKind::Import => "RETURN source.path AS source, target.name AS target",
+        GraphEdgeKind::Import => {
+            "RETURN DISTINCT source.path AS source, target.name AS target, type(r) AS rel, \
+             source.path AS source_file, target.name AS target_file"
+        }
     }
 }
 
@@ -338,7 +515,6 @@ fn endpoint_fields(kind: GraphEdgeKind, symbols: bool) -> (&'static str, &'stati
     }
 }
 
-#[cfg(test)]
 fn endpoint_in_scope(keys: &ScopeKeys, id: &str, file: &str) -> bool {
     match keys {
         ScopeKeys::All => true,
@@ -349,321 +525,5 @@ fn endpoint_in_scope(keys: &ScopeKeys, id: &str, file: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn ready_plans(plans: QueryPlans) -> Vec<EdgeQueryPlan> {
-        match plans {
-            QueryPlans::Ready(plans) => plans,
-            QueryPlans::ClosedScopeTooLarge { chunk_count } => {
-                panic!("expected ready plans, got ClosedScopeTooLarge ({chunk_count} chunks)")
-            }
-        }
-    }
-
-    fn sample(
-        kind: GraphEdgeKind,
-        source: &str,
-        target: &str,
-        source_file: &str,
-        target_file: &str,
-    ) -> SampleGraphEdge {
-        SampleGraphEdge {
-            kind,
-            source: source.to_string(),
-            target: target.to_string(),
-            source_file: source_file.to_string(),
-            target_file: target_file.to_string(),
-        }
-    }
-
-    fn crowded_project() -> Vec<SampleGraphEdge> {
-        let mut edges = Vec::new();
-        for index in 0..80 {
-            edges.push(sample(
-                GraphEdgeKind::Call,
-                &format!("noise-src-{index}"),
-                &format!("noise-dst-{index}"),
-                "src/noise.rs",
-                "src/other.rs",
-            ));
-            edges.push(sample(
-                GraphEdgeKind::Import,
-                "src/noise.rs",
-                &format!("noise_mod_{index}"),
-                "src/noise.rs",
-                &format!("noise_mod_{index}"),
-            ));
-            edges.push(sample(
-                GraphEdgeKind::Inheritance,
-                &format!("noise-child-{index}"),
-                &format!("noise-base-{index}"),
-                "src/noise.rs",
-                "src/other.rs",
-            ));
-        }
-        edges.extend([
-            sample(
-                GraphEdgeKind::Call,
-                "keep-caller",
-                "keep-callee",
-                "src/keep.rs",
-                "src/keep.rs",
-            ),
-            sample(
-                GraphEdgeKind::Import,
-                "src/keep.rs",
-                "keep_mod",
-                "src/keep.rs",
-                "keep_mod",
-            ),
-            sample(
-                GraphEdgeKind::Inheritance,
-                "keep-child",
-                "keep-base",
-                "src/keep.rs",
-                "src/keep.rs",
-            ),
-        ]);
-        edges
-    }
-
-    #[test]
-    fn small_scopes_keep_in_scope_edges_when_project_volume_exceeds_limit() {
-        let files = ScopeKeys::Files(vec!["src/keep.rs".to_string()]);
-        let edges = crowded_project();
-        for kind in [
-            GraphEdgeKind::Call,
-            GraphEdgeKind::Import,
-            GraphEdgeKind::Inheritance,
-        ] {
-            let mode = if kind == GraphEdgeKind::Import {
-                GraphScopeMode::Incident
-            } else {
-                GraphScopeMode::Closed
-            };
-            let plan = EdgeQueryPlan::new(kind, GraphDirection::Outgoing, mode, files.clone(), 5);
-            let kept = plan.select(&edges);
-            assert_eq!(kept.len(), 1, "{kind:?} should retain its in-scope edge");
-            assert!(
-                kept.iter().all(|edge| edge.source_file == "src/keep.rs"),
-                "out-of-scope {kind:?} edges must not appear"
-            );
-        }
-    }
-
-    #[test]
-    fn dense_scopes_return_stable_bounded_rows() {
-        let mut edges = Vec::new();
-        for index in 0..20 {
-            edges.push(sample(
-                GraphEdgeKind::Call,
-                &format!("src-{index:02}"),
-                &format!("dst-{index:02}"),
-                "src/dense.rs",
-                "src/dense.rs",
-            ));
-        }
-        let plan = EdgeQueryPlan::new(
-            GraphEdgeKind::Call,
-            GraphDirection::Outgoing,
-            GraphScopeMode::Closed,
-            ScopeKeys::Files(vec!["src/dense.rs".to_string()]),
-            7,
-        );
-        let first = plan
-            .select(&edges)
-            .into_iter()
-            .map(|edge| (edge.source.clone(), edge.target.clone()))
-            .collect::<Vec<_>>();
-        let second = plan
-            .select(&edges)
-            .into_iter()
-            .map(|edge| (edge.source.clone(), edge.target.clone()))
-            .collect::<Vec<_>>();
-        assert_eq!(first.len(), 7);
-        assert_eq!(first, second);
-        assert_eq!(first[0], ("src-00".to_string(), "dst-00".to_string()));
-    }
-
-    #[test]
-    fn incoming_and_outgoing_limits_are_independent() {
-        let mut edges = Vec::new();
-        for index in 0..6 {
-            edges.push(sample(
-                GraphEdgeKind::Call,
-                &format!("out-{index}"),
-                "seed",
-                "src/out.rs",
-                "src/seed.rs",
-            ));
-            edges.push(sample(
-                GraphEdgeKind::Call,
-                "seed",
-                &format!("in-target-{index}"),
-                "src/seed.rs",
-                "src/out.rs",
-            ));
-        }
-        let keys = ScopeKeys::Files(vec!["src/seed.rs".to_string()]);
-        let outgoing = EdgeQueryPlan::new(
-            GraphEdgeKind::Call,
-            GraphDirection::Outgoing,
-            GraphScopeMode::Incident,
-            keys.clone(),
-            2,
-        )
-        .select(&edges);
-        let incoming = EdgeQueryPlan::new(
-            GraphEdgeKind::Call,
-            GraphDirection::Incoming,
-            GraphScopeMode::Incident,
-            keys,
-            3,
-        )
-        .select(&edges);
-        assert_eq!(outgoing.len(), 2);
-        assert_eq!(incoming.len(), 3);
-        assert!(
-            outgoing
-                .iter()
-                .all(|edge| edge.source_file == "src/seed.rs")
-        );
-        assert!(incoming.iter().all(|edge| {
-            edge.target_file == "src/seed.rs" && edge.source_file != "src/seed.rs"
-        }));
-    }
-
-    #[test]
-    fn query_plans_apply_scope_before_fetch_limit_and_stay_chunk_bounded() {
-        let files = (0..130)
-            .map(|index| format!("src/f{index}.rs"))
-            .collect::<Vec<_>>();
-        let plans = ready_plans(plans_for(
-            GraphEdgeKind::Call,
-            GraphBounds::symmetric(4),
-            GraphScopeMode::Incident,
-            ScopeKeys::Files(files.clone()),
-        ));
-        assert!(plans.len() >= 4);
-        for plan in &plans {
-            let (query, params) = plan.render("project-id");
-            let where_at = query.find("WHERE").expect("scoped query has WHERE");
-            let limit_at = query
-                .find(&format!("LIMIT {}", plan.fetch_limit()))
-                .expect("query uses the sentinel fetch limit");
-            assert!(where_at < limit_at);
-            assert!(query.contains("ORDER BY source, target"));
-            assert!(query.contains("file_path IN ["));
-            assert!(query.len() < 8_000);
-            assert_eq!(params.len(), 1);
-            match &plan.keys {
-                ScopeKeys::Files(chunk) => assert!(chunk.len() <= SCOPE_CHUNK_LEN),
-                other => panic!("expected file chunk, got {other:?}"),
-            }
-        }
-        assert!(
-            plans
-                .iter()
-                .any(|plan| plan.render("project-id").0.contains(&files[0]))
-        );
-    }
-
-    #[test]
-    fn inheritance_queries_use_hierarchy_relationships() {
-        let plan = EdgeQueryPlan::new(
-            GraphEdgeKind::Inheritance,
-            GraphDirection::Outgoing,
-            GraphScopeMode::Closed,
-            ScopeKeys::Symbols(vec!["child".to_string(), "base".to_string()]),
-            9,
-        );
-        let (query, _) = plan.render("project-id");
-        assert!(query.contains("INHERITS|EXTENDS|IMPLEMENTS"));
-        assert!(query.contains("source.id IN ["));
-        assert!(query.contains("target.id IN ["));
-        assert!(query.contains("LIMIT 10"));
-    }
-
-    #[test]
-    fn closed_plans_keep_edges_whose_endpoints_fall_in_separate_chunks() {
-        let files = (0..=SCOPE_CHUNK_LEN)
-            .map(|index| format!("src/f{index}.rs"))
-            .collect::<Vec<_>>();
-        let first = files[0].clone();
-        let last = files[SCOPE_CHUNK_LEN].clone();
-        let plans = ready_plans(plans_for(
-            GraphEdgeKind::Call,
-            GraphBounds::outgoing(8),
-            GraphScopeMode::Closed,
-            ScopeKeys::Files(files),
-        ));
-        let edge = SampleGraphEdge {
-            kind: GraphEdgeKind::Call,
-            source: "src".to_string(),
-            target: "tgt".to_string(),
-            source_file: first,
-            target_file: last,
-        };
-        assert!(
-            plans
-                .iter()
-                .any(|plan| !plan.select(std::slice::from_ref(&edge)).is_empty()),
-            "Closed plans must cover an edge whose endpoints sit in different chunks"
-        );
-        for plan in &plans {
-            match (&plan.keys, &plan.peer_keys) {
-                (ScopeKeys::Files(source), ScopeKeys::Files(target)) => {
-                    assert!(source.len() <= SCOPE_CHUNK_LEN);
-                    assert!(target.len() <= SCOPE_CHUNK_LEN);
-                }
-                other => panic!("expected file chunks, got {other:?}"),
-            }
-        }
-    }
-
-    #[test]
-    fn closed_plans_at_max_scope_stay_bounded() {
-        let files = (0..SCOPE_CHUNK_LEN * MAX_CLOSED_SCOPE_CHUNKS)
-            .map(|index| format!("src/f{index}.rs"))
-            .collect::<Vec<_>>();
-        let plans = ready_plans(plans_for(
-            GraphEdgeKind::Call,
-            GraphBounds::outgoing(8),
-            GraphScopeMode::Closed,
-            ScopeKeys::Files(files),
-        ));
-        let expected = MAX_CLOSED_SCOPE_CHUNKS.pow(2);
-        assert_eq!(plans.len(), expected);
-    }
-
-    #[test]
-    fn closed_plans_reject_oversized_scopes_instead_of_quadratic_blowup() {
-        let files = (0..SCOPE_CHUNK_LEN * MAX_CLOSED_SCOPE_CHUNKS + 1)
-            .map(|index| format!("src/f{index}.rs"))
-            .collect::<Vec<_>>();
-        let chunk_count = files.chunks(SCOPE_CHUNK_LEN).len();
-        let plans = plans_for(
-            GraphEdgeKind::Call,
-            GraphBounds::outgoing(8),
-            GraphScopeMode::Closed,
-            ScopeKeys::Files(files),
-        );
-        assert_eq!(plans, QueryPlans::ClosedScopeTooLarge { chunk_count });
-        assert!(chunk_count > MAX_CLOSED_SCOPE_CHUNKS);
-    }
-
-    #[test]
-    fn unscoped_plans_stay_project_bounded_without_identifier_lists() {
-        let plan = EdgeQueryPlan::new(
-            GraphEdgeKind::Call,
-            GraphDirection::Outgoing,
-            GraphScopeMode::Incident,
-            ScopeKeys::All,
-            11,
-        );
-        let (query, _) = plan.render("project-id");
-        assert!(!query.contains(" IN ["));
-        assert!(query.contains("LIMIT 12"));
-    }
-}
+#[path = "graph_query/tests.rs"]
+mod tests;

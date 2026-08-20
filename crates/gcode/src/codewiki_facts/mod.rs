@@ -47,6 +47,7 @@ pub use graph::{
     GraphAvailability, GraphBounds, GraphDirection, GraphEdge, GraphEdgeKind, GraphNodeFact,
     GraphOutcome, GraphScopeMode, ScopedGraph,
 };
+pub use graph_query::PublicEdge;
 pub use scope::{FileFact, FileId, ScopeSelector};
 pub use search::{SearchHit, SearchQuery};
 pub use symbols::SymbolFact;
@@ -98,7 +99,7 @@ impl CodewikiFacts {
         &self.context.project_id
     }
 
-    fn from_context(context: Context) -> Self {
+    pub(crate) fn from_context(context: Context) -> Self {
         Self {
             context: Arc::new(context),
             read_connection: Arc::new(Mutex::new(None)),
