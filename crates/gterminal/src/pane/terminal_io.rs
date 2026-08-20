@@ -51,7 +51,7 @@ impl GhosttyPaneTerminal {
         })
     }
 
-    pub(super) fn set_windows_powershell_prompt_cwd_reporting(&self, enabled: bool) {
+    pub(crate) fn set_windows_powershell_prompt_cwd_reporting(&self, enabled: bool) {
         if let Ok(mut core) = self.core.lock() {
             core.windows_powershell_prompt_cwd_reporting = enabled;
         }
@@ -132,7 +132,6 @@ impl GhosttyPaneTerminal {
             }
         }
 
-        let foreground_job = crate::platform::foreground_job(shell_pid);
         let Ok(mut core) = self.core.lock() else {
             return false;
         };
@@ -142,13 +141,7 @@ impl GhosttyPaneTerminal {
             .active_screen()
             .map(|screen| screen == crate::ghostty::ActiveScreen::Alternate)
             .unwrap_or(false);
-        restore_host_terminal_theme_if_needed(
-            &mut core,
-            pane_id,
-            shell_pid,
-            alternate_screen,
-            foreground_job.as_ref(),
-        )
+        restore_host_terminal_theme_if_needed(&mut core, pane_id, shell_pid, alternate_screen)
     }
 
     pub fn terminal_title(&self) -> Option<String> {
@@ -165,29 +158,21 @@ impl GhosttyPaneTerminal {
         }
     }
 
-    /// Returns the latest OSC 0/2 title retained for agent detection, or `""`
-    /// if no title has been seen or the last update was an empty clear.
-    #[allow(dead_code)] // exposed for Stage C (detection loop wiring)
-    pub fn agent_osc_title(&self) -> String {
+    pub fn osc_title(&self) -> String {
         self.core
             .lock()
             .map(|core| core.agent_osc_state.latest_title().to_owned())
             .unwrap_or_default()
     }
 
-    /// Returns the latest OSC 9 progress payload retained for agent detection,
-    /// or `""` if none has been seen.
-    #[allow(dead_code)] // exposed for Stage C (detection loop wiring)
-    pub fn agent_osc_progress(&self) -> String {
+    pub fn osc_progress(&self) -> String {
         self.core
             .lock()
             .map(|core| core.agent_osc_state.latest_progress().to_owned())
             .unwrap_or_default()
     }
 
-    /// Clears retained OSC title/progress evidence when the pane's foreground
-    /// agent changes, so a new agent process starts from a blank OSC slate.
-    pub fn clear_agent_osc_state(&self) {
+    pub fn clear_osc_state(&self) {
         if let Ok(mut core) = self.core.lock() {
             core.agent_osc_state.clear_retained();
         }
@@ -217,15 +202,7 @@ impl GhosttyPaneTerminal {
         // Those writes must not be delivered as live pane output.
         let _ = core.terminal.take_clipboard_writes();
         let default_color_observation = core.default_color_tracker.observe(bytes);
-        if shell_pid > 0 && default_color_observation {
-            if let Some(owner_pgid) = current_transient_default_color_owner(shell_pid) {
-                core.transient_default_color_owner_pgid = Some(owner_pgid);
-                debug!(
-                    pane = pane_id.raw(),
-                    owner_pgid, "tracked transient default color override"
-                );
-            }
-        }
+        let _ = (shell_pid, default_color_observation);
 
         core.osc_debug_tracker.observe(bytes);
         for event in core.osc_debug_tracker.drain_pending() {
@@ -243,18 +220,8 @@ impl GhosttyPaneTerminal {
             .active_screen()
             .map(|screen| screen == crate::ghostty::ActiveScreen::Alternate)
             .unwrap_or(false);
-        let filtered_bytes = if shell_pid > 0 {
-            let foreground_job = (!alternate_screen && contains_scrollback_clear_sequence(bytes))
-                .then(|| crate::platform::foreground_job(shell_pid))
-                .flatten();
-            maybe_filter_primary_screen_scrollback_clear(
-                bytes,
-                alternate_screen,
-                foreground_job.as_ref(),
-            )
-        } else {
-            Cow::Borrowed(bytes)
-        };
+        let filtered_bytes =
+            maybe_filter_primary_screen_scrollback_clear(bytes, alternate_screen);
         if filtered_bytes.len() != bytes.len() {
             debug!(
                 pane = pane_id.raw(),
@@ -909,7 +876,7 @@ impl GhosttyPaneTerminal {
             .unwrap_or_default()
     }
 
-    pub fn detection_text(&self) -> String {
+    pub fn viewport_bottom_text(&self) -> String {
         self.core
             .lock()
             .ok()

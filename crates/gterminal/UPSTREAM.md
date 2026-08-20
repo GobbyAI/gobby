@@ -33,7 +33,7 @@ This is a fork record, not a tracking contract. There is no re-pin procedure.
 ## Not imported
 
 - `src/pane/agent_detection.rs`
-- `src/pane.rs` PaneRuntime (de-agent-ify is plan 1.3); a thin `pane.rs` module root is local
+- `src/pane.rs` herdr `PaneRuntime` agent-detection task and `crate::detect`/`crate::integration` wiring (plan 1.3 imported a de-agent-ified `PaneRuntime`)
 - `src/terminal/state.rs`, `src/terminal/metadata.rs`
 - `src/app/`, `src/api/`, `src/cli/`, `src/detect/`, `src/integration/`, `src/persist/`, `src/workspace/`, `src/remote/`, `src/server/`, `src/client/`, plugins, updater, sound, session
 

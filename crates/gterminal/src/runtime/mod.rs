@@ -6,5 +6,6 @@ mod runtime;
 mod runtime_registry;
 mod title;
 
+pub use crate::pane::{PaneRuntime, PaneShellConfig, ShellMode};
 pub use id::TerminalId;
 pub use runtime::TerminalRuntime;

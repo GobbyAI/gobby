@@ -747,6 +747,9 @@ fn ghostty_render_can_suppress_cursor_position() {
         .unwrap();
 
     terminal.backend_mut().assert_cursor_position((4, 0));
+    let buffer = terminal.backend().buffer();
+    assert_eq!(buffer.area.width, 40);
+    assert_eq!(buffer.area.height, 5);
 }
 
 #[test]
@@ -1471,7 +1474,7 @@ fn detection_text_stays_at_bottom_when_viewport_is_scrolled() {
     write_numbered_lines(&mut terminal, 10);
     let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
 
-    let bottom_snapshot = pane.detection_text();
+    let bottom_snapshot = pane.viewport_bottom_text();
     assert_eq!(bottom_snapshot, pane.recent_text(3));
     assert!(bottom_snapshot.contains("000009"));
 
@@ -1479,7 +1482,7 @@ fn detection_text_stays_at_bottom_when_viewport_is_scrolled() {
     pane.set_scroll_offset_from_bottom(before.max_offset_from_bottom);
 
     assert!(pane.visible_text().contains("000000"));
-    assert_eq!(pane.detection_text(), bottom_snapshot);
+    assert_eq!(pane.viewport_bottom_text(), bottom_snapshot);
 }
 
 #[test]
@@ -1540,7 +1543,7 @@ fn plain_text_reads_skip_wide_character_spacer_cells() {
     assert_eq!(pane.visible_text(), "日本語テスト ABC 123\n");
     assert_eq!(pane.recent_text(3), "日本語テスト ABC 123\n");
     assert_eq!(pane.recent_unwrapped_text(3), "日本語テスト ABC 123");
-    assert_eq!(pane.detection_text(), "日本語テスト ABC 123\n");
+    assert_eq!(pane.viewport_bottom_text(), "日本語テスト ABC 123\n");
 }
 
 #[test]
@@ -1579,7 +1582,7 @@ fn resize_shrinks_both_axes_with_cursor_at_old_bottom() {
     pane.resize(3, 7, 8, 16);
 
     assert_eq!(pane.visible_text(), "beta\ngamma\ndelta\n");
-    assert_eq!(pane.detection_text(), "beta\ngamma\ndelta\n");
+    assert_eq!(pane.viewport_bottom_text(), "beta\ngamma\ndelta\n");
     assert_eq!(
         pane.scroll_metrics(),
         Some(ScrollMetrics {
@@ -1597,7 +1600,7 @@ fn resize_reflow_keeps_scrolled_viewport_and_bottom_detection_sane() {
     write_wrapped_contract_lines(&mut terminal, 40);
     let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
 
-    let bottom_snapshot = pane.detection_text();
+    let bottom_snapshot = pane.viewport_bottom_text();
     assert!(bottom_snapshot.contains("END"));
 
     let initial = pane.scroll_metrics().expect("initial scroll metrics");
@@ -1626,11 +1629,11 @@ fn resize_reflow_keeps_scrolled_viewport_and_bottom_detection_sane() {
         assert!(
                 !visible.trim().is_empty(),
                 "visible text should not be empty after resize to {rows}x{cols}; metrics={metrics:?}; detection={:?}; recent={:?}",
-                pane.detection_text(),
+                pane.viewport_bottom_text(),
                 pane.recent_text(6)
             );
         assert!(
-            pane.detection_text().contains("END"),
+            pane.viewport_bottom_text().contains("END"),
             "bottom detection should remain independent from the scrolled viewport after resize"
         );
     }
@@ -1644,12 +1647,12 @@ fn resize_recovery_does_not_replay_history_when_visible_screen_was_blank() {
     let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
 
     assert!(pane.visible_text().trim().is_empty());
-    assert!(pane.detection_text().trim().is_empty());
+    assert!(pane.viewport_bottom_text().trim().is_empty());
 
     pane.resize(3, 20, 0, 0);
 
     assert!(pane.visible_text().trim().is_empty());
-    assert!(pane.detection_text().trim().is_empty());
+    assert!(pane.viewport_bottom_text().trim().is_empty());
     assert!(pane.recent_text(3).trim().is_empty());
 }
 
@@ -1661,14 +1664,14 @@ fn resize_recovery_does_not_replay_scrolled_history_over_blank_bottom() {
     terminal.write(b"\x1b[2J\x1b[H");
     let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
 
-    assert!(pane.detection_text().trim().is_empty());
+    assert!(pane.viewport_bottom_text().trim().is_empty());
     let metrics = pane.scroll_metrics().expect("scroll metrics");
     pane.set_scroll_offset_from_bottom(metrics.max_offset_from_bottom);
     assert!(!pane.visible_text().trim().is_empty());
 
     pane.resize(3, 20, 0, 0);
 
-    assert!(pane.detection_text().trim().is_empty());
+    assert!(pane.viewport_bottom_text().trim().is_empty());
     assert!(pane.recent_text(3).trim().is_empty());
 }
 

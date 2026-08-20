@@ -29,19 +29,6 @@ fn pane_default_theme(
     }
 }
 
-fn shell_job(shell_pid: u32) -> crate::platform::ForegroundJob {
-    crate::platform::ForegroundJob {
-        process_group_id: shell_pid,
-        processes: vec![crate::platform::ForegroundProcess {
-            pid: shell_pid,
-            name: "zsh".to_string(),
-            argv0: Some("zsh".to_string()),
-            argv: Some(vec!["zsh".to_string()]),
-            cmdline: Some("zsh".to_string()),
-        }],
-    }
-}
-
 fn tracked_default_color_events(events: Vec<DefaultColorTrackedEvent>) -> Vec<DefaultColorEvent> {
     events.into_iter().map(|event| event.event).collect()
 }
@@ -479,40 +466,9 @@ fn default_color_event_tracker_ignores_oversized_osc_until_terminator() {
 }
 
 #[test]
-fn droid_scrollback_compat_matches_process_name_and_cmdline() {
-    let name_only = crate::platform::ForegroundJob {
-        process_group_id: 42,
-        processes: vec![crate::platform::ForegroundProcess {
-            pid: 42,
-            name: "droid".to_string(),
-            argv0: None,
-            argv: Some(vec![
-                "/opt/factory/droid".to_string(),
-                "--resume".to_string(),
-            ]),
-            cmdline: Some("/opt/factory/droid --resume".to_string()),
-        }],
-    };
-    assert!(foreground_job_uses_droid_scrollback_compat(&name_only));
-
-    let cmdline_only = crate::platform::ForegroundJob {
-        process_group_id: 42,
-        processes: vec![crate::platform::ForegroundProcess {
-            pid: 42,
-            name: "bun".to_string(),
-            argv0: Some("bun".to_string()),
-            argv: Some(vec![
-                "bun".to_string(),
-                "/home/can/.local/bin/droid".to_string(),
-                "--resume".to_string(),
-            ]),
-            cmdline: Some("/home/can/.local/bin/droid --resume".to_string()),
-        }],
-    };
-    assert!(foreground_job_uses_droid_scrollback_compat(&cmdline_only));
-
-    let shell = shell_job(7);
-    assert!(!foreground_job_uses_droid_scrollback_compat(&shell));
+fn primary_screen_scrollback_clear_is_not_filtered_without_process_probes() {
+    let filtered = maybe_filter_primary_screen_scrollback_clear(b"\x1b[3J\x1b[2J", false);
+    assert_eq!(filtered.as_ref(), b"\x1b[3J\x1b[2J");
 }
 
 #[test]
@@ -522,77 +478,9 @@ fn strip_scrollback_clear_sequences_removes_ed3_only() {
 }
 
 #[test]
-fn primary_screen_droid_compat_ignores_scrollback_clear_only_for_droid() {
-    let droid_job = crate::platform::ForegroundJob {
-        process_group_id: 42,
-        processes: vec![crate::platform::ForegroundProcess {
-            pid: 42,
-            name: "droid".to_string(),
-            argv0: Some("droid".to_string()),
-            argv: Some(vec!["droid".to_string()]),
-            cmdline: Some("droid".to_string()),
-        }],
-    };
-
-    let filtered =
-        maybe_filter_primary_screen_scrollback_clear(b"\x1b[3J\x1b[2J", false, Some(&droid_job));
-    assert_eq!(filtered.as_ref(), b"\x1b[2J");
-
-    let shell =
-        maybe_filter_primary_screen_scrollback_clear(b"\x1b[3J\x1b[2J", false, Some(&shell_job(7)));
-    assert_eq!(shell.as_ref(), b"\x1b[3J\x1b[2J");
-
-    let alternate =
-        maybe_filter_primary_screen_scrollback_clear(b"\x1b[3J\x1b[2J", true, Some(&droid_job));
-    assert_eq!(alternate.as_ref(), b"\x1b[3J\x1b[2J");
-}
-
-#[test]
-fn host_theme_restore_waits_for_shell_and_non_alternate_screen() {
-    assert!(!should_restore_host_terminal_theme(
-        42,
-        7,
-        true,
-        Some(&shell_job(7)),
-    ));
-    assert!(!should_restore_host_terminal_theme(42, 7, false, None));
-    assert!(!should_restore_host_terminal_theme(
-        42,
-        7,
-        false,
-        Some(&crate::platform::ForegroundJob {
-            process_group_id: 42,
-            processes: vec![crate::platform::ForegroundProcess {
-                pid: 42,
-                name: "droid".to_string(),
-                argv0: Some("droid".to_string()),
-                argv: Some(vec!["droid".to_string()]),
-                cmdline: Some("droid".to_string()),
-            }],
-        }),
-    ));
-    assert!(should_restore_host_terminal_theme(
-        42,
-        7,
-        false,
-        Some(&shell_job(7)),
-    ));
-
-    #[cfg(target_os = "macos")]
-    assert!(should_restore_host_terminal_theme(
-        7,
-        7,
-        false,
-        Some(&shell_job(7)),
-    ));
-
-    #[cfg(not(target_os = "macos"))]
-    assert!(!should_restore_host_terminal_theme(
-        7,
-        7,
-        false,
-        Some(&shell_job(7)),
-    ));
+fn host_theme_restore_skips_alternate_screen() {
+    assert!(!should_restore_host_terminal_theme(true));
+    assert!(should_restore_host_terminal_theme(false));
 }
 
 #[test]
@@ -634,11 +522,7 @@ fn restore_host_terminal_theme_reapplies_cached_colors() {
     {
         let mut core = pane.core.lock().unwrap();
         assert!(restore_host_terminal_theme_if_needed(
-            &mut core,
-            pane_id,
-            shell_pid,
-            false,
-            Some(&shell_job(shell_pid)),
+            &mut core, pane_id, shell_pid, false,
         ));
     }
 

@@ -252,68 +252,8 @@ fn target_nofile_soft_limit(
     (current < target).then_some(target)
 }
 
-pub(crate) fn available_pane_shell(child_pid: u32) -> Option<String> {
-    super::available_pane_shell_from_job(child_pid, foreground_job(child_pid)?)
-}
-
-/// Collect the foreground terminal job for a given child PID.
-pub fn foreground_job(child_pid: u32) -> Option<ForegroundJob> {
-    if child_pid == 0 {
-        return None;
-    }
-
-    let fg_pgid = foreground_process_group_id(child_pid)?;
-    let mut processes = Vec::new();
-
-    for pid in process_group_pids(fg_pgid) {
-        let Some(info) = process_bsdinfo(pid) else {
-            continue;
-        };
-        if info.pbi_pgid != fg_pgid {
-            continue;
-        }
-
-        let Some(name) = comm_from_bsdinfo(&info) else {
-            continue;
-        };
-        let argv = process_argv(pid);
-        processes.push(ForegroundProcess {
-            pid,
-            name,
-            argv0: process_argv0_name(pid),
-            cmdline: argv.as_ref().map(|parts| parts.join(" ")),
-            argv,
-        });
-    }
-
-    if processes.is_empty() {
-        return None;
-    }
-
-    Some(ForegroundJob {
-        process_group_id: fg_pgid,
-        processes,
-    })
-}
-
-pub fn foreground_group_leader_job(process_group_id: u32) -> Option<ForegroundJob> {
-    let info = process_bsdinfo(process_group_id)?;
-    if info.pbi_pgid != process_group_id {
-        return None;
-    }
-
-    let name = comm_from_bsdinfo(&info)?;
-    let argv = process_argv(process_group_id);
-    Some(ForegroundJob {
-        process_group_id,
-        processes: vec![ForegroundProcess {
-            pid: process_group_id,
-            name,
-            argv0: process_argv0_name(process_group_id),
-            cmdline: argv.as_ref().map(|parts| parts.join(" ")),
-            argv,
-        }],
-    })
+pub(crate) fn available_pane_shell(_child_pid: u32) -> Option<String> {
+    None
 }
 
 fn process_group_pids(process_group_id: u32) -> Vec<u32> {

@@ -64,6 +64,15 @@ const FORBIDDEN: &[&str] = &[
     "spawn_basic_detection_task",
     "full_lifecycle_authority",
     "begin_graceful_release",
+    "detection_content_seq",
+    "detect_reset_notify",
+    "detect_handle",
+    "fn detection_text(",
+    "fn agent_osc_title",
+    "fn agent_osc_progress",
+    "reset_agent_detection",
+    "set_full_lifecycle_authority_active",
+    "pub fn foreground_job",
 ];
 
 #[test]
@@ -121,5 +130,30 @@ fn no_agent_concepts_in_terminal_core() {
     assert!(
         terminal.contains("fn grapheme_cluster_mode_is_default_and_survives_full_reset"),
         "named grapheme-mode test must live in pane/terminal.rs"
+    );
+
+    let pane = fs::read_to_string(src.join("pane.rs")).expect("pane.rs");
+    assert!(
+        pane.contains("struct PaneRuntime") || pane.contains("pub use self::runtime::PaneRuntime"),
+        "PaneRuntime must live on the pane module"
+    );
+    let runtime = fs::read_to_string(src.join("runtime/runtime.rs")).expect("runtime.rs");
+    for required_api in [
+        "fn spawn(",
+        "fn frame_data(",
+        "fn dirty_patch(",
+        "fn osc_title(",
+        "fn osc_progress(",
+        "fn resize(",
+        "fn encode_terminal_key(",
+    ] {
+        assert!(
+            runtime.contains(required_api),
+            "runtime API missing {required_api}"
+        );
+    }
+    assert!(
+        runtime.contains("fn shutdown(") || runtime.contains("fn kill("),
+        "runtime API must expose shutdown/kill"
     );
 }

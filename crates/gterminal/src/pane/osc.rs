@@ -682,30 +682,6 @@ fn hex_value(byte: u8) -> Option<u8> {
     }
 }
 
-fn foreground_job_is_shell(job: &crate::platform::ForegroundJob, shell_pid: u32) -> bool {
-    job.processes.iter().any(|process| process.pid == shell_pid)
-}
-
-pub(super) fn current_transient_default_color_owner(shell_pid: u32) -> Option<u32> {
-    let job = crate::platform::foreground_job(shell_pid)?;
-    (!foreground_job_is_shell(&job, shell_pid)).then_some(job.process_group_id)
-}
-
-fn foreground_job_uses_droid_scrollback_compat(job: &crate::platform::ForegroundJob) -> bool {
-    job.processes.iter().any(|process| {
-        process.name.eq_ignore_ascii_case("droid")
-            || process
-                .argv0
-                .as_deref()
-                .is_some_and(|argv0| argv0.eq_ignore_ascii_case("droid"))
-            || process.cmdline.as_deref().is_some_and(|cmdline| {
-                cmdline.eq_ignore_ascii_case("droid")
-                    || cmdline.starts_with("droid ")
-                    || cmdline.to_ascii_lowercase().contains("/droid")
-            })
-    })
-}
-
 pub(super) fn contains_scrollback_clear_sequence(bytes: &[u8]) -> bool {
     bytes.windows(4).any(|window| window == b"\x1b[3J")
         || bytes.windows(5).any(|window| window == b"\x1b[?3J")
@@ -738,57 +714,13 @@ fn strip_scrollback_clear_sequences<'a>(bytes: &'a [u8]) -> Cow<'a, [u8]> {
 pub(super) fn maybe_filter_primary_screen_scrollback_clear<'a>(
     bytes: &'a [u8],
     alternate_screen: bool,
-    foreground_job: Option<&crate::platform::ForegroundJob>,
 ) -> Cow<'a, [u8]> {
-    // Droid redraws its primary-screen TUI with CSI 3 J, which erases pane
-    // scrollback inside gterm. Keep the hack scoped to Droid on the primary
-    // screen so normal terminal clear-history behavior still works elsewhere.
-    if alternate_screen
-        || !contains_scrollback_clear_sequence(bytes)
-        || !foreground_job.is_some_and(foreground_job_uses_droid_scrollback_compat)
-    {
-        return Cow::Borrowed(bytes);
-    }
-
-    strip_scrollback_clear_sequences(bytes)
+    let _ = (bytes, alternate_screen);
+    Cow::Borrowed(bytes)
 }
 
-#[cfg(target_os = "macos")]
-pub(super) fn should_restore_host_terminal_theme(
-    owner_pgid: u32,
-    shell_pid: u32,
-    alternate_screen: bool,
-    foreground_job: Option<&crate::platform::ForegroundJob>,
-) -> bool {
-    if alternate_screen {
-        return false;
-    }
-
-    let Some(foreground_job) = foreground_job else {
-        return false;
-    };
-
-    let _ = owner_pgid;
-    foreground_job_is_shell(foreground_job, shell_pid)
-}
-
-#[cfg(not(target_os = "macos"))]
-pub(super) fn should_restore_host_terminal_theme(
-    owner_pgid: u32,
-    shell_pid: u32,
-    alternate_screen: bool,
-    foreground_job: Option<&crate::platform::ForegroundJob>,
-) -> bool {
-    if alternate_screen {
-        return false;
-    }
-
-    let Some(foreground_job) = foreground_job else {
-        return false;
-    };
-
-    foreground_job.process_group_id != owner_pgid
-        && foreground_job_is_shell(foreground_job, shell_pid)
+pub(super) fn should_restore_host_terminal_theme(alternate_screen: bool) -> bool {
+    !alternate_screen
 }
 
 pub(super) fn write_host_terminal_theme(
@@ -836,9 +768,8 @@ fn write_host_default_color(
 pub(super) fn restore_host_terminal_theme_if_needed(
     core: &mut GhosttyPaneCore,
     pane_id: PaneId,
-    shell_pid: u32,
+    _shell_pid: u32,
     alternate_screen: bool,
-    foreground_job: Option<&crate::platform::ForegroundJob>,
 ) -> bool {
     let Some(owner_pgid) = core.transient_default_color_owner_pgid else {
         return false;
@@ -846,8 +777,7 @@ pub(super) fn restore_host_terminal_theme_if_needed(
     if core.host_terminal_theme.is_empty() {
         return false;
     }
-    if !should_restore_host_terminal_theme(owner_pgid, shell_pid, alternate_screen, foreground_job)
-    {
+    if !should_restore_host_terminal_theme(alternate_screen) {
         return false;
     }
 

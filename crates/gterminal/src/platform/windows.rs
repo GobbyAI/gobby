@@ -512,11 +512,6 @@ pub fn current_process_is_detached_server_daemon() -> bool {
     matches!(current_process_is_in_job(), Ok(false))
 }
 
-pub fn foreground_job(child_pid: u32) -> Option<ForegroundJob> {
-    let entries = snapshot_processes();
-    select_pane_foreground_job(child_pid, &entries)
-}
-
 pub(crate) fn available_pane_shell(child_pid: u32) -> Option<String> {
     available_pane_shell_from_snapshot(child_pid, &snapshot_processes())
 }

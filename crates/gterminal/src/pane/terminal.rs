@@ -27,7 +27,6 @@ use super::{
     },
     kitty_keyboard::KittyKeyboardTracker,
     osc::{
-        contains_scrollback_clear_sequence, current_transient_default_color_owner,
         maybe_filter_primary_screen_scrollback_clear, parse_reported_cwd,
         restore_host_terminal_theme_if_needed, write_host_terminal_theme_selective,
         AgentOscStateTracker, DefaultColorEvent, DefaultColorEventTracker, DefaultColorOscTracker,
@@ -85,7 +84,7 @@ pub(crate) struct TerminalDirtyPatch {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum TerminalDirtyPatchOutcome {
+pub enum TerminalDirtyPatchOutcome {
     Clean,
     Patch(TerminalDirtyPatch),
     Fallback,
@@ -388,6 +387,12 @@ impl PaneTerminal {
         self.ghostty.synchronized_output_active()
     }
 
+    pub fn alternate_screen_active(&self) -> bool {
+        self.input_state()
+            .map(|state| state.alternate_screen)
+            .unwrap_or(false)
+    }
+
     pub fn visible_text(&self) -> String {
         self.ghostty.visible_text()
     }
@@ -396,8 +401,8 @@ impl PaneTerminal {
         self.ghostty.visible_ansi()
     }
 
-    pub fn detection_text(&self) -> String {
-        self.ghostty.detection_text()
+    pub fn viewport_bottom_text(&self) -> String {
+        self.ghostty.viewport_bottom_text()
     }
 
     pub fn recent_text(&self, lines: usize) -> String {
@@ -430,6 +435,14 @@ impl PaneTerminal {
 
     pub fn render(&self, frame: &mut Frame, area: Rect, show_cursor: bool) {
         self.ghostty.render(frame, area, show_cursor);
+    }
+
+    pub fn render_to_buffer(
+        &self,
+        buffer: &mut ratatui::buffer::Buffer,
+        area: Rect,
+    ) -> Option<TerminalCursorState> {
+        self.ghostty.render_to_buffer(buffer, area)
     }
 
     pub fn collect_dirty_patch(
@@ -479,19 +492,16 @@ impl PaneTerminal {
         self.ghostty.terminal_title()
     }
 
-    #[allow(dead_code)] // exposed for Stage C (detection loop wiring)
-    pub fn agent_osc_title(&self) -> String {
-        self.ghostty.agent_osc_title()
+    pub fn osc_title(&self) -> String {
+        self.ghostty.osc_title()
     }
 
-    #[allow(dead_code)] // exposed for Stage C (detection loop wiring)
-    pub fn agent_osc_progress(&self) -> String {
-        self.ghostty.agent_osc_progress()
+    pub fn osc_progress(&self) -> String {
+        self.ghostty.osc_progress()
     }
 
-    /// Clears retained OSC title/progress evidence on foreground agent change.
-    pub fn clear_agent_osc_state(&self) {
-        self.ghostty.clear_agent_osc_state()
+    pub fn clear_osc_state(&self) {
+        self.ghostty.clear_osc_state()
     }
 
     pub fn keyboard_protocol(

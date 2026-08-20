@@ -25,9 +25,13 @@ impl GhosttyPaneTerminal {
             .unwrap_or_default()
     }
 
-    pub fn render(&self, frame: &mut Frame, area: Rect, show_cursor: bool) {
+    pub fn render_to_buffer(
+        &self,
+        buf: &mut ratatui::buffer::Buffer,
+        area: Rect,
+    ) -> Option<TerminalCursorState> {
         let Ok(mut core) = self.core.lock() else {
-            return;
+            return None;
         };
         let host_theme = core.host_terminal_theme;
         let initial_default_foreground = core.initial_default_foreground;
@@ -39,7 +43,7 @@ impl GhosttyPaneTerminal {
             ..
         } = &mut *core;
         if render_state.update(terminal).is_err() {
-            return;
+            return None;
         }
         let colors = render_state.colors().ok();
         let default_bg = colors
@@ -52,17 +56,16 @@ impl GhosttyPaneTerminal {
 
         let mut row_iterator = match crate::ghostty::RowIterator::new() {
             Ok(iterator) => iterator,
-            Err(_) => return,
+            Err(_) => return None,
         };
         let mut row_cells = match crate::ghostty::RowCells::new() {
             Ok(cells) => cells,
-            Err(_) => return,
+            Err(_) => return None,
         };
         {
-            let buf = frame.buffer_mut();
             let mut rows = match render_state.populate_row_iterator(&mut row_iterator) {
                 Ok(rows) => rows,
-                Err(_) => return,
+                Err(_) => return None,
             };
             let mut grapheme_bytes = Vec::new();
             let mut symbol_scratch = String::new();
@@ -122,10 +125,13 @@ impl GhosttyPaneTerminal {
         ghostty_clear_render_dirty(render_state, area.height);
 
         let current_cursor = cursor_state_from_render_state(render_state, decscusr_tracker);
+        effective_cursor_state(&mut core, current_cursor)
+    }
+
+    pub fn render(&self, frame: &mut Frame, area: Rect, show_cursor: bool) {
+        let cursor = self.render_to_buffer(frame.buffer_mut(), area);
         if show_cursor {
-            if let Some(cursor) =
-                effective_cursor_state(&mut core, current_cursor).filter(|cursor| cursor.visible)
-            {
+            if let Some(cursor) = cursor.filter(|cursor| cursor.visible) {
                 if cursor.x < area.width && cursor.y < area.height {
                     frame.set_cursor_position((area.x + cursor.x, area.y + cursor.y));
                 }

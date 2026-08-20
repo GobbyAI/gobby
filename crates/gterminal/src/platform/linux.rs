@@ -122,21 +122,8 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-/// Collect the foreground terminal job for a given child PID.
-pub(crate) fn available_pane_shell(child_pid: u32) -> Option<String> {
-    super::available_pane_shell_from_job(child_pid, foreground_job(child_pid)?)
-}
-
-pub fn foreground_job(child_pid: u32) -> Option<ForegroundJob> {
-    if let Some(tpgid) = foreground_process_group_id(child_pid) {
-        return foreground_job_for_group(child_pid, tpgid);
-    }
-
-    if process_detection_mode() != ProcessDetectionMode::ChildGroups {
-        return None;
-    }
-
-    foreground_job_for_group(child_pid, child_groups_foreground_process_group(child_pid)?)
+pub(crate) fn available_pane_shell(_child_pid: u32) -> Option<String> {
+    None
 }
 
 fn foreground_job_for_group(child_pid: u32, process_group_id: u32) -> Option<ForegroundJob> {
@@ -301,25 +288,6 @@ fn numeric_file_name(entry: &std::fs::DirEntry) -> Option<u32> {
 fn live_process_group_member(process_group_id: u32, pid: u32) -> Option<ProcGroupMember> {
     let (pgrp, comm) = process_pgrp_and_comm(pid)?;
     (pgrp > 0 && pgrp as u32 == process_group_id).then_some(ProcGroupMember { pid, comm })
-}
-
-pub fn foreground_group_leader_job(process_group_id: u32) -> Option<ForegroundJob> {
-    let (pgrp, name) = process_pgrp_and_comm(process_group_id)?;
-    if pgrp as u32 != process_group_id {
-        return None;
-    }
-
-    let argv = process_argv(process_group_id);
-    Some(ForegroundJob {
-        process_group_id,
-        processes: vec![ForegroundProcess {
-            pid: process_group_id,
-            name,
-            argv0: None,
-            cmdline: argv.as_ref().map(|parts| parts.join(" ")),
-            argv,
-        }],
-    })
 }
 
 pub fn foreground_process_group_id(child_pid: u32) -> Option<u32> {
