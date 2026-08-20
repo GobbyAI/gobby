@@ -472,7 +472,7 @@ fn content_version_delete_is_project_path_and_hash_scoped() {
         .collect::<Vec<_>>()
         .join("\n");
 
-    assert_eq!(queries.len(), 7);
+    assert_eq!(queries.len(), 10);
     assert!(combined.contains("[r:IMPORTS]"), "{combined}");
     assert!(combined.contains("[r:DEFINES]"), "{combined}");
     assert!(combined.contains("[r:CALLS]"), "{combined}");
@@ -486,7 +486,7 @@ fn content_version_delete_is_project_path_and_hash_scoped() {
     );
     assert_eq!(
         combined.matches("r.content_hash = $content_hash").count(),
-        6
+        9
     );
     assert!(!combined.contains("sync_token"), "{combined}");
     for query in &queries {
@@ -802,8 +802,16 @@ macro_rules! assert_heritage_owner_delete {
             "same-file heritage must anchor on CodeSymbol {{project, file_path}}:\n{combined}"
         );
         assert!(
-            combined.contains("(s:ExternalSymbol OR s:UnresolvedCallee)"),
-            "terminal heritage must scan ExternalSymbol/UnresolvedCallee sources:\n{combined}"
+            combined.contains("MATCH (s:ExternalSymbol {project: $project})-[r:INHERITS|EXTENDS|IMPLEMENTS]->(n {project: $project})"),
+            "terminal heritage must start from indexed ExternalSymbol {{project}}:\n{combined}"
+        );
+        assert!(
+            combined.contains("MATCH (s:UnresolvedCallee {project: $project})-[r:INHERITS|EXTENDS|IMPLEMENTS]->(n {project: $project})"),
+            "terminal heritage must start from indexed UnresolvedCallee {{project}}:\n{combined}"
+        );
+        assert!(
+            combined.contains("MATCH (s)-[r:INHERITS]->(n)"),
+            "cross-file heritage must use a per-type relationship index scan:\n{combined}"
         );
         assert!(
             combined.contains("r.source_file_path = $file_path"),
@@ -818,12 +826,8 @@ macro_rules! assert_heritage_owner_delete {
             "heritage delete must not filter the redundant r.file predicate:\n{combined}"
         );
         assert!(
-            combined.contains("(s {project: $project})"),
-            "heritage delete must bind project on the generic source:\n{combined}"
-        );
-        assert!(
-            combined.contains("(n {project: $project})"),
-            "heritage delete must bind project on the generic target:\n{combined}"
+            combined.contains("s.project = $project") && combined.contains("n.project = $project"),
+            "edge-index heritage must bind project on both endpoints:\n{combined}"
         );
     }};
 }
@@ -1307,7 +1311,9 @@ fn heritage_delete_binds_project_on_both_endpoints() {
             .join("\n");
         assert!(
             heritage.contains("{project: $project}")
-                && heritage.matches("{project: $project}").count() >= 2,
+                && (heritage.matches("{project: $project}").count() >= 2
+                    || (heritage.contains("s.project = $project")
+                        && heritage.contains("n.project = $project"))),
             "same-path heritage in another project must not be deleted:\n{heritage}"
         );
     }
