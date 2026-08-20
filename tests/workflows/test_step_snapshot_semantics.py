@@ -211,9 +211,37 @@ def _row_variables(row: Any) -> dict[str, Any]:
     return cast(dict[str, Any], payload)
 
 
+def _persona_resolution(agent_body: AgentDefinitionBody, step_workflow_id: str | None) -> ExitStack:
+    """Resolve ``agent_body`` for apply_persona_impl without touching agent storage."""
+    row = MagicMock()
+    row.step_workflow_id = step_workflow_id
+    stack = ExitStack()
+    stack.enter_context(
+        patch(
+            "gobby.workflows.agent_resolver.resolve_agent_with_row",
+            return_value=(agent_body, row),
+        )
+    )
+    stack.enter_context(
+        patch(
+            "gobby.mcp_proxy.tools.apply_persona.build_session_persona_changes",
+            return_value=({"_agent_type": agent_body.name}, set()),
+        )
+    )
+    stack.enter_context(
+        patch(
+            "gobby.mcp_proxy.tools.apply_persona._resolve_session_identity",
+            return_value=(None, "claude"),
+        )
+    )
+    return stack
+
+
 @pytest.mark.asyncio
-async def test_persona_switch_replaces_or_deletes_instance(snap_db: PostgresHubDatabase) -> None:
-    from gobby.mcp_proxy.tools.apply_persona import _apply_persona_instance_transition
+async def test_persona_switch_leaves_existing_instance_untouched(
+    snap_db: PostgresHubDatabase,
+) -> None:
+    from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
 
     manager = AgentStepInstanceManager(snap_db)
     first = build_step_instance(
@@ -222,32 +250,53 @@ async def test_persona_switch_replaces_or_deletes_instance(snap_db: PostgresHubD
     first.current_step = "implement"
     manager.save(first)
 
-    _apply_persona_instance_transition(
-        snap_db, S1, _agent("beta", ["review"]), "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
-    )
-    swapped = manager.get_for_session(S1)
-    assert swapped is not None
-    assert swapped.agent_name == "beta"
-    assert swapped.current_step == "review"
-    assert swapped.snapshot.steps[0].name == "review"
+    with _persona_resolution(_agent("beta", ["review"]), "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"):
+        result = await apply_persona_impl(agent="beta", db=snap_db, session_id=S1)
+    assert result["success"] is True
+    kept = manager.get_for_session(S1)
+    assert kept is not None
+    assert kept.id == first.id
+    assert kept.agent_name == "alpha"
+    assert kept.current_step == "implement"
+    assert _snapshot_step_names(kept) == ["claim", "implement"]
 
-    _apply_persona_instance_transition(snap_db, S1, _stepless("comms"), None)
-    assert manager.get_for_session(S1) is None
+    with _persona_resolution(_stepless("comms"), None):
+        result = await apply_persona_impl(agent="comms", db=snap_db, session_id=S1)
+    assert result["success"] is True
+    kept = manager.get_for_session(S1)
+    assert kept is not None
+    assert kept.id == first.id
+    assert kept.agent_name == "alpha"
+    assert kept.current_step == "implement"
+    stored = snap_db.fetchone(
+        "SELECT variables FROM session_variables WHERE session_id = %s", (S1,)
+    )
+    assert stored is not None
+    assert _row_variables(stored)["_agent_type"] == "comms"
 
 
 @pytest.mark.asyncio
-async def test_persona_same_agent_missing_instance_creates_snapshot(
+async def test_persona_without_agent_run_creates_no_step_instance(
     snap_db: PostgresHubDatabase,
 ) -> None:
-    from gobby.mcp_proxy.tools.apply_persona import _apply_persona_instance_transition
+    from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
 
     manager = AgentStepInstanceManager(snap_db)
     assert manager.get_for_session(S1) is None
-    _apply_persona_instance_transition(snap_db, S1, _agent("alpha", ["claim"]), LINEAGE)
-    created = manager.get_for_session(S1)
-    assert created is not None
-    assert created.agent_name == "alpha"
-    assert created.current_step == "claim"
+
+    with _persona_resolution(_agent("alpha", ["claim", "terminate"]), LINEAGE):
+        result = await apply_persona_impl(agent="alpha", db=snap_db, session_id=S1)
+
+    assert result["success"] is True
+    assert manager.get_for_session(S1) is None
+    count = snap_db.fetchone("SELECT COUNT(*) AS n FROM agent_step_instances")
+    assert count is not None
+    assert count["n"] == 0
+    stored = snap_db.fetchone(
+        "SELECT variables FROM session_variables WHERE session_id = %s", (S1,)
+    )
+    assert stored is not None
+    assert _row_variables(stored)["_agent_type"] == "alpha"
 
 
 @pytest.mark.asyncio
@@ -357,7 +406,7 @@ async def test_apply_persona_rejects_reserved_caller_variables(
     assert result["success"] is True
     after = manager.get_for_session(S1)
     assert after is not None
-    assert after.agent_name == "beta"
+    assert after.agent_name == "alpha"
     stored = snap_db.fetchone(
         "SELECT variables FROM session_variables WHERE session_id = %s", (S1,)
     )
@@ -797,94 +846,28 @@ async def test_persona_same_agent_preserves_step_position(
 
 
 @pytest.mark.asyncio
-async def test_persona_replace_fault_leaves_prior_instance(
+async def test_persona_switch_never_calls_step_instance_writers(
     snap_db: PostgresHubDatabase,
 ) -> None:
     from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
-    from gobby.workflows.state_manager import SessionVariableManager
 
     manager = AgentStepInstanceManager(snap_db)
     manager.save(
         build_step_instance(_agent("alpha", ["claim"]), session_id=S1, step_workflow_id=LINEAGE)
     )
-    SessionVariableManager(snap_db).merge_variables(S1, {"_agent_type": "alpha"})
-    row = MagicMock()
-    row.step_workflow_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    forbidden = RuntimeError("apply_persona must not touch agent_step_instances")
     with (
-        patch(
-            "gobby.workflows.agent_resolver.resolve_agent_with_row",
-            return_value=(_agent("beta", ["review"]), row),
-        ),
-        patch(
-            "gobby.mcp_proxy.tools.apply_persona.build_session_persona_changes",
-            return_value=({"_agent_type": "beta"}, set()),
-        ),
-        patch(
-            "gobby.mcp_proxy.tools.apply_persona._resolve_session_identity",
-            return_value=(None, "claude"),
-        ),
-        patch.object(
-            AgentStepInstanceManager,
-            "replace_for_session",
-            side_effect=RuntimeError("replace failed"),
-        ),
+        _persona_resolution(_agent("beta", ["review"]), "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+        patch.object(AgentStepInstanceManager, "save", side_effect=forbidden),
+        patch.object(AgentStepInstanceManager, "replace_for_session", side_effect=forbidden),
+        patch.object(AgentStepInstanceManager, "delete_for_session", side_effect=forbidden),
+        patch.object(AgentStepInstanceManager, "merge_variables", side_effect=forbidden),
     ):
-        with pytest.raises(RuntimeError, match="replace failed"):
-            await apply_persona_impl(agent="beta", db=snap_db, session_id=S1)
+        result = await apply_persona_impl(agent="beta", db=snap_db, session_id=S1)
+    assert result["success"] is True
     remaining = manager.get_for_session(S1)
     assert remaining is not None
     assert remaining.agent_name == "alpha"
-
-
-@pytest.mark.asyncio
-async def test_persona_switch_is_atomic_when_instance_write_fails_after_merge(
-    snap_db: PostgresHubDatabase,
-) -> None:
-    from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
-    from gobby.workflows.state_manager import SessionVariableManager
-
-    manager = AgentStepInstanceManager(snap_db)
-    manager.save(
-        build_step_instance(_agent("alpha", ["claim"]), session_id=S1, step_workflow_id=LINEAGE)
-    )
-    SessionVariableManager(snap_db).merge_variables(S1, {"_agent_type": "alpha"})
-    row = MagicMock()
-    row.step_workflow_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
-    original_merge = SessionVariableManager.merge_variables
-
-    def _merge_then_fail(
-        self: SessionVariableManager,
-        session_id: str,
-        updates: dict[str, Any],
-    ) -> bool:
-        original_merge(self, session_id, updates)
-        raise RuntimeError("post-merge instance failed")
-
-    with (
-        patch(
-            "gobby.workflows.agent_resolver.resolve_agent_with_row",
-            return_value=(_agent("beta", ["review"]), row),
-        ),
-        patch(
-            "gobby.mcp_proxy.tools.apply_persona.build_session_persona_changes",
-            return_value=({"_agent_type": "beta"}, set()),
-        ),
-        patch(
-            "gobby.mcp_proxy.tools.apply_persona._resolve_session_identity",
-            return_value=(None, "claude"),
-        ),
-        patch.object(SessionVariableManager, "merge_variables", _merge_then_fail),
-    ):
-        with pytest.raises(RuntimeError, match="post-merge instance failed"):
-            await apply_persona_impl(agent="beta", db=snap_db, session_id=S1)
-    remaining = manager.get_for_session(S1)
-    assert remaining is not None
-    assert remaining.agent_name == "alpha"
-    stored = snap_db.fetchone(
-        "SELECT variables FROM session_variables WHERE session_id = %s", (S1,)
-    )
-    assert stored is not None
-    assert _row_variables(stored)["_agent_type"] == "alpha"
 
 
 @pytest.mark.asyncio
@@ -925,38 +908,6 @@ async def test_persona_stepless_switch_is_atomic_across_rows(
     remaining = manager.get_for_session(S1)
     assert remaining is not None
     assert remaining.agent_name == "alpha"
-
-
-@pytest.mark.asyncio
-async def test_persona_same_agent_missing_instance_persistence_fault_fails(
-    snap_db: PostgresHubDatabase,
-) -> None:
-    from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
-
-    row = MagicMock()
-    row.step_workflow_id = LINEAGE
-    with (
-        patch(
-            "gobby.workflows.agent_resolver.resolve_agent_with_row",
-            return_value=(_agent("alpha", ["claim"]), row),
-        ),
-        patch(
-            "gobby.mcp_proxy.tools.apply_persona.build_session_persona_changes",
-            return_value=({"_agent_type": "alpha"}, set()),
-        ),
-        patch(
-            "gobby.mcp_proxy.tools.apply_persona._resolve_session_identity",
-            return_value=(None, "claude"),
-        ),
-        patch.object(
-            AgentStepInstanceManager,
-            "replace_for_session",
-            side_effect=RuntimeError("create failed"),
-        ),
-    ):
-        with pytest.raises(RuntimeError, match="create failed"):
-            await apply_persona_impl(agent="alpha", db=snap_db, session_id=S1)
-    assert AgentStepInstanceManager(snap_db).get_for_session(S1) is None
 
 
 @pytest.mark.asyncio
