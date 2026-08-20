@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Literal, Protocol
 
 CODEX_OSS_LOCAL_PROVIDERS = frozenset({"lmstudio", "ollama"})
+CodexLocalTransportStrategy = Literal["oss", "config-override"]
 
 
 class CodexOSSLocalEndpoint(Protocol):
@@ -17,6 +18,23 @@ class CodexOSSLocalEndpoint(Protocol):
 def codex_oss_supported_provider_clause() -> str:
     """Return the supported provider clause used in Codex OSS error messages."""
     return " or ".join(f"provider={provider}" for provider in sorted(CODEX_OSS_LOCAL_PROVIDERS))
+
+
+def codex_local_transport_strategy(
+    protocol: str | None,
+) -> CodexLocalTransportStrategy | None:
+    """Return the Codex web-chat/spawn transport for a local endpoint protocol.
+
+    LM Studio and Ollama keep ``--oss --local-provider``. vLLM uses invocation
+    config overrides with ``wire_api="chat"``. Generic OpenAI-compatible
+    endpoints have no Codex transport.
+    """
+    normalized = protocol.strip().lower() if isinstance(protocol, str) else ""
+    if normalized in CODEX_OSS_LOCAL_PROVIDERS:
+        return "oss"
+    if normalized == "vllm":
+        return "config-override"
+    return None
 
 
 def codex_oss_provider_for_local_endpoint(endpoint: CodexOSSLocalEndpoint) -> str:

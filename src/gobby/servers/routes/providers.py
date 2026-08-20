@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter
 
-from gobby.agents.codex_oss import CODEX_OSS_LOCAL_PROVIDERS
+from gobby.agents.codex_oss import codex_local_transport_strategy
 from gobby.ai.codex_endpoint import codex_endpoint_display_name
 from gobby.ai.endpoint_activation import modalities_for_served_model
 from gobby.ai.endpoints import endpoint_provider
@@ -181,10 +181,9 @@ def _local_generation_provider_entries(
     provider_type_counts = Counter(group.provider_type for group in groups)
     entries: list[dict[str, Any]] = []
     for group in groups:
-        # LM Studio/Ollama chat-completions endpoints execute through the
-        # Codex OSS runtime (see WebChatRuntimeManager); generic
-        # OpenAI-compatible endpoints have no web-chat transport (#19161).
-        routable = group.provider_type in CODEX_OSS_LOCAL_PROVIDERS
+        # LM Studio/Ollama execute through Codex OSS; vLLM uses config-override
+        # chat-wire transport; generic OpenAI-compatible stays catalog-only.
+        routable = codex_local_transport_strategy(group.provider_type) is not None
         if not routable:
             unavailable_reason: str | None = _GENERIC_LOCAL_UNAVAILABLE_REASON
         elif group.error:

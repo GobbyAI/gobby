@@ -7,6 +7,7 @@ from typing import Any
 
 from gobby.adapters.codex_impl.client import CodexAppServerClient
 from gobby.agents.codex_oss import (
+    codex_local_transport_strategy,
     codex_oss_launch_args,
     codex_oss_provider_for_local_endpoint,
     codex_oss_supported_provider_clause,
@@ -22,7 +23,7 @@ from gobby.ai.codex_endpoint import (
     codex_endpoint_app_server_env,
     codex_endpoint_config_overrides,
 )
-from gobby.ai.endpoints import parse_endpoint_model_selector
+from gobby.ai.endpoints import parse_endpoint_model_selector, parse_endpoint_selector
 from gobby.config.ai import GenerationEndpointConfig
 from gobby.config.app import DaemonConfig
 from gobby.servers.chat_session import ChatSession
@@ -75,7 +76,8 @@ class WebChatRuntimeManager:
         )
         self._codex_endpoint_backends: dict[str, CodexWebChatBackend] = {}
         for endpoint_name, endpoint in self._generation_endpoints.items():
-            if endpoint.wire_api == "responses":
+            strategy = codex_local_transport_strategy(endpoint.protocol)
+            if endpoint.wire_api == "responses" or strategy == "config-override":
                 try:
                     endpoint_client = CodexAppServerClient(
                         config_overrides=codex_endpoint_config_overrides(
@@ -86,14 +88,14 @@ class WebChatRuntimeManager:
                     )
                 except ValueError:
                     continue
-            else:
-                try:
-                    oss_provider = codex_oss_provider_for_local_endpoint(endpoint)
-                except ValueError:
-                    continue
+            elif strategy == "oss":
                 endpoint_client = CodexAppServerClient(
-                    global_args=codex_oss_launch_args(oss_provider)
+                    global_args=codex_oss_launch_args(
+                        codex_oss_provider_for_local_endpoint(endpoint)
+                    )
                 )
+            else:
+                continue
             self._codex_endpoint_backends[endpoint_name] = CodexWebChatBackend(
                 client=endpoint_client,
                 generation_endpoint=endpoint,
@@ -194,6 +196,22 @@ class WebChatRuntimeManager:
             return self._droid_backend.health()
         if provider == "claude":
             return self._claude_backend.health()
+        endpoint_name = parse_endpoint_selector(provider)
+        if endpoint_name is not None:
+            backend = self._codex_endpoint_backends.get(endpoint_name)
+            if backend is not None:
+                inner = backend.health()
+                return ProviderBackendHealth(
+                    provider=provider,
+                    available=inner.available,
+                    startup_error=inner.startup_error,
+                )
+            if endpoint_name in self._generation_endpoints:
+                return ProviderBackendHealth(
+                    provider=provider,
+                    available=False,
+                    startup_error="no web-chat transport for this generation endpoint",
+                )
         return ProviderBackendHealth(provider=provider, available=False, startup_error="unknown")
 
     def health_snapshot(self) -> dict[str, dict[str, Any]]:
@@ -330,6 +348,8 @@ class WebChatRuntimeManager:
                 raise RuntimeError(
                     f"Codex Responses endpoint {selector.endpoint_name!r} is unavailable"
                 )
+            if codex_local_transport_strategy(endpoint.protocol) == "config-override":
+                raise RuntimeError(f"vLLM endpoint {selector.endpoint_name!r} is unavailable")
             raise RuntimeError(
                 f"Codex OSS local web chat supports {codex_oss_supported_provider_clause()}"
             )
