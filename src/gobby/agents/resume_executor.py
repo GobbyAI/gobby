@@ -12,7 +12,10 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 import psycopg
 
-from gobby.agents.codex_oss import codex_oss_provider_for_local_endpoint
+from gobby.agents.codex_oss import (
+    codex_local_transport_strategy,
+    codex_oss_provider_for_local_endpoint,
+)
 from gobby.agents.resume_finalization import (
     finalize_resume_handoff_async,
     notify_parent_of_recovery,
@@ -141,7 +144,28 @@ async def resume_agent_run(
             )
             endpoint_env.update(codex_endpoint_env(endpoint))
         elif provider == "codex":
-            codex_oss_provider = codex_oss_provider_for_local_endpoint(endpoint)
+            strategy = codex_local_transport_strategy(endpoint.protocol)
+            if strategy == "config-override":
+                try:
+                    from gobby.agents.local_model import LocalModelError, ensure_local_model
+
+                    resume_model = await ensure_local_model(
+                        endpoint, run_manager=runner.run_storage
+                    )
+                except LocalModelError as exc:
+                    return ResumeAgentResult(
+                        False,
+                        error=f"Local model pre-flight failed: {exc}",
+                    )
+                endpoint_config_overrides = codex_endpoint_config_overrides(
+                    endpoint_selection.name,
+                    endpoint,
+                    model=resume_model,
+                )
+                if endpoint.api_key:
+                    endpoint_env.update(codex_endpoint_env(endpoint))
+            else:
+                codex_oss_provider = codex_oss_provider_for_local_endpoint(endpoint)
         else:
             endpoint_api_base = endpoint.api_base
             endpoint_api_token = endpoint.api_key
