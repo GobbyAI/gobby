@@ -38,39 +38,30 @@ pub(crate) fn delete_file_graph_queries(
             base_params(),
         )?,
         typed_query(
-            "MATCH (s:ExternalSymbol {project: $project})-[r:INHERITS|EXTENDS|IMPLEMENTS]->(n {project: $project})
+            "MATCH ()-[r:INHERITS]->()
              WHERE r.source_file_path = $file_path
-             DELETE r",
-            base_params(),
-        )?,
-        typed_query(
-            "MATCH (s:UnresolvedCallee {project: $project})-[r:INHERITS|EXTENDS|IMPLEMENTS]->(n {project: $project})
-             WHERE r.source_file_path = $file_path
-             DELETE r",
-            base_params(),
-        )?,
-        typed_query(
-            "MATCH (s)-[r:INHERITS]->(n)
-             WHERE r.source_file_path = $file_path
-               AND s.project = $project
+             WITH r, startNode(r) AS s, endNode(r) AS n
+             WHERE s.project = $project
                AND n.project = $project
                AND (s.file_path IS NULL OR s.file_path <> $file_path)
              DELETE r",
             base_params(),
         )?,
         typed_query(
-            "MATCH (s)-[r:EXTENDS]->(n)
+            "MATCH ()-[r:EXTENDS]->()
              WHERE r.source_file_path = $file_path
-               AND s.project = $project
+             WITH r, startNode(r) AS s, endNode(r) AS n
+             WHERE s.project = $project
                AND n.project = $project
                AND (s.file_path IS NULL OR s.file_path <> $file_path)
              DELETE r",
             base_params(),
         )?,
         typed_query(
-            "MATCH (s)-[r:IMPLEMENTS]->(n)
+            "MATCH ()-[r:IMPLEMENTS]->()
              WHERE r.source_file_path = $file_path
-               AND s.project = $project
+             WITH r, startNode(r) AS s, endNode(r) AS n
+             WHERE s.project = $project
                AND n.project = $project
                AND (s.file_path IS NULL OR s.file_path <> $file_path)
              DELETE r",
@@ -153,25 +144,10 @@ pub(crate) fn delete_stale_file_graph_queries(
             base_params(),
         )?,
         typed_query(
-            "MATCH (s:ExternalSymbol {project: $project})-[r:INHERITS|EXTENDS|IMPLEMENTS]->(n {project: $project})
+            "MATCH ()-[r:INHERITS]->()
              WHERE r.source_file_path = $file_path
-               AND r.content_hash = $content_hash
-               AND (r.sync_token IS NULL OR r.sync_token <> $sync_token)
-             DELETE r",
-            base_params(),
-        )?,
-        typed_query(
-            "MATCH (s:UnresolvedCallee {project: $project})-[r:INHERITS|EXTENDS|IMPLEMENTS]->(n {project: $project})
-             WHERE r.source_file_path = $file_path
-               AND r.content_hash = $content_hash
-               AND (r.sync_token IS NULL OR r.sync_token <> $sync_token)
-             DELETE r",
-            base_params(),
-        )?,
-        typed_query(
-            "MATCH (s)-[r:INHERITS]->(n)
-             WHERE r.source_file_path = $file_path
-               AND s.project = $project
+             WITH r, startNode(r) AS s, endNode(r) AS n
+             WHERE s.project = $project
                AND n.project = $project
                AND r.content_hash = $content_hash
                AND (r.sync_token IS NULL OR r.sync_token <> $sync_token)
@@ -180,9 +156,10 @@ pub(crate) fn delete_stale_file_graph_queries(
             base_params(),
         )?,
         typed_query(
-            "MATCH (s)-[r:EXTENDS]->(n)
+            "MATCH ()-[r:EXTENDS]->()
              WHERE r.source_file_path = $file_path
-               AND s.project = $project
+             WITH r, startNode(r) AS s, endNode(r) AS n
+             WHERE s.project = $project
                AND n.project = $project
                AND r.content_hash = $content_hash
                AND (r.sync_token IS NULL OR r.sync_token <> $sync_token)
@@ -191,9 +168,10 @@ pub(crate) fn delete_stale_file_graph_queries(
             base_params(),
         )?,
         typed_query(
-            "MATCH (s)-[r:IMPLEMENTS]->(n)
+            "MATCH ()-[r:IMPLEMENTS]->()
              WHERE r.source_file_path = $file_path
-               AND s.project = $project
+             WITH r, startNode(r) AS s, endNode(r) AS n
+             WHERE s.project = $project
                AND n.project = $project
                AND r.content_hash = $content_hash
                AND (r.sync_token IS NULL OR r.sync_token <> $sync_token)
@@ -258,23 +236,10 @@ pub(crate) fn delete_content_version_queries(
             base_params(),
         )?,
         typed_query(
-            "MATCH (s:ExternalSymbol {project: $project})-[r:INHERITS|EXTENDS|IMPLEMENTS]->(n {project: $project})
+            "MATCH ()-[r:INHERITS]->()
              WHERE r.source_file_path = $file_path
-               AND r.content_hash = $content_hash
-             DELETE r",
-            base_params(),
-        )?,
-        typed_query(
-            "MATCH (s:UnresolvedCallee {project: $project})-[r:INHERITS|EXTENDS|IMPLEMENTS]->(n {project: $project})
-             WHERE r.source_file_path = $file_path
-               AND r.content_hash = $content_hash
-             DELETE r",
-            base_params(),
-        )?,
-        typed_query(
-            "MATCH (s)-[r:INHERITS]->(n)
-             WHERE r.source_file_path = $file_path
-               AND s.project = $project
+             WITH r, startNode(r) AS s, endNode(r) AS n
+             WHERE s.project = $project
                AND n.project = $project
                AND r.content_hash = $content_hash
                AND (s.file_path IS NULL OR s.file_path <> $file_path)
@@ -282,9 +247,10 @@ pub(crate) fn delete_content_version_queries(
             base_params(),
         )?,
         typed_query(
-            "MATCH (s)-[r:EXTENDS]->(n)
+            "MATCH ()-[r:EXTENDS]->()
              WHERE r.source_file_path = $file_path
-               AND s.project = $project
+             WITH r, startNode(r) AS s, endNode(r) AS n
+             WHERE s.project = $project
                AND n.project = $project
                AND r.content_hash = $content_hash
                AND (s.file_path IS NULL OR s.file_path <> $file_path)
@@ -292,9 +258,10 @@ pub(crate) fn delete_content_version_queries(
             base_params(),
         )?,
         typed_query(
-            "MATCH (s)-[r:IMPLEMENTS]->(n)
+            "MATCH ()-[r:IMPLEMENTS]->()
              WHERE r.source_file_path = $file_path
-               AND s.project = $project
+             WITH r, startNode(r) AS s, endNode(r) AS n
+             WHERE s.project = $project
                AND n.project = $project
                AND r.content_hash = $content_hash
                AND (s.file_path IS NULL OR s.file_path <> $file_path)

@@ -42,7 +42,6 @@ pub(in crate::graph::code_graph) const PROJECT_INDEXED_PROPERTIES: &[(&str, &[&s
 ];
 
 const PROJECT_INDEXED_RELATIONSHIPS: &[(&str, &str)] = &[
-    ("CALLS", "source_file_path"),
     ("INHERITS", "source_file_path"),
     ("EXTENDS", "source_file_path"),
     ("IMPLEMENTS", "source_file_path"),

@@ -472,7 +472,7 @@ fn content_version_delete_is_project_path_and_hash_scoped() {
         .collect::<Vec<_>>()
         .join("\n");
 
-    assert_eq!(queries.len(), 10);
+    assert_eq!(queries.len(), 8);
     assert!(combined.contains("[r:IMPORTS]"), "{combined}");
     assert!(combined.contains("[r:DEFINES]"), "{combined}");
     assert!(combined.contains("[r:CALLS]"), "{combined}");
@@ -486,7 +486,7 @@ fn content_version_delete_is_project_path_and_hash_scoped() {
     );
     assert_eq!(
         combined.matches("r.content_hash = $content_hash").count(),
-        9
+        7
     );
     assert!(!combined.contains("sync_token"), "{combined}");
     for query in &queries {
@@ -801,17 +801,20 @@ macro_rules! assert_heritage_owner_delete {
             ),
             "same-file heritage must anchor on CodeSymbol {{project, file_path}}:\n{combined}"
         );
+        for rel in ["INHERITS", "EXTENDS", "IMPLEMENTS"] {
+            assert!(
+                combined.contains(&format!("MATCH ()-[r:{rel}]->()")),
+                "cross-file heritage must use a leaf {rel} relationship scan:\n{combined}"
+            );
+        }
         assert!(
-            combined.contains("MATCH (s:ExternalSymbol {project: $project})-[r:INHERITS|EXTENDS|IMPLEMENTS]->(n {project: $project})"),
-            "terminal heritage must start from indexed ExternalSymbol {{project}}:\n{combined}"
+            combined.contains("WITH r, startNode(r) AS s, endNode(r) AS n"),
+            "heritage endpoint filtering must follow the edge-index scan:\n{combined}"
         );
         assert!(
-            combined.contains("MATCH (s:UnresolvedCallee {project: $project})-[r:INHERITS|EXTENDS|IMPLEMENTS]->(n {project: $project})"),
-            "terminal heritage must start from indexed UnresolvedCallee {{project}}:\n{combined}"
-        );
-        assert!(
-            combined.contains("MATCH (s)-[r:INHERITS]->(n)"),
-            "cross-file heritage must use a per-type relationship index scan:\n{combined}"
+            !combined.contains("(s:ExternalSymbol")
+                && !combined.contains("(s:UnresolvedCallee"),
+            "terminal heritage sources are covered by the leaf relationship scan:\n{combined}"
         );
         assert!(
             combined.contains("r.source_file_path = $file_path"),
@@ -1304,17 +1307,12 @@ fn heritage_delete_binds_project_on_both_endpoints() {
         ),
     ] {
         assert_heritage_owner_delete!(&combined);
-        let heritage = combined
-            .lines()
-            .filter(|line| line.contains("INHERITS|EXTENDS|IMPLEMENTS"))
-            .collect::<Vec<_>>()
-            .join("\n");
         assert!(
-            heritage.contains("{project: $project}")
-                && (heritage.matches("{project: $project}").count() >= 2
-                    || (heritage.contains("s.project = $project")
-                        && heritage.contains("n.project = $project"))),
-            "same-path heritage in another project must not be deleted:\n{heritage}"
+            combined.contains(
+                "MATCH (s:CodeSymbol {project: $project, file_path: $file_path})-[r:INHERITS|EXTENDS|IMPLEMENTS]->(n {project: $project})"
+            ) && combined.contains("s.project = $project")
+                && combined.contains("n.project = $project"),
+            "heritage deletes must bind both endpoints to the project:\n{combined}"
         );
     }
 }

@@ -150,10 +150,9 @@ fn adapter_env_precedence_and_json_decode() {
         assert_eq!(falkor.graph_name, FALKORDB_GRAPH_NAME);
         assert_eq!(qdrant.url.as_deref(), Some("http://qdrant.local:6333"));
         assert_eq!(qdrant.api_key.as_deref(), Some("qdrant-key"));
-        assert!(
-            embedding.is_none(),
-            "local embedding resolution is daemon-routed"
-        );
+        let embedding = embedding.expect("daemon-served embedding config");
+        assert_eq!(embedding.api_base, "http://embeddings.local:11434");
+        assert_eq!(embedding.model, "embed-model");
     });
 }
 
@@ -235,7 +234,9 @@ fn adapter_resolves_grant_backed_plaintext() {
 
         assert_eq!(falkor.password.as_deref(), Some("grant-falkor"));
         assert_eq!(qdrant.api_key.as_deref(), Some("grant-qdrant"));
-        assert!(embedding.is_none());
+        let embedding = embedding.expect("grant-backed embedding config");
+        assert_eq!(embedding.api_base, "http://embeddings.local:11434");
+        assert_eq!(embedding.api_key.as_deref(), Some("grant-embedding"));
     });
 }
 

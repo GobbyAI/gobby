@@ -419,9 +419,9 @@ mod tests {
                 "http://daemon-should-not-be-used:11434/v1",
             ),
         ]);
-        assert!(
-            crate::config::resolve_embedding_config_from_source(None, &mut daemon_source).is_none()
-        );
+        let daemon = crate::config::resolve_embedding_config_from_source(None, &mut daemon_source)
+            .expect("daemon-served embedding config");
+        assert_eq!(daemon.api_base, "http://daemon-should-not-be-used:11434/v1");
 
         let mut off_source = TestSource::with_values([
             (ai_keys::EMBEDDINGS_ROUTING, "off"),
@@ -448,10 +448,11 @@ mod tests {
             (ai_keys::EMBEDDINGS_API_KEY, "secret-marker EMBEDDING_KEY"),
         ]);
 
-        assert!(
-            crate::config::resolve_embedding_config_from_source(None, &mut source).is_none(),
-            "daemon routing must not harvest a local embedding endpoint"
-        );
+        let config = crate::config::resolve_embedding_config_from_source(None, &mut source)
+            .expect("daemon-served embedding config");
+        assert_eq!(config.api_base, "http://shared-binding.local:11434/v1");
+        assert_eq!(config.model, "shared-embed-model");
+        assert_eq!(config.api_key.as_deref(), Some("resolved-embedding-key"));
     }
 
     #[test]
