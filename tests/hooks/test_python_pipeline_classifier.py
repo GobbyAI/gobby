@@ -31,7 +31,6 @@ def test_python_pipeline_normalization_rejects_forbidden_callback_names(
         'import sys; next(sys.modules["builtins"].iter([]))',
         'sorted(["x"], key=lambda value: value.__class__)',
         "import sys; sys.stdin = []",
-        "values = [1]; values[0] = 2",
         (
             'import sys; list(map(sys.modules["builtins"].eval, '
             '["__import__(\\"os\\").system(\\"touch src/pwn\\")"]))'
@@ -103,3 +102,130 @@ def test_python_pipeline_normalization_preserves_safe_read_only_classification(
     assert data["canonical_tool_kind"] == "read"
     assert data["canonical_code_index_navigation"] is True
     assert "canonical_repo_mutation" not in data
+
+
+_MANIFEST_PATH_OVERLAP = """
+import sys, re, collections, itertools
+rx = re.compile(r'(?:src/gobby|crates|docs/|tests/)[A-Za-z0-9_./@-]*')
+leaf = collections.defaultdict(collections.OrderedDict)
+cur = {}
+for line in sys.stdin:
+    plan, _, body = line.rstrip('\\n').partition('\\t')
+    m = re.match(r'- title: (.*)', body)
+    if m:
+        cur[plan] = m.group(1).strip()
+        leaf[plan][cur[plan]] = ['?', set()]
+        continue
+    if plan not in cur:
+        continue
+    for p in rx.findall(body):
+        p = p.rstrip('.').rstrip('/')
+        if '/' in p:
+            leaf[plan][cur[plan]][1].add(p)
+allp = {plan: {p for t, (s, ps) in leaf[plan].items() for p in ps} for plan in leaf}
+for a, b in itertools.combinations(allp, 2):
+    inter = sorted(allp[a] & allp[b])
+    print(f'### {a} x {b}: {len(inter)}')
+    for p in inter:
+        print('   ', p, ','.join(s for t, (s, ps) in leaf[a].items() if p in ps))
+"""
+
+_WORD_HISTOGRAM = """
+from collections import Counter
+import re
+import sys
+
+
+def tokens(text: str) -> list[str]:
+    return [word.lower() for word in re.findall(r'[A-Za-z]+', text)]
+
+
+counts: Counter[str] = Counter()
+for line in sys.stdin:
+    for word in tokens(line):
+        counts[word] += 1
+try:
+    limit = int(sys.stdin.readline() or 5)
+except ValueError:
+    limit = 5
+for word, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:limit]:
+    print(f'{word:<20}{count:>6}')
+print(len(counts), 'distinct words', file=sys.stderr)
+"""
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        _MANIFEST_PATH_OVERLAP,
+        _WORD_HISTOGRAM,
+        "values = [1]; values[0] = 2; print(values)",
+        "import math, statistics; print(math.pi, statistics.mean([1, 2]))",
+        "import sys; print('progress', file=sys.stderr)",
+        "from datetime import datetime; print(datetime.now())",
+        "import json, sys; payload = json.load(sys.stdin); print(payload.get('name'))",
+    ],
+)
+def test_python_pipeline_accepts_pure_stdlib_analysis_scripts(script: str) -> None:
+    assert _classify_python_pipeline(script)
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "import os; os.remove('x')",
+        "from os import remove; remove('x')",
+        "import pathlib; pathlib.Path('x').write_text('y')",
+        "import subprocess; subprocess.run(['rm', 'x'])",
+        "open('x', 'w').write('y')",
+        "import csv; csv.io.open('x', 'w')",
+        "import datetime; datetime.sys.modules['os'].remove('x')",
+        "import datetime\nheld = datetime.sys\nheld.modules['os'].remove('x')",
+        "import datetime\nf = lambda re: re.remove('x')\nf(datetime.sys)",
+        "import re\nre.sub('a', lambda m: open('x', 'w').write('y'), 'a')",
+        "def f():\n    open('x', 'w').write('1')\n\n\nf()",
+        "def f(x=__import__('os').remove('y')):\n    pass",
+        "def f(x: __import__('os').remove('y')):\n    pass",
+        "from collections import _sys\n_sys.modules['os'].remove('x')",
+        "import operator; operator.attrgetter('__class__')",
+        "import re as r; r.compile('x')",
+        "for sys in []:\n    pass",
+        "with open('x') as re:\n    pass",
+        "try:\n    pass\nexcept Exception as re:\n    pass",
+        "from collections.abc import Mapping",
+        "from re import *",
+        "import sys; sys.stderr = None",
+        "import json; json.dump({}, open('x', 'w'))",
+    ],
+)
+def test_python_pipeline_rejects_mutation_and_reflection_escapes(script: str) -> None:
+    assert not _classify_python_pipeline(script)
+
+
+def test_python_pipeline_normalization_keeps_uv_run_analysis_script_read_only() -> None:
+    script = (
+        "import re, sys, collections; "
+        "counts = collections.Counter(re.findall(r'[a-z]+', sys.stdin.read())); "
+        "print(counts.most_common(3))"
+    )
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {"command": f"awk '{{print}}' notes.md | uv run python -c \"{script}\""},
+    }
+
+    normalize_tool_fields(data)
+
+    assert data["canonical_tool_kind"] == "execute"
+    assert "canonical_repo_mutation" not in data
+
+
+def test_python_pipeline_normalization_keeps_uv_run_mutation_script_write() -> None:
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {"command": "uv run python -c \"import os; os.remove('notes.md')\""},
+    }
+
+    normalize_tool_fields(data)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
