@@ -13,7 +13,15 @@ from gobby.mcp_proxy.tools.sessions._terminal import (
     _resolve_tmux_target,
     _send_terminal_compaction_command,
 )
-from gobby.sessions.clear_continuation import clear_failed_attempt, stage_clear_attempt
+from gobby.mcp_proxy.tools.sessions._terminal_webchat import (
+    _clear_live_web_chat_fallback,
+    _find_live_web_chat_session,
+)
+from gobby.sessions.clear_continuation import (
+    build_clear_self_continue_prompt,
+    clear_failed_attempt,
+    stage_clear_attempt,
+)
 from gobby.sessions.compact_continuation import (
     CodexRolloutCursor,
     CodexRolloutObservationError,
@@ -58,7 +66,8 @@ def register_clear_self_tool(
             "turn and types `/clear` into your pane, so your CLI reports the call "
             "as rejected or cancelled. That attribution is wrong — the daemon did "
             "it. Do not stop, and do not ask the user what happened. Agent-run "
-            "sessions are rejected. Web-chat clear is not yet supported."
+            "sessions are rejected. Web-chat sessions clear through the live "
+            "daemon ChatSession registry and do return normally."
         ),
     )
     async def clear_self(handoff: str) -> dict[str, Any]:
@@ -69,14 +78,6 @@ def register_clear_self_tool(
             agent_run_manager=agent_run_manager,
             web_chat_session_registry=web_chat_session_registry,
         )
-
-
-def _web_chat_unsupported() -> dict[str, Any]:
-    return {
-        "success": False,
-        "error": "web chat not yet supported",
-        "error_code": "web_chat_not_supported",
-    }
 
 
 def _error(message: str, error_code: str) -> dict[str, Any]:
@@ -107,15 +108,43 @@ async def execute_clear_self(
         session_manager,
     )
     if error:
-        if _live_web_chat_session(web_chat_session_registry, session_id, resolved_session_id):
-            return _web_chat_unsupported()
+        web_result = await _clear_web_chat_self(
+            handoff,
+            db=db,
+            session_manager=session_manager,
+            agent_run_manager=agent_run_manager,
+            web_chat_session_registry=web_chat_session_registry,
+            session_ids=(session_id, resolved_session_id),
+            db_session=None,
+        )
+        if web_result is not None:
+            return web_result
         return _error(error, "session_not_found")
     assert resolved_session_id is not None
     assert session is not None
 
     session_type = getattr(session, "session_type", "terminal")
     if session_type == "web_chat":
-        return _web_chat_unsupported()
+        if getattr(session, "status", None) == "deleted":
+            return _error(
+                f"Session {resolved_session_id} is deleted",
+                "session_deleted",
+            )
+        web_result = await _clear_web_chat_self(
+            handoff,
+            db=db,
+            session_manager=session_manager,
+            agent_run_manager=agent_run_manager,
+            web_chat_session_registry=web_chat_session_registry,
+            session_ids=(resolved_session_id, session_id),
+            db_session=session,
+        )
+        if web_result is not None:
+            return web_result
+        return _error(
+            f"No live web_chat session found for {resolved_session_id}",
+            "web_chat_not_live",
+        )
     if session_type != "terminal":
         return _error(
             f"unsupported session_type: {session_type}",
@@ -281,24 +310,161 @@ async def execute_clear_self(
     }
 
 
-def _live_web_chat_session(
+async def _clear_web_chat_self(
+    handoff: str,
+    *,
+    db: HubDatabase,
+    session_manager: SessionManager,
+    agent_run_manager: LocalAgentRunManager,
     web_chat_session_registry: WebChatSessionRegistry | None,
-    *session_ids: str | None,
-) -> bool:
+    session_ids: tuple[str | None, ...],
+    db_session: Any | None,
+) -> dict[str, Any] | None:
+    """Stage a durable web-chat clear attempt, then delegate to the live registry."""
     if web_chat_session_registry is None:
-        return False
-    seen: set[str] = set()
-    for candidate in session_ids:
-        if not candidate or candidate in seen:
-            continue
-        seen.add(candidate)
-        try:
-            live = web_chat_session_registry.find_session(candidate)[1]
-        except (LookupError, KeyError, RuntimeError):
-            continue
-        if live is not None:
-            return True
-    return False
+        if db_session is not None:
+            return _error(
+                "web_chat session registry is not available",
+                "web_chat_registry_unavailable",
+            )
+        return None
+
+    _lookup_id, live = _find_live_web_chat_session(web_chat_session_registry, *session_ids)
+    if live is None:
+        if db_session is not None:
+            predecessor = getattr(db_session, "id", None) or session_ids[0]
+            return _error(
+                f"No live web_chat session found for {predecessor}",
+                "web_chat_not_live",
+            )
+        return None
+
+    predecessor_id = getattr(live, "db_session_id", None)
+    if not isinstance(predecessor_id, str) or not predecessor_id:
+        predecessor_id = getattr(db_session, "id", None)
+    if not isinstance(predecessor_id, str) or not predecessor_id:
+        predecessor_id = _lookup_id
+    if not isinstance(predecessor_id, str) or not predecessor_id:
+        return None
+
+    if agent_run_manager.get_by_session(predecessor_id) is not None:
+        return _error(
+            "clear_self is not supported for agent-run sessions",
+            "agent_run_unsupported",
+        )
+
+    attempt_id = uuid4().hex
+    staged = False
+    prior_summary_state: dict[str, Any] = {}
+    try:
+        prior_summary_state = stage_clear_attempt(
+            db,
+            predecessor_id,
+            attempt_id=attempt_id,
+            terminal_context=None,
+            chat_context=_web_chat_attempt_context(live, db_session),
+        )
+        staged = True
+        updated = session_manager.update_summary(
+            predecessor_id,
+            summary_markdown=handoff,
+        )
+        if updated is None:
+            raise RuntimeError(f"failed to persist clear_self handoff for session {predecessor_id}")
+    except Exception as exc:
+        logger.warning(
+            "Failed staging web_chat clear_self handoff for session %s",
+            predecessor_id,
+            exc_info=True,
+        )
+        if staged:
+            clear_failed_attempt(
+                db,
+                predecessor_id,
+                attempt_id=attempt_id,
+                prior_summary_state=prior_summary_state,
+            )
+        return _error(
+            f"failed to stage clear_self handoff: {exc}",
+            "staging_failed",
+        )
+
+    try:
+        result = await _clear_live_web_chat_fallback(
+            web_chat_session_registry,
+            handoff,
+            *session_ids,
+            attempt_id=attempt_id,
+            continuation_prompt=build_clear_self_continue_prompt(predecessor_ref=predecessor_id),
+        )
+    except Exception as exc:
+        clear_failed_attempt(
+            db,
+            predecessor_id,
+            attempt_id=attempt_id,
+            prior_summary_state=prior_summary_state,
+        )
+        logger.warning(
+            "Failed clearing live web_chat session %s",
+            predecessor_id,
+            exc_info=True,
+        )
+        return _error(f"failed to clear web chat: {exc}", "web_chat_clear_failed")
+
+    if result is None:
+        clear_failed_attempt(
+            db,
+            predecessor_id,
+            attempt_id=attempt_id,
+            prior_summary_state=prior_summary_state,
+        )
+        return _error(
+            f"No live web_chat session found for {predecessor_id}",
+            "web_chat_not_live",
+        )
+
+    if result.get("queued"):
+        queued_attempt = result.get("attempt_id")
+        return {
+            "queued": True,
+            "attempt_id": queued_attempt if isinstance(queued_attempt, str) else attempt_id,
+            "handoff_staged": True,
+        }
+
+    if result.get("cleared"):
+        return {
+            **result,
+            "success": True,
+            "session_id": result.get("predecessor_id") or predecessor_id,
+            "attempt_id": result.get("attempt_id") or attempt_id,
+            "handoff_staged": True,
+        }
+
+    clear_failed_attempt(
+        db,
+        predecessor_id,
+        attempt_id=attempt_id,
+        prior_summary_state=prior_summary_state,
+    )
+    return _error(
+        str(result.get("reason") or "web chat clear failed"),
+        "web_chat_clear_failed",
+    )
+
+
+def _web_chat_attempt_context(live: Any, db_session: Any | None) -> dict[str, Any] | None:
+    model = getattr(live, "model", None)
+    if not isinstance(model, str) or not model:
+        model = getattr(db_session, "model", None)
+    mode = getattr(live, "chat_mode", None)
+    if not isinstance(mode, str) or not mode:
+        mode = getattr(db_session, "chat_mode", None)
+    payload: dict[str, Any] = {}
+    if isinstance(model, str) and model:
+        payload["model"] = model
+    if isinstance(mode, str) and mode:
+        payload["mode"] = mode
+    return payload or None
 
 
 def _codex_interrupt_observer(
