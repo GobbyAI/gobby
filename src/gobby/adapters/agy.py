@@ -40,16 +40,15 @@ class AgyAdapter(ACPHookAdapter):
         response: HookResponse,
         hook_type: str | None = None,
     ) -> dict[str, Any]:
-        """Convert HookResponse to AGY hook stdout JSON.
+        """Convert HookResponse to AGY protojson stdout.
 
-        AGY's observed PreToolUse hook accepts a compact decision object such as
-        ``{"decision": "allow"}``. Other AGY hook stdout is currently ignored,
-        but returning the same decision object keeps stop gates visible if AGY
-        starts honoring those responses.
+        AGY unmarshals hook stdout into per-event protobuf messages. Unknown
+        fields such as ``continue`` fail the tool. PreToolUse uses ``overwrite``
+        for argument rewrites; Stop uses ``decision: continue`` to block stop.
         """
 
         contract = get_agy_contract(hook_type)
-        is_denied = response.decision in {"deny", "block"}
+        event_name = contract.hook_event_name if contract is not None else (hook_type or "")
         normalized_reason = normalize_adapter_response_reason(
             response,
             adapter_name=self.__class__.__name__,
@@ -57,22 +56,39 @@ class AgyAdapter(ACPHookAdapter):
             logger=logger,
         )
 
-        decision = response.decision
-        if contract and contract.blocks_tool_call:
-            if response.permission_decision:
-                decision = response.permission_decision
-            elif response.auto_approve:
-                decision = "allow"
-            elif response.decision == "ask":
-                decision = "ask"
-            elif is_denied:
-                decision = "deny"
-        elif is_denied:
-            decision = "block"
+        if event_name in {"PreInvocation", "PostInvocation"}:
+            steps: list[dict[str, str]] = []
+            if response.context:
+                steps.append({"ephemeralMessage": response.context})
+            if response.system_message:
+                steps.append({"userMessage": response.system_message})
+            return {"injectSteps": steps} if steps else {}
 
-        result: dict[str, Any] = {"decision": decision}
+        if event_name == "PostToolUse" or contract is None:
+            return {}
+
+        if event_name == "Stop":
+            if response.decision in {"deny", "block"}:
+                result: dict[str, Any] = {"decision": "continue"}
+                if normalized_reason:
+                    result["reason"] = normalized_reason
+                return result
+            return {}
+
+        is_denied = response.decision in {"deny", "block"}
+        decision = response.decision
+        if response.permission_decision:
+            decision = response.permission_decision
+        elif response.auto_approve:
+            decision = "allow"
+        elif response.decision == "ask":
+            decision = "ask"
+        elif is_denied:
+            decision = "deny"
+
+        result = {"decision": decision}
         if normalized_reason:
             result["reason"] = normalized_reason
-        if contract and contract.blocks_tool_call and response.modified_input is not None:
-            result["updatedInput"] = response.modified_input
+        if response.modified_input is not None:
+            result["overwrite"] = response.modified_input
         return result

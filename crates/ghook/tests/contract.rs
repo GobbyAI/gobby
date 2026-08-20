@@ -426,6 +426,87 @@ fn unmanaged_hook_returns_continue_without_side_effects() -> TestResult {
 }
 
 #[test]
+fn unmanaged_agy_skip_stdout_is_protojson_legal() -> TestResult {
+    for (hook_type, expected) in [
+        ("PreToolUse", serde_json::json!({"decision": "allow"})),
+        ("PreInvocation", serde_json::json!({})),
+        ("Stop", serde_json::json!({})),
+    ] {
+        let home = tempfile::tempdir()?;
+        let gobby_home = tempfile::tempdir()?;
+        let cwd = tempfile::tempdir()?;
+        let output = run_ghook_with_dirs_and_args(
+            home.path(),
+            gobby_home.path(),
+            Some("agy"),
+            Some(hook_type),
+            &closed_local_url()?,
+            VALID_STDIN,
+            RunGhookExtras {
+                env: &[],
+                args: &["--enqueue-only"],
+                cwd: Some(cwd.path()),
+            },
+        )?;
+
+        assert!(output.status.success(), "{hook_type}");
+        assert_json_stdout(&output, expected.clone())?;
+        assert_stderr_empty(&output, &format!("unmanaged agy {hook_type}"))?;
+        assert!(
+            inbox_envelopes(gobby_home.path())?.is_empty(),
+            "{hook_type}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn agy_workspace_paths_manage_when_cwd_is_not_a_project() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let cwd = tempfile::tempdir()?;
+    let project_root = tempfile::tempdir()?;
+    fs::create_dir_all(project_root.path().join(".gobby"))?;
+    fs::write(
+        project_root.path().join(".gobby/project.json"),
+        r#"{"id":"agy-workspace-project"}"#,
+    )?;
+    let stdin = serde_json::json!({
+        "conversationId": "probe",
+        "workspacePaths": [project_root.path()],
+    })
+    .to_string();
+
+    let output = run_ghook_with_dirs_and_args(
+        home.path(),
+        gobby_home.path(),
+        Some("agy"),
+        Some("PreToolUse"),
+        &closed_local_url()?,
+        &stdin,
+        RunGhookExtras {
+            env: &[],
+            args: &["--enqueue-only"],
+            cwd: Some(cwd.path()),
+        },
+    )?;
+
+    assert!(output.status.success());
+    assert_json_stdout(&output, serde_json::json!({"decision": "allow"}))?;
+    let envelope = read_single_inbox_envelope(gobby_home.path())?;
+    assert_eq!(envelope["source"], "agy");
+    assert_eq!(
+        envelope["headers"]
+            .get("X-Gobby-Project-Id")
+            .and_then(Value::as_str),
+        Some("agy-workspace-project")
+    );
+
+    Ok(())
+}
+
+#[test]
 fn unmanaged_statusline_never_emits_hook_action_json() -> TestResult {
     let home = tempfile::tempdir()?;
     let gobby_home = tempfile::tempdir()?;

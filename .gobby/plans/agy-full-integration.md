@@ -10,6 +10,15 @@ Plan artifact: `.gobby/plans/agy-full-integration.md`
 **This plan is parked on an upstream blocker. It is not submitted for planning
 approval and no implementation manifest is derived.**
 
+**Resume in progress (2026-08-20):** Installed AGY **1.1.16** print mode
+**does dispatch** Gobby hooks (GitHub #222 still Open; local probe
+`384e2db9-cff0-437f-8170-cd116ad15d5a` invoked PreInvocation, PreToolUse,
+PostInvocation, and Stop). Remaining Gobby defects blocked payload capture:
+`ghook` skip-opened with protojson-illegal `{"continue":true}`, and hook cwd is
+the `hooks.json` directory so project walk-up missed `workspacePaths`. Step A
+compatibility is in #20624. Gate 0 fixtures and Round 19 wait on a live MCP+
+built-in probe after that lands. Do not finalize unfenced Round 18.
+
 Gate 0 (§1.1) ran against the installed AGY binary as the pre-approval
 prerequisite the Constraints require. It confirmed seven contracts, disproved
 one committed fixture, and left ten records unresolved — but it also uncovered

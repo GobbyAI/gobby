@@ -45,7 +45,7 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
     // Sandbox FS-read denials or a detached process's cwd semantics on
     // macOS would otherwise surprise us (plan :76).
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let project_root = gobby_core::project::find_project_root(&cwd);
+    let mut project_root = gobby_core::project::find_project_root(&cwd);
     let managed_by_environment = has_managed_environment();
 
     // Read stdin before detach too — detach closes the controlling TTY but
@@ -71,7 +71,7 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
         Ok(v) => v,
         Err(e) => {
             if project_root.is_none() && !managed_by_environment {
-                return emit_action(continue_action());
+                return emit_action(continue_action(cfg.source, hook_type));
             }
             let _ = transport::quarantine_malformed(&stdin_raw, &e.to_string(), is_critical);
             emit_empty_json();
@@ -79,13 +79,17 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
         }
     };
 
+    if project_root.is_none() {
+        project_root = project_root_from_workspace_paths(&input_data);
+    }
+
     let context = managed_context(project_root.as_deref(), &input_data);
     if !context.managed {
-        return emit_action(continue_action());
+        return emit_action(continue_action(cfg.source, hook_type));
     }
 
     if planned_shutdown::should_skip_dispatch(hook_type) {
-        return emit_action(continue_action());
+        return emit_action(continue_action(cfg.source, hook_type));
     }
 
     let env = build_dispatch_envelope(&cfg, hook_type, input_data, context.project_id.as_deref());
@@ -164,7 +168,7 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
     };
 
     if args.enqueue_only {
-        return emit_action(continue_action());
+        return emit_action(continue_action(cfg.source, hook_type));
     }
 
     // Detach *after* project walk-up and enqueue — the file on disk is
@@ -196,7 +200,7 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
             // host CLI continues, even on critical hooks — blocking here would
             // live-lock the CLI against a daemon that keeps asking for retry.
             if report.is_retry_backpressure() {
-                return emit_action(continue_action());
+                return emit_action(continue_action(cfg.source, hook_type));
             }
 
             if planned_shutdown::suppress_after_failed_post(
@@ -204,7 +208,7 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
                 report.failure_kind,
                 &enqueued_path,
             ) {
-                return emit_action(continue_action());
+                return emit_action(continue_action(cfg.source, hook_type));
             }
 
             let failure_kind = report
@@ -264,6 +268,24 @@ fn payload_project_id(input_data: &Value) -> Option<String> {
         .and_then(Value::as_str)
         .filter(|project_id| !project_id.is_empty())
         .map(str::to_owned)
+}
+
+/// AGY sets hook cwd to the directory containing `hooks.json` (often
+/// `~/.gemini/config`). The workspace is in camelCase `workspacePaths`.
+fn project_root_from_workspace_paths(input_data: &Value) -> Option<PathBuf> {
+    let paths = input_data
+        .get("workspacePaths")
+        .or_else(|| input_data.get("workspace_paths"))
+        .and_then(Value::as_array)?;
+    for value in paths {
+        let Some(raw) = value.as_str().filter(|path| !path.is_empty()) else {
+            continue;
+        };
+        if let Some(root) = gobby_core::project::find_project_root(Path::new(raw)) {
+            return Some(root);
+        }
+    }
+    None
 }
 
 fn managed_context(project_root: Option<&Path>, input_data: &Value) -> ManagedContext {

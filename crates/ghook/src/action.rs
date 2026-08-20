@@ -12,12 +12,24 @@ pub(crate) struct HookAction {
     pub(crate) stderr_message: Option<String>,
 }
 
-pub(crate) fn continue_action() -> HookAction {
+pub(crate) fn continue_action(source: &str, hook_type: &str) -> HookAction {
     HookAction {
         exit_code: 0,
-        stdout_json: Some(serde_json::json!({"continue": true}).to_string()),
+        stdout_json: Some(skip_stdout_json(source, hook_type)),
         stderr_message: None,
     }
+}
+
+/// Host-legal skip / fail-open stdout. AGY protojson-rejects unknown fields such
+/// as `continue`; other CLIs still consume `{"continue":true}`.
+fn skip_stdout_json(source: &str, hook_type: &str) -> String {
+    if source == "agy" {
+        if hook_type.eq_ignore_ascii_case("PreToolUse") {
+            return serde_json::json!({"decision": "allow"}).to_string();
+        }
+        return "{}".to_string();
+    }
+    serde_json::json!({"continue": true}).to_string()
 }
 
 pub(crate) fn emit_empty_json() {
@@ -258,6 +270,30 @@ mod tests {
     use super::*;
     use crate::transport::DeliveryFailureKind;
     use serde_json::json;
+
+    #[test]
+    fn continue_action_is_cli_specific() {
+        assert_eq!(
+            continue_action("codex", "PreToolUse")
+                .stdout_json
+                .as_deref(),
+            Some(r#"{"continue":true}"#)
+        );
+        assert_eq!(
+            continue_action("agy", "PreToolUse").stdout_json.as_deref(),
+            Some(r#"{"decision":"allow"}"#)
+        );
+        assert_eq!(
+            continue_action("agy", "PreInvocation")
+                .stdout_json
+                .as_deref(),
+            Some("{}")
+        );
+        assert_eq!(
+            continue_action("agy", "Stop").stdout_json.as_deref(),
+            Some("{}")
+        );
+    }
 
     #[test]
     fn action_from_success_forwards_sessionstart_context_json() {
