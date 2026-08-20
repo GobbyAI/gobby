@@ -193,16 +193,3 @@ class LocalLLMProvider:
             max_tokens=max_tokens,
             reasoning_effort=reasoning_effort,
         )
-
-    async def describe_image(
-        self,
-        image_path: str,
-        context: str | None = None,
-        model: str | None = None,
-    ) -> str:
-        resolved = await self._resolve_wire_model(model)
-        return await self._adapter.describe_image(
-            image_path,
-            context=context,
-            model=resolved,
-        )

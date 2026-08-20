@@ -147,12 +147,3 @@ class ClaudeLLMProvider:
             reasoning_effort=reasoning_effort,
             caller=caller,
         )
-
-    async def describe_image(
-        self,
-        image_path: str,
-        context: str | None = None,
-        model: str | None = None,
-    ) -> str:
-        """Generate a text description of an image using Claude vision."""
-        return await self._sdk_client.describe_image(image_path, context, model)

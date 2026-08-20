@@ -13,12 +13,8 @@ from gobby.config.ai import GenerationEndpointConfig
 from gobby.llm.base import (
     LLMProviderError,
     LLMTextResult,
-    VisionInputError,
-    VisionProviderError,
-    VisionProviderUnavailableError,
-    validate_vision_description,
 )
-from gobby.llm.image_payloads import prepare_image_data, prepare_image_inputs
+from gobby.llm.image_payloads import prepare_image_inputs
 
 logger = logging.getLogger(__name__)
 
@@ -80,15 +76,6 @@ class LocalProviderAdapter(Protocol):
         reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         """Generate and parse JSON."""
-
-    async def describe_image(
-        self,
-        image_path: str,
-        *,
-        context: str | None,
-        model: str,
-    ) -> str:
-        """Describe an image with the local endpoint."""
 
 
 def create_local_provider_adapter(
@@ -340,44 +327,6 @@ class OpenAICompatibleLocalProviderAdapter:
 
         return _parse_json_response(response.choices[0].message.content)
 
-    async def describe_image(
-        self,
-        image_path: str,
-        *,
-        context: str | None,
-        model: str,
-    ) -> str:
-        if not self._client:
-            raise VisionProviderUnavailableError("Local LLM client not initialised")
-
-        try:
-            _, mime_type, encoded, _ = await prepare_image_data(image_path, logger)
-            prompt = _image_prompt(context)
-            response = await self._client.chat.completions.create(
-                model=model,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:{mime_type};base64,{encoded}",
-                                },
-                            },
-                            {"type": "text", "text": prompt},
-                        ],
-                    }
-                ],
-                max_tokens=1024,
-            )
-            return validate_vision_description(response.choices[0].message.content or "")
-        except (VisionInputError, VisionProviderError):
-            raise
-        except Exception as exc:
-            logger.error("Failed to describe image with local LLM: %s", exc)
-            raise VisionProviderError(f"Local image description failed: {exc}") from exc
-
 
 class LMStudioLocalProviderAdapter:
     """Local provider backed by LM Studio's native REST API."""
@@ -401,10 +350,19 @@ class LMStudioLocalProviderAdapter:
         reasoning_effort: str | None = None,
         images: list[str] | None = None,
     ) -> LLMTextResult:
-        del images
+        del reasoning_effort
+        payload_input: str | list[dict[str, Any]]
+        if images:
+            prepared = await prepare_image_inputs(images, logger)
+            payload_input = [
+                {"type": "image", "data_url": data_url} for _, _, _, data_url in prepared
+            ]
+            payload_input.append({"type": "message", "content": prompt})
+        else:
+            payload_input = prompt
         payload: dict[str, Any] = {
             "model": model,
-            "input": prompt,
+            "input": payload_input,
             "system_prompt": system_prompt or "You are a helpful assistant.",
             "stream": False,
             "store": False,
@@ -431,33 +389,6 @@ class LMStudioLocalProviderAdapter:
             reasoning_effort=reasoning_effort,
         )
         return _parse_json_response(result.text)
-
-    async def describe_image(
-        self,
-        image_path: str,
-        *,
-        context: str | None,
-        model: str,
-    ) -> str:
-        try:
-            _, _, _, data_url = await prepare_image_data(image_path, logger)
-            payload: dict[str, Any] = {
-                "model": model,
-                "input": [
-                    {"type": "image", "data_url": data_url},
-                    {"type": "message", "content": _image_prompt(context)},
-                ],
-                "stream": False,
-                "store": False,
-                "max_output_tokens": 1024,
-            }
-            result = _lmstudio_text(await self._post_chat(payload, timeout=300.0))
-            return validate_vision_description(result)
-        except (VisionInputError, VisionProviderError):
-            raise
-        except Exception as exc:
-            logger.error("Failed to describe image with LM Studio: %s", exc)
-            raise VisionProviderError(f"LM Studio image description failed: {exc}") from exc
 
     async def _post_chat(self, payload: dict[str, Any], *, timeout: float) -> dict[str, Any]:
         async with httpx.AsyncClient() as client:
@@ -495,12 +426,17 @@ class OllamaLocalProviderAdapter:
         reasoning_effort: str | None = None,
         images: list[str] | None = None,
     ) -> LLMTextResult:
-        del images
+        del reasoning_effort
+        encoded_images: list[str] | None = None
+        if images:
+            prepared = await prepare_image_inputs(images, logger)
+            encoded_images = [encoded for _, _, encoded, _ in prepared]
         payload = _ollama_chat_payload(
             prompt,
             system_prompt=system_prompt,
             model=model,
             max_tokens=max_tokens,
+            images=encoded_images,
         )
         data = await self._post_chat(payload, timeout=300.0)
         return LLMTextResult(text=_ollama_text(data), usage=_ollama_usage(data))
@@ -525,36 +461,6 @@ class OllamaLocalProviderAdapter:
         data = await self._post_chat(payload, timeout=300.0)
         return _parse_json_response(_ollama_text(data))
 
-    async def describe_image(
-        self,
-        image_path: str,
-        *,
-        context: str | None,
-        model: str,
-    ) -> str:
-        try:
-            _, _, encoded, _ = await prepare_image_data(image_path, logger)
-            payload = {
-                "model": model,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": _image_prompt(context),
-                        "images": [encoded],
-                    }
-                ],
-                "stream": False,
-                "keep_alive": -1,
-                "options": {"num_predict": 1024},
-            }
-            result = _ollama_text(await self._post_chat(payload, timeout=300.0))
-            return validate_vision_description(result)
-        except (VisionInputError, VisionProviderError):
-            raise
-        except Exception as exc:
-            logger.error("Failed to describe image with Ollama: %s", exc)
-            raise VisionProviderError(f"Ollama image description failed: {exc}") from exc
-
     async def _post_chat(self, payload: dict[str, Any], *, timeout: float) -> dict[str, Any]:
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -567,16 +473,6 @@ class OllamaLocalProviderAdapter:
         if not isinstance(data, dict):
             raise ValueError("Ollama returned a non-object response")
         return data
-
-
-def _image_prompt(context: str | None) -> str:
-    prompt = (
-        "Please describe this image in detail, focusing on key visual elements, "
-        "any text visible, and the overall context or meaning."
-    )
-    if context:
-        return f"{context}\n\n{prompt}"
-    return prompt
 
 
 def _lmstudio_text(payload: dict[str, Any]) -> str:
@@ -602,13 +498,17 @@ def _ollama_chat_payload(
     system_prompt: str | None,
     model: str,
     max_tokens: int | None,
+    images: list[str] | None = None,
 ) -> dict[str, Any]:
-    messages: list[dict[str, str]] = []
+    messages: list[dict[str, Any]] = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     else:
         messages.append({"role": "system", "content": "You are a helpful assistant."})
-    messages.append({"role": "user", "content": prompt})
+    user: dict[str, Any] = {"role": "user", "content": prompt}
+    if images:
+        user["images"] = list(images)
+    messages.append(user)
 
     payload: dict[str, Any] = {
         "model": model,

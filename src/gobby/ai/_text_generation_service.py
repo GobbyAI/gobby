@@ -56,7 +56,9 @@ logger = logging.getLogger("gobby.ai.text_generation")
 # get the larger cli_candidate_timeout. Fast HTTP API lanes (local / OpenAI-
 # compatible) keep the tight candidate_timeout.
 _FEATURE_CLI_PROVIDERS: frozenset[str] = frozenset({"agy", "droid", "grok", "qwen"})
-_IMAGE_ELIGIBLE_PROTOCOLS: frozenset[str] = frozenset({"openai-compatible", "vllm"})
+_IMAGE_ELIGIBLE_PROTOCOLS: frozenset[str] = frozenset(
+    {"openai-compatible", "vllm", "lmstudio", "ollama"}
+)
 _SPAWN_COLD_ADAPTER_STYLES: frozenset[AIAdapterStyle] = frozenset(
     {
         AIAdapterStyle.CLI,

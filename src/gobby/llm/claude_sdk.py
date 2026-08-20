@@ -16,9 +16,6 @@ from claude_agent_sdk import (
 from gobby.llm.base import (
     LLMProviderError,
     LLMTextResult,
-    VisionProviderError,
-    VisionProviderUnavailableError,
-    validate_vision_description,
 )
 from gobby.llm.claude_models import AgenticGenerationResult
 from gobby.llm.claude_payloads import (
@@ -31,7 +28,7 @@ from gobby.llm.claude_runtime import (
     is_max_turns_error,
     raise_for_error_result,
 )
-from gobby.llm.image_payloads import prepare_image_data, prepare_image_inputs
+from gobby.llm.image_payloads import prepare_image_inputs
 from gobby.llm.textgen_cwd import fixed_textgen_cwd
 
 _FEATURE_TEXTGEN_MAX_TURNS = 8
@@ -370,83 +367,3 @@ class ClaudeSDKClient:
         if not isinstance(result, dict):
             raise ValueError("Claude SDK returned no object structured output")
         return result
-
-    async def describe_image(
-        self,
-        image_path: str,
-        context: str | None = None,
-        model: str | None = None,
-    ) -> str:
-        """Describe an image using Claude Agent SDK."""
-        cli_path = await self._verify_cli_path()
-        if not cli_path:
-            raise VisionProviderUnavailableError("Claude CLI not found")
-
-        _, mime_type, image_base64, _ = await prepare_image_data(image_path, self.logger)
-
-        text_prompt = (
-            "Please describe this image in detail, focusing on the key visual "
-            "elements and any text visible."
-        )
-        if context:
-            text_prompt = f"{context}\n\n{text_prompt}"
-
-        with fixed_textgen_cwd() as neutral_cwd:
-            options = ClaudeAgentOptions(
-                system_prompt="You are a vision assistant that describes images in detail.",
-                max_turns=1,
-                model=model or self._default_model,
-                tools=[],
-                allowed_tools=[],
-                mcp_servers={},
-                permission_mode="default",
-                cli_path=cli_path,
-                cwd=str(neutral_cwd),
-                env=dict(_TEXTGEN_ENV),
-            )
-
-            async def _message_generator() -> AsyncIterator[dict[str, Any]]:
-                yield {
-                    "type": "user",
-                    "message": {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": text_prompt},
-                            _sdk_image_block(mime_type, image_base64),
-                        ],
-                    },
-                }
-
-            async def _run_query() -> str:
-                result_text = ""
-                message_count = 0
-                rate_limit_info: Any | None = None
-                async for message in query(prompt=_message_generator(), options=options):
-                    message_count += 1
-                    event_rate_limit = getattr(message, "rate_limit_info", None)
-                    if event_rate_limit is not None:
-                        rate_limit_info = event_rate_limit
-                    if isinstance(message, AssistantMessage):
-                        for block in message.content:
-                            if isinstance(block, TextBlock):
-                                result_text += block.text
-                    elif isinstance(message, ResultMessage):
-                        raise_for_error_result(
-                            message, "describe_image", rate_limit_info=rate_limit_info
-                        )
-                        if message.result:
-                            result_text = message.result
-                if not result_text:
-                    self.logger.warning(
-                        "describe_image: SDK returned no text content (messages=%d)",
-                        message_count,
-                    )
-                return result_text
-
-            try:
-                result = str(
-                    await execute_sdk_query("describe_image", _run_query, options, self.logger)
-                )
-            except RuntimeError as exc:
-                raise VisionProviderError(f"Claude image description failed: {exc}") from exc
-            return validate_vision_description(result)

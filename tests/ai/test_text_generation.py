@@ -915,7 +915,6 @@ async def test_image_routing_skips_generic_codex() -> None:
     droid = RecordingAdapter("droid")
     qwen = RecordingAdapter("qwen")
     responses = RecordingAdapter("endpoint:openrouter")
-    lmstudio = RecordingAdapter("endpoint:lm-studio")
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(
@@ -962,12 +961,6 @@ async def test_image_routing_skips_generic_codex() -> None:
                 adapter_style=AIAdapterStyle.DAEMON,
             ),
             _endpoint_binding(
-                "endpoint:lm-studio",
-                "llava",
-                protocol="lmstudio",
-                input_modalities=("text", "image"),
-            ),
-            _endpoint_binding(
                 "endpoint:vision",
                 "qwen-vl",
                 protocol="vllm",
@@ -984,7 +977,6 @@ async def test_image_routing_skips_generic_codex() -> None:
             "droid": droid,
             "qwen": qwen,
             "endpoint:openrouter": responses,
-            "endpoint:lm-studio": lmstudio,
             "endpoint:vision": vision,
         },
     )
@@ -998,7 +990,6 @@ async def test_image_routing_skips_generic_codex() -> None:
                 "agy/auto",
                 "droid/default",
                 "qwen/qwen3-coder",
-                "endpoint:lm-studio/llava",
                 "endpoint:vision/qwen-vl",
                 "endpoint:openrouter/kimi",
             ),
@@ -1014,7 +1005,6 @@ async def test_image_routing_skips_generic_codex() -> None:
     assert droid.requests == []
     assert qwen.requests == []
     assert responses.requests == []
-    assert lmstudio.requests == []
     assert vision.requests[0].images == [_gif_data_url()]
 
 
@@ -1241,6 +1231,69 @@ async def test_image_allowlist_cloud_transports() -> None:
     assert generic_codex.requests == []
     assert responses.requests == []
     assert claude.requests[0].images == [_gif_data_url()]
+
+
+@pytest.mark.asyncio
+async def test_image_allowlist_admits_native_transports() -> None:
+    grok = RecordingAdapter("grok")
+    lmstudio = RecordingAdapter("endpoint:lm-studio")
+    ollama = RecordingAdapter("endpoint:ollama")
+    grok_binding = CapabilityBinding(
+        capability=AICapability.TEXT_GENERATE,
+        provider="grok",
+        adapter_style=AIAdapterStyle.CLI,
+        available=True,
+        models=("grok-4",),
+    )
+    lmstudio_binding = _endpoint_binding(
+        "endpoint:lm-studio",
+        "llava",
+        protocol="lmstudio",
+        input_modalities=("text", "image"),
+    )
+    ollama_binding = _endpoint_binding(
+        "endpoint:ollama",
+        "llava",
+        protocol="ollama",
+        input_modalities=("text", "image"),
+    )
+    assert image_transport_eligible(lmstudio_binding)
+    assert image_transport_eligible(ollama_binding)
+    assert not image_transport_eligible(grok_binding)
+
+    service = TextGenerationService(
+        AICapabilityRegistry([grok_binding, lmstudio_binding, ollama_binding]),
+        {
+            "grok": grok,
+            "endpoint:lm-studio": lmstudio,
+            "endpoint:ollama": ollama,
+        },
+    )
+    images = [_gif_data_url()]
+    lm_result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="caption",
+            candidates=("grok/grok-4", "endpoint:lm-studio/llava", "endpoint:ollama/llava"),
+            images=images,
+        )
+    )
+    assert lm_result.provider == "endpoint:lm-studio"
+    assert lm_result.model == "llava"
+    assert grok.requests == []
+    assert ollama.requests == []
+    assert lmstudio.requests[0].images == images
+
+    ollama_result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="caption",
+            candidates=("grok/grok-4", "endpoint:ollama/llava"),
+            images=images,
+        )
+    )
+    assert ollama_result.provider == "endpoint:ollama"
+    assert ollama_result.model == "llava"
+    assert grok.requests == []
+    assert ollama.requests[0].images == images
 
 
 @pytest.mark.asyncio
