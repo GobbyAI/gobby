@@ -165,6 +165,12 @@ async def _local_generation_model_groups(
     )
 
 
+def _local_catalog_model(model: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(model)
+    payload["input_modalities"] = model.get("input_modalities")
+    return payload
+
+
 def _local_generation_provider_entries(
     groups: list[LocalEndpointModelGroup],
     *,
@@ -198,7 +204,7 @@ def _local_generation_provider_entries(
         entry: dict[str, Any] = {
             "provider": group.provider,
             "available": available,
-            "models": group.models,
+            "models": [_local_catalog_model(model) for model in group.models],
             "source": group.source,
             "startup_error": group.error,
             "display_name": display_name,

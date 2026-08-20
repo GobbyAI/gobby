@@ -167,6 +167,11 @@ async def _discover_lmstudio_models(
                 label=_first_string(model, "display_name", "name", "id", "key") or model_id,
                 context_length=_context_length(model),
                 capabilities=_capabilities(model),
+                input_modalities=_entry_input_modalities(
+                    endpoint,
+                    model_id,
+                    _lmstudio_advertised_modalities(model),
+                ),
             )
         )
     return entries
@@ -186,6 +191,11 @@ async def _discover_ollama_models(
                     label=_ollama_label(model, model_id),
                     context_length=_context_length(model),
                     capabilities=_ollama_capabilities(model),
+                    input_modalities=_entry_input_modalities(
+                        endpoint,
+                        model_id,
+                        _ollama_advertised_modalities(model),
+                    ),
                 )
                 for model, model_id in native_models
             ]
@@ -250,9 +260,18 @@ async def _validated_ollama_fallback_models(
         client, endpoint, [model_id for _, model_id in model_items]
     )
     eligible: list[dict[str, Any]] = []
-    for (model, _), (_, details) in zip(model_items, detail_results, strict=True):
-        if _supports_ollama_completion(details):
+    for (model, model_id), (_, details) in zip(model_items, detail_results, strict=True):
+        if not _supports_ollama_completion(details):
+            continue
+        modalities = _entry_input_modalities(
+            endpoint,
+            model_id,
+            _ollama_advertised_modalities(details),
+        )
+        if modalities is None:
             eligible.append(model)
+        else:
+            eligible.append({**model, "input_modalities": modalities})
     return eligible
 
 
@@ -315,11 +334,6 @@ async def _discover_vllm_models(
         model_id = _first_string(model, "id", "model", "name")
         if model_id is None:
             continue
-        modalities = (
-            list(endpoint.input_modalities)
-            if endpoint.probed_model == model_id and endpoint.input_modalities is not None
-            else None
-        )
         entries.append(
             _local_model_entry(
                 endpoint_name,
@@ -327,7 +341,7 @@ async def _discover_vllm_models(
                 label=_first_string(model, "label", "name", "id") or model_id,
                 context_length=_context_length(model),
                 capabilities=_capabilities(model),
-                input_modalities=modalities,
+                input_modalities=_entry_input_modalities(endpoint, model_id, None),
             )
         )
     return entries
@@ -400,9 +414,52 @@ def _is_lmstudio_llm(model: dict[str, Any]) -> bool:
     if kind is None:
         return False
     normalized = kind.lower()
-    if any(token in normalized for token in ("embedding", "rerank", "tts", "vision")):
+    if any(token in normalized for token in ("embedding", "rerank", "tts")):
         return False
-    return "llm" in normalized or "language" in normalized or normalized in {"gguf", "mlx"}
+    return (
+        "llm" in normalized
+        or "language" in normalized
+        or "vlm" in normalized
+        or normalized in {"gguf", "mlx"}
+    )
+
+
+def _lmstudio_advertised_modalities(model: dict[str, Any]) -> list[str] | None:
+    kind = _first_string(model, "type", "model_type", "compatibility_type")
+    if kind is None:
+        return None
+    normalized = kind.lower()
+    if "vlm" in normalized:
+        return ["text", "image"]
+    if "llm" in normalized or "language" in normalized:
+        return ["text"]
+    return None
+
+
+def _ollama_advertised_modalities(model: dict[str, Any]) -> list[str] | None:
+    capabilities = model.get("capabilities")
+    if not isinstance(capabilities, list):
+        return None
+    tokens = {
+        capability.lower()
+        for capability in capabilities
+        if isinstance(capability, str) and capability.strip()
+    }
+    if "vision" in tokens:
+        return ["text", "image"]
+    if "completion" in tokens:
+        return ["text"]
+    return None
+
+
+def _entry_input_modalities(
+    endpoint: GenerationEndpointConfig,
+    model_id: str,
+    advertised: list[str] | None,
+) -> list[str] | None:
+    if endpoint.probed_model == model_id and endpoint.input_modalities is not None:
+        return list(endpoint.input_modalities)
+    return advertised
 
 
 def _ollama_label(model: dict[str, Any], model_id: str) -> str:

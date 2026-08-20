@@ -7,8 +7,14 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
+from gobby.ai._text_generation_service import image_candidate_eligible
+from gobby.ai.registry import AIAdapterStyle, AICapability, CapabilityBinding
 from gobby.config.ai import GenerationEndpointConfig
-from gobby.servers.local_provider_models import discover_local_endpoint_model_group
+from gobby.servers.local_provider_models import (
+    LocalEndpointModelGroup,
+    discover_local_endpoint_model_group,
+)
+from gobby.servers.routes.providers import _local_generation_provider_entries
 
 pytestmark = pytest.mark.unit
 
@@ -156,6 +162,7 @@ async def test_discovers_lmstudio_llm_models(monkeypatch: pytest.MonkeyPatch) ->
             "label": "Default (google/gemma-4-26b-a4b-qat)",
             "canonical_id": "google/gemma-4-26b-a4b-qat",
             "is_default": True,
+            "input_modalities": ["text"],
         },
         {
             "value": "endpoint:lm-studio/google/gemma-4-26b-a4b-qat",
@@ -163,6 +170,7 @@ async def test_discovers_lmstudio_llm_models(monkeypatch: pytest.MonkeyPatch) ->
             "canonical_id": "google/gemma-4-26b-a4b-qat",
             "context_length": 131072,
             "context_length_source": "provider_reported",
+            "input_modalities": ["text"],
         },
     ]
 
@@ -346,6 +354,7 @@ async def test_ollama_falls_back_to_openai_compatible_models(
             "value": "endpoint:ollama/ollama-cloud/qwen3-coder",
             "label": "ollama-cloud/qwen3-coder",
             "canonical_id": "ollama-cloud/qwen3-coder",
+            "input_modalities": ["text"],
         }
     ]
 
@@ -637,3 +646,245 @@ async def test_vllm_modalities_probed_model_only(monkeypatch: pytest.MonkeyPatch
     stale_default = _default_entry(stale_probe.models)
     assert stale_default is not None
     assert stale_default.get("input_modalities") is None
+
+
+_LMSTUDIO_MODELS_URL = "http://localhost:1234/api/v1/models"
+_LMSTUDIO_VLM_ID = "qwen2.5-vl-7b"
+_LMSTUDIO_LLM_ID = "qwen2.5-7b"
+_LMSTUDIO_MLX_ID = "mlx-format"
+_OLLAMA_VISION_ID = "llava:latest"
+_OLLAMA_TEXT_ID = "llama3.2:latest"
+
+
+def _lmstudio_catalog_client() -> _FakeAsyncClient:
+    return _FakeAsyncClient(
+        {
+            _LMSTUDIO_MODELS_URL: _FakeResponse(
+                _LMSTUDIO_MODELS_URL,
+                {
+                    "data": [
+                        {
+                            "id": _LMSTUDIO_LLM_ID,
+                            "display_name": "Qwen text",
+                            "type": "llm",
+                        },
+                        {
+                            "id": _LMSTUDIO_VLM_ID,
+                            "display_name": "Qwen VL",
+                            "type": "vlm",
+                        },
+                        {
+                            "id": "nomic-embed",
+                            "display_name": "Embed",
+                            "type": "embedding",
+                        },
+                        {"id": "unclassified", "display_name": "Unknown"},
+                        {
+                            "id": _LMSTUDIO_MLX_ID,
+                            "display_name": "MLX weights",
+                            "type": "mlx",
+                        },
+                    ]
+                },
+            )
+        }
+    )
+
+
+def _ollama_catalog_client() -> _FakeAsyncClient:
+    return _FakeAsyncClient(
+        {
+            "http://localhost:11434/api/tags": _FakeResponse(
+                "http://localhost:11434/api/tags",
+                {
+                    "models": [
+                        {"name": _OLLAMA_TEXT_ID, "model": _OLLAMA_TEXT_ID},
+                        {"name": _OLLAMA_VISION_ID, "model": _OLLAMA_VISION_ID},
+                        {"name": "nomic-embed-text:latest"},
+                    ]
+                },
+            ),
+            "http://localhost:11434/api/ps": _FakeResponse(
+                "http://localhost:11434/api/ps",
+                {"models": []},
+            ),
+        },
+        show_responses={
+            _OLLAMA_TEXT_ID: _FakeResponse(
+                "http://localhost:11434/api/show",
+                {"capabilities": ["completion"]},
+            ),
+            _OLLAMA_VISION_ID: _FakeResponse(
+                "http://localhost:11434/api/show",
+                {"capabilities": ["completion", "vision"]},
+            ),
+            "nomic-embed-text:latest": _FakeResponse(
+                "http://localhost:11434/api/show",
+                {"capabilities": ["embedding"]},
+            ),
+        },
+    )
+
+
+def _catalog_payload_models(group: LocalEndpointModelGroup) -> list[dict[str, Any]]:
+    entries = _local_generation_provider_entries(
+        [group],
+        codex_installed=True,
+        codex_available=True,
+        codex_unavailable_reason=None,
+    )
+    assert len(entries) == 1
+    models = entries[0]["models"]
+    assert isinstance(models, list)
+    return models
+
+
+def _routing_binding(
+    protocol: str,
+    endpoint_name: str,
+    entry: dict[str, Any],
+) -> CapabilityBinding:
+    return CapabilityBinding(
+        capability=AICapability.TEXT_GENERATE,
+        provider=f"endpoint:{endpoint_name}",
+        adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+        available=True,
+        models=(str(entry["canonical_id"]),),
+        metadata={
+            "endpoint": endpoint_name,
+            "protocol": protocol,
+            "wire_api": "chat-completions",
+            "input_modalities": entry.get("input_modalities"),
+        },
+    )
+
+
+def _assert_modalities_match_predicate(
+    protocol: str,
+    endpoint_name: str,
+    models: list[dict[str, Any]],
+) -> None:
+    for entry in models:
+        assert "input_modalities" in entry
+        modalities = entry.get("input_modalities")
+        expect_image = isinstance(modalities, list) and "image" in modalities
+        binding = _routing_binding(protocol, endpoint_name, entry)
+        model_id = str(entry["canonical_id"])
+        assert image_candidate_eligible(binding, model=model_id) is expect_image
+        if entry.get("is_default") is True:
+            assert image_candidate_eligible(binding) is expect_image
+
+
+@pytest.mark.asyncio
+async def test_lmstudio_vlm_classified(monkeypatch: pytest.MonkeyPatch) -> None:
+    vision_modalities = ["text", "image"]
+    text_modalities = ["text"]
+
+    advertised_client = _lmstudio_catalog_client()
+    _patch_discovery_client(monkeypatch, advertised_client)
+    advertised = await discover_local_endpoint_model_group(
+        "studio",
+        GenerationEndpointConfig(
+            protocol="lmstudio",
+            api_base="http://localhost:1234/v1",
+            model=_LMSTUDIO_VLM_ID,
+        ),
+    )
+
+    vlm_entry = _entry_by_canonical(advertised.models, _LMSTUDIO_VLM_ID)
+    llm_entry = _entry_by_canonical(advertised.models, _LMSTUDIO_LLM_ID)
+    mlx_entry = _entry_by_canonical(advertised.models, _LMSTUDIO_MLX_ID)
+    default_entry = _default_entry(advertised.models)
+    assert vlm_entry["input_modalities"] == vision_modalities
+    assert llm_entry["input_modalities"] == text_modalities
+    assert mlx_entry.get("input_modalities") is None
+    assert all("nomic-embed" not in str(model["value"]) for model in advertised.models)
+    assert all("unclassified" not in str(model["value"]) for model in advertised.models)
+    assert default_entry is not None
+    assert default_entry["value"] == "endpoint:studio"
+    assert default_entry["input_modalities"] == vision_modalities
+
+    degrade_client = _lmstudio_catalog_client()
+    _patch_discovery_client(monkeypatch, degrade_client)
+    degrade = await discover_local_endpoint_model_group(
+        "studio",
+        GenerationEndpointConfig(
+            protocol="lmstudio",
+            api_base="http://localhost:1234/v1",
+            model=_LMSTUDIO_VLM_ID,
+            probed_model=_LMSTUDIO_VLM_ID,
+            input_modalities=text_modalities,
+        ),
+    )
+    degrade_default = _default_entry(degrade.models)
+    assert _entry_by_canonical(degrade.models, _LMSTUDIO_VLM_ID)["input_modalities"] == (
+        text_modalities
+    )
+    assert _entry_by_canonical(degrade.models, _LMSTUDIO_LLM_ID)["input_modalities"] == (
+        text_modalities
+    )
+    assert degrade_default is not None
+    assert degrade_default["input_modalities"] == text_modalities
+
+
+@pytest.mark.asyncio
+async def test_modalities_match_routing_predicate(monkeypatch: pytest.MonkeyPatch) -> None:
+    vision_modalities = ["text", "image"]
+
+    _patch_discovery_client(monkeypatch, _lmstudio_catalog_client())
+    lmstudio = await discover_local_endpoint_model_group(
+        "studio",
+        GenerationEndpointConfig(
+            protocol="lmstudio",
+            api_base="http://localhost:1234/v1",
+            model=_LMSTUDIO_VLM_ID,
+        ),
+    )
+    lmstudio_models = _catalog_payload_models(lmstudio)
+    lmstudio_default = _default_entry(lmstudio_models)
+    assert lmstudio_default is not None
+    assert lmstudio_default["input_modalities"] == vision_modalities
+    assert _entry_by_canonical(lmstudio_models, _LMSTUDIO_VLM_ID)["input_modalities"] == (
+        vision_modalities
+    )
+    _assert_modalities_match_predicate("lmstudio", "studio", lmstudio_models)
+
+    _patch_discovery_client(monkeypatch, _ollama_catalog_client())
+    ollama = await discover_local_endpoint_model_group(
+        "ollama-local",
+        GenerationEndpointConfig(
+            protocol="ollama",
+            api_base="http://localhost:11434",
+            model=_OLLAMA_VISION_ID,
+        ),
+    )
+    ollama_models = _catalog_payload_models(ollama)
+    ollama_default = _default_entry(ollama_models)
+    assert ollama_default is not None
+    assert ollama_default["input_modalities"] == vision_modalities
+    assert _entry_by_canonical(ollama_models, _OLLAMA_VISION_ID)["input_modalities"] == (
+        vision_modalities
+    )
+    assert _entry_by_canonical(ollama_models, _OLLAMA_TEXT_ID)["input_modalities"] == ["text"]
+    _assert_modalities_match_predicate("ollama", "ollama-local", ollama_models)
+
+    _patch_discovery_client(monkeypatch, _vllm_client(_two_vllm_models_payload()))
+    vllm = await discover_local_endpoint_model_group(
+        "vllm-local",
+        GenerationEndpointConfig(
+            protocol="vllm",
+            api_base="http://localhost:8000/v1",
+            model=_VLLM_PROBED_ID,
+            probed_model=_VLLM_PROBED_ID,
+            input_modalities=vision_modalities,
+        ),
+    )
+    vllm_models = _catalog_payload_models(vllm)
+    vllm_default = _default_entry(vllm_models)
+    assert vllm_default is not None
+    assert vllm_default["input_modalities"] == vision_modalities
+    assert _entry_by_canonical(vllm_models, _VLLM_PROBED_ID)["input_modalities"] == (
+        vision_modalities
+    )
+    assert _entry_by_canonical(vllm_models, _VLLM_OTHER_ID).get("input_modalities") is None
+    _assert_modalities_match_predicate("vllm", "vllm-local", vllm_models)

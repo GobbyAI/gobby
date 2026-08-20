@@ -738,6 +738,7 @@ class TestProviderModelsRoute:
                 "label": "Default (qwen-coder-32b)",
                 "canonical_id": "qwen-coder-32b",
                 "is_default": True,
+                "input_modalities": None,
             }
         ]
 
