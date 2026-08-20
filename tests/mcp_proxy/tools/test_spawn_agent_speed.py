@@ -15,7 +15,6 @@ from gobby.providers.capabilities.models import ActivationDescriptor, SpeedMode
 from gobby.providers.capabilities.resolve import SpeedResolution, SpeedStatus
 from gobby.workflows.definitions import AgentDefinitionBody
 from tests.agents.prepared_spawn import prepared_spawn
-from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -65,7 +64,14 @@ async def _spawn_fast() -> tuple[dict[str, Any], SpawnRequest]:
             return_value=_fast_resolution(),
             create=True,
         ),
-        patch("gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn") as mock_execute,
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
+            new_callable=AsyncMock,
+        ) as mock_execute,
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._implementation.prepare_terminal_spawn",
+            return_value=prepared_spawn(),
+        ),
         patch(
             "gobby.mcp_proxy.tools.spawn_agent._implementation.get_machine_id",
             return_value="21000000-0000-4000-8000-000000000001",
@@ -135,9 +141,8 @@ async def test_execute_spawn_attaches_speed_result() -> None:
         parent_session_id="parent-session-xyz",
         project_id="proj-abc",
         speed_resolution=_fast_resolution(),
-    
-    prepared_spawn=prepared_spawn(),
-)
+        prepared_spawn=prepared_spawn(),
+    )
     provider_result = SpawnResult(
         success=True,
         run_id="run-abc",

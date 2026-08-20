@@ -30,14 +30,12 @@ from gobby.agents.srt_runtime import (
     SrtRuntimeError,
     prepare_sandbox_launch,
 )
-from gobby.agents.tmux.spawner import TmuxSpawner
 from gobby.agents.trust import pre_approve_directory
 from gobby.ai.codex_endpoint import (
     codex_endpoint_config_overrides,
     codex_endpoint_env,
 )
 from gobby.ai.endpoints import resolve_generation_endpoint_selector
-from gobby.config.tmux import TmuxConfig
 from gobby.storage import daemon_resume_keys
 from gobby.storage.agents import AgentRun
 
@@ -57,8 +55,8 @@ _INHERITED_PROTOCOL_KEYS = (
     daemon_resume_keys.REAPED_AT_KEY,
     daemon_resume_keys.RECONCILIATION_PENDING_KEY,
     daemon_resume_keys.FINALIZED_AT_KEY,
-    daemon_resume_keys.TMUX_SESSION_NAME_KEY,
-    daemon_resume_keys.PLANNED_TMUX_TITLE_KEY,
+    daemon_resume_keys.TERMINAL_ID_KEY,
+    daemon_resume_keys.SPAWN_KEY_KEY,
     daemon_resume_keys.RESUMED_FROM_RUN_ID_KEY,
 )
 DAEMON_STOP_CONTINUATION_PROMPT = (
@@ -175,14 +173,12 @@ async def resume_agent_run(
     child_session_id = original_run.child_session_id
     if not child_session_id:
         return ResumeAgentResult(False, error="daemon_stop_child_session_missing")
-    planned_tmux_title = f"gobby-resume-{run_id}"
     metadata = dict(resume_metadata)
     for stale_key in _INHERITED_PROTOCOL_KEYS:
         metadata.pop(stale_key, None)
     metadata[daemon_resume_keys.RESUMED_FROM_RUN_ID_KEY] = original_run.id
     metadata["provider_native_session_id"] = native_session_id
     metadata[daemon_resume_keys.RESUME_PHASE_KEY] = "prepared"
-    metadata[daemon_resume_keys.PLANNED_TMUX_TITLE_KEY] = planned_tmux_title
 
     initial_variables = dict(resume_metadata.get("initial_variables") or {})
     initial_variables["daemon_stop_resume"] = True
@@ -343,7 +339,6 @@ async def resume_agent_run(
                 command.append("--strict-mcp-config")
         command.extend(sandbox_args)
         command.append(prompt)
-    command = launch.wrap(command)
     # Merge only the launch-snapshot keys refreshed above. The full local
     # metadata dict carries protocol keys from a stale read (phase, native
     # session id); re-merging it could reset a concurrently advanced phase.
@@ -378,16 +373,37 @@ async def resume_agent_run(
         return ResumeAgentResult(False, run_id=run_id, error="resume_launch_phase_cas_failed")
 
     pre_approve_directory(provider, cwd)
-    spawner = _tmux_spawner(daemon_config, resume_metadata)
+    from gobby.agents.spawn_executor import _runtime_spawn
+    from gobby.agents.spawn_executor_providers import ProviderSpawnPlan
+    from gobby.agents.spawn_models import SpawnRequest
+
+    plan = ProviderSpawnPlan(
+        command=command,
+        env=env,
+        launch=launch,
+        auth_cli=provider,
+        child_session_id=spawn_context.session_id,
+        agent_run_id=run_id,
+        title=f"gobby-resume-{run_id}",
+        codex_prompt=prompt if provider == "codex" else None,
+    )
+    spawn_request = SpawnRequest(
+        prompt=prompt,
+        cwd=cwd,
+        provider=provider,
+        session_id=spawn_context.session_id,
+        run_id=run_id,
+        parent_session_id=parent_session_id,
+        project_id=project_id,
+        session_manager=runner.child_session_manager,
+        run_manager=runner.run_storage,
+        daemon_config=daemon_config,
+        prepared_spawn=spawn_context,
+        terminal_manager=getattr(runner, "terminal_manager", None),
+        terminal_runtime_registry=getattr(runner, "terminal_runtime_registry", None),
+    )
     try:
-        terminal_result = await asyncio.to_thread(
-            spawner.spawn,
-            command=command,
-            cwd=cwd,
-            env=env,
-            title=planned_tmux_title,
-            auth_cli=provider,
-        )
+        terminal_result = await _runtime_spawn(spawn_request, plan)
     except Exception as exc:
         error = f"resume_spawn_failed:{type(exc).__name__}:{exc}"
         await _park_unlaunched_successor(
@@ -409,20 +425,22 @@ async def resume_agent_run(
         )
         return ResumeAgentResult(False, run_id=run_id, error=error)
 
-    tmux_session_name = getattr(terminal_result, "tmux_session_name", None)
-    if provider == "codex" and tmux_session_name:
+    if provider == "codex" and terminal_result.tmux_session_name:
+        runtime = None
+        registry = getattr(runner, "terminal_runtime_registry", None)
+        if registry is not None:
+            runtime = registry.resolve("tmux")
         schedule_codex_prompt_delivery(
-            spawner.session_manager,
-            tmux_session_name,
+            getattr(runtime, "_sessions", runtime),
+            terminal_result.tmux_session_name,
             prompt,
             run_id,
         )
     runner.run_storage.merge_resume_metadata(
         run_id,
         {
-            "tmux_socket_name": getattr(terminal_result, "tmux_socket_name", None),
-            "tmux_socket_path": getattr(terminal_result, "tmux_socket_path", None),
-            daemon_resume_keys.TMUX_SESSION_NAME_KEY: tmux_session_name,
+            daemon_resume_keys.TERMINAL_ID_KEY: terminal_result.terminal_id,
+            daemon_resume_keys.SPAWN_KEY_KEY: terminal_result.tmux_session_name,
         },
     )
     try:
@@ -430,7 +448,7 @@ async def resume_agent_run(
             runner,
             run_id,
             pid=terminal_result.pid,
-            tmux_session_name=tmux_session_name,
+            terminal_id=terminal_result.terminal_id,
             worktree_id=_metadata_str(resume_metadata, "worktree_id"),
             clone_id=_metadata_str(resume_metadata, "clone_id"),
         )
@@ -535,14 +553,14 @@ def _persist_resume_runtime(
     run_id: str,
     *,
     pid: int | None,
-    tmux_session_name: str | None,
+    terminal_id: str | None,
     worktree_id: str | None,
     clone_id: str | None,
 ) -> AgentRun | None:
     runner.run_storage.update_runtime(
         run_id,
         pid=pid,
-        tmux_session_name=tmux_session_name,
+        terminal_id=terminal_id,
         worktree_id=worktree_id,
         clone_id=clone_id,
     )
@@ -663,19 +681,6 @@ def _fire_resume_started(
         )
     except Exception as exc:
         logger.warning("Failed to fire resumed agent_started event for %s: %s", run_id, exc)
-
-
-def _tmux_spawner(daemon_config: Any | None, metadata: dict[str, Any]) -> TmuxSpawner:
-    stored_config = metadata.get("tmux_config")
-    if isinstance(stored_config, dict):
-        try:
-            return TmuxSpawner(config=TmuxConfig.model_validate(stored_config))
-        except Exception as exc:
-            logger.warning("Failed to load persisted tmux resume config: %s", exc)
-    tmux_config = getattr(daemon_config, "tmux", None)
-    if not isinstance(tmux_config, TmuxConfig):
-        raise RuntimeError("daemon tmux config is required to resume tmux agents")
-    return TmuxSpawner(config=tmux_config)
 
 
 def _metadata_str(metadata: dict[str, Any], key: str) -> str | None:

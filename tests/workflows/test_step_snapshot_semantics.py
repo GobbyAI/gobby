@@ -1306,7 +1306,7 @@ async def _run_post_launch_failure_case(
             )
             stack.enter_context(
                 patch(
-                    "gobby.mcp_proxy.tools.spawn_agent._implementation._check_tmux_session_alive",
+                    "gobby.mcp_proxy.tools.spawn_agent._execution._check_tmux_session_alive",
                     new_callable=AsyncMock,
                     return_value=pane_return,
                 )

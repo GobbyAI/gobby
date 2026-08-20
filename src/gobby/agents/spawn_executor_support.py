@@ -5,7 +5,7 @@ import inspect
 import json
 import logging
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import psycopg
 
@@ -33,7 +33,6 @@ from gobby.agents.srt_runtime import SandboxLaunch
 from gobby.config.tmux import TmuxConfig
 
 if TYPE_CHECKING:
-    from gobby.agents.tmux.session_manager import TmuxSessionManager
     from gobby.agents.tmux.spawner import TmuxSpawner
 
 logger = logging.getLogger(__name__)
@@ -272,7 +271,7 @@ _CODEX_PROMPT_DELIVERY_TASKS: set[asyncio.Task[None]] = set()
 
 
 def schedule_codex_prompt_delivery(
-    tmux: "TmuxSessionManager",
+    tmux: Any,
     session_name: str,
     prompt: str,
     run_id: str,
@@ -292,11 +291,13 @@ def schedule_codex_prompt_delivery(
 
 
 async def _deliver_codex_prompt(
-    tmux: "TmuxSessionManager",
+    tmux: Any,
     session_name: str,
     prompt: str,
     run_id: str,
 ) -> None:
+    if tmux is None:
+        return
     try:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + _CODEX_COMPOSER_READY_TIMEOUT_SECONDS

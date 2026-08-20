@@ -21,7 +21,7 @@ from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.spawn_executor import SpawnRequest, SpawnResult, execute_spawn
 from gobby.utils.daemon_client import DaemonClient
 from tests.agents.prepared_spawn import prepared_spawn
-from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
+from tests.agents.test_spawn_executor import _runtime_of, _spawn_kwargs
 
 pytestmark = pytest.mark.unit
 
@@ -137,8 +137,9 @@ class TestExecuteSpawnDroid:
         with (
             patch("gobby.agents.spawn_executor.shutil.which", return_value="/usr/bin/droid"),
             patch("gobby.agents.spawn_executor.prepare_terminal_spawn", mock_prepare),
-            patch("gobby.agents.spawn_executor.pre_approve_directory") as mock_pre_approve,
-            patch("gobby.agents.spawn_executor.TmuxSpawner", return_value=mock_spawner),
+            patch(
+                "gobby.agents.spawn_executor_providers.pre_approve_directory"
+            ) as mock_pre_approve,
         ):
             request.prepared_spawn = mock_prepare.return_value
             result = await execute_spawn(request)
@@ -153,7 +154,7 @@ class TestExecuteSpawnDroid:
         )
         mock_pre_approve.assert_called_once_with("droid", "/tmp/wt")
 
-        spawn_kwargs = mock_spawner.spawn.call_args.kwargs
+        spawn_kwargs = _spawn_kwargs(request)
         assert spawn_kwargs["cwd"] == "/tmp/wt"
         assert spawn_kwargs["command"] == [
             "droid",
@@ -180,8 +181,8 @@ class TestExecuteSpawnDroid:
         assert result.success is True
         assert result.run_id == "run-droid"
         assert result.child_session_id == "gobby-sess-123"
-        assert result.terminal_id == "agent-run-droid"
-        assert result.message == "Droid agent spawned in terminal with session gobby-sess-123"
+        assert result.terminal_id is not None
+        assert "gobby-sess-123" in (result.message or "")
 
     @pytest.mark.asyncio
     async def test_droid_terminal_spawn_failure(self) -> None:
@@ -199,10 +200,11 @@ class TestExecuteSpawnDroid:
         with (
             patch("gobby.agents.spawn_executor.shutil.which", return_value="/usr/bin/droid"),
             patch("gobby.agents.spawn_executor.prepare_terminal_spawn", mock_prepare),
-            patch("gobby.agents.spawn_executor.pre_approve_directory"),
-            patch("gobby.agents.spawn_executor.TmuxSpawner", return_value=mock_spawner),
+            patch("gobby.agents.spawn_executor_providers.pre_approve_directory"),
         ):
             request.prepared_spawn = mock_prepare.return_value
+            _runtime_of(request).typed_fail = True
+            _runtime_of(request).spawn_error = "tmux failed"
             result = await execute_spawn(request)
 
         assert result.success is False

@@ -6,6 +6,7 @@ import asyncio
 from typing import Literal
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
+from gobby.agents.tmux.spawner import tmux_spawn_shell_and_env, validate_spawn_key
 from gobby.agents.tmux.text_injection import (
     TMUX_TEXT_ENTER_DELAY_SECONDS,
     TmuxTextInjectionError,
@@ -14,7 +15,12 @@ from gobby.agents.tmux.text_injection import (
     send_enter_key_to_tmux_target,
     send_named_key_to_tmux_target,
 )
-from gobby.storage.terminals import AttachLocator, Terminal, parse_tmux_generation
+from gobby.storage.terminals import (
+    AttachLocator,
+    Terminal,
+    parse_tmux_generation,
+    tmux_locator_key,
+)
 from gobby.terminals.dimensions import validate_dimensions
 from gobby.terminals.runtime import (
     MAX_INPUT_PAYLOAD_BYTES,
@@ -26,6 +32,7 @@ from gobby.terminals.runtime import (
     PreparedSpawn,
     SnapshotResult,
     TerminalHandle,
+    TerminalSpawnFailed,
     TerminalSpawnRequest,
     TerminalWriteError,
     WriteOutcome,
@@ -118,12 +125,21 @@ class TmuxTerminalRuntime:
                 request.rows if request.rows is not None else 0,
                 request.cols if request.cols is not None else 0,
             )
-        info = await self._sessions.create_session(
-            request.spawn_key,
-            command=request.command,
-            cwd=request.cwd,
-            env=request.env,
+        spawn_key = validate_spawn_key(request.spawn_key)
+        shell_cmd, extra_env = tmux_spawn_shell_and_env(
+            request.command,
+            request.env,
+            request.auth_cli,
         )
+        try:
+            info = await self._sessions.create_session(
+                spawn_key,
+                command=shell_cmd,
+                cwd=request.cwd,
+                env=extra_env,
+            )
+        except Exception as exc:
+            raise TerminalSpawnFailed(str(exc)) from exc
         rc, stdout, _stderr = await self._run(
             "display-message",
             "-t",
@@ -132,23 +148,46 @@ class TmuxTerminalRuntime:
             "#{socket_path}|#{pid}|#{start_time}|#{pane_id}",
         )
         locator: AttachLocator | None = None
+        stored_locator: dict[str, object] | None = None
+        locator_key: str | None = None
         host_terminal_id: str | None = info.pane_id
         if rc == 0 and stdout.strip():
             parsed = parse_tmux_generation(stdout.strip())
             pane_id = str(parsed["pane_id"])
+            socket_path = str(parsed["socket_path"])
+            raw_pid = parsed["server_pid"]
+            raw_start = parsed["server_start_time"]
+            if not isinstance(raw_pid, int) or not isinstance(raw_start, int):
+                raise TerminalSpawnFailed("tmux generation fields were not integers")
+            server_pid = raw_pid
+            server_start_time = raw_start
             locator = AttachLocator(
                 backend="tmux",
                 frame_host_epoch=self._frame_host_epoch,
-                socket_path=str(parsed["socket_path"]),
+                socket_path=socket_path,
+                pane_id=pane_id,
+            )
+            stored_locator = {
+                "socket_path": socket_path,
+                "server_pid": server_pid,
+                "server_start_time": server_start_time,
+                "pane_id": pane_id,
+            }
+            locator_key = tmux_locator_key(
+                socket_path=socket_path,
+                server_pid=server_pid,
+                server_start_time=server_start_time,
                 pane_id=pane_id,
             )
             host_terminal_id = pane_id
         return PreparedSpawn(
             terminal_id=request.terminal_id,
-            spawn_key=request.spawn_key,
+            spawn_key=spawn_key,
             locator=locator,
             process=None,
             host_terminal_id=host_terminal_id,
+            stored_locator=stored_locator,
+            locator_key=locator_key,
         )
 
     async def commit_spawn(self, prepared: PreparedSpawn) -> TerminalHandle:

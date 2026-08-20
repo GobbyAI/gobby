@@ -56,6 +56,8 @@ class PreparedSpawn:
     host_terminal_id: str | None
     persist_acknowledged: bool = False
     observer_bound: bool = False
+    stored_locator: dict[str, object] | None = None
+    locator_key: str | None = None
 
     def acknowledge_persist(self) -> None:
         self.persist_acknowledged = True
@@ -87,6 +89,7 @@ class TerminalSpawnRequest:
     labels: dict[str, str] | None = None
     reservation_id: str | None = None
     reserve_key: str | None = None
+    auth_cli: str | None = None
 
 
 @dataclass(frozen=True)
@@ -124,6 +127,14 @@ class UnregisteredBackendError(KeyError):
 
 class CommitSpawnRefusedError(RuntimeError):
     """commit_spawn called before the caller acknowledged persist."""
+
+
+class TerminalSpawnFailed(RuntimeError):
+    """Backend spawn failed with a definitive, no-effect outcome."""
+
+
+class InvalidSpawnKeyError(ValueError):
+    """Caller-supplied spawn_key would need rewriting to be a backend name."""
 
 
 class InputPayloadTooLargeError(ValueError):

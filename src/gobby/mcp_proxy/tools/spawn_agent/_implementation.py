@@ -40,13 +40,12 @@ from gobby.utils.project_context import get_project_context
 from gobby.workflows.definitions import AgentDefinitionBody
 
 from ._code_index import code_index_preflight_mode
+from ._execution import finalize_executed_spawn
 from ._failure_cleanup import (
     cleanup_created_isolation,
     cleanup_failed_spawn,
     remember_spawn_pid,
-    start_run_or_cleanup,
 )
-from ._health import _check_tmux_session_alive, schedule_tmux_health_check
 from ._idempotency import non_actionable_task_spawn_response
 from ._provider_resolution import (
     concrete_provider,
@@ -54,18 +53,15 @@ from ._provider_resolution import (
     spawning_session_provider,
 )
 from ._runtime import (
-    _build_spawn_success_response,
     _normalize_optional_model,
     _normalize_string_list,
-    _persist_spawn_runtime,
-    _tmux_runtime_metadata,
 )
 from ._spawn_guards import (
     TaskSpawnLease,
     active_task_response_if_blocked,
     reserve_agent_slot,
 )
-from ._step_state import apply_claimed_step_update, persist_initial_step_instance_if_resolved
+from ._step_state import persist_initial_step_instance_if_resolved
 from ._worktree_reuse import prepare_reused_worktree
 
 if TYPE_CHECKING:
@@ -306,7 +302,6 @@ async def spawn_agent_impl(
     task_category: str | None = None
     task_additional_skills: list[str] | None = None
     claimed_session_id: str | None = None
-    task_owned_by_child = False
     resolved_task: Any | None = None
 
     if task_id and task_manager:
@@ -686,6 +681,8 @@ async def spawn_agent_impl(
             code_index_preflight_mode=code_index_mode,
             code_index_api_token=read_local_api_token(),
             prepared_spawn=prepared_spawn,
+            terminal_manager=getattr(runner, "terminal_manager", None),
+            terminal_runtime_registry=getattr(runner, "terminal_runtime_registry", None),
         )
         try:
             spawn_result = await execute_spawn(spawn_request)
@@ -716,232 +713,27 @@ async def spawn_agent_impl(
                 "reasoning": reasoning.to_dict(),
                 "speed": speed_payload,
             }
-        tmux_session_name, tmux_socket_name, tmux_socket_path = _tmux_runtime_metadata(spawn_result)
-        _persist_spawn_runtime(
-            runner,
-            run_id,
-            spawn_result,
-            tmux_session_name=tmux_session_name,
-            worktree_id=isolation_ctx.worktree_id,
-            clone_id=isolation_ctx.clone_id,
-        )
-        if spawn_result.success:
-            attach_error = task_spawn_lease.attach(run_id)
-            if attach_error is not None:
-                task_spawn_lease.release_unattached()
-                error = f"task spawn mutex attach failed: {attach_error}"
-                await cleanup_failed_spawn(
-                    runner,
-                    run_id,
-                    error,
-                    handler,
-                    spawn_config,
-                    completion_registry=completion_registry,
-                    cleanup_isolation=cleanup_isolation_on_failure,
-                    task_manager=task_manager,
-                    child_session_id=spawn_result.child_session_id,
-                    pid=spawn_result.pid,
-                    tmux_session_name=tmux_session_name,
-                    tmux_socket_name=tmux_socket_name,
-                    tmux_socket_path=tmux_socket_path,
-                )
-                return {
-                    "success": False,
-                    "error": error,
-                    "run_id": run_id,
-                    "speed": speed_payload,
-                }
-    tmux_session_name, tmux_socket_name, tmux_socket_path = _tmux_runtime_metadata(spawn_result)
-
-    tmux_spawn = bool(
-        spawn_result.success and spawn_result.terminal_type == "tmux" and tmux_session_name
-    )
-    if tmux_spawn and tmux_session_name:
-        alive, pane_output = await _check_tmux_session_alive(
-            tmux_session_name,
-            socket_name=tmux_socket_name,
-            socket_path=tmux_socket_path,
-        )
-        if not alive:
-            spawn_result.success = False
-            spawn_result.status = "failed"
-            spawn_result.error = f"tmux session '{tmux_session_name}' failed live-pane verification"
-            if pane_output:
-                spawn_result.error = f"{spawn_result.error}\nPane output:\n{pane_output}"
-            await cleanup_failed_spawn(
-                runner,
-                run_id,
-                spawn_result.error,
-                handler,
-                spawn_config,
-                completion_registry=completion_registry,
-                cleanup_isolation=cleanup_isolation_on_failure,
-                task_manager=task_manager,
-                child_session_id=spawn_result.child_session_id,
-                pid=spawn_result.pid,
-                tmux_session_name=tmux_session_name,
-                tmux_socket_name=tmux_socket_name,
-                tmux_socket_path=tmux_socket_path,
-            )
-            return {
-                "success": False,
-                "error": spawn_result.error,
-                "run_id": run_id,
-                "speed": speed_payload,
-            }
-
-    if spawn_result.success and spawn_result.child_session_id is not None:
-        start_error = await start_run_or_cleanup(
-            runner,
-            run_id,
-            handler,
-            spawn_config,
+        return await finalize_executed_spawn(
+            runner=runner,
+            run_id=run_id,
+            spawn_result=spawn_result,
+            spawn_request=spawn_request,
+            isolation_ctx=isolation_ctx,
+            effective_isolation=effective_isolation,
+            base_commit_sha=base_commit_sha,
+            handler=handler,
+            spawn_config=spawn_config,
             completion_registry=completion_registry,
-            cleanup_isolation=cleanup_isolation_on_failure,
+            cleanup_isolation_on_failure=cleanup_isolation_on_failure,
             task_manager=task_manager,
-            child_session_id=spawn_result.child_session_id,
+            task_spawn_lease=task_spawn_lease,
+            parent_session_id=parent_session_id,
+            effective_provider=effective_provider,
+            resolved_task_id=resolved_task_id,
+            task_seq_num=task_seq_num,
+            db=db,
+            agent_body=agent_body,
+            effective_initial_variables=effective_initial_variables,
+            reasoning=reasoning,
+            speed_payload=speed_payload,
         )
-        if start_error is not None:
-            return start_error
-
-        # Fire agent_started event for WebSocket broadcasting
-        try:
-            from gobby.runner_broadcasting import fire_agent_event
-
-            fire_agent_event(
-                "agent_started",
-                run_id,
-                {
-                    "session_id": spawn_result.child_session_id,
-                    "parent_session_id": parent_session_id,
-                    "provider": effective_provider,
-                    "pid": spawn_result.pid,
-                    "tmux_session_name": tmux_session_name,
-                    "tmux_socket_name": tmux_socket_name,
-                    "tmux_socket_path": tmux_socket_path,
-                },
-            )
-        except Exception as e:
-            logger.debug("Failed to fire agent_started event for %s: %s", run_id, e)
-
-        # 12a. Auto-claim task if task_id was provided.
-        if resolved_task_id and task_manager:
-            try:
-                task_obj = task_manager.get_task(resolved_task_id)
-                if not task_obj or not is_task_actionable(task_obj):
-                    logger.info(
-                        "Skipping auto-claim for task %s; task is not actionable",
-                        f"#{task_seq_num}" if task_seq_num else resolved_task_id,
-                    )
-                elif (
-                    current_owner := get_claimed_session_id(task_obj)
-                ) and current_owner != spawn_result.child_session_id:
-                    logger.info(
-                        "Skipping auto-claim for task %s; already assigned to %s",
-                        f"#{task_seq_num}" if task_seq_num else resolved_task_id,
-                        current_owner,
-                    )
-                else:
-                    claimed_task = task_manager.claim_task(
-                        resolved_task_id,
-                        session_id=spawn_result.child_session_id,
-                    )
-                    task_owned_by_child = (
-                        get_claimed_session_id(claimed_task) == spawn_result.child_session_id
-                    )
-                    logger.info(
-                        "Auto-claimed task %s for agent %s (session %s)",
-                        (f"#{task_seq_num}" if task_seq_num else resolved_task_id),
-                        run_id,
-                        spawn_result.child_session_id,
-                    )
-                    if (
-                        task_owned_by_child
-                        and db is not None
-                        and agent_body is not None
-                        and agent_body.step_workflow is not None
-                    ):
-                        apply_claimed_step_update(
-                            db,
-                            agent_body,
-                            session_id=spawn_result.child_session_id,
-                            initial_variables=effective_initial_variables,
-                        )
-            except Exception as e:
-                error = f"Failed to auto-claim task {resolved_task_id}: {e}"
-                logger.warning(error)
-                await cleanup_failed_spawn(
-                    runner,
-                    run_id,
-                    error,
-                    handler,
-                    spawn_config,
-                    completion_registry=completion_registry,
-                    cleanup_isolation=cleanup_isolation_on_failure,
-                    task_manager=task_manager,
-                    child_session_id=spawn_result.child_session_id,
-                    pid=spawn_result.pid,
-                    tmux_session_name=tmux_session_name,
-                    tmux_socket_name=tmux_socket_name,
-                    tmux_socket_path=tmux_socket_path,
-                )
-                return {
-                    "success": False,
-                    "error": error,
-                    "run_id": run_id,
-                    "speed": speed_payload,
-                }
-
-        # Post-spawn health check: verify tmux session is still alive.
-        if spawn_result.terminal_type == "tmux" and tmux_session_name:
-            schedule_tmux_health_check(
-                runner,
-                run_id,
-                tmux_session_name,
-                tmux_socket_name,
-                tmux_socket_path,
-                completion_registry,
-            )
-    else:
-        task_spawn_lease.release_unattached()
-        await cleanup_failed_spawn(
-            runner,
-            run_id,
-            spawn_result.error or "Spawn failed",
-            handler,
-            spawn_config,
-            completion_registry=completion_registry,
-            cleanup_isolation=cleanup_isolation_on_failure,
-            task_manager=task_manager,
-            child_session_id=spawn_result.child_session_id,
-            pid=spawn_result.pid,
-            tmux_session_name=tmux_session_name,
-            tmux_socket_name=tmux_socket_name,
-            tmux_socket_path=tmux_socket_path,
-        )
-
-    # 13. Return response with isolation metadata
-    if not spawn_result.success:
-        return {
-            "success": False,
-            "error": spawn_result.error or "Failed to spawn agent",
-            "reasoning": reasoning.to_dict(),
-            "speed": speed_payload,
-        }
-
-    response = _build_spawn_success_response(
-        run_id=run_id,
-        spawn_result=spawn_result,
-        effective_isolation=effective_isolation,
-        isolation_ctx=isolation_ctx,
-        base_commit_sha=base_commit_sha,
-        tmux_session_name=tmux_session_name,
-        tmux_socket_name=tmux_socket_name,
-        tmux_socket_path=tmux_socket_path,
-        code_index_preflight_warning=(
-            spawn_request.code_index_preflight_warning if spawn_request is not None else None
-        ),
-        reasoning=reasoning,
-    )
-    response["speed"] = speed_payload
-    return response

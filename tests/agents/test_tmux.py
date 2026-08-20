@@ -1411,6 +1411,7 @@ class TestTmuxSpawner:
                 command=["echo", "hello"],
                 cwd="/tmp",
                 env={"GOBBY_SESSION_ID": "sess-1"},
+                spawn_key="gobby-test-key",
             )
 
             mock_create.assert_called_once()
@@ -1423,6 +1424,42 @@ class TestTmuxSpawner:
             assert env_arg["VIRTUAL_ENV_PROMPT"] == ""
             # Gobby-specific vars should still be passed
             assert env_arg["GOBBY_SESSION_ID"] == "sess-1"
+
+    @pytest.mark.asyncio
+    async def test_spawner_uses_caller_supplied_spawn_key(self) -> None:
+        from gobby.storage.terminals import AttachLocator
+        from gobby.terminals.runtime import InvalidSpawnKeyError
+
+        spawner = TmuxSpawner(TmuxConfig())
+        with (
+            patch.object(
+                spawner._session_manager, "create_session", new_callable=AsyncMock
+            ) as mock_create,
+            patch.object(
+                spawner._session_manager, "get_session", new_callable=AsyncMock
+            ) as mock_get,
+        ):
+            mock_create.return_value = TmuxSessionInfo(
+                name="gobby-caller-key", pane_pid=123, pane_id="%7"
+            )
+            mock_get.return_value = TmuxSessionInfo(
+                name="gobby-caller-key", pane_pid=123, pane_id="%7"
+            )
+            result = await spawner._async_spawn(
+                command=["echo", "hello"],
+                cwd="/tmp",
+                spawn_key="gobby-caller-key",
+            )
+        mock_create.assert_called_once()
+        assert mock_create.call_args.kwargs["name"] == "gobby-caller-key"
+        assert isinstance(result.locator, AttachLocator)
+        assert result.tmux_session_name is None
+        with pytest.raises(InvalidSpawnKeyError):
+            await spawner._async_spawn(
+                command=["echo", "hello"],
+                cwd="/tmp",
+                spawn_key="bad.key:colon",
+            )
 
     @pytest.mark.asyncio
     async def test_uv_cache_dir_defaults_to_session_temp_path(self) -> None:
@@ -1443,6 +1480,7 @@ class TestTmuxSpawner:
                 command=["echo", "hello"],
                 cwd="/tmp",
                 env={"GOBBY_SESSION_ID": "sess/1"},
+                spawn_key="gobby-test-key",
             )
 
             env_arg = mock_create.call_args[1].get("env")
@@ -1472,6 +1510,7 @@ class TestTmuxSpawner:
                 command=["echo", "hello"],
                 cwd="/tmp",
                 env={"GOBBY_SESSION_ID": "sess-1"},
+                spawn_key="gobby-test-key",
             )
 
             env_arg = mock_create.call_args[1].get("env")
@@ -1501,6 +1540,7 @@ class TestTmuxSpawner:
                     "GOBBY_SESSION_ID": "sess-1",
                     "UV_CACHE_DIR": "/custom/uv-cache",
                 },
+                spawn_key="gobby-test-key",
             )
 
             env_arg = mock_create.call_args[1].get("env")
@@ -1528,6 +1568,7 @@ class TestTmuxSpawner:
                     "GOBBY_SESSION_ID": "sess-1",
                     "UV_CACHE_DIR": "",
                 },
+                spawn_key="gobby-test-key",
             )
 
             env_arg = mock_create.call_args[1].get("env")
@@ -1552,6 +1593,7 @@ class TestTmuxSpawner:
             await spawner._async_spawn(
                 command=["claude", "--session-id=xxx"],
                 cwd="/tmp",
+                spawn_key="gobby-test-key",
             )
 
             mock_create.assert_called_once()
@@ -1579,6 +1621,7 @@ class TestTmuxSpawner:
             result = await spawner._async_spawn(
                 command=["echo", "test"],
                 cwd="/tmp",
+                spawn_key="gobby-test-key",
             )
 
             assert result.success is True
@@ -1621,7 +1664,9 @@ class TestTmuxSpawner:
             )
             mock_capture.side_effect = capture_failure
             mock_kill.side_effect = record_cleanup
-            result = await spawner._async_spawn(command=["echo", "test"], cwd="/tmp")
+            result = await spawner._async_spawn(
+                command=["echo", "test"], cwd="/tmp", spawn_key="gobby-test-key"
+            )
 
         assert result.success is False
         assert result.error is not None
@@ -1653,7 +1698,9 @@ class TestTmuxSpawner:
             mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=None)
             mock_get.return_value = TmuxSessionInfo(name="test-session", pane_pid=None)
             mock_capture.return_value = "/bin/bash: claude: command not found\n"
-            result = await spawner._async_spawn(command=["echo", "test"], cwd="/tmp")
+            result = await spawner._async_spawn(
+                command=["echo", "test"], cwd="/tmp", spawn_key="gobby-test-key"
+            )
 
         assert result.success is False
         assert result.error is not None
@@ -1684,7 +1731,9 @@ class TestTmuxSpawner:
                 pane_dead=True,
             )
             mock_capture.side_effect = TmuxSessionError("capture failed")
-            result = await spawner._async_spawn(command=["echo", "test"], cwd="/tmp")
+            result = await spawner._async_spawn(
+                command=["echo", "test"], cwd="/tmp", spawn_key="gobby-test-key"
+            )
 
         assert result.success is False
         assert result.error == "tmux session 'test-session' pane is dead"
@@ -1708,7 +1757,9 @@ class TestTmuxSpawner:
         ):
             mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=456)
             mock_get.side_effect = RuntimeError("tmux exploded")
-            result = await spawner._async_spawn(command=["echo", "test"], cwd="/tmp")
+            result = await spawner._async_spawn(
+                command=["echo", "test"], cwd="/tmp", spawn_key="gobby-test-key"
+            )
 
         assert result.success is False
         assert result.error == "tmux session verification failed: tmux exploded"
@@ -1725,6 +1776,7 @@ class TestTmuxSpawner:
             result = await spawner._async_spawn(
                 command=["echo", "test"],
                 cwd="/tmp",
+                spawn_key="gobby-test-key",
             )
 
             assert result.success is False
@@ -1763,6 +1815,7 @@ class TestTmuxSpawner:
                 cwd="/tmp",
                 env={"GOBBY_SESSION_ID": "sess-1"},
                 auth_cli="claude",
+                spawn_key="gobby-test-key",
             )
 
         env_arg = mock_create.call_args[1]["env"]
@@ -1791,6 +1844,7 @@ class TestTmuxSpawner:
                 command=["claude"],
                 cwd="/tmp",
                 env={"ANTHROPIC_API_KEY": "sk-override"},
+                spawn_key="gobby-test-key",
             )
 
         assert mock_create.call_args[1]["env"]["ANTHROPIC_API_KEY"] == "sk-override"
@@ -1810,7 +1864,7 @@ class TestTmuxSpawner:
         ):
             mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
             mock_get.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
-            await spawner._async_spawn(command=["claude"], cwd="/tmp")
+            await spawner._async_spawn(command=["claude"], cwd="/tmp", spawn_key="gobby-test-key")
 
         assert "CLAUDE_CODE_OAUTH_TOKEN" not in mock_create.call_args[1]["env"]
 

@@ -394,10 +394,8 @@ async def _resolve_provisional_daemon_resume_row(
             )
         )
 
-    session_name = (
-        getattr(run, "tmux_session_name", None)
-        or metadata.get("daemon_stop_resume_tmux_session_name")
-        or metadata.get("daemon_stop_resume_planned_tmux_title")
+    session_name = metadata.get("daemon_stop_resume_spawn_key") or getattr(
+        run, "tmux_session_name", None
     )
     live_info = (
         _find_live_tmux_by_planned_name(live_by_name, session_name)

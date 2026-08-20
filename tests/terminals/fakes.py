@@ -31,6 +31,7 @@ from gobby.terminals.runtime import (
 from gobby.utils.datetime import utc_now
 
 _SOCKET = "/private/tmp/tmux-501/default"
+_FAKE_PANE_PID = 12345
 
 
 def make_memory_terminal(
@@ -78,13 +79,132 @@ def make_memory_terminal(
 
 
 class MemoryTerminalStore:
-    """Latch-aware TerminalManager stand-in for coordinator unit tests."""
+    """Latch-aware TerminalManager stand-in for coordinator and spawn unit tests."""
 
-    def __init__(self, terminal: Terminal) -> None:
-        self.rows: dict[str, Terminal] = {terminal.id: terminal}
+    def __init__(self, terminal: Terminal | None = None) -> None:
+        self.rows: dict[str, Terminal] = {} if terminal is None else {terminal.id: terminal}
 
     def get(self, terminal_id: str) -> Terminal | None:
         return self.rows.get(terminal_id)
+
+    def create_pending(
+        self,
+        terminal_id: str,
+        project_id: str,
+        backend: str,
+        ownership: str,
+        spawn_key: str,
+        *,
+        machine_id: str | None = None,
+        session_id: str | None = None,
+        agent_run_id: str | None = None,
+        rows: int | None = None,
+        cols: int | None = None,
+        title: str | None = None,
+    ) -> Terminal:
+        now = datetime.now(UTC)
+        row = Terminal(
+            id=terminal_id,
+            backend=backend,
+            ownership=ownership,
+            state="pending",
+            machine_id=machine_id or str(uuid4()),
+            project_id=project_id,
+            created_at=now,
+            updated_at=now,
+            attempt_generation=1,
+            attempt_started_at=now,
+            unresolved_writes={},
+            spawn_key=spawn_key,
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            rows=rows,
+            cols=cols,
+            title=title,
+        )
+        self.rows[terminal_id] = row
+        return row
+
+    def promote_to_live(
+        self,
+        terminal_id: str,
+        *,
+        locator: Mapping[str, object],
+        locator_key: str,
+        host_epoch: str | None = None,
+        session_name: str | None = None,
+        window_id: str | None = None,
+        title: str | None = None,
+    ) -> Terminal | None:
+        current = self.rows.get(terminal_id)
+        if current is None or current.state != "pending":
+            return None
+        current.state = "live"
+        current.locator = dict(locator)
+        current.locator_key = locator_key
+        current.host_epoch = host_epoch
+        if session_name is not None:
+            current.session_name = session_name
+        if window_id is not None:
+            current.window_id = window_id
+        if title is not None:
+            current.title = title
+        current.updated_at = datetime.now(UTC)
+        return current
+
+    def fail_pending(self, terminal_id: str) -> Terminal | None:
+        current = self.rows.get(terminal_id)
+        if current is None or current.state != "pending":
+            return None
+        current.state = "exited"
+        current.updated_at = datetime.now(UTC)
+        return current
+
+    def fail_pending_attempt(
+        self,
+        terminal_id: str,
+        *,
+        attempt_generation: int,
+        attempt_started_at: datetime,
+    ) -> Terminal | None:
+        current = self.rows.get(terminal_id)
+        if (
+            current is None
+            or current.state != "pending"
+            or current.attempt_generation != attempt_generation
+            or current.attempt_started_at != attempt_started_at
+        ):
+            return None
+        current.state = "exited"
+        current.updated_at = datetime.now(UTC)
+        return current
+
+    def bump_attempt_generation(self, terminal_id: str) -> Terminal | None:
+        current = self.rows.get(terminal_id)
+        if current is None or current.state != "pending":
+            return None
+        current.attempt_generation += 1
+        current.attempt_started_at = datetime.now(UTC)
+        current.updated_at = datetime.now(UTC)
+        return current
+
+    def record_process(self, terminal_id: str, process: Mapping[str, object]) -> Terminal | None:
+        current = self.rows.get(terminal_id)
+        if current is None or current.state != "pending":
+            return None
+        current.process = dict(process)
+        return current
+
+    def list_stale_pending(self, max_age_seconds: float) -> list[Terminal]:
+        now = datetime.now(UTC)
+        stale: list[Terminal] = []
+        for row in self.rows.values():
+            if row.state != "pending":
+                continue
+            age = (now - row.attempt_started_at).total_seconds()
+            if age >= max_age_seconds:
+                stale.append(row)
+        return stale
 
     def persist_unresolved_write(
         self,
@@ -120,7 +240,7 @@ class MemoryTerminalStore:
 
 @dataclass
 class FakeRuntime:
-    """Recording TerminalRuntime used by coordinator and registry tests."""
+    """Recording TerminalRuntime used by coordinator, registry, and spawn tests."""
 
     backend: Literal["tmux", "native"] = "tmux"
     write_log: list[tuple[str, str]] = field(default_factory=list)
@@ -132,15 +252,55 @@ class FakeRuntime:
     create_calls: int = 0
     resize_calls: list[tuple[int, int]] = field(default_factory=list)
     gate: Callable[[], None] | None = None
+    last_request: TerminalSpawnRequest | None = None
+    fail_spawn: bool = False
+    typed_fail: bool = False
+    spawn_error: str = "spawn failed"
+    delay: float = 0.0
+    spawn_hold: asyncio.Event | None = None
+    live_keys: set[str] = field(default_factory=set)
+    killed: list[str] = field(default_factory=list)
+    writes_row: bool = False
 
     async def prepare_spawn(self, request: TerminalSpawnRequest) -> PreparedSpawn:
         self.create_calls += 1
+        self.last_request = request
+        if self.spawn_hold is not None:
+            await self.spawn_hold.wait()
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        if self.typed_fail:
+            from gobby.terminals.runtime import TerminalSpawnFailed
+
+            raise TerminalSpawnFailed(self.spawn_error)
+        if self.fail_spawn:
+            raise RuntimeError(self.spawn_error)
+        self.live_keys.add(request.spawn_key)
+        pane_id = "%1"
+        stored = {
+            "socket_path": _SOCKET,
+            "server_pid": _FAKE_PANE_PID,
+            "server_start_time": 1784592177,
+            "pane_id": pane_id,
+        }
         return PreparedSpawn(
             terminal_id=request.terminal_id,
             spawn_key=request.spawn_key,
-            locator=None,
+            locator=AttachLocator(
+                backend=self.backend,
+                frame_host_epoch="epoch",
+                socket_path=_SOCKET,
+                pane_id=pane_id,
+            ),
             process=None,
-            host_terminal_id=None,
+            host_terminal_id=pane_id,
+            stored_locator=stored,
+            locator_key=tmux_locator_key(
+                socket_path=_SOCKET,
+                server_pid=_FAKE_PANE_PID,
+                server_start_time=1784592177,
+                pane_id=pane_id,
+            ),
         )
 
     async def commit_spawn(self, prepared: PreparedSpawn) -> TerminalHandle:
@@ -152,7 +312,10 @@ class FakeRuntime:
         )
 
     async def is_live(self, terminal: Terminal) -> bool:
-        return terminal.state == "live"
+        spawn_key = getattr(terminal, "spawn_key", None) or getattr(terminal, "session_name", None)
+        if spawn_key in self.live_keys:
+            return True
+        return getattr(terminal, "state", None) == "live"
 
     async def snapshot(self, terminal: Terminal, lines: int = 50) -> SnapshotResult:
         return SnapshotResult(text="", truncated=False, dropped_bytes=0, total_bytes=0)
@@ -174,7 +337,11 @@ class FakeRuntime:
         self.resize_calls.append((rows, cols))
 
     async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
-        return None
+        del grace_seconds
+        name = getattr(terminal, "session_name", None) or getattr(terminal, "spawn_key", None)
+        if isinstance(name, str):
+            self.killed.append(name)
+            self.live_keys.discard(name)
 
     async def attach_locator(self, terminal: Terminal) -> AttachLocator:
         return AttachLocator(backend=self.backend, frame_host_epoch="epoch")
@@ -195,3 +362,16 @@ class FakeRuntime:
 
 def uuid_of(terminal: Terminal) -> UUID:
     return UUID(terminal.id)
+
+
+def bind_spawn_runtime(request: object) -> tuple[MemoryTerminalStore, FakeRuntime]:
+    """Attach an in-memory manager and FakeRuntime to a SpawnRequest."""
+    from gobby.terminals import TerminalRuntimeRegistry
+
+    manager = MemoryTerminalStore()
+    runtime = FakeRuntime()
+    registry = TerminalRuntimeRegistry()
+    registry.register(runtime)
+    request.terminal_manager = manager  # type: ignore[attr-defined]
+    request.terminal_runtime_registry = registry  # type: ignore[attr-defined]
+    return manager, runtime

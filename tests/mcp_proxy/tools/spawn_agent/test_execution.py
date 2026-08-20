@@ -15,7 +15,6 @@ from gobby.agents.session import ChildSessionManager
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
-from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -1064,7 +1063,7 @@ class TestSpawnAgentPreRegistration:
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
             ) as mock_execute,
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation._check_tmux_session_alive",
+                "gobby.mcp_proxy.tools.spawn_agent._execution._check_tmux_session_alive",
                 new_callable=AsyncMock,
                 return_value=(True, None),
             ) as mock_health,
@@ -1149,7 +1148,7 @@ class TestSpawnAgentPreRegistration:
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
             ) as mock_execute,
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation._check_tmux_session_alive",
+                "gobby.mcp_proxy.tools.spawn_agent._execution._check_tmux_session_alive",
                 new_callable=AsyncMock,
                 return_value=health_result,
             ),

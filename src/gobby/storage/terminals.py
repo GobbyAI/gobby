@@ -319,6 +319,29 @@ class TerminalManager:
         """CAS pending → exited for a spawn that never produced a resource."""
         return self._cas(terminal_id, expected="pending", new_state="exited")
 
+    def fail_pending_attempt(
+        self,
+        terminal_id: str,
+        *,
+        attempt_generation: int,
+        attempt_started_at: datetime,
+    ) -> Terminal | None:
+        """CAS pending → exited only when generation and attempt clock still match."""
+        row = self.db.fetchone(
+            """
+            UPDATE terminals
+            SET state = 'exited',
+                updated_at = now()
+            WHERE id = %s
+              AND state = 'pending'
+              AND attempt_generation = %s
+              AND attempt_started_at = %s
+            RETURNING *
+            """,
+            (str(UUID(terminal_id)), attempt_generation, attempt_started_at),
+        )
+        return None if row is None else Terminal.from_row(row)
+
     def mark_exited(self, terminal_id: str) -> Terminal | None:
         """CAS live|orphaned → exited without clearing locator identity."""
         live = self._cas(terminal_id, expected="live", new_state="exited")
@@ -530,14 +553,14 @@ class TerminalManager:
         return None if row is None else Terminal.from_row(row)
 
     def bump_attempt_generation(self, terminal_id: str) -> Terminal | None:
-        """Increment attempt_generation and refresh attempt_started_at together."""
+        """Increment attempt_generation and refresh attempt_started_at on a pending row."""
         row = self.db.fetchone(
             """
             UPDATE terminals
             SET attempt_generation = attempt_generation + 1,
                 attempt_started_at = now(),
                 updated_at = now()
-            WHERE id = %s
+            WHERE id = %s AND state = 'pending'
             RETURNING *
             """,
             (str(UUID(terminal_id)),),

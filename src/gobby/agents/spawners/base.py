@@ -25,6 +25,8 @@ class SpawnResult:
     """Tmux socket name used for the session."""
     tmux_socket_path: str | None = None
     """Explicit tmux socket path used for the session, if configured."""
+    locator: object | None = None
+    """Backend attach locator returned instead of a minted session name."""
 
 
 def make_spawn_env(env: dict[str, str] | None = None) -> dict[str, str]:
@@ -87,6 +89,7 @@ class TerminalSpawnerBase(ABC):
         env: dict[str, str] | None = None,
         title: str | None = None,
         auth_cli: str | None = None,
+        spawn_key: str | None = None,
     ) -> SpawnResult:
         """
         Spawn a new terminal window with the given command.

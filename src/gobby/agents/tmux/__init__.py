@@ -77,6 +77,25 @@ def get_configured_tmux_config() -> TmuxConfig:
         return _configured_tmux_config
 
 
+def get_tmux_session_manager_for(
+    *,
+    socket_name: str | None = None,
+    socket_path: str | None = None,
+) -> TmuxSessionManager:
+    """Return the daemon session manager, or a socket-overridden instance."""
+    if socket_name is None and socket_path is None:
+        return get_tmux_session_manager()
+    config = get_configured_tmux_config().model_copy(
+        update={
+            "socket_name": get_configured_tmux_config().socket_name
+            if socket_name is None
+            else socket_name,
+            "socket_path": socket_path,
+        }
+    )
+    return TmuxSessionManager(config)
+
+
 def tmux_command_prefix(config: TmuxConfig) -> list[str]:
     """Build the tmux command prefix for a config, including socket selection."""
     command = [config.command]

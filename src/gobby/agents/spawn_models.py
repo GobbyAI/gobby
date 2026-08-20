@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import KW_ONLY, dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.agents.sandbox import SandboxConfig
 
@@ -14,7 +15,8 @@ if TYPE_CHECKING:
     from gobby.providers.capabilities.apply import SpeedResultData
     from gobby.providers.capabilities.resolve import SpeedResolution
     from gobby.storage.agents import LocalAgentRunManager
-    from gobby.storage.terminals import AttachLocator
+    from gobby.storage.terminals import AttachLocator, TerminalManager
+    from gobby.terminals import TerminalRuntimeRegistry
 
 
 @dataclass
@@ -67,6 +69,11 @@ class SpawnRequest:
     code_index_api_token: str | None = None
     code_index_preflight_warning: dict[str, str] | None = None
     prepared_spawn: PreparedSpawn
+    terminal_manager: TerminalManager | None = None
+    terminal_runtime_registry: TerminalRuntimeRegistry | None = None
+    backend: Literal["tmux", "native"] | None = None
+    retry_terminal_id: str | None = None
+    cancel_event: asyncio.Event | None = None
 
 
 @dataclass

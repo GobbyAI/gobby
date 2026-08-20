@@ -335,6 +335,10 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
     terminal_runtime_registry = TerminalRuntimeRegistry()
     terminal_runtime_registry.register(TmuxTerminalRuntime(get_tmux_session_manager()))
     runner.terminal_runtime_registry = terminal_runtime_registry
+    if runner.agent_runner is not None:
+        runner.agent_runner.terminal_manager = runner.terminal_manager
+        runner.agent_runner.terminal_runtime_registry = runner.terminal_runtime_registry
+        runner.agent_runner.terminal_config = runner.terminal_config
     try:
         runner.agent_lifecycle_monitor = AgentLifecycleMonitor(
             agent_run_manager=LocalAgentRunManager(runner.database),
