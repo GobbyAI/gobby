@@ -1,6 +1,5 @@
 //! Shared `gcode graph view` scaffold: clap/dispatch glue, payload, visibility.
 
-#[allow(dead_code)]
 mod class_hierarchy;
 mod fcg;
 mod mcg;
@@ -10,7 +9,7 @@ use anyhow::Context as _;
 use std::collections::HashSet;
 
 use crate::cli::GraphViewArgs;
-use crate::codewiki_facts::{CodewikiFacts, GraphAvailability};
+use crate::codewiki_facts::GraphAvailability;
 use crate::config::Context;
 use crate::db;
 use crate::graph::code_graph::GraphReadError;
@@ -18,7 +17,7 @@ use crate::output::Format;
 use crate::search::fts::ResolvedGraphSymbol;
 
 use super::reads::{hint_for, hint_for_error, resolve_symbol_with_connection};
-use render::{ViewEdgeInput, ViewNodeInput, ViewPayload, ViewSeed, build_view_payload, print_view};
+use render::{ViewEdgeInput, ViewNodeInput, ViewPayload, ViewSeed, build_view_payload};
 
 #[allow(dead_code)]
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -258,15 +257,7 @@ pub(crate) fn run(ctx: &Context, args: &GraphViewArgs, format: Format) -> anyhow
         }
         crate::cli::GraphViewKind::ClassHierarchy => {
             let symbol = resolve_view_seed(ctx, &args.seed).context("resolve graph view seed")?;
-            let facts = CodewikiFacts::from_context(ctx.clone());
-            let hint = hint_for_availability(ctx, &facts.graph_availability());
-            let seed = ViewSeed {
-                id: symbol.id.clone(),
-                name: symbol.display_name.clone(),
-                kind: "symbol".to_string(),
-                file: None,
-            };
-            print_view(&empty_view_payload(ctx, args, seed, hint)?, format)
+            class_hierarchy::run(ctx, args, &symbol, format)
         }
     }
 }

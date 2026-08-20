@@ -448,6 +448,25 @@ fn graph_view_omitted_depth_defaults_by_kind() {
         }
         _ => panic!("expected graph view command"),
     }
+
+    let chg = Cli::try_parse_from([
+        "gcode",
+        "graph",
+        "view",
+        "--view",
+        "class-hierarchy",
+        "Derived",
+    ])
+    .expect("omitted --depth parses for class-hierarchy");
+    match chg.command {
+        Command::Graph {
+            command: GraphCommand::View(args),
+        } => {
+            assert_eq!(args.depth, None);
+            assert_eq!(args.effective_depth(), 8);
+        }
+        _ => panic!("expected graph view command"),
+    }
 }
 
 #[test]
