@@ -105,6 +105,7 @@ fn service_config_selection(command: &Command) -> config::ServiceConfigSelection
         Command::Invalidate { .. } => ServiceConfigSelection::projection_cleanup(),
         Command::Graph { .. }
         | Command::Callers { .. }
+        | Command::Callees { .. }
         | Command::Usages { .. }
         | Command::Imports { .. }
         | Command::Path { .. }
@@ -591,6 +592,14 @@ fn run() -> anyhow::Result<()> {
         } => {
             ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::graph::callers(&ctx, &symbol_name, limit, offset, format)
+        }
+        Command::Callees {
+            symbol_name,
+            limit,
+            offset,
+        } => {
+            ensure_project_fresh(&ctx, cli.allow_stale)?;
+            commands::graph::callees(&ctx, &symbol_name, limit, offset, format)
         }
         Command::Usages {
             symbol_name,

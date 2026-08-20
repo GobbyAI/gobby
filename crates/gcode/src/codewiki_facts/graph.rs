@@ -12,7 +12,9 @@ use super::graph_query::{
 };
 use super::{CodewikiFacts, ScopeSelector};
 
-pub use super::graph_query::{GraphBounds, GraphDirection, GraphEdgeKind, GraphScopeMode};
+pub use super::graph_query::{
+    GraphBounds, GraphDirection, GraphEdgeKind, GraphScopeMode, MAX_DECLARED_EDGE_LIMIT,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GraphAvailability {
@@ -26,6 +28,14 @@ pub struct GraphEdge {
     pub target: String,
     pub kind: GraphEdgeKind,
     pub rel: String,
+    pub source_kind: String,
+    pub target_kind: String,
+    pub source_name: String,
+    pub target_name: String,
+    pub source_file: String,
+    pub target_file: String,
+    pub owner_path: String,
+    pub owner_hash: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -184,6 +194,14 @@ impl CodewikiFacts {
                 target: edge.target,
                 kind,
                 rel: edge.rel,
+                source_kind: edge.source_kind,
+                target_kind: edge.target_kind,
+                source_name: edge.source_name,
+                target_name: edge.target_name,
+                source_file: edge.source_file,
+                target_file: edge.target_file,
+                owner_path: edge.owner_path,
+                owner_hash: edge.owner_hash,
             })
             .collect::<Vec<_>>();
         let outcome = if edges.is_empty() {
@@ -259,7 +277,7 @@ impl CodewikiFacts {
         &self,
         plan: &EdgeQueryPlan,
         exclude: &HashSet<PublicEdge>,
-    ) -> Result<GraphOutcome<PublicEdge>> {
+    ) -> Result<GraphOutcome<FetchedEdge>> {
         if plan.limit == 0 || plan.keys.is_empty() {
             return Ok(GraphOutcome::Empty);
         }
@@ -270,7 +288,7 @@ impl CodewikiFacts {
             let page = plan.clone().with_after(after.clone());
             let rows = match self.query_edge_rows(&page) {
                 Ok(rows) => rows,
-                Err(error) => return classify_query::<PublicEdge>(Err(error), plan.limit),
+                Err(error) => return classify_query::<FetchedEdge>(Err(error), plan.limit),
             };
             if rows.is_empty() {
                 break;
@@ -285,11 +303,11 @@ impl CodewikiFacts {
                 ) {
                     continue;
                 }
-                let pair = PublicEdge::new(row.source, row.target, row.rel);
+                let pair = row.public();
                 if !seen.insert(pair.clone()) || graph_query::edge_is_excluded(exclude, &pair) {
                     continue;
                 }
-                eligible.push(pair);
+                eligible.push(row);
                 if eligible.len() >= plan.fetch_limit() {
                     return Ok(GraphOutcome::Available(eligible));
                 }
@@ -385,13 +403,43 @@ fn take_bounded<T: Ord>(rows: &mut Vec<T>, limit: usize) -> bool {
     truncated
 }
 
+#[derive(Clone, Debug, Eq)]
 struct FetchedEdge {
     source: String,
     target: String,
     rel: String,
     source_file: String,
-    #[allow(dead_code)]
     target_file: String,
+    source_kind: String,
+    target_kind: String,
+    source_name: String,
+    target_name: String,
+    owner_path: String,
+    owner_hash: String,
+}
+
+impl FetchedEdge {
+    fn public(&self) -> PublicEdge {
+        PublicEdge::new(&self.source, &self.target, &self.rel)
+    }
+}
+
+impl PartialEq for FetchedEdge {
+    fn eq(&self, other: &Self) -> bool {
+        self.public() == other.public()
+    }
+}
+
+impl PartialOrd for FetchedEdge {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for FetchedEdge {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.public().cmp(&other.public())
+    }
 }
 
 fn rows_to_fetched(kind: GraphEdgeKind, rows: &[Row]) -> Vec<FetchedEdge> {
@@ -411,12 +459,42 @@ fn rows_to_fetched(kind: GraphEdgeKind, rows: &[Row]) -> Vec<FetchedEdge> {
                 .get("target_file")
                 .and_then(|value| value.as_str())
                 .unwrap_or(target);
+            let source_kind = row
+                .get("source_kind")
+                .and_then(|value| value.as_str())
+                .unwrap_or("symbol");
+            let target_kind = row
+                .get("target_kind")
+                .and_then(|value| value.as_str())
+                .unwrap_or("symbol");
+            let source_name = row
+                .get("source_name")
+                .and_then(|value| value.as_str())
+                .unwrap_or(source);
+            let target_name = row
+                .get("target_name")
+                .and_then(|value| value.as_str())
+                .unwrap_or(target);
+            let owner_path = row
+                .get("owner_path")
+                .and_then(|value| value.as_str())
+                .unwrap_or(source_file);
+            let owner_hash = row
+                .get("owner_hash")
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
             Some(FetchedEdge {
                 source: source.to_string(),
                 target: target.to_string(),
                 rel: rel.to_string(),
                 source_file: source_file.to_string(),
                 target_file: target_file.to_string(),
+                source_kind: source_kind.to_string(),
+                target_kind: target_kind.to_string(),
+                source_name: source_name.to_string(),
+                target_name: target_name.to_string(),
+                owner_path: owner_path.to_string(),
+                owner_hash: owner_hash.to_string(),
             })
         })
         .collect()

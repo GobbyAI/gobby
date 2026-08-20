@@ -55,7 +55,7 @@ pub(super) const LINK_METADATA_RETURN: &str = "r.provenance AS provenance, \
      r.source_line AS source_line, \
      r.source_symbol_id AS source_symbol_id, \
      r.matching_method AS matching_method";
-pub(super) const MAX_GRAPH_LIMIT: usize = 100;
+pub(crate) const MAX_GRAPH_LIMIT: usize = 100;
 pub(crate) fn row_to_graph_result(row: &Row) -> GraphResult {
     GraphResult {
         id: row
@@ -106,6 +106,11 @@ pub(crate) fn row_to_graph_result(row: &Row) -> GraphResult {
             .and_then(|v| v.as_u64())
             .and_then(|d| usize::try_from(d).ok()),
         metadata: row_to_projection_metadata(row),
+        node_kind: row
+            .get("node_kind")
+            .or_else(|| row.get("kind"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
     }
 }
 pub(super) fn clamp_limit(limit: usize) -> usize {

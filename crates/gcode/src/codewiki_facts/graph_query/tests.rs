@@ -435,6 +435,23 @@ fn scoped_limits_count_distinct_public_edges() {
 }
 
 #[test]
+fn call_match_includes_external_and_unresolved_targets() {
+    let query = EdgeQueryPlan::new(
+        GraphEdgeKind::Call,
+        GraphDirection::Outgoing,
+        GraphScopeMode::Incident,
+        ScopeKeys::Symbols(vec!["seed".into()]),
+        4,
+    )
+    .render("project-id")
+    .0;
+    assert!(query.contains("target:ExternalSymbol"));
+    assert!(query.contains("target:UnresolvedCallee"));
+    assert!(query.contains("(target {project: $project})"));
+    assert!(!query.contains("(target:CodeSymbol {project: $project})"));
+}
+
+#[test]
 fn scoped_limits_exclude_already_emitted_edges() {
     let edges = vec![
         sample(

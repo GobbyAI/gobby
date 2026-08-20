@@ -424,6 +424,21 @@ fn graph_view_depth_domain() {
 }
 
 #[test]
+fn graph_view_omitted_depth_defaults_by_kind() {
+    let fcg = Cli::try_parse_from(["gcode", "graph", "view", "--view", "fcg", "seed"])
+        .expect("omitted --depth parses for fcg");
+    match fcg.command {
+        Command::Graph {
+            command: GraphCommand::View(args),
+        } => {
+            assert_eq!(args.depth, None);
+            assert_eq!(args.effective_depth(), 1);
+        }
+        _ => panic!("expected graph view command"),
+    }
+}
+
+#[test]
 fn graph_view_rejects_hierarchy_row_limits() {
     let incoming = match Cli::try_parse_from([
         "gcode",

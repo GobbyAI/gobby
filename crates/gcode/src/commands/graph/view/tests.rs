@@ -43,6 +43,7 @@ fn endpoint(
     CandidateEndpoint {
         kind,
         id: id.to_string(),
+        name: Some(id.to_string()),
         file: file.map(ToString::to_string),
         content_hash: hash.map(ToString::to_string),
         machine_id: machine.map(ToString::to_string),

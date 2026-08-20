@@ -215,6 +215,14 @@ impl EdgeQueryPlan {
                     .to_string(),
             );
         }
+        if self.kind == GraphEdgeKind::Call
+            && predicates.first().map(String::as_str) != Some("false")
+        {
+            predicates.push(
+                "(target:CodeSymbol OR target:ExternalSymbol OR target:UnresolvedCallee)"
+                    .to_string(),
+            );
+        }
         predicates
     }
 
@@ -477,7 +485,7 @@ fn match_clause(kind: GraphEdgeKind) -> &'static str {
     match kind {
         GraphEdgeKind::Call => {
             "MATCH (source:CodeSymbol {project: $project})-[r:CALLS]->\
-             (target:CodeSymbol {project: $project})"
+             (target {project: $project})"
         }
         GraphEdgeKind::Import => {
             "MATCH (source:CodeFile {project: $project})-[r:IMPORTS]->\
@@ -492,7 +500,19 @@ fn match_clause(kind: GraphEdgeKind) -> &'static str {
 
 fn return_clause(kind: GraphEdgeKind) -> &'static str {
     match kind {
-        GraphEdgeKind::Call | GraphEdgeKind::Inheritance => {
+        GraphEdgeKind::Call => {
+            "RETURN DISTINCT source.id AS source, target.id AS target, type(r) AS rel, \
+             source.file_path AS source_file, target.file_path AS target_file, \
+             coalesce(source.name, source.id) AS source_name, \
+             coalesce(target.name, target.id) AS target_name, \
+             CASE WHEN source:ExternalSymbol THEN 'external' \
+                  WHEN source:UnresolvedCallee THEN 'unresolved' ELSE 'symbol' END AS source_kind, \
+             CASE WHEN target:ExternalSymbol THEN 'external' \
+                  WHEN target:UnresolvedCallee THEN 'unresolved' ELSE 'symbol' END AS target_kind, \
+             coalesce(r.file, source.file_path) AS owner_path, \
+             coalesce(r.content_hash, '') AS owner_hash"
+        }
+        GraphEdgeKind::Inheritance => {
             "RETURN DISTINCT source.id AS source, target.id AS target, type(r) AS rel, \
              source.file_path AS source_file, target.file_path AS target_file"
         }

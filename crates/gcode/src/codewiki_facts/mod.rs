@@ -45,7 +45,7 @@ mod text;
 pub use crate::freshness::FreshnessStatus;
 pub use graph::{
     GraphAvailability, GraphBounds, GraphDirection, GraphEdge, GraphEdgeKind, GraphNodeFact,
-    GraphOutcome, GraphScopeMode, ScopedGraph,
+    GraphOutcome, GraphScopeMode, MAX_DECLARED_EDGE_LIMIT, ScopedGraph,
 };
 pub use graph_query::PublicEdge;
 pub use scope::{FileFact, FileId, ScopeSelector};

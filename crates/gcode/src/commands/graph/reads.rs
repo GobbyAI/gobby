@@ -136,6 +136,13 @@ pub(super) fn format_caller_result_line(result: &GraphResult, target_name: &str)
     )
 }
 
+pub(super) fn format_callee_result_line(result: &GraphResult, source_name: &str) -> String {
+    format!(
+        "{} [{}] {} -> {}",
+        result.line, result.confidence, source_name, result.name
+    )
+}
+
 pub(super) fn format_usage_result_line(result: &GraphResult, target_name: &str) -> String {
     let rel = result.relation.as_deref().unwrap_or("unknown");
     format!(
@@ -425,6 +432,60 @@ pub fn callers(
             } else {
                 output::print_text(&format_grouped_graph_results(&results, |r| {
                     format_caller_result_line(r, &symbol.display_name)
+                }))?;
+                if total > offset + results.len() {
+                    eprintln!(
+                        "-- {} of {} results (use --offset {} for more)",
+                        results.len(),
+                        total,
+                        offset + results.len()
+                    );
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+pub fn callees(
+    ctx: &Context,
+    symbol_name: &str,
+    limit: usize,
+    offset: usize,
+    format: Format,
+) -> anyhow::Result<()> {
+    let Some((symbol, total, results)) = read_paged_symbol_graph_results(
+        ctx,
+        symbol_name,
+        limit,
+        offset,
+        format,
+        code_graph::count_callees,
+        code_graph::find_callees,
+    )?
+    else {
+        return Ok(());
+    };
+
+    match format {
+        Format::Json => output::print_json(&PagedResponse {
+            project_id: ctx.project_id.clone(),
+            total,
+            offset,
+            limit,
+            results,
+            hint: hint_for(ctx),
+            warnings: Vec::new(),
+        }),
+        Format::Text => {
+            if results.is_empty() && offset == 0 {
+                output::print_text(&format!("No callees found for '{}'", symbol.display_name))?;
+                print_graph_hint_text(ctx, None);
+            } else if results.is_empty() {
+                eprintln!("No callees at offset {offset} (total {total})");
+            } else {
+                output::print_text(&format_grouped_graph_results(&results, |r| {
+                    format_callee_result_line(r, &symbol.display_name)
                 }))?;
                 if total > offset + results.len() {
                     eprintln!(

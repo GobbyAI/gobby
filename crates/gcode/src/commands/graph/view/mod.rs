@@ -2,7 +2,6 @@
 
 #[allow(dead_code)]
 mod class_hierarchy;
-#[allow(dead_code)]
 mod fcg;
 #[allow(dead_code)]
 mod mcg;
@@ -65,6 +64,7 @@ pub(super) enum CandidateEndpointKind {
 pub(super) struct CandidateEndpoint {
     pub kind: CandidateEndpointKind,
     pub id: String,
+    pub name: Option<String>,
     pub file: Option<String>,
     pub content_hash: Option<String>,
     pub machine_id: Option<String>,
@@ -255,13 +255,17 @@ pub(crate) fn run(ctx: &Context, args: &GraphViewArgs, format: Format) -> anyhow
     let facts = CodewikiFacts::from_context(ctx.clone());
     let hint = hint_for_availability(ctx, &facts.graph_availability());
     let seed = ViewSeed {
-        id: symbol.id,
-        name: symbol.display_name,
+        id: symbol.id.clone(),
+        name: symbol.display_name.clone(),
         kind: "symbol".to_string(),
         file: None,
     };
-    let payload = empty_view_payload(ctx, args, seed, hint)?;
-    print_view(&payload, format)
+    match args.view {
+        crate::cli::GraphViewKind::Fcg => fcg::run(ctx, args, &symbol, format),
+        crate::cli::GraphViewKind::Mcg | crate::cli::GraphViewKind::ClassHierarchy => {
+            print_view(&empty_view_payload(ctx, args, seed, hint)?, format)
+        }
+    }
 }
 
 #[cfg(test)]

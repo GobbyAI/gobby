@@ -153,10 +153,16 @@ fn graph_read_guard_stays_strict_but_public_reads_degrade_without_service() {
         GraphPayload::default()
     );
     assert_eq!(count_callers(&ctx, "symbol-1").expect("count degrades"), 0);
+    assert_eq!(count_callees(&ctx, "symbol-1").expect("count degrades"), 0);
     assert_eq!(count_usages(&ctx, "symbol-1").expect("count degrades"), 0);
     assert!(
         find_callers(&ctx, "symbol-1", 0, 10)
             .expect("callers degrade")
+            .is_empty()
+    );
+    assert!(
+        find_callees(&ctx, "symbol-1", 0, 10)
+            .expect("callees degrade")
             .is_empty()
     );
     assert!(

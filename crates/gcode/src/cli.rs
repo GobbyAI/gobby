@@ -260,6 +260,15 @@ pub(crate) enum Command {
         #[arg(long, default_value = "0")]
         offset: usize,
     },
+    /// Find callees of a symbol query, resolved to a canonical symbol ID [requires graph backend]
+    Callees {
+        symbol_name: String,
+        #[arg(long, default_value = "10")]
+        limit: usize,
+        /// Skip first N results (for pagination)
+        #[arg(long, default_value = "0")]
+        offset: usize,
+    },
     /// Find incoming call usages of a symbol query, resolved to a canonical symbol ID [requires graph backend]
     Usages {
         symbol_name: String,

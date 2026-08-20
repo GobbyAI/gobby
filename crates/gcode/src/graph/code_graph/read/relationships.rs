@@ -10,10 +10,10 @@ use crate::visibility;
 use super::super::connection::with_optional_core_graph;
 use super::super::payload::{row_string_owned, row_usize};
 use super::relationship_queries::{
-    blast_radius_query, find_callee_ids_batch_query, find_caller_ids_batch_query,
-    find_caller_ids_query, find_callers_query, find_usage_ids_query, find_usages_query,
-    get_imports_query, resolve_external_call_target_query, symbol_callee_edges_query,
-    symbol_path_steps_query,
+    blast_radius_query, find_callee_ids_batch_query, find_callees_query,
+    find_caller_ids_batch_query, find_caller_ids_query, find_callers_query, find_usage_ids_query,
+    find_usages_query, get_imports_query, resolve_external_call_target_query,
+    symbol_callee_edges_query, symbol_path_steps_query,
 };
 #[cfg(test)]
 use super::relationship_queries::{find_callees_batch_query, find_callers_batch_query};
@@ -89,25 +89,26 @@ fn post_filter_graph_results(
     visibility::filter_visible_graph_results(&mut conn, ctx, results)
 }
 
-fn collect_visible_graph_results(
-    ctx: &Context,
+pub(crate) fn collect_paged_graph_results(
     offset: usize,
     limit: usize,
+    page_size: usize,
     mut fetch_page: impl FnMut(usize, usize) -> anyhow::Result<Vec<GraphResult>>,
+    mut filter: impl FnMut(Vec<GraphResult>) -> anyhow::Result<Vec<GraphResult>>,
 ) -> anyhow::Result<Vec<GraphResult>> {
     if limit == 0 {
         return Ok(Vec::new());
     }
     let mut raw_offset = 0;
     let mut visible_to_skip = offset;
-    let mut visible_results = Vec::with_capacity(limit.min(MAX_GRAPH_LIMIT));
+    let mut visible_results = Vec::with_capacity(limit.min(page_size));
     loop {
-        let raw_results = fetch_page(raw_offset, MAX_GRAPH_LIMIT)?;
+        let raw_results = fetch_page(raw_offset, page_size)?;
         let raw_count = raw_results.len();
         if raw_count == 0 {
             break;
         }
-        for result in post_filter_graph_results(ctx, raw_results)? {
+        for result in filter(raw_results)? {
             if visible_to_skip > 0 {
                 visible_to_skip -= 1;
             } else {
@@ -118,11 +119,22 @@ fn collect_visible_graph_results(
             }
         }
         raw_offset = raw_offset.saturating_add(raw_count);
-        if raw_count < MAX_GRAPH_LIMIT {
+        if raw_count < page_size {
             break;
         }
     }
     Ok(visible_results)
+}
+
+fn collect_visible_graph_results(
+    ctx: &Context,
+    offset: usize,
+    limit: usize,
+    fetch_page: impl FnMut(usize, usize) -> anyhow::Result<Vec<GraphResult>>,
+) -> anyhow::Result<Vec<GraphResult>> {
+    collect_paged_graph_results(offset, limit, MAX_GRAPH_LIMIT, fetch_page, |raw_results| {
+        post_filter_graph_results(ctx, raw_results)
+    })
 }
 
 fn count_visible_graph_results(
@@ -157,6 +169,17 @@ pub fn count_callers(ctx: &Context, symbol_id: &str) -> anyhow::Result<usize> {
     })
 }
 
+pub fn count_callees(ctx: &Context, symbol_id: &str) -> anyhow::Result<usize> {
+    count_visible_graph_results(ctx, |raw_offset, raw_limit| {
+        with_optional_core_graph(ctx, Vec::new, |client| {
+            let (query, params) =
+                find_callees_query(&ctx.project_id, symbol_id, raw_offset, raw_limit);
+            let rows = client.query(&query, Some(params))?;
+            Ok(rows.iter().map(row_to_graph_result).collect())
+        })
+    })
+}
+
 pub fn count_usages(ctx: &Context, symbol_id: &str) -> anyhow::Result<usize> {
     count_visible_graph_results(ctx, |raw_offset, raw_limit| {
         with_optional_core_graph(ctx, Vec::new, |client| {
@@ -178,6 +201,22 @@ pub fn find_callers(
         with_optional_core_graph(ctx, Vec::new, |client| {
             let (query, params) =
                 find_callers_query(&ctx.project_id, symbol_id, raw_offset, raw_limit);
+            let rows = client.query(&query, Some(params))?;
+            Ok(rows.iter().map(row_to_graph_result).collect())
+        })
+    })
+}
+
+pub fn find_callees(
+    ctx: &Context,
+    symbol_id: &str,
+    offset: usize,
+    limit: usize,
+) -> anyhow::Result<Vec<GraphResult>> {
+    collect_visible_graph_results(ctx, offset, limit, |raw_offset, raw_limit| {
+        with_optional_core_graph(ctx, Vec::new, |client| {
+            let (query, params) =
+                find_callees_query(&ctx.project_id, symbol_id, raw_offset, raw_limit);
             let rows = client.query(&query, Some(params))?;
             Ok(rows.iter().map(row_to_graph_result).collect())
         })
