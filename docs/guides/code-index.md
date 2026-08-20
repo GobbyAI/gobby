@@ -223,7 +223,12 @@ sync_worker_breaker_max_backoff_seconds: 900.0
 
 The nightly job runs `gcode repair`. Indexer-version changes trigger one full
 reindex; steady-state runs promote stranded local imports and queue graph drift
-for the daemon sync worker.
+for the daemon sync worker. The gate compares the `indexer_version` stamped on
+the last full run with the running `gcode` build's Cargo version, so an
+extractor change shipped without a version bump never triggers it — run
+`gcode index --full` by hand after such a build. The full-run JSON carries a
+`full_reindex` section with the index counts and the graph/vector projection
+reports, which is where a degraded projection sync shows up.
 
 gcode owns the built-in language and content-extension set described above.
 Extend its built-in path exclusions with `indexing.extra_excludes` in the main

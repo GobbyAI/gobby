@@ -4,7 +4,7 @@ use crate::graph::typed_query;
 
 use super::support::{
     CALL_TARGET_PREDICATE, LINK_METADATA_RETURN, NEIGHBOR_PREDICATE, NEIGHBOR_TYPE_CASE,
-    NODE_TYPE_CASE, TARGET_TYPE_CASE, clamp_limit,
+    NODE_TYPE_CASE, TARGET_TYPE_CASE, anchored_call_node, clamp_limit,
 };
 
 pub(super) fn project_overview_files_query(
@@ -109,21 +109,35 @@ pub(in crate::graph::code_graph) fn file_calls_query(
     project_id: &str,
     file_path: &str,
 ) -> (String, HashMap<String, String>) {
+    let columns = format!(
+        "RETURN source.id AS source_id, source.name AS source_name, \
+                coalesce(source.kind, 'function') AS source_type, \
+                source.kind AS source_kind, source.file_path AS source_file_path, \
+                source.line_start AS source_line_start, source.signature AS source_signature, \
+                target.id AS target_id, target.name AS target_name, \
+                {TARGET_TYPE_CASE} AS target_type, target.kind AS target_kind, \
+                target.file_path AS target_file_path, \
+                target.line_start AS target_line_start, target.signature AS target_signature, \
+                source.id AS source, target.id AS target, 'CALLS' AS type, r.line AS line, \
+                {LINK_METADATA_RETURN}"
+    );
+    // One `source.file_path = $path OR target.file_path = $path` predicate
+    // cannot use the CodeSymbol file_path index on either endpoint, so it
+    // walks every CALLS edge in the project. Two index-anchored branches cover
+    // the same edge set: calls leaving the file, then calls arriving from
+    // other files (the `WITH` keeps the planner expanding from the bound
+    // target instead of re-scanning every project symbol).
     (
         format!(
-            "MATCH (source:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{project: $project}}) \
+            "MATCH (source:CodeSymbol {{project: $project, file_path: $path}})-[r:CALLS]->(target {{project: $project}}) \
              WHERE ({CALL_TARGET_PREDICATE}) \
-               AND (source.file_path = $path OR (target:CodeSymbol AND target.file_path = $path)) \
-             RETURN source.id AS source_id, source.name AS source_name, \
-                    coalesce(source.kind, 'function') AS source_type, \
-                    source.kind AS source_kind, source.file_path AS source_file_path, \
-                    source.line_start AS source_line_start, source.signature AS source_signature, \
-                    target.id AS target_id, target.name AS target_name, \
-                    {TARGET_TYPE_CASE} AS target_type, target.kind AS target_kind, \
-                    target.file_path AS target_file_path, \
-                    target.line_start AS target_line_start, target.signature AS target_signature, \
-                    source.id AS source, target.id AS target, 'CALLS' AS type, r.line AS line, \
-                    {LINK_METADATA_RETURN}"
+             {columns} \
+             UNION ALL \
+             MATCH (target:CodeSymbol {{project: $project, file_path: $path}}) \
+             WITH target \
+             MATCH (source:CodeSymbol {{project: $project}})-[r:CALLS]->(target) \
+             WHERE source.file_path IS NULL OR source.file_path <> $path \
+             {columns}"
         ),
         typed_query::string_params(&[("project", project_id), ("path", file_path)]),
     )
@@ -135,10 +149,10 @@ pub(super) fn symbol_neighbors_query(
     limit: usize,
 ) -> (String, HashMap<String, String>) {
     let limit = clamp_limit(limit);
+    let anchor = anchored_call_node("center", "$id");
     (
         format!(
-            "MATCH (center {{id: $id, project: $project}}) \
-             WHERE center:CodeSymbol OR center:UnresolvedCallee OR center:ExternalSymbol \
+            "{anchor} \
              MATCH (center)-[r:CALLS]-(neighbor {{project: $project}}) \
              WHERE {NEIGHBOR_PREDICATE} \
              RETURN neighbor.id AS id, neighbor.name AS name, {NEIGHBOR_TYPE_CASE} AS type, \
@@ -156,10 +170,10 @@ pub(super) fn blast_radius_center_query(
     project_id: &str,
     symbol_id: &str,
 ) -> (String, HashMap<String, String>) {
+    let anchor = anchored_call_node("n", "$id");
     (
         format!(
-            "MATCH (n {{id: $id, project: $project}}) \
-             WHERE n:CodeSymbol OR n:UnresolvedCallee OR n:ExternalSymbol \
+            "{anchor} \
              RETURN n.id AS id, n.name AS name, {NODE_TYPE_CASE} AS type, \
                     n.kind AS kind, n.file_path AS file_path \
              LIMIT 1"
@@ -216,4 +230,46 @@ pub(in crate::graph::code_graph) fn blast_radius_file_import_query(
         ),
         typed_query::string_params(&[("project", project_id), ("path", file_path)]),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_calls_query_anchors_both_directions_on_the_file_path_index() {
+        let (query, _) = file_calls_query("project-1", "src/lib.rs");
+
+        assert!(query.starts_with(
+            "MATCH (source:CodeSymbol {project: $project, file_path: $path})-[r:CALLS]->(target {project: $project})"
+        ));
+        assert!(query.contains(
+            "UNION ALL MATCH (target:CodeSymbol {project: $project, file_path: $path}) WITH target \
+             MATCH (source:CodeSymbol {project: $project})-[r:CALLS]->(target) \
+             WHERE source.file_path IS NULL OR source.file_path <> $path"
+        ));
+        assert!(!query.contains("source.file_path = $path OR"));
+        assert_eq!(query.matches("RETURN source.id AS source_id").count(), 2);
+    }
+
+    #[test]
+    fn symbol_anchored_payload_queries_resolve_ids_through_labeled_indexes() {
+        let (neighbors, _) = symbol_neighbors_query("project-1", "symbol-1", 10);
+        let (center, _) = blast_radius_center_query("project-1", "symbol-1");
+
+        for query in [&neighbors, &center] {
+            assert!(
+                query.starts_with(
+                    "OPTIONAL MATCH (anchor_symbol:CodeSymbol {id: $id, project: $project})"
+                ),
+                "{query}"
+            );
+        }
+        assert!(neighbors.contains(
+            "AS center WHERE center IS NOT NULL MATCH (center)-[r:CALLS]-(neighbor {project: $project})"
+        ));
+        assert!(center.contains("AS n WHERE n IS NOT NULL RETURN n.id AS id"));
+        assert!(!neighbors.contains("(center {id: $id, project: $project})"));
+        assert!(!center.contains("(n {id: $id, project: $project})"));
+    }
 }

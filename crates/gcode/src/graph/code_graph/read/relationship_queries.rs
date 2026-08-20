@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use crate::graph::typed_query;
 
 use super::support::{
-    CALL_TARGET_PREDICATE, CONFIDENCE_LABEL_CASE, LINK_METADATA_RETURN, clamp_limit, clamp_offset,
+    CALL_TARGET_PREDICATE, CONFIDENCE_LABEL_CASE, LINK_METADATA_RETURN, anchored_call_node,
+    clamp_limit, clamp_offset,
 };
 
 pub(crate) fn find_callers_query(
@@ -14,10 +15,11 @@ pub(crate) fn find_callers_query(
 ) -> (String, HashMap<String, String>) {
     let offset = clamp_offset(offset);
     let limit = clamp_limit(limit);
+    let anchor = anchored_call_node("target", "$id");
     (
         format!(
-            "MATCH (caller:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{id: $id, project: $project}}) \
-             WHERE {CALL_TARGET_PREDICATE} \
+            "{anchor} \
+             MATCH (caller:CodeSymbol {{project: $project}})-[r:CALLS]->(target) \
              WITH caller, collect(coalesce(r.provenance, 'EXTRACTED')) AS provenances \
              WITH caller, {CONFIDENCE_LABEL_CASE} AS confidence_label \
              RETURN caller.id AS caller_id, caller.name AS caller_name, \
@@ -38,10 +40,11 @@ pub(crate) fn find_usages_query(
 ) -> (String, HashMap<String, String>) {
     let offset = clamp_offset(offset);
     let limit = clamp_limit(limit);
+    let anchor = anchored_call_node("target", "$id");
     (
         format!(
-            "MATCH (source:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{id: $id, project: $project}}) \
-             WHERE {CALL_TARGET_PREDICATE} \
+            "{anchor} \
+             MATCH (source:CodeSymbol {{project: $project}})-[r:CALLS]->(target) \
              RETURN source.id AS source_id, source.name AS source_name, \
                     'CALLS' AS rel_type, r.file AS file, r.line AS line, \
                     {LINK_METADATA_RETURN} \
@@ -58,10 +61,11 @@ pub(super) fn find_caller_ids_query(
     limit: usize,
 ) -> (String, HashMap<String, String>) {
     let limit = clamp_limit(limit);
+    let anchor = anchored_call_node("target", "$id");
     (
         format!(
-            "MATCH (caller:CodeSymbol {{project: $project}})-[:CALLS]->(target {{id: $id, project: $project}}) \
-             WHERE {CALL_TARGET_PREDICATE} \
+            "{anchor} \
+             MATCH (caller:CodeSymbol {{project: $project}})-[:CALLS]->(target) \
              RETURN DISTINCT caller.id AS id \
              ORDER BY caller.id \
              LIMIT {limit}"
@@ -76,10 +80,11 @@ pub(super) fn find_usage_ids_query(
     limit: usize,
 ) -> (String, HashMap<String, String>) {
     let limit = clamp_limit(limit);
+    let anchor = anchored_call_node("target", "$id");
     (
         format!(
-            "MATCH (source:CodeSymbol {{project: $project}})-[:CALLS]->(target {{id: $id, project: $project}}) \
-             WHERE {CALL_TARGET_PREDICATE} \
+            "{anchor} \
+             MATCH (source:CodeSymbol {{project: $project}})-[:CALLS]->(target) \
              RETURN DISTINCT source.id AS id \
              ORDER BY source.id \
              LIMIT {limit}"
@@ -96,10 +101,12 @@ pub(crate) fn find_callers_batch_query(
 ) -> (String, HashMap<String, String>) {
     let limit = clamp_limit(limit);
     let ids = typed_query::id_list_literal(symbol_ids);
+    let anchor = anchored_call_node("target", "anchor_id");
     (
         format!(
-            "MATCH (caller:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{project: $project}}) \
-			 WHERE ({CALL_TARGET_PREDICATE}) AND target.id IN [{ids}] \
+            "UNWIND [{ids}] AS anchor_id \
+             {anchor} \
+             MATCH (caller:CodeSymbol {{project: $project}})-[r:CALLS]->(target) \
 			 WITH caller, min(r.file) AS file, min(r.line) AS line, \
 			      collect(coalesce(r.provenance, 'EXTRACTED')) AS provenances \
 			 WITH caller, file, line, {CONFIDENCE_LABEL_CASE} AS confidence_label \
@@ -119,10 +126,12 @@ pub(super) fn find_caller_ids_batch_query(
 ) -> (String, HashMap<String, String>) {
     let limit = clamp_limit(limit);
     let ids = typed_query::id_list_literal(symbol_ids);
+    let anchor = anchored_call_node("target", "anchor_id");
     (
         format!(
-            "MATCH (caller:CodeSymbol {{project: $project}})-[:CALLS]->(target {{project: $project}}) \
-             WHERE ({CALL_TARGET_PREDICATE}) AND target.id IN [{ids}] \
+            "UNWIND [{ids}] AS anchor_id \
+             {anchor} \
+             MATCH (caller:CodeSymbol {{project: $project}})-[:CALLS]->(target) \
              RETURN DISTINCT caller.id AS id \
              ORDER BY caller.id \
              LIMIT {limit}"
@@ -257,9 +266,9 @@ pub(crate) fn resolve_external_call_target_query(
 pub(crate) fn blast_radius_query(depth: usize, limit: usize) -> String {
     let depth = depth.clamp(1, 5);
     let limit = clamp_limit(limit);
+    let anchor = anchored_call_node("target", "$id");
     format!(
-        "MATCH (target {{id: $id, project: $project}}) \
-         WHERE {CALL_TARGET_PREDICATE} \
+        "{anchor} \
          MATCH path = (affected:CodeSymbol {{project: $project}})-[:CALLS*1..{depth}]->(target) \
          WITH affected, min(length(path)) AS distance \
          OPTIONAL MATCH (file:CodeFile {{project: $project}})-[:DEFINES]->(affected) \
@@ -313,5 +322,90 @@ mod tests {
 
         assert!(callers_query.contains("confidence_label AS confidence_label"));
         assert!(callees_query.contains("confidence_label AS confidence_label"));
+    }
+
+    #[test]
+    fn single_target_queries_anchor_on_labeled_id_indexes() {
+        let queries = [
+            find_callers_query("project-1", "symbol-1", 0, 10).0,
+            find_usages_query("project-1", "symbol-1", 0, 10).0,
+            find_caller_ids_query("project-1", "symbol-1", 10).0,
+            find_usage_ids_query("project-1", "symbol-1", 10).0,
+            blast_radius_query(3, 10),
+        ];
+
+        for query in queries {
+            // An unlabeled `(target {id, project})` anchor forces an All Node
+            // Scan; the three label-qualified probes each hit an index.
+            assert!(
+                query.starts_with(
+                    "OPTIONAL MATCH (anchor_symbol:CodeSymbol {id: $id, project: $project})"
+                ),
+                "{query}"
+            );
+            assert!(
+                query.contains("(anchor_unresolved:UnresolvedCallee {id: $id, project: $project})"),
+                "{query}"
+            );
+            assert!(
+                query.contains("(anchor_external:ExternalSymbol {id: $id, project: $project})"),
+                "{query}"
+            );
+            assert!(
+                query.contains(
+                    "WITH coalesce(anchor_symbol, anchor_unresolved, anchor_external) AS target \
+                     WHERE target IS NOT NULL"
+                ),
+                "{query}"
+            );
+            assert!(
+                !query.contains("(target {id: $id, project: $project})"),
+                "{query}"
+            );
+            assert!(!query.contains(CALL_TARGET_PREDICATE), "{query}");
+        }
+    }
+
+    #[test]
+    fn batched_caller_queries_unwind_ids_through_labeled_anchors() {
+        let ids = vec!["symbol-1".to_string(), "symbol-2".to_string()];
+
+        let (callers_query, _) = find_callers_batch_query("project-1", &ids, 10);
+        let (caller_ids_query, _) = find_caller_ids_batch_query("project-1", &ids, 10);
+
+        for query in [callers_query, caller_ids_query] {
+            assert!(
+                query.starts_with("UNWIND ['symbol-1', 'symbol-2'] AS anchor_id"),
+                "{query}"
+            );
+            assert!(
+                query.contains("(anchor_symbol:CodeSymbol {id: anchor_id, project: $project})"),
+                "{query}"
+            );
+            assert!(
+                query.contains("MATCH (caller:CodeSymbol {project: $project})-[")
+                    && query.contains("]->(target)"),
+                "{query}"
+            );
+            assert!(!query.contains("target.id IN"), "{query}");
+        }
+    }
+
+    #[test]
+    fn labeled_source_batches_keep_indexed_in_list_filters() {
+        let ids = vec!["symbol-1".to_string()];
+
+        let (callees_query, _) = find_callees_batch_query("project-1", &ids, 10);
+        let (callee_ids_query, _) = find_callee_ids_batch_query("project-1", &ids, 10);
+
+        // `src` is labeled, so `src.id IN [...]` is served by the CodeSymbol
+        // id index and needs no UNWIND rewrite.
+        for query in [callees_query, callee_ids_query] {
+            assert!(
+                query.contains("MATCH (src:CodeSymbol {project: $project})"),
+                "{query}"
+            );
+            assert!(query.contains("src.id IN ['symbol-1']"), "{query}");
+        }
     }
 }

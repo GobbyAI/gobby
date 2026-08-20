@@ -75,6 +75,7 @@ pub fn contract() -> CliContract {
                     "local_import_inheritance",
                     "marked_for_resync",
                     "graph_reconcile",
+                    "full_reindex",
                     "duration_ms",
                 ],
                 ..CommandContract::new(

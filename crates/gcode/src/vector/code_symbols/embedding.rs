@@ -416,12 +416,12 @@ mod tests {
             (ai_keys::EMBEDDINGS_ROUTING, "daemon"),
             (
                 ai_keys::EMBEDDINGS_API_BASE,
-                "http://daemon-should-not-be-used:11434/v1",
+                "http://daemon-served.local:11434/v1",
             ),
         ]);
         let daemon = crate::config::resolve_embedding_config_from_source(None, &mut daemon_source)
             .expect("daemon-served embedding config");
-        assert_eq!(daemon.api_base, "http://daemon-should-not-be-used:11434/v1");
+        assert_eq!(daemon.api_base, "http://daemon-served.local:11434/v1");
 
         let mut off_source = TestSource::with_values([
             (ai_keys::EMBEDDINGS_ROUTING, "off"),

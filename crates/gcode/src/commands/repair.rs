@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use serde::Serialize;
 
-use crate::commands::index;
+use crate::commands::index::{self, IndexSyncProjectionsOutput, RunIndexLockedOutput};
 use crate::config::Context;
 use crate::db;
 use crate::graph::code_graph::{GraphFileHashRead, GraphFileHashes, read_project_file_hashes};
@@ -14,6 +14,7 @@ use crate::index::indexer::{
 };
 use crate::index_lock::{self, IndexLockPolicy, IndexLockResult};
 use crate::output::{self, Format};
+use crate::projection::sync::{ProjectionStatus, ProjectionSyncReport};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -40,6 +41,7 @@ struct LocalImportCallsSummary {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 struct LocalImportInheritanceSummary {
     pending: usize,
+    resolved: usize,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
@@ -66,6 +68,10 @@ struct RepairOutput {
     local_import_inheritance: LocalImportInheritanceSummary,
     marked_for_resync: MarkedForResyncSummary,
     graph_reconcile: GraphReconcileSummary,
+    /// Index and projection report of the version-gated full run; absent in
+    /// `repair` mode. A degraded graph or vector sync is only visible here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    full_reindex: Option<IndexSyncProjectionsOutput>,
     duration_ms: u64,
 }
 
@@ -94,7 +100,7 @@ fn run_locked(ctx: &Context, started: Instant) -> anyhow::Result<RepairOutput> {
 
     if needs_full_reindex(previous_version.as_deref(), current_version) {
         drop(conn);
-        index::run_index_locked(
+        let full_reindex = match index::run_index_locked(
             ctx,
             IndexRequest {
                 project_root: ctx.project_root.clone(),
@@ -104,7 +110,12 @@ fn run_locked(ctx: &Context, started: Instant) -> anyhow::Result<RepairOutput> {
                 require_cpp_semantics: false,
                 sync_projections: true,
             },
-        )?;
+        )? {
+            RunIndexLockedOutput::Projections(payload) => payload,
+            RunIndexLockedOutput::IndexOnly(_) => {
+                anyhow::bail!("full reindex returned no projection report")
+            }
+        };
         return Ok(RepairOutput {
             project_id: ctx.project_id.clone(),
             mode: RepairMode::FullReindex,
@@ -114,6 +125,7 @@ fn run_locked(ctx: &Context, started: Instant) -> anyhow::Result<RepairOutput> {
             local_import_inheritance: LocalImportInheritanceSummary::default(),
             marked_for_resync: MarkedForResyncSummary::default(),
             graph_reconcile: GraphReconcileSummary::default(),
+            full_reindex: Some(full_reindex),
             duration_ms: elapsed_ms(started),
         });
     }
@@ -158,6 +170,7 @@ fn run_locked(ctx: &Context, started: Instant) -> anyhow::Result<RepairOutput> {
         },
         local_import_inheritance: LocalImportInheritanceSummary {
             pending: inheritance.pending,
+            resolved: inheritance.resolved,
         },
         marked_for_resync: MarkedForResyncSummary {
             promotion_owners: promotion_owners.len(),
@@ -165,6 +178,7 @@ fn run_locked(ctx: &Context, started: Instant) -> anyhow::Result<RepairOutput> {
             total: paths.len(),
         },
         graph_reconcile,
+        full_reindex: None,
         duration_ms: elapsed_ms(started),
     })
 }
@@ -208,8 +222,22 @@ fn repair_text(output: &RepairOutput) -> String {
         .as_deref()
         .map(|reason| format!(", skipped={reason}"))
         .unwrap_or_default();
+    let full = output
+        .full_reindex
+        .as_ref()
+        .map(|payload| {
+            format!(
+                "\nfull reindex: indexed_files={}, skipped_files={}, degraded={}, graph={}, vector={}",
+                payload.indexed_files,
+                payload.skipped_files,
+                payload.degraded.len(),
+                projection_status_text(&payload.projections.graph),
+                projection_status_text(&payload.projections.vector),
+            )
+        })
+        .unwrap_or_default();
     format!(
-        "project: {}\nmode: {}\nindexer version: {} -> {}\nlocal import calls: pending={}, resolved={}\nlocal import inheritance: pending={}\nmarked for resync: promotion_owners={}, graph_drift={}, total={}\ngraph reconcile: checked={}{}\nduration: {} ms",
+        "project: {}\nmode: {}{full}\nindexer version: {} -> {}\nlocal import calls: pending={}, resolved={}\nlocal import inheritance: pending={}, resolved={}\nmarked for resync: promotion_owners={}, graph_drift={}, total={}\ngraph reconcile: checked={}{}\nduration: {} ms",
         output.project_id,
         output.mode.as_str(),
         previous,
@@ -217,6 +245,7 @@ fn repair_text(output: &RepairOutput) -> String {
         output.local_import_calls.pending,
         output.local_import_calls.resolved,
         output.local_import_inheritance.pending,
+        output.local_import_inheritance.resolved,
         output.marked_for_resync.promotion_owners,
         output.marked_for_resync.graph_drift,
         output.marked_for_resync.total,
@@ -226,15 +255,112 @@ fn repair_text(output: &RepairOutput) -> String {
     )
 }
 
+fn projection_status_text(report: &ProjectionSyncReport) -> String {
+    let status = match report.status {
+        ProjectionStatus::Ok => "ok",
+        ProjectionStatus::Degraded => "degraded",
+        ProjectionStatus::Failed => "failed",
+    };
+    match &report.error {
+        Some(error) => format!("{status} ({})", error.kind),
+        None => status.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::index::api::IndexOutcome;
+    use crate::projection::sync::{ProjectionSyncError, ProjectionSyncReports};
 
     fn hub_file(path: &str, hash: &str) -> GraphSyncedFile {
         GraphSyncedFile {
             file_path: path.to_string(),
             content_hash: hash.to_string(),
         }
+    }
+
+    fn sample_output(
+        mode: RepairMode,
+        full_reindex: Option<IndexSyncProjectionsOutput>,
+    ) -> RepairOutput {
+        RepairOutput {
+            project_id: "project-1".to_string(),
+            mode,
+            previous_indexer_version: None,
+            indexer_version: "1.6.1".to_string(),
+            local_import_calls: LocalImportCallsSummary {
+                pending: 4,
+                resolved: 3,
+            },
+            local_import_inheritance: LocalImportInheritanceSummary {
+                pending: 2,
+                resolved: 2,
+            },
+            marked_for_resync: MarkedForResyncSummary::default(),
+            graph_reconcile: GraphReconcileSummary::default(),
+            full_reindex,
+            duration_ms: 7,
+        }
+    }
+
+    fn projection_report(status: ProjectionStatus, error: Option<&str>) -> ProjectionSyncReport {
+        ProjectionSyncReport {
+            status,
+            synced_files: 3,
+            synced_symbols: 9,
+            skipped_files: 0,
+            failed_files: 0,
+            degraded: error.is_some(),
+            error: error.map(|kind| ProjectionSyncError {
+                kind: kind.to_string(),
+                message: "unavailable".to_string(),
+            }),
+        }
+    }
+
+    #[test]
+    fn full_reindex_mode_reports_projection_outcome() {
+        let payload = index::sync_projections_payload(
+            &IndexOutcome {
+                indexed_files: 3,
+                symbols_indexed: 9,
+                ..IndexOutcome::default()
+            },
+            ProjectionSyncReports {
+                graph: projection_report(ProjectionStatus::Ok, None),
+                vector: projection_report(ProjectionStatus::Failed, Some("missing_qdrant_config")),
+            },
+        );
+        let output = sample_output(RepairMode::FullReindex, Some(payload));
+
+        let json = serde_json::to_value(&output).expect("repair json");
+        assert_eq!(json["mode"], "full_reindex");
+        assert_eq!(json["full_reindex"]["indexed_files"], 3);
+        assert_eq!(
+            json["full_reindex"]["projections"]["vector"]["degraded"],
+            true
+        );
+        assert_eq!(
+            json["full_reindex"]["projections"]["vector"]["error"]["kind"],
+            "missing_qdrant_config"
+        );
+        assert!(repair_text(&output).contains(
+            "mode: full_reindex\nfull reindex: indexed_files=3, skipped_files=0, degraded=0, \
+             graph=ok, vector=failed (missing_qdrant_config)\n"
+        ));
+    }
+
+    #[test]
+    fn repair_mode_omits_full_reindex_and_reports_inheritance_resolution() {
+        let output = sample_output(RepairMode::Repair, None);
+
+        let json = serde_json::to_value(&output).expect("repair json");
+        assert!(json.get("full_reindex").is_none());
+        assert_eq!(json["local_import_inheritance"]["resolved"], 2);
+        let text = repair_text(&output);
+        assert!(text.contains("local import inheritance: pending=2, resolved=2"));
+        assert!(!text.contains("full reindex:"));
     }
 
     #[test]

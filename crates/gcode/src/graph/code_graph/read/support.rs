@@ -10,6 +10,22 @@ pub(super) const CALL_TARGET_PREDICATE: &str =
     "target:CodeSymbol OR target:UnresolvedCallee OR target:ExternalSymbol";
 pub(super) const NEIGHBOR_PREDICATE: &str =
     "neighbor:CodeSymbol OR neighbor:UnresolvedCallee OR neighbor:ExternalSymbol";
+
+/// Bind `id_expr` to `alias` through the per-label `{id, project}` indexes.
+///
+/// An unlabeled `(x {id: $id, project: $project})` pattern has no index to
+/// use, so FalkorDB scans every node in the graph before filtering; three
+/// label-qualified `OPTIONAL MATCH` probes resolve the same node in
+/// microseconds and leave it bound for the traversal that follows.
+pub(super) fn anchored_call_node(alias: &str, id_expr: &str) -> String {
+    format!(
+        "OPTIONAL MATCH (anchor_symbol:CodeSymbol {{id: {id_expr}, project: $project}}) \
+         OPTIONAL MATCH (anchor_unresolved:UnresolvedCallee {{id: {id_expr}, project: $project}}) \
+         OPTIONAL MATCH (anchor_external:ExternalSymbol {{id: {id_expr}, project: $project}}) \
+         WITH coalesce(anchor_symbol, anchor_unresolved, anchor_external) AS {alias} \
+         WHERE {alias} IS NOT NULL"
+    )
+}
 pub(super) const TARGET_TYPE_CASE: &str = "CASE \
      WHEN target:CodeSymbol THEN coalesce(target.kind, 'function') \
      WHEN target:ExternalSymbol THEN 'external' \
