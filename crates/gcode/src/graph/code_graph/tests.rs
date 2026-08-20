@@ -434,7 +434,7 @@ fn delete_preserves_current_symbols() {
 
     assert!(
         combined.contains(
-            "MATCH (s:CodeSymbol {project: $project, file_path: $file_path})-[r:CALLS]->()"
+            "MATCH (s:CodeSymbol {project: $project, file_path: $file_path})-[r:CALLS]->(n {project: $project})"
         ),
         "{combined}"
     );
@@ -472,7 +472,7 @@ fn content_version_delete_is_project_path_and_hash_scoped() {
         .collect::<Vec<_>>()
         .join("\n");
 
-    assert_eq!(queries.len(), 5);
+    assert_eq!(queries.len(), 7);
     assert!(combined.contains("[r:IMPORTS]"), "{combined}");
     assert!(combined.contains("[r:DEFINES]"), "{combined}");
     assert!(combined.contains("[r:CALLS]"), "{combined}");
@@ -486,7 +486,7 @@ fn content_version_delete_is_project_path_and_hash_scoped() {
     );
     assert_eq!(
         combined.matches("r.content_hash = $content_hash").count(),
-        4
+        6
     );
     assert!(!combined.contains("sync_token"), "{combined}");
     for query in &queries {
@@ -796,12 +796,26 @@ macro_rules! assert_heritage_owner_delete {
             "heritage delete must target INHERITS|EXTENDS|IMPLEMENTS:\n{combined}"
         );
         assert!(
-            combined.contains("r.file = $file_path"),
-            "heritage delete must filter relationship owner r.file:\n{combined}"
+            combined.contains(
+                "MATCH (s:CodeSymbol {project: $project, file_path: $file_path})-[r:INHERITS|EXTENDS|IMPLEMENTS]->(n {project: $project})"
+            ),
+            "same-file heritage must anchor on CodeSymbol {{project, file_path}}:\n{combined}"
+        );
+        assert!(
+            combined.contains("(s:ExternalSymbol OR s:UnresolvedCallee)"),
+            "terminal heritage must scan ExternalSymbol/UnresolvedCallee sources:\n{combined}"
         );
         assert!(
             combined.contains("r.source_file_path = $file_path"),
             "heritage delete must filter r.source_file_path:\n{combined}"
+        );
+        assert!(
+            combined.contains("s.file_path IS NULL OR s.file_path <> $file_path"),
+            "cross-file heritage must keep relationship ownership when the Type lives elsewhere:\n{combined}"
+        );
+        assert!(
+            !combined.contains("r.file = $file_path"),
+            "heritage delete must not filter the redundant r.file predicate:\n{combined}"
         );
         assert!(
             combined.contains("(s {project: $project})"),
@@ -810,12 +824,6 @@ macro_rules! assert_heritage_owner_delete {
         assert!(
             combined.contains("(n {project: $project})"),
             "heritage delete must bind project on the generic target:\n{combined}"
-        );
-        assert!(
-            !combined.contains(
-                "MATCH (s:CodeSymbol {project: $project, file_path: $file_path})-[r:INHERITS"
-            ),
-            "heritage delete must not copy whole-file CALLS source-file binding:\n{combined}"
         );
     }};
 }
@@ -1225,7 +1233,7 @@ fn delete_cross_file_rust_impl_uses_relationship_owner() {
     );
     assert_heritage_owner_delete!(&combined);
     assert!(
-        !combined.contains("file_path: $file_path})-[r:INHERITS"),
+        combined.contains("s.file_path IS NULL OR s.file_path <> $file_path"),
         "cross-file impl ownership lives on the relationship, not the Type symbol file:\n{combined}"
     );
 }
@@ -1302,5 +1310,139 @@ fn heritage_delete_binds_project_on_both_endpoints() {
                 && heritage.matches("{project: $project}").count() >= 2,
             "same-path heritage in another project must not be deleted:\n{heritage}"
         );
+    }
+}
+
+fn merge_node_property_keys(cypher: &str) -> Vec<(String, Vec<String>)> {
+    let mut out = Vec::new();
+    let mut rest = cypher;
+    while let Some(start) = rest.find("MERGE (") {
+        let after = &rest[start + "MERGE (".len()..];
+        let Some(colon) = after.find(':') else {
+            break;
+        };
+        let alias = &after[..colon];
+        if !alias
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+        {
+            rest = &after[colon + 1..];
+            continue;
+        }
+        let after_colon = &after[colon + 1..];
+        let Some(brace) = after_colon.find('{') else {
+            rest = after_colon;
+            continue;
+        };
+        let label = after_colon[..brace].trim();
+        if !label
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+        {
+            rest = &after_colon[brace + 1..];
+            continue;
+        }
+        let after_brace = &after_colon[brace + 1..];
+        let Some(end) = after_brace.find('}') else {
+            break;
+        };
+        let keys = after_brace[..end]
+            .split(',')
+            .filter_map(|part| {
+                let key = part.split(':').next()?.trim();
+                (!key.is_empty()).then(|| key.to_string())
+            })
+            .collect();
+        out.push((label.to_string(), keys));
+        rest = &after_brace[end + 1..];
+    }
+    out
+}
+
+#[test]
+fn project_indexes_cover_every_merge_key() {
+    let indexed = PROJECT_INDEXED_PROPERTIES
+        .iter()
+        .map(|(label, properties)| {
+            (
+                *label,
+                properties
+                    .iter()
+                    .copied()
+                    .collect::<std::collections::BTreeSet<_>>(),
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for (label, keys) in merge_node_property_keys(include_str!("write/mutation.rs")) {
+        let Some(indexed_keys) = indexed.get(label.as_str()) else {
+            panic!("MERGE label {label} is missing from PROJECT_INDEXED_PROPERTIES");
+        };
+        for key in keys {
+            assert!(
+                indexed_keys.contains(key.as_str()),
+                "MERGE :{label}({key}) is not indexed"
+            );
+        }
+    }
+}
+
+#[test]
+fn stale_sweeps_anchor_on_indexed_file_path() {
+    let combined = combined_cypher(
+        &delete_stale_file_graph_queries("project-1", "src/lib.rs", "hash-1", "tok-1")
+            .expect("stale delete"),
+    );
+    assert!(
+        combined.contains(
+            "MATCH (s:CodeSymbol {project: $project, file_path: $file_path})-[r:CALLS]->(n {project: $project})"
+        ),
+        "stale CALLS must start from CodeSymbol {{project, file_path}}:\n{combined}"
+    );
+    assert!(
+        !combined.contains("CodeSymbol {project: $project})-["),
+        "no stale relationship sweep may match CodeSymbol by project alone:\n{combined}"
+    );
+}
+
+#[test]
+fn file_delete_sweeps_anchor_on_indexed_file_path() {
+    let combined = combined_cypher(
+        &delete_file_graph_queries("project-1", "src/lib.rs", &[]).expect("file delete"),
+    );
+    assert!(
+        combined.contains(
+            "MATCH (s:CodeSymbol {project: $project, file_path: $file_path})-[r:CALLS]->(n {project: $project})"
+        ),
+        "file-delete CALLS must start from CodeSymbol {{project, file_path}}:\n{combined}"
+    );
+    assert!(
+        !combined.contains("CodeSymbol {project: $project})-["),
+        "no file-delete relationship sweep may match CodeSymbol by project alone:\n{combined}"
+    );
+}
+
+#[test]
+fn mutation_edges_keep_file_and_source_file_path_in_parity() {
+    let source = include_str!("write/mutation.rs");
+    for block in source.split("const ADD_") {
+        if !block.contains("{file:") {
+            continue;
+        }
+        assert!(
+            block.contains("r.source_file_path ="),
+            "a mutation that sets r.file must also set r.source_file_path:\n{block}"
+        );
+        if block.contains("file: call.file_path") {
+            assert!(
+                block.contains("r.source_file_path = call.file_path"),
+                "CALLS r.file and r.source_file_path must share call.file_path:\n{block}"
+            );
+        }
+        if block.contains("file: row.file_path") {
+            assert!(
+                block.contains("r.source_file_path = row.file_path"),
+                "heritage r.file and r.source_file_path must share row.file_path:\n{block}"
+            );
+        }
     }
 }

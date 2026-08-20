@@ -105,13 +105,29 @@ impl GraphClient {
             escape_label(label),
             escape_property(property)
         );
-        match self.query(&cypher, None) {
+        self.ensure_index(&cypher, &format!(":{label}({property})"))
+    }
+
+    /// Ensure an exact relationship index exists for a type/property pair.
+    pub fn ensure_exact_relationship_index(
+        &mut self,
+        rel_type: &str,
+        property: &str,
+    ) -> anyhow::Result<()> {
+        let cypher = format!(
+            "CREATE INDEX FOR ()-[r:{}]-() ON (r.{})",
+            escape_rel_type(rel_type),
+            escape_property(property)
+        );
+        self.ensure_index(&cypher, &format!("()-[:{rel_type}]->().{property}"))
+    }
+
+    fn ensure_index(&mut self, cypher: &str, index_name: &str) -> anyhow::Result<()> {
+        match self.query(cypher, None) {
             Ok(_) => Ok(()),
             Err(error) if is_existing_index_error(&error) => {
                 log::debug!(
-                    "FalkorDB index :{}({}) already exists; suppressing duplicate-index error: {error}",
-                    label,
-                    property
+                    "FalkorDB index {index_name} already exists; suppressing duplicate-index error: {error}"
                 );
                 Ok(())
             }

@@ -33,12 +33,19 @@ use mutation::{SyncFileMutation, definition_graph_symbols, new_sync_token};
 use support::execute_write_query;
 use sync_plan::plan_sync_batches;
 
-const PROJECT_INDEXED_LABELS: &[&str] = &[
-    "CodeFile",
-    "CodeSymbol",
-    "CodeModule",
-    "UnresolvedCallee",
-    "ExternalSymbol",
+pub(in crate::graph::code_graph) const PROJECT_INDEXED_PROPERTIES: &[(&str, &[&str])] = &[
+    ("CodeFile", &["project", "path"]),
+    ("CodeSymbol", &["project", "id", "file_path"]),
+    ("CodeModule", &["project", "name"]),
+    ("UnresolvedCallee", &["project", "id"]),
+    ("ExternalSymbol", &["project", "id"]),
+];
+
+const PROJECT_INDEXED_RELATIONSHIPS: &[(&str, &str)] = &[
+    ("CALLS", "source_file_path"),
+    ("INHERITS", "source_file_path"),
+    ("EXTENDS", "source_file_path"),
+    ("IMPLEMENTS", "source_file_path"),
 ];
 
 pub struct CodeGraph<'a> {
@@ -107,8 +114,14 @@ impl<'a> CodeGraph<'a> {
     }
 
     pub fn ensure_project_indexes(&mut self) -> anyhow::Result<()> {
-        for label in PROJECT_INDEXED_LABELS {
-            self.client.ensure_exact_node_index(label, "project")?;
+        for (label, properties) in PROJECT_INDEXED_PROPERTIES {
+            for property in *properties {
+                self.client.ensure_exact_node_index(label, property)?;
+            }
+        }
+        for (rel_type, property) in PROJECT_INDEXED_RELATIONSHIPS {
+            self.client
+                .ensure_exact_relationship_index(rel_type, property)?;
         }
         Ok(())
     }

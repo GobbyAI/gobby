@@ -28,13 +28,28 @@ pub(crate) fn delete_file_graph_queries(
             base_params(),
         )?,
         typed_query(
-            "MATCH (s:CodeSymbol {project: $project, file_path: $file_path})-[r:CALLS]->()
+            "MATCH (s:CodeSymbol {project: $project, file_path: $file_path})-[r:CALLS]->(n {project: $project})
+             DELETE r",
+            base_params(),
+        )?,
+        typed_query(
+            "MATCH (s:CodeSymbol {project: $project, file_path: $file_path})-[r:INHERITS|EXTENDS|IMPLEMENTS]->(n {project: $project})
              DELETE r",
             base_params(),
         )?,
         typed_query(
             "MATCH (s {project: $project})-[r:INHERITS|EXTENDS|IMPLEMENTS]->(n {project: $project})
-             WHERE (r.file = $file_path OR r.source_file_path = $file_path)
+             WHERE (s:ExternalSymbol OR s:UnresolvedCallee)
+               AND r.source_file_path = $file_path
+             DELETE r",
+            base_params(),
+        )?,
+        typed_query(
+            "MATCH (s)-[r:INHERITS|EXTENDS|IMPLEMENTS]->(n)
+             WHERE r.source_file_path = $file_path
+               AND s.project = $project
+               AND n.project = $project
+               AND (s.file_path IS NULL OR s.file_path <> $file_path)
              DELETE r",
             base_params(),
         )?,
@@ -101,18 +116,36 @@ pub(crate) fn delete_stale_file_graph_queries(
             base_params(),
         )?,
         typed_query(
-            "MATCH (s:CodeSymbol {project: $project})-[r:CALLS]->(n {project: $project})
-             WHERE (r.file = $file_path OR r.source_file_path = $file_path)
-               AND r.content_hash = $content_hash
+            "MATCH (s:CodeSymbol {project: $project, file_path: $file_path})-[r:CALLS]->(n {project: $project})
+             WHERE r.content_hash = $content_hash
+               AND (r.sync_token IS NULL OR r.sync_token <> $sync_token)
+             DELETE r",
+            base_params(),
+        )?,
+        typed_query(
+            "MATCH (s:CodeSymbol {project: $project, file_path: $file_path})-[r:INHERITS|EXTENDS|IMPLEMENTS]->(n {project: $project})
+             WHERE r.content_hash = $content_hash
                AND (r.sync_token IS NULL OR r.sync_token <> $sync_token)
              DELETE r",
             base_params(),
         )?,
         typed_query(
             "MATCH (s {project: $project})-[r:INHERITS|EXTENDS|IMPLEMENTS]->(n {project: $project})
-             WHERE (r.file = $file_path OR r.source_file_path = $file_path)
+             WHERE (s:ExternalSymbol OR s:UnresolvedCallee)
+               AND r.source_file_path = $file_path
                AND r.content_hash = $content_hash
                AND (r.sync_token IS NULL OR r.sync_token <> $sync_token)
+             DELETE r",
+            base_params(),
+        )?,
+        typed_query(
+            "MATCH (s)-[r:INHERITS|EXTENDS|IMPLEMENTS]->(n)
+             WHERE r.source_file_path = $file_path
+               AND s.project = $project
+               AND n.project = $project
+               AND r.content_hash = $content_hash
+               AND (r.sync_token IS NULL OR r.sync_token <> $sync_token)
+               AND (s.file_path IS NULL OR s.file_path <> $file_path)
              DELETE r",
             base_params(),
         )?,
@@ -161,16 +194,32 @@ pub(crate) fn delete_content_version_queries(
             base_params(),
         )?,
         typed_query(
-            "MATCH (s:CodeSymbol {project: $project})-[r:CALLS]->(n {project: $project})
-             WHERE (r.file = $file_path OR r.source_file_path = $file_path)
-               AND r.content_hash = $content_hash
+            "MATCH (s:CodeSymbol {project: $project, file_path: $file_path})-[r:CALLS]->(n {project: $project})
+             WHERE r.content_hash = $content_hash
+             DELETE r",
+            base_params(),
+        )?,
+        typed_query(
+            "MATCH (s:CodeSymbol {project: $project, file_path: $file_path})-[r:INHERITS|EXTENDS|IMPLEMENTS]->(n {project: $project})
+             WHERE r.content_hash = $content_hash
              DELETE r",
             base_params(),
         )?,
         typed_query(
             "MATCH (s {project: $project})-[r:INHERITS|EXTENDS|IMPLEMENTS]->(n {project: $project})
-             WHERE (r.file = $file_path OR r.source_file_path = $file_path)
+             WHERE (s:ExternalSymbol OR s:UnresolvedCallee)
+               AND r.source_file_path = $file_path
                AND r.content_hash = $content_hash
+             DELETE r",
+            base_params(),
+        )?,
+        typed_query(
+            "MATCH (s)-[r:INHERITS|EXTENDS|IMPLEMENTS]->(n)
+             WHERE r.source_file_path = $file_path
+               AND s.project = $project
+               AND n.project = $project
+               AND r.content_hash = $content_hash
+               AND (s.file_path IS NULL OR s.file_path <> $file_path)
              DELETE r",
             base_params(),
         )?,
