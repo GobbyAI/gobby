@@ -855,7 +855,7 @@ class TextGenerationService:
         provider = binding.provider if binding else request.provider
         model = request.model or (next(iter(binding.models), None) if binding else None)
         if success:
-            log_event = logger.debug
+            log_event = logger.info
             message = "feature_llm_call"
         elif isinstance(error, _CircuitOpenError):
             log_event = logger.debug

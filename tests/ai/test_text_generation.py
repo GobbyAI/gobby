@@ -264,7 +264,7 @@ async def test_text_generation_service_generate_result_preserves_usage() -> None
 
 
 @pytest.mark.asyncio
-async def test_successful_text_generation_omits_feature_llm_call_at_info(
+async def test_successful_text_generation_logs_feature_llm_call_at_info(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     registry = AICapabilityRegistry(
@@ -289,39 +289,14 @@ async def test_successful_text_generation_omits_feature_llm_call_at_info(
         )
     )
 
-    assert [record for record in caplog.records if record.getMessage() == "feature_llm_call"] == []
-
-
-@pytest.mark.asyncio
-async def test_successful_text_generation_logs_feature_llm_call_at_debug(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    registry = AICapabilityRegistry(
-        [
-            CapabilityBinding(
-                capability=AICapability.TEXT_GENERATE,
-                provider="endpoint:lm-studio",
-                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
-                available=True,
-            )
-        ]
-    )
-    service = TextGenerationService(
-        registry,
-        {"endpoint:lm-studio": RecordingAdapter("endpoint:lm-studio")},
-    )
-    caplog.set_level(logging.DEBUG, logger=TEXT_GENERATION_LOGGER)
-
-    await service.generate_result(
-        TextGenerationRequest(
-            prompt="summarize", provider="endpoint:lm-studio", model="local-model"
-        )
-    )
-
     records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
     assert len(records) == 1
-    assert records[0].levelno == logging.DEBUG
-    assert records[0].__dict__["success"] is True
+    record = records[0]
+    assert record.levelno == logging.INFO
+    assert record.__dict__["success"] is True
+    assert record.__dict__["provider"] == "endpoint:lm-studio"
+    assert record.__dict__["model"] == "local-model"
+    assert record.__dict__["candidate"]
 
 
 @pytest.mark.asyncio
@@ -364,7 +339,7 @@ async def test_recoverable_candidate_failure_logs_feature_llm_call_at_debug(
 
     assert result.provider == "endpoint:good"
     records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
-    assert [record.levelno for record in records] == [logging.DEBUG, logging.DEBUG]
+    assert [record.levelno for record in records] == [logging.DEBUG, logging.INFO]
     assert records[0].__dict__["success"] is False
     assert records[1].__dict__["success"] is True
 
@@ -3367,7 +3342,7 @@ async def test_text_generation_service_times_out_slow_candidate_and_falls_back(
 
     assert result.provider == "endpoint:good"
     records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
-    assert [record.levelno for record in records] == [logging.DEBUG, logging.DEBUG]
+    assert [record.levelno for record in records] == [logging.DEBUG, logging.INFO]
     assert records[0].__dict__["success"] is False
     assert "candidate timed out after 0.01s" in records[0].__dict__["error"]
 
