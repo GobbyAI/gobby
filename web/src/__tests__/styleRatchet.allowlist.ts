@@ -54,4 +54,4 @@ export const IMPORTANT_ALLOWLIST: Record<string, number> = {
 
 // Exact total lines across the recorded infrastructure stylesheets. Any infra CSS change must
 // update this pin consciously in the same commit.
-export const CSS_TOTAL_LINE_PIN = 857;
+export const CSS_TOTAL_LINE_PIN = 876;
