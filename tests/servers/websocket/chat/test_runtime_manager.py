@@ -1044,8 +1044,10 @@ class TestCodexBackend:
         message = str(exc_info.value)
         assert "protocol=ollama" in message
         assert "model=ollama/qwen3-coder" in message
+        # The resolver's diagnosis is the actionable part (#20646); credentials
+        # never travel with it.
+        assert message.endswith(": model not loaded")
         assert "api_base=http://localhost:11434" not in message
-        assert "model not loaded" not in message
         assert "secret-token" not in message
         assert "api_key" not in message
         assert exc_info.value.__cause__ is failure
