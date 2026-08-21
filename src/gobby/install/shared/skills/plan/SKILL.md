@@ -1,7 +1,7 @@
 ---
 name: plan
 description: Adaptive /gobby plan workflow. Investigates first, recommends lightweight or full planning depth, requires decision elicitation, and preserves explicit human gates for artifact enhancement, adversarial review, and optional build handoff.
-version: "3.7.0"
+version: "3.8.0"
 category: core
 triggers: plan, specification, requirements
 metadata:
@@ -19,17 +19,23 @@ Both `$gobby plan` and `/gobby plan` invoke this workflow.
 1. Investigate the request and repository before recommending a planning depth.
    Resolve discoverable facts with repository inspection, using `gcode` for code
    navigation. Do not ask the user for facts the repository can answer.
-2. Assess these complexity signals:
-   - multiple dependent deliverables or subsystems;
-   - public API, schema, migration, security, or destructive-risk work;
-   - material unresolved product decisions;
-   - multi-agent coordination or durable handoff requirements; or
-   - an explicit desire for an artifact, lifecycle automation, or adversarial
-     review.
-3. Recommend **Full** when one or more signals materially affect the work.
-   Recommend **Lightweight** for localized, low-risk work. Ask the user to choose
-   between the two depths. If the user already selected a depth in response to
-   the Plan Mode Consider prompt, honor that choice without asking again.
+2. Determine whether the proposed implementation is a major change. Full-depth
+   candidates are limited to:
+   - a subsystem redesign or rework that changes multiple components and their
+     consumers;
+   - a complex new feature with multiple dependent deliverables across
+     subsystems; or
+   - a broad migration or architecture/security-model change with many
+     consumers and a coordinated rollout.
+3. Recommend **Full** only for a major change. Recommend **Lightweight** for bug
+   fixes, maintenance, localized features or refactors, configuration, and
+   documentation. Public API or schema involvement, security or destructive
+   risk, unresolved product decisions, multi-agent coordination, durable
+   handoff, and a desire for lifecycle automation or adversarial review increase
+   the rigor within the chosen depth; none independently makes a change major.
+   Ask the user to choose between the two depths. If the user already selected a
+   depth in response to the Plan Mode Consider prompt, honor that choice without
+   asking again.
 4. Load `elicit` for every Gobby plan:
 
 ```text
@@ -153,22 +159,28 @@ Start only after explicit adversarial-review approval.
    about it, and resume from the continuation prompt.
 3. Read the canonical result. Present every finding with its full text and
    metadata, and collect one accept/decline vote per finding before editing.
-   Apply accepted repairs; record declined items and deferrals explicitly. In
-   unattended mode, the coordinator judges every item and records each vote
-   with its rationale.
-4. Persist the canonical round checkpoint and complete normal finalization.
-   Base-validate the artifact afterward. Increment
-   `completed_plan_review_rounds` only when finalization succeeds; display
-   attempts, expired evidence, and incomplete rounds never count.
-5. Present the checkpoint menu after every finalized round. Choosing
+   Record declined items and deferrals explicitly. In unattended mode, the
+   coordinator judges every item and records each vote with its rationale.
+4. For a `needs_review` result, persist the rejection checkpoint on the unchanged
+   reviewed artifact before applying accepted repairs. Call
+   `append_plan_changelog_round(evidence_id, prose, round_result)`, then
+   `finalize_plan_review_evidence(evidence_id, round_result)`. Pass the
+   adversary's canonical payload verbatim as `round_result` to both calls; a
+   rejection round without it fails with `missing_round_result`. Only after both
+   calls succeed, apply accepted repairs and base-validate the artifact.
+   Increment `completed_plan_review_rounds` only when finalization succeeds;
+   display attempts, expired evidence, and incomplete rounds never count.
+5. Present the checkpoint menu after every finalized round and any accepted
+   repairs. Choosing
    `continue interactively` after `needs_review` revises and launches the next
    approved review round. Choosing it after `approved` keeps planning open;
    edits invalidate approval and require a fresh reviewed round.
    When a `needs_review` verdict reaches the configured review cap, process
-   every final finding and vote before editing, apply accepted repairs, persist
-   and finalize the normal rejection checkpoint, then append a human-handoff
-   changelog entry. Do not launch another adversary round. Continue only through
-   the explicit human-handoff tools described below.
+   every final finding and vote before editing, append and finalize the normal
+   rejection checkpoint on the unchanged artifact with the canonical
+   `round_result`, apply accepted repairs, base-validate, then append a
+   human-handoff changelog entry. Do not launch another adversary round.
+   Continue only through the explicit human-handoff tools described below.
 6. On approval, apply the server-derived manifest, persist the checkpoint,
    finalize evidence, complete lesson-mint checkpointing, and run:
 
@@ -177,6 +189,22 @@ Start only after explicit adversarial-review approval.
    ```
 
    Then present the checkpoint menu as the final-approval checkpoint.
+
+### Recovery: repairs applied before the checkpoint
+
+If accepted repairs changed the artifact before the rejection checkpoint, save
+the revised file aside. Restore the reviewed bytes from
+`get_plan_review_snapshot(evidence_id)`: write its `snapshot` field back to the
+artifact and confirm the snapshot's SHA-256 equals `plan_hash`. Large tool
+results may be offloaded; page them with `gobby-results:get_tool_result`, or read
+the bytes from the `plan_review_evidence.snapshot` column through read-only
+database access.
+
+On the restored artifact, call `append_plan_changelog_round` with the canonical
+`round_result`, then `finalize_plan_review_evidence` with that same payload.
+Splice the daemon-rendered `## V1 Plan Changelog` round entry — prose plus fence
+— byte-identically into the saved revised file, write that combined revision
+back to the artifact, and run base validation. Never hand-build the fence.
 
 ## Universal Checkpoint and Handoff Contract
 
@@ -253,7 +281,9 @@ gated on the exact V1 fence and atomically stamps
 the recorder error, or `none` when no class is provable. Approval completes
 only after the status leaves `pending`.
 
-The freshness gate exists only in step 1. Plan drift after a completed step 1
+The rejection-round freshness gate lives in `append_plan_changelog_round`; the
+approval gate lives in `apply_plan_review_manifest`. The approval freshness gate
+exists only in step 1. Plan drift after a completed step 1
 cannot block steps 2–4 because they read the immutable evidence row, durable
 intent, and persisted manifest entries. An identical step-1 retry returns its
 recorded result without another write. Finalize, mint, and mint checkpointing

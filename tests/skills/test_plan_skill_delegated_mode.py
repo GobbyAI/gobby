@@ -66,27 +66,29 @@ def test_compact_self_interrupt_warning_is_shared_by_runtime_surfaces() -> None:
 
 
 def test_plan_skill_version(body: str) -> None:
-    assert 'version: "3.7.0"' in body
+    assert 'version: "3.8.0"' in body
 
 
 def test_plan_investigates_before_recommending_depth(body: str) -> None:
-    section = body[
-        body.index("## Depth Selection and Required Elicitation") : body.index(
-            "## Lightweight Workflow"
-        )
-    ]
+    section = _normalize_prose(
+        body[
+            body.index("## Depth Selection and Required Elicitation") : body.index(
+                "## Lightweight Workflow"
+            )
+        ]
+    )
     investigate = section.index("Investigate the request and repository")
-    assess = section.index("Assess these complexity signals")
-    recommend = section.index("Recommend **Full**")
+    classify = section.index("Determine whether the proposed implementation is a major change")
+    recommend = section.index("Recommend **Full** only for a major change")
     ask = section.index("Ask the user to choose")
 
-    assert investigate < assess < recommend < ask
+    assert investigate < classify < recommend < ask
     for signal in (
-        "multiple dependent deliverables or subsystems",
-        "public API, schema, migration, security, or destructive-risk work",
-        "material unresolved product decisions",
-        "multi-agent coordination or durable handoff requirements",
-        "artifact, lifecycle automation, or adversarial",
+        "subsystem redesign or rework",
+        "complex new feature with multiple dependent deliverables",
+        "broad migration or architecture/security-model change",
+        "bug fixes, maintenance, localized features or refactors",
+        "none independently makes a change major",
     ):
         assert signal in section
     assert "honor that choice without asking again" in section
@@ -332,7 +334,7 @@ def test_enhancement_presentation_contract(body: str) -> None:
 
 
 def test_adversary_presentation_contract(body: str) -> None:
-    """Findings are presented and voted before repairs, then finalized."""
+    """Findings are presented and voted, then checkpointed before repairs."""
     presentation = _normalize_prose(
         body[
             body.index("### Adversarial review phase") : body.index(
@@ -343,12 +345,16 @@ def test_adversary_presentation_contract(body: str) -> None:
 
     result = presentation.index("Read the canonical result")
     vote = presentation.index("collect one accept/decline vote per finding before editing")
-    apply_repairs = presentation.index("Apply accepted repairs")
-    checkpoint = presentation.index("Persist the canonical round checkpoint")
+    checkpoint = presentation.index("append_plan_changelog_round(evidence_id, prose, round_result)")
+    finalize = presentation.index("finalize_plan_review_evidence(evidence_id, round_result)")
+    apply_repairs = presentation.index("apply accepted repairs")
+    validate = presentation.index("base-validate the artifact")
 
-    assert result < vote < apply_repairs < checkpoint
+    assert result < vote < checkpoint < finalize < apply_repairs < validate
     assert "Present every finding with its full text and metadata" in presentation
-    assert "record declined items and deferrals explicitly" in presentation
+    assert "Record declined items and deferrals explicitly" in presentation
+    assert "canonical payload verbatim as `round_result` to both calls" in presentation
+    assert "fails with `missing_round_result`" in presentation
     assert (
         "In unattended mode, the coordinator judges every item and records each vote with its "
         "rationale" in presentation
@@ -357,6 +363,26 @@ def test_adversary_presentation_contract(body: str) -> None:
     assert (
         "Increment `completed_plan_review_rounds` only when finalization succeeds" in presentation
     )
+    for recovery_detail in (
+        "Recovery: repairs applied before the checkpoint",
+        "get_plan_review_snapshot(evidence_id)",
+        "SHA-256 equals `plan_hash`",
+        "gobby-results:get_tool_result",
+        "plan_review_evidence.snapshot",
+        "byte-identically",
+        "Never hand-build the fence",
+    ):
+        assert recovery_detail in presentation
+
+    evidence_protocol = body[
+        body.index("## Interactive Review Evidence Protocol") : body.index(
+            "## Waiting on Spawned Runs"
+        )
+    ]
+    assert "rejection-round freshness gate lives in `append_plan_changelog_round`" in (
+        evidence_protocol
+    )
+    assert "approval gate lives in `apply_plan_review_manifest`" in evidence_protocol
 
 
 def test_enhancement_changelog_uses_kind_enhancement(body: str) -> None:
