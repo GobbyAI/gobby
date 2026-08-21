@@ -256,6 +256,80 @@ class TestInstallEmbeddingOverrides:
         assert probe_kwargs["model"] == "text-embedding-qwen3-embedding-4b"
         assert probe_kwargs["api_base"] == "http://192.168.1.10:1234/v1"
 
+    @patch("gobby.cli.installers.embedding._persist_embedding_config")
+    @patch("gobby.cli.installers.embedding._semantic_smoke_test", return_value=True)
+    @patch("gobby.cli.installers.embedding._health_check_embedding", return_value=True)
+    @patch("gobby.cli.installers.embedding._probe_embedding_dim", return_value=1024)
+    @patch(
+        "gobby.cli.installers.embedding._resolve_vllm_served_model_sync",
+        return_value="Qwen/Qwen3-Embedding-0.6B",
+    )
+    def test_vllm_resolves_served_model_and_probes_dim(
+        self,
+        mock_resolve: MagicMock,
+        mock_probe: MagicMock,
+        mock_health: MagicMock,
+        mock_smoke: MagicMock,
+        mock_persist: MagicMock,
+    ) -> None:
+        result = install_embedding(
+            provider="vllm",
+            api_base_override="http://localhost:8323/v1",
+        )
+
+        assert result["success"] is True
+        assert result["model"] == "Qwen/Qwen3-Embedding-0.6B"
+        assert result["dim"] == 1024
+        assert result["api_base"] == "http://localhost:8323/v1"
+        mock_resolve.assert_called_once_with("http://localhost:8323/v1", None)
+        mock_probe.assert_called_once()
+        persist_kwargs = mock_persist.call_args.kwargs
+        assert persist_kwargs["model"] == "Qwen/Qwen3-Embedding-0.6B"
+        assert persist_kwargs["api_base"] == "http://localhost:8323/v1"
+        assert persist_kwargs["dim"] == 1024
+        assert persist_kwargs["provider"] == "vllm"
+
+    @patch("gobby.cli.installers.embedding._probe_embedding_dim", return_value=None)
+    @patch(
+        "gobby.cli.installers.embedding._resolve_vllm_served_model_sync",
+        return_value="Qwen/Qwen3-Embedding-0.6B",
+    )
+    def test_vllm_probe_failure_returns_actionable_error(
+        self, mock_resolve: MagicMock, mock_probe: MagicMock
+    ) -> None:
+        missing_url = install_embedding(provider="vllm")
+        assert missing_url["success"] is False
+        assert "--embedding-url" in missing_url["error"]
+        mock_resolve.assert_not_called()
+
+        result = install_embedding(
+            provider="vllm",
+            api_base_override="http://localhost:8323/v1",
+        )
+        assert result["success"] is False
+        assert "Could not probe embedding dim" in result["error"]
+        assert "--embedding-dim" in result["error"]
+
+    @patch("gobby.cli.installers.embedding._probe_embedding_dim", return_value=4096)
+    @patch(
+        "gobby.cli.installers.embedding._resolve_vllm_served_model_sync",
+        return_value="Qwen/Qwen3-Embedding-0.6B",
+    )
+    def test_vllm_catalog_dim_mismatch_names_both_values(
+        self, mock_resolve: MagicMock, mock_probe: MagicMock
+    ) -> None:
+        from gobby.ai.embedding_catalog import get_spec_or_raise
+
+        spec = get_spec_or_raise("qwen3-0.6b-q8")
+        result = install_embedding(
+            provider="vllm",
+            api_base_override="http://localhost:8323/v1",
+            catalog_key="qwen3-0.6b-q8",
+        )
+        assert result["success"] is False
+        assert "4096" in result["error"]
+        assert str(spec.dim) in result["error"]
+
     @patch("gobby.cli.installers.embedding._setup_lmstudio")
     @patch("gobby.cli.installers.embedding._probe_embedding_dim", return_value=None)
     def test_probe_failure_returns_actionable_error(

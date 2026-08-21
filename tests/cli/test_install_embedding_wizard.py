@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 from collections.abc import Iterator
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import click
@@ -96,7 +97,7 @@ class TestRunEmbeddingInstallNoInteractive:
                 "health_check": True,
             }
         )
-        results: dict = {}
+        results: dict[str, dict[str, Any]] = {}
         provider = _run_embedding_install(installer, results, no_interactive=True)
         assert provider == "lmstudio"
         installer.assert_called_once_with(
@@ -124,7 +125,7 @@ class TestRunEmbeddingInstallNoInteractive:
                 "health_check": True,
             }
         )
-        results: dict = {}
+        results: dict[str, dict[str, Any]] = {}
         provider = _run_embedding_install(installer, results, no_interactive=True)
         assert provider == "ollama"
 
@@ -135,7 +136,7 @@ class TestRunEmbeddingInstallNoInteractive:
     ) -> None:
         """Disable semantic search when no local embedding provider is available."""
         installer = MagicMock(return_value={"success": True, "provider": "none"})
-        results: dict = {}
+        results: dict[str, dict[str, Any]] = {}
         provider = _run_embedding_install(installer, results, no_interactive=True)
         assert provider == "none"
         # Still calls installer with none to persist the disable-semantic-search config
@@ -151,7 +152,7 @@ class TestRunEmbeddingInstallNoInteractive:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         installer = MagicMock(return_value=["not", "a", "dict"])
-        results: dict = {}
+        results: dict[str, dict[str, Any]] = {}
 
         with caplog.at_level("WARNING", logger="gobby.cli._install_embedding_prompts"):
             provider = _run_embedding_install(installer, results, no_interactive=True)
@@ -180,7 +181,7 @@ class TestRunEmbeddingInstallNoInteractive:
                 "health_check": True,
             }
         )
-        results: dict = {}
+        results: dict[str, dict[str, Any]] = {}
 
         provider = _run_embedding_install(
             installer,
@@ -217,7 +218,7 @@ class TestRunEmbeddingInstallNoInteractive:
                 "health_check": True,
             }
         )
-        results: dict = {}
+        results: dict[str, dict[str, Any]] = {}
 
         provider = _run_embedding_install(
             installer,
@@ -253,7 +254,7 @@ class TestRunEmbeddingInstallNoInteractive:
                 "health_check": True,
             }
         )
-        results: dict = {}
+        results: dict[str, dict[str, Any]] = {}
 
         provider = _run_embedding_install(
             installer,
@@ -289,7 +290,7 @@ class TestRunEmbeddingInstallNoInteractive:
                 "health_check": True,
             }
         )
-        results: dict = {}
+        results: dict[str, dict[str, Any]] = {}
 
         provider = _run_embedding_install(
             installer,
@@ -310,7 +311,7 @@ class TestRunEmbeddingInstallNoInteractive:
         self, mock_lms: MagicMock, mock_ollama: MagicMock
     ) -> None:
         installer = MagicMock(side_effect=RuntimeError("boom"))
-        results: dict = {}
+        results: dict[str, dict[str, Any]] = {}
 
         provider = _run_embedding_install(
             installer,
@@ -331,7 +332,7 @@ class TestRunEmbeddingInstallNoInteractive:
         self, mock_lms: MagicMock, mock_ollama: MagicMock
     ) -> None:
         installer = MagicMock(side_effect=subprocess.SubprocessError("boom"))
-        results: dict = {}
+        results: dict[str, dict[str, Any]] = {}
 
         provider = _run_embedding_install(
             installer,
@@ -367,7 +368,7 @@ class TestRunEmbeddingInstallNoInteractive:
         self, mock_lms: MagicMock, mock_ollama: MagicMock
     ) -> None:
         installer = MagicMock()
-        results: dict = {}
+        results: dict[str, dict[str, Any]] = {}
 
         with patch(
             "gobby.cli._install_embedding_prompts._get_embedding_api_key",
@@ -411,7 +412,7 @@ class TestRunEmbeddingInstallNoInteractive:
                 "health_check": True,
             }
         )
-        results: dict = {}
+        results: dict[str, dict[str, Any]] = {}
 
         with patch(
             "gobby.cli._install_embedding_prompts._get_embedding_api_key",
@@ -454,7 +455,7 @@ class TestRunEmbeddingInstallInteractive:
 
         @click.command()
         def cmd() -> None:
-            results: dict = {}
+            results: dict[str, dict[str, Any]] = {}
             provider = _run_embedding_install(installer, results, no_interactive=False)
             click.echo(f"CHOSE={provider}")
 
@@ -473,7 +474,7 @@ class TestRunEmbeddingInstallInteractive:
 
         @click.command()
         def cmd() -> None:
-            results: dict = {}
+            results: dict[str, dict[str, Any]] = {}
             provider = _run_embedding_install(installer, results, no_interactive=False)
             click.echo(f"CHOSE={provider}")
 
@@ -482,6 +483,62 @@ class TestRunEmbeddingInstallInteractive:
         result = runner.invoke(cmd, input="\n")
         assert result.exit_code == 0
         assert "CHOSE=none" in result.output
+
+    @patch("gobby.cli._install_embedding_prompts._get_embedding_api_key", return_value=None)
+    @patch("gobby.cli._detectors._is_ollama_available", return_value=False)
+    @patch("gobby.cli._detectors._is_lmstudio_available", return_value=False)
+    def test_interactive_choose_vllm_prompts_for_url_and_passes_it_to_installer(
+        self, mock_lms: MagicMock, mock_ollama: MagicMock, mock_key: MagicMock
+    ) -> None:
+        runner = CliRunner()
+        installer = MagicMock(
+            return_value={
+                "success": True,
+                "provider": "vllm",
+                "model": "Qwen/Qwen3-Embedding-0.6B",
+                "dim": 1024,
+                "api_base": "http://localhost:8323/v1",
+                "health_check": True,
+            }
+        )
+
+        @click.command()
+        def cmd() -> None:
+            results: dict[str, dict[str, Any]] = {}
+            provider = _run_embedding_install(installer, results, no_interactive=False)
+            click.echo(f"CHOSE={provider}")
+
+        # Menu: [1] OpenAI, [2] vLLM, [3] None (default). "2" picks vLLM;
+        # "\n" declines customization; the URL prompt gets the server URL;
+        # final "\n" accepts the default catalog model.
+        result = runner.invoke(cmd, input="2\n\nhttp://localhost:8323/v1\n\n")
+        assert result.exit_code == 0
+        assert "CHOSE=vllm" in result.output
+        kwargs = installer.call_args.kwargs
+        assert kwargs["provider"] == "vllm"
+        assert kwargs["api_base_override"] == "http://localhost:8323/v1"
+        assert kwargs["catalog_key"] is not None
+
+    @patch("gobby.cli._install_embedding_prompts._get_embedding_api_key", return_value=None)
+    @patch("gobby.cli._detectors._is_ollama_available", return_value=False)
+    @patch("gobby.cli._detectors._is_lmstudio_available", return_value=False)
+    def test_interactive_vllm_blank_url_records_failure(
+        self, mock_lms: MagicMock, mock_ollama: MagicMock, mock_key: MagicMock
+    ) -> None:
+        runner = CliRunner()
+        installer = MagicMock()
+        captured: dict[str, dict[str, Any]] = {}
+
+        @click.command()
+        def cmd() -> None:
+            provider = _run_embedding_install(installer, captured, no_interactive=False)
+            click.echo(f"CHOSE={provider}")
+
+        result = runner.invoke(cmd, input="2\n\n\n")
+        assert "CHOSE=vllm" in result.output
+        installer.assert_not_called()
+        assert captured["embedding"]["success"] is False
+        assert "URL" in captured["embedding"]["error"]
 
     @patch("gobby.cli._detectors._is_ollama_available", return_value=False)
     @patch("gobby.cli._detectors._is_lmstudio_available", return_value=True)
@@ -493,7 +550,7 @@ class TestRunEmbeddingInstallInteractive:
 
         @click.command()
         def cmd() -> None:
-            results: dict = {}
+            results: dict[str, dict[str, Any]] = {}
             provider = _run_embedding_install(installer, results, no_interactive=False)
             click.echo(f"CHOSE={provider}")
 
@@ -534,7 +591,7 @@ class TestRunEmbeddingInstallOverrides:
 
         @click.command()
         def cmd() -> None:
-            results: dict = {}
+            results: dict[str, dict[str, Any]] = {}
             _run_embedding_install(
                 installer,
                 results,
@@ -577,7 +634,7 @@ class TestRunEmbeddingInstallOverrides:
 
         @click.command()
         def cmd() -> None:
-            results: dict = {}
+            results: dict[str, dict[str, Any]] = {}
             _run_embedding_install(
                 installer,
                 results,
@@ -617,7 +674,7 @@ class TestRunEmbeddingInstallOverrides:
 
         @click.command()
         def cmd() -> None:
-            results: dict = {}
+            results: dict[str, dict[str, Any]] = {}
             _run_embedding_install(installer, results, no_interactive=False)
 
         # 1 → lmstudio; y → customize; URL; model; dim
@@ -648,7 +705,7 @@ class TestRunEmbeddingInstallOverrides:
 
         @click.command()
         def cmd() -> None:
-            results: dict = {}
+            results: dict[str, dict[str, Any]] = {}
             _run_embedding_install(installer, results, no_interactive=False)
 
         # Customize: URL + model, blank dim → installer is asked to probe.
@@ -682,7 +739,7 @@ class TestRunEmbeddingInstallOverrides:
 
         @click.command()
         def cmd() -> None:
-            results: dict = {}
+            results: dict[str, dict[str, Any]] = {}
             _run_embedding_install(installer, results, no_interactive=False)
 
         user_input = (
@@ -704,7 +761,7 @@ class TestRunEmbeddingInstallOverrides:
 
         @click.command()
         def cmd() -> None:
-            results: dict = {}
+            results: dict[str, dict[str, Any]] = {}
             provider = _run_embedding_install(installer, results, no_interactive=False)
             click.echo(f"provider={provider}")
             click.echo(f"stored={results['embedding']['success']}")
@@ -721,7 +778,7 @@ class TestEmbeddingKeyLookup:
 
     @patch("gobby.storage.hub.runtime.runtime_hub_database", side_effect=RuntimeError("bug"))
     def test_runtime_hub_error_skips_noninteractive(self, mock_database: MagicMock) -> None:
-        results: dict[str, dict[str, object]] = {}
+        results: dict[str, dict[str, Any]] = {}
 
         key = _get_embedding_api_key(no_interactive=True, results=results, required=True)
 
@@ -740,7 +797,7 @@ class TestOptionalEmbeddingKeyPrompt:
     def test_optional_interactive_prompt_returns_stripped_key(
         self, mock_prompt: MagicMock, mock_database: MagicMock
     ) -> None:
-        results: dict[str, dict[str, object]] = {}
+        results: dict[str, dict[str, Any]] = {}
 
         key = _get_embedding_api_key(no_interactive=False, results=results, required=False)
 
@@ -753,7 +810,7 @@ class TestOptionalEmbeddingKeyPrompt:
     def test_optional_blank_entry_skips_without_failure(
         self, mock_prompt: MagicMock, mock_database: MagicMock
     ) -> None:
-        results: dict[str, dict[str, object]] = {}
+        results: dict[str, dict[str, Any]] = {}
 
         key = _get_embedding_api_key(no_interactive=False, results=results, required=False)
 
@@ -765,7 +822,7 @@ class TestOptionalEmbeddingKeyPrompt:
     def test_optional_abort_skips_without_failure(
         self, mock_prompt: MagicMock, mock_database: MagicMock
     ) -> None:
-        results: dict[str, dict[str, object]] = {}
+        results: dict[str, dict[str, Any]] = {}
 
         key = _get_embedding_api_key(no_interactive=False, results=results, required=False)
 
@@ -774,7 +831,7 @@ class TestOptionalEmbeddingKeyPrompt:
 
     @patch("gobby.storage.hub.runtime.runtime_hub_database", side_effect=RuntimeError("bug"))
     def test_optional_noninteractive_still_skips_silently(self, mock_database: MagicMock) -> None:
-        results: dict[str, dict[str, object]] = {}
+        results: dict[str, dict[str, Any]] = {}
 
         key = _get_embedding_api_key(no_interactive=True, results=results, required=False)
 
@@ -786,7 +843,7 @@ class TestOptionalEmbeddingKeyPrompt:
     def test_required_blank_entry_records_failure(
         self, mock_prompt: MagicMock, mock_database: MagicMock
     ) -> None:
-        results: dict[str, dict[str, object]] = {}
+        results: dict[str, dict[str, Any]] = {}
 
         key = _get_embedding_api_key(no_interactive=False, results=results, required=True)
 

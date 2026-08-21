@@ -339,12 +339,13 @@ def _install_required_stack(
 @click.option(
     "--embedding-provider",
     "embedding_provider",
-    type=click.Choice(["lmstudio", "ollama", "openai-compatible"]),
+    type=click.Choice(["lmstudio", "ollama", "openai-compatible", "vllm"]),
     default=None,
     help=(
         "Compatibility mode for --embedding-url: lmstudio uses LM Studio-compatible "
         "defaults, ollama uses Ollama-compatible defaults, openai-compatible uses "
-        "generic OpenAI-compatible embedding APIs."
+        "generic OpenAI-compatible embedding APIs, vllm resolves the served model "
+        "from the server's /v1/models catalog."
     ),
 )
 @click.option(

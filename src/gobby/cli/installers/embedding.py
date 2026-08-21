@@ -15,6 +15,7 @@ import shutil
 import subprocess
 from typing import TYPE_CHECKING, Any
 
+from gobby.agents.local_model import LocalModelError
 from gobby.ai.embeddings import EmbeddingGenerationError, EmbeddingService
 
 if TYPE_CHECKING:
@@ -65,6 +66,23 @@ _PROVIDER_CONFIG: dict[str, dict[str, Any]] = {
 
 # LM Studio model key to download (nomic-embed-text-v1.5 GGUF)
 _LMSTUDIO_MODEL_KEY = "nomic-embed-text-v1.5"
+
+
+def _resolve_vllm_served_model_sync(api_base: str, api_key: str | None) -> str:
+    """Resolve the single served id from the vLLM server, or raise LocalModelError."""
+    from gobby.agents.local_model import select_vllm_served_model, vllm_served_model_ids
+
+    async def _resolve() -> str:
+        served = await vllm_served_model_ids(api_base, api_key)
+        return select_vllm_served_model("auto", served, api_base=api_base)
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(_resolve())
+    raise LocalModelError("Cannot resolve the vLLM served model from inside an event loop")
+
+
 # Ollama model name
 _OLLAMA_MODEL_NAME = "nomic-embed-text"
 
@@ -122,6 +140,11 @@ def install_embedding(
             "success": False,
             "error": "Custom OpenAI-compatible embedding provider requires --embedding-url",
         }
+    if provider == "vllm" and not api_base_override:
+        return {
+            "success": False,
+            "error": "vLLM embedding provider requires --embedding-url",
+        }
 
     # Provider-specific setup: ensure model is downloaded and loaded.
     # Skip bundled local setup when the user points at their own model or endpoint.
@@ -161,6 +184,11 @@ def install_embedding(
     if catalog_spec is not None:
         catalog_model = catalog_model_for_provider(catalog_spec, provider)
         model = model_override if model_override is not None else catalog_model
+        if model is None and provider == "vllm" and api_base_override:
+            try:
+                model = _resolve_vllm_served_model_sync(api_base_override, embedding_api_key)
+            except LocalModelError as exc:
+                return {"success": False, "error": str(exc)}
         if model is None:
             return {
                 "success": False,
@@ -176,11 +204,29 @@ def install_embedding(
             probed = _probe_embedding_dim(model=model, api_base=api_base, api_key=embedding_api_key)
             if probed is None:
                 return {"success": False, "error": _dim_probe_error(model, api_base)}
+            if provider == "vllm" and probed != catalog_spec.dim:
+                return {
+                    "success": False,
+                    "error": (
+                        f"vLLM served model {model!r} probes dim {probed}, but catalog "
+                        f"key {catalog_key!r} expects dim {catalog_spec.dim}"
+                    ),
+                }
             dim = probed
         else:
             dim = catalog_spec.dim
     else:
         model = model_override if model_override is not None else cfg["model"]
+        if model is None and provider == "vllm" and api_base_override:
+            try:
+                model = _resolve_vllm_served_model_sync(api_base_override, embedding_api_key)
+            except LocalModelError as exc:
+                return {"success": False, "error": str(exc)}
+        if model is None:
+            return {
+                "success": False,
+                "error": f"Provider {provider!r} requires --embedding-model",
+            }
         api_base = api_base_override if api_base_override is not None else cfg["api_base"]
 
         if dim_override is not None:
@@ -189,7 +235,9 @@ def install_embedding(
             probed = _probe_embedding_dim(model=model, api_base=api_base, api_key=embedding_api_key)
             if probed is not None:
                 dim = probed
-            use_provider_default_fallback = api_base_override is not None and model_override is None
+            use_provider_default_fallback = (
+                api_base_override is not None and model_override is None and cfg["dim"] is not None
+            )
             if probed is None and use_provider_default_fallback:
                 dim = cfg["dim"]
                 logger.warning(

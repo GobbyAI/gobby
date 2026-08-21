@@ -85,6 +85,7 @@ def _select_embedding_provider(
     if ollama_ok:
         options.append(("ollama", "Ollama (localhost:11434) - local"))
     options.append(("openai", "OpenAI (cloud, requires API key)"))
+    options.append(("vllm", "vLLM / vllm-metal (operator-started server, custom URL)"))
     options.append(("none", "None (disables semantic embedding work)"))
 
     default_idx = 1
@@ -336,6 +337,8 @@ def _select_embedding_model(
             quant_note = " [Ollama: F16 only]"
         if provider == "lmstudio" and spec.compatibility.lmstudio == "experimental":
             quant_note = " [experimental on LM Studio]"
+        if provider == "vllm":
+            quant_note = " [vLLM: your server must serve a matching model]"
         click.echo(f"  [{i}] {spec.label}{marker}{quant_note}")
     click.echo("")
 
@@ -422,12 +425,34 @@ def _run_embedding_install(
     # Model picker: select from catalog after provider selection.
     # Skipped when CLI overrides are supplied, non-interactive, or provider
     # doesn't support catalog selection (openai, openai-compatible, none).
+    # Computed before the mandatory vllm URL prompt so that prompt alone
+    # never hides the picker.
     cli_overrides_supplied = (
         api_base_override is not None
         or model_override is not None
         or dim_override is not None
         or provider_override is not None
     )
+
+    if provider == "vllm" and api_base_override is None:
+        url_input = ""
+        if not no_interactive:
+            try:
+                url_input = click.prompt(
+                    "vLLM server URL (e.g. http://localhost:8323/v1)",
+                    default="",
+                    show_default=False,
+                ).strip()
+            except (click.Abort, EOFError):
+                click.echo("")
+        if url_input:
+            api_base_override = url_input
+        else:
+            error = "vLLM embedding provider requires a server URL"
+            results["embedding"] = {"success": False, "provider": provider, "error": error}
+            click.echo(f"Failed: {error}", err=True)
+            click.echo("")
+            return provider
     catalog_key = _select_embedding_model(
         provider=provider,
         no_interactive=no_interactive,
@@ -441,6 +466,8 @@ def _run_embedding_install(
         click.echo("Setting up Ollama (may download model on first run)...")
     elif provider == "openai":
         click.echo("Configuring OpenAI embeddings...")
+    elif provider == "vllm":
+        click.echo("Configuring vLLM embeddings (served model resolved from the server)...")
 
     try:
         result = installer(
