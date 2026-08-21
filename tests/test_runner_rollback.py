@@ -26,6 +26,9 @@ class _Host:
         self.drain_gate: Any = None
         self.closed_clients = False
         self.stopped_producers = False
+        self.control_open = True
+        self.frame_open = True
+        self.reconnect_task: Any = object()
 
     async def stop_producers(self) -> None:
         self.stopped_producers = True
@@ -41,6 +44,9 @@ class _Host:
 
     async def close_clients(self) -> None:
         self.closed_clients = True
+        self.control_open = False
+        self.frame_open = False
+        self.reconnect_task = None
         self.events.append("clients")
 
 
@@ -124,6 +130,17 @@ def test_terminal_rollback_awaited_before_exit() -> None:
     gate_idx = lifecycle_text.index("rollback_runner_resources_async")
     pid_idx = lifecycle_text.index("cleanup_owned_pid_file", gate_idx)
     assert pid_idx > gate_idx
+
+
+@pytest.mark.asyncio
+async def test_native_clients_close_on_construction_rollback() -> None:
+    spawned = _Host(adopted=False)
+    await rollback_runner_resources_async(_runner(spawned))
+    assert spawned.closed_clients
+    assert spawned.control_open is False
+    assert spawned.frame_open is False
+    assert spawned.reconnect_task is None
+    assert spawned.stopped_producers is True
 
 
 def test_init_uses_sync_wrapper() -> None:

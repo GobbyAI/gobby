@@ -207,6 +207,7 @@ class GobbyRunner:
     terminal_config: TerminalConfig
     terminal_host_config: TerminalHostConfig
     terminal_host_manager: TerminalHostManager | None
+    frame_client: Any
     write_coordinator: Any
     terminal_effect_bridge: Any
     attention_manager: AttentionStateManager

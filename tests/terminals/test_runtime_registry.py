@@ -24,6 +24,20 @@ def test_registry_composition_and_tmux_resolution() -> None:
     assert exc_info.value.backend == "native"
 
 
+def test_registry_resolves_both_backends() -> None:
+    tmux = FakeRuntime(backend="tmux")
+    native = FakeRuntime(backend="native")
+    registry = TerminalRuntimeRegistry()
+    registry.register(tmux)
+    registry.register(native)
+
+    assert registry.resolve("tmux") is tmux
+    assert registry.resolve("native") is native
+    with pytest.raises(UnregisteredBackendError, match="mystery") as exc_info:
+        registry.resolve("mystery")
+    assert exc_info.value.backend == "mystery"
+
+
 def test_terminal_runtime_has_no_oneshot_spawn_or_stream() -> None:
     names = {
         name for name, _member in inspect.getmembers(TerminalRuntime) if not name.startswith("_")

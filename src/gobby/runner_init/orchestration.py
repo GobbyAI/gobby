@@ -17,7 +17,6 @@ from gobby.sessions.lifecycle import SessionLifecycleManager
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
-    from gobby.events.wake import TmuxSender
     from gobby.projects.purge import GraphCleaner, VectorCleaner
     from gobby.runner import GobbyRunner
     from gobby.system_automation import PipelineHeartbeatService
@@ -351,7 +350,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
     runner.wake_dispatcher = WakeDispatcher(
         session_manager=runner.session_manager,
         ism_manager=ism_manager,
-        tmux_sender=cast("TmuxSender", _send_tmux_session_wake),
+        tmux_sender=_send_tmux_session_wake,
         tmux_pane_sender=_send_tmux_pane_wake,
         agent_run_manager=agent_run_manager,
         run_db=runner.db_executor.run,
@@ -394,6 +393,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
     runner.detection_registry = DetectionManifestRegistry(runner.database)
     from gobby.storage.terminals import TerminalManager
     from gobby.terminals import TerminalRuntimeRegistry
+    from gobby.terminals.native_runtime import HostManagerControl, NativeTerminalRuntime
     from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
 
     runner.terminal_manager = TerminalManager(runner.database)
@@ -414,6 +414,14 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
     from gobby.agents.tmux.session_manager import TmuxSessionManager
 
     terminal_runtime_registry.register(TmuxTerminalRuntime(TmuxSessionManager()))
+    native_runtime = NativeTerminalRuntime(
+        HostManagerControl(runner.terminal_host_manager),
+        frame_host_epoch=str(getattr(runner.terminal_host_manager, "host_epoch", "") or ""),
+        terminal_manager=runner.terminal_manager,
+        spawn_in_doubt_seconds=config.terminals.spawn_in_doubt_seconds,
+    )
+    terminal_runtime_registry.register(native_runtime)
+    runner.frame_client = getattr(runner.terminal_host_manager, "_frame_client", None)
     runner.terminal_runtime_registry = terminal_runtime_registry
     from gobby.terminals.services import TerminalServices
     from gobby.terminals.sync_bridge import TerminalEffectBridge

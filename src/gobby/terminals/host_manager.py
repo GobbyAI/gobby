@@ -14,7 +14,8 @@ from typing import Any
 from gobby.config.terminal_host import TerminalHostConfig
 from gobby.config.terminals import TerminalConfig
 from gobby.storage.terminals import TerminalManager
-from gobby.terminals.host_control import HostControlClient, HostControlError
+from gobby.terminals.host_client import HostClient, HostCommandError
+from gobby.terminals.host_control import HostControlError
 from gobby.terminals.host_identity import PidIdentity, is_live_gterm, pid_matches_ping
 from gobby.terminals.host_protocol import (
     CONTROL_PROTOCOL_VERSION,
@@ -59,6 +60,8 @@ class TerminalHostManager:
         self._spawner = spawner
         self._pid_identity = pid_identity or is_live_gterm
         self._client: Any | None = None
+        self._frame_client: Any | None = None
+        self._reconnect_task: asyncio.Task[None] | None = None
         self._process: Any | None = None
         self._health_task: asyncio.Task[None] | None = None
         self.enabled = config.enabled
@@ -155,9 +158,12 @@ class TerminalHostManager:
         self.host_pid = None
 
     async def stop_producers(self) -> None:
-        task = self._health_task
+        tasks = [self._health_task, self._reconnect_task]
         self._health_task = None
-        if task is not None:
+        self._reconnect_task = None
+        for task in tasks:
+            if task is None:
+                continue
             task.cancel()
             try:
                 await task
@@ -172,9 +178,14 @@ class TerminalHostManager:
 
     async def close_clients(self) -> None:
         client = self._client
+        frame = self._frame_client
         self._client = None
-        if client is not None:
-            close = getattr(client, "close", None)
+        self._frame_client = None
+        self._reconnect_task = None
+        for item in (client, frame):
+            if item is None:
+                continue
+            close = getattr(item, "close", None)
             if callable(close):
                 result = close()
                 if asyncio.iscoroutine(result):
@@ -312,7 +323,13 @@ class TerminalHostManager:
             self.adopted = True
             self.spawned_this_construction = False
             return True
-        except (OSError, HostControlError, PermissionError, ConnectionError) as exc:
+        except (
+            OSError,
+            HostControlError,
+            HostCommandError,
+            PermissionError,
+            ConnectionError,
+        ) as exc:
             self.last_error = str(exc)
             return False
 
@@ -400,7 +417,7 @@ class TerminalHostManager:
     async def _connect(self) -> Any:
         if self._connector is not None:
             return await self._connector()
-        return await HostControlClient.connect(control_socket_path(self.socket_dir))
+        return await HostClient.connect(control_socket_path(self.socket_dir))
 
     async def _host_shutdown(self) -> None:
         client = self._client
@@ -413,7 +430,7 @@ class TerminalHostManager:
         grace_ms = int(self.config.shutdown_grace_seconds * 1000)
         try:
             await client.host_shutdown(grace_ms)
-        except (ConnectionError, HostControlError, OSError) as exc:
+        except (ConnectionError, HostControlError, HostCommandError, OSError) as exc:
             logger.info("host_shutdown response lost; verifying death: %s", exc)
         pid = self.host_pid or read_pidfile(self.socket_dir)
         if pid and not self._process_alive(pid):

@@ -154,6 +154,7 @@ def init_servers(runner: GobbyRunner) -> None:
         terminal_config=getattr(runner, "terminal_config", None),
         terminal_host_config=getattr(runner, "terminal_host_config", None),
         terminal_host_manager=getattr(runner, "terminal_host_manager", None),
+        frame_client=getattr(runner, "frame_client", None),
         communications_manager=runner.communications_manager,
         code_indexer=runner.code_indexer,
         code_index_pruner=getattr(runner, "code_index_pruner", None),

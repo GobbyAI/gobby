@@ -102,6 +102,7 @@ class ServiceContainer:
     terminal_config: TerminalConfig | None = None
     terminal_host_config: TerminalHostConfig | None = None
     terminal_host_manager: TerminalHostManager | None = None
+    frame_client: Any | None = None
 
     # Communications
     communications_manager: Any | None = None  # CommunicationsManager

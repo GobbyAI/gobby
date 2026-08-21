@@ -28,11 +28,13 @@ def test_single_instance_reaches_every_consumer() -> None:
     assert "terminal_manager" in annotations
     assert "terminal_runtime_registry" in annotations
     assert "terminal_config" in annotations
+    assert "frame_client" in annotations
 
     container_names = {item.name for item in fields(ServiceContainer)}
     assert "terminal_manager" in container_names
     assert "terminal_runtime_registry" in container_names
     assert "terminal_config" in container_names
+    assert "frame_client" in container_names
 
     manager = MagicMock(spec=TerminalManager)
     registry = TerminalRuntimeRegistry()

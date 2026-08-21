@@ -88,6 +88,35 @@ class MemoryTerminalStore:
     def get(self, terminal_id: str) -> Terminal | None:
         return self.rows.get(terminal_id)
 
+    def get_by_identity(self, terminal_id: str, spawn_key: str) -> Terminal | None:
+        current = self.rows.get(terminal_id)
+        if current is None or str(current.spawn_key) != spawn_key:
+            return None
+        return current
+
+    def list_live_by_machine(self, machine_id: str) -> list[Terminal]:
+        return [
+            row
+            for row in self.rows.values()
+            if row.machine_id == machine_id and row.state in {"pending", "live"}
+        ]
+
+    def mark_exited(self, terminal_id: str) -> Terminal | None:
+        current = self.rows.get(terminal_id)
+        if current is None:
+            return None
+        current.state = "exited"
+        current.updated_at = datetime.now(UTC)
+        return current
+
+    def mark_orphaned(self, terminal_id: str) -> Terminal | None:
+        current = self.rows.get(terminal_id)
+        if current is None:
+            return None
+        current.state = "orphaned"
+        current.updated_at = datetime.now(UTC)
+        return current
+
     def create_pending(
         self,
         terminal_id: str,

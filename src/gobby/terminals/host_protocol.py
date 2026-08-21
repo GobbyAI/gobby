@@ -72,7 +72,7 @@ class HostListRow:
     terminal_id: str
     spawn_key: str
     commit_state: Literal["prepared", "committed"]
-    observer_bind: Literal["reserved", "none"]
+    observer_bind: Literal["reserved", "bound", "entitled", "none"]
     host_terminal_id: str
     pgid: int | None = None
     start_time: float | None = None
@@ -87,7 +87,7 @@ class HostListRow:
         bind = raw.get("observer_bind", "none")
         if commit not in ("prepared", "committed"):
             commit = "committed"
-        if bind not in ("reserved", "none"):
+        if bind not in ("reserved", "bound", "entitled", "none"):
             bind = "none"
         pgid_raw = raw.get("pgid")
         start_raw = raw.get("start_time")
