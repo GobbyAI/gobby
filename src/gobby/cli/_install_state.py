@@ -161,6 +161,7 @@ def _embedding_state(
     api_base_value = api_base.strip() if isinstance(api_base, str) and api_base.strip() else None
     dim_value = _optional_int(dim)
     has_api_key = _secret_present(values, secrets, AI_EMBEDDING_API_KEY_KEY, keys)
+    api_key_plaintext = _secret_plaintext(values, secrets, AI_EMBEDDING_API_KEY_KEY, keys)
 
     disabled = (
         AI_EMBEDDING_MODEL_KEY in keys
@@ -185,7 +186,7 @@ def _embedding_state(
             problem="model and a positive dimension must both be set",
         )
 
-    provider = _embedding_provider(api_base_value, has_api_key)
+    provider = _embedding_provider(api_base_value, has_api_key, api_key_plaintext)
     if provider == "openai" and not has_api_key:
         return EmbeddingInstallState(
             configured=False,
@@ -291,11 +292,32 @@ def _secret_present(
     return secrets.exists(secret_name)
 
 
-def _embedding_provider(api_base: str | None, has_api_key: bool) -> str:
+def _secret_plaintext(
+    values: Mapping[str, object],
+    secrets: SecretStore,
+    key: str,
+    keys: set[str],
+) -> str | None:
+    if key not in keys:
+        return None
+    configured = values.get(key)
+    if not isinstance(configured, str) or not configured.startswith("$secret:"):
+        return None
+    secret_name = configured.removeprefix("$secret:") or config_key_to_secret_name(key)
+    if not secret_name:
+        return None
+    return secrets.get(secret_name)
+
+
+def _embedding_provider(
+    api_base: str | None,
+    has_api_key: bool,
+    api_key: str | None = None,
+) -> str:
     if api_base:
         if "api.openai.com" in api_base.lower():
             return "openai"
-        fingerprinted = fingerprint_embedding_server_sync(api_base)
+        fingerprinted = fingerprint_embedding_server_sync(api_base, api_key)
         if fingerprinted is not None:
             return fingerprinted
         return "openai-compatible"

@@ -481,6 +481,22 @@ def test_fingerprint_embedding_server_identifies_custom_port_providers(
 
 
 @pytest.mark.unit
+def test_fingerprint_prefers_lmstudio_over_its_ollama_compat_surface(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LM Studio answers /api/tags too; the LM Studio-native probe must win (#20687)."""
+    _patch_fingerprint_client(
+        monkeypatch,
+        {
+            "http://localhost:9997/api/tags": _FingerprintResponse(200),
+            "http://localhost:9997/api/v1/models": _FingerprintResponse(200),
+            "http://localhost:9997/v1/models": _FingerprintResponse(200),
+        },
+    )
+    assert deps.fingerprint_embedding_server_sync("http://localhost:9997/v1") == "lmstudio"
+
+
+@pytest.mark.unit
 def test_fingerprint_embedding_server_identifies_vllm_and_generic(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

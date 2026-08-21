@@ -34,6 +34,9 @@ class _SecretStore:
     def exists(self, name: str) -> bool:
         return name in self.names
 
+    def get(self, name: str) -> str | None:
+        return f"secret-{name}" if name in self.names else None
+
 
 def _configured_values() -> dict[str, Any]:
     return {
@@ -55,7 +58,7 @@ def test_snapshot_reports_complete_sections_and_secret_presence(
 ) -> None:
     monkeypatch.setattr(
         "gobby.cli._install_state.fingerprint_embedding_server_sync",
-        lambda _api_base: "lmstudio",
+        lambda _api_base, _api_key=None: "lmstudio",
     )
     state = snapshot_install_state(
         _ConfigStore(_configured_values()),  # type: ignore[arg-type]

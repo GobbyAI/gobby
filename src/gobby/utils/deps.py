@@ -400,10 +400,12 @@ async def fingerprint_embedding_server(
 ) -> str | None:
     """Identify a local embedding server by probing its origin.
 
-    Ollama answers ``GET /api/tags``; LM Studio answers ``GET /api/v1/models``;
+    LM Studio answers ``GET /api/v1/models``; Ollama answers ``GET /api/tags``;
     vLLM ``/v1/models`` entries carry ``owned_by: "vllm"``; any other
     ``/v1/models`` 200 is generic openai-compatible. Unreachable or
-    unidentifiable servers return ``None``.
+    unidentifiable servers return ``None``. LM Studio's Ollama-compat surface
+    also answers ``/api/tags``, so the LM Studio-native route (which Ollama
+    404s) must be probed first.
     """
     parsed = urlparse(api_base.strip())
     if not parsed.scheme or not parsed.netloc:
@@ -414,8 +416,8 @@ async def fingerprint_embedding_server(
         headers["Authorization"] = f"Bearer {api_key}"
     async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
         for url, provider in (
-            (f"{origin}/api/tags", "ollama"),
             (f"{origin}/api/v1/models", "lmstudio"),
+            (f"{origin}/api/tags", "ollama"),
         ):
             try:
                 response = await client.get(url)
