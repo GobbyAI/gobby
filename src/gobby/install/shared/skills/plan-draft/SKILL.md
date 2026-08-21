@@ -1,7 +1,7 @@
 ---
 name: plan-draft
 description: Methodology for drafting a gobby plan document — phases, task format, TDD compatibility, categories, hierarchy, and dependency notation. Use when drafting or revising a plan artifact.
-version: "1.1.0"
+version: "1.2.0"
 category: methodology
 internal: true
 triggers: plan drafting, plan format, plan specification
@@ -610,6 +610,42 @@ can do the work without outside context?
 - No file mixes exact symbols with `::*`.
 - Final project-aware validation reports `symbol_validation.status: passed`.
 
+### 7. Consumer Sweep Recorded
+
+- For every exact symbol Target, run `gcode usages <symbol-id>` or
+  `gcode blast-radius <name>`.
+- Every owned consumer file in production or tests appears in some
+  deliverable's Targets. Exclude vendor and generated files.
+- When the index does not cover the planned branch, such as the worktree
+  overlay gap tracked by #20664, record the literal-sweep commands and their
+  complete hit lists in `## Constraints` or the owning deliverable body. Run
+  commands such as `gcode grep -F "Symbol(" src/ tests/` and
+  `gcode grep -w symbol` so the adversary and close-gate judge can verify the
+  sweep against the planned branch checkout.
+
+### 8. Derived Carriers Included
+
+Apply every matching row:
+
+| Trigger | Required Targets |
+| --- | --- |
+| `MIGRATIONS` or `baseline.sql` changes | `crates/gcore/assets/schema/catalog.manifest.json`<br>`crates/gcore/src/grant/bundle.rs`<br>`crates/gcore/tests/schema_contract.rs`<br>`crates/gdaemon/tests/cli_contract.rs`<br>`src/gobby/storage/schema_expected_identity.json`<br>`tests/runtime_grants/golden/*.json` |
+| A field is added to or changed on a `src/gobby/config/*.py` model | `crates/gcore/assets/config/runtime_config_contract.json` and the matching `tests/config/` test |
+| A model field is removed | Every constructor and assertion site found by a literal sweep |
+| A wire or protocol field is added | Every golden fixture plus `crates/gcore/src/grant/tests.rs` and `tests/runtime_grants/test_golden_vectors.py` |
+
+### 9. Shared Targets Are Ordered
+
+When two deliverables list the same Target file, the later deliverable carries
+an explicit `(depends: <earlier-section-id>)` edge. Prose sequencing is not
+enforceable; the compiled manifest edge is.
+
+### 10. Production Size Checked
+
+For every targeted hand-maintained production file currently at 850 lines or
+more, record its current line count. Any deliverable that grows the file names
+the split that keeps it below the 1,000-line ceiling.
+
 ### Verification Output
 
 Report:
@@ -622,6 +658,10 @@ Plan Verification:
 ✓ Phase headings use canonical syntax
 ✓ Task sections are self-contained
 ✓ Symbol Targets resolve against a fresh gcode index
+✓ Consumer sweep recorded for every exact Target
+✓ Derived carriers included for every triggered contract
+✓ Shared Target files are ordered by explicit dependencies
+✓ Production file sizes checked against the monolith ceiling
 
 Ready for review.
 ```
@@ -638,6 +678,10 @@ Plan Verification:
 ✓ Phase headings use canonical syntax
 ✓ Task sections are self-contained
 ✓ Symbol Targets resolve against a fresh gcode index
+✓ Consumer sweep recorded for every exact Target
+✓ Derived carriers included for every triggered contract
+✓ Shared Target files are ordered by explicit dependencies
+✓ Production file sizes checked against the monolith ceiling
 
 Plan updated. Ready for review.
 ```

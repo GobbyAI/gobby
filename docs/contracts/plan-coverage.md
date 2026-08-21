@@ -138,6 +138,16 @@ The single-entry form
 target on the header line itself; both forms may appear in one section, and their
 entries merge.
 
+The `plan-draft` Verification Checklist also requires consumer-sweep evidence
+for every exact symbol Target. Record `gcode usages <symbol-id>` or
+`gcode blast-radius <name>` results and place every owned production or test
+consumer, excluding vendor and generated files, in some deliverable's Targets.
+When the index does not cover the planned branch, including the worktree overlay
+gap tracked by #20664, record literal-sweep commands such as
+`gcode grep -F "Symbol(" src/ tests/` and `gcode grep -w symbol` with their hit
+lists in `## Constraints` or the owning deliverable body, and run them from the
+planned branch checkout. This authoring evidence adds no semantic-lint behavior.
+
 **Matching is basename-aware in one direction only** (`_path_covered_by_targets`):
 
 - A mentioned path containing `/` must match a target's normalized file path
