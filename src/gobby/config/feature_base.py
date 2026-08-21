@@ -253,6 +253,17 @@ class FeatureDefaultConfig(BaseModel):
         if self._candidates_omitted:
             self.candidates = list(DEFAULT_PROFILE_CANDIDATES[FeatureProfile(self.profile)])
         self.candidates = validate_feature_candidates(self.candidates)
+        if not self._candidates_omitted:
+            static_default = validate_feature_candidates(
+                list(DEFAULT_PROFILE_CANDIDATES[FeatureProfile(self.profile)])
+            )
+            if list(self.candidates) == static_default:
+                # The values API refuses to store equal-to-default pins, so an
+                # explicit list equal to the static profile default can only be
+                # materialization residue (an exported baked default re-imported
+                # as user config). Treat it as omitted so
+                # ai.generation.profile_defaults keeps flowing through.
+                self._candidates_omitted = True
         return self
 
 

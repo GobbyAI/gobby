@@ -263,6 +263,45 @@ class TestGenerationProfileDefaults:
 
         assert candidate_labels(config.session_summary.candidates) == ("codex/gpt-5.4-mini",)
 
+    def test_candidates_equal_to_static_default_follow_profile_defaults(self) -> None:
+        """Materialized residue equal to the baked default must not pin (#20689)."""
+        config = DaemonConfig(
+            session_summary={
+                "candidates": [
+                    {"candidate": "codex/gpt-5.6-luna"},
+                    {"candidate": "claude/haiku"},
+                ],
+            },
+            ai={
+                "generation": {
+                    "profile_defaults": {
+                        "feature_low": ["endpoint:lm-studio/google/gemma-4-26b-a4b-qat"],
+                    }
+                }
+            },
+        )
+
+        assert candidate_labels(config.session_summary.candidates) == (
+            "endpoint:lm-studio/google/gemma-4-26b-a4b-qat",
+        )
+
+    def test_candidates_equal_to_static_default_stay_default_without_profile_defaults(
+        self,
+    ) -> None:
+        config = DaemonConfig(
+            session_summary={
+                "candidates": [
+                    {"candidate": "codex/gpt-5.6-luna"},
+                    {"candidate": "claude/haiku"},
+                ],
+            },
+        )
+
+        assert candidate_labels(config.session_summary.candidates) == (
+            "codex/gpt-5.6-luna",
+            "claude/haiku",
+        )
+
 
 class TestFeatureConfigInheritance:
     """Verify production feature configs use profile defaults."""
