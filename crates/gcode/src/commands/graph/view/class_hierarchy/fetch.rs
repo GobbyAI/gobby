@@ -1,6 +1,6 @@
 //! Falkor hop fetch and `gcode graph view --view=class-hierarchy` entry.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use anyhow::Context as _;
 use gobby_core::degradation::ServiceState;
@@ -14,17 +14,19 @@ use crate::graph::code_graph::GraphReadError;
 use crate::graph::typed_query;
 use crate::output::Format;
 use crate::search::fts::ResolvedGraphSymbol;
-use crate::visibility;
 
-use super::super::render::{ViewSeed, build_view_payload, print_view};
+use super::super::render::{build_view_payload, print_view};
 use super::super::{
-    CandidateEndpoint, CandidateEndpointKind, ViewEdgeCandidate, VisibleFileMap, VisibleOwnerKey,
-    hint_for_availability,
+    CandidateEndpoint, endpoint_kind_from_label, hint_for_availability, local_machine_id,
+    non_empty, symbol_seed, visible_map_for_candidates,
 };
 use super::{HeritageCursor, HeritageDirection, HeritageHopRow, exhaust_heritage_hop, walk_chg};
 
 const FRONTIER_CHUNK_LEN: usize = 64;
 
+/// One heritage hop, anchored on the frontier side through the `CodeSymbol`
+/// id index (`UNWIND` + labelled id match) so FalkorDB never scans the graph;
+/// the far endpoint may be a symbol, external symbol, or unresolved callee.
 pub(crate) fn heritage_hop_query(
     project_id: &str,
     direction: HeritageDirection,
@@ -33,19 +35,20 @@ pub(crate) fn heritage_hop_query(
     limit: usize,
 ) -> (String, HashMap<String, String>) {
     let listed = typed_query::id_list_literal(frontier);
-    let frontier_pred = if frontier.is_empty() {
-        "false".to_string()
-    } else {
-        match direction {
-            HeritageDirection::Ancestors => format!("source.id IN [{listed}]"),
-            HeritageDirection::Descendants => format!("target.id IN [{listed}]"),
-        }
+    let anchor = "CodeSymbol {id: anchor_id, project: $project}";
+    let (source_node, target_node, far_pred) = match direction {
+        HeritageDirection::Ancestors => (
+            format!("source:{anchor}"),
+            "target {project: $project}".to_string(),
+            "(target:CodeSymbol OR target:ExternalSymbol OR target:UnresolvedCallee)",
+        ),
+        HeritageDirection::Descendants => (
+            "source {project: $project}".to_string(),
+            format!("target:{anchor}"),
+            "(source:CodeSymbol OR source:ExternalSymbol OR source:UnresolvedCallee)",
+        ),
     };
-    let mut predicates = vec![
-        "(source:CodeSymbol OR source:ExternalSymbol OR source:UnresolvedCallee)".to_string(),
-        "(target:CodeSymbol OR target:ExternalSymbol OR target:UnresolvedCallee)".to_string(),
-        frontier_pred,
-    ];
+    let mut predicates = vec![far_pred.to_string()];
     if after.is_some() {
         predicates.push(
             "(source.id > $after_source OR \
@@ -57,8 +60,8 @@ pub(crate) fn heritage_hop_query(
         );
     }
     let query = format!(
-        "MATCH (source {{project: $project}})-[r:INHERITS|EXTENDS|IMPLEMENTS]->\
-         (target {{project: $project}}) \
+        "UNWIND [{listed}] AS anchor_id \
+         MATCH ({source_node})-[r:INHERITS|EXTENDS|IMPLEMENTS]->({target_node}) \
          WHERE {where_clause} \
          RETURN source.id AS source, target.id AS target, type(r) AS rel, id(r) AS edge_id, \
                 coalesce(source.name, source.id) AS source_name, \
@@ -93,30 +96,6 @@ pub(crate) fn heritage_hop_query(
         params.insert("after_edge".to_string(), cursor.edge_id.to_string());
     }
     (query, params)
-}
-
-fn endpoint_kind_from_label(label: &str) -> CandidateEndpointKind {
-    match label {
-        "external" => CandidateEndpointKind::External,
-        "unresolved" => CandidateEndpointKind::Unresolved,
-        "file" => CandidateEndpointKind::File,
-        "module" => CandidateEndpointKind::Module,
-        _ => CandidateEndpointKind::Symbol,
-    }
-}
-
-fn non_empty(value: &str) -> Option<String> {
-    if value.is_empty() {
-        None
-    } else {
-        Some(value.to_string())
-    }
-}
-
-fn local_machine_id() -> String {
-    visibility::local_machine_uuid_or_invisible()
-        .map(|id| id.to_string())
-        .unwrap_or_default()
 }
 
 fn row_str<'a>(row: &'a Row, key: &str) -> Option<&'a str> {
@@ -248,43 +227,6 @@ fn fetch_chg_hop(
     Ok(all)
 }
 
-fn visible_map_for_candidates(
-    ctx: &Context,
-    candidates: impl IntoIterator<Item = ViewEdgeCandidate>,
-) -> anyhow::Result<VisibleFileMap> {
-    let candidates = candidates.into_iter().collect::<Vec<_>>();
-    let mut paths = HashSet::new();
-    for edge in &candidates {
-        if !edge.owner_path.is_empty() {
-            paths.insert(edge.owner_path.clone());
-        }
-        if let Some(file) = &edge.source.file {
-            paths.insert(file.clone());
-        }
-        if let Some(file) = &edge.target.file {
-            paths.insert(file.clone());
-        }
-    }
-    let path_list = paths.into_iter().collect::<Vec<_>>();
-    let mut conn = crate::db::connect_readonly(&ctx.database_url)?;
-    let visible_paths = visibility::visible_graph_paths(&mut conn, ctx, &path_list)?;
-    let machine = local_machine_id();
-    let mut owners = HashSet::new();
-    for edge in candidates {
-        if visible_paths.contains(&edge.owner_path) {
-            owners.insert(VisibleOwnerKey {
-                path: edge.owner_path,
-                content_hash: edge.owner_hash,
-                machine_id: machine.clone(),
-            });
-        }
-    }
-    Ok(VisibleFileMap {
-        owners,
-        overlay_shadowed_paths: HashSet::new(),
-    })
-}
-
 pub(crate) fn run(
     ctx: &Context,
     args: &GraphViewArgs,
@@ -293,30 +235,17 @@ pub(crate) fn run(
 ) -> anyhow::Result<()> {
     let facts = CodewikiFacts::from_context(ctx.clone());
     let hint = hint_for_availability(ctx, &facts.graph_availability());
-    let seed = ViewSeed {
-        id: symbol.id.clone(),
-        name: symbol.display_name.clone(),
-        kind: "symbol".to_string(),
-        file: None,
-    };
+    let (seed, seed_endpoint) = symbol_seed(symbol);
     if !matches!(facts.graph_availability(), GraphAvailability::Available) {
         return print_view(
             &super::super::empty_view_payload(ctx, args, seed, hint)?,
             format,
         );
     }
-    let seed_endpoint = CandidateEndpoint {
-        kind: CandidateEndpointKind::Symbol,
-        id: symbol.id.clone(),
-        name: Some(symbol.display_name.clone()),
-        file: None,
-        content_hash: None,
-        machine_id: None,
-    };
     let walk = walk_chg(
         seed_endpoint,
         args.effective_depth(),
-        |edges| visible_map_for_candidates(ctx, edges.iter().cloned()),
+        |edges| visible_map_for_candidates(ctx, edges),
         |frontier, direction| fetch_chg_hop(ctx, frontier, direction),
     )?;
     let payload = build_view_payload(

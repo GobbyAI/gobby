@@ -245,3 +245,31 @@ fn view_node_file_nullability_by_kind() {
     assert_eq!(by_id["unresolved:Missing"], None);
     assert_eq!(by_id["module:pkg.mod"], Some("src/mod.py".into()));
 }
+
+#[test]
+fn view_empty_payload_uses_seed_name_without_symbol_prefix() {
+    let seed = ViewSeed {
+        id: "src/pkg/mod.py".to_string(),
+        name: "src/pkg/mod.py".to_string(),
+        kind: "file".to_string(),
+        file: Some("src/pkg/mod.py".to_string()),
+    };
+    let payload = build_view_payload(
+        "proj-1",
+        "/abs/project",
+        GraphViewKind::Mcg,
+        seed,
+        1,
+        false,
+        false,
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    )
+    .expect("payload builds");
+    assert!(payload.nodes.is_empty());
+    assert!(payload.mermaid.contains("n0[\"src/pkg/mod.py\"]"));
+    assert!(!payload.mermaid.contains("symbol:"));
+    assert!(is_valid_mermaid(&payload.mermaid));
+}

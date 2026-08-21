@@ -19,6 +19,8 @@ pub(super) type PgParam = Box<dyn ToSql + Sync>;
 pub struct ResolvedGraphSymbol {
     pub id: String,
     pub display_name: String,
+    /// Declaring file for indexed symbols; `None` for external call targets.
+    pub file_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]

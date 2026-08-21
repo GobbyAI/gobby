@@ -52,10 +52,8 @@ pub(super) fn walk_mcg(
     let mut nodes = BTreeMap::new();
     let mut frontier = Vec::new();
     for endpoint in seeds {
-        let key = endpoint_key(&endpoint);
-        nodes
-            .entry(key.clone())
-            .or_insert_with(|| node_from_endpoint(&endpoint));
+        let key = endpoint.key();
+        nodes.entry(key.clone()).or_insert_with(|| endpoint.node());
         if visited.insert(key) {
             frontier.push(endpoint);
         }
@@ -94,8 +92,8 @@ pub(super) fn walk_mcg(
         let mut next_frontier = Vec::new();
         for edge in incoming.edges.into_iter().chain(outgoing.edges) {
             let typed = PublicEdge::new(
-                endpoint_key(&edge.source).canonical(),
-                endpoint_key(&edge.target).canonical(),
+                edge.source.key().canonical(),
+                edge.target.key().canonical(),
                 &edge.rel,
             );
             if !typed_emitted.insert(typed) {
@@ -103,14 +101,14 @@ pub(super) fn walk_mcg(
             }
             untyped_emitted.insert(PublicEdge::new(&edge.source.id, &edge.target.id, &edge.rel));
             nodes
-                .entry(endpoint_key(&edge.source))
-                .or_insert_with(|| node_from_endpoint(&edge.source));
+                .entry(edge.source.key())
+                .or_insert_with(|| edge.source.node());
             nodes
-                .entry(endpoint_key(&edge.target))
-                .or_insert_with(|| node_from_endpoint(&edge.target));
+                .entry(edge.target.key())
+                .or_insert_with(|| edge.target.node());
             edges.push(ViewEdgeInput {
-                source: endpoint_key(&edge.source),
-                target: endpoint_key(&edge.target),
+                source: edge.source.key(),
+                target: edge.target.key(),
                 rel: edge.rel,
             });
             consider_frontier(&mut next_frontier, &mut visited, &mut nodes, &edge.source);
@@ -184,42 +182,14 @@ fn expandable(kind: CandidateEndpointKind) -> bool {
     )
 }
 
-fn endpoint_key(endpoint: &CandidateEndpoint) -> NodeKey {
-    match endpoint.kind {
-        CandidateEndpointKind::File => NodeKey::file(&endpoint.id),
-        CandidateEndpointKind::Module => NodeKey::module(&endpoint.id),
-        CandidateEndpointKind::Symbol => NodeKey::symbol(&endpoint.id),
-        CandidateEndpointKind::External => NodeKey::external(&endpoint.id),
-        CandidateEndpointKind::Unresolved => NodeKey::unresolved(&endpoint.id),
-    }
-}
-
-fn node_from_endpoint(endpoint: &CandidateEndpoint) -> ViewNodeInput {
-    ViewNodeInput {
-        key: endpoint_key(endpoint),
-        name: endpoint.name.clone().unwrap_or_else(|| endpoint.id.clone()),
-        kind: match endpoint.kind {
-            CandidateEndpointKind::File => "file".to_string(),
-            CandidateEndpointKind::Module => "module".to_string(),
-            CandidateEndpointKind::Symbol => "symbol".to_string(),
-            CandidateEndpointKind::External => "external".to_string(),
-            CandidateEndpointKind::Unresolved => "unresolved".to_string(),
-        },
-        file: endpoint.file.clone(),
-        community: None,
-    }
-}
-
 fn consider_frontier(
     frontier: &mut Vec<CandidateEndpoint>,
     visited: &mut HashSet<NodeKey>,
     nodes: &mut BTreeMap<NodeKey, ViewNodeInput>,
     endpoint: &CandidateEndpoint,
 ) {
-    let key = endpoint_key(endpoint);
-    nodes
-        .entry(key.clone())
-        .or_insert_with(|| node_from_endpoint(endpoint));
+    let key = endpoint.key();
+    nodes.entry(key.clone()).or_insert_with(|| endpoint.node());
     if expandable(endpoint.kind) && visited.insert(key) {
         frontier.push(endpoint.clone());
     }
@@ -256,6 +226,7 @@ mod tests {
     fn visible(paths: &[&str]) -> VisibleFileMap {
         VisibleFileMap {
             owners: paths.iter().copied().map(owner).collect(),
+            visible_paths: HashSet::new(),
             overlay_shadowed_paths: HashSet::new(),
         }
     }

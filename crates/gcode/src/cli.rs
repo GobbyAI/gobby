@@ -447,7 +447,11 @@ struct GraphViewArgsRaw {
     /// Symbol query for fcg/class-hierarchy, or file/module for mcg
     seed: String,
     /// Hop depth (1..=16). Omitted: 8 for class-hierarchy, 1 for fcg/mcg
-    #[arg(long, value_parser = clap::value_parser!(u32).range(1..=16))]
+    #[arg(
+        long,
+        value_parser = clap::value_parser!(u32)
+            .range(1..=crate::graph::code_graph::MAX_SYMBOL_PATH_DEPTH as i64)
+    )]
     depth: Option<u32>,
     /// Incoming neighbor limit (fcg and mcg only)
     #[arg(long, value_parser = positive_usize)]

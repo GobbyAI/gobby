@@ -132,8 +132,8 @@ where
 
 fn public_edge(edge: &ViewEdgeCandidate) -> PublicEdge {
     PublicEdge::new(
-        endpoint_key(&edge.source).canonical(),
-        endpoint_key(&edge.target).canonical(),
+        edge.source.key().canonical(),
+        edge.target.key().canonical(),
         &edge.rel,
     )
 }
@@ -156,7 +156,7 @@ fn walk_directed(
         HeritageDirection,
     ) -> anyhow::Result<Vec<HeritageHopRow>>,
 ) -> anyhow::Result<bool> {
-    let mut visited = HashSet::from([endpoint_key(seed)]);
+    let mut visited = HashSet::from([seed.key()]);
     let mut frontier = vec![seed.clone()];
     for hop in 1..=depth {
         if frontier.is_empty() {
@@ -171,24 +171,26 @@ fn walk_directed(
         let kept = take_visible_before_bound(candidates, &visible, None, None);
         let mut next_frontier = Vec::new();
         for edge in kept.edges {
+            // Expand the neighbor even when the other walk already emitted this
+            // edge: a heritage cycle must not orphan the branch behind it.
+            let next = neighbor(&edge, direction);
+            if expandable(next.kind) && visited.insert(next.key()) {
+                next_frontier.push(next.clone());
+            }
             if !acc.emitted.insert(public_edge(&edge)) {
                 continue;
             }
             acc.nodes
-                .entry(endpoint_key(&edge.source))
-                .or_insert_with(|| node_from_endpoint(&edge.source));
+                .entry(edge.source.key())
+                .or_insert_with(|| edge.source.node());
             acc.nodes
-                .entry(endpoint_key(&edge.target))
-                .or_insert_with(|| node_from_endpoint(&edge.target));
+                .entry(edge.target.key())
+                .or_insert_with(|| edge.target.node());
             acc.edges.push(ViewEdgeInput {
-                source: endpoint_key(&edge.source),
-                target: endpoint_key(&edge.target),
+                source: edge.source.key(),
+                target: edge.target.key(),
                 rel: edge.rel.clone(),
             });
-            let next = neighbor(&edge, direction);
-            if expandable(next.kind) && visited.insert(endpoint_key(next)) {
-                next_frontier.push(next.clone());
-            }
         }
         frontier = next_frontier;
     }
@@ -219,7 +221,7 @@ pub(super) fn walk_chg(
     ) -> anyhow::Result<Vec<HeritageHopRow>>,
 ) -> anyhow::Result<ChgWalk> {
     let mut acc = ChgAcc {
-        nodes: BTreeMap::from([(endpoint_key(&seed), node_from_endpoint(&seed))]),
+        nodes: BTreeMap::from([(seed.key(), seed.node())]),
         edges: Vec::new(),
         emitted: HashSet::new(),
     };
@@ -251,32 +253,6 @@ fn expandable(kind: CandidateEndpointKind) -> bool {
     matches!(kind, CandidateEndpointKind::Symbol)
 }
 
-fn endpoint_key(endpoint: &CandidateEndpoint) -> NodeKey {
-    match endpoint.kind {
-        CandidateEndpointKind::Symbol => NodeKey::symbol(&endpoint.id),
-        CandidateEndpointKind::File => NodeKey::file(&endpoint.id),
-        CandidateEndpointKind::Module => NodeKey::module(&endpoint.id),
-        CandidateEndpointKind::External => NodeKey::external(&endpoint.id),
-        CandidateEndpointKind::Unresolved => NodeKey::unresolved(&endpoint.id),
-    }
-}
-
-fn node_from_endpoint(endpoint: &CandidateEndpoint) -> ViewNodeInput {
-    ViewNodeInput {
-        key: endpoint_key(endpoint),
-        name: endpoint.name.clone().unwrap_or_else(|| endpoint.id.clone()),
-        kind: match endpoint.kind {
-            CandidateEndpointKind::Symbol => "symbol".to_string(),
-            CandidateEndpointKind::File => "file".to_string(),
-            CandidateEndpointKind::Module => "module".to_string(),
-            CandidateEndpointKind::External => "external".to_string(),
-            CandidateEndpointKind::Unresolved => "unresolved".to_string(),
-        },
-        file: endpoint.file.clone(),
-        community: None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -285,7 +261,7 @@ mod tests {
     use crate::codewiki_facts::MAX_DECLARED_EDGE_LIMIT;
     use crate::commands::graph::view::render::build_view_payload;
     use crate::commands::graph::view::{
-        CandidateEndpoint, CandidateEndpointKind, VisibleFileMap, VisibleOwnerKey,
+        CandidateEndpoint, CandidateEndpointKind, VisibleFileMap, VisibleOwnerKey, visible_map_from,
     };
 
     use super::fetch::heritage_hop_query;
@@ -308,6 +284,7 @@ mod tests {
     fn visible_all() -> VisibleFileMap {
         VisibleFileMap {
             owners: HashSet::from([owner()]),
+            visible_paths: HashSet::new(),
             overlay_shadowed_paths: HashSet::new(),
         }
     }
@@ -798,12 +775,9 @@ mod tests {
             None,
             MAX_DECLARED_EDGE_LIMIT,
         );
-        assert!(outgoing.contains("(source {project: $project})"));
+        assert!(outgoing.contains("UNWIND ['sym-1'] AS anchor_id"));
+        assert!(outgoing.contains("(source:CodeSymbol {id: anchor_id, project: $project})"));
         assert!(outgoing.contains("(target {project: $project})"));
-        assert!(
-            outgoing
-                .contains("source:CodeSymbol OR source:ExternalSymbol OR source:UnresolvedCallee")
-        );
         assert!(
             outgoing
                 .contains("target:CodeSymbol OR target:ExternalSymbol OR target:UnresolvedCallee")
@@ -814,7 +788,7 @@ mod tests {
         assert!(outgoing.contains("ORDER BY source, target, rel, edge_id"));
         assert!(outgoing.contains(&format!("LIMIT {MAX_DECLARED_EDGE_LIMIT}")));
         assert!(!outgoing.contains(&format!("LIMIT {}", MAX_DECLARED_EDGE_LIMIT + 1)));
-        assert!(outgoing.contains("source.id IN"));
+        assert!(!outgoing.contains(" IN ["));
         assert_eq!(params.get("project").map(String::as_str), Some("'proj-a'"));
         assert!(!outgoing.contains("proj-b"));
 
@@ -825,9 +799,14 @@ mod tests {
             None,
             MAX_DECLARED_EDGE_LIMIT,
         );
+        assert!(incoming.contains("UNWIND ['sym-1'] AS anchor_id"));
         assert!(incoming.contains("(source {project: $project})"));
-        assert!(incoming.contains("(target {project: $project})"));
-        assert!(incoming.contains("target.id IN"));
+        assert!(incoming.contains("(target:CodeSymbol {id: anchor_id, project: $project})"));
+        assert!(
+            incoming
+                .contains("source:CodeSymbol OR source:ExternalSymbol OR source:UnresolvedCallee")
+        );
+        assert!(!incoming.contains("target.id IN"));
 
         let cursor = HeritageCursor {
             source: "s".into(),
@@ -848,5 +827,85 @@ mod tests {
             paged_params.get("after_edge").map(String::as_str),
             Some("9")
         );
+    }
+
+    fn symbol_in(id: &str, file: &str) -> CandidateEndpoint {
+        CandidateEndpoint {
+            kind: CandidateEndpointKind::Symbol,
+            id: id.to_string(),
+            name: Some(id.to_string()),
+            file: Some(file.to_string()),
+            content_hash: None,
+            machine_id: None,
+        }
+    }
+
+    #[test]
+    fn class_hierarchy_keeps_cross_file_base_through_production_visibility() {
+        let mut edge = row(
+            symbol_in("Derived", "src/d.py"),
+            symbol_in("Base", "src/b.py"),
+            "INHERITS",
+            1,
+        );
+        edge.owner_path = "src/d.py".to_string();
+        let catalog = vec![edge];
+        let paths = ["src/d.py", "src/b.py"]
+            .into_iter()
+            .map(String::from)
+            .collect::<HashSet<_>>();
+        let walked = walk_chg(
+            symbol_in("Base", "src/b.py"),
+            8,
+            |edges| Ok(visible_map_from(edges, paths.clone(), MACHINE)),
+            |frontier, direction| {
+                Ok(catalog_fetch(
+                    &catalog,
+                    frontier,
+                    direction,
+                    None,
+                    MAX_DECLARED_EDGE_LIMIT,
+                ))
+            },
+        )
+        .expect("class-hierarchy walk");
+        assert_eq!(
+            edge_triples(&walked),
+            vec![(
+                "symbol:Derived".into(),
+                "symbol:Base".into(),
+                "INHERITS".into()
+            )]
+        );
+        let files = walked
+            .nodes
+            .iter()
+            .map(|node| (node.key.canonical(), node.file.clone()))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(files["symbol:Derived"].as_deref(), Some("src/d.py"));
+        assert_eq!(files["symbol:Base"].as_deref(), Some("src/b.py"));
+        assert!(!walked.incoming_truncated);
+    }
+
+    #[test]
+    fn class_hierarchy_cycle_still_expands_descendants() {
+        let catalog = vec![
+            inherit("A", "B", 1),
+            inherit("B", "A", 2),
+            inherit("C", "B", 3),
+        ];
+        let walked = walk("A", 8, visible_all(), catalog);
+        let ids = node_ids(&walked);
+        assert!(ids.contains(&"symbol:C".to_string()), "{ids:?}");
+        assert_eq!(
+            edge_triples(&walked),
+            vec![
+                ("symbol:A".into(), "symbol:B".into(), "INHERITS".into()),
+                ("symbol:B".into(), "symbol:A".into(), "INHERITS".into()),
+                ("symbol:C".into(), "symbol:B".into(), "INHERITS".into()),
+            ]
+        );
+        assert!(!walked.incoming_truncated);
+        assert!(!walked.outgoing_truncated);
     }
 }

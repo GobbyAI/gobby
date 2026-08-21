@@ -89,6 +89,7 @@ fn resolved_symbol(symbol: &Symbol) -> ResolvedGraphSymbol {
     ResolvedGraphSymbol {
         id: symbol.id.clone(),
         display_name: symbol.name.clone(),
+        file_path: Some(symbol.file_path.clone()),
     }
 }
 

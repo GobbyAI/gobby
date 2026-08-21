@@ -329,6 +329,7 @@ fn resolve_blast_radius_target(
         return Ok(Some(ResolvedGraphSymbol {
             id: target.id,
             display_name: target.display_name,
+            file_path: None,
         }));
     }
     if external_suggestions.is_empty() {

@@ -381,22 +381,6 @@ pub(super) fn classify_query<T>(result: Result<Vec<T>>, limit: usize) -> Result<
     }
 }
 
-#[allow(dead_code)]
-pub(super) fn classify_overfetch<T>(
-    result: Result<Vec<T>>,
-    limit: usize,
-) -> Result<GraphOutcome<T>> {
-    match result {
-        Ok(rows) if rows.is_empty() => Ok(GraphOutcome::Empty),
-        Ok(mut rows) if rows.len() > limit => {
-            rows.truncate(limit);
-            Ok(GraphOutcome::Truncated(rows))
-        }
-        Ok(rows) => Ok(GraphOutcome::Available(rows)),
-        Err(error) => classify_query::<T>(Err(error), limit),
-    }
-}
-
 fn take_bounded<T: Ord>(rows: &mut Vec<T>, limit: usize) -> bool {
     rows.sort();
     rows.dedup();
@@ -460,11 +444,11 @@ fn rows_to_fetched(kind: GraphEdgeKind, rows: &[Row]) -> Vec<FetchedEdge> {
             let source_file = row
                 .get("source_file")
                 .and_then(|value| value.as_str())
-                .unwrap_or(source);
+                .unwrap_or("");
             let target_file = row
                 .get("target_file")
                 .and_then(|value| value.as_str())
-                .unwrap_or(target);
+                .unwrap_or("");
             let source_kind = row
                 .get("source_kind")
                 .and_then(|value| value.as_str())
@@ -527,5 +511,29 @@ mod tests {
         assert!(where_position < limit_position);
         assert!(query.contains("'src/a.rs', 'src/b.rs'"));
         assert_eq!(params.len(), 1);
+    }
+
+    #[test]
+    fn rows_to_fetched_leaves_missing_endpoint_file_empty() {
+        let mut row = Row::new();
+        row.insert("source".to_string(), serde_json::json!("sym-1"));
+        row.insert("target".to_string(), serde_json::json!("ext-1"));
+        row.insert("rel".to_string(), serde_json::json!("CALLS"));
+        row.insert("source_file".to_string(), serde_json::json!("src/a.py"));
+        row.insert("target_file".to_string(), serde_json::Value::Null);
+        let fetched = rows_to_fetched(GraphEdgeKind::Call, &[row]);
+        assert_eq!(fetched.len(), 1);
+        assert_eq!(fetched[0].source_file, "src/a.py");
+        assert_eq!(fetched[0].target_file, "");
+        assert_eq!(fetched[0].owner_path, "src/a.py");
+
+        let mut bare = Row::new();
+        bare.insert("source".to_string(), serde_json::json!("sym-1"));
+        bare.insert("target".to_string(), serde_json::json!("sym-2"));
+        let fetched = rows_to_fetched(GraphEdgeKind::Inheritance, &[bare]);
+        assert_eq!(fetched[0].source_file, "");
+        assert_eq!(fetched[0].target_file, "");
+        assert_eq!(fetched[0].owner_path, "");
+        assert_eq!(fetched[0].rel, "INHERITS");
     }
 }

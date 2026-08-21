@@ -15,11 +15,14 @@ use crate::db;
 use crate::graph::code_graph::GraphReadError;
 use crate::output::Format;
 use crate::search::fts::ResolvedGraphSymbol;
+use crate::visibility;
 
 use super::reads::{hint_for, hint_for_error, resolve_symbol_with_connection};
-use render::{ViewEdgeInput, ViewNodeInput, ViewPayload, ViewSeed, build_view_payload};
+use render::{
+    NodeKey, ViewEdgeInput, ViewNodeInput, ViewPayload, ViewSeed, build_view_payload,
+    node_file_for_kind,
+};
 
-#[allow(dead_code)]
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub(super) struct VisibleOwnerKey {
     pub path: String,
@@ -27,10 +30,16 @@ pub(super) struct VisibleOwnerKey {
     pub machine_id: String,
 }
 
-#[allow(dead_code)]
+/// Visibility decisions for one hop's candidate edges.
+///
+/// `owners` carries the (path, hash, machine) keys of edge owners whose path the
+/// hub reports as visible; `visible_paths` is the full set of hub-visible paths
+/// among every owner and endpoint file in the hop, so endpoints in files other
+/// than the edge owner's can be admitted.
 #[derive(Clone, Debug, Default)]
 pub(super) struct VisibleFileMap {
     pub owners: HashSet<VisibleOwnerKey>,
+    pub visible_paths: HashSet<String>,
     pub overlay_shadowed_paths: HashSet<String>,
 }
 
@@ -45,9 +54,12 @@ impl VisibleFileMap {
             machine_id: machine_id.to_string(),
         })
     }
+
+    fn path_is_visible(&self, path: &str) -> bool {
+        self.visible_paths.contains(path) || self.owners.iter().any(|owner| owner.path == path)
+    }
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum CandidateEndpointKind {
     File,
@@ -57,7 +69,6 @@ pub(super) enum CandidateEndpointKind {
     Unresolved,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct CandidateEndpoint {
     pub kind: CandidateEndpointKind,
@@ -68,7 +79,33 @@ pub(super) struct CandidateEndpoint {
     pub machine_id: Option<String>,
 }
 
-#[allow(dead_code)]
+impl CandidateEndpoint {
+    fn key(&self) -> NodeKey {
+        match self.kind {
+            CandidateEndpointKind::Symbol => NodeKey::symbol(&self.id),
+            CandidateEndpointKind::File => NodeKey::file(&self.id),
+            CandidateEndpointKind::Module => NodeKey::module(&self.id),
+            CandidateEndpointKind::External => NodeKey::external(&self.id),
+            CandidateEndpointKind::Unresolved => NodeKey::unresolved(&self.id),
+        }
+    }
+
+    /// Payload node for this endpoint. `file` follows the `nodes[].file`
+    /// contract: declaring file for files and symbols, the unique provider for
+    /// modules, and `null` for external and unresolved terminals.
+    fn node(&self) -> ViewNodeInput {
+        let key = self.key();
+        let kind = key.kind;
+        ViewNodeInput {
+            key,
+            name: self.name.clone().unwrap_or_else(|| self.id.clone()),
+            kind: kind.key_prefix().to_string(),
+            file: node_file_for_kind(kind, self.file.clone(), self.file.as_slice()),
+            community: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ViewEdgeCandidate {
     pub source: CandidateEndpoint,
@@ -89,7 +126,6 @@ pub(super) struct VisibleBound {
     pub hop_cut: bool,
 }
 
-#[allow(dead_code)]
 pub(super) fn take_visible_before_bound(
     candidates: impl IntoIterator<Item = ViewEdgeCandidate>,
     visible: &VisibleFileMap,
@@ -152,10 +188,107 @@ fn endpoint_is_visible(endpoint: &CandidateEndpoint, visible: &VisibleFileMap) -
                 endpoint.machine_id.as_deref(),
             ) {
                 (Some(hash), Some(machine)) => visible.owner_is_visible(file, hash, machine),
-                _ => visible.owners.iter().any(|owner| owner.path == file),
+                _ => visible.path_is_visible(file),
             }
         }
     }
+}
+
+/// Every non-empty owner and endpoint path referenced by `candidates`, deduplicated.
+pub(super) fn candidate_paths(candidates: &[ViewEdgeCandidate]) -> Vec<String> {
+    let mut paths = HashSet::new();
+    for edge in candidates {
+        if !edge.owner_path.is_empty() {
+            paths.insert(edge.owner_path.clone());
+        }
+        for file in [&edge.source.file, &edge.target.file].into_iter().flatten() {
+            paths.insert(file.clone());
+        }
+    }
+    paths.into_iter().collect()
+}
+
+/// Pure half of the visibility builder: owners whose path is hub-visible plus the
+/// visible path set itself, so endpoint files outside the owner set still admit.
+pub(super) fn visible_map_from(
+    candidates: &[ViewEdgeCandidate],
+    visible_paths: HashSet<String>,
+    machine_id: &str,
+) -> VisibleFileMap {
+    let owners = candidates
+        .iter()
+        .filter(|edge| visible_paths.contains(&edge.owner_path))
+        .map(|edge| VisibleOwnerKey {
+            path: edge.owner_path.clone(),
+            content_hash: edge.owner_hash.clone(),
+            machine_id: machine_id.to_string(),
+        })
+        .collect();
+    VisibleFileMap {
+        owners,
+        visible_paths,
+        overlay_shadowed_paths: HashSet::new(),
+    }
+}
+
+pub(super) fn visible_map_for_candidates(
+    ctx: &Context,
+    candidates: &[ViewEdgeCandidate],
+) -> anyhow::Result<VisibleFileMap> {
+    let paths = candidate_paths(candidates);
+    let mut conn = db::connect_readonly(&ctx.database_url)?;
+    let visible_paths = visibility::visible_graph_paths(&mut conn, ctx, &paths)?;
+    Ok(visible_map_from(
+        candidates,
+        visible_paths,
+        &local_machine_id(),
+    ))
+}
+
+pub(super) fn local_machine_id() -> String {
+    visibility::local_machine_uuid_or_invisible()
+        .map(|id| id.to_string())
+        .unwrap_or_default()
+}
+
+pub(super) fn non_empty(value: &str) -> Option<String> {
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+pub(super) fn endpoint_kind_from_label(label: &str) -> CandidateEndpointKind {
+    match label {
+        "external" => CandidateEndpointKind::External,
+        "unresolved" => CandidateEndpointKind::Unresolved,
+        "file" => CandidateEndpointKind::File,
+        "module" => CandidateEndpointKind::Module,
+        _ => CandidateEndpointKind::Symbol,
+    }
+}
+
+/// Seed descriptor and walk endpoint for a resolved symbol; both carry the
+/// symbol's declaring file so the payload's `seed.file` and seed node `file`
+/// agree with the `nodes[].file` contract.
+fn symbol_seed(symbol: &ResolvedGraphSymbol) -> (ViewSeed, CandidateEndpoint) {
+    (
+        ViewSeed {
+            id: symbol.id.clone(),
+            name: symbol.display_name.clone(),
+            kind: "symbol".to_string(),
+            file: symbol.file_path.clone(),
+        },
+        CandidateEndpoint {
+            kind: CandidateEndpointKind::Symbol,
+            id: symbol.id.clone(),
+            name: Some(symbol.display_name.clone()),
+            file: symbol.file_path.clone(),
+            content_hash: None,
+            machine_id: None,
+        },
+    )
 }
 
 #[derive(Debug)]

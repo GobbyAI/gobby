@@ -1,6 +1,7 @@
 //! JSON + Mermaid payload for `gcode graph view`.
 
 use anyhow::{Context as _, bail};
+#[cfg(test)]
 use gobby_core::graph_analytics::{AnalyticsEdge, AnalyticsGraph, AnalyticsNode, weight_for_kind};
 use gobby_core::vault::mermaid::{escape_label, is_valid_mermaid};
 use serde::Serialize;
@@ -8,7 +9,6 @@ use serde::Serialize;
 use crate::cli::GraphViewKind;
 use crate::output::{self, Format};
 
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub(super) enum NodeKind {
     Symbol,
@@ -19,7 +19,7 @@ pub(super) enum NodeKind {
 }
 
 impl NodeKind {
-    fn key_prefix(self) -> &'static str {
+    pub(super) fn key_prefix(self) -> &'static str {
         match self {
             Self::Symbol => "symbol",
             Self::File => "file",
@@ -37,7 +37,6 @@ pub(super) struct NodeKey {
 }
 
 impl NodeKey {
-    #[allow(dead_code)]
     pub(super) fn symbol(id: impl Into<String>) -> Self {
         Self {
             kind: NodeKind::Symbol,
@@ -45,7 +44,6 @@ impl NodeKey {
         }
     }
 
-    #[allow(dead_code)]
     pub(super) fn file(path: impl Into<String>) -> Self {
         Self {
             kind: NodeKind::File,
@@ -53,7 +51,6 @@ impl NodeKey {
         }
     }
 
-    #[allow(dead_code)]
     pub(super) fn module(name: impl Into<String>) -> Self {
         Self {
             kind: NodeKind::Module,
@@ -61,7 +58,6 @@ impl NodeKey {
         }
     }
 
-    #[allow(dead_code)]
     pub(super) fn external(id: impl Into<String>) -> Self {
         Self {
             kind: NodeKind::External,
@@ -69,7 +65,6 @@ impl NodeKey {
         }
     }
 
-    #[allow(dead_code)]
     pub(super) fn unresolved(id: impl Into<String>) -> Self {
         Self {
             kind: NodeKind::Unresolved,
@@ -144,7 +139,6 @@ pub(super) struct ViewEdgeInput {
     pub rel: String,
 }
 
-#[allow(dead_code)]
 pub(super) fn node_file_for_kind(
     kind: NodeKind,
     declaring_file: Option<String>,
@@ -227,7 +221,7 @@ pub(super) fn build_view_payload(
     })
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub(super) fn analytics_graph_from_payload(payload: &ViewPayload) -> AnalyticsGraph {
     AnalyticsGraph {
         nodes: payload
@@ -284,28 +278,16 @@ fn render_mermaid(
     edges: &[ViewEdge],
 ) -> anyhow::Result<String> {
     let mut keys = nodes.iter().map(|node| node.id.clone()).collect::<Vec<_>>();
-    if keys.is_empty() {
-        keys.push(format!("symbol:{}", seed.id));
-    }
     keys.sort();
     keys.dedup();
-    let mermaid_ids = keys
-        .iter()
-        .enumerate()
-        .map(|(index, _)| format!("n{index}"))
-        .collect::<Vec<_>>();
     let mut id_for = std::collections::BTreeMap::new();
-    for (key, mermaid_id) in keys.iter().zip(mermaid_ids.iter()) {
-        id_for.insert(key.clone(), mermaid_id.clone());
+    for (index, key) in keys.into_iter().enumerate() {
+        id_for.insert(key, format!("n{index}"));
     }
 
     let mut lines = vec!["```mermaid".to_string(), "flowchart TB".to_string()];
     if nodes.is_empty() {
-        let token = id_for
-            .get(&format!("symbol:{}", seed.id))
-            .cloned()
-            .unwrap_or_else(|| "n0".to_string());
-        lines.push(format!("    {token}[\"{}\"]", mermaid_label(&seed.name)));
+        lines.push(format!("    n0[\"{}\"]", mermaid_label(&seed.name)));
     } else {
         for node in nodes {
             let token = id_for

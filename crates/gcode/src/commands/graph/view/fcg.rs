@@ -12,14 +12,12 @@ use crate::codewiki_facts::{
 use crate::config::Context;
 use crate::output::Format;
 use crate::search::fts::ResolvedGraphSymbol;
-use crate::visibility;
 
-use super::render::{
-    NodeKey, ViewEdgeInput, ViewNodeInput, ViewSeed, build_view_payload, print_view,
-};
+use super::render::{ViewEdgeInput, ViewNodeInput, build_view_payload, print_view};
 use super::{
-    CandidateEndpoint, CandidateEndpointKind, ViewEdgeCandidate, VisibleFileMap, VisibleOwnerKey,
-    hint_for_availability, take_visible_before_bound,
+    CandidateEndpoint, CandidateEndpointKind, ViewEdgeCandidate, VisibleFileMap,
+    endpoint_kind_from_label, hint_for_availability, local_machine_id, non_empty, symbol_seed,
+    take_visible_before_bound, visible_map_for_candidates,
 };
 
 pub(super) struct FcgHopFetch {
@@ -49,7 +47,7 @@ pub(super) fn walk_fcg(
     let mut frontier = vec![seed.clone()];
     let mut incoming_truncated = false;
     let mut outgoing_truncated = false;
-    let mut nodes = BTreeMap::from([(seed.id.clone(), node_from_endpoint(&seed))]);
+    let mut nodes = BTreeMap::from([(seed.id.clone(), seed.node())]);
     let mut edges = Vec::new();
 
     for _ in 0..depth {
@@ -77,13 +75,13 @@ pub(super) fn walk_fcg(
             }
             nodes
                 .entry(edge.source.id.clone())
-                .or_insert_with(|| node_from_endpoint(&edge.source));
+                .or_insert_with(|| edge.source.node());
             nodes
                 .entry(edge.target.id.clone())
-                .or_insert_with(|| node_from_endpoint(&edge.target));
+                .or_insert_with(|| edge.target.node());
             edges.push(ViewEdgeInput {
-                source: endpoint_key(&edge.source),
-                target: endpoint_key(&edge.target),
+                source: edge.source.key(),
+                target: edge.target.key(),
                 rel: edge.rel,
             });
             push_frontier(&mut next_frontier, &mut visited, &edge.source);
@@ -104,32 +102,6 @@ fn expandable(kind: CandidateEndpointKind) -> bool {
     matches!(kind, CandidateEndpointKind::Symbol)
 }
 
-fn endpoint_key(endpoint: &CandidateEndpoint) -> NodeKey {
-    match endpoint.kind {
-        CandidateEndpointKind::Symbol => NodeKey::symbol(&endpoint.id),
-        CandidateEndpointKind::File => NodeKey::file(&endpoint.id),
-        CandidateEndpointKind::Module => NodeKey::module(&endpoint.id),
-        CandidateEndpointKind::External => NodeKey::external(&endpoint.id),
-        CandidateEndpointKind::Unresolved => NodeKey::unresolved(&endpoint.id),
-    }
-}
-
-fn node_from_endpoint(endpoint: &CandidateEndpoint) -> ViewNodeInput {
-    ViewNodeInput {
-        key: endpoint_key(endpoint),
-        name: endpoint.name.clone().unwrap_or_else(|| endpoint.id.clone()),
-        kind: match endpoint.kind {
-            CandidateEndpointKind::Symbol => "symbol".to_string(),
-            CandidateEndpointKind::File => "file".to_string(),
-            CandidateEndpointKind::Module => "module".to_string(),
-            CandidateEndpointKind::External => "external".to_string(),
-            CandidateEndpointKind::Unresolved => "unresolved".to_string(),
-        },
-        file: endpoint.file.clone(),
-        community: None,
-    }
-}
-
 fn push_frontier(
     frontier: &mut Vec<CandidateEndpoint>,
     visited: &mut HashSet<String>,
@@ -137,16 +109,6 @@ fn push_frontier(
 ) {
     if expandable(endpoint.kind) && visited.insert(endpoint.id.clone()) {
         frontier.push(endpoint.clone());
-    }
-}
-
-fn endpoint_kind_from_label(label: &str) -> CandidateEndpointKind {
-    match label {
-        "external" => CandidateEndpointKind::External,
-        "unresolved" => CandidateEndpointKind::Unresolved,
-        "file" => CandidateEndpointKind::File,
-        "module" => CandidateEndpointKind::Module,
-        _ => CandidateEndpointKind::Symbol,
     }
 }
 
@@ -175,20 +137,6 @@ fn graph_edge_to_candidate(edge: &GraphEdge, machine_id: &str, hop: usize) -> Vi
         overlay_shadowed: false,
         hop,
     }
-}
-
-fn non_empty(value: &str) -> Option<String> {
-    if value.is_empty() {
-        None
-    } else {
-        Some(value.to_string())
-    }
-}
-
-fn local_machine_id() -> String {
-    visibility::local_machine_uuid_or_invisible()
-        .map(|id| id.to_string())
-        .unwrap_or_default()
 }
 
 fn fetch_fcg_hop(
@@ -220,11 +168,11 @@ fn fetch_fcg_hop(
     let mut outgoing = Vec::new();
     for edge in edges {
         let candidate = graph_edge_to_candidate(&edge, &machine_id, 1);
-        if frontier_ids.contains(&edge.target) {
-            incoming.push(candidate.clone());
-        }
+        // An edge joining two frontier symbols is one outgoing edge, not one of each.
         if frontier_ids.contains(&edge.source) {
             outgoing.push(candidate);
+        } else if frontier_ids.contains(&edge.target) {
+            incoming.push(candidate);
         }
     }
     Ok(FcgHopFetch {
@@ -232,43 +180,6 @@ fn fetch_fcg_hop(
         outgoing,
         incoming_truncated: scoped.incoming_truncated,
         outgoing_truncated: scoped.outgoing_truncated,
-    })
-}
-
-fn visible_map_for_candidates(
-    ctx: &Context,
-    candidates: impl IntoIterator<Item = ViewEdgeCandidate>,
-) -> anyhow::Result<VisibleFileMap> {
-    let candidates = candidates.into_iter().collect::<Vec<_>>();
-    let mut paths = HashSet::new();
-    for edge in &candidates {
-        if !edge.owner_path.is_empty() {
-            paths.insert(edge.owner_path.clone());
-        }
-        if let Some(file) = &edge.source.file {
-            paths.insert(file.clone());
-        }
-        if let Some(file) = &edge.target.file {
-            paths.insert(file.clone());
-        }
-    }
-    let path_list = paths.into_iter().collect::<Vec<_>>();
-    let mut conn = crate::db::connect_readonly(&ctx.database_url)?;
-    let visible_paths = visibility::visible_graph_paths(&mut conn, ctx, &path_list)?;
-    let machine = local_machine_id();
-    let mut owners = HashSet::new();
-    for edge in candidates {
-        if visible_paths.contains(&edge.owner_path) {
-            owners.insert(VisibleOwnerKey {
-                path: edge.owner_path,
-                content_hash: edge.owner_hash,
-                machine_id: machine.clone(),
-            });
-        }
-    }
-    Ok(VisibleFileMap {
-        owners,
-        overlay_shadowed_paths: HashSet::new(),
     })
 }
 
@@ -284,24 +195,11 @@ pub(super) fn run(
 ) -> anyhow::Result<()> {
     let facts = CodewikiFacts::from_context(ctx.clone());
     let hint = hint_for_availability(ctx, &facts.graph_availability());
-    let seed = ViewSeed {
-        id: symbol.id.clone(),
-        name: symbol.display_name.clone(),
-        kind: "symbol".to_string(),
-        file: None,
-    };
+    let (seed, seed_endpoint) = symbol_seed(symbol);
     if !matches!(facts.graph_availability(), GraphAvailability::Available) {
         return print_view(&super::empty_view_payload(ctx, args, seed, hint)?, format);
     }
 
-    let seed_endpoint = CandidateEndpoint {
-        kind: CandidateEndpointKind::Symbol,
-        id: symbol.id.clone(),
-        name: Some(symbol.display_name.clone()),
-        file: None,
-        content_hash: None,
-        machine_id: None,
-    };
     let incoming_limit = user_limit(args.incoming_limit);
     let outgoing_limit = user_limit(args.outgoing_limit);
     let walk = walk_fcg(
@@ -309,7 +207,7 @@ pub(super) fn run(
         args.effective_depth(),
         incoming_limit,
         outgoing_limit,
-        |edges| visible_map_for_candidates(ctx, edges.iter().cloned()),
+        |edges| visible_map_for_candidates(ctx, edges),
         |frontier, exclude| fetch_fcg_hop(&facts, frontier, exclude),
     )?;
     let payload = build_view_payload(
@@ -338,7 +236,7 @@ mod tests {
     use crate::commands::graph::view::render::build_view_payload;
     use crate::commands::graph::view::{
         CandidateEndpoint, CandidateEndpointKind, ViewEdgeCandidate, VisibleFileMap,
-        VisibleOwnerKey,
+        VisibleOwnerKey, visible_map_from,
     };
 
     use super::{FcgHopFetch, walk_fcg};
@@ -358,6 +256,7 @@ mod tests {
     fn visible_all() -> VisibleFileMap {
         VisibleFileMap {
             owners: HashSet::from([owner()]),
+            visible_paths: HashSet::new(),
             overlay_shadowed_paths: HashSet::new(),
         }
     }
@@ -639,5 +538,56 @@ mod tests {
             edge_pairs(&walked),
             vec![("symbol:aaa".into(), "symbol:seed".into())]
         );
+    }
+
+    fn endpoint_in(id: &str, file: &str) -> CandidateEndpoint {
+        CandidateEndpoint {
+            kind: CandidateEndpointKind::Symbol,
+            id: id.to_string(),
+            name: Some(id.to_string()),
+            file: Some(file.to_string()),
+            content_hash: None,
+            machine_id: None,
+        }
+    }
+
+    #[test]
+    fn fcg_keeps_cross_file_callee_and_caller_through_production_visibility() {
+        let seed = endpoint_in("seed", "src/a.py");
+        let mut callee_edge = candidate(seed.clone(), endpoint_in("callee", "src/b.py"));
+        callee_edge.owner_path = "src/a.py".to_string();
+        let mut caller_edge = candidate(endpoint_in("caller", "src/c.py"), seed.clone());
+        caller_edge.owner_path = "src/c.py".to_string();
+        let catalog = vec![callee_edge, caller_edge];
+        let paths = ["src/a.py", "src/b.py", "src/c.py"]
+            .into_iter()
+            .map(String::from)
+            .collect::<HashSet<_>>();
+        let walked = walk_fcg(
+            seed,
+            1,
+            8,
+            8,
+            |edges| Ok(visible_map_from(edges, paths.clone(), MACHINE)),
+            |frontier, exclude| Ok(scoped_fetch(&catalog, frontier, exclude, 64, 64)),
+        )
+        .expect("fcg walk");
+        assert_eq!(
+            edge_pairs(&walked),
+            vec![
+                ("symbol:caller".into(), "symbol:seed".into()),
+                ("symbol:seed".into(), "symbol:callee".into()),
+            ]
+        );
+        assert!(!walked.incoming_truncated);
+        assert!(!walked.outgoing_truncated);
+        let files = walked
+            .nodes
+            .iter()
+            .map(|node| (node.key.canonical(), node.file.clone()))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(files["symbol:callee"].as_deref(), Some("src/b.py"));
+        assert_eq!(files["symbol:caller"].as_deref(), Some("src/c.py"));
+        assert_eq!(files["symbol:seed"].as_deref(), Some("src/a.py"));
     }
 }

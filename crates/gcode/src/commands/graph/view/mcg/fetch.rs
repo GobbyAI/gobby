@@ -16,17 +16,11 @@ use crate::visibility;
 
 use super::super::render::{ViewSeed, build_view_payload, print_view};
 use super::super::{
-    CandidateEndpoint, CandidateEndpointKind, ViewEdgeCandidate, VisibleFileMap, VisibleOwnerKey,
-    hint_for_availability,
+    CandidateEndpoint, CandidateEndpointKind, ViewEdgeCandidate, hint_for_availability,
+    local_machine_id, non_empty, visible_map_for_candidates,
 };
 use super::identity::{McgIdentity, close_endpoint, resolve_mcg_seed};
 use super::{McgHopFetch, assign_leiden_communities, walk_mcg};
-
-fn local_machine_id() -> String {
-    visibility::local_machine_uuid_or_invisible()
-        .map(|id| id.to_string())
-        .unwrap_or_default()
-}
 
 fn import_edge_to_candidate(edge: &GraphEdge, machine_id: &str) -> ViewEdgeCandidate {
     ViewEdgeCandidate {
@@ -52,14 +46,6 @@ fn import_edge_to_candidate(edge: &GraphEdge, machine_id: &str) -> ViewEdgeCandi
         owner_machine: machine_id.to_string(),
         overlay_shadowed: false,
         hop: 1,
-    }
-}
-
-fn non_empty(value: &str) -> Option<String> {
-    if value.is_empty() {
-        None
-    } else {
-        Some(value.to_string())
     }
 }
 
@@ -108,43 +94,6 @@ fn fetch_mcg_hop(
         outgoing,
         incoming_truncated: scoped.incoming_truncated,
         outgoing_truncated: scoped.outgoing_truncated,
-    })
-}
-
-fn visible_map_for_candidates(
-    ctx: &Context,
-    candidates: impl IntoIterator<Item = ViewEdgeCandidate>,
-) -> anyhow::Result<VisibleFileMap> {
-    let candidates = candidates.into_iter().collect::<Vec<_>>();
-    let mut paths = HashSet::new();
-    for edge in &candidates {
-        if !edge.owner_path.is_empty() {
-            paths.insert(edge.owner_path.clone());
-        }
-        if let Some(file) = &edge.source.file {
-            paths.insert(file.clone());
-        }
-        if let Some(file) = &edge.target.file {
-            paths.insert(file.clone());
-        }
-    }
-    let path_list = paths.into_iter().collect::<Vec<_>>();
-    let mut conn = crate::db::connect_readonly(&ctx.database_url)?;
-    let visible_paths = visibility::visible_graph_paths(&mut conn, ctx, &path_list)?;
-    let machine = local_machine_id();
-    let mut owners = HashSet::new();
-    for edge in candidates {
-        if visible_paths.contains(&edge.owner_path) {
-            owners.insert(VisibleOwnerKey {
-                path: edge.owner_path,
-                content_hash: edge.owner_hash,
-                machine_id: machine.clone(),
-            });
-        }
-    }
-    Ok(VisibleFileMap {
-        owners,
-        overlay_shadowed_paths: HashSet::new(),
     })
 }
 
@@ -201,7 +150,7 @@ pub(crate) fn run(ctx: &Context, args: &GraphViewArgs, format: Format) -> anyhow
         args.effective_depth(),
         incoming_limit,
         outgoing_limit,
-        |edges| visible_map_for_candidates(ctx, edges.iter().cloned()),
+        |edges| visible_map_for_candidates(ctx, edges),
         |files, modules, exclude| fetch_mcg_hop(&facts, files, modules, exclude),
         |endpoint| Ok(close_endpoint(endpoint, &identity)),
     )?;

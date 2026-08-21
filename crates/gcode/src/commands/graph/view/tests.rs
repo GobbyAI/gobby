@@ -139,6 +139,7 @@ fn graph_view_respects_active_visible_file_map() {
             owner("src/a.py", "hash-a", "machine-1"),
             owner("src/b.py", "hash-b", "machine-1"),
         ]),
+        visible_paths: HashSet::new(),
         overlay_shadowed_paths: HashSet::from(["src/parent.py".to_string()]),
     };
     let keep = candidate(
@@ -255,6 +256,7 @@ fn graph_view_respects_active_visible_file_map() {
 fn graph_view_invisible_rows_do_not_consume_edge_or_hop_budget() {
     let visible = VisibleFileMap {
         owners: HashSet::from([owner("src/a.py", "hash-a", "machine-1")]),
+        visible_paths: HashSet::new(),
         overlay_shadowed_paths: HashSet::from(["src/shadow.py".to_string()]),
     };
     let mut rows = Vec::new();
@@ -397,6 +399,7 @@ fn graph_view_seed_resolution_propagates_database_errors() {
             Some(ResolvedGraphSymbol {
                 id: "sym-1".into(),
                 display_name: "Derived".into(),
+                file_path: None,
             }),
             Vec::new(),
         )),
@@ -416,4 +419,109 @@ fn graph_view_seed_resolution_propagates_database_errors() {
         ));
     }
     let _ = GraphReadError::NotConfigured;
+}
+
+#[test]
+fn visible_map_from_records_visible_endpoint_paths() {
+    let edge = candidate(
+        endpoint(
+            CandidateEndpointKind::Symbol,
+            "caller",
+            Some("src/b.py"),
+            None,
+            None,
+        ),
+        endpoint(
+            CandidateEndpointKind::Symbol,
+            "callee",
+            Some("src/c.py"),
+            None,
+            None,
+        ),
+        "src/a.py",
+        "hash-a",
+        "machine-1",
+        false,
+        1,
+    );
+    let mut paths = candidate_paths(std::slice::from_ref(&edge));
+    paths.sort();
+    assert_eq!(paths, ["src/a.py", "src/b.py", "src/c.py"]);
+
+    let all = paths.iter().cloned().collect::<HashSet<_>>();
+    let visible = visible_map_from(std::slice::from_ref(&edge), all, "machine-1");
+    assert_eq!(
+        visible.owners,
+        HashSet::from([owner("src/a.py", "hash-a", "machine-1")])
+    );
+    assert!(visible.visible_paths.contains("src/c.py"));
+    let kept = take_visible_before_bound(vec![edge.clone()], &visible, None, None);
+    assert_eq!(kept.edges.len(), 1);
+
+    let without_b = HashSet::from(["src/a.py".to_string(), "src/c.py".to_string()]);
+    let visible = visible_map_from(std::slice::from_ref(&edge), without_b, "machine-1");
+    let kept = take_visible_before_bound(vec![edge], &visible, None, None);
+    assert!(kept.edges.is_empty());
+}
+
+#[test]
+fn symbol_seed_carries_resolved_file_path() {
+    let symbol = ResolvedGraphSymbol {
+        id: "sym-1".into(),
+        display_name: "Derived".into(),
+        file_path: Some("src/a.py".into()),
+    };
+    let (seed, endpoint) = symbol_seed(&symbol);
+    assert_eq!(seed.id, "sym-1");
+    assert_eq!(seed.kind, "symbol");
+    assert_eq!(seed.file.as_deref(), Some("src/a.py"));
+    assert_eq!(endpoint.kind, CandidateEndpointKind::Symbol);
+    assert_eq!(endpoint.file.as_deref(), Some("src/a.py"));
+    let node = endpoint.node();
+    assert_eq!(node.key, NodeKey::symbol("sym-1"));
+    assert_eq!(node.file.as_deref(), Some("src/a.py"));
+
+    let external = ResolvedGraphSymbol {
+        id: "ext-1".into(),
+        display_name: "os.path.join".into(),
+        file_path: None,
+    };
+    let (seed, endpoint) = symbol_seed(&external);
+    assert_eq!(seed.file, None);
+    assert_eq!(endpoint.node().file, None);
+}
+
+#[test]
+fn node_file_is_null_for_external_and_unresolved_even_when_raw_file_is_id() {
+    for (kind, label) in [
+        (CandidateEndpointKind::External, "external"),
+        (CandidateEndpointKind::Unresolved, "unresolved"),
+    ] {
+        let node = endpoint(kind, "ext-1", Some("ext-1"), None, None).node();
+        assert_eq!(node.kind, label);
+        assert_eq!(node.file, None);
+        assert_eq!(node.key.canonical(), format!("{label}:ext-1"));
+    }
+    let module = endpoint(
+        CandidateEndpointKind::Module,
+        "pkg",
+        Some("src/pkg.py"),
+        None,
+        None,
+    )
+    .node();
+    assert_eq!(module.kind, "module");
+    assert_eq!(module.file.as_deref(), Some("src/pkg.py"));
+    let unprovided = endpoint(CandidateEndpointKind::Module, "pkg", None, None, None).node();
+    assert_eq!(unprovided.file, None);
+    let file = endpoint(
+        CandidateEndpointKind::File,
+        "src/a.py",
+        Some("src/a.py"),
+        None,
+        None,
+    )
+    .node();
+    assert_eq!(file.kind, "file");
+    assert_eq!(file.file.as_deref(), Some("src/a.py"));
 }
