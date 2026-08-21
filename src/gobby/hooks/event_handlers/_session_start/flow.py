@@ -422,6 +422,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
         machine_id=machine_id,
         project_id=project_id,
         cli_source=cli_source,
+        terminal_context=terminal_context,
     )
     if resolution.blocked_reason:
         return HookResponse(decision="block", reason=resolution.blocked_reason)

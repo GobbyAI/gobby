@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -127,6 +128,7 @@ class TestResolveSessionStartIdentity:
             machine_id="21000000-0000-4000-8000-000000000001",
             project_id="project-1",
             cli_source="claude",
+            terminal_context=input_data.get("terminal_context"),
         )
 
         assert resolution.is_compact
@@ -150,6 +152,7 @@ class TestResolveSessionStartIdentity:
             machine_id="21000000-0000-4000-8000-000000000001",
             project_id="project-1",
             cli_source="claude",
+            terminal_context=input_data.get("terminal_context"),
         )
 
         assert not resolution.is_compact
@@ -177,6 +180,7 @@ class TestResolveSessionStartIdentity:
             machine_id="21000000-0000-4000-8000-000000000001",
             project_id="project-1",
             cli_source="codex",
+            terminal_context=input_data.get("terminal_context"),
         )
 
         assert resolution.is_compact
@@ -201,6 +205,7 @@ class TestResolveSessionStartIdentity:
             machine_id="21000000-0000-4000-8000-000000000001",
             project_id="project-1",
             cli_source="claude",
+            terminal_context=input_data.get("terminal_context"),
         )
 
         assert resolution.is_compact
@@ -222,6 +227,7 @@ class TestResolveSessionStartIdentity:
             machine_id="21000000-0000-4000-8000-000000000001",
             project_id="project-1",
             cli_source="claude",
+            terminal_context=input_data.get("terminal_context"),
         )
 
         assert not resolution.is_compact
@@ -244,6 +250,7 @@ class TestResolveSessionStartIdentity:
             machine_id="21000000-0000-4000-8000-000000000001",
             project_id="project-1",
             cli_source="claude",
+            terminal_context=TERMINAL_CONTEXT,
         )
 
         assert not resolution.is_compact
@@ -268,6 +275,7 @@ class TestResolveSessionStartIdentity:
                 machine_id="21000000-0000-4000-8000-000000000001",
                 project_id="project-1",
                 cli_source="claude",
+                terminal_context=TERMINAL_CONTEXT,
             )
 
         assert not resolution.is_compact
@@ -292,6 +300,7 @@ class TestResolveSessionStartIdentity:
             machine_id="21000000-0000-4000-8000-000000000001",
             project_id="project-1",
             cli_source="claude",
+            terminal_context=input_data.get("terminal_context"),
         )
 
         assert resolution.blocked_reason is not None
@@ -315,6 +324,7 @@ class TestResolveSessionStartIdentity:
             machine_id="21000000-0000-4000-8000-000000000001",
             project_id="project-1",
             cli_source="claude",
+            terminal_context=input_data.get("terminal_context"),
         )
 
         assert resolution.blocked_reason is None
@@ -339,6 +349,7 @@ class TestResolveSessionStartIdentity:
             machine_id="21000000-0000-4000-8000-000000000001",
             project_id="project-1",
             cli_source="claude",
+            terminal_context=TERMINAL_CONTEXT,
         )
 
         assert resolution.is_compact
@@ -368,6 +379,7 @@ class TestResolveSessionStartIdentity:
             machine_id=LOCAL_MACHINE_ID,
             project_id="project-1",
             cli_source="claude",
+            terminal_context=input_data.get("terminal_context"),
         )
 
         assert not resolution.is_compact
@@ -413,6 +425,7 @@ class TestResolveSessionStartIdentity:
             machine_id=LOCAL_MACHINE_ID,
             project_id="project-1",
             cli_source="claude",
+            terminal_context=dict(TERMINAL_CONTEXT),
         )
 
         assert not resolution.is_compact
@@ -438,6 +451,7 @@ class TestResolveSessionStartIdentity:
             machine_id=LOCAL_MACHINE_ID,
             project_id="project-1",
             cli_source="claude",
+            terminal_context=dict(TERMINAL_CONTEXT),
         )
 
         assert not resolution.is_compact
@@ -445,6 +459,69 @@ class TestResolveSessionStartIdentity:
         assert resolution.clear_predecessor is None
         assert resolution.clear_attempt_id is None
         assert resolution.clear_degrade_reason == "exception"
+
+
+class TestClearResolutionTerminalIdentity:
+    """Clear successors resolve against the enriched context, never the raw payload."""
+
+    RAW_CONTEXT = {**TERMINAL_CONTEXT, "parent_pid": 4242}
+    ENRICHED_CONTEXT = {**RAW_CONTEXT, "cwd": "/some/dir", "parent_create_time": 1787339970.3}
+
+    def _stage_predecessor(self, db: HubDatabase) -> Session:
+        project = LocalProjectManager(db).create(name="clear-identity", repo_path="/some/dir")
+        predecessor = SessionManager(db).register(
+            external_id="pred-ext",
+            machine_id=LOCAL_MACHINE_ID,
+            source="claude",
+            project_id=project.id,
+            terminal_context=dict(self.ENRICHED_CONTEXT),
+        )
+        stage_clear_attempt(
+            db,
+            predecessor.id,
+            attempt_id="attempt-enriched",
+            terminal_context=dict(self.ENRICHED_CONTEXT),
+            chat_context=None,
+        )
+        return predecessor
+
+    def _resolve(
+        self,
+        db: HubDatabase,
+        project_id: str,
+        terminal_context: dict[str, Any],
+    ) -> SessionStartResolution:
+        handler = MagicMock()
+        handler._session_manager.db = db
+        handler.logger = logging.getLogger("test.clear_identity")
+        return resolve_session_start_identity(
+            handler,
+            {"source": "clear", "terminal_context": dict(self.RAW_CONTEXT)},
+            "clear",
+            external_id="succ-ext",
+            machine_id=LOCAL_MACHINE_ID,
+            project_id=project_id,
+            cli_source="claude",
+            terminal_context=terminal_context,
+        )
+
+    def test_enriched_context_resolves_staged_marker(self, hub_db: HubDatabase) -> None:
+        predecessor = self._stage_predecessor(hub_db)
+
+        resolution = self._resolve(hub_db, predecessor.project_id, dict(self.ENRICHED_CONTEXT))
+
+        assert resolution.clear_degrade_reason is None
+        assert resolution.clear_predecessor is not None
+        assert resolution.clear_predecessor.id == predecessor.id
+        assert resolution.clear_attempt_id == "attempt-enriched"
+
+    def test_raw_payload_alone_is_identity_mismatch(self, hub_db: HubDatabase) -> None:
+        predecessor = self._stage_predecessor(hub_db)
+
+        resolution = self._resolve(hub_db, predecessor.project_id, dict(self.RAW_CONTEXT))
+
+        assert resolution.clear_degrade_reason == "identity_mismatch"
+        assert resolution.clear_predecessor is None
 
 
 class TestSessionStartInPlaceCompact:
@@ -1422,6 +1499,35 @@ class TestSessionStartClearBinding:
         mock_dependencies["session_manager"].register_session.assert_called_once()
         mock_take.assert_not_called()
         assert event.metadata["_platform_session_id"] == successor.id
+
+    def test_clear_resolver_receives_enriched_terminal_context(
+        self, mock_dependencies: dict[str, Any]
+    ) -> None:
+        successor = self._successor_row("succ-enriched")
+        mock_dependencies["session_storage"].get.side_effect = (
+            lambda session_id: successor if session_id == successor.id else None
+        )
+        mock_dependencies["session_manager"].register_session.return_value = successor.id
+        mock_dependencies["task_manager"].list_tasks.return_value = []
+        handlers = EventHandlers(**mock_dependencies)
+        raw_context = {**TERMINAL_CONTEXT, "parent_pid": os.getpid()}
+        event = _clear_start_event(external_id="ext-enriched", terminal_context=raw_context)
+
+        with (
+            patch.object(handlers, "_activate_default_agent", return_value=None),
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.resolve_session_start_identity",
+                return_value=_clear_resolution(),
+            ) as mock_resolve,
+            patch("gobby.hooks.event_handlers._session_start.flow.take_clear_handoff_marker"),
+        ):
+            response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        resolved_context = mock_resolve.call_args.kwargs["terminal_context"]
+        assert resolved_context["parent_pid"] == os.getpid()
+        assert resolved_context["parent_create_time"] > 0
+        assert "parent_create_time" not in raw_context
 
     def test_clear_skips_web_chat_external_id_reuse(
         self, mock_dependencies: dict[str, Any]

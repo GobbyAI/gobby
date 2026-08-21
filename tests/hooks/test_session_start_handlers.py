@@ -806,6 +806,10 @@ class TestSessionStartPreCreatedSession:
         mock_svm_cls.return_value = mock_svm
         mock_dependencies["session_storage"].get.return_value = mock_session
         mock_dependencies["session_manager"].update.return_value = mock_session
+        # A clear start never reuses the predecessor row; it registers a successor.
+        successor_id = f"sess-{source}-successor"
+        mock_dependencies["session_manager"].register_session.return_value = successor_id
+        expected_session_id = successor_id if source == "clear" else mock_session.id
 
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -831,7 +835,7 @@ class TestSessionStartPreCreatedSession:
         assert "## Instructions" not in context
         assert (
             call(
-                mock_session.id,
+                expected_session_id,
                 {
                     "_agent_context_injected": False,
                     "_agent_context_rehydrate_pending": True,

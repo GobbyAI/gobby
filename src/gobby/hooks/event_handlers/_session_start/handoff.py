@@ -56,8 +56,14 @@ def resolve_session_start_identity(
     machine_id: str,
     project_id: str,
     cli_source: str,
+    terminal_context: dict[str, Any] | None,
 ) -> SessionStartResolution:
     """Resolve a terminal session start against its persisted session row.
+
+    ``terminal_context`` is the enriched context (cwd plus parent-process
+    identity) — never the raw hook payload. Stored markers carry
+    ``parent_create_time`` from enrichment, and process-identity matching
+    requires it on both sides.
 
     Compaction is an in-place handoff. A marked row with exact terminal process
     identity is canonical even when ingress carries a differing provider ID.
@@ -69,10 +75,10 @@ def resolve_session_start_identity(
     if session_source == "clear":
         return _resolve_clear_session_start(
             handler,
-            input_data,
             machine_id=machine_id,
             project_id=project_id,
             cli_source=cli_source,
+            terminal_context=terminal_context,
         )
 
     session = None
@@ -110,7 +116,7 @@ def resolve_session_start_identity(
         candidate_resolution = resolve_compact_continuation(
             handler._session_manager.db,
             source=cli_source,
-            terminal_context=input_data.get("terminal_context"),
+            terminal_context=terminal_context,
         )
     except Exception as e:
         handler.logger.warning(
@@ -185,7 +191,7 @@ def resolve_session_start_identity(
         input_data["source"] = "startup"
         return SessionStartResolution(session=None, session_source="startup")
 
-    identity = _classify_terminal_identity(session, input_data.get("terminal_context"))
+    identity = _classify_terminal_identity(session, terminal_context)
     if identity == "conflict":
         handler.logger.warning(
             "Blocking compact restart for session %s (external_id=%s): terminal "
@@ -207,15 +213,13 @@ def resolve_session_start_identity(
 
 def _resolve_clear_session_start(
     handler: Any,
-    input_data: dict[str, Any],
     *,
     machine_id: str,
     project_id: str,
     cli_source: str,
+    terminal_context: dict[str, Any] | None,
 ) -> SessionStartResolution:
     """Resolve a clear successor without reusing any existing session row."""
-    raw_context = input_data.get("terminal_context")
-    terminal_context = raw_context if isinstance(raw_context, dict) else None
     predecessor_hint: str | None = None
     if terminal_context is not None:
         hint = terminal_context.get("gobby_session_id")
