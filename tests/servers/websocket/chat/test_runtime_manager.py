@@ -133,6 +133,16 @@ class TestWebChatRuntimeManager:
         assert "droid" in health
         assert health["droid"]["provider"] == "droid"
 
+    def test_health_reports_removed_local_selector_instead_of_raising(self) -> None:
+        manager = WebChatRuntimeManager(codex_client=None)
+
+        health = manager.health("local:studio")
+
+        assert health.provider == "local:studio"
+        assert health.available is False
+        assert health.startup_error is not None
+        assert "removed local: selector" in health.startup_error
+
     def test_acp_backends_expose_grok_and_qwen_only(self) -> None:
         manager = WebChatRuntimeManager(codex_client=None)
 

@@ -196,7 +196,10 @@ class WebChatRuntimeManager:
             return self._droid_backend.health()
         if provider == "claude":
             return self._claude_backend.health()
-        endpoint_name = parse_endpoint_selector(provider)
+        try:
+            endpoint_name = parse_endpoint_selector(provider)
+        except ValueError as exc:
+            return ProviderBackendHealth(provider=provider, available=False, startup_error=str(exc))
         if endpoint_name is not None:
             backend = self._codex_endpoint_backends.get(endpoint_name)
             if backend is not None:
