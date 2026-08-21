@@ -3671,6 +3671,9 @@ async def test_run_cli_text_generation_command_cleans_up_process_when_cancelled(
         return process
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    # pid 4242 is fake: without this patch cleanup would os.killpg a real
+    # process group of that id when one happens to exist (#20688).
+    monkeypatch.setattr(text_generation_adapters, "_signal_cli_process_group", lambda *_args: False)
     task = asyncio.create_task(
         text_generation_adapters._run_cli_text_generation_command(
             "Qwen",
@@ -4327,6 +4330,9 @@ async def test_droid_cli_text_generate_adapter_reports_timeout_with_command(
         return process
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    # pid 4242 is fake: without this patch cleanup would os.killpg a real
+    # process group of that id when one happens to exist (#20688).
+    monkeypatch.setattr(text_generation_adapters, "_signal_cli_process_group", lambda *_args: False)
     adapter = DroidCLITextGenerateAdapter(
         command_path="/usr/local/bin/droid",
         timeout_seconds=0.01,
