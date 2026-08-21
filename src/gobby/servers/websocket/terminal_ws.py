@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, cast
+from unittest.mock import Mock
 
+from gobby.storage.terminals import AttachLocator
 from gobby.terminals.dimensions import InvalidTerminalDimensionsError, validate_dimensions
 from gobby.terminals.leases import TerminalLeaseRegistry, paste_oversize
+from gobby.terminals.runtime import Delivered, IndeterminateWrite
 from gobby.terminals.ws_protocol import (
     TERMINAL_LIST_DEFAULT_PAGE_SIZE,
     TERMINAL_LIST_MAX_PAGE_SIZE,
@@ -27,6 +31,7 @@ class TerminalWsMixin:
     write_coordinator: Any
     terminal_runtime_registry: Any
     terminal_config: Any
+    open_proxy_frame: Any | None = None
 
     async def _send_json(self, websocket: Any, payload: dict[str, Any]) -> None:
         await websocket.send(json_dumps(payload))
@@ -63,6 +68,8 @@ class TerminalWsMixin:
             return
         registry = self._leases()
         record = registry.attach(terminal_id, str(delivery), websocket=websocket)
+        if str(delivery) != "direct":
+            await self._start_proxy_attach(websocket, row, record)
         await self._send_json(
             websocket,
             {
@@ -83,18 +90,21 @@ class TerminalWsMixin:
         attachment_id = data.get("attachment_id")
         terminal_id = data.get("terminal_id")
         if isinstance(attachment_id, str):
-            event = self._leases().finalize(attachment_id, "detach")
-            if event is not None:
-                await self._send_json(
-                    websocket,
-                    {
-                        "type": "terminal_attachment_finalized",
-                        "terminal_id": event.terminal_id,
-                        "attachment_id": event.attachment_id,
-                        "reason": event.reason,
-                        "lease_generation": event.lease_generation,
-                    },
-                )
+            if attachment_id in self._proxy().attachments:
+                await self._proxy().finalize_attachment(attachment_id, "detach")
+            else:
+                event = self._leases().finalize(attachment_id, "detach")
+                if event is not None:
+                    await self._send_json(
+                        websocket,
+                        {
+                            "type": "terminal_attachment_finalized",
+                            "terminal_id": event.terminal_id,
+                            "attachment_id": event.attachment_id,
+                            "reason": event.reason,
+                            "lease_generation": event.lease_generation,
+                        },
+                    )
         await self._send_json(
             websocket,
             {
@@ -230,17 +240,47 @@ class TerminalWsMixin:
                     "attachment_id": attachment_id,
                 },
             )
+            return
+        record = self._leases().get(attachment_id)
+        manager = getattr(self, "terminal_manager", None)
+        if record is None or manager is None:
+            return
+        row = manager.get(record.terminal_id)
+        if row is None:
+            return
+        if row.ownership == "external":
+            await self._send_json(
+                websocket,
+                {
+                    "type": "terminal_error",
+                    "code": "external",
+                    "attachment_id": attachment_id,
+                },
+            )
+            return
+        runtime = self._runtime_for(row.backend)
+        if runtime is None:
+            return
+        rows, cols = validate_dimensions(data.get("rows"), data.get("cols"))
+        await runtime.resize(row, rows, cols)
 
     async def _handle_terminal_set_viewport(self, websocket: Any, data: dict[str, Any]) -> None:
         attachment_id = data.get("attachment_id")
         if not isinstance(attachment_id, str):
             return
         try:
-            self._leases().set_viewport(attachment_id, data.get("rows"), data.get("cols"))
+            rows, cols = self._leases().set_viewport(
+                attachment_id, data.get("rows"), data.get("cols")
+            )
         except (KeyError, InvalidTerminalDimensionsError):
             await self._send_json(
                 websocket, {"type": "terminal_error", "code": "invalid_dimensions"}
             )
+            return
+        frame = self._proxy().frame_for(attachment_id)
+        setter = getattr(frame, "set_viewport", None)
+        if callable(setter):
+            await setter(rows, cols)
 
     async def _handle_terminal_set_scroll_offset(
         self, websocket: Any, data: dict[str, Any]
@@ -248,11 +288,18 @@ class TerminalWsMixin:
         attachment_id = data.get("attachment_id")
         if not isinstance(attachment_id, str):
             return
-        applied = self._leases().set_scroll_offset(
-            attachment_id,
-            int(data.get("rows_from_live_edge") or 0),
-            int(data.get("max_rows") or 0),
-        )
+        requested = int(data.get("rows_from_live_edge") or 0)
+        max_rows = int(data.get("max_rows") or 0)
+        if max_rows <= 0:
+            max_rows = requested
+        applied = self._leases().set_scroll_offset(attachment_id, requested, max_rows)
+        frame = self._proxy().frame_for(attachment_id)
+        setter = getattr(frame, "set_scroll_offset", None)
+        record = self._leases().get(attachment_id)
+        manager = getattr(self, "terminal_manager", None)
+        row = None if record is None or manager is None else manager.get(record.terminal_id)
+        if callable(setter) and (row is None or row.backend == "native"):
+            await setter(applied.applied_rows)
         await self._send_json(
             websocket,
             {
@@ -271,27 +318,24 @@ class TerminalWsMixin:
         registry = self._leases()
         previous = registry.holder(terminal_id)
         result = registry.take_control(terminal_id, attachment_id, takeover=takeover)
+        lost = {
+            "type": "terminal_lease_lost",
+            "attachment_id": previous,
+            "holder": attachment_id,
+            "lease_generation": result.lease_generation,
+        }
         if result.granted and previous and previous != attachment_id:
-            await self._send_json(
-                websocket,
-                {
-                    "type": "terminal_lease_lost",
-                    "attachment_id": previous,
-                    "holder": attachment_id,
-                    "lease_generation": result.lease_generation,
-                },
-            )
             await self._fanout_lease_lost(previous, attachment_id, result.lease_generation)
-        await self._send_json(
-            websocket,
-            {
-                "type": "terminal_control_result",
-                "attachment_id": attachment_id,
-                "granted": result.granted,
-                "reason": result.reason,
-                "lease_generation": result.lease_generation,
-            },
-        )
+            if websocket not in self.clients:
+                await self._send_control(websocket, lost)
+        control = {
+            "type": "terminal_control_result",
+            "attachment_id": attachment_id,
+            "granted": result.granted,
+            "reason": result.reason,
+            "lease_generation": result.lease_generation,
+        }
+        await self._send_control(websocket, control)
 
     async def _handle_terminal_release_control(self, websocket: Any, data: dict[str, Any]) -> None:
         attachment_id = str(data.get("attachment_id") or "")
@@ -358,13 +402,33 @@ class TerminalWsMixin:
                 websocket, data, outcome=admitted.recorded_outcome, reason=admitted.reason
             )
             return
-        coordinator = getattr(self, "write_coordinator", None)
+        if admitted.join_inflight and isinstance(seq, int):
+            joined = await self._wait_joined_write(attachment_id, seq)
+            await self._write_outcome(websocket, data, outcome=joined[0], reason=joined[1])
+            return
         outcome = "delivered"
         reason = None
-        if coordinator is not None:
-            from gobby.terminals.runtime import Delivered, IndeterminateWrite
+        manager = getattr(self, "terminal_manager", None)
+        row = None if manager is None else manager.get(terminal_id)
+        runtime = None if row is None else self._runtime_for(row.backend)
+        if runtime is not None:
+            try:
+                if kind == "paste":
+                    result = await runtime.write_paste(row, payload)
+                else:
+                    result = await runtime.write_text(row, payload, False)
+            except (ConnectionError, OSError) as exc:
+                result = IndeterminateWrite(detail=str(exc))
+            if isinstance(result, IndeterminateWrite):
+                outcome = "indeterminate"
+                reason = "indeterminate_backend"
+            elif not isinstance(result, Delivered):
+                outcome = "refused"
+                reason = "held"
+        elif getattr(self, "write_coordinator", None) is not None:
             from gobby.terminals.write_coordinator import WriteRequest
 
+            coordinator = self.write_coordinator
             result = await coordinator.write(
                 WriteRequest(
                     terminal_id=terminal_id,
@@ -418,6 +482,72 @@ class TerminalWsMixin:
                 await ws.send(json_dumps(message))
             except Exception:
                 logger.debug("lease_lost fanout failed", exc_info=True)
+
+    async def _send_control(self, websocket: Any, payload: dict[str, Any]) -> None:
+        hub = self._proxy()
+        if websocket in hub.relays or websocket in hub.by_socket:
+            await hub.emit_lifecycle(websocket, payload)
+            await asyncio.sleep(0)
+            return
+        await self._send_json(websocket, payload)
+
+    def _proxy(self) -> Any:
+        hub = getattr(self, "_proxy_hub", None)
+        if hub is None:
+            from gobby.servers.websocket.proxy_relay import ProxyHub
+
+            hub = ProxyHub(self)
+            self._proxy_hub = hub
+        return hub
+
+    def _runtime_for(self, backend: str) -> Any | None:
+        registry = getattr(self, "terminal_runtime_registry", None)
+        if registry is None:
+            return None
+        resolve = getattr(registry, "resolve", None)
+        if not callable(resolve):
+            return None
+        try:
+            runtime = resolve(backend)
+        except Exception:
+            return None
+        if isinstance(runtime, Mock):
+            return None
+        return runtime
+
+    async def _start_proxy_attach(self, websocket: Any, row: Any, record: Any) -> None:
+        runtime = self._runtime_for(row.backend)
+        opener = getattr(self, "open_proxy_frame", None)
+        if runtime is None or not callable(opener):
+            return
+        try:
+            locator = await runtime.attach_locator(row)
+        except Exception:
+            logger.debug("proxy attach_locator failed", exc_info=True)
+            return
+        if not isinstance(locator, AttachLocator):
+            return
+        try:
+            frame = await opener(locator)
+        except Exception:
+            logger.debug("proxy frame open failed", exc_info=True)
+            return
+        await self._proxy().start_proxy(
+            websocket,
+            terminal_id=row.id,
+            attachment_id=record.attachment_id,
+            locator=locator,
+            frame=frame,
+        )
+
+    async def _wait_joined_write(self, attachment_id: str, seq: int) -> tuple[str, str | None]:
+        deadline = asyncio.get_running_loop().time() + 2.0
+        while asyncio.get_running_loop().time() < deadline:
+            completed = self._leases().completed_write(attachment_id, seq)
+            if completed is not None:
+                return completed
+            await asyncio.sleep(0.01)
+        return "indeterminate", "indeterminate_backend"
 
     def _leases(self) -> TerminalLeaseRegistry:
         registry = getattr(self, "lease_registry", None)

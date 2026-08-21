@@ -14,6 +14,13 @@ TERMINAL_LIST_MAX_ENCODED_BYTES: Final[int] = 1024 * 1024
 TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES: Final[int] = 16 * 1024 * 1024
 TERMINAL_WS_FRAGMENT_MAX_SOCKET_REASSEMBLY_BYTES: Final[int] = 64 * 1024 * 1024
 TERMINAL_WS_FRAGMENT_MAX_WRAPPED_BYTES: Final[int] = 2 * 1024 * 1024
+TERMINAL_WS_FRAGMENT_REASSEMBLY_TIMEOUT_MS: Final[int] = 5000
+TERMINAL_WS_FRAME_QUEUE_ENTRIES: Final[int] = 64
+TERMINAL_WS_FRAME_QUEUE_BYTES: Final[int] = 2 * 1024 * 1024
+TERMINAL_WS_FRAME_SEND_TIMEOUT_S: Final[float] = 5.0
+TERMINAL_WS_LIFECYCLE_RESERVE_MAX_ENTRIES: Final[int] = 16
+TERMINAL_WS_LIFECYCLE_RESERVE_MAX_BYTES: Final[int] = 64 * 1024
+TERMINAL_WS_LIFECYCLE_SEND_TIMEOUT_S: Final[float] = 2.0
 PASTE_MAX_BYTES: Final[int] = 1024 * 1024
 WRITE_SEQ_CAPACITY: Final[int] = 64
 
@@ -104,6 +111,75 @@ def decode_message(raw: bytes | str) -> dict[str, Any]:
     return parsed
 
 
+def canonical_json(message: Mapping[str, Any]) -> bytes:
+    """Serialize without the trailing newline used by encode_message."""
+    if "mode" in message:
+        raise ValueError("terminal WS messages must not carry mode")
+    _walk_safe_ints(message)
+    return json.dumps(
+        dict(message), ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    ).encode("utf-8")
+
+
+def _fragment_dict(
+    *,
+    event: str,
+    terminal_id: str,
+    attachment_id: str,
+    message_seq: int,
+    index: int,
+    more: bool,
+    chunk: bytes,
+) -> dict[str, Any]:
+    return {
+        "type": "terminal_ws_fragment",
+        "event": event,
+        "terminal_id": terminal_id,
+        "attachment_id": attachment_id,
+        "message_seq": message_seq,
+        "fragment_index": index,
+        "more": more,
+        "encoding": "utf8-b64",
+        "payload": base64.b64encode(chunk).decode("ascii"),
+    }
+
+
+def _greedy_chunks(
+    complete_json: bytes,
+    *,
+    event: str,
+    terminal_id: str,
+    attachment_id: str,
+    message_seq: int,
+) -> list[bytes]:
+    chunks: list[bytes] = []
+    offset = 0
+    while offset < len(complete_json):
+        remaining = len(complete_json) - offset
+        take = remaining
+        while take > 0:
+            chunk = complete_json[offset : offset + take]
+            probe = _fragment_dict(
+                event=event,
+                terminal_id=terminal_id,
+                attachment_id=attachment_id,
+                message_seq=message_seq,
+                index=len(chunks),
+                more=offset + take < len(complete_json),
+                chunk=chunk,
+            )
+            if len(canonical_json(probe)) < TERMINAL_WS_FRAGMENT_MAX_WRAPPED_BYTES:
+                chunks.append(chunk)
+                offset += take
+                break
+            take = max(1, take // 2)
+            if take == 1 and len(canonical_json(probe)) >= TERMINAL_WS_FRAGMENT_MAX_WRAPPED_BYTES:
+                raise ValueError("fragment_too_large")
+        else:
+            raise ValueError("fragment_too_large")
+    return chunks
+
+
 def fragment_event(
     *,
     event: str,
@@ -118,24 +194,68 @@ def fragment_event(
         raise ValueError("fragment_too_large")
     midpoint = max(1, len(complete_json) // 2)
     slices = [complete_json[:midpoint], complete_json[midpoint:]]
+    if any(
+        len(
+            canonical_json(
+                _fragment_dict(
+                    event=event,
+                    terminal_id=terminal_id,
+                    attachment_id=attachment_id,
+                    message_seq=message_seq,
+                    index=index,
+                    more=index < len(slices) - 1,
+                    chunk=chunk,
+                )
+            )
+        )
+        >= TERMINAL_WS_FRAGMENT_MAX_WRAPPED_BYTES
+        for index, chunk in enumerate(slices)
+        if chunk
+    ):
+        slices = _greedy_chunks(
+            complete_json,
+            event=event,
+            terminal_id=terminal_id,
+            attachment_id=attachment_id,
+            message_seq=message_seq,
+        )
     fragments: list[dict[str, Any]] = []
     for index, chunk in enumerate(slices):
         if not chunk and index > 0:
             continue
         fragments.append(
-            {
-                "type": "terminal_ws_fragment",
-                "event": event,
-                "terminal_id": terminal_id,
-                "attachment_id": attachment_id,
-                "message_seq": message_seq,
-                "fragment_index": index,
-                "more": index < len(slices) - 1,
-                "encoding": "utf8-b64",
-                "payload": base64.b64encode(chunk).decode("ascii"),
-            }
+            _fragment_dict(
+                event=event,
+                terminal_id=terminal_id,
+                attachment_id=attachment_id,
+                message_seq=message_seq,
+                index=index,
+                more=index < len(slices) - 1,
+                chunk=chunk,
+            )
         )
     return fragments
+
+
+def emit_proxied_event(
+    event: Mapping[str, Any],
+    *,
+    message_seq: int,
+) -> list[dict[str, Any]]:
+    """Send unfragmented when canonical JSON is under 2 MiB, else fragment."""
+    payload = dict(event)
+    raw = canonical_json(payload)
+    if len(raw) > TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES:
+        raise ValueError("fragment_too_large")
+    if len(raw) < TERMINAL_WS_FRAGMENT_MAX_WRAPPED_BYTES:
+        return [payload]
+    return fragment_event(
+        event=str(payload["type"]),
+        terminal_id=str(payload["terminal_id"]),
+        attachment_id=str(payload["attachment_id"]),
+        message_seq=message_seq,
+        complete_json=raw,
+    )
 
 
 def golden_fixtures() -> dict[str, dict[str, Any]]:

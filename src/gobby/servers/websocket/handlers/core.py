@@ -6,9 +6,7 @@ Extracted from server.py as part of the Strangler Fig decomposition.
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import os
 from typing import Any
 
 from gobby.mcp_proxy.manager import MCPClientManager
@@ -318,17 +316,6 @@ class HandlerMixin:
                 type(input_data).__name__,
             )
             return
-
-        # Check if this is a tmux PTY bridge streaming_id first
-        if hasattr(self, "_tmux_bridge"):
-            bridge_fd = await self._tmux_bridge.get_master_fd(run_id)
-            if bridge_fd is not None:
-                try:
-                    encoded_data = input_data.encode("utf-8")
-                    await asyncio.to_thread(os.write, bridge_fd, encoded_data)
-                except OSError as e:
-                    logger.warning("Failed to write to tmux bridge %s: %s", run_id, e)
-                return
 
         from gobby.storage.agents import LocalAgentRunManager
         from gobby.storage.terminals import TerminalManager

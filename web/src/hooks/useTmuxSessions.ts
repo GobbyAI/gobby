@@ -1,7 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 
+export {
+  createTerminalWsReducer,
+  TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES,
+  TERMINAL_WS_FRAGMENT_MAX_SOCKET_REASSEMBLY_BYTES,
+  TERMINAL_WS_SAFE_INTEGER_MAX,
+} from "./terminalWsFragments";
+import { createTerminalWsReducer } from "./terminalWsFragments";
+
 export const TMUX_REQUEST_TIMEOUT_MS = 10_000;
-export const TERMINAL_WS_SAFE_INTEGER_MAX = Number.MAX_SAFE_INTEGER;
 
 function asSession(row: Partial<TmuxSession> & { terminal_id?: string }): TmuxSession {
   const terminalId = row.terminal_id ?? "";
@@ -129,6 +136,8 @@ export function useTmuxSessions(): TmuxSessionsResult {
   const pendingRequestRef = useRef<PendingRequest | null>(null);
   const pendingRequestTimeoutRef = useRef<number | null>(null);
   const connectRef = useRef<() => void>(() => {});
+  const fragmentReducerRef = useRef(createTerminalWsReducer());
+  const leaseGenerationRef = useRef(new Map<string, number>());
 
   const updateAttachment = useCallback(
     (target: TmuxTarget | null, streamId: string | null) => {
@@ -262,6 +271,30 @@ export function useTmuxSessions(): TmuxSessionsResult {
 
   const handleMessage = useCallback(
     (data: Record<string, unknown>) => {
+      const reducer = fragmentReducerRef.current;
+      if (data.type === "terminal_ws_fragment") {
+        reducer.push(data);
+        for (const event of reducer.applied.splice(0)) {
+          handleMessage(event);
+        }
+        return;
+      }
+      if (data.type === "terminal_attachment_finalized") {
+        const finalizedId = data.attachment_id;
+        if (typeof finalizedId === "string") reducer.finalize(finalizedId);
+      }
+      if (
+        data.type === "terminal_control_result" ||
+        data.type === "terminal_lease_lost"
+      ) {
+        const attachmentId = data.attachment_id;
+        const generation = data.lease_generation;
+        if (typeof attachmentId === "string" && typeof generation === "number") {
+          const previous = leaseGenerationRef.current.get(attachmentId) ?? -1;
+          if (generation < previous) return;
+          leaseGenerationRef.current.set(attachmentId, generation);
+        }
+      }
       switch (data.type) {
         case "terminal_list": {
           const pageItems = ((data.items as TmuxSession[] | undefined) ?? []).map(asSession);
@@ -312,7 +345,9 @@ export function useTmuxSessions(): TmuxSessionsResult {
             break;
 
           if (data.success || typeof data.attachment_id === "string") {
-            updateAttachment(pending.target, data.attachment_id as string);
+            const attachedId = data.attachment_id as string;
+            fragmentReducerRef.current.markLive(attachedId);
+            updateAttachment(pending.target, attachedId);
           } else {
             setAttachError(
               typeof data.message === "string" ? data.message : "Attach failed",
@@ -406,8 +441,16 @@ export function useTmuxSessions(): TmuxSessionsResult {
         case "terminal_output":
           if (outputCallbackRef.current) {
             outputCallbackRef.current(
-              (data.terminal_id as string) || (data.attachment_id as string),
+              (data.attachment_id as string) || (data.terminal_id as string),
               data.data as string,
+            );
+          }
+          break;
+        case "terminal_attach_history":
+          if (outputCallbackRef.current && typeof data.text === "string") {
+            outputCallbackRef.current(
+              (data.attachment_id as string) || (data.terminal_id as string),
+              data.text,
             );
           }
           break;
@@ -459,6 +502,8 @@ export function useTmuxSessions(): TmuxSessionsResult {
       if (!isCurrentConnection()) return;
       setConnected(false);
       setSessionsLoaded(false);
+      fragmentReducerRef.current.disconnect();
+      fragmentReducerRef.current = createTerminalWsReducer();
       updateAttachment(null, null);
       if (pendingRequestTimeoutRef.current !== null) {
         clearTimeout(pendingRequestTimeoutRef.current);

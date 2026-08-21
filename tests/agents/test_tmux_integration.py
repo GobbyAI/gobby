@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import re
 import shlex
 import shutil
 import subprocess
@@ -15,7 +13,6 @@ from uuid import uuid4
 import pytest
 
 from gobby.agents.tmux.output_reader import TmuxOutputReader
-from gobby.agents.tmux.pty_bridge import TmuxPTYBridge
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
 
@@ -135,50 +132,6 @@ async def test_send_keys_pastes_multiline_literal_text(
     assert await tmux_manager.send_keys("paste-target", "alpha\nbeta\ndone\n")
 
     await _wait_for(lambda: _path_contains(output_path, "alpha\nbeta\ndone\n"))
-
-
-async def test_pty_bridge_attach_renders_truecolor(
-    tmux_manager: TmuxSessionManager,
-    tmux_config: TmuxConfig,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # The truecolor SGR is printed before attaching: tmux repaints the screen
-    # on attach, re-encoding each cell's colors with the client's advertised
-    # features, so the bridge output only carries the 24-bit triplet when the
-    # attach client declares RGB support (gobby-#20063). A developer shell's
-    # COLORTERM=truecolor would leak into the attach client and enable RGB on
-    # its own; the daemon runs without it, so strip it to prove the -T flag.
-    monkeypatch.delenv("COLORTERM", raising=False)
-    await tmux_manager.create_session(
-        name="truecolor-target",
-        command=("printf '\\033[48;2;20;80;40mTRUECOLOR-MARKER\\033[0m\\n'; tail -f /dev/null"),
-    )
-
-    bridge = TmuxPTYBridge()
-    collected = bytearray()
-    master_fd = await bridge.attach(
-        session_name="truecolor-target",
-        streaming_id="bridge-truecolor",
-        config=tmux_config,
-    )
-    try:
-        os.set_blocking(master_fd, False)
-
-        def _pump() -> str:
-            try:
-                while chunk := os.read(master_fd, 65536):
-                    collected.extend(chunk)
-            except BlockingIOError:
-                pass
-            return collected.decode("utf-8", errors="replace")
-
-        await _wait_for(lambda: "TRUECOLOR-MARKER" in _pump(), timeout=10.0)
-        text = _pump()
-        # tmux emits semicolon or colon (possibly double-colon) subparameters
-        # depending on version; a 256-color downgrade matches neither.
-        assert re.search(r"48[:;]2[:;]{1,2}20[:;]80[:;]40", text), text
-    finally:
-        await bridge.detach("bridge-truecolor")
 
 
 async def test_output_reader_streams_multibyte_fifo_data(

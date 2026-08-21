@@ -6,7 +6,14 @@ import {
   createMockWebSocket,
   type MockWebSocketInstance,
 } from "../../test/mocks/websocket";
-import { TMUX_REQUEST_TIMEOUT_MS, useTmuxSessions } from "../useTmuxSessions";
+import {
+  TMUX_REQUEST_TIMEOUT_MS,
+  createTerminalWsReducer,
+  TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES,
+  TERMINAL_WS_FRAGMENT_MAX_SOCKET_REASSEMBLY_BYTES,
+  TERMINAL_WS_SAFE_INTEGER_MAX,
+  useTmuxSessions,
+} from "../useTmuxSessions";
 
 type WireMessage = Record<string, unknown>;
 
@@ -665,5 +672,198 @@ describe("useTmuxSessions", () => {
       });
     });
     expect(sentMessages(ws, "terminal_input").length).toBe(before + 1);
+  });
+
+  it("test_fragment_reassembly_and_cleanup", () => {
+    const reducer = createTerminalWsReducer({ now: () => 0 });
+    reducer.markLive("att-a");
+    reducer.markLive("att-b");
+    const history = JSON.stringify({
+      type: "terminal_attach_history",
+      attachment_id: "att-a",
+      text: "hist",
+    });
+    const output = JSON.stringify({
+      type: "terminal_output",
+      attachment_id: "att-a",
+      data: "kf",
+    });
+    const slice = (
+      event: string,
+      attachment: string,
+      seq: number,
+      index: number,
+      more: boolean,
+      text: string,
+    ) => ({
+      type: "terminal_ws_fragment",
+      event,
+      terminal_id: "t1",
+      attachment_id: attachment,
+      message_seq: seq,
+      fragment_index: index,
+      more,
+      encoding: "utf8-b64",
+      payload: btoa(text),
+    });
+    reducer.push(slice("terminal_attach_history", "att-a", 1, 0, true, history.slice(0, 12)));
+    reducer.push(
+      slice(
+        "terminal_output",
+        "att-b",
+        1,
+        0,
+        false,
+        JSON.stringify({ type: "terminal_output", data: "b" }),
+      ),
+    );
+    reducer.push(slice("terminal_attach_history", "att-a", 1, 1, false, history.slice(12)));
+    expect(reducer.applied[0]).toMatchObject({ type: "terminal_output", data: "b" });
+    expect(reducer.applied[1]).toMatchObject({ type: "terminal_attach_history", text: "hist" });
+    reducer.push(slice("terminal_output", "att-a", 2, 0, true, output.slice(0, 10)));
+    reducer.push(slice("terminal_output", "att-a", 2, 1, false, output.slice(10)));
+    expect(reducer.applied.at(-1)).toMatchObject({ type: "terminal_output", data: "kf" });
+
+    const gappy = createTerminalWsReducer({ now: () => 0 });
+    gappy.markLive("att-a");
+    gappy.push(slice("terminal_output", "att-a", 1, 0, true, "abc"));
+    gappy.push(slice("terminal_output", "att-a", 1, 2, false, "def"));
+    expect(gappy.applied).toEqual([]);
+    expect(gappy.errors.some((item) => item.code === "fragment_sequence")).toBe(true);
+
+    const jumped = createTerminalWsReducer({ now: () => 0 });
+    jumped.markLive("att-a");
+    jumped.push(slice("terminal_output", "att-a", 1, 0, true, "abc"));
+    jumped.push(slice("terminal_output", "att-a", 2, 0, false, output));
+    expect(jumped.applied).toEqual([]);
+    expect(jumped.errors.some((item) => item.code === "fragment_sequence")).toBe(true);
+
+    let now = 0;
+    const timed = createTerminalWsReducer({ now: () => now, timeoutMs: 5000 });
+    timed.markLive("att-a");
+    timed.push(slice("terminal_output", "att-a", 1, 0, true, "abc"));
+    now = 5001;
+    timed.tick(now);
+    expect(timed.applied).toEqual([]);
+    expect(timed.errors.some((item) => item.code === "fragment_timeout")).toBe(true);
+
+    expect(TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES).toBe(16 * 1024 * 1024);
+    const huge = createTerminalWsReducer({ now: () => 0, maxReassemblyBytes: 8 });
+    huge.markLive("att-a");
+    huge.push({
+      ...slice("terminal_output", "att-a", 1, 0, false, "x"),
+      payload: btoa("123456789"),
+    });
+    expect(huge.applied).toEqual([]);
+    expect(huge.errors.some((item) => item.code === "fragment_too_large")).toBe(true);
+
+    const dropped = createTerminalWsReducer({ now: () => 0 });
+    dropped.markLive("att-a");
+    dropped.push(slice("terminal_output", "att-a", 1, 0, true, "abc"));
+    dropped.disconnect();
+    dropped.push(slice("terminal_output", "att-a", 1, 1, false, "def"));
+    expect(dropped.applied).toEqual([]);
+  });
+
+  it("test_socket_reassembly_budget_and_stale_fragments", () => {
+    expect(TERMINAL_WS_FRAGMENT_MAX_SOCKET_REASSEMBLY_BYTES).toBe(64 * 1024 * 1024);
+    expect(TERMINAL_WS_SAFE_INTEGER_MAX).toBe(2 ** 53 - 1);
+    const reducer = createTerminalWsReducer({ now: () => 0, maxSocketBytes: 24 });
+    reducer.markLive("a");
+    reducer.markLive("b");
+    const chunk = (attachment: string, seq: number, text: string) => ({
+      type: "terminal_ws_fragment",
+      event: "terminal_output",
+      terminal_id: "t",
+      attachment_id: attachment,
+      message_seq: seq,
+      fragment_index: 0,
+      more: true,
+      encoding: "utf8-b64",
+      payload: btoa(text),
+    });
+    reducer.push(chunk("a", 1, "1234567890123456"));
+    reducer.push(chunk("b", 1, "1234567890123456"));
+    expect(reducer.errors.some((item) => item.code === "fragment_socket_budget")).toBe(true);
+    expect(reducer.applied).toEqual([]);
+    const stale = createTerminalWsReducer({ now: () => 0 });
+    stale.push(chunk("missing", 1, "hello"));
+    expect(stale.applied).toEqual([]);
+    expect(stale.socketBytes).toBe(0);
+    const finished = createTerminalWsReducer({ now: () => 0 });
+    finished.markLive("a");
+    finished.push({
+      ...chunk("a", 1, '{"type":"terminal_output","data":"z"}'),
+      more: false,
+    });
+    expect(finished.socketBytes).toBe(0);
+    const afterFinal = createTerminalWsReducer({ now: () => 0 });
+    afterFinal.markLive("a");
+    afterFinal.finalize("a");
+    afterFinal.push(chunk("a", 1, "hello"));
+    expect(afterFinal.applied).toEqual([]);
+    expect(afterFinal.socketBytes).toBe(0);
+    const seqs = createTerminalWsReducer({ now: () => 0 });
+    seqs.markLive("a");
+    seqs.push({
+      ...chunk("a", Number.MAX_SAFE_INTEGER - 1, '{"type":"terminal_output","data":"x"}'),
+      more: false,
+    });
+    seqs.push({
+      ...chunk("a", Number.MAX_SAFE_INTEGER, '{"type":"terminal_output","data":"y"}'),
+      more: false,
+    });
+    expect(seqs.applied).toHaveLength(2);
+    const overflowSeq = createTerminalWsReducer({ now: () => 0 });
+    overflowSeq.markLive("a");
+    overflowSeq.push({
+      ...chunk("a", Number.MAX_SAFE_INTEGER + 1, '{"type":"terminal_output","data":"z"}'),
+      more: false,
+    });
+    expect(overflowSeq.applied).toEqual([]);
+  });
+
+  it("test_observe_only_finalized_drops_stale_fragments", () => {
+    const reducer = createTerminalWsReducer({ now: () => 0 });
+    reducer.markLive("obs");
+    reducer.push({
+      type: "terminal_ws_fragment",
+      event: "terminal_output",
+      terminal_id: "t",
+      attachment_id: "obs",
+      message_seq: 1,
+      fragment_index: 0,
+      more: true,
+      encoding: "utf8-b64",
+      payload: btoa("abc"),
+    });
+    reducer.push({
+      type: "terminal_attachment_finalized",
+      terminal_id: "t",
+      attachment_id: "obs",
+      reason: "proxy_frame_eof",
+      lease_generation: 0,
+    });
+    expect(reducer.applied).toEqual([
+      expect.objectContaining({
+        type: "terminal_attachment_finalized",
+        attachment_id: "obs",
+        reason: "proxy_frame_eof",
+      }),
+    ]);
+    expect(reducer.socketBytes).toBe(0);
+    reducer.push({
+      type: "terminal_ws_fragment",
+      event: "terminal_output",
+      terminal_id: "t",
+      attachment_id: "obs",
+      message_seq: 1,
+      fragment_index: 1,
+      more: false,
+      encoding: "utf8-b64",
+      payload: btoa("def"),
+    });
+    expect(reducer.applied).toHaveLength(1);
+    expect(reducer.socketBytes).toBe(0);
   });
 });

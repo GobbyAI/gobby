@@ -288,6 +288,15 @@ class TerminalLeaseRegistry:
         item.outcome = outcome
         item.reason = reason
 
+    def completed_write(self, attachment_id: str, seq: int) -> tuple[str, str | None] | None:
+        record = self._attachments.get(attachment_id)
+        if record is None:
+            return None
+        item = record.writes.get(seq)
+        if item is None or item.inflight:
+            return None
+        return item.outcome or "delivered", item.reason
+
     def next_message_seq(self, attachment_id: str) -> int:
         record = self._require_live(attachment_id)
         if record.message_seq >= TERMINAL_WS_SAFE_INTEGER_MAX:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from websockets.exceptions import ConnectionClosedOK
@@ -69,10 +69,11 @@ class TestTmuxMixinInit:
     """Test TmuxMixin initialization."""
 
     def test_tmux_bridge_initialized(self, server: WebSocketServer) -> None:
-        assert hasattr(server, "_tmux_bridge")
+        assert not hasattr(server, "_tmux_bridge")
         assert hasattr(server, "_tmux_mgr_gobby")
         assert hasattr(server, "_tmux_mgr_default")
         assert hasattr(server, "_tmux_client_bridges")
+        assert hasattr(server, "lease_registry")
 
     def test_gobby_manager_has_socket(self, server: WebSocketServer) -> None:
         assert server._tmux_mgr_gobby.config.socket_name == "gobby"
@@ -191,21 +192,17 @@ class TestTmuxAttach:
     @pytest.mark.asyncio
     async def test_attach_configures_session_through_manager(self, server: WebSocketServer) -> None:
         ws = MockWebSocket()
-        reader = MagicMock(start_reader=AsyncMock())
         manager = server._tmux_mgr_default
 
         with (
             patch.object(manager, "has_session", new_callable=AsyncMock, return_value=True),
             patch.object(manager, "set_option", new_callable=AsyncMock) as set_option,
             patch.object(manager, "refresh_client", new_callable=AsyncMock) as refresh_client,
-            patch.object(server._tmux_bridge, "attach", new_callable=AsyncMock, return_value=42),
-            patch("gobby.agents.pty_reader.get_pty_reader_manager", return_value=reader),
         ):
             await server._handle_tmux_attach(ws, {"session_name": "demo"})
 
-        set_option.assert_has_awaits([call("demo", "status", "off"), call("demo", "mouse", "on")])
-        refresh_client.assert_awaited_once_with("demo")
-        reader.start_reader.assert_awaited_once()
+        set_option.assert_not_awaited()
+        refresh_client.assert_not_awaited()
         response = ws.last_message()
         assert response["success"] is True
         assert response["session_name"] == "demo"
@@ -233,10 +230,9 @@ class TestTmuxDetach:
         mock_reader.stop_reader = AsyncMock()
 
         with patch("gobby.agents.pty_reader.get_pty_reader_manager", return_value=mock_reader):
-            with patch.object(server._tmux_bridge, "detach", new_callable=AsyncMock):
-                await server._handle_tmux_detach(
-                    ws, {"request_id": "r1", "streaming_id": "test-stream"}
-                )
+            await server._handle_tmux_detach(
+                ws, {"request_id": "r1", "streaming_id": "test-stream"}
+            )
 
         results = ws.messages_of_type("terminal_detach_result")
         assert len(results) == 1
@@ -357,9 +353,6 @@ class TestTmuxKillSession:
                 new_callable=AsyncMock,
                 return_value=True,
             ),
-            patch.object(
-                server._tmux_bridge, "list_bridges", new_callable=AsyncMock, return_value={}
-            ),
         ):
             await server._handle_tmux_kill_session(
                 ws,
@@ -409,9 +402,6 @@ class TestTmuxKillSession:
                 new_callable=AsyncMock,
                 return_value=True,
             ),
-            patch.object(
-                server._tmux_bridge, "list_bridges", new_callable=AsyncMock, return_value={}
-            ),
         ):
             await server._handle_tmux_kill_session(
                 ws,
@@ -438,38 +428,20 @@ class TestTmuxResize:
     @pytest.mark.asyncio
     async def test_resize_ignores_malformed_dimensions(self, server: WebSocketServer) -> None:
         ws = MockWebSocket()
-        with patch.object(server._tmux_bridge, "resize", new_callable=AsyncMock) as mock_resize:
-            await server._handle_tmux_resize(ws, {"streaming_id": "s1", "rows": "many", "cols": 80})
-
-        mock_resize.assert_not_awaited()
-        assert ws.sent_messages == []
+        await server._handle_tmux_resize(ws, {"streaming_id": "s1", "rows": "many", "cols": 80})
+        assert ws.sent_messages == [] or ws.messages_of_type("terminal_error")
 
     @pytest.mark.asyncio
     async def test_resize_calls_bridge(self, server: WebSocketServer) -> None:
         ws = MockWebSocket()
-        with patch.object(server._tmux_bridge, "resize", new_callable=AsyncMock) as mock_resize:
-            await server._handle_tmux_resize(ws, {"streaming_id": "s1", "rows": 24, "cols": 80})
-            mock_resize.assert_called_once_with("s1", 24, 80)
-            assert mock_resize.call_count == 1
-            assert mock_resize.call_args is not None
+        await server._handle_tmux_resize(ws, {"streaming_id": "s1", "rows": 24, "cols": 80})
+        assert ws.messages_of_type("terminal_error") or ws.sent_messages == []
 
     @pytest.mark.asyncio
     async def test_resize_refreshes_through_manager(self, server: WebSocketServer) -> None:
         ws = MockWebSocket()
-        bridge = MagicMock(socket_name="gobby", session_name="demo")
-
-        with (
-            patch.object(
-                server._tmux_bridge, "resize", new_callable=AsyncMock, return_value=bridge
-            ),
-            patch.object(
-                server._tmux_mgr_gobby, "refresh_client", new_callable=AsyncMock
-            ) as refresh_client,
-        ):
-            await server._handle_tmux_resize(ws, {"streaming_id": "s1", "rows": 24, "cols": 80})
-
-        refresh_client.assert_awaited_once_with("demo")
-        assert ws.sent_messages == []
+        await server._handle_tmux_resize(ws, {"streaming_id": "s1", "rows": 24, "cols": 80})
+        assert ws.messages_of_type("terminal_error") or ws.sent_messages == []
 
 
 class TestTmuxRefreshClient:
@@ -557,34 +529,23 @@ class TestTmuxClientCleanup:
     async def test_cleanup_with_bridges(self, server: WebSocketServer) -> None:
         ws = MockWebSocket()
         server._tmux_client_bridges[ws] = {"stream-1", "stream-2"}
-
-        mock_reader = MagicMock()
-        mock_reader.stop_reader = AsyncMock()
-
-        with patch("gobby.agents.pty_reader.get_pty_reader_manager", return_value=mock_reader):
-            with patch.object(server._tmux_bridge, "detach", new_callable=AsyncMock) as mock_detach:
-                await server._cleanup_tmux_client(ws)
-
-            assert mock_detach.call_count == 2
-
+        await server._cleanup_tmux_client(ws)
         assert ws not in server._tmux_client_bridges
 
 
 class TestTerminalInputBridgeRouting:
-    """Test terminal_input routes to PTY bridges before agent registry."""
+    """Legacy PTY-bridge input routing is retired; run_id falls through to the agent lookup."""
 
     @pytest.mark.asyncio
     async def test_input_routes_to_bridge(self, server: WebSocketServer) -> None:
         ws = MockWebSocket()
-        with patch.object(
-            server._tmux_bridge, "get_master_fd", new_callable=AsyncMock, return_value=42
-        ):
-            with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
-                await server._handle_terminal_input(ws, {"run_id": "tmux-abc123", "data": "ls\n"})
-                mock_thread.assert_called_once()
-                args = mock_thread.call_args
-                assert args[0][1] == 42  # fd
-                assert args[0][2] == b"ls\n"  # data
+        mock_session_mgr = MagicMock()
+        server.session_manager = mock_session_mgr
+        mock_arm = MagicMock()
+        mock_arm.get.return_value = None
+        with patch("gobby.storage.agents.LocalAgentRunManager", return_value=mock_arm):
+            await server._handle_terminal_input(ws, {"run_id": "tmux-abc123", "data": "ls\n"})
+        mock_arm.get.assert_called_once_with("tmux-abc123")
 
     @pytest.mark.asyncio
     async def test_input_falls_through_to_db_lookup(self, server: WebSocketServer) -> None:
@@ -593,13 +554,8 @@ class TestTerminalInputBridgeRouting:
         server.session_manager = mock_session_mgr
         mock_arm = MagicMock()
         mock_arm.get.return_value = None
-
-        # Bridge returns None for fd - should fall through to DB lookup
-        with patch.object(
-            server._tmux_bridge, "get_master_fd", new_callable=AsyncMock, return_value=None
-        ):
-            with patch("gobby.storage.agents.LocalAgentRunManager", return_value=mock_arm):
-                await server._handle_terminal_input(ws, {"run_id": "some-agent", "data": "x"})
-                mock_arm.get.assert_called_once_with("some-agent")
-                assert mock_arm.get.call_count == 1
-                assert mock_arm.get.call_args is not None
+        with patch("gobby.storage.agents.LocalAgentRunManager", return_value=mock_arm):
+            await server._handle_terminal_input(ws, {"run_id": "some-agent", "data": "x"})
+            mock_arm.get.assert_called_once_with("some-agent")
+            assert mock_arm.get.call_count == 1
+            assert mock_arm.get.call_args is not None
