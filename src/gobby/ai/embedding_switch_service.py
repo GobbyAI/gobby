@@ -142,9 +142,11 @@ class EmbeddingSwitchCoordinator:
             configured_api_base if isinstance(configured_api_base, str) else None
         )
         if not resolved_api_base:
+            from gobby.config.embedding_keys import AI_EMBEDDING_API_BASE_KEY
+
             raise ValueError(
                 "vllm embedding switch requires an api_base: pass --api-base or "
-                "configure ai.embeddings.api_base"
+                f"configure {AI_EMBEDDING_API_BASE_KEY}"
             )
         spec = get_spec_or_raise(catalog_key)
         api_key = config.embeddings.api_key
