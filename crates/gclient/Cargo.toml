@@ -1,0 +1,43 @@
+[package]
+name = "gobby-client"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+authors = ["Josh Wilhelmi <hello@gobby.ai>"]
+description = "Gobby terminal workspace client"
+license = "Apache-2.0"
+license-file = "LICENSE"
+repository = "https://github.com/GobbyAI/gobby"
+homepage = "https://gobby.ai"
+keywords = ["gobby", "terminal", "tui"]
+categories = ["command-line-utilities"]
+
+[lib]
+name = "gobby_client"
+path = "src/lib.rs"
+
+[[bin]]
+name = "gclient"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22.1"
+crossterm = "0.29"
+gobby-core = { path = "../gcore" }
+gobby-terminal = { path = "../gterminal", default-features = false }
+libc = "0.2"
+ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-tungstenite = { version = "0.26", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+unicode-width = "0.2"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
