@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 from uuid import UUID, uuid4
 
 import pytest
 
-from gobby.storage.hub.protocol import Row
+from gobby.storage.hub.protocol import Row, Transaction
 from gobby.storage.managed_credentials import (
     CredentialIssuanceError,
     ManagedCredentialManager,
@@ -49,6 +51,11 @@ class _FakeDatabase:
         params: Sequence[Any] | Mapping[str, Any] = (),
     ) -> list[Row]:
         return []
+
+    def transaction(self) -> AbstractContextManager[Transaction]:
+        txn = MagicMock()
+        txn.execute.return_value.fetchone.return_value = self._row
+        return nullcontext(txn)
 
 
 class _RollbackManager(ManagedCredentialManager):

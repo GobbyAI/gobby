@@ -6,8 +6,10 @@ import logging
 import os
 import time
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -195,8 +197,8 @@ def _create_test_channel(store: LocalCommunicationsStore) -> str:
         name=f"att-test-{time.time()}",
         enabled=True,
         config_json={},
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2024, 1, 1, tzinfo=UTC),
     )
     return store.create_channel(channel).id
 
@@ -208,7 +210,7 @@ def _create_test_message(store: LocalCommunicationsStore, channel_id: str) -> st
         direction="outbound",
         content="test with attachment",
         content_type="attachment",
-        created_at="2024-01-01T00:00:00Z",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
     )
     return store.create_message(msg).id
 
@@ -226,7 +228,7 @@ def test_attachment_crud(comms_store: LocalCommunicationsStore) -> None:
         size_bytes=1024,
         local_path="/tmp/test.pdf",
         platform_url="https://cdn.example.com/test.pdf",
-        created_at="2024-01-01T00:00:00Z",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
     )
     saved = comms_store.create_attachment(attachment)
     assert str(uuid.UUID(saved.id)) == saved.id
@@ -387,7 +389,7 @@ def test_attachment_list_multiple(comms_store: LocalCommunicationsStore) -> None
                 filename=f"file_{i}.txt",
                 content_type="text/plain",
                 size_bytes=100 * (i + 1),
-                created_at=f"2024-01-0{i + 1}T00:00:00Z",
+                created_at=datetime(2024, 1, i + 1, tzinfo=UTC),
             )
         )
 
@@ -407,7 +409,7 @@ def test_delete_attachments_for_message(comms_store: LocalCommunicationsStore) -
                 filename=f"bulk_{i}.txt",
                 content_type="text/plain",
                 size_bytes=50,
-                created_at="2024-01-01T00:00:00Z",
+                created_at=datetime(2024, 1, 1, tzinfo=UTC),
             )
         )
 
@@ -437,7 +439,7 @@ def test_attachment_cascade_on_message_delete(
             content_type="text/plain",
             size_bytes=10,
             local_path=str(attachment_path),
-            created_at="2024-01-01T00:00:00Z",
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
         )
     )
 
@@ -553,7 +555,7 @@ async def test_telegram_send_attachment(tmp_path: Path) -> None:
         channel_id="ch1",
         direction="outbound",
         content="Here is the file",
-        created_at="2024-01-01",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
         metadata_json={"platform_destination": "12345"},
     )
     att = CommsAttachment(
@@ -604,7 +606,7 @@ async def test_slack_send_attachment(tmp_path: Path) -> None:
         direction="outbound",
         content="Report attached",
         metadata_json={"platform_destination": "C123"},
-        created_at="2024-01-01",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
     )
     att = CommsAttachment(
         id="a2",
@@ -656,7 +658,7 @@ async def test_discord_send_attachment(tmp_path: Path) -> None:
         direction="outbound",
         content="",
         metadata_json={"platform_destination": "discord-ch"},
-        created_at="2024-01-01",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
     )
     att = CommsAttachment(
         id="a3",
@@ -691,7 +693,7 @@ async def test_email_send_attachment(tmp_path: Path) -> None:
             channel_id="user@example.com",
             direction="outbound",
             content="See attached",
-            created_at="2024-01-01",
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
             metadata_json={"subject": "Data file"},
         )
         att = CommsAttachment(
@@ -721,7 +723,7 @@ async def test_sms_send_attachment_requires_url() -> None:
         channel_id="+15559876543",
         direction="outbound",
         content="",
-        created_at="2024-01-01",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
     )
     att = CommsAttachment(
         id="a5",
@@ -758,7 +760,7 @@ async def test_sms_send_attachment_with_url() -> None:
         direction="outbound",
         content="Check this out",
         metadata_json={"platform_destination": "+15559876543"},
-        created_at="2024-01-01",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
     )
     att = CommsAttachment(
         id="a6",
@@ -780,7 +782,7 @@ async def test_sms_send_attachment_with_url() -> None:
 @pytest.mark.asyncio
 async def test_base_adapter_send_attachment_raises() -> None:
     from gobby.communications.adapters.base import BaseChannelAdapter
-    from gobby.communications.models import ChannelCapabilities
+    from gobby.communications.models import ChannelCapabilities, ChannelConfig
 
     class MinimalAdapter(BaseChannelAdapter):
         @property
@@ -799,22 +801,26 @@ async def test_base_adapter_send_attachment_raises() -> None:
         def supports_polling(self) -> bool:
             return False
 
-        async def initialize(self, config, secret_resolver):
+        async def initialize(
+            self, config: ChannelConfig, secret_resolver: Callable[[str], str | None]
+        ) -> None:
             pass
 
-        async def send_message(self, message):
+        async def send_message(self, message: CommsMessage) -> str | None:
             return None
 
-        async def shutdown(self):
+        async def shutdown(self) -> None:
             pass
 
-        def capabilities(self):
+        def capabilities(self) -> ChannelCapabilities:
             return ChannelCapabilities()
 
-        def parse_webhook(self, payload, headers):
+        def parse_webhook(
+            self, payload: dict[str, Any] | bytes, headers: dict[str, str]
+        ) -> list[CommsMessage]:
             return []
 
-        def verify_webhook(self, payload, headers, secret):
+        def verify_webhook(self, payload: bytes, headers: dict[str, str], secret: str) -> bool:
             return False
 
     adapter = MinimalAdapter()
@@ -823,7 +829,7 @@ async def test_base_adapter_send_attachment_raises() -> None:
         channel_id="ch",
         direction="outbound",
         content="",
-        created_at="2024-01-01",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
     )
     att = CommsAttachment(
         id="a",

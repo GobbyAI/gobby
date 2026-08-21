@@ -25,8 +25,8 @@ MOCK_SESSION = Session(
     summary_markdown=None,
     git_branch="main",
     parent_session_id=None,
-    created_at=datetime.now(UTC).isoformat(),
-    updated_at=datetime.now(UTC).isoformat(),
+    created_at=datetime.now(UTC),
+    updated_at=datetime.now(UTC),
     seq_num=42,
 )
 

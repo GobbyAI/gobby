@@ -43,7 +43,7 @@ def test_load_build_config_merges_agent_limit_from_global_project_and_flags(
     (home / ".gobby").mkdir(parents=True)
     (project_root / ".gobby").mkdir(parents=True)
     (home / ".gobby" / "build.yaml").write_text(yaml.safe_dump({"max_active_agents": 4}))
-    monkeypatch.setattr(build_config.Path, "home", lambda: home)
+    monkeypatch.setattr(Path, "home", lambda: home)
 
     global_only = build_config.load_build_config(project_root=project_root)
     assert global_only.max_active_agents == 4
@@ -73,7 +73,7 @@ def test_load_build_config_rejects_non_positive_agent_limit(
     (project_root / ".gobby" / "build.yaml").write_text(
         yaml.safe_dump({"max_active_agents": invalid_value})
     )
-    monkeypatch.setattr(build_config.Path, "home", lambda: home)
+    monkeypatch.setattr(Path, "home", lambda: home)
 
     with pytest.raises(
         ValueError,

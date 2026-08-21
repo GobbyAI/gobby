@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -13,19 +14,18 @@ from gobby.storage.tasks import LocalTaskManager
 pytestmark = pytest.mark.unit
 
 
-def _options(**overrides: object) -> BuildOptions:
-    values = {
-        "quick": False,
-        "skip_stages": [],
-        "isolation": "none",
-        "isolation_explicit": True,
-        "no_merge": False,
-        "pr": None,
-        "target_branch": None,
-        "assigned_agent": "backend-developer",
-    }
-    values.update(overrides)
-    return BuildOptions(**values)
+def _options(**overrides: Any) -> BuildOptions:
+    base = BuildOptions(
+        quick=False,
+        skip_stages=[],
+        isolation="none",
+        isolation_explicit=True,
+        no_merge=False,
+        pr=None,
+        target_branch=None,
+        assigned_agent="backend-developer",
+    )
+    return replace(base, **overrides)
 
 
 async def test_quick_runs_one_step_and_disables_automation(
@@ -137,6 +137,7 @@ async def test_submit_profile_records_same_repo_delivery_campaign(
         """,
         (task.id,),
     )
+    assert row is not None
     assert row["delivery_mode"] == "pull_request"
     assert row["source_repo"] == "test/test-project"
     assert row["target_repo"] == "test/test-project"
@@ -182,6 +183,7 @@ async def test_submit_profile_records_cross_repo_delivery_campaign(
         """,
         (task.id,),
     )
+    assert row is not None
     assert row["delivery_mode"] == "pull_request"
     assert row["source_repo"] == "test/test-project"
     assert row["target_repo"] == "upstream/test-project"

@@ -345,20 +345,20 @@ class TestAddMcpServer:
             )
 
         assert result["description"] == "Generated description"
-        assert manager.get_server_config("described-server").description == "Generated description"
-        assert (
-            storage.get_server("described-server", project_id).description
-            == "Generated description"
-        )
+        server_config = manager.get_server_config("described-server")
+        assert server_config is not None
+        assert server_config.description == "Generated description"
+        stored_server = storage.get_server("described-server", project_id)
+        assert stored_server is not None
+        assert stored_server.description == "Generated description"
 
         restarted_manager = MCPClientManager(
             project_id=project_id,
             mcp_db_manager=storage,
         )
-        assert (
-            restarted_manager.get_server_config("described-server").description
-            == "Generated description"
-        )
+        restarted_config = restarted_manager.get_server_config("described-server")
+        assert restarted_config is not None
+        assert restarted_config.description == "Generated description"
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -702,7 +702,7 @@ class TestConcurrencyScenarios:
             "full_tool_schemas": [],
         }
 
-        async def add_server(name: str):
+        async def add_server(name: str) -> dict[str, Any]:
             return await add_mcp_server(
                 mcp_manager=mock_mcp_manager,
                 name=name,

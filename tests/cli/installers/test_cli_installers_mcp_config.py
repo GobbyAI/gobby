@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import tomllib
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import psycopg
@@ -283,7 +284,7 @@ class TestRemoveMCPServerJSON:
         # Allow copy2 but fail on write
         orig_open = open
 
-        def mock_open(path, *args, **kwargs):
+        def mock_open(path: str | Path, *args: Any, **kwargs: Any) -> Any:
             if "w" in (args[0] if args else kwargs.get("mode", "r")):
                 raise OSError("read-only fs")
             return orig_open(path, *args, **kwargs)

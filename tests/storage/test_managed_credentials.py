@@ -9,6 +9,7 @@ import stat
 import threading
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import AbstractContextManager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -21,7 +22,7 @@ from psycopg.conninfo import conninfo_to_dict
 
 import gobby.storage.managed_credentials as managed_credentials_module
 from gobby.storage.hub.postgres import PostgresHubDatabase
-from gobby.storage.hub.protocol import Row
+from gobby.storage.hub.protocol import Row, Transaction
 from gobby.storage.managed_credentials import (
     CredentialAuthorizationError,
     CredentialIssuanceError,
@@ -236,6 +237,9 @@ class _UnavailableDatabase:
         del sql, params
         raise psycopg.OperationalError("synthetic hub outage")
 
+    def transaction(self) -> AbstractContextManager[Transaction]:
+        raise psycopg.OperationalError("synthetic hub outage")
+
 
 class _TerminationTimeoutDatabase:
     conninfo = "postgresql://redacted.invalid/example"
@@ -255,6 +259,9 @@ class _TerminationTimeoutDatabase:
     ) -> list[Row]:
         del sql, params
         return []
+
+    def transaction(self) -> AbstractContextManager[Transaction]:
+        raise AssertionError("revocation must not open a hub transaction")
 
 
 def test_hub_outage_removes_bootstrap_and_writes_secret_free_retry_record(

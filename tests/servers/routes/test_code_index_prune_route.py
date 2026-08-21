@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from gobby.code_index.gcode_gateway import GcodeCommandResult
 from gobby.code_index.prune import CodeIndexPruner
 from gobby.servers.routes.code_index import create_code_index_router
 from tests.code_index.test_prune import PruneContext, PruneGateway, PruneStorage, _dirty
@@ -126,11 +126,10 @@ async def test_partial_failure_recovery(tmp_path: Path) -> None:
             *,
             retention_days: int,
             timeout: float | None = None,
-        ) -> Any:
+            env: dict[str, str] | None = None,
+        ) -> GcodeCommandResult:
             targeted.append(project_root)
             if project_root == missing_root:
-                from gobby.code_index.gcode_gateway import GcodeCommandResult
-
                 return GcodeCommandResult(
                     command=("/tmp/gcode", "prune", "--force", "--project", str(project_root)),
                     returncode=1,
@@ -143,7 +142,7 @@ async def test_partial_failure_recovery(tmp_path: Path) -> None:
                     timed_out=False,
                 )
             return await super().prune_project_for_maintenance(
-                project_root, retention_days=retention_days, timeout=timeout
+                project_root, retention_days=retention_days, timeout=timeout, env=env
             )
 
     gateway = RecordingGateway()
@@ -164,4 +163,3 @@ async def test_partial_failure_recovery(tmp_path: Path) -> None:
         item.get("project_id") == PROJECT_A for item in retry.get("skipped", [])
     )
     assert any(item["project_id"] == PROJECT_B for item in retry["failed"])
-    assert gateway.global_timeouts == []

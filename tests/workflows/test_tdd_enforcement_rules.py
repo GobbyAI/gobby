@@ -119,6 +119,7 @@ class TestEnforceTddBlockStructure:
         """Should have set_variable + mcp_call + block effects."""
         _sync_bundled(db)
         row = manager.get_by_name("enforce-tdd-block")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
         effects = body.resolved_effects
@@ -132,6 +133,7 @@ class TestEnforceTddBlockStructure:
     ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("enforce-tdd-block")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
         sv_effect = body.resolved_effects[0]
@@ -142,6 +144,7 @@ class TestEnforceTddBlockStructure:
     def test_mcp_call_updates_task(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("enforce-tdd-block")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
         mcp_effect = body.resolved_effects[1]
@@ -155,6 +158,7 @@ class TestEnforceTddBlockStructure:
     ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("enforce-tdd-block")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
         mcp_effect = body.resolved_effects[1]
@@ -166,6 +170,7 @@ class TestEnforceTddBlockStructure:
     ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("enforce-tdd-block")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
         block_effect = body.resolved_effects[2]
@@ -174,6 +179,7 @@ class TestEnforceTddBlockStructure:
     def test_when_checks_enforce_tdd(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("enforce-tdd-block")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.when is not None
@@ -278,6 +284,7 @@ class TestEnforceTddTrackTestsStructure:
     def test_has_set_variable_effect(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("enforce-tdd-track-tests")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.effects[0].type == "set_variable"
@@ -290,6 +297,7 @@ class TestEnforceTddTrackTestsStructure:
     ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("enforce-tdd-track-tests")
+        assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.when is not None

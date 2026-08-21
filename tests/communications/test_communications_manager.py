@@ -36,6 +36,8 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
 from gobby.utils.datetime import datetime_to_local_iso
 
+_FIXED_TS = datetime(2024, 1, 1, tzinfo=UTC)
+
 
 def make_config() -> CommunicationsConfig:
     return CommunicationsConfig(
@@ -49,7 +51,7 @@ def make_channel(
     channel_type: str = "test",
     channel_id: str = "chan-1",
     enabled: bool = True,
-    config_json: dict | None = None,
+    config_json: dict[str, Any] | None = None,
     webhook_secret: str | None = None,
 ) -> ChannelConfig:
     return ChannelConfig(
@@ -58,8 +60,8 @@ def make_channel(
         name=name,
         enabled=enabled,
         config_json=config_json or {},
-        created_at="2024-01-01T00:00:00",
-        updated_at="2024-01-01T00:00:00",
+        created_at=_FIXED_TS,
+        updated_at=_FIXED_TS,
         webhook_secret=webhook_secret,
     )
 
@@ -166,17 +168,20 @@ async def test_start_polls_poll_only_adapter_with_global_webhook_url() -> None:
     config = make_config()
     config.webhook_base_url = "https://example.com"
     manager = CommunicationsManager(config, store, make_secret_store(), MagicMock())
-    manager._polling_manager.start_polling = MagicMock()
+    start_polling = MagicMock()
 
     adapter = make_adapter(supports_webhooks=False, supports_polling=True)
     adapter_cls = MagicMock(return_value=adapter)
 
-    with patch("gobby.communications.manager.get_adapter_class", return_value=adapter_cls):
+    with (
+        patch.object(manager._polling_manager, "start_polling", start_polling),
+        patch("gobby.communications.manager.get_adapter_class", return_value=adapter_cls),
+    ):
         await manager.start()
 
     assert manager._adapters[channel.name] is adapter
     assert manager._channel_by_name[channel.name] is channel
-    manager._polling_manager.start_polling.assert_called_once_with(channel.name, adapter, None)
+    start_polling.assert_called_once_with(channel.name, adapter, None)
 
 
 @pytest.mark.unit
@@ -269,13 +274,16 @@ async def test_telegram_init_uses_global_webhook_url_as_inbound_source() -> None
     config = make_config()
     config.webhook_base_url = "https://global.example/hooks"
     manager = CommunicationsManager(config, store, make_secret_store(), MagicMock())
-    manager._polling_manager.start_polling = MagicMock()
+    start_polling = MagicMock()
 
     adapter = make_adapter(channel_type="telegram", supports_webhooks=True, supports_polling=True)
 
-    with patch(
-        "gobby.communications.manager.get_adapter_class",
-        return_value=MagicMock(return_value=adapter),
+    with (
+        patch.object(manager._polling_manager, "start_polling", start_polling),
+        patch(
+            "gobby.communications.manager.get_adapter_class",
+            return_value=MagicMock(return_value=adapter),
+        ),
     ):
         await manager.start()
 
@@ -283,7 +291,7 @@ async def test_telegram_init_uses_global_webhook_url_as_inbound_source() -> None
     assert manager._adapters[channel.name] is adapter
     assert "webhook_base_url" not in channel.config_json
     assert init_channel.config_json["webhook_base_url"] == "https://global.example/hooks"
-    manager._polling_manager.start_polling.assert_not_called()
+    start_polling.assert_not_called()
 
 
 @pytest.mark.unit
@@ -322,13 +330,16 @@ async def test_telegram_init_removes_stale_channel_webhook_url_when_polling() ->
     )
     store = make_store([channel])
     manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
-    manager._polling_manager.start_polling = MagicMock()
+    start_polling = MagicMock()
 
     adapter = make_adapter(channel_type="telegram", supports_webhooks=True, supports_polling=True)
 
-    with patch(
-        "gobby.communications.manager.get_adapter_class",
-        return_value=MagicMock(return_value=adapter),
+    with (
+        patch.object(manager._polling_manager, "start_polling", start_polling),
+        patch(
+            "gobby.communications.manager.get_adapter_class",
+            return_value=MagicMock(return_value=adapter),
+        ),
     ):
         await manager.start()
 
@@ -336,7 +347,7 @@ async def test_telegram_init_removes_stale_channel_webhook_url_when_polling() ->
     assert manager._adapters[channel.name] is adapter
     assert channel.config_json["webhook_base_url"] == "https://stale.example/hooks"
     assert "webhook_base_url" not in init_channel.config_json
-    manager._polling_manager.start_polling.assert_called_once_with(channel.name, adapter, None)
+    start_polling.assert_called_once_with(channel.name, adapter, None)
 
 
 @pytest.mark.unit
@@ -388,8 +399,9 @@ async def test_stop_shuts_down_all_adapters() -> None:
     with patch("gobby.communications.manager.get_adapter_class", return_value=mock_adapter_cls):
         await manager.start()
 
-    manager.responder.stop = AsyncMock(side_effect=lambda: events.append("responder"))
-    await manager.stop()
+    responder_stop = AsyncMock(side_effect=lambda: events.append("responder"))
+    with patch.object(manager.responder, "stop", responder_stop):
+        await manager.stop()
 
     mock_adapter.shutdown.assert_called_once()
     vision_service.stop.assert_awaited_once_with()
@@ -625,13 +637,16 @@ async def test_set_websocket_broadcast_before_start_wires_gobby_chat_on_start() 
     assert msg.status == "sent"
     assert msg.platform_message_id is not None
     broadcast.assert_awaited_once()
+    assert broadcast.await_args is not None
     payload = broadcast.await_args.args[0]
     assert payload["content"] == "Hello!"
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_send_message_telegram_4xx_redacts_token_from_logs_and_storage(caplog) -> None:
+async def test_send_message_telegram_4xx_redacts_token_from_logs_and_storage(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     token = "test-telegram-token"
     channel = make_channel(
         channel_type="telegram",
@@ -647,7 +662,7 @@ async def test_send_message_telegram_4xx_redacts_token_from_logs_and_storage(cap
 
     mock_post = AsyncMock()
 
-    async def side_effect(url, **kwargs):
+    async def side_effect(url: str, **kwargs: Any) -> httpx.Response:
         request = httpx.Request("POST", url)
         if "deleteWebhook" in url:
             return httpx.Response(200, request=request, json={"ok": True})
@@ -749,9 +764,8 @@ async def test_send_event_routes_to_channels() -> None:
         await manager.start()
 
     # Mock router to return our channel id
-    manager._router.match_channels = AsyncMock(return_value=["chan-1"])
-
-    msgs = await manager.send_event("task.created", "A task was created!")
+    with patch.object(manager._router, "match_channels", AsyncMock(return_value=["chan-1"])):
+        msgs = await manager.send_event("task.created", "A task was created!")
 
     assert len(msgs) == 1
     assert msgs[0].content == "A task was created!"
@@ -834,9 +848,8 @@ async def test_send_event_skips_inactive_channels() -> None:
     store = make_store()
     manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
 
-    manager._router.match_channels = AsyncMock(return_value=["chan-inactive"])
-
-    msgs = await manager.send_event("task.created", "Hello!")
+    with patch.object(manager._router, "match_channels", AsyncMock(return_value=["chan-inactive"])):
+        msgs = await manager.send_event("task.created", "Hello!")
     assert msgs == []
 
 
@@ -853,7 +866,7 @@ async def test_handle_inbound_stores_messages() -> None:
         channel_id="chan-1",
         direction="inbound",
         content="Hi there!",
-        created_at="2024-01-01T00:00:00",
+        created_at=_FIXED_TS,
     )
 
     mock_adapter = make_adapter()
@@ -1186,8 +1199,8 @@ async def test_handle_inbound_resolves_identity() -> None:
         id="identity-1",
         channel_id="chan-1",
         external_user_id="ext-user-1",
-        created_at="2024-01-01T00:00:00",
-        updated_at="2024-01-01T00:00:00",
+        created_at=_FIXED_TS,
+        updated_at=_FIXED_TS,
         session_id="session-abc",
     )
     store.get_identity_by_external.return_value = identity
@@ -1198,7 +1211,7 @@ async def test_handle_inbound_resolves_identity() -> None:
         direction="inbound",
         content="Hi!",
         identity_id="ext-user-1",
-        created_at="2024-01-01T00:00:00",
+        created_at=_FIXED_TS,
     )
 
     mock_adapter = make_adapter()
@@ -1228,8 +1241,8 @@ async def test_handle_inbound_messages_continues_after_identity_resolution_failu
         id="identity-2",
         channel_id="chan-1",
         external_user_id="ext-user-2",
-        created_at="2024-01-01T00:00:00",
-        updated_at="2024-01-01T00:00:00",
+        created_at=_FIXED_TS,
+        updated_at=_FIXED_TS,
         session_id="session-ok",
     )
     object.__setattr__(
@@ -1250,7 +1263,7 @@ async def test_handle_inbound_messages_continues_after_identity_resolution_failu
             direction="inbound",
             content="bad",
             identity_id="ext-user-1",
-            created_at="2024-01-01T00:00:00",
+            created_at=_FIXED_TS,
         ),
         CommsMessage(
             id="good-msg",
@@ -1258,7 +1271,7 @@ async def test_handle_inbound_messages_continues_after_identity_resolution_failu
             direction="inbound",
             content="good",
             identity_id="ext-user-2",
-            created_at="2024-01-01T00:00:00",
+            created_at=_FIXED_TS,
         ),
     ]
 
@@ -1306,7 +1319,7 @@ async def test_handle_inbound_messages_stores_internal_channel_id(
         direction="inbound",
         content="Hi",
         metadata_json=metadata_json,
-        created_at="2024-01-01T00:00:00",
+        created_at=_FIXED_TS,
     )
 
     stored = await manager.handle_inbound_messages("test-channel", [message])
@@ -1326,9 +1339,9 @@ async def test_adapter_rate_limit_callback_wires_to_limiter() -> None:
 
     mock_adapter = make_adapter()
     # Capture the callback that manager sets on the adapter
-    captured_callback = None
+    captured_callback: Callable[[float, bool], None] | None = None
 
-    def set_callback(cb):
+    def set_callback(cb: Callable[[float, bool], None]) -> None:
         nonlocal captured_callback
         captured_callback = cb
 
@@ -1430,7 +1443,9 @@ async def test_add_channel_stores_secrets_in_secret_store() -> None:
 
 
 @pytest.mark.integration
-async def test_add_channel_persists_webhook_secret_reference(temp_db, mock_machine_id: str) -> None:
+async def test_add_channel_persists_webhook_secret_reference(
+    temp_db: HubDatabase, mock_machine_id: str
+) -> None:
     """New channel rows contain a SecretStore reference instead of plaintext."""
     assert mock_machine_id
     store = LocalCommunicationsStore(temp_db)
@@ -1524,7 +1539,7 @@ async def test_init_adapter_offloads_secret_ref_store_reads() -> None:
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_init_adapter_resolves_secret_refs_with_real_secret_store(
-    temp_db, mock_machine_id: str
+    temp_db: HubDatabase, mock_machine_id: str
 ) -> None:
     """_init_adapter() passes a ref-aware resolver backed by SecretStore.get."""
     assert mock_machine_id
@@ -1549,8 +1564,8 @@ async def test_init_adapter_resolves_secret_refs_with_real_secret_store(
             "bot_token": "$secret:COMMS_SLACK_BOT_TOKEN_MY_SLACK",
             "signing_secret": "$secret:COMMS_SLACK_SIGNING_SECRET_MY_SLACK",
         },
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=_FIXED_TS,
+        updated_at=_FIXED_TS,
     )
 
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
@@ -1729,7 +1744,7 @@ async def test_update_channel_delegates_to_store() -> None:
     assert result == channel
     store.update_channel.assert_called_once_with(channel)
     # updated_at should be refreshed
-    assert channel.updated_at != "2024-01-01T00:00:00"
+    assert channel.updated_at != _FIXED_TS
 
 
 @pytest.mark.unit
@@ -1868,8 +1883,8 @@ async def test_send_message_injects_conversation_reference_destination() -> None
         id="identity-1",
         channel_id=channel.id,
         external_user_id="teams-user-1",
-        created_at="2024-01-01T00:00:00",
-        updated_at="2024-01-01T00:00:00",
+        created_at=_FIXED_TS,
+        updated_at=_FIXED_TS,
         session_id="session-abc",
         metadata_json={
             "conversation_reference": {
@@ -2116,8 +2131,8 @@ async def test_handle_inbound_populates_thread_map_and_handles_reactions() -> No
         channel_id="chan-1",
         external_user_id="user-1",
         session_id="session-123",
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=_FIXED_TS,
+        updated_at=_FIXED_TS,
     )
 
     manager._identity_manager = MagicMock()
@@ -2133,7 +2148,7 @@ async def test_handle_inbound_populates_thread_map_and_handles_reactions() -> No
         direction="inbound",
         content="Hello",
         platform_thread_id="thread-456",
-        created_at="2024-01-01T00:00:00Z",
+        created_at=_FIXED_TS,
         identity_id="user-1",
     )
 
@@ -2144,7 +2159,7 @@ async def test_handle_inbound_populates_thread_map_and_handles_reactions() -> No
         content="+1",
         platform_message_id="reaction:501:msg-123",
         content_type="reaction",
-        created_at="2024-01-01T00:00:00Z",
+        created_at=_FIXED_TS,
         identity_id="user-1",
         metadata_json={"reaction_target_message_id": "msg-123"},
     )

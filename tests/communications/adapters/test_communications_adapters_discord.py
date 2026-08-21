@@ -6,6 +6,7 @@ import asyncio
 import json
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -28,8 +29,8 @@ def channel_config() -> ChannelConfig:
         name="Test Discord",
         enabled=True,
         config_json={},
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2024, 1, 1, tzinfo=UTC),
     )
 
 
@@ -95,7 +96,7 @@ async def test_send_message_success(
             channel_id="gobby-internal-channel",
             direction="outbound",
             content="Hello Discord",
-            created_at="2024-01-01T00:00:00Z",
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
             metadata_json={"platform_destination": "channel_123"},
         )
 
@@ -196,7 +197,7 @@ async def test_rate_limit_headers_parsed(
             channel_id="gobby-internal-channel",
             direction="outbound",
             content="Test",
-            created_at="2024-01-01T00:00:00Z",
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
             metadata_json={"platform_destination": "channel_123"},
         )
 
@@ -240,7 +241,7 @@ async def test_rate_limit_pre_wait(
             channel_id="gobby-internal-channel",
             direction="outbound",
             content="Test",
-            created_at="2024-01-01T00:00:00Z",
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
             metadata_json={"platform_destination": "channel_123"},
         )
 
@@ -348,7 +349,9 @@ async def test_gateway_message_create_forwards_to_manager(adapter: DiscordAdapte
     )
 
     inbound_callback.assert_awaited_once()
-    messages = inbound_callback.await_args.args[0]
+    await_args = inbound_callback.await_args
+    assert await_args is not None
+    messages = await_args.args[0]
     assert len(messages) == 1
     assert messages[0].content == "Hello from gateway"
     assert messages[0].metadata_json["platform_channel_id"] == "channel_123"
@@ -522,7 +525,7 @@ async def test_send_message_embed(
         channel_id="gobby-internal-channel",
         direction="outbound",
         content=embed,
-        created_at="2024-01-01T00:00:00Z",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
         content_type="embed",
         metadata_json={"fallback_text": "Test fallback", "platform_destination": "channel_123"},
     )
@@ -559,7 +562,7 @@ async def test_send_message_embed_list(
         channel_id="gobby-internal-channel",
         direction="outbound",
         content=embeds,
-        created_at="2024-01-01T00:00:00Z",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
         content_type="embed",
         metadata_json={"platform_destination": "channel_123"},
     )
@@ -594,7 +597,7 @@ async def test_send_message_embed_invalid_json(
         channel_id="gobby-internal-channel",
         direction="outbound",
         content="not json",
-        created_at="2024-01-01T00:00:00Z",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
         content_type="embed",
         metadata_json={"platform_destination": "channel_123"},
     )
@@ -619,7 +622,7 @@ async def test_send_message_embed_title_too_long(
         channel_id="gobby-internal-channel",
         direction="outbound",
         content=embed,
-        created_at="2024-01-01T00:00:00Z",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
         content_type="embed",
         metadata_json={"platform_destination": "channel_123"},
     )
@@ -644,7 +647,7 @@ async def test_send_message_embed_too_many_fields(
         channel_id="gobby-internal-channel",
         direction="outbound",
         content=embed,
-        created_at="2024-01-01T00:00:00Z",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
         content_type="embed",
         metadata_json={"platform_destination": "channel_123"},
     )
@@ -738,7 +741,7 @@ async def test_send_message_chunking(
         direction="outbound",
         content=long_content,
         metadata_json={"platform_destination": "channel_123"},
-        created_at="2024-01-01T00:00:00Z",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
     )
 
     with patch.object(adapter._client, "post", new_callable=AsyncMock) as mock_post:

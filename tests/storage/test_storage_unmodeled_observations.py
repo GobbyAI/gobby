@@ -77,10 +77,12 @@ def test_duplicate_reprocess_keeps_count_one_and_moves_last_seen(
         if row.name == observation.name
     ]
     before = before_rows[0].last_seen_at
-    before_event = temp_db.fetchone(
+    before_event_row = temp_db.fetchone(
         "SELECT last_seen_at FROM unmodeled_observation_events WHERE name = %s",
         (observation.name,),
-    )["last_seen_at"]
+    )
+    assert before_event_row is not None
+    before_event = before_event_row["last_seen_at"]
 
     assert store.record(observation) is False
 

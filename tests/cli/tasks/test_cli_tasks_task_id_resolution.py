@@ -11,12 +11,14 @@ These tests verify that CLI commands correctly accept and resolve:
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
 
 from gobby.cli import cli
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import TaskNotFoundError
 
 
@@ -47,7 +49,7 @@ def _isolated_cli_runtime() -> Iterator[None]:
 
 
 @pytest.fixture
-def mock_task_with_uuid():
+def mock_task_with_uuid() -> MagicMock:
     """Create a mock task with UUID-style ID."""
     task = MagicMock()
     task.id = str(uuid.uuid4())
@@ -78,7 +80,7 @@ def mock_task_with_uuid():
 
 
 @pytest.fixture
-def hub_sample_project(hub_db):
+def hub_sample_project(hub_db: HubDatabase) -> dict[str, Any]:
     """Create a sample project through the active hub database adapter."""
     from gobby.storage.projects import LocalProjectManager
 
@@ -107,7 +109,7 @@ class TestResolveTaskIdWithSeqNum:
         mock_manager.resolve_task_reference.return_value = mock_task_with_uuid.id
 
         # Now simulate get_task succeeding with the resolved UUID
-        def get_task_side_effect(task_id):
+        def get_task_side_effect(task_id: str) -> MagicMock:
             if task_id == mock_task_with_uuid.id:
                 return mock_task_with_uuid
             raise ValueError("not found")
@@ -176,7 +178,7 @@ class TestResolveTaskIdWithPathFormat:
         mock_manager.find_tasks_by_prefix.return_value = []
         mock_manager.resolve_task_reference.return_value = mock_task_with_uuid.id
 
-        def get_task_side_effect(task_id):
+        def get_task_side_effect(task_id: str) -> MagicMock:
             if task_id == mock_task_with_uuid.id:
                 return mock_task_with_uuid
             raise ValueError("not found")
@@ -339,7 +341,9 @@ class TestIntegrationResolveTaskId:
     """Integration tests using real database for #N format resolution."""
 
     @pytest.mark.integration
-    def test_resolve_hash_format_integration(self, hub_db, hub_sample_project) -> None:
+    def test_resolve_hash_format_integration(
+        self, hub_db: HubDatabase, hub_sample_project: dict[str, Any]
+    ) -> None:
         """Test #N resolution with real database."""
         from gobby.cli.tasks._utils import resolve_task_id
         from gobby.storage.tasks import LocalTaskManager
@@ -378,7 +382,9 @@ class TestIntegrationResolveTaskId:
         assert result.id == task3.id
 
     @pytest.mark.integration
-    def test_resolve_path_format_integration(self, hub_db, hub_sample_project) -> None:
+    def test_resolve_path_format_integration(
+        self, hub_db: HubDatabase, hub_sample_project: dict[str, Any]
+    ) -> None:
         """Test path format resolution with real database."""
         from gobby.cli.tasks._utils import resolve_task_id
         from gobby.storage.tasks import LocalTaskManager
@@ -421,7 +427,9 @@ class TestIntegrationResolveTaskId:
         assert result.id == grandchild.id
 
     @pytest.mark.integration
-    def test_resolve_uuid_format_integration(self, hub_db, hub_sample_project) -> None:
+    def test_resolve_uuid_format_integration(
+        self, hub_db: HubDatabase, hub_sample_project: dict[str, Any]
+    ) -> None:
         """Test UUID format resolution with real database."""
         from gobby.cli.tasks._utils import resolve_task_id
         from gobby.storage.tasks import LocalTaskManager
@@ -441,7 +449,9 @@ class TestIntegrationResolveTaskId:
         assert result.id == task.id
 
     @pytest.mark.integration
-    def test_resolve_gt_format_deprecated_integration(self, hub_db, hub_sample_project) -> None:
+    def test_resolve_gt_format_deprecated_integration(
+        self, hub_db: HubDatabase, hub_sample_project: dict[str, Any]
+    ) -> None:
         """Test gt-* format shows deprecation error."""
         from gobby.cli.tasks._utils import resolve_task_id
         from gobby.storage.tasks import LocalTaskManager
@@ -460,7 +470,9 @@ class TestIntegrationResolveTaskId:
         assert result is None
 
     @pytest.mark.integration
-    def test_resolve_nonexistent_seq_num_integration(self, hub_db, hub_sample_project) -> None:
+    def test_resolve_nonexistent_seq_num_integration(
+        self, hub_db: HubDatabase, hub_sample_project: dict[str, Any]
+    ) -> None:
         """Test non-existent #N returns None."""
         from gobby.cli.tasks._utils import resolve_task_id
         from gobby.storage.tasks import LocalTaskManager

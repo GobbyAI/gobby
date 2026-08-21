@@ -8,7 +8,7 @@ import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, Unpack
 from unittest.mock import patch
 
 import pytest
@@ -20,6 +20,7 @@ from gobby.storage.tasks import LocalTaskManager
 
 if TYPE_CHECKING:
     from gobby.build.service import BuildOptions, BuildResult
+    from gobby.config.build import DeliveryMode, Isolation, StageCapOverride
 
 pytestmark = pytest.mark.unit
 
@@ -32,16 +33,55 @@ def _local_machine_identity() -> Iterator[None]:
         yield
 
 
-async def _build(input_ref: str, opts: object, db: object, project_id: str) -> BuildResult:
+async def _build(
+    input_ref: str,
+    opts: BuildOptions,
+    db: HubDatabase,
+    project_id: str,
+) -> BuildResult:
     from gobby.build.service import build
 
     return await build(input_ref, opts, db=db, project_id=project_id)
 
 
-def _options(**overrides: object) -> BuildOptions:
+class _OptionOverrides(TypedDict, total=False):
+    """Keyword overrides accepted by ``_options`` — mirrors ``BuildOptions`` fields."""
+
+    profile: str
+    quick: bool
+    skip_stages: list[str]
+    skip_stages_explicit: bool
+    isolation: Isolation
+    isolation_explicit: bool
+    unattended: bool
+    unattended_explicit: bool
+    delivery_mode: DeliveryMode
+    delivery_mode_explicit: bool
+    delivery_target_repo: str | None
+    delivery_target_repo_explicit: bool
+    no_merge: bool
+    pr: str | None
+    stage_caps: list[StageCapOverride]
+    target_branch: str | None
+    assigned_agent: str | None
+    clones_dir: Path | None
+    cwd: Path | None
+    reset_expansion_output: bool
+    max_active_agents: int | None
+    max_retries: int | None
+    planning_seed_state: Literal["drafted", "needs_review", "approved"]
+    completed_plan_review_rounds: int
+    plan_enhancement_rounds: int
+    plan_enhancement_rounds_explicit: bool
+    dry_run: bool
+    coordinator_session_ref: str | None
+    project_explicit: bool
+
+
+def _options(**overrides: Unpack[_OptionOverrides]) -> BuildOptions:
     from gobby.build.service import BuildOptions
 
-    values = {
+    values: _OptionOverrides = {
         "quick": False,
         "skip_stages": [],
         "isolation": "worktree",
@@ -75,10 +115,12 @@ def _disable_dispatcher_tick(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _table_counts(temp_db: HubDatabase, *tables: str) -> dict[str, int]:
-    return {
-        table: int(temp_db.fetchone(f"SELECT COUNT(*) AS count FROM {table}")["count"])
-        for table in tables
-    }
+    counts: dict[str, int] = {}
+    for table in tables:
+        row = temp_db.fetchone(f"SELECT COUNT(*) AS count FROM {table}")
+        assert row is not None
+        counts[table] = int(row["count"])
+    return counts
 
 
 def _init_git_repo(path: Path) -> None:
@@ -154,9 +196,13 @@ async def test_build_coordinator_summary_survives_and_root_attaches_before_tick(
     )
     seen: dict[str, object] = {}
 
-    async def fake_tick(*args: object, **_kwargs: object) -> DispatcherTickSummary:
-        db = args[0]
-        tick_project_id = str(args[1])
+    async def fake_tick(
+        db: HubDatabase | None = None,
+        project_id: str | None = None,
+        **_kwargs: object,
+    ) -> DispatcherTickSummary:
+        assert db is not None
+        tick_project_id = str(project_id)
         run = BuildHistoryStorage(db).latest_run_for_input(tick_project_id, f"#{task.seq_num}")
         seen["root_task_id"] = run.root_task_id if run else None
         seen["summary"] = run.summary if run else None
@@ -182,6 +228,7 @@ async def test_build_coordinator_summary_survives_and_root_attaches_before_tick(
     }
     assert run is not None
     assert run.root_task_id == task.id
+    assert run.summary is not None
     assert run.summary["build_project_id"] == project_id
     assert run.summary["coordinator_project_id"] == project_id
     assert run.summary["coordinator_session_id"] == coordinator.id
@@ -266,6 +313,7 @@ async def test_build_accepts_cross_project_uuid_coordinator_with_explicit_projec
     run = BuildHistoryStorage(temp_db).latest_run_for_input(project_id, f"#{task.seq_num}")
 
     assert run is not None
+    assert run.summary is not None
     assert run.summary["build_project_id"] == project_id
     assert run.summary["coordinator_project_id"] == other_project.id
     assert run.summary["coordinator_session_id"] == coordinator.id
@@ -273,7 +321,7 @@ async def test_build_accepts_cross_project_uuid_coordinator_with_explicit_projec
 
 @pytest.mark.asyncio
 async def test_build_rejects_unknown_skip_stage_with_valid_values(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     project_id, _repo_path = _project(temp_db, tmp_path)
@@ -289,7 +337,7 @@ async def test_build_rejects_unknown_skip_stage_with_valid_values(
 
 @pytest.mark.asyncio
 async def test_build_rejects_retired_test_arch_stage(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     from gobby.config.build import StageCapOverride
@@ -321,7 +369,7 @@ async def test_build_rejects_retired_test_arch_stage(
 
 @pytest.mark.asyncio
 async def test_plan_file_basename_resolves_from_project_plans_dir(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     project_id, repo_path = _project(temp_db, tmp_path)
@@ -344,7 +392,7 @@ async def test_plan_file_basename_resolves_from_project_plans_dir(
 
 @pytest.mark.asyncio
 async def test_plan_file_relative_path_resolves_from_request_cwd(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     project_id, _repo_path = _project(temp_db, tmp_path)
@@ -367,7 +415,7 @@ async def test_plan_file_relative_path_resolves_from_request_cwd(
 
 @pytest.mark.asyncio
 async def test_plan_file_quick_initializes_planning_pulse(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     project_id, repo_path = _project(temp_db, tmp_path)
@@ -388,7 +436,7 @@ async def test_plan_file_quick_initializes_planning_pulse(
 
 @pytest.mark.asyncio
 async def test_approved_plan_file_seed_starts_at_expansion(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     project_id, repo_path = _project(temp_db, tmp_path)
@@ -409,7 +457,7 @@ async def test_approved_plan_file_seed_starts_at_expansion(
 
 @pytest.mark.asyncio
 async def test_needs_review_plan_file_seed_sets_planning_review_round_count(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     project_id, repo_path = _project(temp_db, tmp_path)
@@ -439,8 +487,8 @@ async def test_needs_review_plan_file_seed_sets_planning_review_round_count(
 
 @pytest.mark.asyncio
 async def test_build_accepts_isolation_for_single_leaf_and_merges_by_default(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     leaf = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
@@ -463,8 +511,8 @@ async def test_build_accepts_isolation_for_single_leaf_and_merges_by_default(
 
 @pytest.mark.asyncio
 async def test_build_rejects_isolation_change_on_epic_with_existing_artifact(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     from gobby.storage.tasks import TaskArtifactManager
 
@@ -497,7 +545,7 @@ async def test_build_rejects_isolation_change_on_epic_with_existing_artifact(
 
 @pytest.mark.asyncio
 async def test_build_validates_target_branch_exists(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     project_id, repo_path = _project(temp_db, tmp_path)
@@ -517,7 +565,7 @@ async def test_build_validates_target_branch_exists(
 
 @pytest.mark.asyncio
 async def test_build_validates_clones_dir_when_clone_isolation(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -539,8 +587,8 @@ async def test_build_validates_clones_dir_when_clone_isolation(
 
 @pytest.mark.asyncio
 async def test_build_rejects_no_merge_without_isolation(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     leaf = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
@@ -561,7 +609,7 @@ async def test_build_rejects_no_merge_without_isolation(
 
 @pytest.mark.asyncio
 async def test_build_plan_file_creates_planning_epic_artifacts_manifest_and_kicks_tick(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     project_id, repo_path = _project(temp_db, tmp_path)
@@ -604,7 +652,7 @@ async def test_build_plan_file_creates_planning_epic_artifacts_manifest_and_kick
 @pytest.mark.asyncio
 async def test_build_plan_file_rerun_resumes_open_root_for_same_plan_file(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     _disable_dispatcher_tick(monkeypatch)
@@ -625,7 +673,7 @@ async def test_build_plan_file_rerun_resumes_open_root_for_same_plan_file(
         project_id=project_id,
     )
 
-    root_count = temp_db.fetchone(
+    root_row = temp_db.fetchone(
         """
         SELECT COUNT(*) AS count
           FROM tasks
@@ -634,7 +682,9 @@ async def test_build_plan_file_rerun_resumes_open_root_for_same_plan_file(
            AND title = %s
         """,
         (project_id, f"Build {plan_file.name}"),
-    )["count"]
+    )
+    assert root_row is not None
+    root_count = root_row["count"]
 
     assert first.created is True
     assert second.created is False
@@ -645,7 +695,7 @@ async def test_build_plan_file_rerun_resumes_open_root_for_same_plan_file(
 @pytest.mark.asyncio
 async def test_build_plan_file_uses_registered_open_root_task(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     from gobby.agents.sync import sync_bundled_agents
@@ -728,7 +778,7 @@ async def test_build_plan_file_uses_registered_open_root_task(
         ),
     )
 
-    duplicate_count = temp_db.fetchone(
+    duplicate_row = temp_db.fetchone(
         """
         SELECT COUNT(*) AS count
           FROM tasks
@@ -737,7 +787,9 @@ async def test_build_plan_file_uses_registered_open_root_task(
            AND title = %s
         """,
         (project_id, f"Build {plan_file.name}"),
-    )["count"]
+    )
+    assert duplicate_row is not None
+    duplicate_count = duplicate_row["count"]
 
     assert result.created is False
     assert result.task_id == root.id
@@ -749,7 +801,7 @@ async def test_build_plan_file_uses_registered_open_root_task(
 @pytest.mark.asyncio
 async def test_build_plan_file_planning_spawn_forces_main_context(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     from gobby.agents.sync import sync_bundled_agents
@@ -807,7 +859,7 @@ async def test_build_plan_file_planning_spawn_forces_main_context(
 @pytest.mark.asyncio
 async def test_build_plan_file_plan_adversary_spawn_forces_main_context(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     from gobby.agents.sync import sync_bundled_agents
@@ -991,7 +1043,7 @@ async def test_plan_file_dry_run_skip_pr_returns_full_manifest_chain(
 @pytest.mark.asyncio
 async def test_plan_file_bare_stage_overrides_do_not_select_manifest(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     from gobby.config.build import StageCapOverride
@@ -1039,7 +1091,7 @@ async def test_plan_file_bare_stage_overrides_do_not_select_manifest(
 @pytest.mark.asyncio
 async def test_plan_file_relative_hidden_path_resolves_from_request_cwd(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     project_id, repo_path = _project(temp_db, tmp_path)
@@ -1065,7 +1117,9 @@ async def test_plan_file_relative_hidden_path_resolves_from_request_cwd(
 
 
 @pytest.mark.asyncio
-async def test_build_persists_stage_caps_on_manifest_rows(temp_db, tmp_path: Path) -> None:
+async def test_build_persists_stage_caps_on_manifest_rows(
+    temp_db: HubDatabase, tmp_path: Path
+) -> None:
     from gobby.config.build import StageCapOverride
 
     project_id, repo_path = _project(temp_db, tmp_path)
@@ -1100,7 +1154,9 @@ async def test_build_persists_stage_caps_on_manifest_rows(temp_db, tmp_path: Pat
 
 
 @pytest.mark.asyncio
-async def test_build_rejects_stage_cap_for_skipped_stage(temp_db, tmp_path: Path) -> None:
+async def test_build_rejects_stage_cap_for_skipped_stage(
+    temp_db: HubDatabase, tmp_path: Path
+) -> None:
     from gobby.config.build import StageCapOverride
 
     project_id, repo_path = _project(temp_db, tmp_path)
@@ -1123,7 +1179,7 @@ async def test_build_rejects_stage_cap_for_skipped_stage(temp_db, tmp_path: Path
 @pytest.mark.asyncio
 async def test_build_passes_active_agent_cap_separately_from_stage_work_cap(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     from gobby.build.service import DispatcherTickSummary
@@ -1159,7 +1215,7 @@ async def test_build_passes_active_agent_cap_separately_from_stage_work_cap(
 @pytest.mark.asyncio
 async def test_build_launch_resumes_paused_dispatcher_before_tick(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     from gobby.build.project_state import is_project_automation_enabled
@@ -1201,7 +1257,7 @@ async def test_build_launch_resumes_paused_dispatcher_before_tick(
 
 @pytest.mark.asyncio
 async def test_max_retries_zero_sets_one_attempt_per_resolved_stage(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     project_id, repo_path = _project(temp_db, tmp_path)
@@ -1223,7 +1279,7 @@ async def test_max_retries_zero_sets_one_attempt_per_resolved_stage(
 
 @pytest.mark.asyncio
 async def test_stage_override_wins_over_max_retries_default(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     from gobby.config.build import StageCapOverride
@@ -1257,7 +1313,7 @@ async def test_stage_override_wins_over_max_retries_default(
     ],
 )
 async def test_build_rejects_stage_caps_below_one(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
     stage_name: str,
     cap_name: str,
@@ -1284,7 +1340,7 @@ async def test_build_rejects_stage_caps_below_one(
 
 @pytest.mark.asyncio
 async def test_build_rejects_negative_max_retries(
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     project_id, repo_path = _project(temp_db, tmp_path)
@@ -1302,8 +1358,8 @@ async def test_build_rejects_negative_max_retries(
 
 @pytest.mark.asyncio
 async def test_build_leaf_uses_category_primary_stage_and_sets_agent(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     task_manager = LocalTaskManager(temp_db)
     leaf = task_manager.create_task(
@@ -1334,8 +1390,8 @@ async def test_build_leaf_uses_category_primary_stage_and_sets_agent(
 @pytest.mark.asyncio
 async def test_build_existing_leaf_omitted_backend_defaults_to_worktree(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     _disable_dispatcher_tick(monkeypatch)
     task_manager = LocalTaskManager(temp_db)
@@ -1366,8 +1422,8 @@ async def test_build_existing_leaf_omitted_backend_defaults_to_worktree(
 @pytest.mark.asyncio
 async def test_build_existing_leaf_explicit_isolation_overrides_task_isolation(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     _disable_dispatcher_tick(monkeypatch)
     task_manager = LocalTaskManager(temp_db)
@@ -1395,8 +1451,8 @@ async def test_build_existing_leaf_explicit_isolation_overrides_task_isolation(
 @pytest.mark.asyncio
 async def test_build_rerun_same_manifest_preserves_active_stage(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     _disable_dispatcher_tick(monkeypatch)
     task_manager = LocalTaskManager(temp_db)
@@ -1438,8 +1494,8 @@ async def test_build_rerun_same_manifest_preserves_active_stage(
 @pytest.mark.asyncio
 async def test_build_rejects_skip_stage_on_existing_lifecycle(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     _disable_dispatcher_tick(monkeypatch)
     task_manager = LocalTaskManager(temp_db)
@@ -1470,8 +1526,8 @@ async def test_build_rejects_skip_stage_on_existing_lifecycle(
 @pytest.mark.asyncio
 async def test_build_existing_lifecycle_stage_caps_update_rows(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     from gobby.config.build import StageCapOverride
 
@@ -1617,8 +1673,8 @@ async def test_build_epic_dry_run_resume_skips_subtree_cascade_locking(
 
 @pytest.mark.asyncio
 async def test_build_epic_cascade_initializes_child_from_resolved_scope(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     from gobby.config.build import StageCapOverride
 
@@ -1657,7 +1713,7 @@ async def test_build_epic_cascade_initializes_child_from_resolved_scope(
 @pytest.mark.asyncio
 async def test_build_epic_defers_integration_worktrees_to_spawn(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     _disable_dispatcher_tick(monkeypatch)
@@ -1718,7 +1774,7 @@ async def test_build_epic_defers_integration_worktrees_to_spawn(
 @pytest.mark.asyncio
 async def test_epic_no_merge_skips_only_root_promotion(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     _disable_dispatcher_tick(monkeypatch)
@@ -1758,7 +1814,7 @@ async def test_epic_no_merge_skips_only_root_promotion(
 @pytest.mark.asyncio
 async def test_existing_epic_cascade_forces_child_merge_with_legacy_root_manifest(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     _disable_dispatcher_tick(monkeypatch)
@@ -1797,7 +1853,7 @@ async def test_existing_epic_cascade_forces_child_merge_with_legacy_root_manifes
 @pytest.mark.asyncio
 async def test_build_epic_cascade_preserves_active_child_with_cap_drift(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     from gobby.storage.tasks._stage_types import StageManifestSpec
@@ -1854,8 +1910,8 @@ async def test_build_epic_cascade_preserves_active_child_with_cap_drift(
 @pytest.mark.asyncio
 async def test_build_epic_cascade_skips_closed_descendants_with_existing_lifecycle(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     from gobby.config.build import StageCapOverride
 
@@ -1916,8 +1972,8 @@ async def test_build_epic_cascade_skips_closed_descendants_with_existing_lifecyc
 @pytest.mark.asyncio
 async def test_build_epic_cascade_skips_busy_descendant_manifest_initialization(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     from gobby.config.build import StageCapOverride
     from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
@@ -2044,8 +2100,8 @@ async def test_build_leaf_with_services_creates_agent_run_by_completion(
 
 @pytest.mark.asyncio
 async def test_build_leaf_rejects_non_automated_category(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     leaf = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
@@ -2067,8 +2123,8 @@ async def test_build_leaf_rejects_non_automated_category(
 @pytest.mark.asyncio
 async def test_build_task_ref_automates_existing_expansion_output(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     _disable_dispatcher_tick(monkeypatch)
     task_manager = LocalTaskManager(temp_db)
@@ -2304,8 +2360,8 @@ async def test_build_task_ref_removes_skipped_pr_from_progressed_child_epic(
 @pytest.mark.asyncio
 async def test_build_task_ref_removes_auto_started_skipped_pr_from_child_epic(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     from gobby.storage.tasks import StageManifestSpec
 
@@ -2384,8 +2440,8 @@ async def test_build_task_ref_removes_auto_started_skipped_pr_from_child_epic(
 @pytest.mark.asyncio
 async def test_build_resume_cascades_skipped_pr_to_descendants(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     from gobby.storage.tasks import StageManifestSpec
 
@@ -2488,8 +2544,8 @@ async def test_build_resume_cascades_skipped_pr_to_descendants(
 @pytest.mark.asyncio
 async def test_build_resume_development_epic_defers_workspace_provisioning(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     from gobby.storage.tasks import StageManifestSpec
 
@@ -2560,8 +2616,8 @@ async def test_build_resume_development_epic_defers_workspace_provisioning(
 
 @pytest.mark.asyncio
 async def test_build_task_ref_can_reset_existing_expansion_output(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(

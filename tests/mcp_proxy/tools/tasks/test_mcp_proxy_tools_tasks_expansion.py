@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Coroutine
 from datetime import timedelta
 from inspect import signature
 from typing import Any
@@ -40,7 +41,7 @@ def _complete_run(run_manager: LocalExpansionRunManager, run_id: str) -> Expansi
     return result
 
 
-def test_reset_expansion_output_tool_is_registered(temp_db) -> None:
+def test_reset_expansion_output_tool_is_registered(temp_db: HubDatabase) -> None:
     from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
 
     registry = create_task_ops_registry(
@@ -49,12 +50,14 @@ def test_reset_expansion_output_tool_is_registered(temp_db) -> None:
     )
 
     assert any(item["name"] == "reset_expansion_output" for item in registry.list_tools())
-    schema = registry.get_schema("reset_expansion_output")["inputSchema"]
+    tool_schema = registry.get_schema("reset_expansion_output")
+    assert tool_schema is not None
+    schema = tool_schema["inputSchema"]
     assert schema["required"] == ["task_id"]
     assert schema["properties"]["run_id"]["type"] == "string"
 
 
-def test_start_expansion_schema_accepts_reset_output(temp_db) -> None:
+def test_start_expansion_schema_accepts_reset_output(temp_db: HubDatabase) -> None:
     from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
 
     registry = create_task_ops_registry(
@@ -62,12 +65,14 @@ def test_start_expansion_schema_accepts_reset_output(temp_db) -> None:
         startup_config=MagicMock(),
     )
 
-    schema = registry.get_schema("start_expansion_run")["inputSchema"]
+    tool_schema = registry.get_schema("start_expansion_run")
+    assert tool_schema is not None
+    schema = tool_schema["inputSchema"]
     assert schema["properties"]["reset_output"]["type"] == "boolean"
     assert schema["properties"]["stage_pipeline_mode"]["type"] == ["boolean", "null"]
 
 
-def test_start_expansion_schema_accepts_explicit_null_optionals(temp_db) -> None:
+def test_start_expansion_schema_accepts_explicit_null_optionals(temp_db: HubDatabase) -> None:
     """The expand-task pipeline sends explicit nulls for unset optional inputs."""
     from gobby.mcp_proxy.services.argument_validation import check_arguments
     from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
@@ -77,7 +82,9 @@ def test_start_expansion_schema_accepts_explicit_null_optionals(temp_db) -> None
         startup_config=MagicMock(),
     )
 
-    schema = registry.get_schema("start_expansion_run")["inputSchema"]
+    tool_schema = registry.get_schema("start_expansion_run")
+    assert tool_schema is not None
+    schema = tool_schema["inputSchema"]
     errors = check_arguments(
         {
             "task_id": "#1",
@@ -136,7 +143,7 @@ def test_start_expansion_replaces_stale_crashed_run(
         (utc_now() - timedelta(minutes=31), crashed.id),
     )
 
-    def finish_immediately(coro: object) -> ExpansionRun | None:
+    def finish_immediately(coro: Coroutine[Any, Any, Any]) -> ExpansionRun | None:
         coro.close()
         return run_manager.get_latest_for_task(task.id)
 
@@ -155,7 +162,9 @@ def test_start_expansion_replaces_stale_crashed_run(
 
     assert result.reused is False
     assert result.run_id != crashed.id
-    assert run_manager.get(crashed.id).status == "failed"
+    crashed_run = run_manager.get(crashed.id)
+    assert crashed_run is not None
+    assert crashed_run.status == "failed"
 
 
 def test_completion_emits_terminal_event(
@@ -175,7 +184,7 @@ def test_completion_emits_terminal_event(
         session_id: str | None,
         auto_apply: bool = True,
         suppress_parent_stage_transition: bool = False,
-    ):
+    ) -> ExpansionRun:
         _ = self, session_id, auto_apply, suppress_parent_stage_transition
         return _complete_run(run_manager, run_id)
 
@@ -212,7 +221,7 @@ def test_failure_emits_terminal_event(temp_db: HubDatabase, sample_project: dict
         session_id: str | None,
         auto_apply: bool = True,
         suppress_parent_stage_transition: bool = False,
-    ):
+    ) -> ExpansionRun:
         _ = self, run_id, session_id, auto_apply, suppress_parent_stage_transition
         raise RuntimeError("boom")
 
@@ -254,7 +263,7 @@ def test_cancellation_emits_terminal_event(
         session_id: str | None,
         auto_apply: bool = True,
         suppress_parent_stage_transition: bool = False,
-    ):
+    ) -> ExpansionRun:
         _ = self, run_id, session_id, auto_apply, suppress_parent_stage_transition
         raise asyncio.CancelledError()
 
@@ -293,7 +302,7 @@ def test_start_expansion_accepts_caller_allocated_run_id(
         session_id: str | None,
         auto_apply: bool = True,
         suppress_parent_stage_transition: bool = False,
-    ):
+    ) -> ExpansionRun:
         _ = self, session_id, auto_apply, suppress_parent_stage_transition
         return _complete_run(run_manager, run_id)
 
@@ -332,7 +341,7 @@ def test_start_expansion_reset_output_calls_reset(
         session_id: str | None,
         auto_apply: bool = True,
         suppress_parent_stage_transition: bool = False,
-    ):
+    ) -> ExpansionRun:
         _ = self, session_id, auto_apply, suppress_parent_stage_transition
         return _complete_run(run_manager, run_id)
 
@@ -378,7 +387,7 @@ def test_synchronous_terminal_emits_event(
         session_id: str | None,
         auto_apply: bool = True,
         suppress_parent_stage_transition: bool = False,
-    ):
+    ) -> ExpansionRun:
         _ = self, session_id, auto_apply, suppress_parent_stage_transition
         return _complete_run(run_manager, run_id)
 
@@ -404,8 +413,8 @@ def test_synchronous_terminal_emits_event(
 
 
 def test_stage_pipeline_mutex_suppresses_expansion_terminal_event(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     from gobby.mcp_proxy.tools.tasks._expansion import start_expansion_run_impl
 
@@ -448,7 +457,7 @@ def test_stage_pipeline_mutex_suppresses_expansion_terminal_event(
         session_id: str | None,
         auto_apply: bool = True,
         suppress_parent_stage_transition: bool = False,
-    ):
+    ) -> ExpansionRun:
         _ = self, session_id, auto_apply
         captured["suppress_parent_stage_transition"] = suppress_parent_stage_transition
         return _complete_run(run_manager, run_id)
@@ -495,7 +504,7 @@ async def test_async_start_returns_running_and_emits_later(
         session_id: str | None,
         auto_apply: bool = True,
         suppress_parent_stage_transition: bool = False,
-    ):
+    ) -> ExpansionRun:
         _ = self, session_id, auto_apply, suppress_parent_stage_transition
         await drain_asyncio_tasks()
         return _complete_run(run_manager, run_id)

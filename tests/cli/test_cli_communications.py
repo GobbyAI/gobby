@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -10,14 +11,14 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def mock_daemon_client():
+def mock_daemon_client() -> Iterator[MagicMock]:
     with patch("gobby.cli.communications.get_daemon_client") as mock:
         client = MagicMock()
         mock.return_value = client
         yield client
 
 
-def test_comms_status_success(mock_daemon_client):
+def test_comms_status_success(mock_daemon_client: MagicMock) -> None:
     runner = CliRunner()
 
     mock_response = MagicMock(spec=httpx.Response)
@@ -42,7 +43,7 @@ def test_comms_status_success(mock_daemon_client):
     mock_daemon_client.call_http_api.assert_called_once_with("/api/comms/channels", method="GET")
 
 
-def test_comms_send_success(mock_daemon_client):
+def test_comms_send_success(mock_daemon_client: MagicMock) -> None:
     runner = CliRunner()
 
     mock_response = MagicMock(spec=httpx.Response)
@@ -60,7 +61,7 @@ def test_comms_send_success(mock_daemon_client):
     )
 
 
-def test_comms_channels_list(mock_daemon_client):
+def test_comms_channels_list(mock_daemon_client: MagicMock) -> None:
     runner = CliRunner()
 
     mock_response = MagicMock(spec=httpx.Response)
@@ -78,7 +79,7 @@ def test_comms_channels_list(mock_daemon_client):
     assert "cc_123" in result.output
 
 
-def test_comms_channels_add_telegram(mock_daemon_client):
+def test_comms_channels_add_telegram(mock_daemon_client: MagicMock) -> None:
     runner = CliRunner()
 
     mock_response = MagicMock(spec=httpx.Response)
@@ -104,7 +105,7 @@ def test_comms_channels_add_telegram(mock_daemon_client):
     )
 
 
-def test_comms_channels_add_slack(mock_daemon_client):
+def test_comms_channels_add_slack(mock_daemon_client: MagicMock) -> None:
     runner = CliRunner()
 
     mock_response = MagicMock(spec=httpx.Response)
@@ -156,7 +157,7 @@ def test_comms_channels_add_discord(mock_daemon_client: MagicMock) -> None:
     )
 
 
-def test_comms_channels_add_teams(mock_daemon_client):
+def test_comms_channels_add_teams(mock_daemon_client: MagicMock) -> None:
     runner = CliRunner()
 
     mock_response = MagicMock(spec=httpx.Response)
@@ -182,7 +183,7 @@ def test_comms_channels_add_teams(mock_daemon_client):
     )
 
 
-def test_comms_channels_add_email(mock_daemon_client):
+def test_comms_channels_add_email(mock_daemon_client: MagicMock) -> None:
     runner = CliRunner()
 
     mock_response = MagicMock(spec=httpx.Response)
@@ -214,7 +215,7 @@ def test_comms_channels_add_email(mock_daemon_client):
     )
 
 
-def test_comms_channels_add_sms(mock_daemon_client):
+def test_comms_channels_add_sms(mock_daemon_client: MagicMock) -> None:
     runner = CliRunner()
 
     mock_response = MagicMock(spec=httpx.Response)
@@ -240,7 +241,7 @@ def test_comms_channels_add_sms(mock_daemon_client):
     )
 
 
-def test_comms_channels_add_gobby_chat(mock_daemon_client):
+def test_comms_channels_add_gobby_chat(mock_daemon_client: MagicMock) -> None:
     runner = CliRunner()
 
     mock_response = MagicMock(spec=httpx.Response)
@@ -263,7 +264,9 @@ def test_comms_channels_add_gobby_chat(mock_daemon_client):
     )
 
 
-def test_comms_channels_add_custom_rejects_non_object_config(mock_daemon_client):
+def test_comms_channels_add_custom_rejects_non_object_config(
+    mock_daemon_client: MagicMock,
+) -> None:
     runner = CliRunner()
 
     result = runner.invoke(comms, ["channels", "add", "custom", "bad-custom"], input="[]\n")

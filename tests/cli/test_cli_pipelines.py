@@ -4,6 +4,7 @@ TDD tests for the pipelines CLI group.
 """
 
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -14,6 +15,12 @@ from click.testing import CliRunner
 from gobby.cli import cli
 from gobby.workflows.definitions import PipelineDefinition, PipelineStep
 from gobby.workflows.loader_cache import DiscoveredWorkflow
+from gobby.workflows.pipeline_state import (
+    ExecutionStatus,
+    PipelineExecution,
+    StepExecution,
+    StepStatus,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -25,7 +32,7 @@ def runner() -> CliRunner:
 
 
 @pytest.fixture
-def mock_pipeline():
+def mock_pipeline() -> PipelineDefinition:
     """Create a mock pipeline definition."""
     return PipelineDefinition(
         name="deploy",
@@ -39,7 +46,9 @@ def mock_pipeline():
 
 
 @pytest.fixture
-def mock_discovered_pipelines(mock_pipeline):
+def mock_discovered_pipelines(
+    mock_pipeline: PipelineDefinition,
+) -> list[DiscoveredWorkflow]:
     """Create mock discovered pipelines."""
     pipeline2 = PipelineDefinition(
         name="test",
@@ -67,7 +76,7 @@ def mock_discovered_pipelines(mock_pipeline):
 class TestPipelinesCLIRegistration:
     """Tests for pipelines CLI command registration."""
 
-    def test_pipelines_command_exists(self, runner) -> None:
+    def test_pipelines_command_exists(self, runner: CliRunner) -> None:
         """Verify pipelines command is registered."""
         assert "pipelines" in cli.commands
         result = runner.invoke(cli, ["pipelines", "--help"])
@@ -75,7 +84,7 @@ class TestPipelinesCLIRegistration:
         assert result.exit_code == 0
         assert "pipelines" in result.output.lower()
 
-    def test_pipelines_subcommands_exist(self, runner) -> None:
+    def test_pipelines_subcommands_exist(self, runner: CliRunner) -> None:
         """Verify expected subcommands are registered."""
         assert "pipelines" in cli.commands
         result = runner.invoke(cli, ["pipelines", "--help"])
@@ -89,7 +98,9 @@ class TestPipelinesCLIRegistration:
 class TestPipelinesList:
     """Tests for gobby pipelines list command."""
 
-    def test_list_discovers_pipelines(self, runner, mock_discovered_pipelines) -> None:
+    def test_list_discovers_pipelines(
+        self, runner: CliRunner, mock_discovered_pipelines: list[DiscoveredWorkflow]
+    ) -> None:
         """Verify 'gobby pipelines list' calls discover_pipelines."""
         mock_loader = MagicMock()
         mock_loader.discover_pipelines_sync.return_value = mock_discovered_pipelines
@@ -103,7 +114,9 @@ class TestPipelinesList:
             assert result.exit_code == 0
             mock_loader.discover_pipelines_sync.assert_called_once_with("project-uuid")
 
-    def test_list_outputs_pipeline_names(self, runner, mock_discovered_pipelines) -> None:
+    def test_list_outputs_pipeline_names(
+        self, runner: CliRunner, mock_discovered_pipelines: list[DiscoveredWorkflow]
+    ) -> None:
         """Verify list command outputs pipeline names."""
         mock_loader = MagicMock()
         mock_loader.discover_pipelines_sync.return_value = mock_discovered_pipelines
@@ -115,7 +128,9 @@ class TestPipelinesList:
             assert "deploy" in result.output
             assert "test" in result.output
 
-    def test_list_shows_descriptions(self, runner, mock_discovered_pipelines) -> None:
+    def test_list_shows_descriptions(
+        self, runner: CliRunner, mock_discovered_pipelines: list[DiscoveredWorkflow]
+    ) -> None:
         """Verify list command shows pipeline descriptions."""
         mock_loader = MagicMock()
         mock_loader.discover_pipelines_sync.return_value = mock_discovered_pipelines
@@ -126,7 +141,9 @@ class TestPipelinesList:
             assert result.exit_code == 0
             assert "Deploy to production" in result.output
 
-    def test_list_shows_source(self, runner, mock_discovered_pipelines) -> None:
+    def test_list_shows_source(
+        self, runner: CliRunner, mock_discovered_pipelines: list[DiscoveredWorkflow]
+    ) -> None:
         """Verify list command indicates project vs global source."""
         mock_loader = MagicMock()
         mock_loader.discover_pipelines_sync.return_value = mock_discovered_pipelines
@@ -137,7 +154,7 @@ class TestPipelinesList:
             assert result.exit_code == 0
             assert "project" in result.output.lower()
 
-    def test_list_empty_result(self, runner) -> None:
+    def test_list_empty_result(self, runner: CliRunner) -> None:
         """Verify list handles no pipelines found."""
         mock_loader = MagicMock()
         mock_loader.discover_pipelines_sync.return_value = []
@@ -148,7 +165,9 @@ class TestPipelinesList:
             assert result.exit_code == 0
             assert "no pipeline" in result.output.lower() or result.output.strip() == ""
 
-    def test_list_json_format(self, runner, mock_discovered_pipelines) -> None:
+    def test_list_json_format(
+        self, runner: CliRunner, mock_discovered_pipelines: list[DiscoveredWorkflow]
+    ) -> None:
         """Verify list command supports --json output."""
         import json
 
@@ -167,7 +186,9 @@ class TestPipelinesList:
 class TestPipelinesShow:
     """Tests for gobby pipelines show command."""
 
-    def test_show_loads_pipeline(self, runner, mock_pipeline) -> None:
+    def test_show_loads_pipeline(
+        self, runner: CliRunner, mock_pipeline: PipelineDefinition
+    ) -> None:
         """Verify 'gobby pipelines show <name>' loads the pipeline."""
         mock_loader = MagicMock()
         mock_loader.load_pipeline_sync.return_value = mock_pipeline
@@ -181,7 +202,9 @@ class TestPipelinesShow:
             assert result.exit_code == 0
             mock_loader.load_pipeline_sync.assert_called_once_with("deploy", "project-uuid")
 
-    def test_show_outputs_pipeline_details(self, runner, mock_pipeline) -> None:
+    def test_show_outputs_pipeline_details(
+        self, runner: CliRunner, mock_pipeline: PipelineDefinition
+    ) -> None:
         """Verify show command outputs pipeline definition details."""
         mock_loader = MagicMock()
         mock_loader.load_pipeline_sync.return_value = mock_pipeline
@@ -193,7 +216,7 @@ class TestPipelinesShow:
             assert "deploy" in result.output
             assert "Deploy to production" in result.output
 
-    def test_show_outputs_steps(self, runner, mock_pipeline) -> None:
+    def test_show_outputs_steps(self, runner: CliRunner, mock_pipeline: PipelineDefinition) -> None:
         """Verify show command outputs step information."""
         mock_loader = MagicMock()
         mock_loader.load_pipeline_sync.return_value = mock_pipeline
@@ -205,7 +228,7 @@ class TestPipelinesShow:
             assert "build" in result.output
             assert "test" in result.output
 
-    def test_show_not_found(self, runner) -> None:
+    def test_show_not_found(self, runner: CliRunner) -> None:
         """Verify show returns error for nonexistent pipeline."""
         mock_loader = MagicMock()
         mock_loader.load_pipeline_sync.return_value = None
@@ -215,7 +238,7 @@ class TestPipelinesShow:
 
             assert result.exit_code != 0 or "not found" in result.output.lower()
 
-    def test_show_json_format(self, runner, mock_pipeline) -> None:
+    def test_show_json_format(self, runner: CliRunner, mock_pipeline: PipelineDefinition) -> None:
         """Verify show command supports --json output."""
         import json
 
@@ -240,26 +263,29 @@ class TestPipelinesRun:
             yield
 
     @pytest.fixture
-    def mock_execution(self):
+    def mock_execution(self) -> PipelineExecution:
         """Create a mock pipeline execution."""
-        from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
-
         return PipelineExecution(
             id="pe-abc123",
             pipeline_name="deploy",
             project_id="proj-1",
             status=ExecutionStatus.COMPLETED,
-            created_at="2026-01-01T00:00:00Z",
-            updated_at="2026-01-01T00:01:00Z",
+            created_at=datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+            updated_at=datetime(2026, 1, 1, 0, 1, tzinfo=UTC),
             outputs_json='{"result": "success"}',
         )
 
-    def test_run_subcommand_exists(self, runner) -> None:
+    def test_run_subcommand_exists(self, runner: CliRunner) -> None:
         """Verify 'run' subcommand is registered."""
         result = runner.invoke(cli, ["pipelines", "--help"])
         assert "run" in result.output
 
-    def test_run_loads_and_executes(self, runner, mock_pipeline, mock_execution) -> None:
+    def test_run_loads_and_executes(
+        self,
+        runner: CliRunner,
+        mock_pipeline: PipelineDefinition,
+        mock_execution: PipelineExecution,
+    ) -> None:
         """Verify 'gobby pipelines run <name>' loads and executes pipeline."""
         mock_loader = MagicMock()
         mock_loader.load_pipeline_sync.return_value = mock_pipeline
@@ -282,7 +308,12 @@ class TestPipelinesRun:
             assert mock_executor.execute.call_count == 1
             assert mock_executor.execute.call_args is not None
 
-    def test_run_parses_inputs(self, runner, mock_pipeline, mock_execution) -> None:
+    def test_run_parses_inputs(
+        self,
+        runner: CliRunner,
+        mock_pipeline: PipelineDefinition,
+        mock_execution: PipelineExecution,
+    ) -> None:
         """Verify '-i key=value' parses inputs correctly."""
         mock_loader = MagicMock()
         mock_loader.load_pipeline_sync.return_value = mock_pipeline
@@ -306,7 +337,12 @@ class TestPipelinesRun:
             assert inputs.get("env") == "prod"
             assert inputs.get("version") == "1.0"
 
-    def test_run_outputs_execution_id(self, runner, mock_pipeline, mock_execution) -> None:
+    def test_run_outputs_execution_id(
+        self,
+        runner: CliRunner,
+        mock_pipeline: PipelineDefinition,
+        mock_execution: PipelineExecution,
+    ) -> None:
         """Verify run command outputs execution_id and status."""
         mock_loader = MagicMock()
         mock_loader.load_pipeline_sync.return_value = mock_pipeline
@@ -324,7 +360,9 @@ class TestPipelinesRun:
             assert "pe-abc123" in result.output
             assert "completed" in result.output.lower()
 
-    def test_run_handles_approval_required(self, runner, mock_pipeline) -> None:
+    def test_run_handles_approval_required(
+        self, runner: CliRunner, mock_pipeline: PipelineDefinition
+    ) -> None:
         """Verify run command handles ApprovalRequired with token display."""
         from gobby.workflows.pipeline_state import ApprovalRequired
 
@@ -351,7 +389,7 @@ class TestPipelinesRun:
             assert "approval" in result.output.lower()
             assert "approval-token-xyz" in result.output
 
-    def test_run_pipeline_not_found(self, runner) -> None:
+    def test_run_pipeline_not_found(self, runner: CliRunner) -> None:
         """Verify run returns error for nonexistent pipeline."""
         mock_loader = MagicMock()
         mock_loader.load_pipeline_sync.return_value = None
@@ -361,7 +399,9 @@ class TestPipelinesRun:
 
             assert result.exit_code != 0 or "not found" in result.output.lower()
 
-    def test_run_pipeline_disabled(self, runner, mock_pipeline) -> None:
+    def test_run_pipeline_disabled(
+        self, runner: CliRunner, mock_pipeline: PipelineDefinition
+    ) -> None:
         """Disabled pipelines fail before daemon or local execution."""
         mock_pipeline.enabled = False
         mock_loader = MagicMock()
@@ -377,7 +417,12 @@ class TestPipelinesRun:
         assert result.exit_code != 0
         assert "Pipeline 'deploy' is disabled" in result.output
 
-    def test_run_json_format(self, runner, mock_pipeline, mock_execution) -> None:
+    def test_run_json_format(
+        self,
+        runner: CliRunner,
+        mock_pipeline: PipelineDefinition,
+        mock_execution: PipelineExecution,
+    ) -> None:
         """Verify run command supports --json output."""
         import json
 
@@ -403,25 +448,21 @@ class TestPipelineRunsShow:
     """Tests for gobby pipelines runs show command."""
 
     @pytest.fixture
-    def mock_execution(self):
+    def mock_execution(self) -> PipelineExecution:
         """Create a mock pipeline execution."""
-        from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
-
         return PipelineExecution(
             id="pe-abc123",
             pipeline_name="deploy",
             project_id="proj-1",
             status=ExecutionStatus.RUNNING,
-            created_at="2026-01-01T00:00:00Z",
-            updated_at="2026-01-01T00:01:00Z",
+            created_at=datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+            updated_at=datetime(2026, 1, 1, 0, 1, tzinfo=UTC),
             inputs_json='{"env": "prod"}',
         )
 
     @pytest.fixture
-    def mock_step_executions(self):
+    def mock_step_executions(self) -> list[StepExecution]:
         """Create mock step executions."""
-        from gobby.workflows.pipeline_state import StepExecution, StepStatus
-
         return [
             StepExecution(
                 id=1,
@@ -437,18 +478,23 @@ class TestPipelineRunsShow:
             ),
         ]
 
-    def test_runs_subcommand_exists(self, runner) -> None:
+    def test_runs_subcommand_exists(self, runner: CliRunner) -> None:
         """Verify 'runs' subcommand is registered."""
         result = runner.invoke(cli, ["pipelines", "--help"])
         assert "runs" in result.output
 
-    def test_old_status_subcommand_is_removed(self, runner) -> None:
+    def test_old_status_subcommand_is_removed(self, runner: CliRunner) -> None:
         """Verify old 'status' subcommand is not registered."""
         result = runner.invoke(cli, ["pipelines", "status", "pe-abc123"])
         assert result.exit_code == 2
         assert "No such command" in result.output
 
-    def test_status_fetches_execution(self, runner, mock_execution, mock_step_executions) -> None:
+    def test_status_fetches_execution(
+        self,
+        runner: CliRunner,
+        mock_execution: PipelineExecution,
+        mock_step_executions: list[StepExecution],
+    ) -> None:
         """Verify 'gobby pipelines runs show <id>' fetches execution."""
         mock_manager = MagicMock()
         mock_manager.get_execution.return_value = mock_execution
@@ -461,7 +507,10 @@ class TestPipelineRunsShow:
             mock_manager.get_execution.assert_called_once_with("pe-abc123")
 
     def test_status_displays_execution_details(
-        self, runner, mock_execution, mock_step_executions
+        self,
+        runner: CliRunner,
+        mock_execution: PipelineExecution,
+        mock_step_executions: list[StepExecution],
     ) -> None:
         """Verify status command displays execution details."""
         mock_manager = MagicMock()
@@ -476,7 +525,12 @@ class TestPipelineRunsShow:
             assert "deploy" in result.output
             assert "running" in result.output.lower()
 
-    def test_status_shows_step_statuses(self, runner, mock_execution, mock_step_executions) -> None:
+    def test_status_shows_step_statuses(
+        self,
+        runner: CliRunner,
+        mock_execution: PipelineExecution,
+        mock_step_executions: list[StepExecution],
+    ) -> None:
         """Verify status command shows step statuses."""
         mock_manager = MagicMock()
         mock_manager.get_execution.return_value = mock_execution
@@ -490,7 +544,7 @@ class TestPipelineRunsShow:
             assert "test" in result.output
             assert "completed" in result.output.lower()
 
-    def test_status_not_found(self, runner) -> None:
+    def test_status_not_found(self, runner: CliRunner) -> None:
         """Verify status returns error for nonexistent execution."""
         mock_manager = MagicMock()
         mock_manager.get_execution.return_value = None
@@ -500,7 +554,12 @@ class TestPipelineRunsShow:
 
             assert result.exit_code != 0 or "not found" in result.output.lower()
 
-    def test_status_json_format(self, runner, mock_execution, mock_step_executions) -> None:
+    def test_status_json_format(
+        self,
+        runner: CliRunner,
+        mock_execution: PipelineExecution,
+        mock_step_executions: list[StepExecution],
+    ) -> None:
         """Verify status command supports --json output."""
         import json
 
@@ -530,7 +589,7 @@ class TestPipelinesDaemonApproval:
     )
     def test_approval_commands_prefer_healthy_daemon(
         self,
-        runner,
+        runner: CliRunner,
         action: str,
         expected_path: str,
         expected_text: str,
@@ -586,9 +645,8 @@ class TestPipelinesDaemonApproval:
         assert "pe-daemon" in result.output
         get_local_executor.assert_not_called()
 
-    def test_approve_falls_back_to_local_when_daemon_unreachable(self, runner) -> None:
+    def test_approve_falls_back_to_local_when_daemon_unreachable(self, runner: CliRunner) -> None:
         """Verify local approval is used only after the daemon route is unreachable."""
-        from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
 
         class FakeDaemonClient:
             def __init__(
@@ -620,8 +678,8 @@ class TestPipelinesDaemonApproval:
             pipeline_name="deploy",
             project_id="proj-1",
             status=ExecutionStatus.COMPLETED,
-            created_at="2026-01-01T00:00:00Z",
-            updated_at="2026-01-01T00:01:00Z",
+            created_at=datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+            updated_at=datetime(2026, 1, 1, 0, 1, tzinfo=UTC),
         )
         mock_executor.approve = AsyncMock(return_value=mock_execution)
 
@@ -646,23 +704,21 @@ class TestPipelinesApprove:
         with patch("gobby.cli.pipelines._try_daemon_approval", return_value=None):
             yield
 
-    def test_approve_subcommand_exists(self, runner) -> None:
+    def test_approve_subcommand_exists(self, runner: CliRunner) -> None:
         """Verify 'approve' subcommand is registered."""
         result = runner.invoke(cli, ["pipelines", "--help"])
         assert "approve" in result.output
 
-    def test_approve_calls_executor(self, runner) -> None:
+    def test_approve_calls_executor(self, runner: CliRunner) -> None:
         """Verify 'gobby pipelines approve <token>' calls executor.approve()."""
-        from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
-
         mock_executor = MagicMock()
         mock_execution = PipelineExecution(
             id="pe-abc123",
             pipeline_name="deploy",
             project_id="proj-1",
             status=ExecutionStatus.COMPLETED,
-            created_at="2026-01-01T00:00:00Z",
-            updated_at="2026-01-01T00:01:00Z",
+            created_at=datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+            updated_at=datetime(2026, 1, 1, 0, 1, tzinfo=UTC),
         )
         mock_executor.approve = AsyncMock(return_value=mock_execution)
 
@@ -680,18 +736,16 @@ class TestPipelinesApprove:
                 "approval-token-xyz", approved_by="local-user"
             )
 
-    def test_approve_shows_result(self, runner) -> None:
+    def test_approve_shows_result(self, runner: CliRunner) -> None:
         """Verify approve command shows execution result."""
-        from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
-
         mock_executor = MagicMock()
         mock_execution = PipelineExecution(
             id="pe-abc123",
             pipeline_name="deploy",
             project_id="proj-1",
             status=ExecutionStatus.COMPLETED,
-            created_at="2026-01-01T00:00:00Z",
-            updated_at="2026-01-01T00:01:00Z",
+            created_at=datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+            updated_at=datetime(2026, 1, 1, 0, 1, tzinfo=UTC),
         )
         mock_executor.approve = AsyncMock(return_value=mock_execution)
 
@@ -702,7 +756,7 @@ class TestPipelinesApprove:
             assert "pe-abc123" in result.output
             assert "completed" in result.output.lower()
 
-    def test_approve_invalid_token(self, runner) -> None:
+    def test_approve_invalid_token(self, runner: CliRunner) -> None:
         """Verify approve handles invalid token."""
         mock_executor = MagicMock()
         mock_executor.approve = AsyncMock(side_effect=ValueError("Invalid token"))
@@ -712,11 +766,9 @@ class TestPipelinesApprove:
 
             assert result.exit_code != 0 or "invalid" in result.output.lower()
 
-    def test_approve_json_format(self, runner) -> None:
+    def test_approve_json_format(self, runner: CliRunner) -> None:
         """Verify approve command supports --json output."""
         import json
-
-        from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
 
         mock_executor = MagicMock()
         mock_execution = PipelineExecution(
@@ -724,8 +776,8 @@ class TestPipelinesApprove:
             pipeline_name="deploy",
             project_id="proj-1",
             status=ExecutionStatus.COMPLETED,
-            created_at="2026-01-01T00:00:00Z",
-            updated_at="2026-01-01T00:01:00Z",
+            created_at=datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+            updated_at=datetime(2026, 1, 1, 0, 1, tzinfo=UTC),
         )
         mock_executor.approve = AsyncMock(return_value=mock_execution)
 
@@ -746,23 +798,21 @@ class TestPipelinesReject:
         with patch("gobby.cli.pipelines._try_daemon_approval", return_value=None):
             yield
 
-    def test_reject_subcommand_exists(self, runner) -> None:
+    def test_reject_subcommand_exists(self, runner: CliRunner) -> None:
         """Verify 'reject' subcommand is registered."""
         result = runner.invoke(cli, ["pipelines", "--help"])
         assert "reject" in result.output
 
-    def test_reject_calls_executor(self, runner) -> None:
+    def test_reject_calls_executor(self, runner: CliRunner) -> None:
         """Verify 'gobby pipelines reject <token>' calls executor.reject()."""
-        from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
-
         mock_executor = MagicMock()
         mock_execution = PipelineExecution(
             id="pe-abc123",
             pipeline_name="deploy",
             project_id="proj-1",
             status=ExecutionStatus.FAILED,
-            created_at="2026-01-01T00:00:00Z",
-            updated_at="2026-01-01T00:01:00Z",
+            created_at=datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+            updated_at=datetime(2026, 1, 1, 0, 1, tzinfo=UTC),
         )
         mock_executor.reject = AsyncMock(return_value=mock_execution)
 
@@ -780,18 +830,16 @@ class TestPipelinesReject:
                 "approval-token-xyz", rejected_by="local-user"
             )
 
-    def test_reject_shows_result(self, runner) -> None:
+    def test_reject_shows_result(self, runner: CliRunner) -> None:
         """Verify reject command shows execution result."""
-        from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
-
         mock_executor = MagicMock()
         mock_execution = PipelineExecution(
             id="pe-abc123",
             pipeline_name="deploy",
             project_id="proj-1",
             status=ExecutionStatus.FAILED,
-            created_at="2026-01-01T00:00:00Z",
-            updated_at="2026-01-01T00:01:00Z",
+            created_at=datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+            updated_at=datetime(2026, 1, 1, 0, 1, tzinfo=UTC),
         )
         mock_executor.reject = AsyncMock(return_value=mock_execution)
 
@@ -801,7 +849,7 @@ class TestPipelinesReject:
             assert result.exit_code == 0
             assert "pe-abc123" in result.output
 
-    def test_reject_invalid_token(self, runner) -> None:
+    def test_reject_invalid_token(self, runner: CliRunner) -> None:
         """Verify reject handles invalid token."""
         mock_executor = MagicMock()
         mock_executor.reject = AsyncMock(side_effect=ValueError("Invalid token"))
@@ -811,11 +859,9 @@ class TestPipelinesReject:
 
             assert result.exit_code != 0 or "invalid" in result.output.lower()
 
-    def test_reject_json_format(self, runner) -> None:
+    def test_reject_json_format(self, runner: CliRunner) -> None:
         """Verify reject command supports --json output."""
         import json
-
-        from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
 
         mock_executor = MagicMock()
         mock_execution = PipelineExecution(
@@ -823,8 +869,8 @@ class TestPipelinesReject:
             pipeline_name="deploy",
             project_id="proj-1",
             status=ExecutionStatus.FAILED,
-            created_at="2026-01-01T00:00:00Z",
-            updated_at="2026-01-01T00:01:00Z",
+            created_at=datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+            updated_at=datetime(2026, 1, 1, 0, 1, tzinfo=UTC),
         )
         mock_executor.reject = AsyncMock(return_value=mock_execution)
 
@@ -841,43 +887,43 @@ class TestPipelinesHistory:
     """Tests for gobby pipelines history command."""
 
     @pytest.fixture
-    def mock_executions(self):
+    def mock_executions(self) -> list[PipelineExecution]:
         """Create mock pipeline executions."""
-        from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
-
         return [
             PipelineExecution(
                 id="pe-abc123",
                 pipeline_name="deploy",
                 project_id="proj-1",
                 status=ExecutionStatus.COMPLETED,
-                created_at="2026-01-01T00:00:00Z",
-                updated_at="2026-01-01T00:01:00Z",
+                created_at=datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+                updated_at=datetime(2026, 1, 1, 0, 1, tzinfo=UTC),
             ),
             PipelineExecution(
                 id="pe-def456",
                 pipeline_name="deploy",
                 project_id="proj-1",
                 status=ExecutionStatus.FAILED,
-                created_at="2026-01-02T00:00:00Z",
-                updated_at="2026-01-02T00:01:00Z",
+                created_at=datetime(2026, 1, 2, 0, 0, tzinfo=UTC),
+                updated_at=datetime(2026, 1, 2, 0, 1, tzinfo=UTC),
             ),
             PipelineExecution(
                 id="pe-ghi789",
                 pipeline_name="deploy",
                 project_id="proj-1",
                 status=ExecutionStatus.RUNNING,
-                created_at="2026-01-03T00:00:00Z",
-                updated_at="2026-01-03T00:01:00Z",
+                created_at=datetime(2026, 1, 3, 0, 0, tzinfo=UTC),
+                updated_at=datetime(2026, 1, 3, 0, 1, tzinfo=UTC),
             ),
         ]
 
-    def test_history_subcommand_exists(self, runner) -> None:
+    def test_history_subcommand_exists(self, runner: CliRunner) -> None:
         """Verify 'history' subcommand is registered."""
         result = runner.invoke(cli, ["pipelines", "--help"])
         assert "history" in result.output
 
-    def test_history_lists_executions(self, runner, mock_executions) -> None:
+    def test_history_lists_executions(
+        self, runner: CliRunner, mock_executions: list[PipelineExecution]
+    ) -> None:
         """Verify 'gobby pipelines history <name>' lists executions."""
         mock_manager = MagicMock()
         mock_manager.list_executions.return_value = mock_executions
@@ -890,7 +936,9 @@ class TestPipelinesHistory:
             call_kwargs = mock_manager.list_executions.call_args
             assert call_kwargs.kwargs.get("pipeline_name") == "deploy"
 
-    def test_history_shows_id_status_created(self, runner, mock_executions) -> None:
+    def test_history_shows_id_status_created(
+        self, runner: CliRunner, mock_executions: list[PipelineExecution]
+    ) -> None:
         """Verify history shows id, status, and created_at."""
         mock_manager = MagicMock()
         mock_manager.list_executions.return_value = mock_executions
@@ -904,7 +952,9 @@ class TestPipelinesHistory:
             assert "completed" in result.output.lower()
             assert "failed" in result.output.lower()
 
-    def test_history_supports_limit(self, runner, mock_executions) -> None:
+    def test_history_supports_limit(
+        self, runner: CliRunner, mock_executions: list[PipelineExecution]
+    ) -> None:
         """Verify history supports --limit flag."""
         mock_manager = MagicMock()
         mock_manager.list_executions.return_value = mock_executions[:2]
@@ -916,7 +966,7 @@ class TestPipelinesHistory:
             call_kwargs = mock_manager.list_executions.call_args
             assert call_kwargs.kwargs.get("limit") == 2
 
-    def test_history_empty_result(self, runner) -> None:
+    def test_history_empty_result(self, runner: CliRunner) -> None:
         """Verify history handles no executions gracefully."""
         mock_manager = MagicMock()
         mock_manager.list_executions.return_value = []
@@ -927,7 +977,9 @@ class TestPipelinesHistory:
             assert result.exit_code == 0
             assert "no executions" in result.output.lower() or "0" in result.output
 
-    def test_history_json_format(self, runner, mock_executions) -> None:
+    def test_history_json_format(
+        self, runner: CliRunner, mock_executions: list[PipelineExecution]
+    ) -> None:
         """Verify history command supports --json output."""
         import json
 
@@ -947,7 +999,9 @@ class TestPipelinesHistory:
             assert data["limit"] == 20
             assert data["offset"] == 0
 
-    def test_history_offset_passes_through(self, runner, mock_executions) -> None:
+    def test_history_offset_passes_through(
+        self, runner: CliRunner, mock_executions: list[PipelineExecution]
+    ) -> None:
         """--offset flag is forwarded to list_executions and shown in JSON."""
         import json
 
@@ -967,7 +1021,9 @@ class TestPipelinesHistory:
             call_kwargs = mock_manager.list_executions.call_args.kwargs
             assert call_kwargs["offset"] == 10
 
-    def test_history_text_footer_shows_range(self, runner, mock_executions) -> None:
+    def test_history_text_footer_shows_range(
+        self, runner: CliRunner, mock_executions: list[PipelineExecution]
+    ) -> None:
         """Plain-text history output includes a 'Showing X-Y of N' footer."""
         mock_manager = MagicMock()
         mock_manager.list_executions.return_value = mock_executions
@@ -984,41 +1040,41 @@ class TestPipelineRunsList:
     """Tests for gobby pipelines runs list command."""
 
     @pytest.fixture
-    def mock_executions(self):
+    def mock_executions(self) -> list[PipelineExecution]:
         """Create mock pipeline executions for list tests."""
-        from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
-
         return [
             PipelineExecution(
                 id="pe-aaa111",
                 pipeline_name="deploy",
                 project_id="proj-1",
                 status=ExecutionStatus.COMPLETED,
-                created_at="2026-01-01T00:00:00Z",
-                updated_at="2026-01-01T00:01:00Z",
+                created_at=datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+                updated_at=datetime(2026, 1, 1, 0, 1, tzinfo=UTC),
             ),
             PipelineExecution(
                 id="pe-bbb222",
                 pipeline_name="test-suite",
                 project_id="proj-1",
                 status=ExecutionStatus.RUNNING,
-                created_at="2026-01-02T00:00:00Z",
-                updated_at="2026-01-02T00:01:00Z",
+                created_at=datetime(2026, 1, 2, 0, 0, tzinfo=UTC),
+                updated_at=datetime(2026, 1, 2, 0, 1, tzinfo=UTC),
             ),
         ]
 
-    def test_runs_subcommand_exists(self, runner) -> None:
+    def test_runs_subcommand_exists(self, runner: CliRunner) -> None:
         """Verify 'runs' subcommand is registered."""
         result = runner.invoke(cli, ["pipelines", "--help"])
         assert "runs" in result.output
 
-    def test_old_executions_subcommand_is_removed(self, runner) -> None:
+    def test_old_executions_subcommand_is_removed(self, runner: CliRunner) -> None:
         """Verify old 'executions' subcommand is not registered."""
         result = runner.invoke(cli, ["pipelines", "executions"])
         assert result.exit_code == 2
         assert "No such command" in result.output
 
-    def test_executions_lists_all(self, runner, mock_executions) -> None:
+    def test_executions_lists_all(
+        self, runner: CliRunner, mock_executions: list[PipelineExecution]
+    ) -> None:
         """Verify 'gobby pipelines runs list' lists executions."""
         mock_manager = MagicMock()
         mock_manager.list_executions.return_value = mock_executions
@@ -1032,7 +1088,9 @@ class TestPipelineRunsList:
             assert "pe-bbb222" in result.output
             assert "deploy" in result.output
 
-    def test_executions_status_filter(self, runner, mock_executions) -> None:
+    def test_executions_status_filter(
+        self, runner: CliRunner, mock_executions: list[PipelineExecution]
+    ) -> None:
         """Verify --status flag filters executions."""
         mock_manager = MagicMock()
         mock_manager.list_executions.return_value = [mock_executions[0]]
@@ -1047,7 +1105,9 @@ class TestPipelineRunsList:
 
             assert call_kwargs.kwargs.get("status") == ExecutionStatus.COMPLETED
 
-    def test_executions_name_filter(self, runner, mock_executions) -> None:
+    def test_executions_name_filter(
+        self, runner: CliRunner, mock_executions: list[PipelineExecution]
+    ) -> None:
         """Verify --name filters by pipeline definition name."""
         mock_manager = MagicMock()
         mock_manager.list_executions.return_value = [mock_executions[0]]
@@ -1060,7 +1120,9 @@ class TestPipelineRunsList:
             call_kwargs = mock_manager.list_executions.call_args
             assert call_kwargs.kwargs.get("pipeline_name") == "deploy"
 
-    def test_executions_json_output(self, runner, mock_executions) -> None:
+    def test_executions_json_output(
+        self, runner: CliRunner, mock_executions: list[PipelineExecution]
+    ) -> None:
         """Verify --json flag produces JSON output."""
         import json
 
@@ -1083,7 +1145,9 @@ class TestPipelineRunsList:
             assert data["offset"] == 0
             assert data["status_summary"] == {"completed": 1, "running": 1}
 
-    def test_runs_list_offset_passes_through(self, runner, mock_executions) -> None:
+    def test_runs_list_offset_passes_through(
+        self, runner: CliRunner, mock_executions: list[PipelineExecution]
+    ) -> None:
         """--offset flag is forwarded to list_executions and surfaced in JSON."""
         import json
 
@@ -1106,7 +1170,7 @@ class TestPipelineRunsList:
             assert call_kwargs["offset"] == 10
             assert call_kwargs["limit"] == 5
 
-    def test_executions_empty(self, runner) -> None:
+    def test_executions_empty(self, runner: CliRunner) -> None:
         """Verify executions handles no results."""
         mock_manager = MagicMock()
         mock_manager.list_executions.return_value = []
@@ -1118,7 +1182,7 @@ class TestPipelineRunsList:
             assert result.exit_code == 0
             assert "no executions" in result.output.lower()
 
-    def test_executions_invalid_status(self, runner) -> None:
+    def test_executions_invalid_status(self, runner: CliRunner) -> None:
         """Verify invalid --status is rejected."""
         mock_manager = MagicMock()
 
@@ -1133,27 +1197,27 @@ class TestPipelinesSearch:
     """Tests for gobby pipelines search command."""
 
     @pytest.fixture
-    def mock_search_results(self):
+    def mock_search_results(self) -> list[PipelineExecution]:
         """Create mock search results."""
-        from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
-
         return [
             PipelineExecution(
                 id="pe-search1",
                 pipeline_name="deploy-prod",
                 project_id="proj-1",
                 status=ExecutionStatus.COMPLETED,
-                created_at="2026-01-01T00:00:00Z",
-                updated_at="2026-01-01T00:01:00Z",
+                created_at=datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+                updated_at=datetime(2026, 1, 1, 0, 1, tzinfo=UTC),
             ),
         ]
 
-    def test_search_subcommand_exists(self, runner) -> None:
+    def test_search_subcommand_exists(self, runner: CliRunner) -> None:
         """Verify 'search' subcommand is registered."""
         result = runner.invoke(cli, ["pipelines", "--help"])
         assert "search" in result.output
 
-    def test_search_basic(self, runner, mock_search_results) -> None:
+    def test_search_basic(
+        self, runner: CliRunner, mock_search_results: list[PipelineExecution]
+    ) -> None:
         """Verify basic search works."""
         mock_manager = MagicMock()
         mock_manager.search_executions.return_value = mock_search_results
@@ -1166,7 +1230,9 @@ class TestPipelinesSearch:
             assert "deploy-prod" in result.output
             mock_manager.search_executions.assert_called_once()
 
-    def test_search_json_output(self, runner, mock_search_results) -> None:
+    def test_search_json_output(
+        self, runner: CliRunner, mock_search_results: list[PipelineExecution]
+    ) -> None:
         """Verify --json flag produces JSON output."""
         import json
 
@@ -1184,7 +1250,9 @@ class TestPipelinesSearch:
             assert data["offset"] == 0
             assert data["query"] == "deploy"
 
-    def test_search_offset_passes_through(self, runner, mock_search_results) -> None:
+    def test_search_offset_passes_through(
+        self, runner: CliRunner, mock_search_results: list[PipelineExecution]
+    ) -> None:
         """--offset flag is forwarded to search_executions."""
         mock_manager = MagicMock()
         mock_manager.search_executions.return_value = mock_search_results
@@ -1198,7 +1266,7 @@ class TestPipelinesSearch:
             call_kwargs = mock_manager.search_executions.call_args.kwargs
             assert call_kwargs["offset"] == 4
 
-    def test_search_no_results(self, runner) -> None:
+    def test_search_no_results(self, runner: CliRunner) -> None:
         """Verify search handles no results."""
         mock_manager = MagicMock()
         mock_manager.search_executions.return_value = []
@@ -1209,7 +1277,9 @@ class TestPipelinesSearch:
             assert result.exit_code == 0
             assert "no executions" in result.output.lower()
 
-    def test_search_no_errors_flag(self, runner, mock_search_results) -> None:
+    def test_search_no_errors_flag(
+        self, runner: CliRunner, mock_search_results: list[PipelineExecution]
+    ) -> None:
         """Verify --no-errors flag is passed through."""
         mock_manager = MagicMock()
         mock_manager.search_executions.return_value = mock_search_results
@@ -1225,12 +1295,12 @@ class TestPipelinesSearch:
 class TestPipelinesImport:
     """Tests for gobby pipelines import command."""
 
-    def test_import_subcommand_exists(self, runner) -> None:
+    def test_import_subcommand_exists(self, runner: CliRunner) -> None:
         """Verify 'import' subcommand is registered."""
         result = runner.invoke(cli, ["pipelines", "--help"])
         assert "import" in result.output
 
-    def test_import_reads_lobster_file(self, runner, tmp_path) -> None:
+    def test_import_reads_lobster_file(self, runner: CliRunner, tmp_path: Path) -> None:
         """Verify 'gobby pipelines import path.lobster' reads file."""
         # Create a test .lobster file
         lobster_file = tmp_path / "test.lobster"
@@ -1256,7 +1326,7 @@ steps:
             assert result.exit_code == 0
             assert "imported-pipeline" in result.output
 
-    def test_import_saves_to_workflows_dir(self, runner, tmp_path) -> None:
+    def test_import_saves_to_workflows_dir(self, runner: CliRunner, tmp_path: Path) -> None:
         """Verify import saves converted pipeline to .gobby/workflows/."""
         # Create a test .lobster file
         lobster_file = tmp_path / "deploy.lobster"
@@ -1282,7 +1352,7 @@ steps:
             saved_file = workflows_dir / "deploy.yaml"
             assert saved_file.exists()
 
-    def test_import_converts_external_format(self, runner, tmp_path) -> None:
+    def test_import_converts_external_format(self, runner: CliRunner, tmp_path: Path) -> None:
         """Verify import converts external format to Gobby format."""
         import yaml
 
@@ -1324,7 +1394,7 @@ steps:
             # Verify approval: true -> approval.required: true
             assert saved_content["steps"][2]["approval"]["required"] is True
 
-    def test_import_outputs_saved_path(self, runner, tmp_path) -> None:
+    def test_import_outputs_saved_path(self, runner: CliRunner, tmp_path: Path) -> None:
         """Verify import outputs the saved file path."""
         # Create a test .lobster file
         lobster_file = tmp_path / "test.lobster"
@@ -1348,7 +1418,7 @@ steps:
             assert result.exit_code == 0
             assert "test-pipeline.yaml" in result.output
 
-    def test_import_file_not_found(self, runner, tmp_path) -> None:
+    def test_import_file_not_found(self, runner: CliRunner, tmp_path: Path) -> None:
         """Verify import handles file not found error."""
         # Create project directory structure
         gobby_dir = tmp_path / ".gobby"
@@ -1359,7 +1429,7 @@ steps:
 
             assert result.exit_code != 0 or "not found" in result.output.lower()
 
-    def test_import_no_project(self, runner, tmp_path) -> None:
+    def test_import_no_project(self, runner: CliRunner, tmp_path: Path) -> None:
         """Verify import handles no project context."""
         # Create a test .lobster file
         lobster_file = tmp_path / "test.lobster"
@@ -1377,7 +1447,7 @@ steps:
             # Should fail or warn when no project context
             assert result.exit_code != 0 or "project" in result.output.lower()
 
-    def test_import_custom_output(self, runner, tmp_path) -> None:
+    def test_import_custom_output(self, runner: CliRunner, tmp_path: Path) -> None:
         """Verify import supports --output flag for custom destination."""
         # Create a test .lobster file
         lobster_file = tmp_path / "test.lobster"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -11,16 +12,18 @@ from gobby.gwiki_gateway import (
     INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
     INTERACTIVE_HEALTH_GWIKI_TIMEOUT_SECONDS,
     GwikiCommandError,
+    GwikiGateway,
 )
 from gobby.mcp_proxy.registries import setup_internal_registries
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.wiki import create_wiki_registry
 from gobby.storage.projects import LocalProjectManager
+from gobby.wiki.update_coordinator import WikiUpdateCoordinator
 
 pytestmark = pytest.mark.unit
 
 
-class FakeGateway:
+class FakeGateway(GwikiGateway):
     instances: list[FakeGateway] = []
     next_result: dict[str, Any] | None = None
 
@@ -124,7 +127,7 @@ class FakeGateway:
 
     async def ingest_url(
         self,
-        urls: list[str],
+        urls: Sequence[str],
         *,
         max_age_hours: int | None = None,
     ) -> dict[str, Any]:
@@ -148,8 +151,8 @@ class FakeGateway:
         topic: str | None = None,
         *,
         kind: str | None = None,
-        sources: list[str] | None = None,
-        outline: list[str] | None = None,
+        sources: Sequence[str] | None = None,
+        outline: Sequence[str] | None = None,
         target: str | Path | None = None,
         write_intent: bool = False,
         ai: str | None = None,
@@ -244,10 +247,10 @@ class FakeGateway:
         return {"ok": True, "command": command, "payload": payload, "stderr": ""}
 
 
-class RecordingCoordinator:
+class RecordingCoordinator(WikiUpdateCoordinator):
     instances: list[RecordingCoordinator] = []
 
-    def __init__(self, gateway: FakeGateway) -> None:
+    def __init__(self, gateway: GwikiGateway) -> None:
         self.gateway = gateway
         self.handled: list[dict[str, Any]] = []
         RecordingCoordinator.instances.append(self)
@@ -274,7 +277,8 @@ def _registry() -> InternalToolRegistry:
 def _schema(name: str) -> dict[str, Any]:
     schema = _registry().get_schema(name)
     assert schema is not None
-    return schema["inputSchema"]
+    input_schema: dict[str, Any] = schema["inputSchema"]
+    return input_schema
 
 
 @pytest.mark.asyncio

@@ -98,9 +98,9 @@ class TestBuildMemoryContext:
         mem = Memory(
             id="m1",
             content="- Use TypeScript",
-            memory_type="preference",
-            created_at="2024-01-01",
-            updated_at="2024-01-01",
+            memory_type=MemoryType.PREFERENCE,
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
         )
         result = build_memory_context([mem])
         assert "## Preferences" in result
@@ -115,23 +115,23 @@ class TestBuildMemoryContext:
             Memory(
                 id="m1",
                 content="- dash item",
-                memory_type="preference",
-                created_at="2024-01-01",
-                updated_at="2024-01-01",
+                memory_type=MemoryType.PREFERENCE,
+                created_at=datetime(2024, 1, 1, tzinfo=UTC),
+                updated_at=datetime(2024, 1, 1, tzinfo=UTC),
             ),
             Memory(
                 id="m2",
                 content="* asterisk item",
-                memory_type="preference",
-                created_at="2024-01-01",
-                updated_at="2024-01-01",
+                memory_type=MemoryType.PREFERENCE,
+                created_at=datetime(2024, 1, 1, tzinfo=UTC),
+                updated_at=datetime(2024, 1, 1, tzinfo=UTC),
             ),
             Memory(
                 id="m3",
                 content="• bullet item",
-                memory_type="preference",
-                created_at="2024-01-01",
-                updated_at="2024-01-01",
+                memory_type=MemoryType.PREFERENCE,
+                created_at=datetime(2024, 1, 1, tzinfo=UTC),
+                updated_at=datetime(2024, 1, 1, tzinfo=UTC),
             ),
         ]
         result = build_memory_context(memories)
@@ -151,30 +151,30 @@ class TestBuildMemoryContext:
             Memory(
                 id="m1",
                 content="This is the project context",
-                memory_type="context",
-                created_at="2024-01-01",
-                updated_at="2024-01-01",
+                memory_type=MemoryType.CONTEXT,
+                created_at=datetime(2024, 1, 1, tzinfo=UTC),
+                updated_at=datetime(2024, 1, 1, tzinfo=UTC),
             ),
             Memory(
                 id="m2",
                 content="- Use Python 3.11+",
-                memory_type="preference",
-                created_at="2024-01-01",
-                updated_at="2024-01-01",
+                memory_type=MemoryType.PREFERENCE,
+                created_at=datetime(2024, 1, 1, tzinfo=UTC),
+                updated_at=datetime(2024, 1, 1, tzinfo=UTC),
             ),
             Memory(
                 id="m3",
                 content="- Follow PEP 8 style",
-                memory_type="pattern",
-                created_at="2024-01-01",
-                updated_at="2024-01-01",
+                memory_type=MemoryType.PATTERN,
+                created_at=datetime(2024, 1, 1, tzinfo=UTC),
+                updated_at=datetime(2024, 1, 1, tzinfo=UTC),
             ),
             Memory(
                 id="m4",
                 content="- Database uses PostgreSQL",
-                memory_type="fact",
-                created_at="2024-01-01",
-                updated_at="2024-01-01",
+                memory_type=MemoryType.FACT,
+                created_at=datetime(2024, 1, 1, tzinfo=UTC),
+                updated_at=datetime(2024, 1, 1, tzinfo=UTC),
             ),
         ]
         result = build_memory_context(memories)
@@ -202,9 +202,9 @@ class TestBuildMemoryContext:
         mem = Memory(
             id="m1",
             content="- This is context with dash",
-            memory_type="context",
-            created_at="2024-01-01",
-            updated_at="2024-01-01",
+            memory_type=MemoryType.CONTEXT,
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
         )
         result = build_memory_context([mem])
         # Context type preserves original formatting
@@ -217,16 +217,16 @@ class TestBuildMemoryContext:
             Memory(
                 id="m1",
                 content="fact content",
-                memory_type="fact",
-                created_at="2024-01-01",
-                updated_at="2024-01-01",
+                memory_type=MemoryType.FACT,
+                created_at=datetime(2024, 1, 1, tzinfo=UTC),
+                updated_at=datetime(2024, 1, 1, tzinfo=UTC),
             ),
             Memory(
                 id="m2",
                 content="context content",
-                memory_type="context",
-                created_at="2024-01-01",
-                updated_at="2024-01-01",
+                memory_type=MemoryType.CONTEXT,
+                created_at=datetime(2024, 1, 1, tzinfo=UTC),
+                updated_at=datetime(2024, 1, 1, tzinfo=UTC),
             ),
         ]
         result = build_memory_context(memories)
@@ -242,16 +242,16 @@ class TestBuildMemoryContext:
             Memory(
                 id="m1",
                 content="- ",  # Only bullet, no content
-                memory_type="preference",
-                created_at="2024-01-01",
-                updated_at="2024-01-01",
+                memory_type=MemoryType.PREFERENCE,
+                created_at=datetime(2024, 1, 1, tzinfo=UTC),
+                updated_at=datetime(2024, 1, 1, tzinfo=UTC),
             ),
             Memory(
                 id="m2",
                 content="- Valid content",
-                memory_type="preference",
-                created_at="2024-01-01",
-                updated_at="2024-01-01",
+                memory_type=MemoryType.PREFERENCE,
+                created_at=datetime(2024, 1, 1, tzinfo=UTC),
+                updated_at=datetime(2024, 1, 1, tzinfo=UTC),
             ),
         ]
         result = build_memory_context(memories)

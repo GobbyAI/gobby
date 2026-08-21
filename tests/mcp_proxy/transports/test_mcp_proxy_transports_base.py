@@ -165,14 +165,13 @@ class TestBaseTransportConnectionProperties:
         """Test state property returns current connection state."""
         assert base_transport.state == ConnectionState.DISCONNECTED
 
-        base_transport._state = ConnectionState.CONNECTING
-        assert base_transport.state == ConnectionState.CONNECTING
-
-        base_transport._state = ConnectionState.CONNECTED
-        assert base_transport.state == ConnectionState.CONNECTED
-
-        base_transport._state = ConnectionState.FAILED
-        assert base_transport.state == ConnectionState.FAILED
+        for next_state in (
+            ConnectionState.CONNECTING,
+            ConnectionState.CONNECTED,
+            ConnectionState.FAILED,
+        ):
+            base_transport._state = next_state
+            assert base_transport.state == next_state
 
     def test_session_property_none_initially(self, base_transport: BaseTransportConnection) -> None:
         """Test session property returns None initially."""
@@ -285,7 +284,7 @@ class TestBaseTransportConnectionHealthCheck:
         """Test health_check returns False on timeout."""
         mock_session = MagicMock()
 
-        async def slow_list_tools() -> list:
+        async def slow_list_tools() -> list[Any]:
             await wait_forever()
             return []
 

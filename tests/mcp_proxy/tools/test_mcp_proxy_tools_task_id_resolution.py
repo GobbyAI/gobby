@@ -9,6 +9,7 @@ These tests verify that MCP tools correctly resolve task references:
 """
 
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -36,8 +37,8 @@ def sample_task_uuid() -> Task:
         title="Test Task",
         priority=2,
         task_type="task",
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2024, 1, 1, tzinfo=UTC),
         description="Test description",
         validation_criteria="The requested task update is observable.",
         labels=["test"],
@@ -150,6 +151,7 @@ class TestMCPGetTaskWithHashFormat:
         # Create registry and get the get_task tool
         registry = create_task_registry(mock_task_manager)
         get_task_func = registry.get_tool("get_task")
+        assert get_task_func is not None
 
         # Call with #1 format
         with patch(
@@ -175,6 +177,7 @@ class TestMCPGetTaskWithHashFormat:
 
         registry = create_task_registry(mock_task_manager)
         get_task_func = registry.get_tool("get_task")
+        assert get_task_func is not None
 
         with patch(
             "gobby.mcp_proxy.tools.tasks._resolution.get_project_context",
@@ -194,6 +197,7 @@ class TestMCPGetTaskWithHashFormat:
 
         registry = create_task_registry(mock_task_manager)
         get_task_func = registry.get_tool("get_task")
+        assert get_task_func is not None
 
         with patch(
             "gobby.mcp_proxy.tools.tasks._resolution.get_project_context",
@@ -222,6 +226,7 @@ class TestMCPUpdateTaskWithHashFormat:
 
         registry = create_task_registry(mock_task_manager)
         update_task_func = registry.get_tool("update_task")
+        assert update_task_func is not None
 
         with patch(
             "gobby.mcp_proxy.tools.tasks._resolution.get_project_context",
@@ -261,6 +266,7 @@ class TestMCPCloseTaskWithHashFormat:
 
         registry = create_task_registry(mock_task_manager)
         close_task_func = registry.get_tool("close_task")
+        assert close_task_func is not None
 
         with patch(
             "gobby.mcp_proxy.tools.tasks._resolution.get_project_context",
@@ -307,6 +313,7 @@ class TestIntegrationMCPTaskIdResolution:
 
         registry = create_task_registry(manager)
         get_task_func = registry.get_tool("get_task")
+        assert get_task_func is not None
 
         # Test #1 resolution
         with (
@@ -366,6 +373,7 @@ class TestIntegrationMCPTaskIdResolution:
 
         registry = create_task_registry(manager)
         get_task_func = registry.get_tool("get_task")
+        assert get_task_func is not None
 
         # Test path resolution (1.2)
         with (
@@ -402,6 +410,7 @@ class TestIntegrationMCPTaskIdResolution:
 
         registry = create_task_registry(manager)
         get_task_func = registry.get_tool("get_task")
+        assert get_task_func is not None
 
         with (
             patch(

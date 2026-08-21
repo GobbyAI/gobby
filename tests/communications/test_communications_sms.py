@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 from collections.abc import Callable
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import urlencode
 
@@ -38,8 +39,8 @@ async def test_initialize(
         channel_type="sms",
         name="test",
         enabled=True,
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2024, 1, 1, tzinfo=UTC),
         config_json={
             "account_sid": "AC123",
             "auth_token": "$secret:TWILIO_AUTH_TOKEN",
@@ -65,8 +66,8 @@ async def test_send_message(
         channel_type="sms",
         name="test",
         enabled=True,
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2024, 1, 1, tzinfo=UTC),
         config_json={
             "account_sid": "AC123",
             "auth_token": "$secret:TWILIO_AUTH_TOKEN",
@@ -82,7 +83,7 @@ async def test_send_message(
         direction="outbound",
         content="Hello SMS",
         metadata_json={"platform_destination": "+0987654321"},
-        created_at="2024-01-01T00:00:00Z",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
     )
 
     with patch.object(adapter._client, "post", new_callable=AsyncMock) as mock_post:

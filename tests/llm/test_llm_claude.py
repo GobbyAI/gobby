@@ -35,7 +35,7 @@ JSON_SCHEMA = {
 
 
 class MockAssistantMessage:
-    def __init__(self, content: list) -> None:
+    def __init__(self, content: list[Any]) -> None:
         self.content = content
 
 
@@ -84,7 +84,7 @@ class MockTextBlock:
 
 
 class MockToolUseBlock:
-    def __init__(self, id: str, name: str, input: dict) -> None:
+    def __init__(self, id: str, name: str, input: dict[str, Any]) -> None:
         self.id = id
         self.name = name
         self.input = input
@@ -336,7 +336,7 @@ class TestExecuteSdkQuery:
     ) -> None:
         from gobby.llm.claude_runtime import execute_sdk_query
 
-        options = MockClaudeAgentOptions()
+        options = _mock_agent_options()
 
         async def failure_with_stderr() -> str:
             assert callable(options.stderr)
@@ -371,7 +371,7 @@ class TestExecuteSdkQuery:
             execute_sdk_query,
         )
 
-        options = MockClaudeAgentOptions()
+        options = _mock_agent_options()
         call_count = 0
         caplog.clear()
 
@@ -413,7 +413,7 @@ class TestExecuteSdkQuery:
             execute_sdk_query,
         )
 
-        options = MockClaudeAgentOptions()
+        options = _mock_agent_options()
         call_count = 0
         caplog.clear()
 
@@ -462,7 +462,7 @@ class TestExecuteSdkQuery:
         from gobby.llm.claude_errors import ClaudeSDKProviderFailure
         from gobby.llm.claude_runtime import execute_sdk_query
 
-        options = MockClaudeAgentOptions()
+        options = _mock_agent_options()
 
         async def failed() -> str:
             raise ClaudeSDKProviderFailure(
@@ -503,7 +503,7 @@ class TestExecuteSdkQuery:
         """Non-shutdown ExceptionGroups should follow the normal diagnostics path."""
         from gobby.llm.claude_runtime import execute_sdk_query
 
-        options = MockClaudeAgentOptions()
+        options = _mock_agent_options()
         caplog.clear()
 
         async def grouped_failure() -> str:
@@ -717,7 +717,7 @@ class TestGenerateText:
     async def test_generate_text_sdk_passes_reasoning_effort(
         self, claude_config: DaemonConfig
     ) -> None:
-        captured_kwargs: list[dict[str, object]] = []
+        captured_kwargs: list[dict[str, Any]] = []
 
         async def mock_query(prompt: str, options: Any) -> object:
             captured_kwargs.append(options.kwargs)
@@ -740,7 +740,7 @@ class TestGenerateText:
         """One-shot textgen shares one stable cwd so Claude materializes a
         single ~/.claude/projects slug, and auto-memory stays off (#20450)."""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        captured_kwargs: list[dict[str, object]] = []
+        captured_kwargs: list[dict[str, Any]] = []
 
         async def mock_query(prompt: str, options: Any) -> AsyncIterator[object]:
             captured_kwargs.append(options.kwargs)
@@ -770,7 +770,7 @@ class TestGenerateText:
         # turns (1)" on reasoning/continuation-heavy prompts instead of returning
         # text. Guard bounded headroom (>1) AND that tools stay disabled so the
         # extra turns can never become an agent action-loop.
-        captured_kwargs: list[dict[str, object]] = []
+        captured_kwargs: list[dict[str, Any]] = []
 
         async def mock_query(prompt: str, options: Any) -> object:
             captured_kwargs.append(options.kwargs)
@@ -836,7 +836,7 @@ class TestGenerateText:
     async def test_generate_text_sdk_omits_reasoning_effort_when_auto_or_unset(
         self, claude_config: DaemonConfig
     ) -> None:
-        captured_kwargs: list[dict[str, object]] = []
+        captured_kwargs: list[dict[str, Any]] = []
         replies = iter(["auto reply", "default reply"])
 
         async def mock_query(prompt: str, options: Any) -> object:
@@ -863,7 +863,7 @@ class TestGenerateText:
     async def test_generate_text_sdk_passes_unverified_reasoning_effort(
         self, claude_config: DaemonConfig
     ) -> None:
-        captured_kwargs: list[dict[str, object]] = []
+        captured_kwargs: list[dict[str, Any]] = []
 
         async def mock_query(prompt: str, options: Any) -> object:
             captured_kwargs.append(options.kwargs)
@@ -888,7 +888,7 @@ class TestGenerateAgentic:
     async def test_generate_agentic_defaults_to_readonly_tools(
         self, claude_config: DaemonConfig
     ) -> None:
-        captured_kwargs: list[dict[str, object]] = []
+        captured_kwargs: list[dict[str, Any]] = []
 
         async def mock_query(prompt: str, options: Any) -> object:
             captured_kwargs.append(options.kwargs)
@@ -935,7 +935,8 @@ class TestGenerateAgentic:
                 await query_fn()
             except RuntimeError:
                 pass
-            return await query_fn()
+            text: str = await query_fn()
+            return text
 
         with (
             mock_claude_sdk(mock_query),
@@ -994,7 +995,7 @@ class TestGenerateJson:
         """Internal SDK calls isolate settings with setting_sources=[]."""
         captured_sources: list[list[str] | None] = []
 
-        async def mock_query(prompt: str, options: object) -> object:
+        async def mock_query(prompt: str, options: Any) -> object:
             captured_sources.append(options.setting_sources)
             yield MockResultMessage(structured_output={"isolated": True})
 
@@ -1033,7 +1034,8 @@ class TestGenerateJson:
             **kwargs: object,
         ) -> dict[str, Any]:
             captured["operation"] = operation
-            return await query_fn()
+            payload: dict[str, Any] = await query_fn()
+            return payload
 
         with mock_claude_sdk(mock_query):
             from gobby.llm.claude import ClaudeLLMProvider
@@ -1065,7 +1067,7 @@ class TestGenerateJson:
     async def test_generate_json_sdk_omits_reasoning_effort_when_auto(
         self, claude_config: DaemonConfig
     ) -> None:
-        captured_kwargs: list[dict[str, object]] = []
+        captured_kwargs: list[dict[str, Any]] = []
 
         async def mock_query(prompt: str, options: Any) -> object:
             captured_kwargs.append(options.kwargs)

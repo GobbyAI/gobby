@@ -13,7 +13,7 @@ tools (search_tasks, reindex_tasks) with all code paths:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -24,7 +24,7 @@ from gobby.storage.tasks import TaskNotFoundError
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.projects import LocalProjectManager
-    from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.tasks import LocalTaskManager, Task
 
 pytestmark = pytest.mark.unit
 
@@ -88,7 +88,7 @@ def task_manager(temp_db: HubDatabase) -> LocalTaskManager:
 
 
 @pytest.fixture
-def real_project(project_manager: LocalProjectManager) -> dict:
+def real_project(project_manager: LocalProjectManager) -> dict[str, Any]:
     """Create a real project for task scoping."""
     project = project_manager.create(
         name="search-test-project",
@@ -100,10 +100,10 @@ def real_project(project_manager: LocalProjectManager) -> dict:
 @pytest.fixture
 def seeded_tasks(
     task_manager: LocalTaskManager,
-    real_project: dict,
-) -> list:
+    real_project: dict[str, Any],
+) -> list[Task]:
     """Create several tasks for search tests."""
-    tasks = []
+    tasks: list[Task] = []
     task_data = [
         (
             "Fix login authentication bug",
@@ -172,6 +172,7 @@ class TestSearchTasksValidation:
         ctx = _make_ctx(task_manager)
         registry = create_search_registry(ctx)
         func = registry.get_tool("search_tasks")
+        assert func is not None
 
         result = func(query="")
         assert result["error"] == "Query is required"
@@ -185,6 +186,7 @@ class TestSearchTasksValidation:
         ctx = _make_ctx(task_manager)
         registry = create_search_registry(ctx)
         func = registry.get_tool("search_tasks")
+        assert func is not None
 
         result = func(query=query)
         assert "error" in result
@@ -200,6 +202,7 @@ class TestSearchTasksProjectFilter:
 
         registry = create_search_registry(ctx)
         func = registry.get_tool("search_tasks")
+        assert func is not None
 
         result = func(query="test")
         assert "error" in result
@@ -212,6 +215,7 @@ class TestSearchTasksProjectFilter:
 
         registry = create_search_registry(ctx)
         func = registry.get_tool("search_tasks")
+        assert func is not None
 
         func(query="test", project="my-project", all_projects=True)
         ctx.resolve_project_filter.assert_called_once_with("my-project", True)
@@ -225,12 +229,13 @@ class TestSearchTasksResults:
     def test_successful_search_returns_results(
         self,
         task_manager: LocalTaskManager,
-        real_project: dict,
-        seeded_tasks: list,
+        real_project: dict[str, Any],
+        seeded_tasks: list[Task],
     ) -> None:
         ctx = _make_ctx(task_manager, project_id=real_project["id"])
         registry = create_search_registry(ctx)
         func = registry.get_tool("search_tasks")
+        assert func is not None
 
         result = func(query="authentication")
 
@@ -241,12 +246,13 @@ class TestSearchTasksResults:
     def test_search_results_have_score(
         self,
         task_manager: LocalTaskManager,
-        real_project: dict,
-        seeded_tasks: list,
+        real_project: dict[str, Any],
+        seeded_tasks: list[Task],
     ) -> None:
         ctx = _make_ctx(task_manager, project_id=real_project["id"])
         registry = create_search_registry(ctx)
         func = registry.get_tool("search_tasks")
+        assert func is not None
 
         result = func(query="login bug")
 
@@ -260,12 +266,13 @@ class TestSearchTasksResults:
     def test_search_results_include_compact_fields(
         self,
         task_manager: LocalTaskManager,
-        real_project: dict,
-        seeded_tasks: list,
+        real_project: dict[str, Any],
+        seeded_tasks: list[Task],
     ) -> None:
         ctx = _make_ctx(task_manager, project_id=real_project["id"])
         registry = create_search_registry(ctx)
         func = registry.get_tool("search_tasks")
+        assert func is not None
 
         result = func(query="database")
 
@@ -279,12 +286,13 @@ class TestSearchTasksResults:
     def test_search_match_preview_is_bounded_and_normalized(
         self,
         task_manager: LocalTaskManager,
-        real_project: dict,
-        seeded_tasks: list,
+        real_project: dict[str, Any],
+        seeded_tasks: list[Task],
     ) -> None:
         ctx = _make_ctx(task_manager, project_id=real_project["id"])
         registry = create_search_registry(ctx)
         func = registry.get_tool("search_tasks")
+        assert func is not None
         long_description = "First line\n\n" + "token  " * 80
         task_manager.create_task(
             project_id=real_project["id"],
@@ -308,12 +316,13 @@ class TestSearchTasksResults:
     def test_query_is_stripped(
         self,
         task_manager: LocalTaskManager,
-        real_project: dict,
-        seeded_tasks: list,
+        real_project: dict[str, Any],
+        seeded_tasks: list[Task],
     ) -> None:
         ctx = _make_ctx(task_manager, project_id=real_project["id"])
         registry = create_search_registry(ctx)
         func = registry.get_tool("search_tasks")
+        assert func is not None
 
         result = func(query="  authentication  ")
 
@@ -322,12 +331,13 @@ class TestSearchTasksResults:
     def test_no_matching_results_returns_empty(
         self,
         task_manager: LocalTaskManager,
-        real_project: dict,
-        seeded_tasks: list,
+        real_project: dict[str, Any],
+        seeded_tasks: list[Task],
     ) -> None:
         ctx = _make_ctx(task_manager, project_id=real_project["id"])
         registry = create_search_registry(ctx)
         func = registry.get_tool("search_tasks")
+        assert func is not None
 
         result = func(query="xyzzynonexistent12345")
 
@@ -343,6 +353,7 @@ class TestSearchTasksResults:
         ctx = _make_ctx(task_manager)
         registry = create_search_registry(ctx)
         func = registry.get_tool("search_tasks")
+        assert func is not None
 
         with patch.object(
             task_manager,
@@ -369,6 +380,7 @@ class TestSearchTasksResults:
         ctx = _make_ctx(task_manager)
         registry = create_search_registry(ctx)
         func = registry.get_tool("search_tasks")
+        assert func is not None
 
         with (
             patch.object(
@@ -387,7 +399,7 @@ class TestSearchTasksStageStateFilter:
     def test_single_stage_state_passed_as_string(
         self,
         task_manager: LocalTaskManager,
-        real_project: dict,
+        real_project: dict[str, Any],
     ) -> None:
         ctx = _make_ctx(task_manager, project_id=real_project["id"])
         # Use a mock to verify the stage state is passed as-is.
@@ -396,6 +408,7 @@ class TestSearchTasksStageStateFilter:
 
         registry = create_search_registry(ctx)
         func = registry.get_tool("search_tasks")
+        assert func is not None
 
         func(query="test", current_stage_state="ready")
 
@@ -412,6 +425,7 @@ class TestSearchTasksStageStateFilter:
 
         registry = create_search_registry(ctx)
         func = registry.get_tool("search_tasks")
+        assert func is not None
 
         func(query="test", current_stage_state=["ready", "needs_review"])
 
@@ -428,6 +442,7 @@ class TestSearchTasksStageStateFilter:
 
         registry = create_search_registry(ctx)
         func = registry.get_tool("search_tasks")
+        assert func is not None
 
         func(query="test", current_stage_state="ready, in_progress, needs_review")
 
@@ -455,6 +470,7 @@ class TestSearchTasksParentFilter:
 
         registry = create_search_registry(ctx)
         func = registry.get_tool("search_tasks")
+        assert func is not None
 
         func(query="test", parent_task_id="#10")
 
@@ -473,6 +489,7 @@ class TestSearchTasksParentFilter:
 
         registry = create_search_registry(ctx)
         func = registry.get_tool("search_tasks")
+        assert func is not None
 
         result = func(query="test", parent_task_id="bad-ref")
 
@@ -491,6 +508,7 @@ class TestSearchTasksParentFilter:
 
         registry = create_search_registry(ctx)
         func = registry.get_tool("search_tasks")
+        assert func is not None
 
         func(query="test")
 
@@ -511,6 +529,7 @@ class TestSearchTasksAllFilters:
 
         registry = create_search_registry(ctx)
         func = registry.get_tool("search_tasks")
+        assert func is not None
 
         func(
             query="  test query  ",
@@ -547,6 +566,7 @@ class TestReindexTasks:
 
         registry = create_reindex_registry(ctx)
         func = registry.get_tool("reindex_tasks")
+        assert func is not None
 
         result = func()
 
@@ -560,6 +580,7 @@ class TestReindexTasks:
 
         registry = create_reindex_registry(ctx)
         func = registry.get_tool("reindex_tasks")
+        assert func is not None
 
         func(project="my-project")
 
@@ -574,6 +595,7 @@ class TestReindexTasks:
 
         registry = create_reindex_registry(ctx)
         func = registry.get_tool("reindex_tasks")
+        assert func is not None
 
         func(all_projects=True)
 
@@ -587,6 +609,7 @@ class TestReindexTasks:
 
         registry = create_reindex_registry(ctx)
         func = registry.get_tool("reindex_tasks")
+        assert func is not None
 
         result = func(project="bad")
 
@@ -603,6 +626,7 @@ class TestReindexTasks:
 
         registry = create_reindex_registry(ctx)
         func = registry.get_tool("reindex_tasks")
+        assert func is not None
 
         result = func()
 

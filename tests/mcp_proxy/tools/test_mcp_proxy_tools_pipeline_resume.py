@@ -317,7 +317,7 @@ async def test_resume_returns_only_resumable_ids() -> None:
 
     loader = AsyncMock()
 
-    async def _load(name: str, project_path: str | None = None):
+    async def _load(name: str, project_path: str | None = None) -> MagicMock:
         assert project_path == "test-project"
         if name == "resumable-pipeline":
             return resumable_pipeline

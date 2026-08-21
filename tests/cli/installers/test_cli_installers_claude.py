@@ -296,7 +296,7 @@ class TestInstallClaude:
             hook_type: {"type": "command", "command": f"user-{hook_type}"}
             for hook_type in template_hooks
         }
-        existing_settings = {
+        existing_settings: dict[str, Any] = {
             "allowedTools": ["tool1", "tool2"],
             "hooks": {
                 hook_type: [
@@ -1224,7 +1224,7 @@ class TestInstallClaudeEdgeCases:
         (hooks_dir / "hook_dispatcher.py").write_text("# mock hook dispatcher")
         (hooks_dir / "validate_settings.py").write_text("# mock validate settings")
 
-        hooks_template = {"hooks": {"SessionStart": [{"hooks": []}]}}
+        hooks_template: dict[str, Any] = {"hooks": {"SessionStart": [{"hooks": []}]}}
         (claude_dir / "hooks-template.json").write_text(json.dumps(hooks_template))
 
         return install_dir

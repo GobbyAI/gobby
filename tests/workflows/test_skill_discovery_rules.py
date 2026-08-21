@@ -356,7 +356,11 @@ class TestBrevityRules:
         assert variables["code_index_navigation_used_this_turn"]["value"] is False
 
     @pytest.mark.asyncio
-    async def test_reinforcer_repeats_after_brevity_is_loaded(self, db) -> None:
+    async def test_reinforcer_fires_once_per_epoch_after_brevity_is_loaded(
+        self, db: HubDatabase
+    ) -> None:
+        """The reminder lands on the first turn of an epoch and stays quiet until the
+        five-turn cadence (covered in test_reminder_cadence_rules) comes due."""
         _sync_bundled(db)
         engine = RuleEngine(db)
         variables = self._turn_variables(loaded=True)
@@ -371,10 +375,11 @@ class TestBrevityRules:
         first = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         second = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
+        reminder = "Brevity reminder (normal): answer first; keep context tight."
         assert first.context is not None
-        assert second.context is not None
-        assert "Brevity reminder (normal): answer first; keep context tight." in first.context
-        assert "Brevity reminder (normal): answer first; keep context tight." in second.context
+        assert reminder in first.context
+        assert variables["brevity_reminder_turn"] == 0
+        assert second.context is None or reminder not in second.context
 
     @pytest.mark.asyncio
     async def test_opt_out_prompt_disables_and_suppresses_brevity_rules(self, db) -> None:
@@ -3557,7 +3562,9 @@ class TestCodeIndexRuleCondition:
 class TestRequireCodeIndexSkillStructure:
     """Verify require-code-index-skill blocks with the canonical directive."""
 
-    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+    def test_has_block_effect_with_canonical_directive(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-code-index-skill")
         assert row is not None
@@ -3572,6 +3579,7 @@ class TestRequireCodeIndexSkillStructure:
         assert '"gobby-skills/get_skill"' in body.when
         assert '{"name": "code-index"}' in body.when
         assert "not variables.get('code_index_preflight_warning')" in body.when
+        assert body.effects is not None
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         assert _skill_fetch_template("code-index") in body.effects[0].reason
@@ -3883,7 +3891,9 @@ class TestCodeIndexNavigationRules:
 
         assert response.decision == "allow"
 
-    def test_gcode_fail_open_tracker_rules_sync(self, db, manager) -> None:
+    def test_gcode_fail_open_tracker_rules_sync(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
 
         tracker = manager.get_by_name("track-gcode-fail-open")
@@ -3892,6 +3902,7 @@ class TestCodeIndexNavigationRules:
         assert tracker_body.event.value == "after_tool"
         assert tracker_body.when is not None
         assert "event.data.get('is_error')" in tracker_body.when
+        assert tracker_body.effects is not None
         assert tracker_body.effects[0].type == "set_variable"
         assert tracker_body.effects[0].variable == "gcode_fail_open"
         assert tracker_body.effects[0].value is True
@@ -4145,7 +4156,7 @@ class TestCodeIndexNavigationRules:
     )
     @pytest.mark.asyncio
     async def test_gcode_navigation_remediation_clears_same_tool_retry_guard(
-        self, db, rule_name: str, command: str
+        self, db: HubDatabase, rule_name: str, command: str
     ) -> None:
         _sync_bundled(db)
         variables = self._variables(loaded=True)
@@ -4172,7 +4183,7 @@ class TestCodeIndexNavigationRules:
         assert variables["_last_blocked_reason"] == ""
 
     @pytest.mark.asyncio
-    async def test_turn_start_resets_gcode_navigation_flag(self, db) -> None:
+    async def test_turn_start_resets_gcode_navigation_flag(self, db: HubDatabase) -> None:
         _sync_bundled(db)
         variables = self._variables(loaded=True, used=True)
         event = self._event(HookEventType.BEFORE_AGENT, {"prompt": "continue"})

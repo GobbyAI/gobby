@@ -1,7 +1,7 @@
 """Tests for gobby-communications MCP tool registry."""
 
 from dataclasses import asdict
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -16,13 +16,13 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def mock_store():
+def mock_store() -> MagicMock:
     store = MagicMock()
     return store
 
 
 @pytest.fixture
-def mock_manager(mock_store):
+def mock_manager(mock_store: MagicMock) -> MagicMock:
     manager = MagicMock()
     manager._store = mock_store
     manager.send_message = AsyncMock()
@@ -52,7 +52,7 @@ def registry(mock_manager: MagicMock, tmp_path: Path) -> Any:
 
 
 @pytest.mark.asyncio
-async def test_send_message(registry, mock_manager):
+async def test_send_message(registry: Any, mock_manager: MagicMock) -> None:
     mock_msg = MagicMock()
     mock_msg.id = "msg-123"
     mock_msg.status = "sent"
@@ -86,10 +86,10 @@ async def test_send_message(registry, mock_manager):
 
 @pytest.mark.asyncio
 async def test_send_attachment_validates_path_and_returns_metadata(
-    registry,
-    mock_manager,
-    tmp_path,
-):
+    registry: Any,
+    mock_manager: MagicMock,
+    tmp_path: Path,
+) -> None:
     image_path = tmp_path / "parity.png"
     image_path.write_bytes(b"png")
     message = MagicMock(
@@ -132,7 +132,9 @@ async def test_send_attachment_validates_path_and_returns_metadata(
 
 
 @pytest.mark.asyncio
-async def test_send_attachment_rejects_missing_path(registry, mock_manager, tmp_path):
+async def test_send_attachment_rejects_missing_path(
+    registry: Any, mock_manager: MagicMock, tmp_path: Path
+) -> None:
     result = await registry.get_tool("send_attachment")(
         channel="telegram",
         file_path=str(tmp_path / "missing.png"),
@@ -166,7 +168,7 @@ async def test_send_attachment_rejects_path_outside_workspace(
     mock_manager.send_attachment.assert_not_awaited()
 
 
-async def test_send_message_reports_failed_status(registry, mock_manager):
+async def test_send_message_reports_failed_status(registry: Any, mock_manager: MagicMock) -> None:
     mock_msg = MagicMock()
     mock_msg.id = "msg-123"
     mock_msg.status = "failed"
@@ -180,15 +182,15 @@ async def test_send_message_reports_failed_status(registry, mock_manager):
     assert res == {"success": False, "message_id": "msg-123", "error": "network error"}
 
 
-def test_list_channels(registry, mock_store, mock_manager):
+def test_list_channels(registry: Any, mock_store: MagicMock, mock_manager: MagicMock) -> None:
     channel = ChannelConfig(
         id="ch-1",
         channel_type="slack",
         name="test-channel",
         enabled=True,
         config_json={},
-        created_at=datetime.now().isoformat(),
-        updated_at=datetime.now().isoformat(),
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
     )
     mock_store.list_channels.return_value = [channel]
 
@@ -201,15 +203,15 @@ def test_list_channels(registry, mock_store, mock_manager):
     assert res["channels"][0]["project_id"] is None
 
 
-def test_get_messages(registry, mock_store):
+def test_get_messages(registry: Any, mock_store: MagicMock) -> None:
     channel = ChannelConfig(
         id="ch-1",
         channel_type="slack",
         name="test-channel",
         enabled=True,
         config_json={},
-        created_at=datetime.now().isoformat(),
-        updated_at=datetime.now().isoformat(),
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
     )
     mock_store.get_channel_by_name.return_value = channel
 
@@ -218,7 +220,7 @@ def test_get_messages(registry, mock_store):
         channel_id="ch-1",
         direction="inbound",
         content="Hello",
-        created_at=datetime.now().isoformat(),
+        created_at=datetime.now(UTC),
         session_id="session-1",
     )
     mock_store.list_messages.return_value = [msg]
@@ -232,15 +234,15 @@ def test_get_messages(registry, mock_store):
 
 
 @pytest.mark.asyncio
-async def test_add_channel(registry, mock_manager):
+async def test_add_channel(registry: Any, mock_manager: MagicMock) -> None:
     channel = ChannelConfig(
         id="ch-new",
         channel_type="slack",
         name="new-channel",
         enabled=True,
         config_json={},
-        created_at=datetime.now().isoformat(),
-        updated_at=datetime.now().isoformat(),
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
     )
     mock_manager.add_channel.return_value = channel
 
@@ -253,15 +255,15 @@ async def test_add_channel(registry, mock_manager):
     assert res["init_error"] is None
 
 
-async def test_add_channel_reports_init_error(registry, mock_manager):
+async def test_add_channel_reports_init_error(registry: Any, mock_manager: MagicMock) -> None:
     channel = ChannelConfig(
         id="ch-new",
         channel_type="slack",
         name="new-channel",
         enabled=True,
         config_json={},
-        created_at=datetime.now().isoformat(),
-        updated_at=datetime.now().isoformat(),
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
     )
     mock_manager.add_channel.return_value = channel
     mock_manager.channel_to_dict.return_value = {
@@ -282,7 +284,7 @@ async def test_add_channel_reports_init_error(registry, mock_manager):
 
 
 @pytest.mark.asyncio
-async def test_remove_channel(registry, mock_manager):
+async def test_remove_channel(registry: Any, mock_manager: MagicMock) -> None:
     handler = registry.get_tool("remove_channel")
 
     res = await handler(name="old-channel")
@@ -349,8 +351,8 @@ def _make_channel(id: str = "ch-1", name: str = "test-channel") -> ChannelConfig
         name=name,
         enabled=True,
         config_json={},
-        created_at=datetime.now().isoformat(),
-        updated_at=datetime.now().isoformat(),
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
     )
 
 
@@ -367,12 +369,12 @@ def _make_identity(
         external_user_id=external_user_id,
         external_username=external_username,
         session_id=session_id,
-        created_at=datetime.now().isoformat(),
-        updated_at=datetime.now().isoformat(),
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
     )
 
 
-def test_link_identity_success(registry, mock_store):
+def test_link_identity_success(registry: Any, mock_store: MagicMock) -> None:
     mock_store.get_channel_by_name.return_value = _make_channel()
     mock_store.get_identity_by_external.return_value = _make_identity()
 
@@ -384,7 +386,7 @@ def test_link_identity_success(registry, mock_store):
     mock_store.update_identity_session.assert_called_once_with("id-1", "session-99")
 
 
-def test_link_identity_channel_not_found(registry, mock_store):
+def test_link_identity_channel_not_found(registry: Any, mock_store: MagicMock) -> None:
     mock_store.get_channel_by_name.return_value = None
 
     handler = registry.get_tool("link_identity")
@@ -394,7 +396,7 @@ def test_link_identity_channel_not_found(registry, mock_store):
     assert "not found" in res["error"]
 
 
-def test_link_identity_identity_not_found(registry, mock_store):
+def test_link_identity_identity_not_found(registry: Any, mock_store: MagicMock) -> None:
     mock_store.get_channel_by_name.return_value = _make_channel()
     mock_store.get_identity_by_external.return_value = None
 
@@ -405,7 +407,7 @@ def test_link_identity_identity_not_found(registry, mock_store):
     assert "not found" in res["error"]
 
 
-def test_list_identities_no_filters(registry, mock_store):
+def test_list_identities_no_filters(registry: Any, mock_store: MagicMock) -> None:
     identities = [_make_identity(), _make_identity(id="id-2", external_user_id="ext-2")]
     mock_store.list_identities.return_value = identities
 
@@ -417,7 +419,7 @@ def test_list_identities_no_filters(registry, mock_store):
     mock_store.list_identities.assert_called_once_with(channel_id=None)
 
 
-def test_list_identities_filter_by_channel(registry, mock_store):
+def test_list_identities_filter_by_channel(registry: Any, mock_store: MagicMock) -> None:
     mock_store.get_channel_by_name.return_value = _make_channel()
     mock_store.list_identities.return_value = [_make_identity()]
 
@@ -428,7 +430,7 @@ def test_list_identities_filter_by_channel(registry, mock_store):
     mock_store.list_identities.assert_called_once_with(channel_id="ch-1")
 
 
-def test_list_identities_filter_by_session(registry, mock_store):
+def test_list_identities_filter_by_session(registry: Any, mock_store: MagicMock) -> None:
     identities = [
         _make_identity(id="id-1", session_id="session-1"),
         _make_identity(id="id-2", session_id="session-2"),

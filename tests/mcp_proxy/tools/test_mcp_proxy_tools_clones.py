@@ -13,6 +13,7 @@ import asyncio
 import subprocess
 import threading
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -1763,7 +1764,6 @@ class TestMergeCloneToTarget:
             ),
             _git_result(stdout="deadbeef"),
             _git_result(),
-            _git_result(),
             _git_result(stdout="stash@{0}\x00interleaved\nstash@{1}\x00ours"),
             _git_result(),
         ]
@@ -1790,7 +1790,6 @@ class TestMergeCloneToTarget:
             _git_result(),
             _git_result(stdout="ours\x00On main: test-stash-marker"),
             _git_result(stdout="deadbeef"),
-            _git_result(),
             _git_result(),
             _git_result(stdout="stash@{0}\x00ours"),
             _git_result(returncode=1, stderr="restore conflict"),

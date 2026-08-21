@@ -117,8 +117,11 @@ constraint-dependencies = [
 # 2026-06-09 and resolves with chatterbox-tts==0.1.7, so keep the override on
 # the stable audit floor while chatterbox keeps its exact pin.
 override-dependencies = [
-    # Torch and TorchAudio publish compatibility-locked releases.
-    "torch==2.11.0",
+    # torch <2.13.0 has GHSA-rrmf-rvhw-rf47 (CVE-2025-3000, torch.jit.script memory
+    # corruption). torchaudio 2.11.0 is its final release and declares no torch pin;
+    # its native extension loads and runs (resample, MelSpectrogram, lfilter) against
+    # torch 2.13.0, verified 2026-08-21.
+    "torch==2.13.0",
     "torchaudio==2.11.0",
     # The exercised Gobby voice paths do not use the removed pkg_resources API.
     # Force the security-fixed release over stale transitive pins.
@@ -291,7 +294,8 @@ dev = [
     "black>=26.3.1",  # CVE-2026-32274
     "mypy>=1.8.0",
     "mutmut>=3.0.0",
-    "pip>=26.1.2",  # CVE-2026-1703, CVE-2026-3219, CVE-2026-6357, PYSEC-2026-196
+    # CVE-2026-1703, CVE-2026-3219, CVE-2026-6357, PYSEC-2026-196, PYSEC-2026-3721
+    "pip>=26.2",
     "pip-audit>=2.7.0",
     "pre-commit>=4.0.0",
     # pygments <2.20.0 has CVE-2026-4539 (transitive via rich/textual)

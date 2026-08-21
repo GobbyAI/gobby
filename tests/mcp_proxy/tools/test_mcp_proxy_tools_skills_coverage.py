@@ -23,9 +23,9 @@ def _make_skill(
     content: str = "# Skill Content",
     version: str = "1.0",
     license: str | None = None,
-    compatibility: dict | None = None,
-    allowed_tools: list | None = None,
-    metadata: dict | None = None,
+    compatibility: dict[str, Any] | None = None,
+    allowed_tools: list[str] | None = None,
+    metadata: dict[str, Any] | None = None,
     enabled: bool = True,
     source: str = "installed",
     source_path: str | None = None,
@@ -112,7 +112,7 @@ def _create_registry(db: Any, project_id: str | None = None, hub_manager: Any | 
 
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
-        registry = create_skills_registry(db, project_id=project_id, hub_manager=hub_manager)
+        registry: Any = create_skills_registry(db, project_id=project_id, hub_manager=hub_manager)
 
         # Expose mocks for assertions
         registry._mock_storage = mock_storage

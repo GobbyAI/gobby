@@ -1,5 +1,7 @@
 """Tests for SKILL.md frontmatter parser."""
 
+from pathlib import Path
+
 import pytest
 
 from gobby.skills import limits
@@ -36,7 +38,7 @@ def test_rejects_oversized_skill_text() -> None:
         parse_skill_text(text)
 
 
-def test_rejects_oversized_skill_file(tmp_path) -> None:
+def test_rejects_oversized_skill_file(tmp_path: Path) -> None:
     skill_file = tmp_path / "SKILL.md"
     skill_file.write_bytes(b"x" * (limits.MAX_SKILL_MD_BYTES + 1))
 
@@ -187,6 +189,7 @@ Complete instructions.
         assert skill.compatibility == "Requires Python 3.11+"
         assert skill.version == "2.0.0"
         assert skill.allowed_tools == ["Bash", "Read", "Write"]
+        assert skill.metadata is not None
         assert skill.metadata["author"] == "test"
         assert skill.metadata["skillport"]["category"] == "testing"
         assert skill.metadata["skillport"]["tags"] == ["test", "example"]
@@ -666,7 +669,7 @@ Content
 class TestParseSkillFile:
     """Tests for parse_skill_file function."""
 
-    def test_parse_existing_file(self, tmp_path) -> None:
+    def test_parse_existing_file(self, tmp_path: Path) -> None:
         """Test parsing an existing skill file."""
         skill_file = tmp_path / "SKILL.md"
         skill_file.write_text("""---
@@ -686,12 +689,12 @@ Content here.
         assert "# File Test Skill" in skill.content
         assert skill.source_path == str(skill_file)
 
-    def test_parse_nonexistent_file(self, tmp_path) -> None:
+    def test_parse_nonexistent_file(self, tmp_path: Path) -> None:
         """Test that nonexistent file raises FileNotFoundError."""
         with pytest.raises(FileNotFoundError):
             parse_skill_file(tmp_path / "nonexistent.md")
 
-    def test_parse_real_skill_format(self, tmp_path) -> None:
+    def test_parse_real_skill_format(self, tmp_path: Path) -> None:
         """Test parsing a skill in the full expected format."""
         skill_file = tmp_path / "SKILL.md"
         skill_file.write_text("""---
@@ -741,6 +744,7 @@ docs: update API documentation
         assert skill.compatibility == "Requires git CLI"
         assert skill.version == "1.0.0"
         assert skill.allowed_tools == ["Bash(git:*)"]
+        assert skill.metadata is not None
         assert skill.metadata["author"] == "anthropic"
         assert skill.get_category() == "git"
         assert skill.get_tags() == ["git", "commits", "workflow"]

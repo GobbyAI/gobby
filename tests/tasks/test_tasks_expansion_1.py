@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
 from gobby.storage.definitions.agents import AgentDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks import expansion_service as expansion_module
 from gobby.tasks.expansion_service import ExpansionService
@@ -17,7 +19,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def service(temp_db) -> ExpansionService:
+def service(temp_db: HubDatabase) -> ExpansionService:
     return ExpansionService(task_manager=LocalTaskManager(temp_db), llm_service=MagicMock())
 
 
@@ -82,7 +84,7 @@ def test_expansion_leaf_categories_are_development_forward() -> None:
 
 def test_validate_compiled_spec_rejects_manual_leaves(
     service: ExpansionService,
-    sample_project,
+    sample_project: dict[str, Any],
 ) -> None:
     epic = _parent(service, sample_project)
     spec = service.normalize_compiled_spec(
@@ -144,7 +146,7 @@ def test_validate_compiled_spec_rejects_invalid_task_metadata(
 
 def test_validate_compiled_spec_rejects_planning_leaf_tasks(
     service: ExpansionService,
-    sample_project,
+    sample_project: dict[str, Any],
 ) -> None:
     epic = _parent(service, sample_project)
     spec = service.normalize_compiled_spec(
@@ -175,7 +177,7 @@ def test_validate_compiled_spec_rejects_planning_leaf_tasks(
 
 def test_validate_compiled_spec_rejects_research_leaf_tasks(
     service: ExpansionService,
-    sample_project,
+    sample_project: dict[str, Any],
 ) -> None:
     epic = _parent(service, sample_project)
     spec = service.normalize_compiled_spec(
@@ -204,7 +206,7 @@ def test_validate_compiled_spec_rejects_research_leaf_tasks(
     assert any("development-forward" in error for error in validation["errors"])
 
 
-def test_contract_plan_manifest_rejects_research_and_planning_categories(tmp_path) -> None:
+def test_contract_plan_manifest_rejects_research_and_planning_categories(tmp_path: Path) -> None:
     plan = tmp_path / "bad-categories.md"
     plan.write_text(
         """
@@ -267,7 +269,7 @@ def test_contract_plan_manifest_rejects_research_and_planning_categories(tmp_pat
 
 def test_normalize_preserves_registry_agent_selection_and_additional_skills(
     service: ExpansionService,
-    sample_project,
+    sample_project: dict[str, Any],
 ) -> None:
     epic = _parent(service, sample_project)
     _store_agent(service, "frontend-developer", "Frontend development")
@@ -298,7 +300,7 @@ def test_normalize_preserves_registry_agent_selection_and_additional_skills(
 
 def test_normalize_defaults_ambiguous_automated_leaf_to_backend_with_audit_marker(
     service: ExpansionService,
-    sample_project,
+    sample_project: dict[str, Any],
 ) -> None:
     epic = _parent(service, sample_project)
     spec = service.normalize_compiled_spec(
@@ -329,7 +331,7 @@ def test_normalize_defaults_ambiguous_automated_leaf_to_backend_with_audit_marke
 
 def test_normalize_selects_best_fit_agent_from_registry(
     service: ExpansionService,
-    sample_project,
+    sample_project: dict[str, Any],
 ) -> None:
     _store_agent(service, "backend-developer", "Backend storage and MCP implementation")
     _store_agent(service, "frontend-developer", "Frontend UI, React, CSS, and Playwright")
@@ -363,7 +365,7 @@ def test_normalize_selects_best_fit_agent_from_registry(
 
 def test_normalize_selects_frontend_from_web_tsx_signals(
     service: ExpansionService,
-    sample_project,
+    sample_project: dict[str, Any],
 ) -> None:
     _store_agent(service, "backend-developer", "Backend storage and MCP implementation")
     _store_agent(service, "frontend-developer", "Frontend UI, React, CSS, and Playwright")

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, tzinfo
 from email.utils import format_datetime
-from typing import Any
+from typing import Any, Self
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -105,21 +105,24 @@ async def test_execute_retries_429_after_server_delay() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_issues_paginates_past_one_hundred_and_stops_at_terminal_cursor() -> None:
+async def test_list_issues_paginates_past_one_hundred_and_stops_at_terminal_cursor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     client = LinearGraphQLClient("lin_api_key")
-    first_page = [{"id": f"issue-{index}"} for index in range(100)]
-    second_page = [{"id": f"issue-{index}"} for index in range(100, 125)]
-    client.execute = AsyncMock(
+    first_page: list[dict[str, object]] = [{"id": f"issue-{index}"} for index in range(100)]
+    second_page: list[dict[str, object]] = [{"id": f"issue-{index}"} for index in range(100, 125)]
+    execute = AsyncMock(
         side_effect=[
             {"issues": _connection(first_page, has_next_page=True, end_cursor="cursor-100")},
             {"issues": _connection(second_page, has_next_page=False, end_cursor=None)},
         ]
     )
+    monkeypatch.setattr(client, "execute", execute)
 
     issues = await client.list_issues(team_id="team-1")
 
     assert [issue["id"] for issue in issues] == [f"issue-{index}" for index in range(125)]
-    assert [call.args[1]["after"] for call in client.execute.await_args_list] == [
+    assert [call.args[1]["after"] for call in execute.await_args_list] == [
         None,
         "cursor-100",
     ]
@@ -138,9 +141,10 @@ async def test_linear_list_connections_paginate_all_pages(
     method_name: str,
     method_args: tuple[str, ...],
     connection_path: tuple[str, ...],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = LinearGraphQLClient("lin_api_key")
-    client.execute = AsyncMock(
+    execute = AsyncMock(
         side_effect=[
             _nested_connection(
                 connection_path,
@@ -152,42 +156,51 @@ async def test_linear_list_connections_paginate_all_pages(
             ),
         ]
     )
+    monkeypatch.setattr(client, "execute", execute)
 
     method = getattr(client, method_name)
     records = await method(*method_args)
 
     assert [record["id"] for record in records] == ["first", "second"]
-    assert client.execute.await_count == 2
+    assert execute.await_count == 2
 
 
 @pytest.mark.asyncio
-async def test_linear_pagination_rejects_missing_or_repeated_next_cursor() -> None:
+async def test_linear_pagination_rejects_missing_or_repeated_next_cursor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     client = LinearGraphQLClient("lin_api_key")
-    client.execute = AsyncMock(
+    execute = AsyncMock(
         return_value={
             "issues": _connection([{"id": "partial"}], has_next_page=True, end_cursor=None)
         }
     )
+    monkeypatch.setattr(client, "execute", execute)
 
     with pytest.raises(LinearGraphQLError, match="endCursor"):
         await client.list_issues(team_id="team-1")
 
 
 @pytest.mark.asyncio
-async def test_linear_pagination_rejects_missing_page_info() -> None:
+async def test_linear_pagination_rejects_missing_page_info(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     client = LinearGraphQLClient("lin_api_key")
-    client.execute = AsyncMock(return_value={"issues": {"nodes": [{"id": "partial"}]}})
+    execute = AsyncMock(return_value={"issues": {"nodes": [{"id": "partial"}]}})
+    monkeypatch.setattr(client, "execute", execute)
 
     with pytest.raises(LinearGraphQLError, match="pageInfo"):
         await client.list_issues(team_id="team-1")
 
 
 @pytest.mark.asyncio
-async def test_list_projects_chains_fallback_failure_to_primary_error() -> None:
+async def test_list_projects_chains_fallback_failure_to_primary_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     client = LinearGraphQLClient("lin_api_key")
     primary = LinearGraphQLError("team projects failed")
     fallback = LinearGraphQLError("global projects failed")
-    client.execute = AsyncMock(side_effect=[primary, fallback])
+    monkeypatch.setattr(client, "execute", AsyncMock(side_effect=[primary, fallback]))
 
     with pytest.raises(LinearGraphQLError, match="global projects failed") as exc_info:
         await client.list_projects("team-1")
@@ -284,14 +297,18 @@ async def test_non_idempotent_creation_retries_connect_establishment_failure(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("method_name", ["create_issue", "create_project"])
-async def test_creation_methods_mark_graphql_execution_non_idempotent(method_name: str) -> None:
+async def test_creation_methods_mark_graphql_execution_non_idempotent(
+    method_name: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     client = LinearGraphQLClient("lin_api_key")
-    client.execute = AsyncMock(
+    execute = AsyncMock(
         return_value={
             "issueCreate": {"issue": {"id": "issue-1"}},
             "projectCreate": {"project": {"id": "project-1"}},
         }
     )
+    monkeypatch.setattr(client, "execute", execute)
 
     if method_name == "create_issue":
         record = await _create_issue(client)
@@ -300,10 +317,13 @@ async def test_creation_methods_mark_graphql_execution_non_idempotent(method_nam
         record = await client.create_project("team-1", "Project")
         assert record["id"] == "project-1"
 
-    assert client.execute.await_args.kwargs["idempotent"] is False
+    assert execute.await_args is not None
+    assert execute.await_args.kwargs["idempotent"] is False
 
 
-def _install_fake_client(monkeypatch: pytest.MonkeyPatch, outcomes: list[Any]) -> list[Any]:
+def _install_fake_client(
+    monkeypatch: pytest.MonkeyPatch, outcomes: list[httpx.Response | Exception]
+) -> list[Any]:
     calls: list[Any] = []
 
     class FakeAsyncClient:
@@ -403,8 +423,8 @@ def test_parse_date_retry_after_adds_bounded_jitter(
 ) -> None:
     class FrozenDateTime(datetime):
         @classmethod
-        def now(cls, tz: object = None) -> datetime:
-            return datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
+        def now(cls, tz: tzinfo | None = None) -> Self:
+            return cls(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
 
     monkeypatch.setattr("gobby.utils.http_retry.datetime", FrozenDateTime)
     monkeypatch.setattr("gobby.integrations.linear_graphql.random.uniform", lambda _low, high: high)
