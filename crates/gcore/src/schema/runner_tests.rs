@@ -1163,7 +1163,7 @@ fn migrations_directory_exists_and_copy_agent_entry_is_registered() {
         migrations_dir.is_dir(),
         "crates/gcore/assets/schema/migrations must exist so later leaves can register include_str entries"
     );
-    assert_eq!(MIGRATIONS.len(), 24);
+    assert_eq!(MIGRATIONS.len(), 25);
     assert_eq!(MIGRATIONS[0].version, 376);
     assert_eq!(MIGRATIONS[0].filename, "376_copy_agent_definitions.sql");
     assert_eq!(MIGRATIONS[1].version, 377);
@@ -1261,6 +1261,11 @@ fn migrations_directory_exists_and_copy_agent_entry_is_registered() {
     assert_eq!(
         MIGRATIONS[23].filename,
         "399_drain_orphan_binding_alias.sql"
+    );
+    assert_eq!(MIGRATIONS[24].version, 400);
+    assert_eq!(
+        MIGRATIONS[24].filename,
+        "400_drop_vision_extract_config_rows.sql"
     );
     assert!(MIGRATIONS[5].sql.contains("-- gobby:destructive"));
     for migration in MIGRATIONS {

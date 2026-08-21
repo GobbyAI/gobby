@@ -177,6 +177,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "0043823579b2457d3a7df5d0697dfbe080aaff3aed4fe735166ec14e28acaefe",
         sql: include_str!("../../assets/schema/migrations/399_drain_orphan_binding_alias.sql"),
     },
+    EmbeddedMigration {
+        version: 400,
+        filename: "400_drop_vision_extract_config_rows.sql",
+        checksum: "07fac33f96b083fc98efa7f6c41d903b7c65f5362d214851b0bd712a4c36a387",
+        sql: include_str!("../../assets/schema/migrations/400_drop_vision_extract_config_rows.sql"),
+    },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 
