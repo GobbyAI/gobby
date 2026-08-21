@@ -342,10 +342,11 @@ memory:
 
 `gobby install` accepts `--embedding-url`, `--embedding-provider`,
 `--embedding-model`, and `--embedding-dim` to override the bundled provider
-defaults. Custom URL inference uses the endpoint port: `11434` selects Ollama,
-`1234` selects LM Studio, and any other port uses generic
-`openai-compatible` routing. Pass `--embedding-provider` to override that
-inference for custom endpoints.
+defaults. Provider identity for a custom URL comes from fingerprinting the
+server: Ollama answers `GET /api/tags`, LM Studio answers `GET /api/v1/models`,
+vLLM's `/v1/models` entries carry `owned_by: "vllm"`, and any other reachable
+`/v1/models` endpoint routes as generic `openai-compatible`. Pass
+`--embedding-provider` to override that identification for custom endpoints.
 
 When `--embedding-dim` is omitted alongside a custom URL or model, the
 installer probes `/v1/embeddings` on the target endpoint to detect the dim. If
@@ -372,6 +373,17 @@ storage and a slower embed step. Example install:
 gobby install --embedding-url http://localhost:1234/v1 \
               --embedding-model text-embedding-qwen3-embedding-4b
 # --embedding-dim is auto-detected from the endpoint; pass 2560 to skip the probe.
+```
+
+A vLLM (or vllm-metal) embedding server is operator-started and serves one
+model per process, so it always runs on its own port, separate from any vLLM
+generation endpoint. The served model is resolved live from `/v1/models` and
+the dim is always probed, never defaulted:
+
+```bash
+gobby install --embedding-provider vllm --embedding-url http://localhost:8323/v1
+# or switch an existing installation to a vllm-served catalog model:
+gobby embeddings switch qwen3-0.6b-q8 --provider vllm --api-base http://localhost:8323/v1
 ```
 
 `memory.backend` accepts `local` or `null`. Qdrant and FalkorDB connection

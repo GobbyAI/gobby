@@ -173,7 +173,7 @@ gobby uninstall [OPTIONS]
 | `--project` | Install project-scoped configuration. |
 | `--voice` | Install voice support assets. |
 | `--embedding-url URL` | Use a custom embedding API endpoint. |
-| `--embedding-provider PROVIDER` | Force embedding provider compatibility mode. |
+| `--embedding-provider PROVIDER` | Force embedding provider compatibility mode (`lmstudio`, `ollama`, `openai-compatible`, `vllm`). |
 | `--embedding-model MODEL` | Override the embedding model. |
 | `--embedding-dim N` | Override the embedding dimension. |
 | `--secret-kek-posture [key-file|passphrase]` | Select daemon-local secret KEK storage. |

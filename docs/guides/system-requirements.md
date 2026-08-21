@@ -98,6 +98,7 @@ stores vectors in Qdrant when the local vector stack is enabled.
 | Ollama | `nomic-embed-text`, `http://localhost:11434/v1` | Uses the `ollama` CLI, 768 dimensions |
 | LM Studio | `text-embedding-nomic-embed-text-v1.5@f16`, `http://localhost:1234/v1` | Uses the `lms` CLI, 768 dimensions |
 | OpenAI | `text-embedding-3-small` with an OpenAI API key | Hosted embeddings, 1536 dimensions |
+| vLLM / vllm-metal | Served model resolved from `/v1/models` (e.g. `Qwen/Qwen3-Embedding-0.6B`), operator-chosen `api_base` | Operator-started server on its own port (one model per process, separate from generation); dim probed from the endpoint |
 | None | No embedding provider | Managed datastores still install and start; semantic embedding work is disabled |
 
 The default configuration model is `nomic-embed-text` with 768 dimensions. Installer-selected

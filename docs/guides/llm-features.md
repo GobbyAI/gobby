@@ -99,6 +99,11 @@ probe exercises a real tool call. A failed probe persists
 activate response's `probe_diagnostics.tools`, and hides the endpoint from the
 web-chat picker until a re-activation succeeds.
 
+vLLM serves one model per process, so an embedding model runs as a separate
+server on its own port; see the embeddings guidance in
+[configuration.md](./configuration.md) for `--embedding-provider vllm` and
+`gobby embeddings switch --provider vllm`.
+
 Paired selectors for the same endpoint. Auto becomes the picker/candidate value
 `endpoint:vllm` after the single served id is resolved:
 
