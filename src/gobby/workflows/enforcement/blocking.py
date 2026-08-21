@@ -36,6 +36,13 @@ INFRASTRUCTURE_TOOLS = {
 }
 
 
+# Provider-native catalog tools that discover other tools without executing
+# any: Claude Code's deferred-tool loader and Grok's MCP catalog search.
+# They are always allowed by step allowlists and pass agent enforcement unless
+# an agent definition blocks them explicitly.
+PROVIDER_DISCOVERY_TOOLS = frozenset({"ToolSearch", "search_tool"})
+
+
 # Out-of-band operator/debug channels. Callers are typically humans driving
 # a session from the web app or CLI; they target a session whose workflow
 # they aren't bound by. These bypass step/agent allow-lists so a dev can
@@ -136,6 +143,19 @@ def is_discovery_tool(tool_name: str | None) -> bool:
         True if this is a discovery tool that doesn't need schema unlock
     """
     return tool_name in DISCOVERY_TOOLS if tool_name else False
+
+
+def is_provider_discovery_tool(tool_name: str | None) -> bool:
+    """True when *tool_name* is a provider-native tool-catalog tool.
+
+    Args:
+        tool_name: The native tool name reported by the provider hook
+            (from event.data.tool_name)
+
+    Returns:
+        True for ToolSearch (Claude Code) and search_tool (Grok)
+    """
+    return tool_name in PROVIDER_DISCOVERY_TOOLS if tool_name else False
 
 
 def is_operator_tool(tool_name: str | None) -> bool:

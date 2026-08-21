@@ -537,6 +537,34 @@ class TestAgentToolEnforcement:
 
         assert response is None
 
+    @pytest.mark.parametrize("tool_name", ["ToolSearch", "search_tool"])
+    def test_provider_discovery_tool_exempt_by_default(self, tool_name: str) -> None:
+        """Provider catalog tools pass agent enforcement unless explicitly blocked."""
+        variables: dict[str, Any] = {
+            "_agent_blocked_tools": ["Edit"],
+            "_agent_blocked_mcp_tools": ["gobby-memory:create_memory"],
+            "_agent_type": "plan-adversary-taskless",
+        }
+
+        response = _check_agent_tool(tool_name, variables)
+
+        assert response is None
+
+    @pytest.mark.parametrize("tool_name", ["ToolSearch", "search_tool"])
+    def test_explicit_block_overrides_provider_discovery_exempt(self, tool_name: str) -> None:
+        """Explicit blocked_tools entries still win over the catalog-tool exemption."""
+        variables: dict[str, Any] = {
+            "_agent_blocked_tools": [tool_name],
+            "_agent_type": "plan-adversary-taskless",
+        }
+
+        response = _check_agent_tool(tool_name, variables)
+
+        assert response is not None
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert f"Tool '{tool_name}' is blocked" in response.reason
+
     def test_blocked_tools_overrides_infra_exempt_for_agent(self) -> None:
         """Agent-level blocked_tools can deny set_variable while get_variable stays usable."""
         variables: dict[str, Any] = {
@@ -2036,17 +2064,19 @@ class TestStepEnforcementAfterTransition:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_toolsearch_allowed_in_restricted_step(
+    @pytest.mark.parametrize("tool_name", ["ToolSearch", "search_tool"])
+    async def test_provider_discovery_tool_allowed_in_restricted_step(
         self,
+        tool_name: str,
         db: "HubDatabase",
         manager: AgentDefinitionManager,
         engine: RuleEngine,
         instance_mgr: AgentStepInstanceManager,
     ) -> None:
-        """ToolSearch (Claude Code deferred tool loader) should always be allowed."""
+        """Claude Code ToolSearch and Grok search_tool bypass step allowlists."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
         event = _make_event(
-            data={"tool_name": "ToolSearch"},
+            data={"tool_name": tool_name},
         )
         variables: dict[str, Any] = {}
 
@@ -2593,16 +2623,20 @@ class TestProviderToolNameNormalization:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_grok_native_search_tool_still_blocked(
+    async def test_grok_foreign_native_tool_still_blocked(
         self,
         db: "HubDatabase",
         manager: AgentDefinitionManager,
         engine: RuleEngine,
         instance_mgr: AgentStepInstanceManager,
     ) -> None:
-        """Canonicalization does not fail open: foreign native tools stay denied."""
+        """Canonicalization does not fail open: foreign native tools stay denied.
+
+        Grok's ``search_tool`` is a catalog tool and is exempt like Claude
+        Code's ``ToolSearch``; its shell tool is the foreign example here.
+        """
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
-        event = _make_event(data={"tool_name": "search_tool"})
+        event = _make_event(data={"tool_name": "run_terminal_command"})
 
         response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
         assert response.decision == "block"

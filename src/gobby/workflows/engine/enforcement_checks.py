@@ -15,6 +15,7 @@ from gobby.workflows.enforcement.blocking import (
     is_gobby_call_tool,
     is_infrastructure_tool,
     is_operator_tool,
+    is_provider_discovery_tool,
 )
 from gobby.workflows.engine.skill_load_guidance import skill_load_block_guidance
 from gobby.workflows.reserved_variables import is_reserved_workflow_variable
@@ -328,6 +329,8 @@ class EnforcementCheckMixin:
             )
 
         # Discovery/infrastructure tools pass unless explicitly blocked above.
+        if is_provider_discovery_tool(tool_name):
+            return None
         if canonical_tool.startswith("mcp__gobby__"):
             mcp_suffix = canonical_tool[len("mcp__gobby__") :]
             if is_discovery_tool(mcp_suffix) or is_infrastructure_tool(mcp_suffix):
@@ -397,8 +400,9 @@ class EnforcementCheckMixin:
         wf_name = instance.agent_name
         allowed_target = f"tool:{canonical_tool.casefold()}"
 
-        # ToolSearch (Claude Code deferred tool loader) is always allowed
-        if tool_name == "ToolSearch":
+        # Provider tool-catalog tools (Claude Code ToolSearch, Grok search_tool)
+        # discover tools without executing any and are always allowed.
+        if is_provider_discovery_tool(tool_name):
             return None
 
         if self._is_native_set_variable_tool(tool_name):
