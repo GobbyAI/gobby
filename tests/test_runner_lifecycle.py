@@ -3491,7 +3491,12 @@ class TestShutdownLoop:
                     new=AsyncMock(side_effect=RuntimeError("readiness failed")),
                 )
             )
-            rollback = stack.enter_context(patch("gobby.runner_rollback.rollback_runner_resources"))
+            rollback = stack.enter_context(
+                patch(
+                    "gobby.runner_rollback.rollback_runner_resources_async",
+                    new=AsyncMock(),
+                )
+            )
             stack.enter_context(patch("gobby.runner_maintenance.setup_signal_handlers"))
             stack.enter_context(patch("gobby.runner_maintenance.cleanup_pid_file"))
 
@@ -3503,7 +3508,7 @@ class TestShutdownLoop:
 
             assert exc_info.value.code == 1
             readiness.assert_awaited_once_with(runner)
-            rollback.assert_called_once_with(runner)
+            rollback.assert_awaited_once_with(runner)
 
     @pytest.mark.asyncio
     async def test_web_chat_runtime_starts_after_http_bind(self, mock_config) -> None:

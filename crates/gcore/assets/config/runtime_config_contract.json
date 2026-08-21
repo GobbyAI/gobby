@@ -4077,6 +4077,64 @@
     },
     {
       "activation": "live",
+      "default": null,
+      "description": "Optional absolute gterm binary path. None uses resolve_native_bin.",
+      "key": "terminal_host.binary_path",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable gterm host supervision for native terminals.",
+      "key": "terminal_host.enabled",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 5.0,
+      "description": "Seconds between control ping health checks.",
+      "key": "terminal_host.health_interval_seconds",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 10.0,
+      "description": "Grace period for host_shutdown and process-group reaping.",
+      "key": "terminal_host.shutdown_grace_seconds",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "~/.gobby",
+      "description": "Directory for gterm sockets, pidfile, and control token.",
+      "key": "terminal_host.socket_dir",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
       "default": "tmux",
       "description": "Default TerminalRuntime backend for new Gobby-owned terminals.",
       "key": "terminals.default_backend",

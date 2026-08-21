@@ -398,6 +398,18 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
 
     runner.terminal_manager = TerminalManager(runner.database)
     runner.terminal_config = config.terminals
+    from gobby.config.terminal_host import TerminalHostConfig
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.terminals.host_manager import TerminalHostManager
+
+    host_config = getattr(config, "terminal_host", None) or TerminalHostConfig()
+    runner.terminal_host_config = host_config
+    runner.terminal_host_manager = TerminalHostManager(
+        config=host_config,
+        terminal_config=config.terminals,
+        terminal_manager=runner.terminal_manager,
+        run_manager=LocalAgentRunManager(runner.database),
+    )
     terminal_runtime_registry = TerminalRuntimeRegistry()
     from gobby.agents.tmux.session_manager import TmuxSessionManager
 

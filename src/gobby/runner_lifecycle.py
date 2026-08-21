@@ -168,9 +168,9 @@ async def run_daemon(
                     successor_application_name=application_name,
                 )
             except BaseException as gate_error:
-                from gobby.runner_rollback import rollback_runner_resources
+                from gobby.runner_rollback import rollback_runner_resources_async
 
-                rollback_runner_resources(runner)
+                await rollback_runner_resources_async(runner)
                 cleanup_owned_pid_file()
                 if isinstance(gate_error, asyncio.CancelledError):
                     raise
@@ -299,9 +299,9 @@ async def run_daemon(
 
     except Exception as e:
         logger.exception("Fatal error: %s", e)
-        from gobby.runner_rollback import rollback_runner_resources
+        from gobby.runner_rollback import rollback_runner_resources_async
 
-        rollback_runner_resources(runner)
+        await rollback_runner_resources_async(runner)
         cleanup_owned_pid_file()
         sys.exit(1)
     finally:

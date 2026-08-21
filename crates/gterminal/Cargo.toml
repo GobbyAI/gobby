@@ -34,9 +34,11 @@ ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "fs", "signal"] }
 tracing = "0.1.44"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unicode-width = "0.2"
+uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(windows)'.dependencies]
 widestring = "1.2"
@@ -68,4 +70,17 @@ tempfile = "3"
 
 [[test]]
 name = "frame_producer"
+required-features = ["vt-engine"]
+
+[[test]]
+name = "host_lifecycle"
+required-features = ["vt-engine"]
+
+[[test]]
+name = "control_protocol"
+required-features = ["vt-engine"]
+
+[[bin]]
+name = "gterm"
+path = "src/bin/gterm.rs"
 required-features = ["vt-engine"]

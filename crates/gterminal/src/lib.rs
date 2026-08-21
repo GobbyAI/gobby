@@ -9,6 +9,7 @@
 pub(crate) const GTERM_ENV_VAR: &str = "GTERM_ENV";
 pub(crate) const GTERM_ENV_VALUE: &str = "1";
 
+pub mod host;
 pub mod input;
 pub mod ipc;
 pub mod layout;

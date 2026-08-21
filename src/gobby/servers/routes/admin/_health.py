@@ -107,6 +107,21 @@ def _get_degraded_services(server: "HTTPServer") -> list[str]:
     return sorted(str(service_name) for service_name in degraded_services)
 
 
+def _gterm_host_status(server: "HTTPServer") -> dict[str, Any] | None:
+    """Read-only gterm host health snapshot."""
+    runner = server.get_runner()
+    if runner is None:
+        return None
+    host = getattr(runner, "terminal_host_manager", None)
+    health_state = getattr(host, "health_state", None)
+    if not callable(health_state):
+        return None
+    snapshot = health_state()
+    if isinstance(snapshot, dict):
+        return snapshot
+    return None
+
+
 async def _get_falkordb_memory_status(server: "HTTPServer") -> dict[str, Any]:
     """Collect the FalkorDB status payload for the admin memory section."""
     try:
@@ -149,11 +164,15 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
         """Lightweight health check including local hook-runtime compatibility."""
         hook_runtime = await asyncio.to_thread(read_ghook_runtime_diagnostic)
         degraded_services = _get_degraded_services(server)
-        return {
+        payload: dict[str, Any] = {
             "status": "degraded" if hook_runtime.is_degraded or degraded_services else "ok",
             "degraded_services": degraded_services,
             "hook_runtime": hook_runtime.to_dict(),
         }
+        gterm_host = _gterm_host_status(server)
+        if gterm_host is not None:
+            payload["gterm_host"] = gterm_host
+        return payload
 
     @router.get("/startup-progress")
     async def startup_progress() -> dict[str, Any]:
@@ -579,6 +598,9 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             "hook_runtime": hook_runtime.to_dict(),
             "response_time_ms": response_time_ms,
         }
+        gterm_host = _gterm_host_status(server)
+        if gterm_host is not None:
+            payload["gterm_host"] = gterm_host
         if postgres_status is not None:
             payload["postgres"] = postgres_status
         return payload

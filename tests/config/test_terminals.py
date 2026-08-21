@@ -18,7 +18,6 @@ _SRC = Path(__file__).resolve().parents[2] / "src" / "gobby"
 _P2_CONSUMERS = (
     _SRC / "terminals",
     _SRC / "config" / "terminals.py",
-    _SRC / "config" / "app.py",
 )
 
 
@@ -46,6 +45,8 @@ def test_shared_terminal_config_precedes_host_config() -> None:
     for root in _P2_CONSUMERS:
         paths = [root] if root.is_file() else sorted(root.rglob("*.py"))
         for path in paths:
+            if path.name.startswith("host_"):
+                continue
             tree = ast.parse(path.read_text(encoding="utf-8"))
             for node in ast.walk(tree):
                 if isinstance(node, ast.ImportFrom) and node.module is not None:

@@ -811,6 +811,15 @@ async def _run_async_shutdown_cleanup(
             definition_revision_listener.close,
             "Definition revision listener shutdown",
         )
+    host = getattr(runner, "terminal_host_manager", None)
+    if host is not None:
+        preserve_host = shutdown_intent is ShutdownIntent.RESTART
+        stop = getattr(host, "stop", None)
+        if callable(stop):
+            await _best_effort(
+                lambda: stop(preserve_host=preserve_host),
+                "gterm host stop",
+            )
     preserved_agent_pids = await runner_lifecycle_processes._preserved_agent_terminal_pids(runner)
     if preserved_agent_pids is None:
         logger.warning(

@@ -230,6 +230,13 @@ class TerminalManager:
         row = self.db.fetchone("SELECT * FROM terminals WHERE id = %s", (str(UUID(terminal_id)),))
         return None if row is None else Terminal.from_row(row)
 
+    def get_by_identity(self, terminal_id: str, spawn_key: str) -> Terminal | None:
+        """Load a row only when both durable identity fields match."""
+        row = self.get(terminal_id)
+        if row is None or row.spawn_key != spawn_key:
+            return None
+        return row
+
     def create_pending(
         self,
         terminal_id: str,
@@ -483,7 +490,7 @@ class TerminalManager:
         rows = self.db.fetchall(
             f"""
             SELECT * FROM terminals
-            WHERE {' AND '.join(filters)}
+            WHERE {" AND ".join(filters)}
             ORDER BY created_at ASC, id ASC
             LIMIT %s
             """,

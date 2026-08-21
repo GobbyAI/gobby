@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
     from gobby.config.bootstrap import BootstrapConfig
     from gobby.config.runtime import ConfigRuntime
+    from gobby.config.terminal_host import TerminalHostConfig
     from gobby.config.terminals import TerminalConfig
     from gobby.daemon_lease import ActiveDaemonLease
     from gobby.events.completion_registry import CompletionEventRegistry
@@ -74,6 +75,7 @@ if TYPE_CHECKING:
     from gobby.sync.memories import MemoryBackupManager
     from gobby.tasks.validation import TaskValidator
     from gobby.terminals import TerminalRuntimeRegistry
+    from gobby.terminals.host_manager import TerminalHostManager
     from gobby.wiki.watcher import WikiWatcher
     from gobby.workflows.pipeline_executor import PipelineExecutor
     from gobby.workflows.pipeline_loader import PipelineLoader
@@ -203,6 +205,8 @@ class GobbyRunner:
     terminal_manager: TerminalManager
     terminal_runtime_registry: TerminalRuntimeRegistry
     terminal_config: TerminalConfig
+    terminal_host_config: TerminalHostConfig
+    terminal_host_manager: TerminalHostManager | None
     write_coordinator: Any
     terminal_effect_bridge: Any
     attention_manager: AttentionStateManager
@@ -247,9 +251,9 @@ class GobbyRunner:
             runtime = getattr(self, "config_runtime", None)
             if runtime is not None:
                 await runtime.close()
-            from gobby.runner_rollback import rollback_runner_resources
+            from gobby.runner_rollback import rollback_runner_resources_async
 
-            rollback_runner_resources(self)
+            await rollback_runner_resources_async(self)
             raise
         return self
 

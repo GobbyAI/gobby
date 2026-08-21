@@ -70,6 +70,7 @@ from gobby.config.sessions import (
 from gobby.config.skills import SkillsConfig
 from gobby.config.system_loops import SystemLoopsConfig
 from gobby.config.tasks import CompactHandoffConfig, GobbyTasksConfig, WorkflowConfig
+from gobby.config.terminal_host import TerminalHostConfig
 from gobby.config.terminals import TerminalConfig
 from gobby.config.tmux import TmuxConfig
 from gobby.config.ui import (
@@ -397,6 +398,10 @@ class DaemonConfig(BaseModel):
     terminals: TerminalConfig = Field(
         default_factory=TerminalConfig,
         description="Backend-neutral terminal spawn and in-doubt configuration",
+    )
+    terminal_host: TerminalHostConfig = Field(
+        default_factory=TerminalHostConfig,
+        description="gterm host supervision configuration",
     )
     cron: CronConfig = Field(
         default_factory=CronConfig,
