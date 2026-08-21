@@ -6,6 +6,7 @@ pub mod daemon;
 pub mod frame_source;
 pub mod input;
 pub mod persist;
+pub mod startup;
 pub mod teardown;
 pub mod theme;
 pub mod tmux_identity;

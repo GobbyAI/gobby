@@ -1,12 +1,9 @@
 //! App shell: project selection, roster, and pane views.
 
 use crate::frame_source::AttachLocator;
-use crate::teardown::{CrosstermBackend, TerminalGuard};
 use crate::theme::{Theme, ThemeKind};
 use crate::Workspace;
-use anyhow::Context;
 use gobby_terminal::protocol::{ClientMessage, PaneLocator, RenderEncoding, PROTOCOL_VERSION};
-use std::io::IsTerminal;
 
 /// Handshake + user attach used by the live workspace and by Unix frame connect.
 pub fn observe_tmux_pane(locator: &AttachLocator) -> (ClientMessage, ClientMessage) {
@@ -41,14 +38,16 @@ pub fn observe_tmux_pane(locator: &AttachLocator) -> (ClientMessage, ClientMessa
 }
 
 pub fn run() -> anyhow::Result<()> {
-    let _url = gobby_core::daemon_url::daemon_url();
-    let _token = gobby_core::local_token::read_local_cli_token().ok();
-    let _theme = Theme::new(ThemeKind::Dark);
-    let _ws = Workspace::scripted();
-    if std::io::stdout().is_terminal() {
-        let mut guard = TerminalGuard::new(CrosstermBackend);
-        guard.arm().context("enter terminal modes")?;
-        drop(guard);
+    crate::startup::run()
+}
+
+pub fn run_ready(ready: crate::startup::Ready) -> anyhow::Result<()> {
+    let mut ws = Workspace::scripted();
+    if let Some(project) = ready.project {
+        ws.select_project(project);
     }
+    let _url = ready.daemon_url;
+    let _token = ready.token;
+    let _theme = Theme::new(ThemeKind::Dark);
     Ok(())
 }
