@@ -124,10 +124,8 @@ function isLegacyProviderModelOption(
     (value.canonical_id === undefined ||
       typeof value.canonical_id === "string") &&
     (value.input_modalities === undefined ||
-      (Array.isArray(value.input_modalities) &&
-        value.input_modalities.every(
-          (modality) => typeof modality === "string",
-        ))) &&
+      value.input_modalities === null ||
+      isStringArray(value.input_modalities)) &&
     (value.supports_tools === undefined ||
       typeof value.supports_tools === "boolean") &&
     (value.execution_provider === undefined ||
@@ -224,7 +222,15 @@ export function isProviderModelEntry(
 }
 
 function mapProviderModel(model: ProviderModelPayload): ProviderModelOption {
-  if ("value" in model) return model;
+  if ("value" in model) {
+    // /api/providers/models emits `input_modalities: null` for "unknown";
+    // normalize to absent so legacy and matrix options agree.
+    if (model.input_modalities === null) {
+      const { input_modalities: _unknown, ...rest } = model;
+      return rest;
+    }
+    return model;
+  }
   return {
     value: model.canonical_model,
     label: model.display_name,

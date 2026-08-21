@@ -166,7 +166,8 @@ def _ai_capability(enabled: bool) -> AIDaemonCapability | AIUnavailableCapabilit
 
 def _vision_extract_enabled(snapshot: ConfigSnapshot) -> bool:
     return any(
-        endpoint.vision_extract for endpoint in snapshot.active.ai.generation.endpoints.values()
+        endpoint.input_modalities is not None and "image" in endpoint.input_modalities
+        for endpoint in snapshot.active.ai.generation.endpoints.values()
     )
 
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { render } from "@testing-library/react";
-import { renderBadges } from "../SessionsTab.helpers";
+import { renderBadges, resolveLocalFlag } from "../SessionsTab.helpers";
 import type { Badge, WatchingSessionEntry } from "../SessionsTab.helpers";
 import type { AcpSessionInfo } from "../../../types/sessions";
 
@@ -103,6 +103,24 @@ describe("renderBadges kind chip", () => {
     expect(labels[0]).toBe("ACP");
     // Remaining chips stay alphabetically sorted: LOCAL before SB.
     expect(labels.slice(1)).toEqual(["LOCAL", "SB"]);
+  });
+});
+
+describe("resolveLocalFlag", () => {
+  it("classifies vllm sessions as local when the explicit flag is absent", () => {
+    expect(resolveLocalFlag(null, "vllm", "Qwen/Qwen2.5-7B-Instruct")).toBe(
+      true,
+    );
+    expect(resolveLocalFlag(undefined, "VLLM", "any")).toBe(true);
+    expect(resolveLocalFlag(null, "lmstudio", "mistral")).toBe(true);
+    expect(resolveLocalFlag(null, "codex", "gpt-5.4")).toBe(false);
+  });
+
+  it("lets an explicit is_local flag win over the vllm provider fallback", () => {
+    expect(resolveLocalFlag(false, "vllm", "Qwen/Qwen2.5-7B-Instruct")).toBe(
+      false,
+    );
+    expect(resolveLocalFlag(true, "codex", "gpt-5.4")).toBe(true);
   });
 });
 

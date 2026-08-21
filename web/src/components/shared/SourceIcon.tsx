@@ -80,6 +80,22 @@ export function SourceIcon({ source, size = 14 }: SourceIconProps) {
     );
   }
 
+  if (source === "vllm") {
+    return (
+      <svg
+        width={size}
+        height={size}
+        viewBox="0 0 96 96"
+        fill="currentColor"
+        className="source-icon source-icon-vllm shrink-0"
+        aria-hidden="true"
+      >
+        <path d="M41.05 27.29v55.31L13.4 27.29z" />
+        <path d="M41.05 82.6h21.73L81.43 12.21 55.86 25.68z" />
+      </svg>
+    );
+  }
+
   const providerLogo =
     PROVIDER_LOGOS[source as keyof typeof PROVIDER_LOGOS] || null;
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import os
 import stat
 import tempfile
@@ -94,7 +95,8 @@ def server_with_llm() -> MagicMock:
                     "lm-studio": {
                         "api_base": "http://localhost:1234/v1",
                         "model": "llava",
-                        "vision_extract": True,
+                        "probed_model": "llava",
+                        "input_modalities": ["text", "image"],
                     }
                 }
             )
@@ -223,6 +225,112 @@ def test_generate_selects_explicit_provider_model(
             cwd="/tmp/project",
         )
     ]
+
+
+def _gif_data_url() -> str:
+    encoded = base64.standard_b64encode(b"GIF89a").decode("utf-8")
+    return f"data:image/gif;base64,{encoded}"
+
+
+def test_generate_route_forwards_images(
+    client: TestClient,
+    server_with_llm: MagicMock,
+) -> None:
+    adapter = _FakeTextAdapter()
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="endpoint:local-vllm",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("qwen-vl",),
+                metadata={
+                    "endpoint": "local-vllm",
+                    "protocol": "vllm",
+                    "wire_api": "chat-completions",
+                    "input_modalities": ["text", "image"],
+                },
+            )
+        ]
+    )
+    server_with_llm.services.text_generation_service = TextGenerationService(
+        registry,
+        {"endpoint:local-vllm": adapter},
+    )
+    images = [_gif_data_url()]
+
+    response = client.post(
+        "/api/llm/generate",
+        json={
+            "prompt": "caption this",
+            "provider": "endpoint:local-vllm",
+            "model": "qwen-vl",
+            "images": images,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["provider"] == "endpoint:local-vllm"
+    assert response.json()["model"] == "qwen-vl"
+    assert adapter.requests[0].images == images
+    assert adapter.requests[0].prompt == "caption this"
+
+
+def test_generate_route_image_rejections(
+    client: TestClient,
+    server_with_llm: MagicMock,
+    tmp_path: Path,
+) -> None:
+    adapter = _FakeTextAdapter()
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="endpoint:local-vllm",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("qwen-vl",),
+                metadata={
+                    "endpoint": "local-vllm",
+                    "protocol": "vllm",
+                    "wire_api": "chat-completions",
+                    "input_modalities": ["text", "image"],
+                },
+            )
+        ]
+    )
+    server_with_llm.services.text_generation_service = TextGenerationService(
+        registry,
+        {"endpoint:local-vllm": adapter},
+    )
+    oversized = []
+    for index in range(5):
+        path = tmp_path / f"huge-{index}.png"
+        path.write_bytes(b"x" * MAX_IMAGE_BYTES)
+        oversized.append(str(path))
+    cases = [
+        (["data:image/png"], "Malformed data URL"),
+        (["data:image/bmp;base64,Qk0="], "Disallowed image MIME type"),
+        (["data:image/png;base64,!!!!"], "Invalid image base64"),
+        (["relative.png"], "Image path must be absolute: relative.png"),
+        (["/missing/does-not-exist.png"], "Image not found"),
+        ([_gif_data_url()] * 9, "Too many images (max 8)"),
+        (oversized, "aggregate limit"),
+    ]
+    for images, match in cases:
+        response = client.post(
+            "/api/llm/generate",
+            json={
+                "prompt": "caption this",
+                "provider": "endpoint:local-vllm",
+                "model": "qwen-vl",
+                "images": images,
+            },
+        )
+        assert response.status_code == 400, (images[0][:40], response.status_code, response.text)
+        assert match in response.json()["detail"]
+        assert adapter.requests == []
 
 
 def test_generate_caps_and_propagates_timeout_overrides(

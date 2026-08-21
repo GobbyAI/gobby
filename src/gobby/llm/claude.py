@@ -87,6 +87,7 @@ class ClaudeLLMProvider:
         *,
         reasoning_effort: str | None = None,
         caller: str | None = None,
+        images: Sequence[str] | None = None,
     ) -> LLMTextResult:
         """Generate text and surface Anthropic token usage when available."""
         return await self._sdk_client.generate_text_result(
@@ -96,6 +97,7 @@ class ClaudeLLMProvider:
             max_tokens,
             reasoning_effort=reasoning_effort,
             caller=caller,
+            images=images,
         )
 
     async def generate_agentic(
@@ -145,12 +147,3 @@ class ClaudeLLMProvider:
             reasoning_effort=reasoning_effort,
             caller=caller,
         )
-
-    async def describe_image(
-        self,
-        image_path: str,
-        context: str | None = None,
-        model: str | None = None,
-    ) -> str:
-        """Generate a text description of an image using Claude vision."""
-        return await self._sdk_client.describe_image(image_path, context, model)

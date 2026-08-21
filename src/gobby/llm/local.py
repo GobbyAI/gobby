@@ -81,6 +81,7 @@ class LocalLLMProvider:
         self._url = str(url)
         self._default_model = str(model)
         self._api_key = str(getattr(local_cfg, "api_key", None) or "not-needed")
+        self._endpoint = local_cfg
         self._adapter = create_local_provider_adapter(local_cfg)
         self._client: Any | None = self._adapter.client
         logger.debug(
@@ -112,6 +113,17 @@ class LocalLLMProvider:
             return self._default_model
 
         return model
+
+    async def _resolve_wire_model(self, model: str | None) -> str:
+        requested = self._resolve_model(model)
+        if self._endpoint.protocol != "vllm":
+            return requested
+        from gobby.agents.local_model import resolve_vllm_served_model
+
+        endpoint = self._endpoint
+        if requested != endpoint.model:
+            endpoint = endpoint.model_copy(update={"model": requested})
+        return await resolve_vllm_served_model(endpoint)
 
     # ------------------------------------------------------------------
     # Provider primitives
@@ -147,16 +159,18 @@ class LocalLLMProvider:
         *,
         reasoning_effort: str | None = None,
         caller: str | None = None,
+        images: list[str] | None = None,
     ) -> LLMTextResult:
         if caller:
             logger.debug("Local LLM text request from %s", caller)
-        resolved = self._resolve_model(model)
+        resolved = await self._resolve_wire_model(model)
         return await self._adapter.generate_text_result(
             prompt,
             system_prompt=system_prompt,
             model=resolved,
             max_tokens=max_tokens,
             reasoning_effort=reasoning_effort,
+            images=images,
         )
 
     async def generate_json(
@@ -171,24 +185,11 @@ class LocalLLMProvider:
     ) -> dict[str, Any]:
         if caller:
             logger.debug("Local LLM JSON request from %s", caller)
-        resolved = self._resolve_model(model)
+        resolved = await self._resolve_wire_model(model)
         return await self._adapter.generate_json(
             prompt,
             system_prompt=system_prompt,
             model=resolved,
             max_tokens=max_tokens,
             reasoning_effort=reasoning_effort,
-        )
-
-    async def describe_image(
-        self,
-        image_path: str,
-        context: str | None = None,
-        model: str | None = None,
-    ) -> str:
-        resolved = self._resolve_model(model)
-        return await self._adapter.describe_image(
-            image_path,
-            context=context,
-            model=resolved,
         )

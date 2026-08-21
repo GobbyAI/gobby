@@ -12,9 +12,9 @@ import pytest
 
 from gobby.agents import resume_executor
 from gobby.agents.srt_runtime import SandboxLaunch
+from gobby.ai.codex_endpoint import CODEX_ENDPOINT_API_KEY_ENV
 from gobby.config.app import DaemonConfig
 from gobby.storage.agents import AgentRun
-from tests.agents.prepared_spawn import prepared_spawn
 
 pytestmark = pytest.mark.unit
 
@@ -425,6 +425,62 @@ async def test_resume_responses_endpoint_rebuilds_child_scoped_codex_config(
 
 
 @pytest.mark.asyncio
+async def test_resume_vllm_endpoint_uses_config_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "sk-vllm-resume-never-in-argv"
+    metadata = _resume_metadata()
+    metadata["model"] = "endpoint:metal/Qwen/Qwen2.5-7B-Instruct"
+    storage = MagicMock()
+    runner = _runner(storage=storage)
+    spawner = MagicMock()
+    spawner.spawn.return_value = _spawn_result()
+    finalize = AsyncMock()
+    _patch_common(monkeypatch, spawner=spawner, finalize=finalize)
+    build_cli = MagicMock(return_value=(["codex", "resume"], {}))
+    monkeypatch.setattr(resume_executor, "build_cli_command", build_cli)
+    ensure_local_model = AsyncMock(return_value="Qwen/Qwen2.5-7B-Instruct")
+    monkeypatch.setattr(resume_executor, "ensure_local_model", ensure_local_model)
+
+    result = await resume_executor.resume_agent_run(
+        _original_run(),
+        resume_metadata=metadata,
+        runner=runner,
+        session_manager=MagicMock(),
+        daemon_config=DaemonConfig(
+            ai={
+                "generation": {
+                    "endpoints": {
+                        "metal": {
+                            "protocol": "vllm",
+                            "api_base": "http://127.0.0.1:8000/v1",
+                            "api_key": secret,
+                            "model": "Qwen/Qwen2.5-7B-Instruct",
+                        }
+                    }
+                }
+            }
+        ),
+    )
+
+    assert result.success is True
+    ensure_local_model.assert_awaited_once()
+    build_kwargs = build_cli.call_args.kwargs
+    assert build_kwargs["cli"] == "codex"
+    assert build_kwargs["codex_oss_provider"] is None
+    assert build_kwargs["model"] == "Qwen/Qwen2.5-7B-Instruct"
+    overrides = build_kwargs["config_overrides"]
+    assert 'model_provider="gobby-vllm-metal"' in overrides
+    assert 'model_providers.gobby-vllm-metal.wire_api="chat"' in overrides
+    assert f'model_providers.gobby-vllm-metal.env_key="{CODEX_ENDPOINT_API_KEY_ENV}"' in overrides
+    assert f'shell_environment_policy.exclude=["{CODEX_ENDPOINT_API_KEY_ENV}"]' in overrides
+    assert "--oss" not in repr(build_kwargs)
+    assert secret not in repr(build_kwargs)
+    spawn_env = spawner.spawn.call_args.kwargs["env"]
+    assert spawn_env[CODEX_ENDPOINT_API_KEY_ENV] == secret
+
+
+@pytest.mark.asyncio
 async def test_resume_never_replays_stored_secret_overrides(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -648,3 +704,47 @@ async def test_successor_metadata_strips_inherited_protocol_keys(
         successor_metadata["daemon_stop_resume_planned_tmux_title"]
         == f"gobby-resume-{_SUCCESSOR_ID}"
     )
+
+
+@pytest.mark.asyncio
+async def test_resume_vllm_endpoint_reports_unresolved_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unresolved $secret: api_key fails the resume contract instead of raising."""
+    metadata = _resume_metadata()
+    metadata["model"] = "endpoint:metal/Qwen/Qwen2.5-7B-Instruct"
+    runner = _runner(storage=MagicMock())
+    spawner = MagicMock()
+    spawner.spawn.return_value = _spawn_result()
+    _patch_common(monkeypatch, spawner=spawner, finalize=AsyncMock())
+    monkeypatch.setattr(resume_executor, "build_cli_command", MagicMock())
+    monkeypatch.setattr(
+        resume_executor,
+        "ensure_local_model",
+        AsyncMock(return_value="Qwen/Qwen2.5-7B-Instruct"),
+    )
+
+    result = await resume_executor.resume_agent_run(
+        _original_run(),
+        resume_metadata=metadata,
+        runner=runner,
+        session_manager=MagicMock(),
+        daemon_config=DaemonConfig(
+            ai={
+                "generation": {
+                    "endpoints": {
+                        "metal": {
+                            "protocol": "vllm",
+                            "api_base": "http://127.0.0.1:8000/v1",
+                            "api_key": "$secret:missing",
+                            "model": "Qwen/Qwen2.5-7B-Instruct",
+                        }
+                    }
+                }
+            }
+        ),
+    )
+
+    assert result.success is False
+    assert "secret" in (result.error or "")
+    spawner.spawn.assert_not_called()

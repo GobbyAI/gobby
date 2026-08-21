@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import signal
 from collections.abc import AsyncIterator
@@ -27,9 +28,17 @@ from gobby.ai import (
     TextGenerationService,
     build_daemon_text_generation_service,
 )
-from gobby.ai._text_generation_builder import _daemon_text_generation_adapter_factories
+from gobby.ai._image_routing import LocalModelModalities
+from gobby.ai._text_generation_builder import (
+    _daemon_text_generation_adapter_factories,
+    _responses_text_generate_adapter_factory,
+)
 from gobby.ai._text_generation_helpers import _CandidateTimeoutError, _coerce_text_result
-from gobby.ai._text_generation_service import _gate_reasoning_effort
+from gobby.ai._text_generation_service import (
+    _gate_reasoning_effort,
+    image_candidate_eligible,
+    image_transport_eligible,
+)
 from gobby.ai.text_generation import (
     ONE_SHOT_DIRECTIVE,
     FeatureGenerationUnavailableError,
@@ -801,6 +810,495 @@ async def test_text_generation_service_explicit_provider_model_bypasses_profile_
     assert codex.requests == []
     assert local.requests[0].profile == "feature_low"
     assert local.requests[0].model == "qwen-local"
+
+
+def _gif_data_url() -> str:
+    encoded = base64.standard_b64encode(b"GIF89a").decode("utf-8")
+    return f"data:image/gif;base64,{encoded}"
+
+
+def _endpoint_binding(
+    provider: str,
+    model: str,
+    *,
+    protocol: str,
+    wire_api: str = "chat-completions",
+    input_modalities: tuple[str, ...] | None = ("text", "image"),
+    adapter_style: AIAdapterStyle = AIAdapterStyle.OPENAI_COMPATIBLE,
+) -> CapabilityBinding:
+    endpoint_name = provider.removeprefix("endpoint:")
+    metadata: dict[str, object] = {
+        "endpoint": endpoint_name,
+        "protocol": protocol,
+        "wire_api": wire_api,
+    }
+    if input_modalities is not None:
+        metadata["input_modalities"] = list(input_modalities)
+    return CapabilityBinding(
+        capability=AICapability.TEXT_GENERATE,
+        provider=provider,
+        adapter_style=adapter_style,
+        available=True,
+        models=(model,),
+        metadata=metadata,
+    )
+
+
+@pytest.mark.asyncio
+async def test_image_routing_mixed_catalog() -> None:
+    text_only = RecordingAdapter("endpoint:text-only")
+    vision = RecordingAdapter("endpoint:vision")
+    registry = AICapabilityRegistry(
+        [
+            _endpoint_binding(
+                "endpoint:text-only",
+                "llama",
+                protocol="openai-compatible",
+                input_modalities=("text",),
+            ),
+            _endpoint_binding(
+                "endpoint:vision",
+                "qwen-vl",
+                protocol="vllm",
+                input_modalities=("text", "image"),
+            ),
+        ]
+    )
+    service = TextGenerationService(
+        registry,
+        {"endpoint:text-only": text_only, "endpoint:vision": vision},
+    )
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="caption",
+            candidates=("endpoint:text-only/llama", "endpoint:vision/qwen-vl"),
+            images=[_gif_data_url()],
+        )
+    )
+
+    assert result.provider == "endpoint:vision"
+    assert result.model == "qwen-vl"
+    assert text_only.requests == []
+    assert vision.requests[0].images == [_gif_data_url()]
+
+
+@pytest.mark.asyncio
+async def test_image_request_text_only_selection_diagnostic() -> None:
+    adapter = RecordingAdapter("endpoint:text-only")
+    registry = AICapabilityRegistry(
+        [
+            _endpoint_binding(
+                "endpoint:text-only",
+                "llama",
+                protocol="openai-compatible",
+                input_modalities=("text",),
+            )
+        ]
+    )
+    service = TextGenerationService(registry, {"endpoint:text-only": adapter})
+
+    with pytest.raises(ValueError, match="Image inputs are not supported by endpoint:text-only"):
+        await service.generate_result(
+            TextGenerationRequest(
+                prompt="caption",
+                provider="endpoint:text-only",
+                model="llama",
+                images=[_gif_data_url()],
+            )
+        )
+
+    assert adapter.requests == []
+
+
+@pytest.mark.asyncio
+async def test_image_routing_skips_generic_codex() -> None:
+    vision = RecordingAdapter("endpoint:vision")
+    generic_codex = RecordingAdapter("codex")
+    grok = RecordingAdapter("grok")
+    agy = RecordingAdapter("agy")
+    droid = RecordingAdapter("droid")
+    qwen = RecordingAdapter("qwen")
+    responses = RecordingAdapter("endpoint:openrouter")
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("gpt-5.3-codex-spark",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="grok",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("grok-4",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="agy",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=("auto",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="droid",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=("default",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="qwen",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=("qwen3-coder",),
+            ),
+            _endpoint_binding(
+                "endpoint:openrouter",
+                "kimi",
+                protocol="openai-compatible",
+                wire_api="responses",
+                input_modalities=("text", "image"),
+                adapter_style=AIAdapterStyle.DAEMON,
+            ),
+            _endpoint_binding(
+                "endpoint:vision",
+                "qwen-vl",
+                protocol="vllm",
+                input_modalities=("text", "image"),
+            ),
+        ]
+    )
+    service = TextGenerationService(
+        registry,
+        {
+            "codex": generic_codex,
+            "grok": grok,
+            "agy": agy,
+            "droid": droid,
+            "qwen": qwen,
+            "endpoint:openrouter": responses,
+            "endpoint:vision": vision,
+        },
+    )
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="caption",
+            candidates=(
+                "codex/gpt-5.3-codex-spark",
+                "grok/grok-4",
+                "agy/auto",
+                "droid/default",
+                "qwen/qwen3-coder",
+                "endpoint:vision/qwen-vl",
+                "endpoint:openrouter/kimi",
+            ),
+            images=[_gif_data_url()],
+        )
+    )
+
+    assert result.provider == "endpoint:vision"
+    assert result.model == "qwen-vl"
+    assert generic_codex.requests == []
+    assert grok.requests == []
+    assert agy.requests == []
+    assert droid.requests == []
+    assert qwen.requests == []
+    assert responses.requests == []
+    assert vision.requests[0].images == [_gif_data_url()]
+
+
+def _gif_payload() -> tuple[str, str, bytes]:
+    image_bytes = b"GIF89a"
+    encoded = base64.standard_b64encode(image_bytes).decode("utf-8")
+    return f"data:image/gif;base64,{encoded}", encoded, image_bytes
+
+
+def _openrouter_responses_config() -> DaemonConfig:
+    return DaemonConfig(
+        ai={
+            "generation": {
+                "endpoints": {
+                    "openrouter": {
+                        "api_base": "https://openrouter.ai/api/v1",
+                        "model": "moonshotai/kimi-k3",
+                        "wire_api": "responses",
+                        "api_key": "sk-test",
+                    }
+                }
+            }
+        }
+    )
+
+
+def _image_flag_paths(command: list[str]) -> list[str]:
+    paths: list[str] = []
+    index = 0
+    while index < len(command):
+        token = command[index]
+        if token in {"--image", "-i"} and index + 1 < len(command):
+            paths.append(command[index + 1])
+            index += 2
+            continue
+        index += 1
+    return paths
+
+
+@pytest.mark.asyncio
+async def test_codex_endpoint_image_args(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    data_url, encoded, image_bytes = _gif_payload()
+    file_image = tmp_path / "scene.png"
+    file_image.write_bytes(b"\x89PNG\r\n")
+    calls: list[dict[str, Any]] = []
+
+    async def fake_run_cli(
+        provider_name: str,
+        command: list[str],
+        *,
+        neutral_cwd: Path,
+        timeout_seconds: float,
+        env_overrides: dict[str, str],
+        stdin_input: str | None = None,
+    ) -> str:
+        del timeout_seconds, env_overrides, stdin_input
+        image_paths = _image_flag_paths(command)
+        assert image_paths, command
+        materialized = next(path for path in image_paths if Path(path).parent == neutral_cwd)
+        assert Path(materialized).is_file()
+        assert Path(materialized).read_bytes() == image_bytes
+        Path(command[command.index("--output-last-message") + 1]).write_text(
+            "caption", encoding="utf-8"
+        )
+        calls.append(
+            {
+                "provider_name": provider_name,
+                "command": command,
+                "neutral_cwd": neutral_cwd,
+                "image_paths": image_paths,
+                "materialized": materialized,
+            }
+        )
+        return ""
+
+    monkeypatch.setattr(text_generation_adapters, "_run_cli_text_generation_command", fake_run_cli)
+    monkeypatch.setattr(
+        "gobby.ai._text_generation_adapters.shutil.which",
+        lambda _name: "/bin/codex",
+    )
+    config = _openrouter_responses_config()
+    adapter = _responses_text_generate_adapter_factory(config, "openrouter")()
+    assert isinstance(adapter, CodexCLITextGenerateAdapter)
+
+    response = await adapter.generate(
+        TextGenerationRequest(
+            provider="endpoint:openrouter",
+            model="moonshotai/kimi-k3",
+            prompt="caption",
+            images=[data_url, str(file_image)],
+        )
+    )
+
+    assert response == "caption"
+    assert len(calls) == 1
+    command = calls[0]["command"]
+    argv = " ".join(command)
+    assert "data:image" not in argv
+    assert encoded not in argv
+    assert image_bytes.decode("ascii") not in argv
+    image_paths = calls[0]["image_paths"]
+    assert str(file_image) in image_paths
+    materialized = Path(calls[0]["materialized"])
+    assert materialized.parent == calls[0]["neutral_cwd"]
+    assert not materialized.exists()
+    assert command[-1] == "-"
+    assert "--image" in command or "-i" in command
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["nonzero", "timeout", "cancellation"])
+async def test_codex_endpoint_image_tempfile_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    data_url, encoded, _image_bytes = _gif_payload()
+    captured: list[Path] = []
+    commands: list[list[str]] = []
+
+    async def fake_run_cli(
+        _provider_name: str,
+        command: list[str],
+        *,
+        neutral_cwd: Path,
+        timeout_seconds: float,
+        env_overrides: dict[str, str],
+        stdin_input: str | None = None,
+    ) -> str:
+        del timeout_seconds, env_overrides, stdin_input
+        image_paths = _image_flag_paths(command)
+        assert len(image_paths) == 1
+        image_path = Path(image_paths[0])
+        assert image_path.parent == neutral_cwd
+        assert image_path.is_file()
+        captured.append(image_path)
+        commands.append(command)
+        if failure == "nonzero":
+            raise RuntimeError("Codex CLI failed with exit code 1: boom")
+        if failure == "timeout":
+            raise RuntimeError("Codex CLI timed out after 1s: /bin/codex exec")
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(text_generation_adapters, "_run_cli_text_generation_command", fake_run_cli)
+    adapter = CodexCLITextGenerateAdapter(
+        command_path="/bin/codex",
+        config_overrides=('model_providers.gobby_endpoint_openrouter.wire_api="responses"',),
+    )
+    request = TextGenerationRequest(
+        provider="endpoint:openrouter",
+        prompt="caption",
+        images=[data_url],
+    )
+    if failure == "cancellation":
+        with pytest.raises(asyncio.CancelledError):
+            await adapter.generate(request)
+    else:
+        with pytest.raises(RuntimeError):
+            await adapter.generate(request)
+
+    assert captured
+    assert not captured[0].exists()
+    assert commands
+    argv = " ".join(commands[0])
+    assert "data:image" not in argv
+    assert encoded not in argv
+
+
+@pytest.mark.asyncio
+async def test_image_allowlist_cloud_transports() -> None:
+    claude = RecordingAdapter("claude")
+    generic_codex = RecordingAdapter("codex")
+    responses = RecordingAdapter("endpoint:openrouter")
+    claude_binding = CapabilityBinding(
+        capability=AICapability.TEXT_GENERATE,
+        provider="claude",
+        adapter_style=AIAdapterStyle.LLM_PROVIDER,
+        available=True,
+        models=("haiku",),
+    )
+    generic_codex_binding = CapabilityBinding(
+        capability=AICapability.TEXT_GENERATE,
+        provider="codex",
+        adapter_style=AIAdapterStyle.DAEMON,
+        available=True,
+        models=("gpt-5.3-codex-spark",),
+    )
+    responses_binding = _endpoint_binding(
+        "endpoint:openrouter",
+        "kimi",
+        protocol="openai-compatible",
+        wire_api="responses",
+        input_modalities=("text", "image"),
+        adapter_style=AIAdapterStyle.DAEMON,
+    )
+    assert image_transport_eligible(claude_binding)
+    assert image_transport_eligible(responses_binding)
+    assert not image_transport_eligible(generic_codex_binding)
+
+    service = TextGenerationService(
+        AICapabilityRegistry([generic_codex_binding, claude_binding, responses_binding]),
+        {
+            "codex": generic_codex,
+            "claude": claude,
+            "endpoint:openrouter": responses,
+        },
+    )
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="caption",
+            candidates=(
+                "codex/gpt-5.3-codex-spark",
+                "claude/haiku",
+                "endpoint:openrouter/kimi",
+            ),
+            images=[_gif_data_url()],
+        )
+    )
+
+    assert result.provider == "claude"
+    assert result.model == "haiku"
+    assert generic_codex.requests == []
+    assert responses.requests == []
+    assert claude.requests[0].images == [_gif_data_url()]
+
+
+@pytest.mark.asyncio
+async def test_image_allowlist_admits_native_transports() -> None:
+    grok = RecordingAdapter("grok")
+    lmstudio = RecordingAdapter("endpoint:lm-studio")
+    ollama = RecordingAdapter("endpoint:ollama")
+    grok_binding = CapabilityBinding(
+        capability=AICapability.TEXT_GENERATE,
+        provider="grok",
+        adapter_style=AIAdapterStyle.CLI,
+        available=True,
+        models=("grok-4",),
+    )
+    lmstudio_binding = _endpoint_binding(
+        "endpoint:lm-studio",
+        "llava",
+        protocol="lmstudio",
+        input_modalities=("text", "image"),
+    )
+    ollama_binding = _endpoint_binding(
+        "endpoint:ollama",
+        "llava",
+        protocol="ollama",
+        input_modalities=("text", "image"),
+    )
+    assert image_transport_eligible(lmstudio_binding)
+    assert image_transport_eligible(ollama_binding)
+    assert not image_transport_eligible(grok_binding)
+
+    service = TextGenerationService(
+        AICapabilityRegistry([grok_binding, lmstudio_binding, ollama_binding]),
+        {
+            "grok": grok,
+            "endpoint:lm-studio": lmstudio,
+            "endpoint:ollama": ollama,
+        },
+    )
+    images = [_gif_data_url()]
+    lm_result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="caption",
+            candidates=("grok/grok-4", "endpoint:lm-studio/llava", "endpoint:ollama/llava"),
+            images=images,
+        )
+    )
+    assert lm_result.provider == "endpoint:lm-studio"
+    assert lm_result.model == "llava"
+    assert grok.requests == []
+    assert ollama.requests == []
+    assert lmstudio.requests[0].images == images
+
+    ollama_result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="caption",
+            candidates=("grok/grok-4", "endpoint:ollama/llava"),
+            images=images,
+        )
+    )
+    assert ollama_result.provider == "endpoint:ollama"
+    assert ollama_result.model == "llava"
+    assert grok.requests == []
+    assert ollama.requests[0].images == images
 
 
 @pytest.mark.asyncio
@@ -1944,7 +2442,9 @@ class FakeNativeTextProvider:
         *,
         reasoning_effort: str | None = None,
         caller: str | None = None,
+        images: list[str] | None = None,
     ) -> LLMTextResult:
+        del images
         self.text_calls.append((prompt, system_prompt, model, max_tokens, reasoning_effort, caller))
         return LLMTextResult(
             text=f"{system_prompt}:{prompt}:{model}:{max_tokens}:{reasoning_effort}:{caller}",
@@ -4211,3 +4711,111 @@ async def test_run_cli_text_generation_command_rejects_unaccepted_exit(
             env_overrides={},
             accepted_exit_codes=frozenset({53, 55}),
         )
+
+
+@pytest.mark.asyncio
+async def test_image_admission_does_not_fail_open_on_selection_errors() -> None:
+    vision = RecordingAdapter("endpoint:vision")
+    registry = AICapabilityRegistry(
+        [_endpoint_binding("endpoint:vision", "qwen-vl", protocol="openai-compatible")]
+    )
+    service = TextGenerationService(registry, {"endpoint:vision": vision})
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="caption",
+            candidates=("endpoint:missing/llama", "endpoint:vision/qwen-vl"),
+            images=[_gif_data_url()],
+        )
+    )
+    assert result.provider == "endpoint:vision"
+    assert [request.model for request in vision.requests] == ["qwen-vl"]
+
+    with pytest.raises(CapabilityUnavailableError):
+        await service.generate_result(
+            TextGenerationRequest(
+                prompt="caption",
+                provider="endpoint:missing",
+                model="llama",
+                images=[_gif_data_url()],
+            )
+        )
+    assert len(vision.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_image_admission_consults_local_modality_resolver() -> None:
+    vision = RecordingAdapter("endpoint:vllm")
+    binding = _endpoint_binding("endpoint:vllm", "auto", protocol="vllm", input_modalities=None)
+    calls: list[tuple[str, str | None]] = []
+    verdicts: list[LocalModelModalities] = []
+
+    async def resolver(endpoint_name: str, model: str | None) -> LocalModelModalities:
+        calls.append((endpoint_name, model))
+        return verdicts.pop(0)
+
+    service = TextGenerationService(
+        AICapabilityRegistry([binding]),
+        {"endpoint:vllm": vision},
+        local_modality_resolver=resolver,
+    )
+    request = TextGenerationRequest(
+        prompt="caption",
+        provider="endpoint:vllm",
+        model="auto",
+        images=[_gif_data_url()],
+    )
+
+    verdicts.append(
+        LocalModelModalities(model="Qwen/Qwen2.5-VL", input_modalities=("text", "image"))
+    )
+    result = await service.generate_result(request)
+    assert result.provider == "endpoint:vllm"
+    assert vision.requests[0].model == "auto"
+    assert calls == [("vllm", "auto")]
+
+    verdicts.append(LocalModelModalities(model="Qwen/Qwen2.5-VL", input_modalities=("text",)))
+    with pytest.raises(ValueError, match=r"endpoint:vllm/Qwen/Qwen2\.5-VL: input_modalities"):
+        await service.generate_result(request)
+
+    verdicts.append(
+        LocalModelModalities(
+            model=None,
+            input_modalities=None,
+            error="model: auto requires exactly one served vLLM model; found 2: a, b",
+        )
+    )
+    with pytest.raises(ValueError, match="requires exactly one served vLLM model"):
+        await service.generate_result(request)
+    assert len(vision.requests) == 1
+
+
+def _probed_binding(protocol: str, default_model: str, probed_model: str) -> CapabilityBinding:
+    return CapabilityBinding(
+        capability=AICapability.TEXT_GENERATE,
+        provider="endpoint:local",
+        adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+        available=True,
+        models=(default_model,),
+        metadata={
+            "endpoint": "local",
+            "protocol": protocol,
+            "wire_api": "chat-completions",
+            "model": default_model,
+            "probed_model": probed_model,
+            "input_modalities": ["text", "image"],
+        },
+    )
+
+
+def test_static_image_predicate_scopes_probe_evidence_to_the_requested_model() -> None:
+    vllm_auto = _probed_binding("vllm", "auto", "Qwen/Qwen2.5-VL")
+    assert image_candidate_eligible(vllm_auto) is True
+    assert image_candidate_eligible(vllm_auto, model="auto") is True
+    assert image_candidate_eligible(vllm_auto, model="Qwen/Qwen2.5-VL") is True
+    assert image_candidate_eligible(vllm_auto, model="other-served-id") is False
+
+    lmstudio = _probed_binding("lmstudio", "text-llm", "vision-vlm")
+    assert image_candidate_eligible(lmstudio) is False
+    assert image_candidate_eligible(lmstudio, model="text-llm") is False
+    assert image_candidate_eligible(lmstudio, model="vision-vlm") is True

@@ -48,8 +48,27 @@ body {
 .source-icon-codex,
 .source-icon-grok,
 .source-icon-lmstudio,
-.source-icon-ollama {
+.source-icon-ollama,
+.source-icon-vllm {
   color: var(--text-primary);
+}
+
+/* Compact Text/Image capability chips — Chip primitive owns geometry; the
+   tone is an explicit opaque pair (secondary text on the primary surface with
+   a border) so it holds WCAG AA in both themes on any row state, including
+   the picker's hovered bg-muted row. */
+.capability-chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-inline-start: 0.375rem;
+}
+
+.capability-chip {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
 }
 
 .app {

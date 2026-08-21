@@ -8,6 +8,12 @@ from typing import Any
 
 import httpx
 
+from gobby.agents.local_model import (
+    LocalModelError,
+    select_vllm_served_model,
+    vllm_health_url,
+    vllm_models_url,
+)
 from gobby.ai.endpoints import ENDPOINT_PROVIDER_PREFIX
 from gobby.config.ai import GenerationEndpointConfig, GenerationEndpointProtocol
 
@@ -15,6 +21,7 @@ LOCAL_PROVIDER_LABELS: dict[str, str] = {
     "lmstudio": "LM Studio",
     "ollama": "Ollama",
     "openai-compatible": "OpenAI Compatible",
+    "vllm": "vLLM",
 }
 NO_COMPLETION_MODELS_ERROR = "No completion-capable models discovered"
 
@@ -50,11 +57,13 @@ async def discover_local_endpoint_model_group(
             discovered = await _discover_lmstudio_models(endpoint_name, endpoint)
         elif endpoint.protocol == "ollama":
             discovered = await _discover_ollama_models(endpoint_name, endpoint)
+        elif endpoint.protocol == "vllm":
+            discovered = await _discover_vllm_models(endpoint_name, endpoint)
         else:
             async with httpx.AsyncClient() as client:
                 discovered = await _openai_compatible_models(client, endpoint_name, endpoint)
         models = _merge_default_model(endpoint_name, endpoint, discovered)
-        capability_checked = endpoint.protocol in {"lmstudio", "ollama"}
+        capability_checked = endpoint.protocol in {"lmstudio", "ollama", "vllm"}
         source = "live" if discovered or capability_checked else "config"
         return LocalEndpointModelGroup(
             endpoint_name=endpoint_name,
@@ -80,24 +89,49 @@ def local_provider_display_label(provider: str) -> str:
     return LOCAL_PROVIDER_LABELS.get(normalized, provider.strip() or "Local")
 
 
+def _default_alias_canonical_id(
+    endpoint: GenerationEndpointConfig,
+    discovered: list[dict[str, Any]],
+) -> str | None:
+    if endpoint.protocol == "vllm":
+        served = [
+            canonical_id
+            for entry in discovered
+            if isinstance(canonical_id := entry.get("canonical_id"), str) and canonical_id.strip()
+        ]
+        try:
+            return select_vllm_served_model(endpoint, served)
+        except LocalModelError:
+            return None
+    if endpoint.protocol == "openai-compatible":
+        return endpoint.model
+    if any(entry.get("canonical_id") == endpoint.model for entry in discovered):
+        return endpoint.model
+    return None
+
+
 def _merge_default_model(
     endpoint_name: str,
     endpoint: GenerationEndpointConfig,
     discovered: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    default_is_verified = endpoint.protocol == "openai-compatible" or any(
-        entry.get("canonical_id") == endpoint.model for entry in discovered
-    )
+    alias_id = _default_alias_canonical_id(endpoint, discovered)
     entries: list[dict[str, Any]] = []
-    if default_is_verified:
-        entries.append(
-            {
-                "value": f"{ENDPOINT_PROVIDER_PREFIX}{endpoint_name}",
-                "label": f"Default ({endpoint.model})",
-                "canonical_id": endpoint.model,
-                "is_default": True,
-            }
-        )
+    if alias_id is not None:
+        default_entry: dict[str, Any] = {
+            "value": f"{ENDPOINT_PROVIDER_PREFIX}{endpoint_name}",
+            "label": f"Default ({endpoint.model})",
+            "canonical_id": endpoint.model,
+            "is_default": True,
+        }
+        for entry in discovered:
+            if entry.get("canonical_id") != alias_id:
+                continue
+            modalities = entry.get("input_modalities")
+            if modalities is not None:
+                default_entry["input_modalities"] = modalities
+            break
+        entries.append(default_entry)
     entries.extend(discovered)
     deduped: dict[str, dict[str, Any]] = {}
     for entry in entries:
@@ -134,6 +168,11 @@ async def _discover_lmstudio_models(
                 label=_first_string(model, "display_name", "name", "id", "key") or model_id,
                 context_length=_context_length(model),
                 capabilities=_capabilities(model),
+                input_modalities=_entry_input_modalities(
+                    endpoint,
+                    model_id,
+                    _lmstudio_advertised_modalities(model),
+                ),
             )
         )
     return entries
@@ -153,6 +192,11 @@ async def _discover_ollama_models(
                     label=_ollama_label(model, model_id),
                     context_length=_context_length(model),
                     capabilities=_ollama_capabilities(model),
+                    input_modalities=_entry_input_modalities(
+                        endpoint,
+                        model_id,
+                        _ollama_advertised_modalities(model),
+                    ),
                 )
                 for model, model_id in native_models
             ]
@@ -217,9 +261,18 @@ async def _validated_ollama_fallback_models(
         client, endpoint, [model_id for _, model_id in model_items]
     )
     eligible: list[dict[str, Any]] = []
-    for (model, _), (_, details) in zip(model_items, detail_results, strict=True):
-        if _supports_ollama_completion(details):
+    for (model, model_id), (_, details) in zip(model_items, detail_results, strict=True):
+        if not _supports_ollama_completion(details):
+            continue
+        modalities = _entry_input_modalities(
+            endpoint,
+            model_id,
+            _ollama_advertised_modalities(details),
+        )
+        if modalities is None:
             eligible.append(model)
+        else:
+            eligible.append({**model, "input_modalities": modalities})
     return eligible
 
 
@@ -264,6 +317,37 @@ def _supports_ollama_completion(model: dict[str, Any]) -> bool:
     )
 
 
+async def _discover_vllm_models(
+    endpoint_name: str,
+    endpoint: GenerationEndpointConfig,
+) -> list[dict[str, Any]]:
+    models_url = vllm_models_url(endpoint.api_base)
+    health_url = vllm_health_url(endpoint.api_base)
+    headers = _headers(endpoint.api_key)
+    async with httpx.AsyncClient() as client:
+        health = await client.get(health_url, headers=headers, timeout=10.0)
+        health.raise_for_status()
+        response = await client.get(models_url, headers=headers, timeout=10.0)
+        response.raise_for_status()
+        payload = response.json()
+    entries: list[dict[str, Any]] = []
+    for model in _model_list(payload):
+        model_id = _first_string(model, "id", "model", "name")
+        if model_id is None:
+            continue
+        entries.append(
+            _local_model_entry(
+                endpoint_name,
+                model_id,
+                label=_first_string(model, "label", "name", "id") or model_id,
+                context_length=_context_length(model),
+                capabilities=_capabilities(model),
+                input_modalities=_entry_input_modalities(endpoint, model_id, None),
+            )
+        )
+    return entries
+
+
 async def _openai_compatible_models(
     client: httpx.AsyncClient,
     endpoint_name: str,
@@ -298,6 +382,7 @@ def _local_model_entry(
     label: str,
     context_length: int | None,
     capabilities: Any | None,
+    input_modalities: list[str] | None = None,
 ) -> dict[str, Any]:
     entry: dict[str, Any] = {
         "value": f"{ENDPOINT_PROVIDER_PREFIX}{endpoint_name}/{model_id}",
@@ -309,6 +394,8 @@ def _local_model_entry(
         entry["context_length_source"] = "provider_reported"
     if capabilities is not None:
         entry["capabilities"] = capabilities
+    if input_modalities is not None:
+        entry["input_modalities"] = input_modalities
     return entry
 
 
@@ -328,9 +415,52 @@ def _is_lmstudio_llm(model: dict[str, Any]) -> bool:
     if kind is None:
         return False
     normalized = kind.lower()
-    if any(token in normalized for token in ("embedding", "rerank", "tts", "vision")):
+    if any(token in normalized for token in ("embedding", "rerank", "tts")):
         return False
-    return "llm" in normalized or "language" in normalized or normalized in {"gguf", "mlx"}
+    return (
+        "llm" in normalized
+        or "language" in normalized
+        or "vlm" in normalized
+        or normalized in {"gguf", "mlx"}
+    )
+
+
+def _lmstudio_advertised_modalities(model: dict[str, Any]) -> list[str] | None:
+    kind = _first_string(model, "type", "model_type", "compatibility_type")
+    if kind is None:
+        return None
+    normalized = kind.lower()
+    if "vlm" in normalized:
+        return ["text", "image"]
+    if "llm" in normalized or "language" in normalized:
+        return ["text"]
+    return None
+
+
+def _ollama_advertised_modalities(model: dict[str, Any]) -> list[str] | None:
+    capabilities = model.get("capabilities")
+    if not isinstance(capabilities, list):
+        return None
+    tokens = {
+        capability.lower()
+        for capability in capabilities
+        if isinstance(capability, str) and capability.strip()
+    }
+    if "vision" in tokens:
+        return ["text", "image"]
+    if "completion" in tokens:
+        return ["text"]
+    return None
+
+
+def _entry_input_modalities(
+    endpoint: GenerationEndpointConfig,
+    model_id: str,
+    advertised: list[str] | None,
+) -> list[str] | None:
+    if endpoint.probed_model == model_id and endpoint.input_modalities is not None:
+        return list(endpoint.input_modalities)
+    return advertised
 
 
 def _ollama_label(model: dict[str, Any], model_id: str) -> str:
@@ -341,6 +471,7 @@ def _context_length(model: dict[str, Any]) -> int | None:
     for key in (
         "context_length",
         "max_context_length",
+        "max_model_len",
         "context_window",
         "max_context_window",
         "ctx_length",

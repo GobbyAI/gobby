@@ -24,7 +24,9 @@ import {
   getReasoningOptionsForModel,
   resolveProviderModelPair,
   type ProviderModelEntry,
+  type ProviderModelOption,
 } from "../providerModels";
+import { isProviderModelEntry } from "../providerModelCatalog";
 
 const catalog: ProviderModelEntry[] = [
   {
@@ -368,6 +370,7 @@ describe("providerModels", () => {
   it("humanizes endpoint provider ids instead of raw scheme casing (#20047)", () => {
     expect(getProviderDisplayName("endpoint:lm-studio")).toBe("LM Studio");
     expect(getProviderDisplayName("endpoint:ollama")).toBe("Ollama");
+    expect(getProviderDisplayName("endpoint:vllm")).toBe("vLLM");
     expect(getProviderDisplayName("endpoint:my-box")).toBe("My Box");
   });
 
@@ -489,6 +492,67 @@ describe("providerModels", () => {
         "endpoint:openrouter/moonshotai/kimi-k3",
       ),
     ).toBe(false);
+  });
+
+  it("follows capability chips for image eligibility on endpoint-backed options", () => {
+    const mixedCatalog: ProviderModelEntry[] = [
+      {
+        provider: "codex",
+        available: true,
+        source: "live",
+        models: [
+          { value: "gpt-5.4", label: "GPT-5.4" },
+          {
+            value: "endpoint:openrouter/moonshotai/kimi-k3",
+            label: "OpenRouter: moonshotai/kimi-k3",
+            input_modalities: null,
+          } as ProviderModelOption,
+        ],
+      },
+      {
+        provider: "endpoint:generic",
+        execution_provider: "codex",
+        available: true,
+        source: "live",
+        models: [
+          {
+            value: "endpoint:generic/llama",
+            label: "Llama",
+          },
+        ],
+      },
+      {
+        provider: "endpoint:vllm",
+        execution_provider: "codex",
+        available: true,
+        source: "live",
+        models: [
+          {
+            value: "endpoint:vllm",
+            label: "Qwen2.5-VL",
+            is_default: true,
+            input_modalities: ["text", "image"],
+          },
+        ],
+      },
+    ];
+
+    expect(
+      modelSupportsImageInput(
+        mixedCatalog,
+        "codex",
+        "endpoint:openrouter/moonshotai/kimi-k3",
+      ),
+    ).toBe(false);
+    expect(modelSupportsImageInput(mixedCatalog, "codex", "gpt-5.4")).toBe(
+      true,
+    );
+    expect(
+      modelSupportsImageInput(mixedCatalog, "codex", "endpoint:generic/llama"),
+    ).toBe(false);
+    expect(
+      modelSupportsImageInput(mixedCatalog, "codex", "endpoint:vllm"),
+    ).toBe(true);
   });
 
   it("maps a source-less matrix response", async () => {
@@ -909,5 +973,71 @@ describe("providerModels", () => {
         model: endpointSelector,
       }),
     ).toEqual({ provider: "codex", model: endpointSelector });
+  });
+});
+
+describe("null input_modalities in /api/providers/models", () => {
+  const localEntry = {
+    provider: "endpoint:generic",
+    execution_provider: "codex",
+    available: true,
+    display_name: "OpenAI Compatible",
+    provider_type: "openai-compatible",
+    source: "live",
+    models: [
+      {
+        value: "endpoint:generic/llama",
+        label: "Llama",
+        canonical_id: "llama",
+        input_modalities: null,
+      },
+    ],
+  };
+  const codexEntry = {
+    provider: "codex",
+    available: true,
+    source: "live",
+    models: [
+      {
+        value: "gpt-5.4",
+        label: "GPT-5.4",
+        input_modalities: ["text", "image"],
+      },
+      {
+        value: "endpoint:openrouter/kimi-k3",
+        label: "OpenRouter: kimi-k3",
+        input_modalities: null,
+      },
+    ],
+  };
+
+  it("accepts local and codex entries whose models carry null modalities", () => {
+    expect(isProviderModelEntry(localEntry)).toBe(true);
+    expect(isProviderModelEntry(codexEntry)).toBe(true);
+  });
+
+  it("keeps those providers in the fetched catalog and normalizes null to absent", async () => {
+    clearProviderModelCache();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ providers: [localEntry, codexEntry] }),
+      }),
+    );
+
+    const result = await fetchProviderModelCatalog();
+
+    expect(result.map((entry) => entry.provider)).toEqual([
+      "endpoint:generic",
+      "codex",
+    ]);
+    const llama = getModelsForProvider(result, "endpoint:generic")[0];
+    expect(llama).toBeDefined();
+    expect("input_modalities" in (llama ?? {})).toBe(false);
+    expect(modelSupportsImageInput(result, "codex", "gpt-5.4")).toBe(true);
+    expect(
+      modelSupportsImageInput(result, "codex", "endpoint:openrouter/kimi-k3"),
+    ).toBe(false);
   });
 });

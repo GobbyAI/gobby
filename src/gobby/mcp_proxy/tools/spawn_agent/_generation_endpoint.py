@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from gobby.agents.codex_oss import codex_oss_provider_for_local_endpoint
+from gobby.agents.codex_oss import (
+    codex_local_transport_strategy,
+    codex_oss_provider_for_local_endpoint,
+)
 from gobby.agents.local_model import LocalModelError
 from gobby.ai.codex_endpoint import (
     codex_endpoint_config_overrides,
@@ -79,8 +82,23 @@ async def resolve_spawn_generation_endpoint(
         raise ValueError(f"Local model pre-flight failed: {exc}") from exc
 
     if runtime_provider == "codex":
-        # Codex OSS receives local routing through CLI flags while other runtimes
-        # connect directly to the endpoint credentials returned below.
+        strategy = codex_local_transport_strategy(selection.endpoint.protocol)
+        if strategy == "config-override":
+            child_env = (
+                dict(codex_endpoint_env(selected_endpoint)) if selected_endpoint.api_key else None
+            )
+            return SpawnGenerationEndpointResolution(
+                model=resolved_model,
+                api_base=api_base,
+                api_token=api_token,
+                is_local=True,
+                codex_config_overrides=codex_endpoint_config_overrides(
+                    selection.name,
+                    selected_endpoint,
+                    model=resolved_model,
+                ),
+                child_env=child_env,
+            )
         return SpawnGenerationEndpointResolution(
             model=resolved_model,
             api_base=api_base,

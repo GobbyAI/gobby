@@ -11,12 +11,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from gobby.agents.local_model import resolve_vllm_served_model
 from gobby.ai._managed_tool_chat_lease import build_managed_tool_chat_lease_factory
 from gobby.ai._tool_chat_adapters import (
     ClaudeProviderFactory,
     ClaudeToolChatAdapter,
     OpenAIClientFactory,
     OpenAICompatibleToolChatAdapter,
+    OpenAIModelResolver,
 )
 from gobby.ai._tool_chat_contracts import ToolLoopLimits
 from gobby.ai._tool_chat_service import ToolChatAdapterFactory, ToolChatService
@@ -32,6 +34,7 @@ from gobby.ai.registry import (
     CapabilityBinding,
     build_daemon_ai_capability_registry,
 )
+from gobby.config.ai import GenerationEndpointConfig
 from gobby.config.app import DaemonConfig
 from gobby.llm.claude import ClaudeLLMProvider
 from gobby.llm.local_provider_adapters import create_local_provider_adapter
@@ -67,10 +70,12 @@ def _daemon_tool_chat_adapter_factories(
             provider_factory=_claude_provider_factory(config)
         ),
         AIAdapterStyle.OPENAI_COMPATIBLE: lambda: OpenAICompatibleToolChatAdapter(
-            client_factory=_local_client_factory(config)
+            client_factory=_local_client_factory(config),
+            model_resolver=_local_model_resolver(config),
         ),
         AIAdapterStyle.LOCAL: lambda: OpenAICompatibleToolChatAdapter(
-            client_factory=_local_client_factory(config)
+            client_factory=_local_client_factory(config),
+            model_resolver=_local_model_resolver(config),
         ),
         AIAdapterStyle.DAEMON: lambda: CodexSpawnToolChatAdapter(
             config=config,
@@ -87,15 +92,42 @@ def _claude_provider_factory(config: DaemonConfig) -> ClaudeProviderFactory:
     return factory
 
 
+def _binding_endpoint_config(
+    config: DaemonConfig, binding: CapabilityBinding
+) -> GenerationEndpointConfig:
+    endpoint_name = binding.metadata.get("endpoint")
+    if not endpoint_name:
+        raise ValueError("openai_compatible tool_chat binding is missing 'endpoint' metadata")
+    return resolve_generation_endpoint(config, str(endpoint_name))
+
+
 def _local_client_factory(config: DaemonConfig) -> OpenAIClientFactory:
     def factory(binding: CapabilityBinding) -> Any:
-        endpoint_name = binding.metadata.get("endpoint")
-        if not endpoint_name:
-            raise ValueError("openai_compatible tool_chat binding is missing 'endpoint' metadata")
-        local_cfg = resolve_generation_endpoint(config, str(endpoint_name))
+        local_cfg = _binding_endpoint_config(config, binding)
         client = getattr(create_local_provider_adapter(local_cfg), "client", None)
         if client is None:
+            endpoint_name = binding.metadata.get("endpoint")
             raise RuntimeError(f"Local client for endpoint {endpoint_name!r} is unavailable")
         return client
 
     return factory
+
+
+def _local_model_resolver(config: DaemonConfig) -> OpenAIModelResolver:
+    """Resolve the wire model for a local tool_chat binding.
+
+    ``None`` means the endpoint's configured default. vllm endpoints resolve
+    through :func:`resolve_vllm_served_model`, so ``model: auto`` becomes the
+    single served id and the literal sentinel never reaches the wire.
+    """
+
+    async def resolve(binding: CapabilityBinding, model: str | None) -> str:
+        local_cfg = _binding_endpoint_config(config, binding)
+        requested = model or local_cfg.model
+        if local_cfg.protocol != "vllm":
+            return requested
+        if requested != local_cfg.model:
+            local_cfg = local_cfg.model_copy(update={"model": requested})
+        return await resolve_vllm_served_model(local_cfg)
+
+    return resolve

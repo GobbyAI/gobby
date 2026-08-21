@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { Fragment, useState, useCallback, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -7,6 +7,7 @@ import {
 } from "../ui/Dialog";
 import { SourceIcon } from "../shared/SourceIcon";
 import { Button } from "../ui/Button";
+import { Chip } from "../ui/Chip";
 import { cn } from "../../lib/utils";
 import {
   fetchProviderModelCatalog,
@@ -14,15 +15,17 @@ import {
   getModelsForProvider,
   getProviderDisplayName,
   getProviderDisplayNameFromEntry,
+  inputModalityChips,
   isHiddenProvider,
   type ProviderModelEntry,
+  type ProviderModelOption,
 } from "../../lib/providerModels";
 
 function getVisibleModelsForProvider(
   catalog: ProviderModelEntry[],
   provider: string,
   currentModel: string,
-): { value: string; label: string }[] {
+): ProviderModelOption[] {
   const entry = catalog.find((candidate) => candidate.provider === provider);
   const models = getModelsForProvider(catalog, provider);
   if (models.length > 0) return models;
@@ -30,6 +33,23 @@ function getVisibleModelsForProvider(
   return [
     { value: currentModel || "default", label: currentModel || "Default" },
   ];
+}
+
+function CapabilityChips({ modalities }: { modalities?: string[] | null }) {
+  const chips = inputModalityChips(modalities);
+  if (chips.length === 0) return null;
+  return (
+    // Whitespace text nodes are not rendered inside the flex cluster but do
+    // separate the chip labels in the row's accessible name.
+    <span className="capability-chips">
+      {chips.map((label) => (
+        <Fragment key={label}>
+          {" "}
+          <Chip className="capability-chip">{label}</Chip>
+        </Fragment>
+      ))}
+    </span>
+  );
 }
 
 function getExecutionProvider(
@@ -299,7 +319,10 @@ export function ProviderPicker({
                             handleSelect(executionProvider, model.value)
                           }
                         >
-                          {model.label}
+                          {model.label}{" "}
+                          <CapabilityChips
+                            modalities={model.input_modalities}
+                          />
                           {isSelected && (
                             <span className="ml-2 text-[length:var(--text-2xs)]">
                               ●
