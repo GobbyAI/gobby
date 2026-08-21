@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-import random
 import re
+import secrets
 import struct
 import tempfile
 import zlib
@@ -437,7 +437,7 @@ async def _probe_chat_vision(adapter: Any, model: str) -> None:
 
 def _probe_color() -> tuple[str, bytes]:
     """Pick the probe color at random and render its solid PNG."""
-    name, rgb = random.choice(_PROBE_COLORS)  # noqa: S311 - probe variety, not security
+    name, rgb = secrets.choice(_PROBE_COLORS)
     return name, _solid_color_png(rgb, _PROBE_IMAGE_SIZE)
 
 
