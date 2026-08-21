@@ -642,9 +642,9 @@ enforceable; the compiled manifest edge is.
 
 ### 10. Production Size Checked
 
-For every targeted hand-maintained production file currently at 850 lines or
-more, record its current line count. Any deliverable that grows the file names
-the split that keeps it below the 1,000-line ceiling.
+For every targeted hand-maintained production file within 150 lines of the
+1,000-line ceiling, record its current line count. The deliverable that grows
+the file names the split that keeps it below the ceiling.
 
 ### Verification Output
 
@@ -658,10 +658,10 @@ Plan Verification:
 ✓ Phase headings use canonical syntax
 ✓ Task sections are self-contained
 ✓ Symbol Targets resolve against a fresh gcode index
-✓ Consumer sweep recorded for every exact Target
-✓ Derived carriers included for every triggered contract
-✓ Shared Target files are ordered by explicit dependencies
-✓ Production file sizes checked against the monolith ceiling
+✓ Consumer sweep recorded
+✓ Derived carriers included
+✓ Shared targets are ordered
+✓ Production size checked
 
 Ready for review.
 ```
@@ -678,10 +678,10 @@ Plan Verification:
 ✓ Phase headings use canonical syntax
 ✓ Task sections are self-contained
 ✓ Symbol Targets resolve against a fresh gcode index
-✓ Consumer sweep recorded for every exact Target
-✓ Derived carriers included for every triggered contract
-✓ Shared Target files are ordered by explicit dependencies
-✓ Production file sizes checked against the monolith ceiling
+✓ Consumer sweep recorded
+✓ Derived carriers included
+✓ Shared targets are ordered
+✓ Production size checked
 
 Plan updated. Ready for review.
 ```
