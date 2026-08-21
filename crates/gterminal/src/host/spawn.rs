@@ -4,7 +4,6 @@
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -21,12 +20,12 @@ pub struct PreparedChild {
 
 impl PreparedChild {
     pub fn commit(&mut self) -> io::Result<()> {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .custom_flags(libc::O_NONBLOCK)
-            .open(&self.gate)?;
-        let _ = file.write_all(&[b'\n']);
-        Ok(())
+        // POSIX FIFOs rendezvous: a reader open blocks until a writer exists.
+        // O_NONBLOCK write open returns ENXIO on macOS while the child is still
+        // blocked in that reader open, which swallowed the gate byte and left
+        // the PTY exec'd process stuck. A blocking writer open completes both.
+        let mut file = OpenOptions::new().write(true).open(&self.gate)?;
+        file.write_all(&[b'\n'])
     }
 }
 

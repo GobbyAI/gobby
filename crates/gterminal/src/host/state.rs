@@ -497,7 +497,9 @@ impl HostState {
         }
         #[cfg(feature = "vt-engine")]
         if let Some(child) = slot.child.as_mut() {
-            let _ = child.commit();
+            if child.commit().is_err() {
+                return err("commit_failed");
+            }
         }
         slot.commit_state = CommitState::Committed;
         slot.commit_deadline = None;

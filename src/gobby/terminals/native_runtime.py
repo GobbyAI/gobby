@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
 
 from gobby.storage.terminals import AttachLocator, Terminal, native_locator_key
 from gobby.terminals.dimensions import validate_dimensions
+from gobby.terminals.frame_client import FrameClient
 from gobby.terminals.host_client import (
     MAX_CONTROL_LINE,
     HostCommandError,
     HostUnavailableError,
     encode_control_line,
 )
-from gobby.terminals.host_protocol import HostListRow
+from gobby.terminals.host_protocol import HostListRow, frames_socket_path
 from gobby.terminals.host_reconcile import reconcile_host_inventory
 from gobby.terminals.runtime import (
     MAX_INPUT_PAYLOAD_BYTES,
@@ -110,6 +113,52 @@ class NativeTerminalRuntime:
             return host_id
         raise TerminalWriteError(stage="none")
 
+    def _socket_dir(self) -> Path | None:
+        manager = getattr(self._client, "_manager", None)
+        directory = getattr(manager, "socket_dir", None)
+        if directory is None:
+            directory = getattr(self._client, "socket_dir", None)
+        if directory is None:
+            return None
+        return Path(directory)
+
+    def _frame_token(self) -> str:
+        directory = self._socket_dir()
+        if directory is None:
+            return ""
+        path = directory / "local_cli_token"
+        try:
+            return path.read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
+
+    async def _ensure_frame_client(self, locator: AttachLocator) -> Any:
+        existing = self._frame_client
+        if existing is not None and not bool(getattr(existing, "closed", False)):
+            return existing
+        directory = self._socket_dir()
+        if directory is None:
+            raise HostCommandError("attach_failed")
+        try:
+            reader, writer = await asyncio.open_unix_connection(str(frames_socket_path(directory)))
+        except (OSError, ConnectionError) as exc:
+            raise HostCommandError("attach_failed") from exc
+        client = FrameClient(reader, writer)
+        epoch = locator.frame_host_epoch or self._frame_host_epoch
+        if not epoch:
+            epoch = str(getattr(self._client, "host_epoch", "") or "")
+        await client.handshake(
+            AttachLocator(
+                backend="native",
+                frame_host_epoch=epoch,
+                host_terminal_id=locator.host_terminal_id,
+            ),
+            local_token=self._frame_token(),
+        )
+        self._frame_client = client
+        self._frame_host_epoch = epoch
+        return client
+
     async def reserve_observer(self, terminal_id: UUID) -> Mapping[str, str]:
         await self._ensure()
         subscribe = getattr(self._client, "subscribe_events", None)
@@ -132,14 +181,13 @@ class NativeTerminalRuntime:
         return payload if isinstance(payload, dict) else {"ok": True, "released": True}
 
     async def bind_observer(self, prepared: PreparedSpawn, reservation_id: str) -> None:
-        if self._frame_client is None:
-            raise HostCommandError("attach_failed")
         locator = prepared.locator or AttachLocator(
             backend="native",
             frame_host_epoch=self._frame_host_epoch,
             host_terminal_id=prepared.host_terminal_id,
         )
-        await self._frame_client.attach_terminal(locator, reservation_id=reservation_id)
+        client = await self._ensure_frame_client(locator)
+        await client.attach_terminal(locator, reservation_id=reservation_id)
         prepared.acknowledge_observer()
 
     async def prepare_spawn(self, request: TerminalSpawnRequest) -> PreparedSpawn:
