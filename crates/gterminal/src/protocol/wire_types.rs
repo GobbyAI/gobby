@@ -368,9 +368,9 @@ pub struct PaneModes {
 
 /// Messages sent from the client to the host over the **read-only** frame socket.
 ///
-/// Variant indices 1–3 are reserved so a hand-built herdr `Input` / `ClipboardImage`
-/// / `Resize` payload cannot alias a live verb. The host treats those tags as
-/// unknown and never forwards them to a PTY.
+/// Variant indices 1–3 are reserved so a hand-built fork-point `Input` /
+/// `ClipboardImage` / `Resize` payload cannot alias a live verb. The host
+/// treats those tags as unknown and never forwards them to a PTY.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ClientMessage {
     /// Handshake: protocol version, encoding, local CLI token, and viewport.
@@ -383,16 +383,16 @@ pub enum ClientMessage {
         #[serde(default)]
         tmux_identity: Option<TmuxClientIdentity>,
     },
-    /// Legacy herdr Input (tag 1). Rejected as unknown; never a write path.
+    /// Legacy fork-point Input (tag 1). Rejected as unknown; never a write path.
     LegacyInput {
         data: Vec<u8>,
     },
-    /// Legacy herdr ClipboardImage (tag 2). Rejected as unknown.
+    /// Legacy fork-point ClipboardImage (tag 2). Rejected as unknown.
     LegacyClipboard {
         extension: String,
         data: Vec<u8>,
     },
-    /// Legacy herdr Resize (tag 3). Rejected as unknown; never TIOCSWINSZ.
+    /// Legacy fork-point Resize (tag 3). Rejected as unknown; never TIOCSWINSZ.
     LegacyResize {
         cols: u16,
         rows: u16,

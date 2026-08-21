@@ -586,6 +586,41 @@ class TestExecuteSpawn:
             assert result.child_session_id == "child-session-id"
 
     @pytest.mark.asyncio
+    async def test_tmux_run_pid_is_pane_pid_not_server_pid(self) -> None:
+        from tests.terminals.fakes import _FAKE_PANE_PID, _FAKE_SERVER_PID
+
+        run_manager = MagicMock()
+        request = SpawnRequest(
+            prompt="Test",
+            cwd="/path",
+            provider="claude",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+            session_manager=MagicMock(),
+            run_manager=run_manager,
+            machine_id="21000000-0000-4000-8000-000000000002",
+            prepared_spawn=prepared_spawn(),
+            terminal_backend="tmux",
+        )
+        context = MagicMock()
+        context.session_id = "child-session-id"
+        context.agent_run_id = "run-123"
+        context.env_vars = {"GOBBY_SESSION_ID": "child-session-id"}
+        with patch(
+            "gobby.agents.spawn_executor.prepare_terminal_spawn",
+            return_value=context,
+        ):
+            request.prepared_spawn = context
+            result = await execute_spawn(request)
+        assert result.success is True
+        assert result.pid == _FAKE_PANE_PID
+        assert result.pid != _FAKE_SERVER_PID
+        run_manager.update_runtime.assert_called()
+        assert run_manager.update_runtime.call_args.kwargs["pid"] == _FAKE_PANE_PID
+
+    @pytest.mark.asyncio
     async def test_spawn_failure_propagates_error(self):
         """Test that spawn failure returns error in result."""
         mock_session_manager = MagicMock()

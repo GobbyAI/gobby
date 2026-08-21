@@ -203,6 +203,7 @@ class TmuxTerminalRuntime:
             host_terminal_id=host_terminal_id,
             stored_locator=stored_locator,
             locator_key=locator_key,
+            pid=info.pane_pid,
         )
 
     async def commit_spawn(self, prepared: PreparedSpawn) -> TerminalHandle:

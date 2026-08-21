@@ -6,6 +6,7 @@ import logging
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
 from typing import Any, Protocol
+from uuid import UUID
 
 from gobby.storage.terminals import Terminal, native_locator_key
 from gobby.utils.datetime import utc_now
@@ -61,6 +62,20 @@ def _interrupt_run(run_manager: Any, run_id: str | None) -> None:
         cancel(run_id, terminal_reason="daemon_stop")
 
 
+def _durable_terminal_id(terminal_id: str) -> bool:
+    """True when the host row names a gobby terminals-table id.
+
+    Tmux observers use ``locator_key`` (``tmux:socket:pid:start:%pane``) as
+    ``terminal_id``. Those slots are not unknown native children and must not
+    be UUID-parsed or killed during adoption.
+    """
+    try:
+        UUID(terminal_id)
+    except ValueError:
+        return False
+    return True
+
+
 async def reconcile_host_inventory(
     *,
     terminal_manager: SupportsIdentityLookup,
@@ -89,6 +104,8 @@ async def reconcile_host_inventory(
     for row in host_rows:
         terminal_id = str(row.terminal_id)
         spawn_key = str(row.spawn_key)
+        if not _durable_terminal_id(terminal_id):
+            continue
         durable = terminal_manager.get_by_identity(terminal_id, spawn_key)
         commit_state = getattr(row, "commit_state", "committed")
         if durable is None:

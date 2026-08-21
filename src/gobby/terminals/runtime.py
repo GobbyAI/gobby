@@ -64,6 +64,7 @@ class PreparedSpawn:
     observer_bound: bool = False
     stored_locator: dict[str, object] | None = None
     locator_key: str | None = None
+    pid: int | None = None
 
     def acknowledge_persist(self) -> None:
         self.persist_acknowledged = True

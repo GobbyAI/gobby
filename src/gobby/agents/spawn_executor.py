@@ -515,10 +515,10 @@ async def _promote_prepared(
                 terminal_id=terminal_id,
             )
 
-    pid: int | None = None
-    raw_pid = stored.get("server_pid")
-    if isinstance(raw_pid, int):
-        pid = raw_pid
+    pid = prepared.pid
+    process = prepared.process
+    if pid is None and process is not None:
+        pid = process.pgid
     if request.run_manager is not None:
         try:
             request.run_manager.update_runtime(

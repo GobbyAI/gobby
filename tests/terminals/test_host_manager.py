@@ -411,6 +411,46 @@ async def test_adoption_reconciliation_matrix(
 
 
 @pytest.mark.asyncio
+async def test_reconcile_skips_tmux_observer_slots(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    from gobby.terminals.host_protocol import write_pidfile
+
+    terminals = TerminalManager(temp_db)
+    epoch = str(uuid.uuid4())
+    live = _live(terminals, sample_project["id"], epoch, host_terminal_id="ht-live")
+    observer = FakeListRow(
+        terminal_id="tmux:/tmp/gobby:86901:1000:%140",
+        spawn_key="tmux:/tmp/gobby:86901:1000:%140",
+        host_terminal_id="ht-tmux",
+        commit_state="committed",
+    )
+    client = FakeControlClient(
+        host_epoch=epoch,
+        host_pid=8001,
+        terminals=[
+            FakeListRow(
+                terminal_id=live.id,
+                spawn_key=live.spawn_key or live.id,
+                commit_state="committed",
+                host_terminal_id="ht-live",
+            ),
+            observer,
+        ],
+    )
+    write_pidfile(tmp_path, 8001)
+    host = _host(tmp_path, terminals, client)
+    await host.start()
+    await host.reconcile()
+    assert host.running is True
+    assert host.last_error is None
+    assert _loaded(terminals, live.id).state == "live"
+    assert "ht-tmux" not in client.kill_calls
+
+
+@pytest.mark.asyncio
 async def test_control_token_is_minted_scoped_and_rotated(
     tmp_path: Path,
     temp_db: HubDatabase,
@@ -694,3 +734,32 @@ def test_gterm_bin_requires_vt_engine() -> None:
     bins = cargo.get("bin", [])
     gterm = next(item for item in bins if item.get("name") == "gterm")
     assert gterm.get("required-features") == ["vt-engine"]
+
+
+def test_host_spawn_forwards_attachment_pool_args(tmp_path: Path) -> None:
+    from gobby.config.terminal_host import TerminalHostConfig
+    from gobby.terminals.host_manager import TerminalHostManager
+
+    captured: list[list[str]] = []
+
+    class _BoomPopen:
+        def __init__(self, args: list[str], **kwargs: object) -> None:
+            del kwargs
+            captured.append(list(args))
+            raise OSError("boom")
+
+    host = TerminalHostManager(
+        config=TerminalHostConfig(
+            socket_dir=str(tmp_path),
+            binary_path="/bin/echo",
+            max_attachments_total=8,
+            max_attachments_per_terminal=4,
+        ),
+        terminal_config=TerminalConfig(),
+    )
+    with patch("subprocess.Popen", _BoomPopen):
+        with pytest.raises(OSError, match="boom"):
+            host._spawn_host_process()
+    argv = captured[0]
+    assert argv[argv.index("--max-attachments-total") + 1] == "8"
+    assert argv[argv.index("--max-attachments-per-terminal") + 1] == "4"

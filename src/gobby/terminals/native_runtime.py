@@ -17,7 +17,7 @@ from gobby.terminals.host_client import (
     HostUnavailableError,
     encode_control_line,
 )
-from gobby.terminals.host_protocol import HostListRow, frames_socket_path
+from gobby.terminals.host_protocol import HostListRow, control_socket_path, frames_socket_path
 from gobby.terminals.host_reconcile import reconcile_host_inventory
 from gobby.terminals.runtime import (
     MAX_INPUT_PAYLOAD_BYTES,
@@ -234,12 +234,34 @@ class NativeTerminalRuntime:
     async def commit_spawn(self, prepared: PreparedSpawn) -> TerminalHandle:
         if not prepared.persist_acknowledged or not prepared.observer_bound:
             raise CommitSpawnRefusedError("persist and observer bind have not been acknowledged")
-        await self._client.spawn_commit(str(prepared.terminal_id), prepared.spawn_key)
         locator = prepared.locator or AttachLocator(
             backend="native",
             frame_host_epoch=self._frame_host_epoch,
             host_terminal_id=prepared.host_terminal_id,
         )
+        try:
+            await self._client.spawn_commit(str(prepared.terminal_id), prepared.spawn_key)
+        except ConnectionError:
+            directory = self._socket_dir()
+            reconnect = getattr(self._client, "reconnect", None)
+            if directory is None or not callable(reconnect):
+                raise
+            await reconnect(
+                control_socket_path(directory), expected_epoch=self._frame_host_epoch or None
+            )
+            rows = await self._client.list_terminals()
+            match = next(
+                (
+                    row
+                    for row in rows
+                    if str(row.terminal_id) == str(prepared.terminal_id)
+                    and str(row.spawn_key) == prepared.spawn_key
+                    and row.commit_state == "committed"
+                ),
+                None,
+            )
+            if match is None:
+                raise
         return TerminalHandle(terminal_id=prepared.terminal_id, locator=locator)
 
     async def is_live(self, terminal: Terminal) -> bool:

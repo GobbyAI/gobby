@@ -255,16 +255,22 @@ class TerminalHostManager:
                 return
             await client.kill(host_terminal_id)
 
-        error = await reconcile_host_inventory(
-            terminal_manager=manager,
-            machine_id=require_machine_id(),
-            host_epoch=epoch,
-            host_rows=host_rows,
-            spawn_in_doubt_seconds=self.terminal_config.spawn_in_doubt_seconds,
-            run_manager=self.run_manager,
-            kill=kill,
-            unknown_grace_seconds=self.config.shutdown_grace_seconds,
-        )
+        try:
+            error = await reconcile_host_inventory(
+                terminal_manager=manager,
+                machine_id=require_machine_id(),
+                host_epoch=epoch,
+                host_rows=host_rows,
+                spawn_in_doubt_seconds=self.terminal_config.spawn_in_doubt_seconds,
+                run_manager=self.run_manager,
+                kill=kill,
+                unknown_grace_seconds=self.config.shutdown_grace_seconds,
+            )
+        except ValueError as exc:
+            logger.warning("host inventory reconcile skipped invalid identity: %s", exc)
+            self.last_error = str(exc)
+            self._record_observation_health(host_rows)
+            return
         if error:
             self.last_error = error
         self._record_observation_health(host_rows)
@@ -391,6 +397,10 @@ class TerminalHostManager:
                     str(self.config.tmux_poll_backoff_ceiling_ms),
                     "--max-attached-terminals",
                     str(self.config.max_attached_terminals),
+                    "--max-attachments-total",
+                    str(self.config.max_attachments_total),
+                    "--max-attachments-per-terminal",
+                    str(self.config.max_attachments_per_terminal),
                     "--tmux-attach-history-lines",
                     str(self.config.tmux_attach_history_lines),
                     "--tmux-attach-history-max-bytes",
@@ -509,6 +519,29 @@ class TerminalHostManager:
                 await self.reconcile()
             except Exception as exc:
                 self.last_error = str(exc)
+                pid = self.host_pid
+                if isinstance(pid, int) and pid > 0 and self._pid_identity(pid):
+                    logger.warning("gterm control probe failed; reconnecting live host: %s", exc)
+                    try:
+                        stale = self._client
+                        if stale is not None:
+                            close = getattr(stale, "close", None)
+                            if callable(close):
+                                result = close()
+                                if asyncio.iscoroutine(result):
+                                    await result
+                        replacement = await self._connect()
+                        token = self.ensure_control_token()
+                        hello = await replacement.hello(CONTROL_PROTOCOL_VERSION, token)
+                        ping = await replacement.ping()
+                        self._client = replacement
+                        self.host_epoch = ping.host_epoch or hello.host_epoch
+                        self.host_pid = ping.host_pid
+                    except Exception as reconnect_exc:
+                        self.last_error = str(reconnect_exc)
+                        await self.handle_host_death()
+                        return
+                    continue
                 await self.handle_host_death()
                 return
 

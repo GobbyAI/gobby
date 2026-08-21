@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+from pathlib import Path
 from typing import Any, cast
 from unittest.mock import Mock
 
@@ -20,6 +22,16 @@ from gobby.terminals.ws_protocol import (
 from gobby.utils.json_helpers import json_dumps
 
 logger = logging.getLogger(__name__)
+
+WRITE_FAULT_NAME = "terminal_write_fault"
+
+
+def write_handler_faulted() -> bool:
+    """True when the isolated-daemon write-handler fault file is present."""
+    home = os.environ.get("GOBBY_HOME")
+    if not home:
+        return False
+    return Path(home).joinpath(WRITE_FAULT_NAME).is_file()
 
 
 class TerminalWsMixin:
@@ -405,6 +417,13 @@ class TerminalWsMixin:
         if admitted.join_inflight and isinstance(seq, int):
             joined = await self._wait_joined_write(attachment_id, seq)
             await self._write_outcome(websocket, data, outcome=joined[0], reason=joined[1])
+            return
+        if write_handler_faulted():
+            if isinstance(seq, int):
+                self._leases().complete_write(attachment_id, seq, "refused", "write_handler_fault")
+            await self._write_outcome(
+                websocket, data, outcome="refused", reason="write_handler_fault"
+            )
             return
         outcome = "delivered"
         reason = None

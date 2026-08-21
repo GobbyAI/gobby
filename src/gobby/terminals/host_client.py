@@ -87,6 +87,7 @@ class HostClient:
         self._reader = reader
         self._writer = writer
         self._pid_alive = pid_alive
+        self._lock = asyncio.Lock()
         self.closed = False
         self.host_epoch: str | None = None
         self.next_seq = 1
@@ -144,9 +145,10 @@ class HostClient:
         encoded = encode_control_line(request)
         if len(encoded) >= MAX_CONTROL_LINE:
             raise HostCommandError("request_too_large")
-        self._writer.write(encoded)
-        await self._writer.drain()
-        return await self.read_payload()
+        async with self._lock:
+            self._writer.write(encoded)
+            await self._writer.drain()
+            return await self.read_payload()
 
     async def hello(self, protocol_version: int, control_token: str) -> HelloResult:
         payload = await self._roundtrip(

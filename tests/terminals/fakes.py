@@ -32,6 +32,7 @@ from gobby.terminals.runtime import (
 from gobby.utils.datetime import utc_now
 
 _SOCKET = "/private/tmp/tmux-501/default"
+_FAKE_SERVER_PID = 4242
 _FAKE_PANE_PID = 12345
 
 
@@ -349,7 +350,7 @@ class FakeRuntime:
         pane_id = "%1"
         stored = {
             "socket_path": _SOCKET,
-            "server_pid": _FAKE_PANE_PID,
+            "server_pid": _FAKE_SERVER_PID,
             "server_start_time": 1784592177,
             "pane_id": pane_id,
         }
@@ -367,10 +368,11 @@ class FakeRuntime:
             stored_locator=stored,
             locator_key=tmux_locator_key(
                 socket_path=_SOCKET,
-                server_pid=_FAKE_PANE_PID,
+                server_pid=_FAKE_SERVER_PID,
                 server_start_time=1784592177,
                 pane_id=pane_id,
             ),
+            pid=_FAKE_PANE_PID,
         )
 
     async def commit_spawn(self, prepared: PreparedSpawn) -> TerminalHandle:

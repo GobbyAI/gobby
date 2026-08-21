@@ -337,6 +337,16 @@ async def _start_terminal_host(runner: GobbyRunner, tracker: StartupTracker | No
             if tracker:
                 tracker.error("gterm_host", host.last_error or "unavailable")
             return
+        epoch = host.host_epoch
+        registry = getattr(runner, "terminal_runtime_registry", None)
+        if epoch and registry is not None:
+            for backend in ("native", "tmux"):
+                try:
+                    runtime = registry.resolve(backend)
+                except Exception:
+                    continue
+                if hasattr(runtime, "_frame_host_epoch"):
+                    runtime._frame_host_epoch = str(epoch)
         if tracker:
             tracker.complete("gterm host")
     except Exception as e:
