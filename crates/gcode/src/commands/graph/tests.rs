@@ -4,8 +4,8 @@ use super::lifecycle::{
 };
 use super::payload::format_report_text;
 use super::reads::{
-    format_blast_radius_result_line, format_caller_result_line, format_grouped_graph_results,
-    format_symbol_path_text, format_usage_result_line,
+    format_blast_radius_result_line, format_callee_result_line, format_caller_result_line,
+    format_grouped_graph_results, format_symbol_path_text, format_usage_result_line,
 };
 use super::{imports, report};
 use crate::commands::token_budget;
@@ -15,6 +15,7 @@ use crate::models::{
     GraphPathStep, GraphResult, PagedResponse, ProjectionMetadata, ProjectionProvenance,
 };
 use crate::output::Format;
+use clap::Parser;
 use serde_json::json;
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -69,6 +70,7 @@ fn graph_text_groups_by_file_and_sorts_entries() {
             relation: Some("CALLS".to_string()),
             distance: None,
             metadata: None,
+            node_kind: None,
         },
         GraphResult {
             id: "a2".to_string(),
@@ -79,6 +81,7 @@ fn graph_text_groups_by_file_and_sorts_entries() {
             relation: Some("CALLS".to_string()),
             distance: None,
             metadata: None,
+            node_kind: None,
         },
         GraphResult {
             id: "a1".to_string(),
@@ -89,6 +92,7 @@ fn graph_text_groups_by_file_and_sorts_entries() {
             relation: Some("CALLS".to_string()),
             distance: None,
             metadata: None,
+            node_kind: None,
         },
     ];
 
@@ -110,6 +114,7 @@ fn graph_read_text_lines_surface_confidence_labels() {
         relation: Some("CALLS".to_string()),
         distance: Some(2),
         metadata: None,
+        node_kind: None,
     };
 
     assert_eq!(
@@ -137,6 +142,7 @@ fn graph_read_token_budget_uses_rendered_rows() {
         relation: Some("CALLS".to_string()),
         distance: Some(1),
         metadata: None,
+        node_kind: None,
     };
     let second = GraphResult {
         id: "sym-2".to_string(),
@@ -147,6 +153,7 @@ fn graph_read_token_budget_uses_rendered_rows() {
         relation: Some("CALLS".to_string()),
         distance: Some(2),
         metadata: None,
+        node_kind: None,
     };
     let budget = token_budget::estimate_tokens(&format_usage_result_line(&first, "main"));
 
@@ -501,6 +508,7 @@ fn top_level_read_commands_preserve_json_shape() {
             relation: Some("CALLS".to_string()),
             distance: Some(1),
             metadata: None,
+            node_kind: None,
         }],
         hint: None,
         warnings: Vec::new(),
@@ -539,6 +547,7 @@ fn top_level_read_commands_preserve_json_shape() {
                 ProjectionMetadata::new(ProjectionProvenance::Extracted, "gcode")
                     .with_source_file_path("src/lib.rs"),
             ),
+            node_kind: None,
         }],
         hint: None,
         warnings: Vec::new(),
@@ -550,4 +559,198 @@ fn top_level_read_commands_preserve_json_shape() {
         value["results"][0]["metadata"]["source_file_path"],
         "src/lib.rs"
     );
+}
+
+fn graph_result(id: &str, name: &str, file_path: &str, line: usize) -> GraphResult {
+    GraphResult {
+        id: id.to_string(),
+        name: name.to_string(),
+        file_path: file_path.to_string(),
+        line,
+        confidence: ProjectionProvenance::Extracted,
+        relation: Some("CALLS".to_string()),
+        distance: None,
+        metadata: None,
+        node_kind: None,
+    }
+}
+
+#[test]
+fn callees_mirrors_callers_pagination() {
+    let callers = crate::cli::Cli::try_parse_from([
+        "gcode",
+        "callers",
+        "handleAuth",
+        "--limit",
+        "3",
+        "--offset",
+        "2",
+    ])
+    .expect("callers parses");
+    let callees = crate::cli::Cli::try_parse_from([
+        "gcode",
+        "callees",
+        "handleAuth",
+        "--limit",
+        "3",
+        "--offset",
+        "2",
+    ])
+    .expect("callees parses");
+    match (callers.command, callees.command) {
+        (
+            crate::cli::Command::Callers {
+                limit: callers_limit,
+                offset: callers_offset,
+                ..
+            },
+            crate::cli::Command::Callees {
+                limit: callees_limit,
+                offset: callees_offset,
+                ..
+            },
+        ) => {
+            assert_eq!(callers_limit, callees_limit);
+            assert_eq!(callers_offset, callees_offset);
+        }
+        _ => panic!("expected callers and callees"),
+    }
+
+    let result = graph_result("sym-2", "callee", "src/lib.rs", 12);
+    assert_eq!(
+        format_callee_result_line(&result, "main"),
+        "12 [EXTRACTED] main -> callee"
+    );
+
+    let page = PagedResponse {
+        project_id: "project-123".to_string(),
+        total: 5,
+        offset: 2,
+        limit: 3,
+        results: vec![result],
+        hint: None,
+        warnings: Vec::new(),
+    };
+    let value = serde_json::to_value(&page).expect("serialize");
+    assert_eq!(value["total"], 5);
+    assert_eq!(value["offset"], 2);
+    assert_eq!(value["limit"], 3);
+    assert!(value.get("token_budget").is_none());
+
+    let ctx = make_ctx_no_falkordb();
+    super::callees(&ctx, "handleAuth", 10, 0, Format::Json).expect("callees degrades");
+}
+
+#[test]
+fn callees_paginates_past_max_graph_limit() {
+    let all = (0..102)
+        .map(|index| {
+            graph_result(
+                &format!("callee-{index:03}"),
+                &format!("callee-{index:03}"),
+                "src/lib.rs",
+                index,
+            )
+        })
+        .collect::<Vec<_>>();
+    let fetch_from = |all: Vec<GraphResult>| {
+        move |offset: usize, limit: usize| {
+            let end = (offset + limit).min(all.len());
+            Ok(if offset >= all.len() {
+                Vec::new()
+            } else {
+                all[offset..end].to_vec()
+            })
+        }
+    };
+    let first = code_graph::collect_paged_graph_results(
+        0,
+        50,
+        code_graph::MAX_GRAPH_LIMIT,
+        fetch_from(all.clone()),
+        Ok,
+    )
+    .expect("first page");
+    let second = code_graph::collect_paged_graph_results(
+        50,
+        50,
+        code_graph::MAX_GRAPH_LIMIT,
+        fetch_from(all.clone()),
+        Ok,
+    )
+    .expect("second page");
+    let third = code_graph::collect_paged_graph_results(
+        100,
+        50,
+        code_graph::MAX_GRAPH_LIMIT,
+        fetch_from(all),
+        Ok,
+    )
+    .expect("third page");
+
+    assert_eq!(first.len(), 50);
+    assert_eq!(second.len(), 50);
+    assert_eq!(third.len(), 2);
+    assert_eq!(first[0].id, "callee-000");
+    assert_eq!(second[0].id, "callee-050");
+    assert_eq!(third[0].id, "callee-100");
+    assert_eq!(third[1].id, "callee-101");
+    let mut ids = first
+        .iter()
+        .chain(&second)
+        .chain(&third)
+        .map(|result| result.id.clone())
+        .collect::<Vec<_>>();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), 102);
+}
+
+#[test]
+fn callees_keeps_external_and_unresolved_targets() {
+    use std::collections::HashSet;
+
+    let local_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    let external_id =
+        crate::models::make_external_symbol_id("project-1", "print", Some("builtins"));
+    let unresolved_id = crate::models::make_unresolved_callee_id("project-1", "missing_fn");
+    let mut local = graph_result(local_id, "local", "src/lib.rs", 1);
+    local.node_kind = Some("symbol".into());
+    let mut external = graph_result(&external_id, "print", "src/lib.rs", 2);
+    external.node_kind = Some("external".into());
+    let mut unresolved = graph_result(&unresolved_id, "missing_fn", "src/lib.rs", 3);
+    unresolved.node_kind = Some("unresolved".into());
+    let mut hidden_external = graph_result(&external_id, "print", "src/hidden.rs", 4);
+    hidden_external.node_kind = Some("external".into());
+
+    let visible_ids = HashSet::from([local_id.to_string()]);
+    let visible_paths = HashSet::from(["src/lib.rs".to_string()]);
+
+    assert!(crate::visibility::graph_result_is_visible(
+        &local,
+        &visible_ids,
+        &visible_paths
+    ));
+    assert!(crate::visibility::graph_result_is_visible(
+        &external,
+        &visible_ids,
+        &visible_paths
+    ));
+    assert!(crate::visibility::graph_result_is_visible(
+        &unresolved,
+        &visible_ids,
+        &visible_paths
+    ));
+    assert!(!crate::visibility::graph_result_is_visible(
+        &hidden_external,
+        &visible_ids,
+        &visible_paths
+    ));
+    let mut hidden_local = local.clone();
+    hidden_local.id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb".into();
+    assert!(!crate::visibility::graph_result_is_visible(
+        &hidden_local,
+        &visible_ids,
+        &visible_paths
+    ));
 }

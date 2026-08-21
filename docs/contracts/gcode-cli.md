@@ -5,9 +5,9 @@ The machine-readable contract lives at `crates/gcode/contract/gcode.contract.jso
 
 ## Version
 
-`contract_version`: 4
+`contract_version`: 5
 
-Version 4 renames the global freshness bypass to `--allow-stale`. Each command below emits
+Version 5 pins exit codes, adds `callees`, and adds `graph view`. Each command below emits
 a stable JSON shape under `--format json`; the keys are pinned in
 `gcode.contract.json` and asserted by the drift tests.
 
@@ -25,7 +25,13 @@ a stable JSON shape under `--format json`; the keys are pinned in
   location resolved
 - `symbols` — the stored symbol record (no `source`)
 - `tree` — `file_path, language, symbol_count` per file
-- `callers`, `usages` — graph reads (the `graph_read_keys` envelope)
+- `callers`, `callees`, `usages` — graph reads (the `graph_read_keys` envelope).
+  `callees` is caller-parity `limit`/`offset` only; it has no output-clip
+  `--token-budget`
+- `graph view` — scoped `fcg` / `mcg` / `class-hierarchy` dump. JSON keys:
+  `project_id, project_root, view, seed, depth, incoming_truncated,
+  outgoing_truncated, hint, nodes, edges, communities, mermaid`. Mermaid is
+  always present and is never character/token-sliced
 - `imports`, `blast-radius` — the paged graph envelope (`project_id, total,
   offset, limit, results[]`, each row carrying `id, name, file_path, line,
   confidence, relation, distance, metadata, hint`)

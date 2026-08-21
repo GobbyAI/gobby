@@ -147,48 +147,48 @@
           "repeatable": false
         }
       ],
-    "json_output_keys": [
-      "project_id",
-      "root",
-      "indexed_files",
-      "indexed_symbols",
-      "skipped_files",
-      "errors"
-    ]
-  },
-  {
-    "name": "repair",
-    "summary": "Repair stranded index state and graph projection drift.",
-    "daemon_consumed": true,
-    "positionals": [],
-    "flags": [
-      {
-        "name": "--format",
-        "takes_value": true,
-        "value_name": "json|text",
-        "allowed_values": [
-          "json",
-          "text"
-        ],
-        "required": false,
-        "repeatable": false
-      }
-    ],
-    "json_output_keys": [
-      "project_id",
-      "mode",
-      "previous_indexer_version",
-      "indexer_version",
-      "local_import_calls",
-      "local_import_inheritance",
-      "marked_for_resync",
-      "graph_reconcile",
-      "full_reindex",
-      "duration_ms"
-    ]
-  },
-  {
-    "name": "status",
+      "json_output_keys": [
+        "project_id",
+        "root",
+        "indexed_files",
+        "indexed_symbols",
+        "skipped_files",
+        "errors"
+      ]
+    },
+    {
+      "name": "repair",
+      "summary": "Repair stranded index state and graph projection drift.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [
+        {
+          "name": "--format",
+          "takes_value": true,
+          "value_name": "json|text",
+          "allowed_values": [
+            "json",
+            "text"
+          ],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "project_id",
+        "mode",
+        "previous_indexer_version",
+        "indexer_version",
+        "local_import_calls",
+        "local_import_inheritance",
+        "marked_for_resync",
+        "graph_reconcile",
+        "full_reindex",
+        "duration_ms"
+      ]
+    },
+    {
+      "name": "status",
       "summary": "Show project index status.",
       "daemon_consumed": false,
       "positionals": [],
@@ -920,6 +920,63 @@
       ]
     },
     {
+      "name": "callees",
+      "summary": "Find callees of a symbol UUID or name.",
+      "daemon_consumed": true,
+      "positionals": [
+        {
+          "name": "SYMBOL",
+          "required": true,
+          "repeatable": false
+        }
+      ],
+      "flags": [
+        {
+          "name": "--limit",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--offset",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--format",
+          "takes_value": true,
+          "value_name": "json|text",
+          "allowed_values": [
+            "json",
+            "text"
+          ],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "project_id",
+        "total",
+        "offset",
+        "limit",
+        "results",
+        "id",
+        "name",
+        "file_path",
+        "line",
+        "confidence",
+        "relation",
+        "distance",
+        "metadata",
+        "hint"
+      ]
+    },
+    {
       "name": "usages",
       "summary": "Find incoming call usages of a symbol UUID or name.",
       "daemon_consumed": true,
@@ -1344,6 +1401,81 @@
         "nodes",
         "links",
         "summary"
+      ]
+    },
+    {
+      "name": "graph view",
+      "summary": "Render a scoped fcg, mcg, or class-hierarchy graph view.",
+      "daemon_consumed": false,
+      "positionals": [
+        {
+          "name": "SEED",
+          "required": true,
+          "repeatable": false
+        }
+      ],
+      "flags": [
+        {
+          "name": "--view",
+          "takes_value": true,
+          "value_name": "fcg|mcg|class-hierarchy",
+          "allowed_values": [
+            "fcg",
+            "mcg",
+            "class-hierarchy"
+          ],
+          "required": true,
+          "repeatable": false
+        },
+        {
+          "name": "--depth",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--incoming-limit",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--outgoing-limit",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--format",
+          "takes_value": true,
+          "value_name": "json|text",
+          "allowed_values": [
+            "json",
+            "text"
+          ],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "project_id",
+        "project_root",
+        "view",
+        "seed",
+        "depth",
+        "incoming_truncated",
+        "outgoing_truncated",
+        "hint",
+        "nodes",
+        "edges",
+        "communities",
+        "mermaid"
       ]
     },
     {

@@ -67,6 +67,7 @@ GCODE_READONLY_TOOLS: frozenset[str] = frozenset(
         "tree",
         "kinds",
         "callers",
+        "callees",
         "usages",
         "imports",
         "path",
@@ -88,6 +89,11 @@ GWIKI_READONLY_TOOLS: frozenset[str] = frozenset(
 _READONLY_BY_CLI: dict[str, frozenset[str]] = {
     "gcode": GCODE_READONLY_TOOLS,
     "gwiki": GWIKI_READONLY_TOOLS,
+}
+# Nested argv under a mutating parent. `graph` stays off the read whitelist;
+# a no-mutation policy may still expose it and authorize exactly `graph view`.
+_GCODE_READONLY_NESTED: dict[str, frozenset[str]] = {
+    "graph": frozenset({"view"}),
 }
 GCODE_ALLOWED_TOOLS: frozenset[str] = GCODE_READONLY_TOOLS | frozenset(
     {
@@ -146,6 +152,7 @@ _TOOL_DESCRIPTIONS: dict[tuple[str, str], str] = {
         "High-level project summary with per-module symbol counts. args: []."
     ),
     ("gcode", "callers"): ('Who calls a function/method. args: ["<symbol-id-or-name>"].'),
+    ("gcode", "callees"): ('Who a function/method calls. args: ["<symbol-id-or-name>"].'),
     ("gcode", "usages"): (
         'All usages (calls + imports) of a symbol. args: ["<symbol-id-or-name>"].'
     ),
@@ -181,6 +188,18 @@ def _is_readonly(cli: str, subcommand: str) -> bool:
     return subcommand in _READONLY_BY_CLI.get(cli, frozenset())
 
 
+def _nested_readonly_parent(cli: str, subcommand: str) -> bool:
+    return cli == "gcode" and subcommand in _GCODE_READONLY_NESTED
+
+
+def _is_readonly_invocation(cli: str, subcommand: str, args: list[str]) -> bool:
+    if _is_readonly(cli, subcommand):
+        return True
+    if not _nested_readonly_parent(cli, subcommand):
+        return False
+    return bool(args) and args[0] in _GCODE_READONLY_NESTED[subcommand]
+
+
 def tool_name_for(cli: str, subcommand: str) -> str:
     """Return the stable OpenAI/MCP tool name for a CLI subcommand."""
     return f"{cli}_{subcommand.replace('-', '_')}"
@@ -207,7 +226,9 @@ def validate_policy(policy: ToolPolicy, *, allow_empty: bool = False) -> None:
             raise ToolPolicyError(
                 f"Subcommand {policy.cli} {subcommand!r} is not allowed by policy."
             )
-        if not policy.allow_mutation and not _is_readonly(policy.cli, subcommand):
+        if not policy.allow_mutation and not (
+            _is_readonly(policy.cli, subcommand) or _nested_readonly_parent(policy.cli, subcommand)
+        ):
             raise ToolPolicyError(
                 f"Subcommand {policy.cli} {subcommand!r} is not read-only; "
                 "it requires a policy with allow_mutation=True."
@@ -420,7 +441,10 @@ class ToolRuntime:
         subcommand = self._subcommand_by_tool_name.get(tool_name)
         if subcommand is None:
             raise ToolPolicyError(f"Tool {tool_name!r} is not exposed by this policy.")
-        if not self._policy.allow_mutation and not _is_readonly(self._policy.cli, subcommand):
+        if not self._policy.allow_mutation and not (
+            _is_readonly(self._policy.cli, subcommand)
+            or _nested_readonly_parent(self._policy.cli, subcommand)
+        ):
             raise ToolPolicyError(f"Tool {tool_name!r} is not permitted by a read-only policy.")
         return subcommand
 
@@ -462,6 +486,12 @@ class ToolRuntime:
         try:
             subcommand = self.resolve(tool_name)
             args = self._args_from(arguments)
+            if not self._policy.allow_mutation and not _is_readonly_invocation(
+                self._policy.cli, subcommand, args
+            ):
+                raise ToolPolicyError(
+                    f"Tool {tool_name!r} argv {args!r} is not permitted by a read-only policy."
+                )
         except ToolPolicyError as exc:
             self._record(
                 tool_name,

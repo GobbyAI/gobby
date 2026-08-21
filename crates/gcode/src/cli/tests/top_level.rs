@@ -67,6 +67,54 @@ fn test_parse_callers_remains_top_level() {
 }
 
 #[test]
+fn test_parse_callees_remains_top_level() {
+    let cli = Cli::try_parse_from(["gcode", "callees", "handleAuth"]).expect("callees parses");
+
+    match cli.command {
+        Command::Callees {
+            symbol_name,
+            limit,
+            offset,
+        } => {
+            assert_eq!(symbol_name, "handleAuth");
+            assert_eq!(limit, 10);
+            assert_eq!(offset, 0);
+        }
+        _ => panic!("expected top-level callees command"),
+    }
+
+    let paged = Cli::try_parse_from([
+        "gcode",
+        "callees",
+        "handleAuth",
+        "--limit",
+        "3",
+        "--offset",
+        "2",
+    ])
+    .expect("callees pagination flags parse");
+    match paged.command {
+        Command::Callees {
+            symbol_name,
+            limit,
+            offset,
+        } => {
+            assert_eq!(symbol_name, "handleAuth");
+            assert_eq!(limit, 3);
+            assert_eq!(offset, 2);
+        }
+        _ => panic!("expected top-level callees command"),
+    }
+
+    let token_budget =
+        match Cli::try_parse_from(["gcode", "callees", "handleAuth", "--token-budget", "80"]) {
+            Ok(_) => panic!("callees must not grow an output-clip --token-budget flag"),
+            Err(error) => error,
+        };
+    assert_eq!(token_budget.kind(), clap::error::ErrorKind::UnknownArgument);
+}
+
+#[test]
 fn outline_has_no_summarize_surface() {
     let error = match Cli::try_parse_from(["gcode", "outline", "--summarize", "src/lib.rs"]) {
         Ok(_) => panic!("outline --summarize must be gone"),

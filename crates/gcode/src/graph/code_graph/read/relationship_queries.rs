@@ -32,6 +32,35 @@ pub(crate) fn find_callers_query(
     )
 }
 
+pub(crate) fn find_callees_query(
+    project_id: &str,
+    symbol_id: &str,
+    offset: usize,
+    limit: usize,
+) -> (String, HashMap<String, String>) {
+    let offset = clamp_offset(offset);
+    let limit = clamp_limit(limit);
+    (
+        format!(
+            "MATCH (src:CodeSymbol {{project: $project, id: $id}})-[r:CALLS]->\
+             (target {{project: $project}}) \
+             WHERE ({CALL_TARGET_PREDICATE}) \
+             WITH target, collect(coalesce(r.provenance, 'EXTRACTED')) AS provenances, \
+                  min(r.file) AS file, min(r.line) AS line, \
+                  CASE WHEN target:ExternalSymbol THEN 'external' \
+                       WHEN target:UnresolvedCallee THEN 'unresolved' \
+                       ELSE 'symbol' END AS node_kind \
+             WITH target, file, line, node_kind, {CONFIDENCE_LABEL_CASE} AS confidence_label \
+             RETURN target.id AS callee_id, target.name AS callee_name, \
+                    file AS file, line AS line, confidence_label AS confidence_label, \
+                    node_kind AS node_kind \
+             ORDER BY target.id \
+             SKIP {offset} LIMIT {limit}"
+        ),
+        typed_query::string_params(&[("project", project_id), ("id", symbol_id)]),
+    )
+}
+
 pub(crate) fn find_usages_query(
     project_id: &str,
     symbol_id: &str,
@@ -293,6 +322,18 @@ mod tests {
         assert!(query.contains("confidence_label AS confidence_label"));
         assert!(query.contains("WHEN 'AMBIGUOUS' IN provenances THEN 'AMBIGUOUS'"));
         assert!(!query.contains("r.confidence AS confidence"));
+    }
+
+    #[test]
+    fn callees_query_pages_outgoing_call_targets() {
+        let (query, _) = find_callees_query("project-1", "symbol-1", 10, 20);
+
+        assert!(query.contains("MATCH (src:CodeSymbol {project: $project, id: $id})"));
+        assert!(query.contains(CALL_TARGET_PREDICATE));
+        assert!(query.contains("ORDER BY target.id"));
+        assert!(query.contains("SKIP 10 LIMIT 20"));
+        assert!(query.contains("node_kind AS node_kind"));
+        assert!(!query.contains("find_callees_batch"));
     }
 
     #[test]

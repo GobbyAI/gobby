@@ -69,6 +69,53 @@ def test_validate_policy_rejects_mutator_without_allow_mutation() -> None:
         validate_policy(ToolPolicy(cli="gcode", tools=("search", "index")))
 
 
+@pytest.mark.asyncio
+async def test_graph_view_is_readonly_without_graph_mutators(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[list[str]] = []
+
+    async def fake_run_argv(
+        argv: list[str],
+        *,
+        cwd: str,
+        timeout: float,
+        byte_cap: int,
+        env: dict[str, str] | None = None,
+    ) -> str:
+        del cwd, timeout, byte_cap, env
+        captured.append(argv)
+        return "ok"
+
+    monkeypatch.setattr(tools, "run_argv", fake_run_argv)
+    policy = ToolPolicy(cli="gcode", tools=("callees", "graph"))
+    validate_policy(policy)
+    runtime = ToolRuntime(policy, project_path="/tmp")
+
+    assert await runtime.execute("gcode_callees", {"args": ["Symbol"]}) == "ok"
+    assert (
+        await runtime.execute(
+            "gcode_graph",
+            {"args": ["view", "--view", "fcg", "Derived"]},
+        )
+        == "ok"
+    )
+    assert captured == [
+        ["gcode", "callees", "Symbol"],
+        ["gcode", "graph", "view", "--view", "fcg", "Derived"],
+    ]
+
+    for args in (
+        ["clear"],
+        ["rebuild"],
+        ["sync-file", "--file", "src/app.py"],
+        ["cleanup-orphans"],
+    ):
+        with pytest.raises(ToolPolicyError):
+            await runtime.execute("gcode_graph", {"args": args})
+    assert len(captured) == 2
+
+
 def test_validate_policy_allows_mutator_when_opted_in() -> None:
     policy = ToolPolicy(cli="gwiki", tools=("search", "compile"), allow_mutation=True)
     validate_policy(policy)

@@ -624,6 +624,9 @@ pub struct GraphResult {
     pub distance: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<ProjectionMetadata>,
+    /// Graph node partition: `symbol`, `external`, or `unresolved`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -926,6 +929,7 @@ mod tests {
                         relation,
                         distance,
                         metadata: None,
+                        node_kind: None,
                     };
 
                     let serialized =

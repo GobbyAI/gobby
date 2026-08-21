@@ -27,7 +27,10 @@ pub(super) use package_metadata::{
     load_go_module_path, load_js_external_packages, load_js_self_package_name,
     load_rust_external_crates, load_rust_self_crate_names,
 };
-pub(super) use python::{build_python_module_index, python_candidate_files};
+pub(super) use python::{
+    build_python_module_index, python_candidate_files, python_local_module_lookup,
+    python_module_names_for_rel,
+};
 
 pub(super) use apple::build_swift_module_files;
 use apple::{build_objc_indexes, objc_relative_import_file, swift_modules_for_rel};
@@ -358,6 +361,89 @@ impl ImportResolutionContext {
             .get(module)
             .cloned()
             .unwrap_or_default()
+    }
+
+    /// Specifier-only lookup: absolute Python dotted modules plus the Go, Java,
+    /// C#, Kotlin, Scala, Lua, PHP, Ruby, and Elixir declaration maps. Relative
+    /// forms (Python `.x`, JS `./x`) return nothing — they need an importer.
+    pub(crate) fn importer_independent_candidates(&self, module: &str) -> Vec<String> {
+        let mut files = Vec::new();
+        if !module.starts_with('.') {
+            files.extend(python_candidate_files(module));
+        }
+        files.extend(self.go_candidate_files(module));
+        files.extend(self.java_candidate_files(module));
+        files.extend(self.csharp_type_files(module));
+        files.extend(self.kotlin_package_files(module));
+        files.extend(self.scala_package_files(module));
+        files.extend(self.lua_module_files(module));
+        files.extend(self.php_candidate_files(module));
+        files.extend(self.ruby_constant_files(module));
+        files.extend(self.elixir_module_files(module));
+        files.sort();
+        files.dedup();
+        files
+    }
+
+    /// Importer-aware lookup: Python relative specifiers resolved against the
+    /// importer's package, JS/TS paths, Rust `use` paths, and Objective-C imports.
+    pub(crate) fn importer_candidates(&self, module: &str, importer: &str) -> Vec<String> {
+        let mut files = Vec::new();
+        if module.starts_with('.')
+            && let Some(local) = python_local_module_lookup(module, importer)
+        {
+            files.extend(python_candidate_files(&local));
+        }
+        files.extend(self.js_candidate_files(importer, module));
+        if let Some(binding) = self.rust_import_candidate(importer, module) {
+            files.extend(binding.candidate_files);
+        }
+        files.extend(self.objc_import_candidate_files(importer, module));
+        files.sort();
+        files.dedup();
+        files
+    }
+
+    /// Module names each of `files` declares: one pass over the declaration maps
+    /// plus the Python path-derived names. Values are sorted and deduplicated.
+    pub(crate) fn path_derived_module_names_for_files<'a>(
+        &self,
+        files: impl IntoIterator<Item = &'a str>,
+    ) -> HashMap<String, Vec<String>> {
+        let mut declared: HashMap<&str, Vec<&str>> = HashMap::new();
+        for index in [
+            &self.java_class_files,
+            &self.csharp_type_files,
+            &self.kotlin_package_files,
+            &self.scala_package_files,
+            &self.lua_module_files,
+            &self.php_symbol_files,
+            &self.ruby_constant_files,
+            &self.elixir_module_files,
+            &self.swift_module_files,
+        ] {
+            for (name, declaring_files) in index {
+                for file in declaring_files {
+                    declared.entry(file.as_str()).or_default().push(name);
+                }
+            }
+        }
+        files
+            .into_iter()
+            .map(|file| {
+                let mut names = python_module_names_for_rel(file);
+                names.extend(
+                    declared
+                        .get(file)
+                        .into_iter()
+                        .flatten()
+                        .map(|name| (*name).to_string()),
+                );
+                names.sort();
+                names.dedup();
+                (file.to_string(), names)
+            })
+            .collect()
     }
 }
 

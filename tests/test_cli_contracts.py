@@ -381,6 +381,8 @@ def test_gcode_contract_covers_daemon_consumed_surface() -> None:
     assert {
         "index",
         "search",
+        "callees",
+        "graph view",
         "graph sync-file",
         "vector sync-file",
         "graph overview",
@@ -391,6 +393,21 @@ def test_gcode_contract_covers_daemon_consumed_surface() -> None:
         "graph clear",
         "graph rebuild",
     } <= commands
+    assert {
+        "project_id",
+        "project_root",
+        "view",
+        "seed",
+        "depth",
+        "incoming_truncated",
+        "outgoing_truncated",
+        "hint",
+        "nodes",
+        "edges",
+        "communities",
+        "mermaid",
+    } <= _json_keys(contract, "graph view")
+    assert {"total", "offset", "limit", "results"} <= _json_keys(contract, "callees")
     assert "codewiki" not in commands
     assert "--project" in _flag_names(contract["global_flags"])
     assert {"project_id", "results"} <= _json_keys(contract, "search")

@@ -374,3 +374,53 @@ fn swift_module_files_preserve_unix_backslash_filenames() {
         Some(&vec![r"Sources/App/Mod\el.swift".to_string()])
     );
 }
+
+#[test]
+fn mcg_relative_specifier_not_guessed_without_importer() {
+    let context = ImportResolutionContext::default();
+    assert!(context.importer_independent_candidates(".p").is_empty());
+    assert!(context.importer_independent_candidates("..p").is_empty());
+    assert!(
+        context
+            .importer_candidates(".p", "src/a.py")
+            .contains(&"src/p.py".to_string())
+    );
+    assert!(
+        context
+            .importer_independent_candidates("p")
+            .contains(&"p.py".to_string())
+    );
+    assert!(
+        context
+            .importer_candidates("./x", "src/a.ts")
+            .contains(&"src/x.ts".to_string())
+    );
+    assert!(
+        !context
+            .importer_candidates("p", "src/a.py")
+            .contains(&"p.py".to_string())
+    );
+}
+
+#[test]
+fn path_derived_names_for_files_inverts_declaration_maps_once() {
+    let tempdir = TempDir::new().expect("tempdir");
+    let root = tempdir.path();
+    let java = root.join("src/main/java/pkg/Foo.java");
+    fs::create_dir_all(java.parent().expect("parent")).expect("dirs");
+    fs::write(&java, "package pkg;\n\npublic class Foo {}\n").expect("java file");
+    let python = root.join("src/pkg/mod.py");
+    fs::create_dir_all(python.parent().expect("parent")).expect("dirs");
+    fs::write(&python, "x = 1\n").expect("python file");
+
+    let context = build_import_resolution_context(root, &[java, python]);
+    let names = context.path_derived_module_names_for_files([
+        "src/main/java/pkg/Foo.java",
+        "src/pkg/mod.py",
+        "README.md",
+    ]);
+    assert_eq!(names["src/main/java/pkg/Foo.java"], vec!["pkg.Foo"]);
+    assert_eq!(names["src/pkg/mod.py"], vec!["pkg.mod", "src.pkg.mod"]);
+    assert!(names["README.md"].is_empty());
+    assert_eq!(names.len(), 3);
+}

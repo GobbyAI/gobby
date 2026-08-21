@@ -1,5 +1,5 @@
 use crate::output;
-use clap::{ArgGroup, Parser, Subcommand};
+use clap::{ArgGroup, Args, FromArgMatches, Parser, Subcommand, ValueEnum};
 
 const DEFAULT_SYMBOL_PATH_MAX_DEPTH: usize =
     crate::graph::code_graph::DEFAULT_SYMBOL_PATH_MAX_DEPTH;
@@ -260,6 +260,15 @@ pub(crate) enum Command {
         #[arg(long, default_value = "0")]
         offset: usize,
     },
+    /// Find callees of a symbol query, resolved to a canonical symbol ID [requires graph backend]
+    Callees {
+        symbol_name: String,
+        #[arg(long, default_value = "10")]
+        limit: usize,
+        /// Skip first N results (for pagination)
+        #[arg(long, default_value = "0")]
+        offset: usize,
+    },
     /// Find incoming call usages of a symbol query, resolved to a canonical symbol ID [requires graph backend]
     Usages {
         symbol_name: String,
@@ -378,6 +387,129 @@ pub(crate) enum GraphCommand {
         #[arg(long, default_value = "100")]
         limit: usize,
     },
+    /// Render a scoped graph view (fcg, mcg, or class-hierarchy)
+    View(GraphViewArgs),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum GraphViewKind {
+    Fcg,
+    Mcg,
+    #[value(name = "class-hierarchy")]
+    ClassHierarchy,
+}
+
+impl GraphViewKind {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Fcg => "fcg",
+            Self::Mcg => "mcg",
+            Self::ClassHierarchy => "class-hierarchy",
+        }
+    }
+
+    pub(crate) fn default_depth(self) -> u32 {
+        match self {
+            Self::ClassHierarchy => 8,
+            Self::Fcg | Self::Mcg => 1,
+        }
+    }
+
+    pub(crate) fn effective_depth(self, depth: Option<u32>) -> u32 {
+        depth.unwrap_or_else(|| self.default_depth())
+    }
+
+    pub(crate) fn allows_row_limits(self) -> bool {
+        matches!(self, Self::Fcg | Self::Mcg)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct GraphViewArgs {
+    pub view: GraphViewKind,
+    pub seed: String,
+    pub depth: Option<u32>,
+    pub incoming_limit: Option<usize>,
+    pub outgoing_limit: Option<usize>,
+}
+
+impl GraphViewArgs {
+    pub(crate) fn effective_depth(&self) -> u32 {
+        self.view.effective_depth(self.depth)
+    }
+}
+
+#[derive(Args, Clone, Debug)]
+struct GraphViewArgsRaw {
+    /// View kind: fcg, mcg, or class-hierarchy
+    #[arg(long, value_enum)]
+    view: GraphViewKind,
+    /// Symbol query for fcg/class-hierarchy, or file/module for mcg
+    seed: String,
+    /// Hop depth (1..=16). Omitted: 8 for class-hierarchy, 1 for fcg/mcg
+    #[arg(
+        long,
+        value_parser = clap::value_parser!(u32)
+            .range(1..=crate::graph::code_graph::MAX_SYMBOL_PATH_DEPTH as i64)
+    )]
+    depth: Option<u32>,
+    /// Incoming neighbor limit (fcg and mcg only)
+    #[arg(long, value_parser = positive_usize)]
+    incoming_limit: Option<usize>,
+    /// Outgoing neighbor limit (fcg and mcg only)
+    #[arg(long, value_parser = positive_usize)]
+    outgoing_limit: Option<usize>,
+}
+
+impl FromArgMatches for GraphViewArgs {
+    fn from_arg_matches(matches: &clap::ArgMatches) -> Result<Self, clap::Error> {
+        Self::from_arg_matches_mut(&mut matches.clone())
+    }
+
+    fn from_arg_matches_mut(matches: &mut clap::ArgMatches) -> Result<Self, clap::Error> {
+        let raw = GraphViewArgsRaw::from_arg_matches_mut(matches)?;
+        if !raw.view.allows_row_limits()
+            && (raw.incoming_limit.is_some() || raw.outgoing_limit.is_some())
+        {
+            return Err(clap::Error::raw(
+                clap::error::ErrorKind::ArgumentConflict,
+                "--incoming-limit and --outgoing-limit cannot be used with --view=class-hierarchy",
+            ));
+        }
+        Ok(Self {
+            view: raw.view,
+            seed: raw.seed,
+            depth: raw.depth,
+            incoming_limit: raw.incoming_limit,
+            outgoing_limit: raw.outgoing_limit,
+        })
+    }
+
+    fn update_from_arg_matches(&mut self, matches: &clap::ArgMatches) -> Result<(), clap::Error> {
+        self.update_from_arg_matches_mut(&mut matches.clone())
+    }
+
+    fn update_from_arg_matches_mut(
+        &mut self,
+        matches: &mut clap::ArgMatches,
+    ) -> Result<(), clap::Error> {
+        *self = Self::from_arg_matches_mut(matches)?;
+        Ok(())
+    }
+}
+
+impl Args for GraphViewArgs {
+    fn group_id() -> Option<clap::Id> {
+        GraphViewArgsRaw::group_id()
+    }
+
+    fn augment_args(cmd: clap::Command) -> clap::Command {
+        GraphViewArgsRaw::augment_args(cmd)
+    }
+
+    fn augment_args_for_update(cmd: clap::Command) -> clap::Command {
+        GraphViewArgsRaw::augment_args_for_update(cmd)
+    }
 }
 
 #[derive(Subcommand)]
