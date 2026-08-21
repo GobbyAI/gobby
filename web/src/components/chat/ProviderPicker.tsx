@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { Fragment, useState, useCallback, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -39,11 +39,14 @@ function CapabilityChips({ modalities }: { modalities?: string[] | null }) {
   const chips = inputModalityChips(modalities);
   if (chips.length === 0) return null;
   return (
-    <span className="capability-chips" aria-hidden="true">
+    // Whitespace text nodes are not rendered inside the flex cluster but do
+    // separate the chip labels in the row's accessible name.
+    <span className="capability-chips">
       {chips.map((label) => (
-        <Chip key={label} className="capability-chip">
-          {label}
-        </Chip>
+        <Fragment key={label}>
+          {" "}
+          <Chip className="capability-chip">{label}</Chip>
+        </Fragment>
       ))}
     </span>
   );
@@ -316,7 +319,7 @@ export function ProviderPicker({
                             handleSelect(executionProvider, model.value)
                           }
                         >
-                          {model.label}
+                          {model.label}{" "}
                           <CapabilityChips
                             modalities={model.input_modalities}
                           />

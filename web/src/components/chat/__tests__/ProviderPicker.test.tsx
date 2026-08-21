@@ -112,9 +112,11 @@ function buildCapabilityCatalog() {
             input_modalities: ["text", "image"],
           },
           {
+            // Served but un-probed: the API reports modalities as null.
             value: "endpoint:vllm/llama-3",
             label: "Llama 3",
             canonical_id: "llama-3",
+            input_modalities: null,
           },
         ],
       },
@@ -167,8 +169,17 @@ function getProviderHeader(displayName: string) {
   return within(header);
 }
 
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function capabilityChips(name: string | RegExp) {
-  const button = screen.getByRole("button", { name });
+  // Chips join the row's accessible name; match the label plus optional chips.
+  const pattern =
+    typeof name === "string"
+      ? new RegExp(`^${escapeRegExp(name)}( Text)?( Image)?●?$`)
+      : name;
+  const button = screen.getByRole("button", { name: pattern });
   return [...button.querySelectorAll(".capability-chip")].map(
     (element) => element.textContent,
   );
@@ -340,7 +351,9 @@ describe("ProviderPicker", () => {
 
     expect(await screen.findByText("Codex")).toBeTruthy();
     await userEvent.click(
-      screen.getByRole("button", { name: "OpenRouter: Moonshotai/Kimi K3" }),
+      screen.getByRole("button", {
+        name: "OpenRouter: Moonshotai/Kimi K3 Text Image",
+      }),
     );
 
     expect(onSelect).toHaveBeenCalledWith(
@@ -373,7 +386,7 @@ describe("ProviderPicker", () => {
     expect(getProviderHeader("Codex").getByText("active")).toBeTruthy();
     expect(
       screen.getByRole("button", {
-        name: "OpenRouter: Moonshotai/Kimi K3●",
+        name: "OpenRouter: Moonshotai/Kimi K3 Text Image●",
       }),
     ).toBeTruthy();
     expect(screen.getByRole("button", { name: "GPT 5.4" })).toBeTruthy();
@@ -404,7 +417,7 @@ describe("ProviderPicker", () => {
 
     await userEvent.click(
       await screen.findByRole("button", {
-        name: "OpenRouter: Moonshotai/Kimi K3",
+        name: "OpenRouter: Moonshotai/Kimi K3 Text Image",
       }),
     );
 
@@ -470,7 +483,7 @@ describe("ProviderPicker", () => {
 
     await userEvent.click(
       await screen.findByRole("button", {
-        name: "OpenRouter: Moonshotai/Kimi K3",
+        name: "OpenRouter: Moonshotai/Kimi K3 Text Image",
       }),
     );
     expect(screen.getByText("Switch provider?")).toBeTruthy();
@@ -507,7 +520,7 @@ describe("ProviderPicker", () => {
 
     await userEvent.click(
       await screen.findByRole("button", {
-        name: "OpenRouter: Moonshotai/Kimi K3",
+        name: "OpenRouter: Moonshotai/Kimi K3 Text Image",
       }),
     );
     expect(screen.getByText("Switch provider?")).toBeTruthy();
@@ -675,5 +688,12 @@ describe("ProviderPicker", () => {
     expect(capabilityChips("Mistral")).toEqual([]);
     expect(capabilityChips(/^Opus/)).toEqual([]);
     expect(capabilityChips("GPT 5.4")).toEqual([]);
+
+    // Chips are exposed to assistive tech as part of the row's name.
+    expect(
+      screen.getByRole("button", { name: "Qwen2.5 VL Text Image" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Llama 3" })).toBeInTheDocument();
+    expect(document.querySelector(".capability-chips[aria-hidden]")).toBeNull();
   });
 });

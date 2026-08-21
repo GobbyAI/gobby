@@ -53,8 +53,10 @@ body {
   color: var(--text-primary);
 }
 
-/* Compact Text/Image capability chips — Chip primitive owns tone/geometry;
-   this is only the inline cluster so both themes inherit --text-muted. */
+/* Compact Text/Image capability chips — Chip primitive owns geometry; the
+   tone is an explicit opaque pair (secondary text on the primary surface with
+   a border) so it holds WCAG AA in both themes on any row state, including
+   the picker's hovered bg-muted row. */
 .capability-chips {
   display: inline-flex;
   align-items: center;
@@ -64,6 +66,9 @@ body {
 
 .capability-chip {
   flex: 0 0 auto;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
 }
 
 .app {
