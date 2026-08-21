@@ -1,0 +1,214 @@
+name: Release gterm
+
+on:
+  push:
+    tags:
+      - "gterm-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Test before release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@f5b277aa8941a90c16bc1cd6ab9363e0502b7d31
+        with:
+          tool: nextest
+
+      - name: Verify tag matches Cargo.toml version
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          tag_version="${tag#gterm-v}"
+          if [ "$tag" = "$tag_version" ]; then
+            echo "::error::Tag '$tag' does not start with 'gterm-v'." >&2
+            exit 1
+          fi
+          cargo_version="$(cargo pkgid -p gobby-terminal | sed 's/.*@//')"
+          if [ "$tag_version" != "$cargo_version" ]; then
+            echo "::error::Tag version '$tag_version' does not match crates/gterminal/Cargo.toml version '$cargo_version'." >&2
+            exit 1
+          fi
+          echo "Tag '$tag' aligns with crates/gterminal/Cargo.toml version '$cargo_version'."
+
+      - name: Clippy
+        run: cargo clippy -p gobby-terminal --all-targets -- -D warnings
+
+      - name: Run tests
+        run: cargo nextest run --profile ci -p gobby-terminal
+
+      - name: Setup Zig 0.15.2
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
+        with:
+          version: 0.15.2
+
+      - name: Clippy with vt-engine
+        run: cargo clippy -p gobby-terminal --features vt-engine --all-targets -- -D warnings
+
+      - name: Run tests with vt-engine
+        run: cargo nextest run --profile ci -p gobby-terminal --features vt-engine
+
+      - name: Package gobby-terminal and assert provenance inputs
+        run: |
+          set -euo pipefail
+          cargo package -p gobby-terminal --list --no-verify > /tmp/gobby-terminal-package.list
+          for required in \
+            LICENSE \
+            NOTICE.md \
+            UPSTREAM.md \
+            vendor/libghostty-vt.vendor.json \
+            vendor/libghostty-vt.patches.md \
+            vendor/portable-pty.patches.md \
+            vendor/libghostty-vt/LICENSE \
+            vendor/portable-pty/LICENSE.md
+          do
+            if ! grep -Fxq "$required" /tmp/gobby-terminal-package.list; then
+              echo "::error::packaged gobby-terminal is missing $required" >&2
+              exit 1
+            fi
+          done
+          if ! grep -q '^vendor/libghostty-vt/' /tmp/gobby-terminal-package.list; then
+            echo "::error::packaged gobby-terminal is missing vendor/libghostty-vt sources" >&2
+            exit 1
+          fi
+
+      - name: Build unpacked gobby-terminal package with vt-engine
+        run: |
+          set -euo pipefail
+          cargo package -p gobby-terminal --no-verify
+          cargo_version="$(cargo pkgid -p gobby-terminal | sed 's/.*@//')"
+          cd "target/package/gobby-terminal-${cargo_version}"
+          cargo build --features vt-engine --release
+
+      - name: Dry-run crates.io publish
+        run: cargo publish -p gobby-terminal --dry-run --no-verify
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            cross: false
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            cross: false
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: false
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: true
+
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.target }}
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Setup Zig 0.15.2
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
+        with:
+          version: 0.15.2
+
+      - name: Install cross-compilation tools (Linux ARM)
+        if: matrix.cross && startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
+      - name: Build gterm
+        run: cargo build --release --target ${{ matrix.target }} -p gobby-terminal --features vt-engine
+
+      - name: Package
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf ../../../gterm-${{ matrix.target }}.tar.gz gterm
+          cd ../../..
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gterm-${{ matrix.target }}
+          path: gterm-${{ matrix.target }}.tar.gz
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
+
+      - name: Publish gobby-terminal to crates.io
+        run: cargo publish -p gobby-terminal
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  release:
+    needs: [build, publish]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          merge-multiple: true
+
+      - name: Generate SHA-256 checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for asset in gterm-*.tar.gz; do
+            sha256sum "$asset" > "$asset.sha256"
+          done
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          tag="${GITHUB_REF#refs/tags/}"
+          assets=(gterm-*.tar.gz gterm-*.tar.gz.sha256)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "::error::No gterm release assets found." >&2
+            exit 1
+          fi
+          for asset in "${assets[@]}"; do
+            case "$asset" in
+              *windows*) echo "::error::Windows gterm assets are not shipped in Stage-0." >&2; exit 1 ;;
+            esac
+          done
+          gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --generate-notes --verify-tag --latest=false

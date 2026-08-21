@@ -13,6 +13,8 @@ holds pre-monorepo release history only.
 | `gobby-daemon` | `gdaemon` | `0.3.1` | `gdaemon-v0.3.1` | crates.io + GitHub binaries |
 | `gobby-hooks` | `ghook` | `0.8.4` | `ghook-v0.8.4` | crates.io + GitHub binaries |
 | `gobby-wiki` | `gwiki` | `0.9.2` | `gwiki-v0.9.2` | crates.io + GitHub binaries |
+| `gobby-terminal` | `gterm` | `0.1.0` | `gterm-v0.1.0` | crates.io + GitHub binaries (four Stage-0 triples) |
+| `gobby-client` | `gclient` | `0.1.0` | `gclient-v0.1.0` | crates.io + GitHub binaries (four Stage-0 triples) |
 
 ## Version Rules
 
@@ -24,7 +26,11 @@ holds pre-monorepo release history only.
   and `ghook`). crates.io rejects path dependencies without a `version` field,
   so never drop it.
 - Keep tag prefixes aligned with the package release contract: `gcode-v*`,
-  `gdaemon-v*`, `ghook-v*`, `gwiki-v*`, and `gobby-core-v*`.
+  `gdaemon-v*`, `ghook-v*`, `gwiki-v*`, `gterm-v*`, `gclient-v*`, and
+  `gobby-core-v*`.
+- Publish `gobby-terminal` version *V* before tagging `gclient-v*` that
+  depends on *V*. `gobby-client` cannot publish until that exact
+  `gobby-terminal` version is on crates.io.
 
 ## Merge Order
 

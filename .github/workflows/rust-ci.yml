@@ -11,6 +11,8 @@ on:
       - ".github/workflows/release-gdaemon.yml"
       - ".github/workflows/release-ghook.yml"
       - ".github/workflows/release-gwiki.yml"
+      - ".github/workflows/release-gterminal.yml"
+      - ".github/workflows/release-gclient.yml"
       - "Cargo.lock"
       - "Cargo.toml"
       - "crates/**"
@@ -26,6 +28,8 @@ on:
       - ".github/workflows/release-gdaemon.yml"
       - ".github/workflows/release-ghook.yml"
       - ".github/workflows/release-gwiki.yml"
+      - ".github/workflows/release-gterminal.yml"
+      - ".github/workflows/release-gclient.yml"
       - "Cargo.lock"
       - "Cargo.toml"
       - "crates/**"
@@ -137,6 +141,13 @@ jobs:
 
       - name: Test (gobby-terminal)
         run: cargo nextest run --profile ci -p gobby-terminal
+
+      # gobby-client: Zig-free workspace client (before Zig setup on purpose)
+      - name: Clippy (gobby-client)
+        run: cargo clippy -p gobby-client --all-targets -- -D warnings
+
+      - name: Test (gobby-client)
+        run: cargo nextest run --profile ci -p gobby-client
 
       - name: Setup Zig 0.15.2
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
