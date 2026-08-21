@@ -26,6 +26,7 @@ __all__ = [
     "vllm_api_base",
     "vllm_health_url",
     "vllm_models_url",
+    "vllm_served_model_ids",
     "VLLM_TOOL_CALLING_HINT",
 ]
 
@@ -402,9 +403,9 @@ def _format_served_models(served: list[str]) -> str:
     return ", ".join(served) if served else "(none)"
 
 
-def select_vllm_served_model(endpoint: GenerationEndpointConfig, served: list[str]) -> str:
+def select_vllm_served_model(requested: str, served: list[str], *, api_base: str) -> str:
     """Apply the auto-exactly-one / explicit-present rule to a served catalog."""
-    requested = endpoint.model.strip()
+    requested = requested.strip()
     if requested == "auto":
         if len(served) == 1:
             logger.info("Auto-detected vLLM model: %s", served[0])
@@ -416,9 +417,46 @@ def select_vllm_served_model(endpoint: GenerationEndpointConfig, served: list[st
     if requested in served:
         return requested
     raise LocalModelError(
-        f"vLLM endpoint at {endpoint.api_base} does not serve model {requested!r}. "
+        f"vLLM endpoint at {api_base} does not serve model {requested!r}. "
         f"Served models: {_format_served_models(served)}"
     )
+
+
+async def vllm_served_model_ids(
+    api_base: str,
+    api_key: str | None,
+    *,
+    timeout: float = 10.0,
+) -> list[str]:
+    """Fetch the served model ids from ``GET {origin}/v1/models``."""
+    models_url = vllm_models_url(api_base)
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(
+                models_url,
+                headers=_headers(api_key),
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            payload: Any = response.json()
+        except httpx.TimeoutException as e:
+            raise LocalModelError(
+                f"Timed out waiting for the vllm endpoint at {api_base} to answer GET {models_url}."
+            ) from e
+        except httpx.RequestError as e:
+            raise LocalModelError(
+                f"Cannot connect to local vllm endpoint at {api_base}: {e}"
+            ) from e
+        except httpx.HTTPStatusError as e:
+            raise LocalModelError(
+                f"Local vllm endpoint returned error: {e.response.status_code}"
+            ) from e
+        except ValueError as e:
+            raise LocalModelError(
+                f"vLLM endpoint at {api_base} returned invalid model catalog JSON"
+            ) from e
+
+    return _vllm_served_model_ids(payload)
 
 
 async def resolve_vllm_served_model(endpoint: GenerationEndpointConfig) -> str:
@@ -429,32 +467,5 @@ async def resolve_vllm_served_model(endpoint: GenerationEndpointConfig) -> str:
     present and never loaded. The literal sentinel ``auto`` is never sent on
     the wire.
     """
-    models_url = vllm_models_url(endpoint.api_base)
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(
-                models_url,
-                headers=_headers(endpoint.api_key),
-                timeout=10.0,
-            )
-            response.raise_for_status()
-            payload: Any = response.json()
-        except httpx.TimeoutException as e:
-            raise LocalModelError(
-                f"Timed out waiting for the vllm endpoint at {endpoint.api_base} "
-                f"to answer GET {models_url}."
-            ) from e
-        except httpx.RequestError as e:
-            raise LocalModelError(
-                f"Cannot connect to local vllm endpoint at {endpoint.api_base}: {e}"
-            ) from e
-        except httpx.HTTPStatusError as e:
-            raise LocalModelError(
-                f"Local vllm endpoint returned error: {e.response.status_code}"
-            ) from e
-        except ValueError as e:
-            raise LocalModelError(
-                f"vLLM endpoint at {endpoint.api_base} returned invalid model catalog JSON"
-            ) from e
-
-    return select_vllm_served_model(endpoint, _vllm_served_model_ids(payload))
+    served = await vllm_served_model_ids(endpoint.api_base, endpoint.api_key)
+    return select_vllm_served_model(endpoint.model, served, api_base=endpoint.api_base)

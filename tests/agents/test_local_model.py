@@ -387,3 +387,29 @@ async def test_vllm_resolver_maps_httpx_request_errors(
 
     with pytest.raises(local_model.LocalModelError, match=fragment):
         await local_model.resolve_vllm_served_model(endpoint)
+
+
+@pytest.mark.asyncio
+async def test_vllm_served_model_ids_returns_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    models_url = "http://localhost:8000/v1/models"
+    fake_client = _FakeAsyncClient(
+        {("GET", models_url): [_openai_models_response(models_url, ["model-a", "model-b"])]}
+    )
+    _patch_httpx_client(monkeypatch, fake_client)
+
+    served = await local_model.vllm_served_model_ids("http://localhost:8000/v1", None)
+
+    assert served == ["model-a", "model-b"]
+    _assert_vllm_discovery_only(fake_client, models_url)
+
+
+@pytest.mark.asyncio
+async def test_vllm_served_model_ids_maps_transport_errors_to_local_model_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_httpx_client(monkeypatch, _RaisingAsyncClient(httpx.ConnectError("refused")))
+
+    with pytest.raises(local_model.LocalModelError, match="Cannot connect"):
+        await local_model.vllm_served_model_ids("http://localhost:8000/v1", None)

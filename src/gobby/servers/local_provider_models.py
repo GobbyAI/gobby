@@ -111,7 +111,7 @@ def _default_alias_canonical_id(
             if isinstance(canonical_id := entry.get("canonical_id"), str) and canonical_id.strip()
         ]
         try:
-            return select_vllm_served_model(endpoint, served)
+            return select_vllm_served_model(endpoint.model, served, api_base=endpoint.api_base)
         except LocalModelError:
             return None
     if endpoint.protocol == "openai-compatible":
