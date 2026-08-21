@@ -71,6 +71,12 @@ pub const MAX_TMUX_ATTACH_HISTORY_LINES: u32 = 2_000;
 pub const DEFAULT_TMUX_ATTACH_HISTORY_MAX_BYTES: u32 = 256 * 1024;
 pub const MIN_TMUX_ATTACH_HISTORY_MAX_BYTES: u32 = 1024;
 pub const MAX_TMUX_ATTACH_HISTORY_MAX_BYTES: u32 = 256 * 1024;
+pub const DEFAULT_TMUX_POLL_INTERVAL_MS: u32 = 150;
+pub const MIN_TMUX_POLL_INTERVAL_MS: u32 = 50;
+pub const MAX_TMUX_POLL_INTERVAL_MS: u32 = 5_000;
+pub const DEFAULT_TMUX_POLL_BACKOFF_CEILING_MS: u32 = 5_000;
+pub const MIN_TMUX_POLL_BACKOFF_CEILING_MS: u32 = 150;
+pub const MAX_TMUX_POLL_BACKOFF_CEILING_MS: u32 = 30_000;
 
 /// Maximum allowed server-to-client frame payload when Kitty graphics are enabled.
 /// Normal traffic keeps `MAX_FRAME_SIZE`; this larger cap is only for explicit

@@ -74,3 +74,15 @@ class TerminalHostConfig(BaseModel):
         le=256 * 1024,
         description="AttachHistory byte cap for tmux observers (3.4).",
     )
+    tmux_poll_interval_ms: int = Field(
+        default=150,
+        ge=50,
+        le=5_000,
+        description="Host capture-poll interval for tmux observers.",
+    )
+    tmux_poll_backoff_ceiling_ms: int = Field(
+        default=5_000,
+        ge=150,
+        le=30_000,
+        description="Backoff ceiling for transient tmux poll failures.",
+    )

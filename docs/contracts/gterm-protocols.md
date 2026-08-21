@@ -20,8 +20,8 @@ write.
 
 Client → host:
 
-- `Hello { version, encoding, local_token, cols, rows }`
-- `AttachTerminal { host_terminal_id, reservation_id? }`
+- `Hello { version, encoding, local_token, cols, rows, tmux_identity? }`
+- `AttachTerminal { host_terminal_id, reservation_id?, locator? }`
 - `SetViewport { rows, cols }` — attachment-local render size, never `TIOCSWINSZ`
 - `SetScrollOffset { rows_from_live_edge }` — attachment-local scroll, never PTY input
 - `Detach`
@@ -29,12 +29,18 @@ Client → host:
 Host → client:
 
 - `Welcome { host_epoch }`
+- `Attached { created, host_terminal_id }`
 - `Frame(FrameData)` / `Terminal(TerminalFrame)` / `Graphics` / `AttachHistory`
 - `ScrollOffsetApplied { applied_rows, max_rows }`
 - `TerminalExited` / `Error`
 
 `reservation_id` is required only for a daemon internal observer bind. User
-attaches omit it. Legacy herdr `Input` / `Resize` tags are rejected as
+and tmux attaches omit it and never present a reservation. Tmux attaches carry
+the pane `locator` (socket, server pid, start time, pane id). `Hello.tmux_identity`
+is the client's own pane, used to refuse recursive self-view. `FrameData.modes`
+carries cursor/mouse/keypad/copy-mode flags so a mode change with no cell change
+still produces a frame. Typed refusals include `self_view`, `capacity`,
+`copy_mode`, and `stale`. Legacy herdr `Input` / `Resize` tags are rejected as
 `unknown_message` and never mutate a terminal.
 
 Wrong protocol version or `local_token` is a typed error before any attach.

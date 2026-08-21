@@ -2,7 +2,7 @@
 
 use gobby_client::frame_source::{AttachLocator, FrameError, ScriptedFrameSource};
 use gobby_client::Workspace;
-use gobby_terminal::protocol::{write_message, ClientMessage};
+use gobby_terminal::protocol::write_message;
 use serde_json::json;
 use std::fs;
 use std::path::PathBuf;
@@ -121,6 +121,8 @@ fn frame_attach_refuses_epoch_mismatch_before_attach() {
         host_terminal_id: "ht-1".into(),
         socket_path: "/tmp/gterm-frames.sock".into(),
         pane_id: None,
+        server_pid: None,
+        server_start_time: None,
     };
     let err = ws.attach_locator(locator.clone()).unwrap_err();
     assert!(matches!(err, FrameError::HostEpochChanged { .. }));
@@ -128,10 +130,16 @@ fn frame_attach_refuses_epoch_mismatch_before_attach() {
     let mut buf = Vec::new();
     write_message(
         &mut buf,
-        &ClientMessage::AttachTerminal {
+        &gobby_client::views::observe_tmux_pane(&AttachLocator {
+            backend: "tmux".into(),
+            frame_host_epoch: "epoch".into(),
             host_terminal_id: "ht-1".into(),
-            reservation_id: None,
-        },
+            socket_path: "/tmp/tmux-sock".into(),
+            pane_id: Some("%0".into()),
+            server_pid: Some(9),
+            server_start_time: Some(1),
+        })
+        .1,
     )
     .unwrap();
     let golden = fs::read(
@@ -150,6 +158,8 @@ fn frame_attach_refuses_epoch_mismatch_before_attach() {
         host_terminal_id: "ht-1".into(),
         socket_path: "/tmp/gterm-frames.sock".into(),
         pane_id: Some("%1".into()),
+        server_pid: None,
+        server_start_time: None,
     };
     assert!(ws.attach_locator(stale).is_err());
     assert!(!ws.frames().sent_attach());

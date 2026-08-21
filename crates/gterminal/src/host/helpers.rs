@@ -52,6 +52,7 @@ pub(crate) fn list_rows(inner: &Inner) -> Vec<Value> {
                 },
                 "observation_reason": slot.observation_reason.map(ObservationReason::as_str),
                 "observation_generation": slot.observation_generation,
+                "tmux_history_bytes": slot.tmux_history_bytes,
             })
         })
         .collect()

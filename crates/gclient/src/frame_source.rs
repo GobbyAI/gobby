@@ -16,6 +16,8 @@ pub struct AttachLocator {
     pub host_terminal_id: String,
     pub socket_path: String,
     pub pane_id: Option<String>,
+    pub server_pid: Option<i32>,
+    pub server_start_time: Option<i64>,
 }
 
 #[derive(Debug, Error)]
@@ -178,12 +180,14 @@ impl UnixSocketFrameSource {
     ) -> Result<(std::os::unix::net::UnixStream, String), FrameError> {
         let mut stream =
             std::os::unix::net::UnixStream::connect(PathBuf::from(&locator.socket_path))?;
+        let identity = crate::tmux_identity::current();
         let hello = ClientMessage::Hello {
             version: PROTOCOL_VERSION,
             encoding: RenderEncoding::SemanticFrame,
             local_token: self.token.clone(),
             cols,
             rows,
+            tmux_identity: identity,
         };
         write_message(&mut stream, &hello).map_err(|err| FrameError::Other(err.to_string()))?;
         let welcome = read_message::<_, ServerMessage>(&mut stream, MAX_FRAME_SIZE)
@@ -210,10 +214,7 @@ impl FrameSource for UnixSocketFrameSource {
         rows: u16,
     ) -> Result<String, FrameError> {
         let (mut stream, epoch) = self.handshake(locator, cols, rows)?;
-        let attach = ClientMessage::AttachTerminal {
-            host_terminal_id: locator.host_terminal_id.clone(),
-            reservation_id: None,
-        };
+        let attach = crate::views::observe_tmux_pane(locator).1;
         write_message(&mut stream, &attach).map_err(|err| FrameError::Other(err.to_string()))?;
         self.sent_attach = true;
         Ok(epoch)

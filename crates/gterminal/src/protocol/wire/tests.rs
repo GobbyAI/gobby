@@ -9,6 +9,7 @@ fn hello_msg(cols: u16, rows: u16) -> ClientMessage {
         local_token: "local-token".into(),
         cols,
         rows,
+        tmux_identity: None,
     }
 }
 
@@ -57,6 +58,7 @@ fn framing_large_payload_roundtrip() {
         }),
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: super::PaneModes::default(),
     };
     let msg = ServerMessage::Frame(frame);
 
@@ -388,6 +390,7 @@ fn frame_data_rejects_mismatched_cell_count() {
         cursor: None,
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: super::PaneModes::default(),
     };
     assert!(frame.to_ratatui_buffer().is_none());
 }

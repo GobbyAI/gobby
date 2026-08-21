@@ -645,6 +645,48 @@ async def test_reconcile_does_not_promote_uncommitted_prepare(
     assert client.claimed is True
 
 
+@pytest.mark.asyncio
+async def test_observation_state_reconverges_after_daemon_downtime(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    from gobby.terminals.host_protocol import write_pidfile
+
+    terminals = TerminalManager(temp_db)
+    epoch = str(uuid.uuid4())
+    row = _live(terminals, sample_project["id"], epoch)
+    client = FakeControlClient(
+        host_epoch=epoch,
+        host_pid=9300,
+        terminals=[
+            FakeListRow(
+                terminal_id=row.id,
+                spawn_key=row.spawn_key or row.id,
+                observation_state="orphaned_observation",
+                observation_reason="observation_ceiling",
+                observation_generation=4,
+            )
+        ],
+    )
+    write_pidfile(tmp_path, 9300)
+    host = _host(tmp_path, terminals, client)
+    await host.start()
+    await host.reconcile()
+    held = _loaded(terminals, row.id)
+    assert held.state == "live"
+    assert host.observation_health[row.id]["observation_state"] == "orphaned_observation"
+    client.terminals[0].observation_state = "live"
+    client.terminals[0].observation_reason = None
+    await host.reconcile()
+    recovered = _loaded(terminals, row.id)
+    assert recovered.state == "live"
+    assert host.observation_health[row.id]["observation_state"] == "live"
+    host.note_confirmed_absence(row.id)
+    exited = _loaded(terminals, row.id)
+    assert exited.state == "exited"
+
+
 def test_gterm_bin_requires_vt_engine() -> None:
     cargo = tomllib.loads(
         (Path(__file__).resolve().parents[2] / "crates" / "gterminal" / "Cargo.toml").read_text()

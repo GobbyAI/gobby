@@ -14,12 +14,18 @@ use crate::ipc::{prepare_socket_path, restrict_socket_permissions};
 
 mod config;
 mod control;
+mod embed;
 mod frames;
 mod helpers;
 mod ledger;
+pub mod poll;
 #[cfg(all(unix, feature = "vt-engine"))]
 mod spawn;
 mod state;
+
+pub use poll::{
+    classify_poll, parse_poll_batch, truncate_attach_history, PollClass, POLL_FIELD_COUNT,
+};
 
 use config::HostConfig;
 use state::HostState;
@@ -199,6 +205,12 @@ impl HostArgs {
                 }
                 "--tmux-attach-history-max-bytes" => {
                     host_config.tmux_attach_history_max_bytes = parse_u32(args.next());
+                }
+                "--tmux-poll-interval-ms" => {
+                    host_config.tmux_poll_interval_ms = parse_u32(args.next());
+                }
+                "--tmux-poll-backoff-ceiling-ms" => {
+                    host_config.tmux_poll_backoff_ceiling_ms = parse_u32(args.next());
                 }
                 _ => {}
             }

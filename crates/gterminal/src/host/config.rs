@@ -6,13 +6,14 @@ use crate::protocol::{
     DEFAULT_MAX_ATTACHED_TERMINALS, DEFAULT_MAX_ATTACHMENTS_PER_TERMINAL,
     DEFAULT_MAX_ATTACHMENTS_TOTAL, DEFAULT_NATIVE_SCROLLBACK_MAX_BYTES,
     DEFAULT_NATIVE_SCROLLBACK_MAX_LINES, DEFAULT_TMUX_ATTACH_HISTORY_LINES,
-    DEFAULT_TMUX_ATTACH_HISTORY_MAX_BYTES, MAX_MAX_ATTACHED_TERMINALS,
-    MAX_MAX_ATTACHMENTS_PER_TERMINAL, MAX_MAX_ATTACHMENTS_TOTAL, MAX_NATIVE_SCROLLBACK_MAX_BYTES,
-    MAX_NATIVE_SCROLLBACK_MAX_LINES, MAX_TMUX_ATTACH_HISTORY_LINES,
-    MAX_TMUX_ATTACH_HISTORY_MAX_BYTES, MIN_MAX_ATTACHED_TERMINALS,
+    DEFAULT_TMUX_ATTACH_HISTORY_MAX_BYTES, DEFAULT_TMUX_POLL_BACKOFF_CEILING_MS,
+    DEFAULT_TMUX_POLL_INTERVAL_MS, MAX_MAX_ATTACHED_TERMINALS, MAX_MAX_ATTACHMENTS_PER_TERMINAL,
+    MAX_MAX_ATTACHMENTS_TOTAL, MAX_NATIVE_SCROLLBACK_MAX_BYTES, MAX_NATIVE_SCROLLBACK_MAX_LINES,
+    MAX_TMUX_ATTACH_HISTORY_LINES, MAX_TMUX_ATTACH_HISTORY_MAX_BYTES,
+    MAX_TMUX_POLL_BACKOFF_CEILING_MS, MAX_TMUX_POLL_INTERVAL_MS, MIN_MAX_ATTACHED_TERMINALS,
     MIN_MAX_ATTACHMENTS_PER_TERMINAL, MIN_MAX_ATTACHMENTS_TOTAL, MIN_NATIVE_SCROLLBACK_MAX_BYTES,
     MIN_NATIVE_SCROLLBACK_MAX_LINES, MIN_TMUX_ATTACH_HISTORY_LINES,
-    MIN_TMUX_ATTACH_HISTORY_MAX_BYTES,
+    MIN_TMUX_ATTACH_HISTORY_MAX_BYTES, MIN_TMUX_POLL_BACKOFF_CEILING_MS, MIN_TMUX_POLL_INTERVAL_MS,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,6 +25,8 @@ pub struct HostConfig {
     pub native_scrollback_max_bytes: u32,
     pub tmux_attach_history_lines: u32,
     pub tmux_attach_history_max_bytes: u32,
+    pub tmux_poll_interval_ms: u32,
+    pub tmux_poll_backoff_ceiling_ms: u32,
 }
 
 impl Default for HostConfig {
@@ -36,6 +39,8 @@ impl Default for HostConfig {
             native_scrollback_max_bytes: DEFAULT_NATIVE_SCROLLBACK_MAX_BYTES,
             tmux_attach_history_lines: DEFAULT_TMUX_ATTACH_HISTORY_LINES,
             tmux_attach_history_max_bytes: DEFAULT_TMUX_ATTACH_HISTORY_MAX_BYTES,
+            tmux_poll_interval_ms: DEFAULT_TMUX_POLL_INTERVAL_MS,
+            tmux_poll_backoff_ceiling_ms: DEFAULT_TMUX_POLL_BACKOFF_CEILING_MS,
         }
     }
 }
@@ -83,6 +88,18 @@ impl HostConfig {
             self.tmux_attach_history_max_bytes,
             MIN_TMUX_ATTACH_HISTORY_MAX_BYTES,
             MAX_TMUX_ATTACH_HISTORY_MAX_BYTES,
+        )?;
+        check(
+            "tmux_poll_interval_ms",
+            self.tmux_poll_interval_ms,
+            MIN_TMUX_POLL_INTERVAL_MS,
+            MAX_TMUX_POLL_INTERVAL_MS,
+        )?;
+        check(
+            "tmux_poll_backoff_ceiling_ms",
+            self.tmux_poll_backoff_ceiling_ms,
+            MIN_TMUX_POLL_BACKOFF_CEILING_MS,
+            MAX_TMUX_POLL_BACKOFF_CEILING_MS,
         )?;
         Ok(self)
     }

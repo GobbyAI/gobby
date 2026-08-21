@@ -234,10 +234,7 @@ impl Workspace {
     pub fn attach_frames(&mut self, id: PaneId) -> Result<(), FrameError> {
         let locator = self.locator_for(id);
         self.frames.connect(&locator, 80, 24)?;
-        let attach = ClientMessage::AttachTerminal {
-            host_terminal_id: locator.host_terminal_id.clone(),
-            reservation_id: None,
-        };
+        let attach = crate::views::observe_tmux_pane(&locator).1;
         self.frames.send(&attach)?;
         let pane = self.panes.get_mut(&id).expect("pane");
         pane.live = true;
@@ -256,10 +253,7 @@ impl Workspace {
 
     pub fn attach_locator(&mut self, locator: AttachLocator) -> Result<String, FrameError> {
         let epoch = self.frames.connect(&locator, 80, 24)?;
-        let attach = ClientMessage::AttachTerminal {
-            host_terminal_id: locator.host_terminal_id,
-            reservation_id: None,
-        };
+        let attach = crate::views::observe_tmux_pane(&locator).1;
         self.frames.send(&attach)?;
         Ok(epoch)
     }
@@ -272,6 +266,8 @@ impl Workspace {
             host_terminal_id: pane.terminal_id.clone(),
             socket_path: "/tmp/gterm-frames.sock".into(),
             pane_id: None,
+            server_pid: None,
+            server_start_time: None,
         }
     }
 

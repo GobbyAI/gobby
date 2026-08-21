@@ -8,6 +8,7 @@ pub mod input;
 pub mod persist;
 pub mod teardown;
 pub mod theme;
+pub mod tmux_identity;
 pub mod ui;
 pub mod views;
 

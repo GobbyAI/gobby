@@ -73,6 +73,7 @@ class TerminalHostManager:
         self.backoff_seconds = 0.0
         self.last_error: str | None = None
         self._stop_requested = False
+        self.observation_health: dict[str, dict[str, Any]] = {}
 
     @property
     def socket_dir(self) -> Path:
@@ -255,6 +256,33 @@ class TerminalHostManager:
         )
         if error:
             self.last_error = error
+        self._record_observation_health(host_rows)
+
+    def _record_observation_health(self, host_rows: list[Any]) -> None:
+        manager = self.terminal_manager
+        if manager is None:
+            return
+        for row in host_rows:
+            state = str(getattr(row, "observation_state", "live") or "live")
+            reason = getattr(row, "observation_reason", None)
+            generation = int(getattr(row, "observation_generation", 1) or 1)
+            terminal_id = str(row.terminal_id)
+            self.observation_health[terminal_id] = {
+                "observation_state": state,
+                "observation_reason": reason,
+                "observation_generation": generation,
+            }
+            if state in {"stale", "orphaned_observation"}:
+                continue
+            if state == "live":
+                continue
+
+    def note_confirmed_absence(self, terminal_id: str) -> None:
+        manager = self.terminal_manager
+        if manager is None:
+            return
+        manager.mark_exited(terminal_id)
+        self.observation_health.pop(terminal_id, None)
 
     async def _try_adopt(self) -> bool:
         socket_path = control_socket_path(self.socket_dir)
@@ -335,7 +363,22 @@ class TerminalHostManager:
         env["GTERM_LOG_FILE"] = str(log_path)
         with log_path.open("a", encoding="utf-8") as log_file:
             return __import__("subprocess").Popen(  # nosec B603
-                [binary, "host", "--socket-dir", str(self.socket_dir)],
+                [
+                    binary,
+                    "host",
+                    "--socket-dir",
+                    str(self.socket_dir),
+                    "--tmux-poll-interval-ms",
+                    str(self.config.tmux_poll_interval_ms),
+                    "--tmux-poll-backoff-ceiling-ms",
+                    str(self.config.tmux_poll_backoff_ceiling_ms),
+                    "--max-attached-terminals",
+                    str(self.config.max_attached_terminals),
+                    "--tmux-attach-history-lines",
+                    str(self.config.tmux_attach_history_lines),
+                    "--tmux-attach-history-max-bytes",
+                    str(self.config.tmux_attach_history_max_bytes),
+                ],
                 stdin=__import__("subprocess").DEVNULL,
                 stdout=log_file,
                 stderr=log_file,

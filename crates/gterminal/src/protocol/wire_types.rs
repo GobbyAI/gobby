@@ -306,6 +306,66 @@ impl ClientInputEvent {
     }
 }
 
+/// Client-reported tmux identity used to refuse recursive self-view.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct TmuxClientIdentity {
+    pub socket_path: String,
+    pub server_pid: i32,
+    pub server_start_time: i64,
+    pub pane_id: String,
+}
+
+/// Physical tmux pane identity carried on user `AttachTerminal`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PaneLocator {
+    pub socket_path: String,
+    pub server_pid: i32,
+    pub server_start_time: i64,
+    pub pane_id: String,
+}
+
+impl PaneLocator {
+    pub fn locator_key(&self) -> String {
+        format!(
+            "tmux:{}:{}:{}:{}",
+            self.socket_path, self.server_pid, self.server_start_time, self.pane_id
+        )
+    }
+
+    pub fn matches_identity(&self, identity: &TmuxClientIdentity) -> bool {
+        self.socket_path == identity.socket_path
+            && self.server_pid == identity.server_pid
+            && self.server_start_time == identity.server_start_time
+            && self.pane_id == identity.pane_id
+    }
+}
+
+/// Per-pane mode flags that can change with no cell mutation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PaneModes {
+    pub cursor_visible: bool,
+    pub cursor_very_visible: bool,
+    pub cursor_shape: u8,
+    pub cursor_blinking: bool,
+    pub cursor_colour: String,
+    pub alternate_on: bool,
+    pub keypad_cursor: bool,
+    pub keypad: bool,
+    pub bracket_paste: bool,
+    pub mouse_standard: bool,
+    pub mouse_button: bool,
+    pub mouse_any: bool,
+    pub mouse_all: bool,
+    pub mouse_sgr: bool,
+    pub mouse_utf8: bool,
+    pub wrap: bool,
+    pub origin: bool,
+    pub insert: bool,
+    pub scroll_region_upper: u16,
+    pub scroll_region_lower: u16,
+    pub pane_in_mode: bool,
+}
+
 /// Messages sent from the client to the host over the **read-only** frame socket.
 ///
 /// Variant indices 1–3 are reserved so a hand-built herdr `Input` / `ClipboardImage`
@@ -320,6 +380,8 @@ pub enum ClientMessage {
         local_token: String,
         cols: u16,
         rows: u16,
+        #[serde(default)]
+        tmux_identity: Option<TmuxClientIdentity>,
     },
     /// Legacy herdr Input (tag 1). Rejected as unknown; never a write path.
     LegacyInput {
@@ -342,6 +404,8 @@ pub enum ClientMessage {
         host_terminal_id: String,
         #[serde(default)]
         reservation_id: Option<String>,
+        #[serde(default)]
+        locator: Option<PaneLocator>,
     },
     /// Attachment-local render size. Never reaches TIOCSWINSZ.
     SetViewport {
@@ -453,6 +517,9 @@ pub struct FrameData {
     pub hyperlinks: Vec<String>,
     /// Kitty graphics protocol bytes to apply after the text frame.
     pub graphics: Vec<u8>,
+    /// Pane mode and cursor appearance flags from a tmux poll or native emulator.
+    #[serde(default)]
+    pub modes: PaneModes,
 }
 
 impl FrameData {
@@ -513,6 +580,7 @@ impl FrameData {
             cursor,
             hyperlinks: hyperlink_uris,
             graphics: Vec::new(),
+            modes: PaneModes::default(),
         }
     }
 
@@ -605,6 +673,10 @@ pub enum ServerMessage {
         code: String,
         message: Option<String>,
     },
+    Attached {
+        created: bool,
+        host_terminal_id: String,
+    },
 }
 
 /// Closed observation-health vocabulary shared with `list` and 3.4.
@@ -626,6 +698,16 @@ pub enum ObservationReason {
     PollUnparseable,
     GeometryExceedsMaxCells,
     ObservationCeiling,
+}
+
+impl ObservationState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Live => "live",
+            Self::Stale => "stale",
+            Self::OrphanedObservation => "orphaned_observation",
+        }
+    }
 }
 
 impl ObservationReason {

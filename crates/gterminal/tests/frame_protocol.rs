@@ -26,6 +26,7 @@ fn hello_frame(cols: u16, rows: u16) -> ClientMessage {
         local_token: LOCAL.into(),
         cols,
         rows,
+        tmux_identity: None,
     }
 }
 
@@ -112,6 +113,7 @@ fn hello_rejects_bad_version_and_token() {
             local_token: "wrong".into(),
             cols: 80,
             rows: 24,
+            tmux_identity: None,
         },
     );
     match read_msg(&mut bad_token) {
@@ -128,6 +130,7 @@ fn hello_rejects_bad_version_and_token() {
             local_token: LOCAL.into(),
             cols: 80,
             rows: 24,
+            tmux_identity: None,
         },
     );
     match read_msg(&mut bad_ver) {
@@ -162,6 +165,7 @@ fn attach_viewport_and_observer_sizing() {
         &ClientMessage::AttachTerminal {
             host_terminal_id: host_terminal_id.clone(),
             reservation_id: None,
+            locator: None,
         },
     );
     write_msg(&mut a, &ClientMessage::SetViewport { rows: 20, cols: 40 });
@@ -174,6 +178,7 @@ fn attach_viewport_and_observer_sizing() {
         &ClientMessage::AttachTerminal {
             host_terminal_id,
             reservation_id: None,
+            locator: None,
         },
     );
     write_msg(&mut b, &ClientMessage::SetViewport { rows: 10, cols: 20 });
@@ -200,8 +205,13 @@ fn frame_channel_is_read_only() {
         &ClientMessage::AttachTerminal {
             host_terminal_id,
             reservation_id: None,
+            locator: None,
         },
     );
+    match read_msg(&mut frames) {
+        ServerMessage::Attached { .. } => {}
+        other => panic!("expected attached: {other:?}"),
+    }
     write_msg(
         &mut frames,
         &ClientMessage::LegacyInput {
@@ -252,6 +262,7 @@ fn dimension_bounds_rejected_before_allocation() {
             local_token: LOCAL.into(),
             cols: 0,
             rows: 24,
+            tmux_identity: None,
         },
     );
     match read_msg(&mut frames) {
@@ -298,8 +309,13 @@ fn set_scroll_offset_is_attachment_local() {
         &ClientMessage::AttachTerminal {
             host_terminal_id: host_terminal_id.clone(),
             reservation_id: None,
+            locator: None,
         },
     );
+    match read_msg(&mut a) {
+        ServerMessage::Attached { .. } => {}
+        other => panic!("expected attached: {other:?}"),
+    }
     write_msg(
         &mut a,
         &ClientMessage::SetScrollOffset {
@@ -345,6 +361,7 @@ fn worst_case_keyframe_fits_max_frame_size() {
         cursor: None,
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: gobby_terminal::protocol::PaneModes::default(),
     };
     let msg = ServerMessage::Frame(frame);
     let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();

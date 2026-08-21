@@ -76,6 +76,10 @@ class HostListRow:
     host_terminal_id: str
     pgid: int | None = None
     start_time: float | None = None
+    observation_state: str = "live"
+    observation_reason: str | None = None
+    observation_generation: int = 1
+    tmux_history_bytes: int = 0
 
     @classmethod
     def from_mapping(cls, raw: dict[str, Any]) -> HostListRow:
@@ -95,6 +99,12 @@ class HostListRow:
             host_terminal_id=str(raw.get("host_terminal_id") or raw["terminal_id"]),
             pgid=int(pgid_raw) if isinstance(pgid_raw, int) else None,
             start_time=float(start_raw) if isinstance(start_raw, (int, float)) else None,
+            observation_state=str(raw.get("observation_state") or "live"),
+            observation_reason=(
+                str(reason) if (reason := raw.get("observation_reason")) is not None else None
+            ),
+            observation_generation=int(raw.get("observation_generation") or 1),
+            tmux_history_bytes=int(raw.get("tmux_history_bytes") or 0),
         )
 
 

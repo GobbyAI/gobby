@@ -30,6 +30,9 @@ class FakeListRow:
     host_terminal_id: str = "ht-1"
     pgid: int | None = None
     start_time: float | None = None
+    observation_state: str = "live"
+    observation_reason: str | None = None
+    observation_generation: int = 1
 
 
 @dataclass

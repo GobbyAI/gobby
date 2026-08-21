@@ -78,19 +78,25 @@ pub(crate) struct TerminalSlot {
     pub(crate) observation_state: ObservationState,
     pub(crate) observation_reason: Option<ObservationReason>,
     pub(crate) observation_generation: u64,
-    fingerprint: u64,
-    reservation_id: String,
-    reserve_key: String,
-    reserve_generation: u64,
+    pub(crate) fingerprint: u64,
+    pub(crate) reservation_id: String,
+    pub(crate) reserve_key: String,
+    pub(crate) reserve_generation: u64,
     pub(crate) observer_bind: ObserverBind,
-    commit_deadline: Option<Instant>,
+    pub(crate) commit_deadline: Option<Instant>,
     #[cfg(feature = "vt-engine")]
-    child: Option<PreparedChild>,
-    written_bytes: u64,
-    dropped_bytes: u64,
-    total_bytes: u64,
-    truncated: bool,
-    user_attachments: HashSet<u64>,
+    pub(crate) child: Option<PreparedChild>,
+    pub(crate) written_bytes: u64,
+    pub(crate) dropped_bytes: u64,
+    pub(crate) total_bytes: u64,
+    pub(crate) truncated: bool,
+    pub(crate) user_attachments: HashSet<u64>,
+    pub(crate) locator: Option<crate::protocol::PaneLocator>,
+    pub(crate) tmux_history_bytes: u64,
+    pub(crate) history: Option<crate::protocol::ServerMessage>,
+    pub(crate) last_frame: Option<crate::protocol::FrameData>,
+    pub(crate) observer_generation: u64,
+    pub(crate) consecutive_failures: u32,
 }
 
 pub struct Attachment {
@@ -116,11 +122,11 @@ struct EventSub {
 
 pub(crate) struct Inner {
     pub(crate) terminals: HashMap<Identity, TerminalSlot>,
-    by_host_id: HashMap<String, Identity>,
-    next_host_id: u64,
+    pub(crate) by_host_id: HashMap<String, Identity>,
+    pub(crate) next_host_id: u64,
     pub(crate) reservations: HashMap<String, Reservation>,
-    attachments: HashMap<u64, Attachment>,
-    next_attachment: u64,
+    pub(crate) attachments: HashMap<u64, Attachment>,
+    pub(crate) next_attachment: u64,
     event_subs: Vec<EventSub>,
     control_owners: HashSet<u64>,
 }
@@ -135,7 +141,8 @@ pub struct HostState {
     pub draining: AtomicBool,
     pub shutdown: watch::Sender<bool>,
     pub next_conn: AtomicU64,
-    inner: Mutex<Inner>,
+    pub(crate) inner: Mutex<Inner>,
+    pub(crate) polls: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
 }
 
 impl HostState {
@@ -158,6 +165,7 @@ impl HostState {
             draining: AtomicBool::new(false),
             shutdown,
             next_conn: AtomicU64::new(1),
+            polls: Mutex::new(HashMap::new()),
             inner: Mutex::new(Inner {
                 terminals: HashMap::new(),
                 by_host_id: HashMap::new(),
@@ -441,6 +449,12 @@ impl HostState {
                 total_bytes: 0,
                 truncated: false,
                 user_attachments: HashSet::new(),
+                locator: None,
+                tmux_history_bytes: 0,
+                history: None,
+                last_frame: None,
+                observer_generation: 0,
+                consecutive_failures: 0,
             };
             inner
                 .by_host_id
@@ -867,6 +881,13 @@ impl HostState {
             let Some(identity) = inner.by_host_id.get(&host_id).cloned() else {
                 continue;
             };
+            if inner
+                .terminals
+                .get(&identity)
+                .is_some_and(|slot| slot.locator.is_some())
+            {
+                continue;
+            }
             #[cfg(feature = "vt-engine")]
             let frame = {
                 let Some(slot) = inner.terminals.get_mut(&identity) else {
@@ -899,6 +920,7 @@ impl HostState {
                 cursor: None,
                 hyperlinks: Vec::new(),
                 graphics: Vec::new(),
+                modes: crate::protocol::PaneModes::default(),
             };
             let msg = match encoding {
                 RenderEncoding::SemanticFrame => ServerMessage::Frame(frame),

@@ -85,6 +85,10 @@ name = "frame_protocol"
 required-features = ["vt-engine"]
 
 [[test]]
+name = "embed"
+required-features = ["vt-engine"]
+
+[[test]]
 name = "wire_golden"
 
 [[bin]]

@@ -29,6 +29,7 @@ fn make_frame(width: u16, height: u16, cells: Vec<CellData>) -> FrameData {
         cursor: None,
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: crate::protocol::PaneModes::default(),
     }
 }
 
@@ -227,6 +228,7 @@ fn blit_frame_begins_sync_before_hiding_cursor_after_visible_cursor_repeat() {
         }),
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: crate::protocol::PaneModes::default(),
     };
     let mut changed = visible.clone();
     changed.cells[0] = make_cell("B", 0, 0, 0);
@@ -294,6 +296,7 @@ fn blit_frame_can_repeat_final_cursor_state_after_synchronized_output() {
         }),
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: crate::protocol::PaneModes::default(),
     };
 
     let mut last_visible_cursor = None;
@@ -334,6 +337,7 @@ fn blit_frame_can_skip_final_cursor_state_after_synchronized_output() {
         }),
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: crate::protocol::PaneModes::default(),
     };
 
     let mut last_visible_cursor = None;
@@ -374,6 +378,7 @@ fn drawn_cursor_reverses_visible_cursor_cell() {
         }),
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: crate::protocol::PaneModes::default(),
     };
     let drawn = frame_with_drawn_cursor(frame.clone());
 
@@ -411,6 +416,7 @@ fn drawn_cursor_ignores_hidden_cursor() {
         }),
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: crate::protocol::PaneModes::default(),
     };
 
     assert_eq!(frame_with_drawn_cursor(frame.clone()), frame);
@@ -430,6 +436,7 @@ fn blit_frame_emits_cursor_shape_before_visibility_without_touching_ime_anchor()
         }),
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: crate::protocol::PaneModes::default(),
     };
 
     let mut last_visible_cursor = None;
@@ -477,6 +484,7 @@ fn blit_frame_repeats_explicit_hidden_cursor_anchor_after_synchronized_output() 
         }),
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: crate::protocol::PaneModes::default(),
     };
     let hidden = FrameData {
         cells: vec![make_cell("B", 0, 0, 0); 9],
@@ -490,6 +498,7 @@ fn blit_frame_repeats_explicit_hidden_cursor_anchor_after_synchronized_output() 
         }),
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: crate::protocol::PaneModes::default(),
     };
     let mut last_visible_cursor = None;
     let mut last_cursor_shape = 0;
@@ -726,6 +735,7 @@ fn blit_frame_positions_cursor() {
         }),
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: crate::protocol::PaneModes::default(),
     };
 
     let mut output = Vec::new();
@@ -752,6 +762,7 @@ fn blit_frame_hides_cursor_when_invisible() {
         }),
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: crate::protocol::PaneModes::default(),
     };
 
     let mut output = Vec::new();
@@ -773,6 +784,7 @@ fn blit_frame_no_cursor_hides_cursor() {
         cursor: None,
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: crate::protocol::PaneModes::default(),
     };
 
     let mut output = Vec::new();
@@ -800,6 +812,7 @@ fn blit_frame_restores_cursor_visibility() {
         }),
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: crate::protocol::PaneModes::default(),
     };
 
     let mut output = Vec::new();
@@ -822,6 +835,7 @@ fn blit_frame_restores_cursor_visibility() {
         }),
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: crate::protocol::PaneModes::default(),
     };
 
     let mut output = Vec::new();
@@ -851,6 +865,7 @@ fn blit_frame_positions_cursor_before_showing_it() {
         }),
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: crate::protocol::PaneModes::default(),
     };
     let mut curr = prev.clone();
     curr.cells[0] = make_cell("B", 0, 0, 0);
@@ -891,6 +906,7 @@ fn blit_frame_parks_hidden_cursor_at_last_visible_position() {
         }),
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: crate::protocol::PaneModes::default(),
     };
     let hidden = FrameData {
         cells: vec![make_cell("B", 0, 0, 0); 9],
@@ -899,6 +915,7 @@ fn blit_frame_parks_hidden_cursor_at_last_visible_position() {
         cursor: None,
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: crate::protocol::PaneModes::default(),
     };
     let mut last_visible_cursor = None;
     let mut last_cursor_shape = 0;
@@ -941,6 +958,7 @@ fn blit_frame_parks_hidden_cursor_at_bottom_right_without_history() {
         cursor: None,
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: crate::protocol::PaneModes::default(),
     };
     let mut last_visible_cursor = None;
     let mut last_cursor_shape = 0;
@@ -976,6 +994,7 @@ fn blit_frame_hides_previous_visible_cursor_when_next_frame_has_none() {
         }),
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: crate::protocol::PaneModes::default(),
     };
     let curr = FrameData {
         cells: vec![make_cell("B", 0, 0, 0)],
@@ -984,6 +1003,7 @@ fn blit_frame_hides_previous_visible_cursor_when_next_frame_has_none() {
         cursor: None,
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: crate::protocol::PaneModes::default(),
     };
 
     let mut output = Vec::new();
@@ -1008,6 +1028,7 @@ fn full_redraw_skips_trailing_cells_covered_by_wide_graphemes() {
         cursor: None,
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: crate::protocol::PaneModes::default(),
     };
 
     let mut output = Vec::new();
@@ -1032,6 +1053,7 @@ fn full_redraw_skips_trailing_cells_covered_by_halfwidth_voiced_kana() {
         cursor: None,
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: crate::protocol::PaneModes::default(),
     };
 
     let mut output = Vec::new();
@@ -1056,6 +1078,7 @@ fn diff_redraw_reveals_cells_hidden_by_previous_wide_graphemes() {
         cursor: None,
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: crate::protocol::PaneModes::default(),
     };
     let curr = FrameData {
         cells: vec![
@@ -1068,6 +1091,7 @@ fn diff_redraw_reveals_cells_hidden_by_previous_wide_graphemes() {
         cursor: None,
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: crate::protocol::PaneModes::default(),
     };
 
     let mut output = Vec::new();
@@ -1094,6 +1118,7 @@ fn diff_redraw_skips_new_trailing_cells_covered_by_wide_graphemes() {
         cursor: None,
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: crate::protocol::PaneModes::default(),
     };
     let curr = FrameData {
         cells: vec![
@@ -1106,6 +1131,7 @@ fn diff_redraw_skips_new_trailing_cells_covered_by_wide_graphemes() {
         cursor: None,
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: crate::protocol::PaneModes::default(),
     };
 
     let mut output = Vec::new();
@@ -1129,6 +1155,7 @@ fn diff_redraw_reveals_cells_hidden_by_previous_halfwidth_voiced_kana() {
         cursor: None,
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: crate::protocol::PaneModes::default(),
     };
     let curr = FrameData {
         cells: vec![
@@ -1141,6 +1168,7 @@ fn diff_redraw_reveals_cells_hidden_by_previous_halfwidth_voiced_kana() {
         cursor: None,
         hyperlinks: Vec::new(),
         graphics: Vec::new(),
+        modes: crate::protocol::PaneModes::default(),
     };
 
     let mut output = Vec::new();
