@@ -637,7 +637,7 @@ def test_crafted_missing_expired_and_duplicate_issue_inputs_are_rejected(
             admin.execute("RESET ROLE")
 
 
-def test_daemon_registry_and_one_hour_principal_lifetime_are_enforced(
+def test_daemon_registry_and_principal_lifetime_bound_are_enforced(
     authorization_fixture: AuthorizationFixture,
 ) -> None:
     fixture = authorization_fixture
@@ -662,7 +662,7 @@ def test_daemon_registry_and_one_hour_principal_lifetime_are_enforced(
                 admin,
                 f"""SELECT * FROM {AUTH_SCHEMA}.issue_principal(
                     %s, 'agent_run', %s, %s, %s,
-                    NOW() + INTERVAL '1 hour 1 second', %s
+                    NOW() + INTERVAL '24 hours 1 second', %s
                 )""",
                 (
                     execution_id,
