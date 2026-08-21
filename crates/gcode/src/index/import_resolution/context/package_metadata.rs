@@ -170,17 +170,52 @@ fn rust_manifest_paths(root_path: &Path) -> Vec<PathBuf> {
     manifests
 }
 
-pub(in crate::index::import_resolution) fn load_rust_self_crate_name(
+/// Map of project-relative source roots to normalized `[package].name`.
+/// `crates/gwiki/src` → `gobby_wiki`; a single-crate repo maps `src` → name.
+pub(in crate::index::import_resolution) fn load_rust_self_crate_names(
     root_path: &Path,
-) -> Option<String> {
-    let contents = std::fs::read_to_string(root_path.join("Cargo.toml")).ok()?;
-    let cargo_toml = toml::from_str::<toml::Table>(&contents).ok()?;
-    cargo_toml
-        .get("package")
-        .and_then(|package| package.get("name"))
-        .and_then(toml::Value::as_str)
-        .map(normalize_rust_crate_name)
-        .filter(|name| !name.is_empty())
+) -> HashMap<String, String> {
+    let mut names = HashMap::new();
+    for manifest in rust_manifest_paths(root_path) {
+        let Ok(contents) = std::fs::read_to_string(&manifest) else {
+            continue;
+        };
+        let Ok(cargo_toml) = toml::from_str::<toml::Table>(&contents) else {
+            continue;
+        };
+        let Some(name) = cargo_toml
+            .get("package")
+            .and_then(|package| package.get("name"))
+            .and_then(toml::Value::as_str)
+            .map(normalize_rust_crate_name)
+            .filter(|name| !name.is_empty())
+        else {
+            continue;
+        };
+        let Some(key) = rust_source_root_key(root_path, &manifest) else {
+            continue;
+        };
+        names.insert(key, name);
+    }
+    names
+}
+
+fn rust_source_root_key(root_path: &Path, manifest: &Path) -> Option<String> {
+    let dir = manifest.parent()?;
+    let rel = dir
+        .strip_prefix(root_path)
+        .ok()
+        .map(Path::to_path_buf)
+        .or_else(|| {
+            let root_abs = root_path.canonicalize().ok()?;
+            canonical_relative_path(dir, &root_abs)
+        })?;
+    let rel = normalize_storage_path(&rel);
+    if rel.is_empty() {
+        Some("src".to_string())
+    } else {
+        Some(format!("{rel}/src"))
+    }
 }
 
 fn collect_rust_dependency_keys(value: Option<&toml::Value>, crates: &mut HashSet<String>) {

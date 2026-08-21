@@ -1379,7 +1379,7 @@ def test_takeover_fencing(
                     f"--- error ---\n{standby.read_error_logs()}"
                 )
             try:
-                health = httpx.get(f"{standby.http_url}/api/admin/health", timeout=1.0)
+                health = httpx.get(f"{standby.http_url}/api/health", timeout=1.0)
             except httpx.HTTPError:
                 return False
             return health.status_code == 200 and health.json().get("lease_mode") == "standby"

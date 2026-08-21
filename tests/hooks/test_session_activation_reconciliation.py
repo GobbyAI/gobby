@@ -718,12 +718,13 @@ def test_parent_shaped_taskless_session_ignores_agent_run_step_fallback(
     assert AgentStepInstanceManager(db).get_for_session(session_id) is None
 
 
-def test_interactive_persona_step_workflow_remains_repairable(
+def test_interactive_persona_session_never_materializes_step_workflow(
     db: HubDatabase,
     session_manager: SessionManager,
     project_id: str,
     tmp_path: Path,
 ) -> None:
+    """apply_persona binds ``_agent_type`` only; turn-start repair must not add a step machine."""
     _create_worker_agent(db)
     session_id = _register_session(
         session_manager,
@@ -734,16 +735,19 @@ def test_interactive_persona_step_workflow_remains_repairable(
     session = session_manager.get(session_id)
     assert session is not None
     assert session.parent_session_id is None
+    assert session.agent_run_id is None
     variables = {
         "_agent_type": "worker",
+        "is_spawned_agent": False,
+        "assigned_task_id": "#14475",
     }
 
+    missing = _missing_step_state(db, session_id, variables, session, None)
     created = _ensure_step_instance(db, session_id, variables, session)
 
-    instance = AgentStepInstanceManager(db).get_for_session(session_id)
-    assert created is True
-    assert instance is not None
-    assert instance.current_step == "claim"
+    assert missing == []
+    assert created is False
+    assert AgentStepInstanceManager(db).get_for_session(session_id) is None
 
 
 def test_spawned_step_agent_restores_workflow_variable_and_instance(

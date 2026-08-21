@@ -267,6 +267,295 @@ serde_json = { version = "1" }
 }
 
 #[test]
+fn impl_display_method_does_not_shadow_fmt_module_alias() {
+    let parsed = parse_rust(
+        r#"
+use std::fmt;
+
+struct CliError;
+
+impl fmt::Display for CliError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let _ = f;
+        Ok(())
+    }
+}
+"#,
+        &[(
+            "Cargo.toml",
+            r#"[package]
+name = "app"
+"#,
+        )],
+    );
+
+    let row = parsed
+        .inheritance
+        .iter()
+        .find(|row| row.target_name == "Display")
+        .expect("Display heritage");
+    assert_eq!(row.target_kind.as_str(), "external");
+    assert_eq!(row.target_external_module.as_deref(), Some("std::fmt"));
+    assert!(
+        !parsed.inheritance.iter().any(|row| {
+            row.target_local_import_candidate_files()
+                .iter()
+                .any(|file| file.ends_with("fmt.rs"))
+                || row
+                    .source_local_import_candidate_files()
+                    .iter()
+                    .any(|file| file.ends_with("fmt.rs"))
+                || row
+                    .target_external_module
+                    .as_deref()
+                    .is_some_and(|module| module.ends_with("fmt.rs"))
+        }),
+        "fmt.rs candidate leaked: {:?}",
+        parsed.inheritance
+    );
+}
+
+#[test]
+fn qualified_path_through_local_module_alias_resolves_under_alias_module() {
+    let trait_impl = parse_rust(
+        r#"
+use crate::search;
+
+struct S;
+impl search::bm25::Trait for S {}
+"#,
+        &[(
+            "Cargo.toml",
+            r#"[package]
+name = "app"
+"#,
+        )],
+    );
+    let row = trait_impl
+        .inheritance
+        .iter()
+        .find(|row| row.target_name == "Trait")
+        .expect("Trait heritage");
+    assert_eq!(row.target_kind.as_str(), "local_import");
+    let candidates = row.target_local_import_candidate_files();
+    assert!(
+        candidates.iter().any(|file| file == "src/search/bm25.rs"),
+        "candidates {candidates:?} missing src/search/bm25.rs"
+    );
+    assert!(
+        candidates
+            .iter()
+            .any(|file| file == "src/search/bm25/mod.rs"),
+        "candidates {candidates:?} missing src/search/bm25/mod.rs"
+    );
+
+    let aliased = parse_rust(
+        r#"
+use crate::x as y;
+
+fn go() {
+    y::Z();
+}
+"#,
+        &[(
+            "Cargo.toml",
+            r#"[package]
+name = "app"
+"#,
+        )],
+    );
+    assert_rust_local_import!(&aliased, "Z", "src/x.rs");
+    assert_rust_local_import!(&aliased, "Z", "src/x/mod.rs");
+}
+
+#[test]
+fn self_and_leading_colon_paths_do_not_invent_local_modules() {
+    let parsed = parse_rust(
+        r#"
+struct S;
+
+impl S {
+    fn new() -> Self {
+        S
+    }
+}
+
+fn run() {
+    Self::new();
+}
+
+impl ::std::fmt::Display for S {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        let _ = f;
+        Ok(())
+    }
+}
+"#,
+        &[(
+            "Cargo.toml",
+            r#"[package]
+name = "app"
+"#,
+        )],
+    );
+
+    let display = parsed
+        .inheritance
+        .iter()
+        .find(|row| row.target_name == "Display")
+        .expect("Display heritage");
+    assert_eq!(display.target_kind.as_str(), "external");
+    assert_eq!(display.target_external_module.as_deref(), Some("std::fmt"));
+
+    let invented = parsed.calls.iter().any(|call| {
+        call.local_import_candidate_files()
+            .iter()
+            .any(|file| file.ends_with("Self.rs") || file.ends_with("/Self/mod.rs"))
+    }) || parsed.inheritance.iter().any(|row| {
+        row.target_local_import_candidate_files()
+            .iter()
+            .any(|file| file.ends_with("Self.rs") || file.contains("/Self/"))
+    });
+    assert!(
+        !invented,
+        "Self.rs local candidate leaked: {:?}",
+        parsed.calls
+    );
+}
+
+#[test]
+fn multi_level_super_import_resolves_to_ancestor_module() {
+    let parsed = parse_source(
+        "src/a/b/c.rs",
+        r#"
+use super::super::sink::CodeFactSink;
+
+struct S;
+impl CodeFactSink for S {}
+"#,
+        &[(
+            "Cargo.toml",
+            r#"[package]
+name = "app"
+"#,
+        )],
+    );
+    let row = parsed
+        .inheritance
+        .iter()
+        .find(|row| row.target_name == "CodeFactSink")
+        .expect("CodeFactSink heritage");
+    assert_eq!(row.target_kind.as_str(), "local_import");
+    let candidates = row.target_local_import_candidate_files();
+    assert!(
+        candidates.iter().any(|file| file == "src/a/sink.rs"),
+        "candidates {candidates:?} missing src/a/sink.rs"
+    );
+    assert!(
+        candidates.iter().any(|file| file == "src/a/sink/mod.rs"),
+        "candidates {candidates:?} missing src/a/sink/mod.rs"
+    );
+}
+
+#[test]
+fn pub_use_seeds_bindings_for_qualified_calls() {
+    let parsed = parse_rust(
+        r#"
+pub use crate::x;
+
+fn go() {
+    x::Y();
+}
+"#,
+        &[(
+            "Cargo.toml",
+            r#"[package]
+name = "app"
+"#,
+        )],
+    );
+    assert_rust_local_import!(&parsed, "Y", "src/x.rs");
+    assert_rust_local_import!(&parsed, "Y", "src/x/mod.rs");
+}
+
+#[test]
+fn imported_type_assoc_call_carries_type_member_qualifier() {
+    let parsed = parse_rust(
+        r#"
+use crate::foo::Bar;
+use crate::foo::Baz as Renamed;
+
+fn go() {
+    Bar::new();
+    Renamed::build();
+}
+"#,
+        &[(
+            "Cargo.toml",
+            r#"[package]
+name = "app"
+"#,
+        )],
+    );
+    assert_rust_local_import!(&parsed, "new", "src/foo.rs");
+    assert_rust_local_import!(&parsed, "new", "src/foo/mod.rs");
+    let new_call = parsed
+        .calls
+        .iter()
+        .find(|call| call.callee_name == "new")
+        .expect("Bar::new call");
+    assert_eq!(
+        new_call.local_import_type_member_qualifier().as_deref(),
+        Some("Bar")
+    );
+
+    let build_call = parsed
+        .calls
+        .iter()
+        .find(|call| call.callee_name == "build")
+        .expect("Renamed::build call");
+    assert_eq!(build_call.callee_target_kind.as_str(), "local_import");
+    assert_eq!(
+        build_call.local_import_type_member_qualifier().as_deref(),
+        Some("Baz"),
+        "aliased imports carry the original type name"
+    );
+    assert_eq!(
+        build_call.local_import_candidate_files(),
+        vec!["src/foo.rs", "src/foo/mod.rs"]
+    );
+}
+
+#[test]
+fn module_alias_heritage_target_carries_plain_candidates() {
+    let parsed = parse_rust(
+        r#"
+use crate::search;
+
+struct S;
+impl search::Trait for S {}
+"#,
+        &[(
+            "Cargo.toml",
+            r#"[package]
+name = "app"
+"#,
+        )],
+    );
+    let row = parsed
+        .inheritance
+        .iter()
+        .find(|row| row.target_name == "Trait")
+        .expect("Trait heritage");
+    assert_eq!(row.target_kind.as_str(), "local_import");
+    assert_eq!(
+        row.target_external_module.as_deref(),
+        Some("src/search.rs\nsrc/search/mod.rs"),
+        "heritage carriers hold candidate files only"
+    );
+}
+
+#[test]
 fn records_rust_self_crate_import_and_leaves_glob_unresolved() {
     let parsed = parse_rust(
         r#"
@@ -510,19 +799,22 @@ name = "app"
 
 #[test]
 fn classifies_rust_workspace_member_dependencies() {
-    let parsed = parse_rust(
+    let parsed = parse_source(
+        "crates/app/src/main.rs",
         r#"
 use serde_json::from_str;
 
-fn run() {
+fn go() {
     from_str("{}");
+    app::service::run();
+    gobby_core::config::load();
 }
 "#,
         &[
             (
                 "Cargo.toml",
                 r#"[workspace]
-members = ["crates/app"]
+members = ["crates/app", "crates/core"]
 "#,
             ),
             (
@@ -532,14 +824,43 @@ name = "app"
 
 [dependencies]
 serde_json = "1"
+gobby-core = { path = "../core" }
 "#,
             ),
+            (
+                "crates/core/Cargo.toml",
+                r#"[package]
+name = "gobby-core"
+"#,
+            ),
+            ("crates/app/src/service.rs", "pub fn run() {}\n"),
         ],
     );
 
-    let call = parsed.calls.first().expect("from_str call");
-    assert_eq!(call.callee_target_kind.as_str(), "external");
-    assert_eq!(call.callee_external_module.as_deref(), Some("serde_json"));
+    let from_str = parsed
+        .calls
+        .iter()
+        .find(|call| call.callee_name == "from_str")
+        .expect("from_str call");
+    assert_eq!(from_str.callee_target_kind.as_str(), "external");
+    assert_eq!(
+        from_str.callee_external_module.as_deref(),
+        Some("serde_json")
+    );
+
+    assert_rust_local_import!(&parsed, "run", "crates/app/src/service.rs");
+    assert_rust_local_import!(&parsed, "run", "crates/app/src/service/mod.rs");
+
+    let sibling = parsed
+        .calls
+        .iter()
+        .find(|call| call.callee_name == "load")
+        .expect("gobby_core::config::load call");
+    assert_eq!(sibling.callee_target_kind.as_str(), "external");
+    assert_eq!(
+        sibling.callee_external_module.as_deref(),
+        Some("gobby_core::config")
+    );
 }
 
 #[test]

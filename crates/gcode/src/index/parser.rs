@@ -469,7 +469,12 @@ fn extract_imports(
         }
     }
 
-    import_resolution::seed_import_bindings(language, import_context, &mut extracted.bindings);
+    import_resolution::seed_import_bindings(
+        language,
+        import_context,
+        &mut extracted.bindings,
+        rel_path,
+    );
     Ok(extracted)
 }
 

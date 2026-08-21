@@ -228,52 +228,6 @@ class TestBuildPersonaChanges:
         instance = AgentStepInstanceManager(db).get_for_session(session_id)
         assert instance is None
 
-    @pytest.mark.parametrize("task_key", ["assigned_task_id", "active_task_id"])
-    def test_step_workflow_creates_instance_for_spawned_session(
-        self,
-        db: HubDatabase,
-        task_key: str,
-    ) -> None:
-        from gobby.workflows.definitions import WorkflowStep
-        from gobby.workflows.state_manager import SessionVariableManager
-        from gobby.workflows.step_instances import AgentStepInstanceManager
-
-        db.execute(
-            "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
-            ("11111111-1111-4111-8111-111111110002", "test-project-2", "/tmp/test"),
-        )
-        session_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4003"
-        db.execute(
-            "INSERT INTO sessions (id, external_id, project_id, machine_id, source, status) "
-            "VALUES (%s, %s, %s, %s, %s, %s)",
-            (
-                session_id,
-                "ext-2",
-                "11111111-1111-4111-8111-111111110002",
-                "21000000-0000-4000-8000-000000000001",
-                "test",
-                "active",
-            ),
-        )
-        SessionVariableManager(db).merge_variables(session_id, {task_key: "#20144"})
-
-        agent = AgentDefinitionBody(
-            name="stepper",
-            step_workflow=AgentStepWorkflowBody(
-                steps=[
-                    WorkflowStep(name="plan", instructions="Plan the work"),
-                    WorkflowStep(name="execute", instructions="Do the work"),
-                ],
-            ),
-        )
-        from gobby.mcp_proxy.tools.apply_persona import _apply_persona_instance_transition
-
-        _apply_persona_instance_transition(db, session_id, agent, None)
-        instance = AgentStepInstanceManager(db).get_for_session(session_id)
-        assert instance is not None
-        assert instance.agent_name == "stepper"
-        assert instance.current_step == "plan"
-
     def test_spawned_session_preserves_existing_step_workflow(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
         from gobby.workflows.definitions import WorkflowStep
@@ -534,6 +488,70 @@ class TestApplyPersonaImpl:
         call_args = mock_merge.call_args
         merged_changes = call_args[0][1]
         assert merged_changes["custom_key"] == "custom_val"
+
+    @pytest.mark.asyncio
+    async def test_stepful_persona_never_creates_step_instance(self, db: HubDatabase) -> None:
+        """A persona switch is prompt + skills only; it must not install a step workflow."""
+        from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
+        from gobby.workflows.definitions import WorkflowStep
+        from gobby.workflows.state_manager import SessionVariableManager
+        from gobby.workflows.step_instances import AgentStepInstanceManager
+
+        db.execute(
+            "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
+            ("11111111-1111-4111-8111-111111110006", "persona-project", "/tmp/test"),
+        )
+        session_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4006"
+        db.execute(
+            "INSERT INTO sessions (id, external_id, project_id, machine_id, source, status) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (
+                session_id,
+                "ext-persona",
+                "11111111-1111-4111-8111-111111110006",
+                "21000000-0000-4000-8000-000000000001",
+                "claude",
+                "active",
+            ),
+        )
+        reviewer = AgentDefinitionBody(
+            name="qa-reviewer",
+            surfaces=["persona", "spawn"],
+            step_workflow=AgentStepWorkflowBody(
+                steps=[
+                    WorkflowStep(name="claim", instructions="Claim the task"),
+                    WorkflowStep(name="terminate", instructions="Call end_agent_run"),
+                ],
+            ),
+        )
+
+        with (
+            patch(
+                "gobby.workflows.agent_resolver.resolve_agent_with_row",
+                return_value=(
+                    reviewer,
+                    MagicMock(step_workflow_id="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+                ),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.apply_persona.build_session_persona_changes",
+                return_value=({"_agent_type": "qa-reviewer"}, set()),
+            ),
+        ):
+            result = await apply_persona_impl(
+                agent="qa-reviewer",
+                db=db,
+                session_id=session_id,
+            )
+
+        assert result["success"] is True
+        assert result["mode"] == "persona"
+        assert AgentStepInstanceManager(db).get_for_session(session_id) is None
+        row = db.fetchone("SELECT COUNT(*) AS n FROM agent_step_instances")
+        assert row is not None
+        assert row["n"] == 0
+        variables = SessionVariableManager(db).get_variables(session_id)
+        assert variables["_agent_type"] == "qa-reviewer"
 
     @pytest.mark.asyncio
     async def test_non_persona_capable_agent_errors(self, db: HubDatabase) -> None:

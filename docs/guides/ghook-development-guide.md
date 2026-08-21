@@ -224,7 +224,7 @@ terminal-context injection, or enqueue, Stop hooks check
 are accepted for `intent` values
 `stop`/`restart` or source prefixes `cli_`, `http_`, `service_`, and `mcp_`.
 
-Accepted markers trigger a short GET to `{daemon_url}/api/admin/health`. Any
+Accepted markers trigger a short GET to `{daemon_url}/api/health`. Any
 HTTP response means the daemon is reachable; transport failures mean it is
 unreachable. Fresh marker plus unreachable daemon returns `{"continue":true}`
 with exit 0 and no stdin/enqueue side effects.

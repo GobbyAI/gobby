@@ -236,7 +236,7 @@ Prometheus exposition is served at:
 Other useful admin routes include:
 
 ```text
-/api/admin/health
+/api/health
 /api/admin/startup-progress
 /api/admin/status
 ```

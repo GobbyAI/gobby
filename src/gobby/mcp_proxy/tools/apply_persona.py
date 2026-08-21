@@ -16,11 +16,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from gobby.storage.hub.protocol import (
-    AgentStepInstanceMutation,
-    HubDatabase,
-    SessionVariableMutation,
-)
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.reserved_variables import is_reserved_workflow_variable
 from gobby.workflows.variable_defaults import (
@@ -188,36 +184,6 @@ def colliding_persona_variable_error(
     return "Caller variables collide with reserved or persona-owned keys: " + ", ".join(blocked)
 
 
-def _apply_persona_instance_transition(
-    db: HubDatabase,
-    session_id: str,
-    agent_body: AgentDefinitionBody,
-    step_workflow_id: str | None,
-) -> None:
-    """Create, preserve, replace, or delete the typed instance for a persona target."""
-    from gobby.workflows.step_instances import (
-        AgentStepInstanceManager,
-        build_step_instance,
-    )
-
-    manager = AgentStepInstanceManager(db)
-    existing = manager.get_for_session(session_id)
-    stepful = agent_body.step_workflow is not None
-    same_agent = existing is not None and existing.agent_name == agent_body.name
-    if stepful and same_agent and existing is not None:
-        return
-    if stepful:
-        manager.replace_for_session(
-            build_step_instance(
-                agent_body,
-                session_id=session_id,
-                step_workflow_id=step_workflow_id,
-            )
-        )
-        return
-    manager.delete_for_session(session_id)
-
-
 def _resolve_session_identity(
     db: HubDatabase,
     session_id: str,
@@ -256,8 +222,10 @@ async def apply_persona_impl(
     - deferred context reinjection flags
 
     It intentionally does not change provider/model/isolation, merge agent
-    variables, change active rules, create step workflows, or apply tool
-    restrictions.
+    variables, change active rules, or apply tool restrictions. It never
+    reads or writes ``agent_step_instances``: step workflows belong to spawned
+    agent runs, and a persona switch must neither install one nor disturb
+    one that a spawn already created.
     """
     if db is None:
         return {"success": False, "error": "Database not available"}
@@ -286,7 +254,7 @@ async def apply_persona_impl(
             "success": False,
             "error": f"Agent definition '{agent}' not found",
         }
-    agent_body, agent_row = resolved
+    agent_body, _ = resolved
 
     if not agent_body.supports_surface("persona"):
         return {
@@ -327,15 +295,7 @@ async def apply_persona_impl(
 
     from gobby.workflows.state_manager import SessionVariableManager
 
-    with db.transaction_immediate(AgentStepInstanceMutation(session_id=session_id)) as txn:
-        txn.acquire_additional_lock(SessionVariableMutation(session_id=session_id))
-        _apply_persona_instance_transition(
-            db,
-            session_id,
-            agent_body,
-            agent_row.step_workflow_id,
-        )
-        SessionVariableManager(db).merge_variables(session_id, changes)
+    SessionVariableManager(db).merge_variables(session_id, changes)
 
     return {
         "success": True,

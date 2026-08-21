@@ -83,6 +83,9 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
     # (``compact_boundary`` is first-classed as a divider; other subtypes are
     # skipped). ``summary``/``file-history-snapshot`` are listed for
     # forward-compatibility with Claude Code's classic transcript format.
+    # ``custom-title`` is the user-set counterpart of ``ai-title`` (not rendered
+    # as a title card); ``atis-latch`` carries an opaque per-turn latch token
+    # that must never be echoed into the parser-error log.
     _SKIPPED_RECORD_TYPES: ClassVar[frozenset[str]] = frozenset(
         {
             "queue-operation",
@@ -98,6 +101,8 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             "fork-context-ref",
             "summary",
             "file-history-snapshot",
+            "custom-title",
+            "atis-latch",
         }
     )
 

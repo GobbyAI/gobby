@@ -67,7 +67,7 @@ def test_standby_exposes_only_health_status_and_lease_control() -> None:
     control = _control(FakeLease(), [])
     client = TestClient(create_standby_app(control))
 
-    assert client.get("/api/admin/health").json()["lease_mode"] == "standby"
+    assert client.get("/api/health").json()["lease_mode"] == "standby"
     assert client.get("/api/admin/status").json()["lease"]["mode"] == "standby"
     assert client.get("/api/admin/lease/status").json() == {
         "mode": "standby",

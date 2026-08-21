@@ -80,7 +80,7 @@ def create_standby_app(control: StandbyLeaseControl) -> FastAPI:
         if not token or not supplied or not secrets.compare_digest(supplied, token):
             raise HTTPException(status_code=401, detail="Authentication required")
 
-    @app.get("/api/admin/health")
+    @app.get("/api/health")
     async def health() -> dict[str, str]:
         return {"status": "ok", "lease_mode": "standby"}
 

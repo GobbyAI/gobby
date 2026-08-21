@@ -8,6 +8,7 @@ import secrets
 import tempfile
 import time
 from collections.abc import Mapping, Sequence
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -16,7 +17,7 @@ from uuid import UUID, uuid4
 
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
-from gobby.storage.hub.protocol import HubDatabase, Row
+from gobby.storage.hub.protocol import HubDatabase, Row, Transaction
 
 AUTH_SCHEMA = "gobby_agent_auth"
 MANAGED_EXECUTION_BOOTSTRAP_ENV = "GOBBY_MANAGED_EXECUTION_BOOTSTRAP"
@@ -73,6 +74,8 @@ class _CredentialDatabase(Protocol):
         sql: str,
         params: Sequence[Any] | Mapping[str, Any] = (),
     ) -> list[Row]: ...
+
+    def transaction(self) -> AbstractContextManager[Transaction]: ...
 
 
 @dataclass(frozen=True)
@@ -408,40 +411,47 @@ class ManagedCredentialManager:
         self.heartbeat()
         password = secrets.token_urlsafe(32)
         try:
-            row = self._database.fetchone(
-                f"""SELECT * FROM {AUTH_SCHEMA}.issue_or_reuse_interactive_principal(
-                    %s, %s, %s, %s, %s, %s
-                )""",
-                (
-                    deployment_token,
-                    self._machine_id,
-                    project_id,
-                    session_id,
-                    normalized_expiry,
-                    password,
-                ),
-            )
-            if row is None:
-                raise CredentialIssuanceError("interactive issuance returned no result")
-            role_name = str(_row_value(row, "role_name"))
-            generation = int(_row_value(row, "credential_generation"))
-            reused = bool(_row_value(row, "reused"))
-            execution_id = UUID(str(_row_value(row, "managed_execution_id")))
-            if reused:
-                password = self._load_interactive_password(
-                    secret_store,
-                    deployment_token=deployment_token,
-                    project_id=project_id,
-                    generation=generation,
-                )
-            else:
-                self._store_interactive_password(
-                    secret_store,
-                    deployment_token=deployment_token,
-                    project_id=project_id,
-                    generation=generation,
-                    password=password,
-                )
+            # One transaction: issue_or_reuse_interactive_principal takes an advisory
+            # xact lock, so holding the transaction open until the sealed material is
+            # written means a concurrent issuer can never reuse a binding whose
+            # material does not exist yet.
+            with self._database.transaction() as txn:
+                row = txn.execute(
+                    f"""SELECT * FROM {AUTH_SCHEMA}.issue_or_reuse_interactive_principal(
+                        %s, %s, %s, %s, %s, %s
+                    )""",
+                    (
+                        deployment_token,
+                        self._machine_id,
+                        project_id,
+                        session_id,
+                        normalized_expiry,
+                        password,
+                    ),
+                ).fetchone()
+                if row is None:
+                    raise CredentialIssuanceError("interactive issuance returned no result")
+                role_name = str(_row_value(row, "role_name"))
+                generation = int(_row_value(row, "credential_generation"))
+                reused = bool(_row_value(row, "reused"))
+                execution_id = UUID(str(_row_value(row, "managed_execution_id")))
+                if reused:
+                    password = self._load_interactive_password(
+                        secret_store,
+                        txn,
+                        deployment_token=deployment_token,
+                        project_id=project_id,
+                        generation=generation,
+                    )
+                else:
+                    self._store_interactive_password(
+                        secret_store,
+                        txn,
+                        deployment_token=deployment_token,
+                        project_id=project_id,
+                        generation=generation,
+                        password=password,
+                    )
             return InteractiveCredential(
                 role_name=role_name,
                 credential_generation=generation,
@@ -477,32 +487,34 @@ class ManagedCredentialManager:
         generation: int | None = None
         try:
             drain_until = self._interactive_drain_until(deployment_token, project_id)
-            row = self._database.fetchone(
-                f"""SELECT * FROM {AUTH_SCHEMA}.rotate_interactive_principal(
-                    %s, %s, %s, %s, %s, %s, %s
-                )""",
-                (
-                    deployment_token,
-                    self._machine_id,
-                    project_id,
-                    session_id,
-                    normalized_expiry,
-                    password,
-                    drain_until,
-                ),
-            )
-            if row is None:
-                raise CredentialIssuanceError("interactive rotation returned no result")
-            role_name = str(_row_value(row, "role_name"))
-            generation = int(_row_value(row, "credential_generation"))
-            execution_id = UUID(str(_row_value(row, "managed_execution_id")))
-            self._store_interactive_password(
-                secret_store,
-                deployment_token=deployment_token,
-                project_id=project_id,
-                generation=generation,
-                password=password,
-            )
+            with self._database.transaction() as txn:
+                row = txn.execute(
+                    f"""SELECT * FROM {AUTH_SCHEMA}.rotate_interactive_principal(
+                        %s, %s, %s, %s, %s, %s, %s
+                    )""",
+                    (
+                        deployment_token,
+                        self._machine_id,
+                        project_id,
+                        session_id,
+                        normalized_expiry,
+                        password,
+                        drain_until,
+                    ),
+                ).fetchone()
+                if row is None:
+                    raise CredentialIssuanceError("interactive rotation returned no result")
+                role_name = str(_row_value(row, "role_name"))
+                generation = int(_row_value(row, "credential_generation"))
+                execution_id = UUID(str(_row_value(row, "managed_execution_id")))
+                self._store_interactive_password(
+                    secret_store,
+                    txn,
+                    deployment_token=deployment_token,
+                    project_id=project_id,
+                    generation=generation,
+                    password=password,
+                )
             credential = InteractiveCredential(
                 role_name=role_name,
                 credential_generation=generation,
@@ -638,6 +650,7 @@ class ManagedCredentialManager:
     def _store_interactive_password(
         self,
         secret_store: SecretStore,
+        txn: Transaction,
         *,
         deployment_token: str,
         project_id: UUID,
@@ -650,7 +663,7 @@ class ManagedCredentialManager:
             generation=generation,
         )
         ciphertext = secret_store.seal(password.encode("utf-8"), aad=aad.encode("utf-8"))
-        stored = self._database.fetchone(
+        stored = txn.execute(
             f"""SELECT {AUTH_SCHEMA}.replace_interactive_credential_material(
                 %s, %s, %s, %s, %s, %s
             )""",
@@ -662,7 +675,7 @@ class ManagedCredentialManager:
                 ciphertext,
                 aad,
             ),
-        )
+        ).fetchone()
         if stored is None or not bool(
             _row_value(stored, "replace_interactive_credential_material")
         ):
@@ -673,17 +686,18 @@ class ManagedCredentialManager:
     def _load_interactive_password(
         self,
         secret_store: SecretStore,
+        txn: Transaction,
         *,
         deployment_token: str,
         project_id: UUID,
         generation: int,
     ) -> str:
-        row = self._database.fetchone(
+        row = txn.execute(
             f"""SELECT * FROM {AUTH_SCHEMA}.load_interactive_credential_material(
                 %s, %s, %s, %s
             )""",
             (deployment_token, self._machine_id, project_id, generation),
-        )
+        ).fetchone()
         if row is None:
             raise CredentialIssuanceError("interactive credential material is missing")
         ciphertext = str(_row_value(row, "ciphertext"))

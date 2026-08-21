@@ -45,6 +45,42 @@ impl ScratchHome {
     }
 }
 
+/// Stage a verified v3 hub backup manifest under `home` for the schema's current
+/// head so destructive applies get past manifest verification.
+fn stage_verified_backup(home: &ScratchHome, database_url: &str, schema: &str) -> Result<()> {
+    let mut admin = connect_readwrite(database_url).context("connect to test PostgreSQL")?;
+    admin.batch_execute(&format!("SET search_path TO \"{schema}\""))?;
+    let row = admin.query_one(
+        "SELECT (pg_control_system()).system_identifier::text, current_database(), oid, \
+                COALESCE((SELECT MAX(version) FROM schema_migrations), 0), \
+                to_char(timezone('UTC', now()), 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') \
+         FROM pg_database WHERE datname = current_database()",
+        &[],
+    )?;
+    let mut manifest: serde_json::Value = serde_json::from_str(include_str!(
+        "../../gcore/tests/fixtures/hub_backup_manifest/v3_roundtrip.json"
+    ))?;
+    manifest["source_identity"]["pg_system_identifier"] =
+        serde_json::json!(row.get::<_, String>(0));
+    manifest["source_identity"]["database_name"] = serde_json::json!(row.get::<_, String>(1));
+    manifest["source_identity"]["database_oid"] = serde_json::json!(row.get::<_, u32>(2));
+    manifest["backup_starting_head"] = serde_json::json!(row.get::<_, i32>(3));
+    manifest["created_at"] = serde_json::json!(row.get::<_, String>(4));
+    manifest["artifacts"][0]["sha256"] =
+        serde_json::json!("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    manifest["artifacts"][0]["size_bytes"] = serde_json::json!(0);
+
+    let backup_dir = home.path.join("backups/hub/epoch-fence");
+    std::fs::create_dir_all(backup_dir.join("postgres"))?;
+    std::fs::write(backup_dir.join("postgres/fixture.dump"), [])?;
+    std::fs::write(
+        backup_dir.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest)?,
+    )?;
+
+    Ok(())
+}
+
 #[test]
 fn apply_builds_verified_baseline_in_named_schema() -> Result<()> {
     let Ok(database_url) = env::var(DATABASE_URL_ENV) else {
@@ -188,20 +224,47 @@ fn destructive_apply_refuses_without_open_maintenance_epoch() -> Result<()> {
         eprintln!("skipped: {DATABASE_URL_ENV} is not set");
         return Ok(());
     };
+    let scratch = ScratchSchema {
+        database_url: database_url.clone(),
+        name: format!("gdaemon_epoch_refuse_{}", std::process::id()),
+    };
+    let mut admin = connect_readwrite(&database_url).context("connect to test PostgreSQL")?;
+    admin.batch_execute(&format!(
+        "DROP SCHEMA IF EXISTS \"{}\" CASCADE; CREATE SCHEMA \"{}\"",
+        scratch.name, scratch.name
+    ))?;
+
     let identity = Command::cargo_bin("gdaemon")?
         .args(["schema", "version", "--json"])
         .output()?;
     assert!(identity.status.success());
+    let identity_json = String::from_utf8(identity.stdout)?;
+
+    let first = Command::cargo_bin("gdaemon")?
+        .args(["schema", "apply", "--schema", &scratch.name])
+        .env(EXPECTED_IDENTITY_ENV, &identity_json)
+        .env("GOBBY_DATABASE_URL", &database_url)
+        .output()?;
+    assert!(
+        first.status.success(),
+        "initial apply failed: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    let home = ScratchHome::create()?;
+    stage_verified_backup(&home, &database_url, &scratch.name)?;
+
     let output = Command::cargo_bin("gdaemon")?
         .args([
             "schema",
             "apply",
             "--destructive",
             "--schema",
-            "gdaemon_epoch_refuse",
+            &scratch.name,
         ])
-        .env(EXPECTED_IDENTITY_ENV, String::from_utf8(identity.stdout)?)
+        .env(EXPECTED_IDENTITY_ENV, identity_json)
         .env("GOBBY_DATABASE_URL", &database_url)
+        .env("GOBBY_HOME", &home.path)
         .output()?;
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -252,34 +315,8 @@ fn destructive_apply_succeeds_with_epoch_bound_dsn_and_verified_backup() -> Resu
         scratch.name
     ))?;
 
-    let row = admin.query_one(
-        "SELECT (pg_control_system()).system_identifier::text, current_database(), oid, \
-                COALESCE((SELECT MAX(version) FROM schema_migrations), 0), \
-                to_char(timezone('UTC', now()), 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') \
-         FROM pg_database WHERE datname = current_database()",
-        &[],
-    )?;
-    let mut manifest: serde_json::Value = serde_json::from_str(include_str!(
-        "../../gcore/tests/fixtures/hub_backup_manifest/v3_roundtrip.json"
-    ))?;
-    manifest["source_identity"]["pg_system_identifier"] =
-        serde_json::json!(row.get::<_, String>(0));
-    manifest["source_identity"]["database_name"] = serde_json::json!(row.get::<_, String>(1));
-    manifest["source_identity"]["database_oid"] = serde_json::json!(row.get::<_, u32>(2));
-    manifest["backup_starting_head"] = serde_json::json!(row.get::<_, i32>(3));
-    manifest["created_at"] = serde_json::json!(row.get::<_, String>(4));
-    manifest["artifacts"][0]["sha256"] =
-        serde_json::json!("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
-    manifest["artifacts"][0]["size_bytes"] = serde_json::json!(0);
-
     let home = ScratchHome::create()?;
-    let backup_dir = home.path.join("backups/hub/epoch-fence");
-    std::fs::create_dir_all(backup_dir.join("postgres"))?;
-    std::fs::write(backup_dir.join("postgres/fixture.dump"), [])?;
-    std::fs::write(
-        backup_dir.join("manifest.json"),
-        serde_json::to_vec_pretty(&manifest)?,
-    )?;
+    stage_verified_backup(&home, &database_url, &scratch.name)?;
 
     let separator = if database_url.contains('?') { '&' } else { '?' };
     let bound_url = format!(
@@ -316,6 +353,7 @@ fn destructive_apply_refuses_after_epoch_is_released() -> Result<()> {
         database_url: database_url.clone(),
         name: format!("gdaemon_epoch_released_{}", std::process::id()),
     };
+    let home = ScratchHome::create()?;
     let mut admin = connect_readwrite(&database_url).context("connect to test PostgreSQL")?;
     admin.batch_execute(&format!(
         "DROP SCHEMA IF EXISTS \"{}\" CASCADE; CREATE SCHEMA \"{}\"",
@@ -349,6 +387,8 @@ fn destructive_apply_refuses_after_epoch_is_released() -> Result<()> {
         scratch.name
     ))?;
 
+    stage_verified_backup(&home, &database_url, &scratch.name)?;
+
     let separator = if database_url.contains('?') { '&' } else { '?' };
     let bound_url = format!(
         "{database_url}{separator}options=-csearch_path%3D{}%20-cgobby.maintenance_epoch%3Daaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee2",
@@ -364,6 +404,7 @@ fn destructive_apply_refuses_after_epoch_is_released() -> Result<()> {
         ])
         .env(EXPECTED_IDENTITY_ENV, identity_json)
         .env("GOBBY_DATABASE_URL", bound_url)
+        .env("GOBBY_HOME", &home.path)
         .output()?;
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);

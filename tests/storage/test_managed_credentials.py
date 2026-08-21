@@ -6,6 +6,7 @@ import json
 import os
 import re
 import stat
+import threading
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -663,6 +664,73 @@ def test_interactive_reuse_refreshes_expired_role(
             reason="test-cleanup",
         )
         manager.close()
+        store.db.close()
+
+
+def test_concurrent_interactive_issue_waits_for_sealed_material(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A concurrent issuer must block until the first issuer's material commits.
+
+    Regression for handshake rejections with ``interactive credential material is
+    missing``: the second issuer reused a freshly inserted binding before its
+    sealed material row existed.
+    """
+    fixture = authorization_fixture
+    store = _secret_store(fixture)
+    first_manager = _manager(fixture, tmp_path / "managed-a")
+    second_manager = _manager(fixture, tmp_path / "managed-b")
+    token = "dddddddddddddddd"
+    binding_inserted = threading.Event()
+    release_store = threading.Event()
+    original_store = first_manager._store_interactive_password
+
+    def delayed_store(*args: Any, **kwargs: Any) -> None:
+        binding_inserted.set()
+        assert release_store.wait(timeout=10)
+        original_store(*args, **kwargs)
+
+    monkeypatch.setattr(first_manager, "_store_interactive_password", delayed_store)
+    expires_at = datetime.now(UTC) + timedelta(hours=1)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(
+                first_manager.issue_interactive,
+                deployment_token=token,
+                project_id=fixture.project_id,
+                session_id=fixture.session_id,
+                expires_at=expires_at,
+                secret_store=store,
+            )
+            assert binding_inserted.wait(timeout=10)
+            second = pool.submit(
+                second_manager.issue_interactive,
+                deployment_token=token,
+                project_id=fixture.project_id,
+                session_id=fixture.session_id,
+                expires_at=expires_at,
+                secret_store=store,
+            )
+            with pytest.raises(TimeoutError):
+                second.result(timeout=1.0)
+            release_store.set()
+            issued = first.result(timeout=10)
+            reused = second.result(timeout=10)
+        assert issued.reused is False
+        assert reused.reused is True
+        assert reused.dsn == issued.dsn
+        assert _material_generations(fixture, token) == {issued.credential_generation}
+    finally:
+        release_store.set()
+        second_manager.revoke_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            reason="test-cleanup",
+        )
+        first_manager.close()
+        second_manager.close()
         store.db.close()
 
 

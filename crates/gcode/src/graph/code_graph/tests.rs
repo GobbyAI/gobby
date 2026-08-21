@@ -1086,26 +1086,80 @@ fn heritage_merge_external_and_unresolved_targets() {
 }
 
 #[test]
-fn heritage_local_import_is_not_projected() {
-    let rows = [heritage_relation(
-        heritage_end(Some("derived-id"), "Derived", CallTargetKind::Symbol, None),
-        heritage_end(
-            None,
-            "Helper",
-            CallTargetKind::LocalImport,
-            Some("pkg/helper.py"),
+fn local_import_heritage_endpoints_project_as_unresolved() {
+    let helper_id = make_unresolved_callee_id("project-1", "Helper");
+    let pending_id = make_unresolved_callee_id("project-1", "Pending");
+    let rows = [
+        heritage_relation(
+            heritage_end(Some("derived-id"), "Derived", CallTargetKind::Symbol, None),
+            heritage_end(
+                None,
+                "Helper",
+                CallTargetKind::LocalImport,
+                Some("pkg/helper.py"),
+            ),
+            HeritageKind::Inherits,
+            9,
         ),
-        HeritageKind::Inherits,
-        9,
-    )];
+        heritage_relation(
+            heritage_end(
+                None,
+                "Pending",
+                CallTargetKind::LocalImport,
+                Some("pkg/pending.py"),
+            ),
+            heritage_end(
+                None,
+                "Helper",
+                CallTargetKind::LocalImport,
+                Some("pkg/helper.py"),
+            ),
+            HeritageKind::Inherits,
+            10,
+        ),
+    ];
     let queries = planned_heritage(&rows);
+    let symbol_to_pending = query_with(&queries, "MERGE (source:CodeSymbol");
     assert!(
-        queries.iter().all(|query| {
-            !query.cypher.contains("INHERITS")
-                && !query.cypher.contains("EXTENDS")
-                && !query.cypher.contains("IMPLEMENTS")
-        }),
-        "LocalImport heritage must wait for promotion"
+        symbol_to_pending
+            .cypher
+            .contains("MERGE (target:UnresolvedCallee {id: row.target_id, project: $project})")
+    );
+    assert!(
+        symbol_to_pending.cypher.contains("[r:INHERITS"),
+        "symbol→LocalImport must emit INHERITS: {}",
+        symbol_to_pending.cypher
+    );
+    assert!(
+        symbol_to_pending
+            .params
+            .get("rows")
+            .is_some_and(|rows| rows.contains(&helper_id)),
+        "Helper unresolved id missing from {:?}",
+        symbol_to_pending.params.get("rows")
+    );
+
+    let both_pending = query_with(
+        &queries,
+        "MERGE (source:UnresolvedCallee {id: row.source_id, project: $project})",
+    );
+    assert!(
+        both_pending
+            .cypher
+            .contains("MERGE (target:UnresolvedCallee {id: row.target_id, project: $project})")
+    );
+    assert!(
+        both_pending.cypher.contains("[r:INHERITS"),
+        "LocalImport→LocalImport must emit INHERITS: {}",
+        both_pending.cypher
+    );
+    assert!(
+        both_pending
+            .params
+            .get("rows")
+            .is_some_and(|rows| { rows.contains(&pending_id) && rows.contains(&helper_id) }),
+        "both-sides LocalImport ids missing from {:?}",
+        both_pending.params.get("rows")
     );
 }
 
