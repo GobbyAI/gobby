@@ -44,6 +44,7 @@ from gobby.providers import AGY_UNAVAILABLE_REASON
 from gobby.providers.capabilities.apply import speed_result
 from gobby.storage.terminals import Terminal, TerminalManager
 from gobby.terminals import TerminalRuntimeRegistry, UnregisteredBackendError
+from gobby.terminals.host_client import HostCommandError
 from gobby.terminals.runtime import (
     CommitSpawnRefusedError,
     TerminalRuntime,
@@ -102,7 +103,7 @@ def resolve_terminal_services(
     request: SpawnRequest,
 ) -> tuple[TerminalManager, TerminalRuntimeRegistry, TerminalRuntime, str]:
     """Resolve composition-root services, falling back to a tmux singleton registry."""
-    backend = request.backend or _default_backend(request)
+    backend = request.terminal_backend
     manager = request.terminal_manager
     registry = request.terminal_runtime_registry
     if manager is None:
@@ -356,7 +357,18 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
                 error="native_reserve_unavailable",
                 terminal_id=terminal_id,
             )
-        reservation = await runtime.reserve_observer(UUID(terminal_id))
+        try:
+            reservation = await runtime.reserve_observer(UUID(terminal_id))
+        except HostCommandError as exc:
+            manager.fail_pending(terminal_id)
+            return SpawnResult(
+                success=False,
+                run_id=plan.agent_run_id,
+                child_session_id=plan.child_session_id,
+                status="failed",
+                error=str(exc),
+                terminal_id=terminal_id,
+            )
         spawn_request.reservation_id = reservation.get("reservation_id")
         spawn_request.reserve_key = reservation.get("reserve_key")
 
@@ -421,6 +433,7 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
         terminal_id=terminal_id,
         spawn_key=spawn_key,
         prepared=prepared,
+        reservation_id=spawn_request.reservation_id,
     )
 
 
@@ -434,6 +447,7 @@ async def _promote_prepared(
     terminal_id: str,
     spawn_key: str,
     prepared: RuntimePreparedSpawn,
+    reservation_id: str | None = None,
 ) -> SpawnResult:
     if prepared.process is not None:
         manager.record_process(
@@ -443,6 +457,29 @@ async def _promote_prepared(
     stored = prepared.stored_locator or {}
     locator_key = prepared.locator_key or ""
     prepared.acknowledge_persist()
+    if backend == "native":
+        bind = getattr(runtime, "bind_observer", None)
+        try:
+            if callable(bind) and reservation_id:
+                await bind(prepared, reservation_id)
+            else:
+                prepared.acknowledge_observer()
+        except Exception as exc:
+            await _kill_spawn_key(
+                runtime,
+                spawn_key,
+                pending=manager.get(terminal_id),
+                host_terminal_id=prepared.host_terminal_id,
+            )
+            manager.fail_pending(terminal_id)
+            return SpawnResult(
+                success=False,
+                run_id=plan.agent_run_id,
+                child_session_id=plan.child_session_id,
+                status="failed",
+                error=str(exc),
+                terminal_id=terminal_id,
+            )
     try:
         handle = await runtime.commit_spawn(prepared)
     except CommitSpawnRefusedError as exc:
@@ -547,8 +584,11 @@ async def _kill_spawn_key(
     spawn_key: str,
     *,
     pending: Terminal | None,
+    host_terminal_id: str | None = None,
 ) -> None:
     terminal = _terminal_for_spawn_key(runtime.backend, spawn_key, pending)
+    if host_terminal_id:
+        terminal.locator = {**(terminal.locator or {}), "host_terminal_id": host_terminal_id}
     try:
         await runtime.terminate(terminal, 1.0)
     except Exception:

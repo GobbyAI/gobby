@@ -506,6 +506,7 @@ class TerminalHostManager:
                 ping = await client.ping()
                 self.host_pid = ping.host_pid
                 self.host_epoch = ping.host_epoch
+                await self.reconcile()
             except Exception as exc:
                 self.last_error = str(exc)
                 await self.handle_host_death()

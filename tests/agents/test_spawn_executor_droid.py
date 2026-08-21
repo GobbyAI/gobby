@@ -35,6 +35,7 @@ def _droid_request(**overrides: Any) -> SpawnRequest:
         "run_id": "run",
         "parent_session_id": "parent",
         "project_id": "proj",
+        "terminal_backend": "tmux",
     }
     values.update(overrides)
     values.setdefault("prepared_spawn", prepared_spawn())

@@ -96,6 +96,7 @@ async def _spawn_fast() -> tuple[dict[str, Any], SpawnRequest]:
         )
 
         result = await spawn_agent_impl(
+            terminal_backend="tmux",
             prompt="Do the thing",
             runner=runner,
             agent_body=agent_body,
@@ -142,6 +143,7 @@ async def test_execute_spawn_attaches_speed_result() -> None:
         project_id="proj-abc",
         speed_resolution=_fast_resolution(),
         prepared_spawn=prepared_spawn(),
+        terminal_backend="tmux",
     )
     provider_result = SpawnResult(
         success=True,

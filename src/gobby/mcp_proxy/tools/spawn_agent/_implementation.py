@@ -26,7 +26,7 @@ from gobby.agents.resume_metadata import build_resume_metadata
 from gobby.agents.sandbox import SandboxConfig, agent_sandbox_config
 from gobby.agents.spawn import cleanup_unlaunched_spawn, prepare_terminal_spawn
 from gobby.agents.spawn_executor import execute_spawn
-from gobby.agents.spawn_models import SpawnRequest
+from gobby.agents.spawn_models import SpawnRequest, resolve_terminal_backend
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
 from gobby.providers.capabilities.apply import SpeedUnavailableError, apply_speed, speed_result
 from gobby.tasks.state_semantics import (
@@ -110,8 +110,13 @@ async def spawn_agent_impl(
     daemon_config: Any | None = None,  # DaemonConfig
     code_index: Any | None = None,  # CodeIndexContext
     held_task_mutex: Any | None = None,
+    terminal_backend: Literal["tmux", "native"] | None = None,
 ) -> dict[str, Any]:
     """Core spawn_agent implementation used by the MCP tool and direct callers."""
+    try:
+        resolved_terminal_backend = resolve_terminal_backend(terminal_backend, daemon_config)
+    except ValueError as exc:
+        return {"success": False, "error": str(exc)}
     # 0. Plan-validation gate for planning agents.
     # Structural failures block planning roles. Authoring roles may continue
     # past symbol-only failures with repair diagnostics appended to the prompt.
@@ -684,6 +689,7 @@ async def spawn_agent_impl(
             terminal_manager=getattr(runner, "terminal_manager", None),
             terminal_runtime_registry=getattr(runner, "terminal_runtime_registry", None),
             write_coordinator=getattr(runner, "write_coordinator", None),
+            terminal_backend=resolved_terminal_backend,
         )
         try:
             spawn_result = await execute_spawn(spawn_request)

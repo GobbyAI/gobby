@@ -275,6 +275,27 @@ class HostClient:
             }
         )
 
+    async def reserve_observer(self, terminal_id: str, reserve_key: str) -> dict[str, Any]:
+        return await self._roundtrip(
+            {
+                "method": "reserve_observer",
+                "terminal_id": terminal_id,
+                "reserve_key": reserve_key,
+            }
+        )
+
+    async def release_observer(self, reservation_id: str, reserve_key: str) -> dict[str, Any]:
+        return await self._roundtrip(
+            {
+                "method": "release_observer",
+                "reservation_id": reservation_id,
+                "reserve_key": reserve_key,
+            }
+        )
+
+    async def subscribe_events(self) -> dict[str, Any]:
+        return await self._roundtrip({"method": "subscribe_events"})
+
     async def reconnect(self, socket_path: Path, expected_epoch: str | None = None) -> str:
         await self.close()
         replacement = await HostClient.connect(socket_path)

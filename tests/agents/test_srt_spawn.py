@@ -131,6 +131,7 @@ async def test_droid_command_is_wrapped_once_after_srt_preflight() -> None:
         run_manager=run_manager,
         sandbox_config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
         prepared_spawn=prepared_spawn(),
+        terminal_backend="tmux",
     )
     spawn_context = SimpleNamespace(
         session_id="child",
@@ -214,6 +215,7 @@ async def test_srt_preflight_failure_prevents_tmux_spawn() -> None:
             agent_run_id="actual-run",
             env_vars={"GOBBY_SESSION_ID": "child"},
         ),
+        terminal_backend="tmux",
     )
     spawn_context = SimpleNamespace(
         session_id="child",

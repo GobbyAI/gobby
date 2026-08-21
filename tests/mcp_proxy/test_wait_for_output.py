@@ -13,7 +13,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.mcp_proxy.tools.agents import create_agents_registry
-from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
+from gobby.storage.terminals import Terminal
+from gobby.terminals import TerminalRuntimeRegistry
+from gobby.terminals.runtime import SnapshotResult
+from tests.terminals.fakes import FakeRuntime, MemoryTerminalStore, make_memory_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -33,15 +36,47 @@ def _runner(run: Any | None) -> MagicMock:
     return runner
 
 
+class _CaptureRuntime(FakeRuntime):
+    """FakeRuntime that delegates snapshot/liveness to the historical tmux mock."""
+
+    def __init__(self, tmux: MagicMock) -> None:
+        super().__init__()
+        self._tmux = tmux
+
+    async def snapshot(self, terminal: Terminal, lines: int = 50) -> SnapshotResult:
+        del terminal, lines
+        text = await self._tmux.capture_pane("agent-test")
+        if text is None:
+            raise RuntimeError("capture returned none")
+        return SnapshotResult(
+            text=text,
+            truncated=False,
+            dropped_bytes=0,
+            total_bytes=len(text.encode("utf-8")),
+        )
+
+    async def is_live(self, terminal: Terminal) -> bool:
+        del terminal
+        has_session = getattr(self._tmux, "has_session", None)
+        if has_session is None:
+            return True
+        return bool(await has_session("agent-test"))
+
+
 async def _invoke(run: Any | None, tmux: MagicMock, **kwargs: Any) -> dict[str, Any]:
     runner = _runner(run)
-    with patch(
-        "gobby.mcp_proxy.tools.agents_query_tools.get_tmux_session_manager",
-        return_value=tmux,
-    ):
-        registry = create_agents_registry(runner)
-        wait_for_output = registry._tools["wait_for_output"].func
-        return await wait_for_output("run-1", **kwargs)
+    store = MemoryTerminalStore()
+    runtime = _CaptureRuntime(tmux)
+    if run is not None and run.terminal_id:
+        terminal = make_memory_terminal(terminal_id=run.terminal_id)
+        store.rows[terminal.id] = terminal
+    registry = TerminalRuntimeRegistry()
+    registry.register(runtime)
+    runner.terminal_manager = store
+    runner.terminal_runtime_registry = registry
+    tools = create_agents_registry(runner)
+    wait_for_output = tools._tools["wait_for_output"].func
+    return await wait_for_output("run-1", **kwargs)
 
 
 @pytest.mark.asyncio
@@ -229,17 +264,21 @@ async def test_wait_for_output_cancellation_finishes_capture_cleanup() -> None:
     cancelling_tmux.capture_pane = AsyncMock(side_effect=blocking_capture)
     cancelling_tmux.has_session = AsyncMock(return_value=True)
     runner = _runner(_run())
-    with patch(
-        "gobby.mcp_proxy.tools.agents_query_tools.get_tmux_session_manager",
-        return_value=cancelling_tmux,
-    ):
-        registry = create_agents_registry(runner)
-        wait_for_output = registry._tools["wait_for_output"].func
-        waiting = asyncio.create_task(wait_for_output("run-1", pattern="READY", timeout_seconds=10))
-        await capture_started.wait()
-        waiting.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await waiting
+    store = MemoryTerminalStore()
+    terminal = make_memory_terminal(terminal_id="agent-test")
+    store.rows[terminal.id] = terminal
+    runtime = _CaptureRuntime(cancelling_tmux)
+    registry = TerminalRuntimeRegistry()
+    registry.register(runtime)
+    runner.terminal_manager = store
+    runner.terminal_runtime_registry = registry
+    tools = create_agents_registry(runner)
+    wait_for_output = tools._tools["wait_for_output"].func
+    waiting = asyncio.create_task(wait_for_output("run-1", pattern="READY", timeout_seconds=10))
+    await capture_started.wait()
+    waiting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
 
     assert waiting.done()
     assert capture_finished.is_set()

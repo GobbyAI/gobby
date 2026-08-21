@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 from gobby.agents.spawn_executor import derive_spawn_key
 from gobby.storage.terminals import Terminal, TerminalManager
 from gobby.terminals.dimensions import validate_dimensions
+from gobby.terminals.host_client import HostCommandError
 from gobby.terminals.runtime import (
     CommitSpawnRefusedError,
     TerminalRuntime,
@@ -69,7 +70,11 @@ async def spawn_web_terminal(
         if not can_reserve_observer(runtime):
             manager.fail_pending(terminal_id)
             return WebSpawnResult(False, terminal_id, "native_reserve_unavailable")
-        reservation = await runtime.reserve_observer(UUID(terminal_id))
+        try:
+            reservation = await runtime.reserve_observer(UUID(terminal_id))
+        except HostCommandError as exc:
+            manager.fail_pending(terminal_id)
+            return WebSpawnResult(False, terminal_id, str(exc))
         request.reservation_id = reservation.get("reservation_id")
         request.reserve_key = reservation.get("reserve_key")
     prepare_task = asyncio.create_task(runtime.prepare_spawn(request))
@@ -95,6 +100,17 @@ async def spawn_web_terminal(
     stored = prepared.stored_locator or {}
     locator_key = prepared.locator_key or ""
     prepared.acknowledge_persist()
+    if runtime.backend == "native":
+        bind = getattr(runtime, "bind_observer", None)
+        try:
+            if callable(bind) and request.reservation_id:
+                await bind(prepared, request.reservation_id)
+            else:
+                prepared.acknowledge_observer()
+        except Exception as exc:
+            await _kill(runtime, spawn_key, manager.get(terminal_id))
+            manager.fail_pending(terminal_id)
+            return WebSpawnResult(False, terminal_id, str(exc))
     try:
         handle = await runtime.commit_spawn(prepared)
     except CommitSpawnRefusedError as exc:

@@ -24,6 +24,7 @@ from gobby.agents.recovery_state import (
     daemon_resume_successor_id,
     is_daemon_stop_parked,
 )
+from gobby.agents.tmux import get_tmux_session_manager
 from gobby.mcp_proxy.tools.agent_live_activity import (
     overlay_live_activity,
     overlay_runs_live_activity,
@@ -474,13 +475,15 @@ def register_agent_query_tools(
         interval = max(0.1, min(interval_value, 30.0))
         deadline = agents.time.monotonic() + timeout
         consecutive_capture_failures = 0
-        from gobby.agents.tmux.session_manager import TmuxSessionManager
         from gobby.storage.terminals import TerminalManager
+        from gobby.terminals.runtime import TerminalRuntime
         from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
 
         db = getattr(ctx.runner, "database", None) or getattr(ctx.runner, "db", None)
-        terminal_manager = TerminalManager(db) if db is not None else None
-        runtime = TmuxTerminalRuntime(TmuxSessionManager())
+        injected_manager = getattr(ctx.runner, "terminal_manager", None)
+        terminal_manager = injected_manager or (TerminalManager(db) if db is not None else None)
+        registry = getattr(ctx.runner, "terminal_runtime_registry", None)
+        runtime: TerminalRuntime | None = None
 
         while True:
             pane_output: str | None = None
@@ -494,6 +497,10 @@ def register_agent_query_tools(
                 if terminal is None:
                     capture_failed = True
                 else:
+                    if registry is not None:
+                        runtime = registry.resolve(terminal.backend)
+                    elif runtime is None:
+                        runtime = TmuxTerminalRuntime(get_tmux_session_manager())
                     snapshot = await runtime.snapshot(terminal, _WAIT_OUTPUT_CAPTURE_LINES)
                     pane_output = snapshot.text
                     capture_failed = pane_output is None
@@ -540,11 +547,15 @@ def register_agent_query_tools(
                         if terminal_manager is None or not run.terminal_id
                         else terminal_manager.get(run.terminal_id)
                     )
-                    pane_exists = (
-                        False
-                        if terminal is None
-                        else await runtime.is_live(terminal)
-                    )
+                    if terminal is None:
+                        pane_exists = False
+                    else:
+                        if runtime is None:
+                            if registry is not None:
+                                runtime = registry.resolve(terminal.backend)
+                            else:
+                                runtime = TmuxTerminalRuntime(get_tmux_session_manager())
+                        pane_exists = await runtime.is_live(terminal)
                 except asyncio.CancelledError:
                     raise
                 except Exception:

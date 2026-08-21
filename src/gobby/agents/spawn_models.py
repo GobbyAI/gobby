@@ -7,6 +7,7 @@ from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.agents.sandbox import SandboxConfig
+from gobby.config.terminals import TerminalConfig
 
 if TYPE_CHECKING:
     from gobby.agents.session import ChildSessionManager
@@ -18,6 +19,23 @@ if TYPE_CHECKING:
     from gobby.storage.terminals import AttachLocator, TerminalManager
     from gobby.terminals import TerminalRuntimeRegistry
     from gobby.terminals.write_coordinator import WriteCoordinator
+
+
+def resolve_terminal_backend(
+    requested: str | None,
+    daemon_config: Any | None,
+) -> Literal["tmux", "native"]:
+    """Validate an explicit backend or fall back to TerminalConfig.default_backend."""
+    if requested is None:
+        config = getattr(daemon_config, "terminals", None)
+        if isinstance(config, TerminalConfig):
+            return config.default_backend
+        return "tmux"
+    if requested == "native":
+        return "native"
+    if requested == "tmux":
+        return "tmux"
+    raise ValueError(f"invalid terminal_backend: {requested}")
 
 
 @dataclass
@@ -74,6 +92,7 @@ class SpawnRequest:
     terminal_runtime_registry: TerminalRuntimeRegistry | None = None
     write_coordinator: WriteCoordinator | None = None
     backend: Literal["tmux", "native"] | None = None
+    terminal_backend: Literal["tmux", "native"] = "tmux"
     retry_terminal_id: str | None = None
     cancel_event: asyncio.Event | None = None
 

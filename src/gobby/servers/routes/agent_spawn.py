@@ -61,6 +61,7 @@ class AgentSpawnRequest(ReasoningEffortMixin):
     branch_name: str | None = None
     base_branch: str | None = None
     timeout: float | None = None
+    terminal_backend: Literal["tmux", "native"] | None = None
 
 
 class AgentSpawnResponse(BaseModel):
@@ -343,6 +344,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             db=server.services.database,
             completion_registry=server.services.completion_registry,
             daemon_config=config_snapshot.active,
+            terminal_backend=req.terminal_backend,
         )
 
         if result.get("success"):

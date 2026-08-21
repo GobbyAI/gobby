@@ -98,6 +98,7 @@ class TestProviderResolution:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=agent_body,
@@ -149,6 +150,7 @@ class TestProviderResolution:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=agent_body,
@@ -197,6 +199,7 @@ class TestProviderResolution:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=None,
@@ -246,6 +249,7 @@ class TestProviderResolution:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=None,
@@ -293,6 +297,7 @@ class TestProviderResolution:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="Do the thing",
                 runner=runner,
                 provider="codex",
@@ -350,6 +355,7 @@ class TestProviderResolution:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="Do the thing",
                 runner=runner,
                 provider="codex",
@@ -417,6 +423,7 @@ class TestSpawnAutoClaimOwner:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=None,
@@ -475,6 +482,7 @@ class TestSpawnAutoClaimOwner:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=None,
@@ -535,6 +543,7 @@ class TestSpawnAutoClaimOwner:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=None,
@@ -593,6 +602,7 @@ class TestSpawnAutoClaimOwner:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=None,

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Literal
+from uuid import UUID
 
 from gobby.storage.terminals import AttachLocator, Terminal, native_locator_key
 from gobby.terminals.dimensions import validate_dimensions
@@ -84,6 +86,7 @@ class NativeTerminalRuntime:
         self._spawn_in_doubt_seconds = spawn_in_doubt_seconds
         self._frame_client = frame_client
         self._run_manager = run_manager
+        self._subscribed = False
 
     @classmethod
     def preflight_line(cls, payload: dict[str, Any]) -> bytes:
@@ -106,6 +109,38 @@ class NativeTerminalRuntime:
         if isinstance(host_id, str) and host_id:
             return host_id
         raise TerminalWriteError(stage="none")
+
+    async def reserve_observer(self, terminal_id: UUID) -> Mapping[str, str]:
+        await self._ensure()
+        subscribe = getattr(self._client, "subscribe_events", None)
+        if callable(subscribe) and not self._subscribed:
+            await subscribe()
+            self._subscribed = True
+        reserve_key = str(terminal_id)
+        payload = await self._client.reserve_observer(str(terminal_id), reserve_key)
+        return {
+            "reservation_id": str(payload.get("reservation_id") or ""),
+            "reserve_key": str(payload.get("reserve_key") or reserve_key),
+        }
+
+    async def release_observer(self, reservation_id: str, reserve_key: str) -> Mapping[str, Any]:
+        await self._ensure()
+        release = getattr(self._client, "release_observer", None)
+        if not callable(release):
+            return {"ok": True, "released": True}
+        payload = await release(reservation_id, reserve_key)
+        return payload if isinstance(payload, dict) else {"ok": True, "released": True}
+
+    async def bind_observer(self, prepared: PreparedSpawn, reservation_id: str) -> None:
+        if self._frame_client is None:
+            raise HostCommandError("attach_failed")
+        locator = prepared.locator or AttachLocator(
+            backend="native",
+            frame_host_epoch=self._frame_host_epoch,
+            host_terminal_id=prepared.host_terminal_id,
+        )
+        await self._frame_client.attach_terminal(locator, reservation_id=reservation_id)
+        prepared.acknowledge_observer()
 
     async def prepare_spawn(self, request: TerminalSpawnRequest) -> PreparedSpawn:
         await self._ensure()
