@@ -80,6 +80,13 @@ required-features = ["vt-engine"]
 name = "control_protocol"
 required-features = ["vt-engine"]
 
+[[test]]
+name = "frame_protocol"
+required-features = ["vt-engine"]
+
+[[test]]
+name = "wire_golden"
+
 [[bin]]
 name = "gterm"
 path = "src/bin/gterm.rs"

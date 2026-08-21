@@ -3,7 +3,7 @@
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,7 +12,17 @@ use tracing::info;
 
 use crate::ipc::{prepare_socket_path, restrict_socket_permissions};
 
+mod config;
 mod control;
+mod frames;
+mod helpers;
+mod ledger;
+#[cfg(all(unix, feature = "vt-engine"))]
+mod spawn;
+mod state;
+
+use config::HostConfig;
+use state::HostState;
 
 const CONTROL_SOCKET: &str = "gterm-control.sock";
 const FRAMES_SOCKET: &str = "gterm-frames.sock";
@@ -34,6 +44,11 @@ pub async fn run() -> io::Result<()> {
         ));
     }
 
+    let host_config = args
+        .host_config
+        .validate()
+        .map_err(|err| io::Error::new(err.kind(), format!("gterm host config: {err}")))?;
+    let local_token = read_local_token(&args.socket_dir);
     let host_epoch = uuid::Uuid::new_v4().to_string();
     let version = env!("CARGO_PKG_VERSION").to_string();
     let host_pid = std::process::id();
@@ -53,12 +68,16 @@ pub async fn run() -> io::Result<()> {
     let frames_listener = UnixListener::bind(&frames_path)?;
     restrict_socket_permissions(&frames_path, 0o600)?;
 
-    let draining = Arc::new(AtomicBool::new(false));
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
-    let token = Arc::new(token);
-    let host_epoch = Arc::new(host_epoch);
-    let version = Arc::new(version);
-    let shutdown_grace_ms = args.shutdown_grace_ms;
+    let state = HostState::new(
+        host_config,
+        token,
+        local_token,
+        host_epoch.clone(),
+        version,
+        host_pid,
+        shutdown_tx.clone(),
+    );
 
     info!(
         epoch = %host_epoch,
@@ -66,42 +85,15 @@ pub async fn run() -> io::Result<()> {
         "gterm host listening"
     );
 
-    let frames_task = tokio::spawn(async move {
-        loop {
-            match frames_listener.accept().await {
-                Ok((_stream, _)) => {}
-                Err(_) => break,
-            }
-        }
-    });
-
-    let control_accept = {
-        let draining = Arc::clone(&draining);
-        let shutdown_tx = shutdown_tx.clone();
-        let token = Arc::clone(&token);
-        let host_epoch = Arc::clone(&host_epoch);
-        let version = Arc::clone(&version);
+    let frames_task = {
+        let state = Arc::clone(&state);
         tokio::spawn(async move {
             loop {
-                match control_listener.accept().await {
+                match frames_listener.accept().await {
                     Ok((stream, _)) => {
-                        let draining = Arc::clone(&draining);
-                        let shutdown_tx = shutdown_tx.clone();
-                        let token = Arc::clone(&token);
-                        let host_epoch = Arc::clone(&host_epoch);
-                        let version = Arc::clone(&version);
+                        let state = Arc::clone(&state);
                         tokio::spawn(async move {
-                            control::handle_connection(
-                                stream,
-                                token,
-                                host_epoch,
-                                version,
-                                host_pid,
-                                draining,
-                                shutdown_tx,
-                                shutdown_grace_ms,
-                            )
-                            .await;
+                            frames::handle_connection(stream, state).await;
                         });
                     }
                     Err(_) => break,
@@ -110,13 +102,43 @@ pub async fn run() -> io::Result<()> {
         })
     };
 
+    let control_accept = {
+        let state = Arc::clone(&state);
+        tokio::spawn(async move {
+            loop {
+                match control_listener.accept().await {
+                    Ok((stream, _)) => {
+                        let state = Arc::clone(&state);
+                        tokio::spawn(async move {
+                            control::handle_connection(stream, state).await;
+                        });
+                    }
+                    Err(_) => break,
+                }
+            }
+        })
+    };
+
+    let ticker = {
+        let state = Arc::clone(&state);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_millis(30));
+            loop {
+                interval.tick().await;
+                state.expire_prepared().await;
+                state.broadcast_frames().await;
+            }
+        })
+    };
+
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     tokio::select! {
         _ = shutdown_rx.changed() => {}
         _ = sigterm.recv() => {
-            draining.store(true, Ordering::SeqCst);
+            state.draining.store(true, Ordering::SeqCst);
         }
     }
+    ticker.abort();
 
     control_accept.abort();
     frames_task.abort();
@@ -134,6 +156,7 @@ struct HostArgs {
     pid_file: PathBuf,
     log_file: PathBuf,
     shutdown_grace_ms: u64,
+    host_config: HostConfig,
 }
 
 impl HostArgs {
@@ -146,13 +169,38 @@ impl HostArgs {
                     .map(|home| home.join(".gobby"))
                     .unwrap_or_else(|| PathBuf::from("."))
             });
+        let mut host_config = HostConfig::default();
         let mut args = std::env::args().skip(1);
         let _cmd = args.next();
         while let Some(arg) = args.next() {
-            if arg == "--socket-dir" {
-                if let Some(value) = args.next() {
-                    socket_dir = PathBuf::from(value);
+            match arg.as_str() {
+                "--socket-dir" => {
+                    if let Some(value) = args.next() {
+                        socket_dir = PathBuf::from(value);
+                    }
                 }
+                "--max-attachments-per-terminal" => {
+                    host_config.max_attachments_per_terminal = parse_u32(args.next());
+                }
+                "--max-attachments-total" => {
+                    host_config.max_attachments_total = parse_u32(args.next());
+                }
+                "--max-attached-terminals" => {
+                    host_config.max_attached_terminals = parse_u32(args.next());
+                }
+                "--native-scrollback-max-lines" => {
+                    host_config.native_scrollback_max_lines = parse_u32(args.next());
+                }
+                "--native-scrollback-max-bytes" => {
+                    host_config.native_scrollback_max_bytes = parse_u32(args.next());
+                }
+                "--tmux-attach-history-lines" => {
+                    host_config.tmux_attach_history_lines = parse_u32(args.next());
+                }
+                "--tmux-attach-history-max-bytes" => {
+                    host_config.tmux_attach_history_max_bytes = parse_u32(args.next());
+                }
+                _ => {}
             }
         }
         let log_file = std::env::var("GTERM_LOG_FILE")
@@ -165,8 +213,31 @@ impl HostArgs {
             log_file,
             socket_dir,
             shutdown_grace_ms: 10_000,
+            host_config,
         }
     }
+}
+
+fn parse_u32(value: Option<String>) -> u32 {
+    value.and_then(|v| v.parse().ok()).unwrap_or(u32::MAX)
+}
+
+fn read_local_token(socket_dir: &Path) -> String {
+    let candidates = [
+        socket_dir.join("local_cli_token"),
+        dirs_home()
+            .map(|home| home.join(".gobby").join("local_cli_token"))
+            .unwrap_or_else(|| PathBuf::from("local_cli_token")),
+    ];
+    for path in candidates {
+        if let Ok(text) = fs::read_to_string(&path) {
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+    }
+    String::new()
 }
 
 fn dirs_home() -> Option<PathBuf> {

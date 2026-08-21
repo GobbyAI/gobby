@@ -306,98 +306,61 @@ impl ClientInputEvent {
     }
 }
 
-/// Messages sent from the client to the server over the client protocol socket.
+/// Messages sent from the client to the host over the **read-only** frame socket.
+///
+/// Variant indices 1–3 are reserved so a hand-built herdr `Input` / `ClipboardImage`
+/// / `Resize` payload cannot alias a live verb. The host treats those tags as
+/// unknown and never forwards them to a PTY.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ClientMessage {
-    /// Handshake: client announces its protocol version and terminal dimensions.
+    /// Handshake: protocol version, encoding, local CLI token, and viewport.
     Hello {
-        /// Protocol version the client speaks.
         version: u32,
-        /// Terminal width in columns.
+        encoding: RenderEncoding,
+        local_token: String,
         cols: u16,
-        /// Terminal height in rows.
         rows: u16,
-        /// Width of a terminal cell in physical pixels, or 0 when client-side Kitty graphics are disabled.
-        cell_width_px: u32,
-        /// Height of a terminal cell in physical pixels, or 0 when client-side Kitty graphics are disabled.
-        cell_height_px: u32,
-        /// Render encoding requested by the client.
-        requested_encoding: RenderEncoding,
-        /// Keybinding profile requested by the client.
-        keybindings: ClientKeybindings,
-        /// Whether this connection will render the full app or attach directly to a pane terminal.
-        launch_mode: ClientLaunchMode,
     },
-
-    /// Raw input bytes read from the client's stdin.
-    Input {
-        /// Raw terminal input (possibly multi-byte escape sequences).
+    /// Legacy herdr Input (tag 1). Rejected as unknown; never a write path.
+    LegacyInput {
         data: Vec<u8>,
     },
-
-    /// Image bytes read from the client's local clipboard for remote paste bridging.
-    ClipboardImage {
-        /// Image file extension without a leading dot.
+    /// Legacy herdr ClipboardImage (tag 2). Rejected as unknown.
+    LegacyClipboard {
         extension: String,
-        /// Raw image bytes.
         data: Vec<u8>,
     },
-
-    /// Terminal resize notification from the client.
-    Resize {
-        /// New terminal width in columns.
+    /// Legacy herdr Resize (tag 3). Rejected as unknown; never TIOCSWINSZ.
+    LegacyResize {
         cols: u16,
-        /// New terminal height in rows.
         rows: u16,
-        /// Width of a terminal cell in physical pixels, or 0 when client-side Kitty graphics are disabled.
         cell_width_px: u32,
-        /// Height of a terminal cell in physical pixels, or 0 when client-side Kitty graphics are disabled.
         cell_height_px: u32,
     },
-
-    /// Graceful disconnect request.
     Detach,
-
-    /// Switch this connection into direct terminal attach mode.
     AttachTerminal {
-        /// Terminal id to attach to.
-        terminal_id: String,
-        /// Replace an existing writable attach owner for this terminal.
-        takeover: bool,
+        host_terminal_id: String,
+        #[serde(default)]
+        reservation_id: Option<String>,
     },
-
-    /// Scroll input handled by a direct terminal attach client.
-    AttachScroll {
-        /// Original input source for routing.
-        source: AttachScrollSource,
-        /// Scroll direction.
-        direction: AttachScrollDirection,
-        /// Number of terminal rows to move when using host scrollback.
-        lines: u16,
-        /// Mouse column relative to the attached terminal, when available.
-        column: Option<u16>,
-        /// Mouse row relative to the attached terminal, when available.
-        row: Option<u16>,
-        /// Crossterm-compatible modifier bits for forwarded mouse wheel events.
-        modifiers: u8,
+    /// Attachment-local render size. Never reaches TIOCSWINSZ.
+    SetViewport {
+        rows: u16,
+        cols: u16,
     },
-
-    /// Structured input events from platform clients that do not expose Unix-style raw bytes.
-    InputEvents { events: Vec<ClientInputEvent> },
-
-    /// Switch this connection into read-only terminal observe mode.
-    ObserveTerminal {
-        /// Pane, terminal, or agent target to observe.
-        target: String,
+    /// Attachment-local rows-from-live-edge. Never reaches PTY input.
+    SetScrollOffset {
+        rows_from_live_edge: u32,
     },
+}
 
-    /// Switch this connection into writable terminal control mode.
-    ControlTerminal {
-        /// Pane, terminal, or agent target to control.
-        target: String,
-        /// Replace an existing writable controller for this terminal.
-        takeover: bool,
-    },
+impl ClientMessage {
+    pub fn is_legacy_unknown(&self) -> bool {
+        matches!(
+            self,
+            Self::LegacyInput { .. } | Self::LegacyClipboard { .. } | Self::LegacyResize { .. }
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -612,80 +575,106 @@ pub enum NotifyKind {
     SystemToast,
 }
 
-/// Messages sent from the server to the client over the client protocol socket.
+/// Messages sent from the host to a frame client.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ServerMessage {
-    /// Handshake response: server acknowledges (or rejects) the client.
     Welcome {
-        /// Protocol version the server speaks.
-        version: u32,
-        /// Render encoding selected by the server for this connection.
-        encoding: RenderEncoding,
-        /// If present, the handshake failed and this describes why.
-        /// The client should exit with a clear error message.
-        error: Option<String>,
+        host_epoch: String,
     },
-
-    /// A rendered frame to be displayed by a semantic-frame client.
     Frame(FrameData),
-
-    /// Terminal bytes to write directly for a terminal-ANSI client.
     Terminal(TerminalFrame),
-
-    /// Client-local Kitty graphics bytes to write directly to the host terminal.
     Graphics {
-        /// Raw Kitty graphics protocol bytes.
         bytes: Vec<u8>,
     },
-
-    /// Server is shutting down. Clients should exit gracefully.
-    ServerShutdown {
-        /// Optional reason for the shutdown.
-        reason: Option<String>,
+    AttachHistory {
+        text: String,
+        truncated: bool,
+        dropped_bytes: u64,
+        total_bytes: u64,
     },
-
-    /// A notification event (sound/toast) to be rendered locally by the client.
-    Notify {
-        /// What kind of notification.
-        kind: NotifyKind,
-        /// Human-readable title or sound label.
-        message: String,
-        /// Optional human-readable notification body.
-        body: Option<String>,
+    ScrollOffsetApplied {
+        applied_rows: u32,
+        max_rows: u32,
     },
-
-    /// OSC 52 clipboard data forwarded from a PTY through the server.
-    Clipboard {
-        /// Base64-encoded clipboard data.
-        data: String,
+    TerminalExited {
+        host_terminal_id: String,
+        #[serde(default)]
+        exit_code: Option<i32>,
     },
-
-    /// Set the foreground client's outer terminal window title.
-    WindowTitle {
-        /// Sanitized title to write with OSC 0. `None` restores Gterm's default title.
-        title: Option<String>,
+    Error {
+        code: String,
+        message: Option<String>,
     },
+}
 
-    /// Client-local runtime config changed on disk; refresh it without reconnecting.
-    ReloadSoundConfig,
+/// Closed observation-health vocabulary shared with `list` and 3.4.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ObservationState {
+    Live,
+    Stale,
+    OrphanedObservation,
+}
 
-    /// Whether the client should currently capture host mouse input.
-    MouseCapture {
-        /// True when Gterm mouse UI is enabled or the focused pane app requests mouse reporting.
-        enabled: bool,
-    },
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ObservationReason {
+    PollSpawnFailed,
+    PollTimeout,
+    PollPermission,
+    PollFdExhausted,
+    PollUnparseable,
+    GeometryExceedsMaxCells,
+    ObservationCeiling,
+}
 
-    /// Whether the focused terminal requests Kitty report-all keyboard input.
-    KittyKeyboardReportAll {
-        /// True only while the focused pane requests `REPORT_ALL_KEYS_AS_ESCAPE_CODES`.
-        enabled: bool,
-    },
+impl ObservationReason {
+    pub const LONGEST: &'static str = "geometry_exceeds_max_cells";
 
-    /// Apply the prefix-mode ASCII input-source change on the foreground client.
-    /// `active = true` → switch to an ASCII-capable source (saving the current one);
-    /// `active = false` → restore the saved source.
-    PrefixInputSource {
-        /// Whether the ASCII input source should be active.
-        active: bool,
-    },
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::PollSpawnFailed => "poll_spawn_failed",
+            Self::PollTimeout => "poll_timeout",
+            Self::PollPermission => "poll_permission",
+            Self::PollFdExhausted => "poll_fd_exhausted",
+            Self::PollUnparseable => "poll_unparseable",
+            Self::GeometryExceedsMaxCells => "geometry_exceeds_max_cells",
+            Self::ObservationCeiling => "observation_ceiling",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DimensionError {
+    ZeroOrNegative,
+    AboveMaximum,
+    CellProductOverflow,
+}
+
+impl DimensionError {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::ZeroOrNegative => "invalid_dimensions",
+            Self::AboveMaximum => "dimensions_too_large",
+            Self::CellProductOverflow => "cell_product_overflow",
+        }
+    }
+}
+
+/// Validate rows/cols before any grid allocation or TIOCSWINSZ.
+pub fn validate_dimensions(rows: i64, cols: i64) -> Result<(u16, u16), DimensionError> {
+    use super::{MAX_CELLS, MAX_COLS, MAX_ROWS, MIN_COLS, MIN_ROWS};
+    if rows < i64::from(MIN_ROWS) || cols < i64::from(MIN_COLS) {
+        return Err(DimensionError::ZeroOrNegative);
+    }
+    if rows > i64::from(MAX_ROWS) || cols > i64::from(MAX_COLS) {
+        return Err(DimensionError::AboveMaximum);
+    }
+    let rows_u = rows as u16;
+    let cols_u = cols as u16;
+    let product = (rows as u64).saturating_mul(cols as u64);
+    if product > MAX_CELLS as u64 {
+        return Err(DimensionError::CellProductOverflow);
+    }
+    Ok((rows_u, cols_u))
 }

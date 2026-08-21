@@ -2,591 +2,24 @@ use super::*;
 use ratatui::style::{Color, Modifier};
 use std::io::{self, Read};
 
+fn hello_msg(cols: u16, rows: u16) -> ClientMessage {
+    ClientMessage::Hello {
+        version: PROTOCOL_VERSION,
+        encoding: RenderEncoding::SemanticFrame,
+        local_token: "local-token".into(),
+        cols,
+        rows,
+    }
+}
+
 // ---- Round-trip: ClientMessage ----
 
 #[test]
 fn client_hello_roundtrip() {
-    let msg = ClientMessage::Hello {
-        version: PROTOCOL_VERSION,
-        cols: 80,
-        rows: 24,
-        cell_width_px: 8,
-        cell_height_px: 16,
-        requested_encoding: RenderEncoding::SemanticFrame,
-        keybindings: ClientKeybindings::Server,
-        launch_mode: ClientLaunchMode::App,
-    };
+    let msg = hello_msg(80, 24);
     let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
     let (decoded, _): (ClientMessage, _) =
         bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
-    assert_eq!(msg, decoded);
-}
-
-#[test]
-fn client_input_roundtrip() {
-    let msg = ClientMessage::Input {
-        data: vec![0x1b, 0x5b, 0x41], // ESC [ A (up arrow)
-    };
-    let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
-    let (decoded, _): (ClientMessage, _) =
-        bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
-    assert_eq!(msg, decoded);
-}
-
-#[test]
-fn client_message_wire_tags_preserve_protocol_15_order() {
-    fn tag(msg: &ClientMessage) -> u8 {
-        *bincode::serde::encode_to_vec(msg, bincode::config::standard())
-            .unwrap()
-            .first()
-            .expect("encoded client message should include enum tag")
-    }
-
-    assert_eq!(
-        tag(&ClientMessage::Hello {
-            version: PROTOCOL_VERSION,
-            cols: 80,
-            rows: 24,
-            cell_width_px: 8,
-            cell_height_px: 16,
-            requested_encoding: RenderEncoding::SemanticFrame,
-            keybindings: ClientKeybindings::Server,
-            launch_mode: ClientLaunchMode::App,
-        }),
-        0
-    );
-    assert_eq!(tag(&ClientMessage::Input { data: Vec::new() }), 1);
-    assert_eq!(
-        tag(&ClientMessage::ClipboardImage {
-            extension: "png".to_owned(),
-            data: Vec::new(),
-        }),
-        2
-    );
-    assert_eq!(
-        tag(&ClientMessage::Resize {
-            cols: 80,
-            rows: 24,
-            cell_width_px: 8,
-            cell_height_px: 16,
-        }),
-        3
-    );
-    assert_eq!(tag(&ClientMessage::Detach), 4);
-    assert_eq!(
-        tag(&ClientMessage::AttachTerminal {
-            terminal_id: "term".to_owned(),
-            takeover: false,
-        }),
-        5
-    );
-    assert_eq!(
-        tag(&ClientMessage::AttachScroll {
-            source: AttachScrollSource::Wheel,
-            direction: AttachScrollDirection::Up,
-            lines: 1,
-            column: None,
-            row: None,
-            modifiers: 0,
-        }),
-        6
-    );
-    assert_eq!(tag(&ClientMessage::InputEvents { events: Vec::new() }), 7);
-    assert_eq!(
-        tag(&ClientMessage::ObserveTerminal {
-            target: "w1:p1".to_owned(),
-        }),
-        8
-    );
-    assert_eq!(
-        tag(&ClientMessage::ControlTerminal {
-            target: "w1:p1".to_owned(),
-            takeover: false,
-        }),
-        9
-    );
-}
-
-#[test]
-fn client_input_events_roundtrip() {
-    let msg = ClientMessage::InputEvents {
-        events: vec![
-            ClientInputEvent::Key {
-                code: ClientKeyCode::Char('N'),
-                modifiers: crossterm::event::KeyModifiers::SHIFT.bits(),
-                kind: ClientKeyKind::Press,
-
-                repeat_count: 1,
-                generated_text: None,
-                source: crate::protocol::ClientKeySource::Synthesized,
-            },
-            ClientInputEvent::Key {
-                code: ClientKeyCode::Backspace,
-                modifiers: 0,
-                kind: ClientKeyKind::Press,
-                repeat_count: 3,
-                generated_text: None,
-                source: crate::protocol::ClientKeySource::Vt {
-                    bytes: b"\x1b[127;1u".to_vec(),
-                },
-            },
-            ClientInputEvent::Key {
-                code: ClientKeyCode::Esc,
-                modifiers: 0,
-                kind: ClientKeyKind::Release,
-                repeat_count: 1,
-                generated_text: None,
-                source: crate::protocol::ClientKeySource::WindowsConsole {
-                    record: crate::input::WindowsKeyRecord {
-                        key_down: false,
-                        repeat_count: 1,
-                        virtual_key_code: 27,
-                        virtual_scan_code: 1,
-                        unicode: 27,
-                        control_key_state: 0,
-                    },
-                },
-            },
-            ClientInputEvent::TextCommit("你🙂".to_owned()),
-            ClientInputEvent::Mouse {
-                kind: ClientMouseKind::Down(ClientMouseButton::Left),
-                column: 3,
-                row: 4,
-                modifiers: 0,
-            },
-        ],
-    };
-    let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
-    // Freeze the protocol 19 input envelope before it is published.
-    assert_eq!(
-        encoded,
-        vec![
-            7, 5, 0, 15, 78, 1, 0, 1, 0, 0, 0, 0, 0, 0, 3, 0, 1, 8, 27, 91, 49, 50, 55, 59, 49,
-            117, 0, 14, 0, 2, 1, 0, 2, 0, 1, 27, 1, 27, 0, 1, 7, 228, 189, 160, 240, 159, 153, 130,
-            2, 0, 0, 3, 4, 0,
-        ]
-    );
-    let (decoded, _): (ClientMessage, _) =
-        bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
-    assert_eq!(msg, decoded);
-}
-
-#[test]
-fn wire_release_cannot_restore_a_grouped_repeat_count() {
-    let event = ClientInputEvent::Key {
-        code: ClientKeyCode::Esc,
-        modifiers: 0,
-        kind: ClientKeyKind::Release,
-        repeat_count: 3,
-        generated_text: Some("ignored".to_owned()),
-        source: ClientKeySource::Synthesized,
-    };
-
-    match event.to_raw_input_event() {
-        crate::raw_input::RawInputEvent::Key(key) => {
-            assert_eq!(key.kind, crossterm::event::KeyEventKind::Release);
-            assert_eq!(key.repeat_count, 1);
-            assert_eq!(key.generated_text, None);
-        }
-        other => panic!("expected key event, got {other:?}"),
-    }
-}
-
-#[test]
-fn client_input_events_convert_to_raw_keys() {
-    let record = crate::input::WindowsKeyRecord {
-        key_down: false,
-        repeat_count: 1,
-        virtual_key_code: 78,
-        virtual_scan_code: 49,
-        unicode: 78,
-        control_key_state: 16,
-    };
-    let shifted = ClientInputEvent::Key {
-        code: ClientKeyCode::Char('N'),
-        modifiers: crossterm::event::KeyModifiers::SHIFT.bits(),
-        kind: ClientKeyKind::Press,
-        repeat_count: 1,
-        generated_text: None,
-        source: ClientKeySource::WindowsConsole { record },
-    }
-    .to_raw_input_event();
-    match shifted {
-        crate::raw_input::RawInputEvent::Key(key) => {
-            assert_eq!(key.code, crossterm::event::KeyCode::Char('N'));
-            assert_eq!(key.modifiers, crossterm::event::KeyModifiers::SHIFT);
-            assert_eq!(key.kind, crossterm::event::KeyEventKind::Press);
-            assert_eq!(
-                key.windows_record().map(|record| record.key_down),
-                Some(false)
-            );
-        }
-        other => panic!("expected shifted key event, got {other:?}"),
-    }
-
-    let backspace = ClientInputEvent::Key {
-        code: ClientKeyCode::Backspace,
-        modifiers: 0,
-        kind: ClientKeyKind::Press,
-
-        repeat_count: 1,
-        generated_text: None,
-        source: crate::protocol::ClientKeySource::Synthesized,
-    }
-    .to_raw_input_event();
-    match backspace {
-        crate::raw_input::RawInputEvent::Key(key) => {
-            assert_eq!(key.code, crossterm::event::KeyCode::Backspace);
-            assert_eq!(key.modifiers, crossterm::event::KeyModifiers::empty());
-            assert_eq!(key.kind, crossterm::event::KeyEventKind::Press);
-        }
-        other => panic!("expected backspace key event, got {other:?}"),
-    }
-}
-
-#[test]
-fn client_clipboard_image_roundtrip() {
-    let msg = ClientMessage::ClipboardImage {
-        extension: "png".to_owned(),
-        data: vec![0x89, b'P', b'N', b'G'],
-    };
-    let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
-    let (decoded, _): (ClientMessage, _) =
-        bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
-    assert_eq!(msg, decoded);
-}
-
-#[test]
-fn client_input_large_multilingual_payload_roundtrip() {
-    let text = "你好，今天我们测试一段比较长的语音输入。こんにちは。안녕하세요.🙂".repeat(1024);
-    assert!(text.len() > 64 * 1024);
-    assert!(text.len() < MAX_FRAME_SIZE);
-    let msg = ClientMessage::Input {
-        data: text.as_bytes().to_vec(),
-    };
-
-    let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
-    let (decoded, consumed): (ClientMessage, _) =
-        bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
-
-    assert_eq!(consumed, encoded.len());
-    assert_eq!(decoded, msg);
-}
-
-#[test]
-fn client_resize_roundtrip() {
-    let msg = ClientMessage::Resize {
-        cols: 80,
-        rows: 24,
-        cell_width_px: 8,
-        cell_height_px: 16,
-    };
-    let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
-    let (decoded, _): (ClientMessage, _) =
-        bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
-    assert_eq!(msg, decoded);
-}
-
-#[test]
-fn client_detach_roundtrip() {
-    let msg = ClientMessage::Detach;
-    let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
-    let (decoded, _): (ClientMessage, _) =
-        bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
-    assert_eq!(msg, decoded);
-}
-
-#[test]
-fn client_attach_terminal_roundtrip() {
-    let msg = ClientMessage::AttachTerminal {
-        terminal_id: "term_123".to_owned(),
-        takeover: true,
-    };
-    let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
-    let (decoded, _): (ClientMessage, _) =
-        bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
-    assert_eq!(msg, decoded);
-}
-
-#[test]
-fn client_observe_terminal_roundtrip() {
-    let msg = ClientMessage::ObserveTerminal {
-        target: "w1:p1".to_owned(),
-    };
-    let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
-    let (decoded, _): (ClientMessage, _) =
-        bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
-    assert_eq!(msg, decoded);
-}
-
-#[test]
-fn client_control_terminal_roundtrip() {
-    let msg = ClientMessage::ControlTerminal {
-        target: "w1:p1".to_owned(),
-        takeover: true,
-    };
-    let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
-    let (decoded, _): (ClientMessage, _) =
-        bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
-    assert_eq!(msg, decoded);
-}
-
-#[test]
-fn client_attach_scroll_roundtrip() {
-    let msg = ClientMessage::AttachScroll {
-        source: AttachScrollSource::Wheel,
-        direction: AttachScrollDirection::Up,
-        lines: 3,
-        column: Some(12),
-        row: Some(7),
-        modifiers: 4,
-    };
-    let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
-    let (decoded, _): (ClientMessage, _) =
-        bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
-    assert_eq!(msg, decoded);
-}
-
-// ---- Round-trip: ServerMessage ----
-
-#[test]
-fn server_welcome_roundtrip() {
-    let msg = ServerMessage::Welcome {
-        version: PROTOCOL_VERSION,
-        encoding: RenderEncoding::SemanticFrame,
-        error: None,
-    };
-    let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
-    let (decoded, _): (ServerMessage, _) =
-        bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
-    assert_eq!(msg, decoded);
-}
-
-#[test]
-fn server_welcome_with_error_roundtrip() {
-    let msg = ServerMessage::Welcome {
-        version: PROTOCOL_VERSION,
-        encoding: RenderEncoding::SemanticFrame,
-        error: Some("incompatible version".to_owned()),
-    };
-    let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
-    let (decoded, _): (ServerMessage, _) =
-        bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
-    assert_eq!(msg, decoded);
-}
-
-#[test]
-fn server_frame_roundtrip_nontrivial() {
-    // Build a 3×2 frame with varied styles (≥2×2).
-    let frame = FrameData {
-        cells: vec![
-            CellData {
-                symbol: "H".into(),
-                fg: color_to_u32(Color::Red),
-                bg: color_to_u32(Color::Black),
-                modifier: Modifier::BOLD.bits(),
-                skip: false,
-                hyperlink: None,
-            },
-            CellData {
-                symbol: "i".into(),
-                fg: color_to_u32(Color::Green),
-                bg: color_to_u32(Color::Reset),
-                modifier: Modifier::ITALIC.bits(),
-                skip: false,
-                hyperlink: None,
-            },
-            CellData {
-                symbol: "!".into(),
-                fg: color_to_u32(Color::Rgb(255, 128, 0)),
-                bg: color_to_u32(Color::Indexed(220)),
-                modifier: (Modifier::BOLD | Modifier::UNDERLINED).bits(),
-                skip: false,
-                hyperlink: Some(0),
-            },
-            CellData {
-                symbol: " ".into(),
-                fg: color_to_u32(Color::Reset),
-                bg: color_to_u32(Color::Reset),
-                modifier: Modifier::empty().bits(),
-                skip: true,
-                hyperlink: None,
-            },
-            CellData {
-                symbol: "→".into(), // multi-byte grapheme
-                fg: color_to_u32(Color::Cyan),
-                bg: color_to_u32(Color::Blue),
-                modifier: Modifier::REVERSED.bits(),
-                skip: false,
-                hyperlink: None,
-            },
-            CellData {
-                symbol: "🦀".into(), // emoji, wide grapheme cluster
-                fg: color_to_u32(Color::Yellow),
-                bg: color_to_u32(Color::Magenta),
-                modifier: Modifier::empty().bits(),
-                skip: false,
-                hyperlink: None,
-            },
-        ],
-        width: 3,
-        height: 2,
-        cursor: Some(CursorState {
-            x: 0,
-            y: 0,
-            visible: true,
-            shape: 6,
-        }),
-        hyperlinks: vec!["https://example.com".to_owned()],
-        graphics: Vec::new(),
-    };
-    let msg = ServerMessage::Frame(frame.clone());
-    let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
-    let (decoded, _): (ServerMessage, _) =
-        bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
-    assert_eq!(msg, decoded);
-    match decoded {
-        ServerMessage::Frame(frame) => {
-            assert_eq!(frame.cells[2].hyperlink, Some(0));
-            assert_eq!(frame.hyperlinks, vec!["https://example.com".to_owned()]);
-        }
-        other => panic!("expected frame, got {other:?}"),
-    }
-}
-
-#[test]
-fn server_shutdown_roundtrip() {
-    let msg = ServerMessage::ServerShutdown {
-        reason: Some("updating".to_owned()),
-    };
-    let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
-    let (decoded, _): (ServerMessage, _) =
-        bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
-    assert_eq!(msg, decoded);
-}
-
-#[test]
-fn server_notify_roundtrip() {
-    for kind in [
-        NotifyKind::Sound,
-        NotifyKind::Toast,
-        NotifyKind::SystemToast,
-    ] {
-        let msg = ServerMessage::Notify {
-            kind,
-            message: "agent done".to_owned(),
-            body: None,
-        };
-        let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
-        let (decoded, _): (ServerMessage, _) =
-            bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
-        assert_eq!(msg, decoded);
-    }
-}
-
-#[test]
-fn server_clipboard_roundtrip() {
-    let msg = ServerMessage::Clipboard {
-        data: "dGVzdA==".to_owned(), // base64 "test"
-    };
-    let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
-    let (decoded, _): (ServerMessage, _) =
-        bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
-    assert_eq!(msg, decoded);
-}
-
-#[test]
-fn server_window_title_roundtrip() {
-    for title in [Some("gterm api".to_owned()), None] {
-        let msg = ServerMessage::WindowTitle { title };
-        let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
-        let (decoded, _): (ServerMessage, _) =
-            bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
-        assert_eq!(msg, decoded);
-    }
-}
-
-#[test]
-fn server_graphics_roundtrip() {
-    let msg = ServerMessage::Graphics {
-        bytes: b"\x1b_Ga=d,d=A,q=2;\x1b\\".to_vec(),
-    };
-    let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
-    let (decoded, _): (ServerMessage, _) =
-        bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
-    assert_eq!(msg, decoded);
-}
-
-#[test]
-fn server_terminal_frame_roundtrip() {
-    let msg = ServerMessage::Terminal(TerminalFrame {
-        seq: 7,
-        width: 120,
-        height: 40,
-        full: false,
-        bytes: b"\x1b[1;1Hhello".to_vec(),
-    });
-    let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
-    let (decoded, _): (ServerMessage, _) =
-        bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
-    assert_eq!(msg, decoded);
-}
-
-#[test]
-fn server_reload_sound_config_roundtrip() {
-    let msg = ServerMessage::ReloadSoundConfig;
-    let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
-    let (decoded, _): (ServerMessage, _) =
-        bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
-    assert_eq!(msg, decoded);
-}
-
-#[test]
-fn server_mouse_capture_roundtrip() {
-    let msg = ServerMessage::MouseCapture { enabled: true };
-    let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
-    let (decoded, _): (ServerMessage, _) =
-        bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
-    assert_eq!(msg, decoded);
-}
-
-#[test]
-fn server_kitty_keyboard_report_all_roundtrip() {
-    let msg = ServerMessage::KittyKeyboardReportAll { enabled: true };
-    let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
-    let (decoded, _): (ServerMessage, _) =
-        bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
-    assert_eq!(msg, decoded);
-}
-
-#[test]
-fn server_prefix_input_source_roundtrip() {
-    for active in [true, false] {
-        let msg = ServerMessage::PrefixInputSource { active };
-        let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
-        let (decoded, _): (ServerMessage, _) =
-            bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
-        assert_eq!(msg, decoded);
-    }
-}
-
-// ---- Framing ----
-
-#[test]
-fn framing_small_message_roundtrip() {
-    let msg = ClientMessage::Hello {
-        version: PROTOCOL_VERSION,
-        cols: 80,
-        rows: 24,
-        cell_width_px: 8,
-        cell_height_px: 16,
-        requested_encoding: RenderEncoding::SemanticFrame,
-        keybindings: ClientKeybindings::Server,
-        launch_mode: ClientLaunchMode::App,
-    };
-    let mut buf = Vec::new();
-    write_message(&mut buf, &msg).unwrap();
-    let decoded: ClientMessage = read_message(&mut buf.as_slice(), MAX_FRAME_SIZE).unwrap();
     assert_eq!(msg, decoded);
 }
 
@@ -648,24 +81,15 @@ fn framing_multiple_messages_sequential() {
 
     for i in 0..150u32 {
         let msg = match i % 5 {
-            0 => ClientMessage::Hello {
-                version: PROTOCOL_VERSION,
-                cols: (80 + (i % 40) as u16),
-                rows: (24 + (i % 20) as u16),
-                cell_width_px: 8,
-                cell_height_px: 16,
-                requested_encoding: RenderEncoding::SemanticFrame,
-                keybindings: ClientKeybindings::Server,
-                launch_mode: ClientLaunchMode::App,
-            },
-            1 => ClientMessage::Input {
+            0 => hello_msg(80, 24),
+            1 => ClientMessage::LegacyInput {
                 data: vec![(i % 256) as u8; (i as usize % 50) + 1],
             },
-            2 => ClientMessage::ClipboardImage {
+            2 => ClientMessage::LegacyClipboard {
                 extension: "png".to_owned(),
                 data: vec![0x89, b'P', b'N', b'G', (i % 256) as u8],
             },
-            3 => ClientMessage::Resize {
+            3 => ClientMessage::LegacyResize {
                 cols: (100 + (i % 30) as u16),
                 rows: (30 + (i % 10) as u16),
                 cell_width_px: 8,
@@ -756,7 +180,7 @@ fn framing_zero_length_message() {
 #[test]
 fn framing_partial_read_reassembly() {
     // Simulate partial reads by using a reader that yields small chunks.
-    let msg = ClientMessage::Input {
+    let msg = ClientMessage::LegacyInput {
         data: vec![42; 500], // 500-byte input payload
     };
     let mut full_buf = Vec::new();
@@ -818,20 +242,17 @@ fn prepersistence_version_zero_welcome_has_error() {
     let check = check_client_version(0);
     let response = match check {
         VersionCheck::Compatible => ServerMessage::Welcome {
-            version: PROTOCOL_VERSION,
-            encoding: RenderEncoding::SemanticFrame,
-            error: None,
+            host_epoch: "epoch".to_owned(),
         },
-        VersionCheck::Incompatible(reason) => ServerMessage::Welcome {
-            version: PROTOCOL_VERSION,
-            encoding: RenderEncoding::SemanticFrame,
-            error: Some(reason),
+        VersionCheck::Incompatible(reason) => ServerMessage::Error {
+            code: "unsupported_protocol".to_owned(),
+            message: Some(reason),
         },
     };
 
     match response {
-        ServerMessage::Welcome { error: Some(_), .. } => {}
-        other => panic!("expected Welcome with error, got: {other:?}"),
+        ServerMessage::Error { code, .. } => assert_eq!(code, "unsupported_protocol"),
+        other => panic!("expected Error, got: {other:?}"),
     }
 }
 
@@ -865,7 +286,7 @@ fn malformed_frame_does_not_panic() {
 #[test]
 fn oversized_input_rejected_custom_max() {
     // Verify a custom (small) max_frame_size is enforced.
-    let msg = ClientMessage::Input {
+    let msg = ClientMessage::LegacyInput {
         data: vec![0x41; 1000],
     };
     let mut buf = Vec::new();
@@ -1084,16 +505,7 @@ fn read_message_rejects_trailing_bytes() {
 #[test]
 fn read_message_accepts_exact_payload() {
     // A normally-framed message should decode without error.
-    let msg = ClientMessage::Hello {
-        version: PROTOCOL_VERSION,
-        cols: 80,
-        rows: 24,
-        cell_width_px: 8,
-        cell_height_px: 16,
-        requested_encoding: RenderEncoding::SemanticFrame,
-        keybindings: ClientKeybindings::Server,
-        launch_mode: ClientLaunchMode::App,
-    };
+    let msg = hello_msg(80, 24);
     let mut buf = Vec::new();
     write_message(&mut buf, &msg).unwrap();
     let decoded: ClientMessage = read_message(&mut buf.as_slice(), MAX_FRAME_SIZE).unwrap();
@@ -1120,24 +532,15 @@ fn framing_over_unix_socketpair() {
     let (mut a, mut b) = UnixStream::pair().expect("socketpair");
 
     let messages = vec![
-        ClientMessage::Hello {
-            version: PROTOCOL_VERSION,
-            cols: 200,
-            rows: 60,
-            cell_width_px: 8,
-            cell_height_px: 16,
-            requested_encoding: RenderEncoding::SemanticFrame,
-            keybindings: ClientKeybindings::Server,
-            launch_mode: ClientLaunchMode::App,
-        },
-        ClientMessage::Input {
+        hello_msg(80, 24),
+        ClientMessage::LegacyInput {
             data: b"hello world".to_vec(),
         },
-        ClientMessage::ClipboardImage {
+        ClientMessage::LegacyClipboard {
             extension: "png".to_owned(),
             data: vec![0x89, b'P', b'N', b'G'],
         },
-        ClientMessage::Resize {
+        ClientMessage::LegacyResize {
             cols: 100,
             rows: 30,
             cell_width_px: 8,

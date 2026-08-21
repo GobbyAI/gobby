@@ -8,8 +8,9 @@ constants is owned by plan 3.2, not this module.
 from __future__ import annotations
 
 MAX_FRAME_SIZE = 2 * 1024 * 1024
-WORST_CELL_BYTES = 64
-MAX_CELLS = MAX_FRAME_SIZE // WORST_CELL_BYTES
+FRAME_HEADER = 64
+WORST_CELL_BYTES = 96
+MAX_CELLS = (MAX_FRAME_SIZE - FRAME_HEADER) // WORST_CELL_BYTES
 MAX_ROWS = 1024
 MAX_COLS = 1024
 MIN_ROWS = 1

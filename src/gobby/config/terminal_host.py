@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+_MIB = 1024 * 1024
+
 
 class TerminalHostConfig(BaseModel):
     """Daemon supervision settings for the gterm host process."""
@@ -29,4 +31,46 @@ class TerminalHostConfig(BaseModel):
         default=10.0,
         ge=0,
         description="Grace period for host_shutdown and process-group reaping.",
+    )
+    max_attachments_per_terminal: int = Field(
+        default=8,
+        ge=1,
+        le=8,
+        description="Maximum user frame attachments on one terminal.",
+    )
+    max_attachments_total: int = Field(
+        default=128,
+        ge=4,
+        le=128,
+        description="Attachment pool including four reserved lifecycle slots.",
+    )
+    max_attached_terminals: int = Field(
+        default=64,
+        ge=1,
+        le=64,
+        description="Maximum distinct terminals the host will observe.",
+    )
+    native_scrollback_max_lines: int = Field(
+        default=10_000,
+        ge=500,
+        le=50_000,
+        description="Oldest-first native scrollback line ceiling.",
+    )
+    native_scrollback_max_bytes: int = Field(
+        default=8 * _MIB,
+        ge=256 * 1024,
+        le=32 * _MIB,
+        description="Oldest-first native scrollback byte ceiling.",
+    )
+    tmux_attach_history_lines: int = Field(
+        default=500,
+        ge=1,
+        le=2000,
+        description="AttachHistory line cap for tmux observers (3.4).",
+    )
+    tmux_attach_history_max_bytes: int = Field(
+        default=256 * 1024,
+        ge=1024,
+        le=256 * 1024,
+        description="AttachHistory byte cap for tmux observers (3.4).",
     )

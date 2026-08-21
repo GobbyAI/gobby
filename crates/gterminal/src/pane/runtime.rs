@@ -433,6 +433,101 @@ impl PaneRuntime {
             render_notify,
         })
     }
+
+    /// Attach Ghostty + the PTY actor to an already-forked master fd (exec barrier).
+    #[cfg(unix)]
+    pub fn from_master_fd(
+        rows: u16,
+        cols: u16,
+        scrollback_limit_bytes: usize,
+        host_terminal_theme: crate::terminal_theme::TerminalTheme,
+        host_terminal_appearance: Option<crate::terminal_theme::HostAppearance>,
+        master_fd: std::os::fd::OwnedFd,
+        child_pid_value: u32,
+    ) -> std::io::Result<Self> {
+        let pane_id = PaneId::alloc();
+        let (response_tx, _response_rx) = mpsc::channel::<Bytes>(1);
+        let mut terminal = crate::ghostty::Terminal::new(cols, rows, scrollback_limit_bytes)
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        if crate::kitty_graphics::is_enabled() {
+            terminal
+                .enable_kitty_graphics()
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+        }
+        let pane_terminal = GhosttyPaneTerminal::new(terminal, response_tx.clone())?;
+        pane_terminal.apply_host_terminal_theme(host_terminal_theme);
+        let _ = pane_terminal.apply_host_terminal_appearance(host_terminal_appearance);
+        let terminal = Arc::new(PaneTerminal::new(pane_terminal));
+        let kitty_keyboard_flags = Arc::new(AtomicU16::new(0));
+        let render_notify = Arc::new(Notify::new());
+        let child_pid = Arc::new(AtomicU32::new(child_pid_value));
+        let reported_cwd = Arc::new(Mutex::new(None));
+        let child_wait_completed = Arc::new(AtomicBool::new(false));
+        {
+            let child_wait_completed = child_wait_completed.clone();
+            let pid = child_pid_value as i32;
+            tokio::task::spawn_blocking(move || {
+                let mut status = 0;
+                unsafe {
+                    libc::waitpid(pid, &mut status, 0);
+                }
+                child_wait_completed.store(true, Ordering::Release);
+            });
+        }
+        let io = {
+            let terminal = terminal.clone();
+            let response_writer = response_tx.clone();
+            let render_notify = render_notify.clone();
+            let child_pid = child_pid.clone();
+            let reported_cwd = reported_cwd.clone();
+            let rt = tokio::runtime::Handle::current();
+            let on_read = Box::new(move |bytes: &[u8]| {
+                let shell_pid = child_pid.load(Ordering::Acquire);
+                let result =
+                    terminal.process_pty_bytes(pane_id, shell_pid, bytes, &response_writer);
+                if result.request_render {
+                    render_notify.notify_one();
+                }
+                if let Some(delay) = result.render_delay {
+                    let render_notify = render_notify.clone();
+                    rt.spawn(async move {
+                        tokio::time::sleep(delay).await;
+                        render_notify.notify_one();
+                    });
+                }
+                if let Some(cwd) = result.reported_cwd.clone() {
+                    if let Ok(mut reported) = reported_cwd.lock() {
+                        *reported = Some(cwd);
+                    }
+                }
+                for content in result.clipboard_writes {
+                    let _ = crate::platform::write_clipboard(&content);
+                }
+                PtyReadResult {
+                    terminal_responses: result.terminal_responses,
+                }
+            });
+            PaneRuntimeIo::Actor(PtyIoActor::spawn(PtyIoActorConfig {
+                pane_id: pane_id.raw(),
+                master_fd,
+                initially_quiesced: false,
+                on_read,
+                on_reader_exit: None,
+            })?)
+        };
+        Ok(Self {
+            pane_id,
+            terminal,
+            io,
+            current_size: Cell::new((rows, cols, 0, 0)),
+            child_pid,
+            reported_cwd,
+            child_wait_completed: Some(child_wait_completed),
+            kitty_keyboard_flags,
+            preserve_processes_on_drop: false,
+            render_notify,
+        })
+    }
 }
 
 include!("runtime_ops.rs");

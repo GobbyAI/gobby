@@ -4113,6 +4113,61 @@
     },
     {
       "activation": "live",
+      "default": 64,
+      "description": "Maximum distinct terminals the host will observe.",
+      "key": "terminal_host.max_attached_terminals",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 8,
+      "description": "Maximum user frame attachments on one terminal.",
+      "key": "terminal_host.max_attachments_per_terminal",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 128,
+      "description": "Attachment pool including four reserved lifecycle slots.",
+      "key": "terminal_host.max_attachments_total",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 8388608,
+      "description": "Oldest-first native scrollback byte ceiling.",
+      "key": "terminal_host.native_scrollback_max_bytes",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 10000,
+      "description": "Oldest-first native scrollback line ceiling.",
+      "key": "terminal_host.native_scrollback_max_lines",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
       "default": 10.0,
       "description": "Grace period for host_shutdown and process-group reaping.",
       "key": "terminal_host.shutdown_grace_seconds",
@@ -4131,6 +4186,28 @@
       "namespace": "terminal_host",
       "secrecy": "none",
       "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 500,
+      "description": "AttachHistory line cap for tmux observers (3.4).",
+      "key": "terminal_host.tmux_attach_history_lines",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 262144,
+      "description": "AttachHistory byte cap for tmux observers (3.4).",
+      "key": "terminal_host.tmux_attach_history_max_bytes",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": "integer",
       "visibility": "public"
     },
     {

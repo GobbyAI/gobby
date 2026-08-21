@@ -32,17 +32,46 @@ pub fn write_token(dir: &Path, token: &str) {
 }
 
 pub fn spawn_host(socket_dir: &Path) -> Child {
+    spawn_host_with_args(socket_dir, &[])
+}
+
+pub fn spawn_host_with_args(socket_dir: &Path, extra: &[&str]) -> Child {
     let log_path = socket_dir.join("gterm.log");
-    Command::new(gterm_bin())
-        .arg("host")
+    let token_path = socket_dir.join("local_cli_token");
+    if !token_path.exists() {
+        std::fs::write(&token_path, "local-token").expect("write local token");
+    }
+    let mut cmd = Command::new(gterm_bin());
+    cmd.arg("host")
         .arg("--socket-dir")
         .arg(socket_dir)
+        .args(extra)
         .env("GTERM_LOG_FILE", &log_path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn gterm host")
+        .stderr(Stdio::piped());
+    cmd.spawn().expect("spawn gterm host")
+}
+
+pub fn hello_control(stream: &mut UnixStream, token: &str) -> Value {
+    send_json(
+        stream,
+        &serde_json::json!({
+            "method": "hello",
+            "protocol_version": 1,
+            "control_token": token,
+        }),
+    );
+    recv_json(stream)
+}
+
+pub fn rpc(stream: &mut UnixStream, method: &str, extra: serde_json::Value) -> Value {
+    let mut req = extra;
+    if let Some(obj) = req.as_object_mut() {
+        obj.insert("method".into(), serde_json::Value::String(method.into()));
+    }
+    send_json(stream, &req);
+    recv_json(stream)
 }
 
 pub fn wait_socket(path: &Path) {
