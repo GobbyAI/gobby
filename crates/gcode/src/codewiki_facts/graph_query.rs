@@ -118,7 +118,8 @@ pub struct EdgeQueryPlan {
     pub keys: ScopeKeys,
     pub peer_keys: ScopeKeys,
     pub limit: usize,
-    pub after: Option<(String, String)>,
+    /// Keyset cursor `(source, target, rel)` matching `ORDER BY source, target, rel`.
+    pub after: Option<(String, String, String)>,
 }
 
 #[cfg(test)]
@@ -150,7 +151,7 @@ impl EdgeQueryPlan {
         }
     }
 
-    pub fn with_after(mut self, after: Option<(String, String)>) -> Self {
+    pub fn with_after(mut self, after: Option<(String, String, String)>) -> Self {
         self.after = after;
         self
     }
@@ -182,7 +183,7 @@ impl EdgeQueryPlan {
             "project".to_string(),
             typed_query::cypher_string_literal(project_id),
         )]);
-        if let Some((after_source, after_target)) = &self.after {
+        if let Some((after_source, after_target, after_rel)) = &self.after {
             params.insert(
                 "after_source".to_string(),
                 typed_query::cypher_string_literal(after_source),
@@ -190,6 +191,10 @@ impl EdgeQueryPlan {
             params.insert(
                 "after_target".to_string(),
                 typed_query::cypher_string_literal(after_target),
+            );
+            params.insert(
+                "after_rel".to_string(),
+                typed_query::cypher_string_literal(after_rel),
             );
         }
         (query, params)
@@ -236,10 +241,13 @@ impl EdgeQueryPlan {
             ScopeKeys::Symbols(ids) => self.list_predicates(ids, true),
         };
         if self.after.is_some() && predicates.first().map(String::as_str) != Some("false") {
-            predicates.push(
-                "(source > $after_source OR (source = $after_source AND target > $after_target))"
-                    .to_string(),
-            );
+            let (source_id, target_id) = identity_fields(self.kind);
+            predicates.push(format!(
+                "({source_id} > $after_source OR \
+                 ({source_id} = $after_source AND {target_id} > $after_target) OR \
+                 ({source_id} = $after_source AND {target_id} = $after_target \
+                  AND type(r) > $after_rel))"
+            ));
         }
         if self.kind == GraphEdgeKind::Call
             && predicates.first().map(String::as_str) != Some("false")
@@ -647,6 +655,15 @@ fn return_clause(kind: GraphEdgeKind) -> &'static str {
              'file' AS source_kind, 'module' AS target_kind, \
              source.path AS owner_path, coalesce(r.content_hash, '') AS owner_hash"
         }
+    }
+}
+
+/// The node properties projected as the `source`/`target` columns, so keyset
+/// predicates compare the same values `ORDER BY source, target, rel` sorts on.
+fn identity_fields(kind: GraphEdgeKind) -> (&'static str, &'static str) {
+    match kind {
+        GraphEdgeKind::Import => ("source.path", "target.name"),
+        GraphEdgeKind::Call | GraphEdgeKind::Inheritance => ("source.id", "target.id"),
     }
 }
 

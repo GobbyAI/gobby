@@ -553,3 +553,71 @@ fn typed_import_keys_do_not_match_file_path_to_module_name() {
         vec![PublicEdge::new("collision", "local-dep", "IMPORTS")]
     );
 }
+
+#[test]
+fn keyset_cursor_orders_by_source_target_rel() {
+    let call = EdgeQueryPlan::new(
+        GraphEdgeKind::Call,
+        GraphDirection::Outgoing,
+        GraphScopeMode::Incident,
+        ScopeKeys::Symbols(vec!["sym-1".into()]),
+        4,
+    )
+    .with_after(Some(("sym-1".into(), "sym-2".into(), "CALLS".into())));
+    let (query, params) = call.render("project-id");
+    assert!(query.contains("ORDER BY source, target, rel"));
+    assert!(query.contains("source.id > $after_source"));
+    assert!(query.contains("source.id = $after_source AND target.id > $after_target"));
+    assert!(query.contains(
+        "source.id = $after_source AND target.id = $after_target AND type(r) > $after_rel"
+    ));
+    assert!(!query.contains("(source > $after_source"));
+    assert_eq!(params.get("after_rel").map(String::as_str), Some("'CALLS'"));
+    assert_eq!(
+        params.get("after_source").map(String::as_str),
+        Some("'sym-1'")
+    );
+    assert_eq!(
+        params.get("after_target").map(String::as_str),
+        Some("'sym-2'")
+    );
+
+    let inheritance = EdgeQueryPlan::new(
+        GraphEdgeKind::Inheritance,
+        GraphDirection::Outgoing,
+        GraphScopeMode::Incident,
+        ScopeKeys::Symbols(vec!["sym-1".into()]),
+        4,
+    )
+    .with_after(Some(("sym-1".into(), "sym-2".into(), "EXTENDS".into())));
+    let (query, _) = inheritance.render("project-id");
+    assert!(query.contains("target.id = $after_target AND type(r) > $after_rel"));
+
+    let import = EdgeQueryPlan::new(
+        GraphEdgeKind::Import,
+        GraphDirection::Outgoing,
+        GraphScopeMode::Incident,
+        ScopeKeys::Endpoints {
+            files: vec!["src/a.py".into()],
+            modules: Vec::new(),
+        },
+        4,
+    )
+    .with_after(Some(("src/a.py".into(), "pkg".into(), "IMPORTS".into())));
+    let (query, params) = import.render("project-id");
+    assert!(query.contains("source.path > $after_source"));
+    assert!(query.contains("source.path = $after_source AND target.name > $after_target"));
+    assert!(query.contains("type(r) > $after_rel"));
+    assert_eq!(params.len(), 4);
+
+    let first_page = EdgeQueryPlan::new(
+        GraphEdgeKind::Call,
+        GraphDirection::Outgoing,
+        GraphScopeMode::Incident,
+        ScopeKeys::Symbols(vec!["sym-1".into()]),
+        4,
+    );
+    let (query, params) = first_page.render("project-id");
+    assert!(!query.contains("$after_"));
+    assert_eq!(params.len(), 1);
+}

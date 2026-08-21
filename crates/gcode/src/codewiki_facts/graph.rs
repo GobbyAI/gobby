@@ -301,7 +301,7 @@ impl CodewikiFacts {
             }
             let raw_count = rows.len();
             for row in rows {
-                after = Some((row.source.clone(), row.target.clone()));
+                after = Some((row.source.clone(), row.target.clone(), row.rel.clone()));
                 if graph_query::incident_incoming_source_in_frontier(
                     plan,
                     &row.source,
