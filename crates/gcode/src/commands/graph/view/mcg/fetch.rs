@@ -22,7 +22,14 @@ use super::super::{
 use super::identity::{McgIdentity, close_endpoint, resolve_mcg_seed};
 use super::{McgHopFetch, assign_leiden_communities, walk_mcg};
 
-fn import_edge_to_candidate(edge: &GraphEdge, machine_id: &str) -> ViewEdgeCandidate {
+/// Import edge → walk candidate. The module endpoint's `file` is the unique
+/// provider from the identity map (the raw `target_file` column is the module
+/// name for `IMPORTS` rows, never a path).
+fn import_edge_to_candidate(
+    edge: &GraphEdge,
+    machine_id: &str,
+    identity: &McgIdentity,
+) -> ViewEdgeCandidate {
     ViewEdgeCandidate {
         source: CandidateEndpoint {
             kind: CandidateEndpointKind::File,
@@ -36,7 +43,7 @@ fn import_edge_to_candidate(edge: &GraphEdge, machine_id: &str) -> ViewEdgeCandi
             kind: CandidateEndpointKind::Module,
             id: edge.target.clone(),
             name: Some(edge.target_name.clone()),
-            file: non_empty(&edge.target_file).filter(|path| path != &edge.target),
+            file: identity.unique_provider(&edge.target),
             content_hash: None,
             machine_id: None,
         },
@@ -51,6 +58,7 @@ fn import_edge_to_candidate(edge: &GraphEdge, machine_id: &str) -> ViewEdgeCandi
 
 fn fetch_mcg_hop(
     facts: &CodewikiFacts,
+    identity: &McgIdentity,
     files: &[CandidateEndpoint],
     modules: &[CandidateEndpoint],
     exclude: &HashSet<PublicEdge>,
@@ -81,7 +89,7 @@ fn fetch_mcg_hop(
     let mut incoming = Vec::new();
     let mut outgoing = Vec::new();
     for edge in edges {
-        let candidate = import_edge_to_candidate(&edge, &machine_id);
+        let candidate = import_edge_to_candidate(&edge, &machine_id, identity);
         if module_set.contains(&edge.target) {
             incoming.push(candidate.clone());
         }
@@ -151,7 +159,7 @@ pub(crate) fn run(ctx: &Context, args: &GraphViewArgs, format: Format) -> anyhow
         incoming_limit,
         outgoing_limit,
         |edges| visible_map_for_candidates(ctx, edges),
-        |files, modules, exclude| fetch_mcg_hop(&facts, files, modules, exclude),
+        |files, modules, exclude| fetch_mcg_hop(&facts, &identity, files, modules, exclude),
         |endpoint| Ok(close_endpoint(endpoint, &identity)),
     )?;
     let (nodes, communities) = assign_leiden_communities(walk.nodes, &walk.edges);
@@ -170,4 +178,51 @@ pub(crate) fn run(ctx: &Context, args: &GraphViewArgs, format: Format) -> anyhow
     )
     .context("build mcg view payload")?;
     print_view(&payload, format)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{HashMap, HashSet};
+
+    use crate::codewiki_facts::{GraphEdge, GraphEdgeKind};
+
+    use super::super::identity::McgIdentity;
+    use super::import_edge_to_candidate;
+
+    fn import_edge(target: &str) -> GraphEdge {
+        GraphEdge {
+            source: "src/consumer.py".into(),
+            target: target.into(),
+            kind: GraphEdgeKind::Import,
+            rel: "IMPORTS".into(),
+            source_kind: "file".into(),
+            target_kind: "module".into(),
+            source_name: "src/consumer.py".into(),
+            target_name: target.into(),
+            source_file: "src/consumer.py".into(),
+            target_file: target.into(),
+            owner_path: "src/consumer.py".into(),
+            owner_hash: "hash-a".into(),
+        }
+    }
+
+    #[test]
+    fn mcg_import_edge_candidate_uses_identity_provider_not_target_file() {
+        let identity = McgIdentity {
+            visible_files: HashSet::from(["src/consumer.py".into(), "src/p.py".into()]),
+            providers: HashMap::from([
+                ("p".into(), vec!["src/p.py".into()]),
+                ("shared".into(), vec!["src/a.py".into(), "src/b.py".into()]),
+            ]),
+            aliases: HashMap::from([("src/p.py".into(), vec!["p".into()])]),
+        };
+        let unique = import_edge_to_candidate(&import_edge("p"), "machine-1", &identity);
+        assert_eq!(unique.target.file.as_deref(), Some("src/p.py"));
+        assert_eq!(unique.source.file.as_deref(), Some("src/consumer.py"));
+        assert_eq!(unique.owner_machine, "machine-1");
+        let ambiguous = import_edge_to_candidate(&import_edge("shared"), "machine-1", &identity);
+        assert_eq!(ambiguous.target.file, None);
+        let unknown = import_edge_to_candidate(&import_edge("dep"), "machine-1", &identity);
+        assert_eq!(unknown.target.file, None);
+    }
 }

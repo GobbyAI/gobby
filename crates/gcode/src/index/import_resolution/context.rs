@@ -352,23 +352,13 @@ impl ImportResolutionContext {
             .unwrap_or_default()
     }
 
-    pub(crate) fn candidate_files_for_module(
-        &self,
-        module: &str,
-        importer: Option<&str>,
-    ) -> Vec<String> {
+    /// Specifier-only lookup: absolute Python dotted modules plus the Go, Java,
+    /// C#, Kotlin, Scala, Lua, PHP, Ruby, and Elixir declaration maps. Relative
+    /// forms (Python `.x`, JS `./x`) return nothing — they need an importer.
+    pub(crate) fn importer_independent_candidates(&self, module: &str) -> Vec<String> {
         let mut files = Vec::new();
-        if let Some(importer) = importer {
-            if let Some(local) = python_local_module_lookup(module, importer) {
-                files.extend(python_candidate_files(&local));
-            }
-            files.extend(self.js_candidate_files(importer, module));
-            if let Some(binding) = self.rust_import_candidate(importer, module) {
-                files.extend(binding.candidate_files);
-            }
-            files.extend(self.objc_import_candidate_files(importer, module));
-        } else if let Some(local) = python_local_module_lookup(module, "") {
-            files.extend(python_candidate_files(&local));
+        if !module.starts_with('.') {
+            files.extend(python_candidate_files(module));
         }
         files.extend(self.go_candidate_files(module));
         files.extend(self.java_candidate_files(module));
@@ -384,32 +374,65 @@ impl ImportResolutionContext {
         files
     }
 
-    pub(crate) fn path_derived_module_names(&self, file_path: &str) -> Vec<String> {
-        let mut names = python_module_names_for_rel(file_path);
-        invert_named_files(&self.java_class_files, file_path, &mut names);
-        invert_named_files(&self.csharp_type_files, file_path, &mut names);
-        invert_named_files(&self.kotlin_package_files, file_path, &mut names);
-        invert_named_files(&self.scala_package_files, file_path, &mut names);
-        invert_named_files(&self.lua_module_files, file_path, &mut names);
-        invert_named_files(&self.php_symbol_files, file_path, &mut names);
-        invert_named_files(&self.ruby_constant_files, file_path, &mut names);
-        invert_named_files(&self.elixir_module_files, file_path, &mut names);
-        invert_named_files(&self.swift_module_files, file_path, &mut names);
-        names.sort();
-        names.dedup();
-        names
-    }
-}
-
-fn invert_named_files(
-    index: &HashMap<String, Vec<String>>,
-    file_path: &str,
-    names: &mut Vec<String>,
-) {
-    for (name, files) in index {
-        if files.iter().any(|file| file == file_path) {
-            names.push(name.clone());
+    /// Importer-aware lookup: Python relative specifiers resolved against the
+    /// importer's package, JS/TS paths, Rust `use` paths, and Objective-C imports.
+    pub(crate) fn importer_candidates(&self, module: &str, importer: &str) -> Vec<String> {
+        let mut files = Vec::new();
+        if module.starts_with('.')
+            && let Some(local) = python_local_module_lookup(module, importer)
+        {
+            files.extend(python_candidate_files(&local));
         }
+        files.extend(self.js_candidate_files(importer, module));
+        if let Some(binding) = self.rust_import_candidate(importer, module) {
+            files.extend(binding.candidate_files);
+        }
+        files.extend(self.objc_import_candidate_files(importer, module));
+        files.sort();
+        files.dedup();
+        files
+    }
+
+    /// Module names each of `files` declares: one pass over the declaration maps
+    /// plus the Python path-derived names. Values are sorted and deduplicated.
+    pub(crate) fn path_derived_module_names_for_files<'a>(
+        &self,
+        files: impl IntoIterator<Item = &'a str>,
+    ) -> HashMap<String, Vec<String>> {
+        let mut declared: HashMap<&str, Vec<&str>> = HashMap::new();
+        for index in [
+            &self.java_class_files,
+            &self.csharp_type_files,
+            &self.kotlin_package_files,
+            &self.scala_package_files,
+            &self.lua_module_files,
+            &self.php_symbol_files,
+            &self.ruby_constant_files,
+            &self.elixir_module_files,
+            &self.swift_module_files,
+        ] {
+            for (name, declaring_files) in index {
+                for file in declaring_files {
+                    declared.entry(file.as_str()).or_default().push(name);
+                }
+            }
+        }
+        files
+            .into_iter()
+            .map(|file| {
+                let mut names = python_module_names_for_rel(file);
+                names.extend(
+                    declared
+                        .get(file)
+                        .into_iter()
+                        .flatten()
+                        .map(|name| (*name).to_string()),
+                );
+                names.sort();
+                names.dedup();
+                (file.to_string(), names)
+            })
+            .collect()
     }
 }
 
