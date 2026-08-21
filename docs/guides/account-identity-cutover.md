@@ -186,3 +186,26 @@ For post-commit verification or smoke failure:
 
 Keep both backup and rehearsal evidence through the soak period. ConfigStore
 4.3 identity dependency tracking is covered by task #19982.
+
+## Post-soak scratch teardown
+
+The scratch hub is a Compose project (`gobby-identity-rehearsal` in the
+reference run) whose containers reuse the pytest names
+`gobby-postgres-test-1`, `gobby-qdrant-test-1`, and `gobby-falkordb-test-1`
+on ports 60892 / 60990 / 60992. It is not the pytest fixture. Those names
+and port 60892 are also the intended `docker-compose.test.yml` singleton, so
+leave the scratch stack down before starting `postgres-test`.
+
+Every scratch service is behind a Compose profile. Tear the project down
+with `--profile all` and `-v` (named `gobby_test_*` volumes only):
+
+```bash
+docker compose --profile all \
+  -p gobby-identity-rehearsal \
+  -f "$SCRATCH_GOBBY_HOME/services/docker-compose.yml" \
+  down -v --remove-orphans
+```
+
+Do not pass `-p services` or `~/.gobby/services/docker-compose.yml` to
+`down`. After soak, delete the rehearsal evidence bundle under
+`~/.gobby/rehearsals/account-identity-cutover/`.

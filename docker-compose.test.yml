@@ -1,3 +1,6 @@
+# Cwd-independent project so worktrees reuse gobby-postgres-test-1.
+name: gobby
+
 services:
   postgres-test:
     build:

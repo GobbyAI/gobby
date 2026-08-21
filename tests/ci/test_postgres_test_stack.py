@@ -90,6 +90,7 @@ def test_test_compose_defines_ephemeral_postgres_test_service(repo_root: Path) -
     assert compose_path.is_file(), "docker-compose.test.yml must define postgres-test"
 
     compose = _load_yaml(compose_path)
+    assert compose["name"] == "gobby"
     services = _mapping(compose["services"])
     postgres = _mapping(services["postgres-test"])
     manifest = _load_pg_search_manifest(repo_root)
