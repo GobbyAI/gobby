@@ -102,6 +102,53 @@ class TestFormatStatusMessage:
         assert "OpenAI-compatible endpoint" in line
         assert "Ollama" not in line
 
+    def test_format_status_message_renders_generation_endpoint_health(self) -> None:
+        api_data = {
+            "generation_endpoints": [
+                {
+                    "name": "vllm",
+                    "protocol": "vllm",
+                    "provider_label": "vLLM",
+                    "wire_api": "chat-completions",
+                    "api_base": "http://localhost:8321/v1",
+                    "model": "auto",
+                    "healthy": True,
+                    "served_model": "mlx-community/Qwen2.5-3B-Instruct-4bit",
+                    "model_count": 1,
+                    "error": None,
+                },
+                {
+                    "name": "vllm-vision",
+                    "protocol": "vllm",
+                    "provider_label": "vLLM",
+                    "wire_api": "chat-completions",
+                    "api_base": "http://localhost:8322/v1",
+                    "model": "auto",
+                    "healthy": False,
+                    "served_model": None,
+                    "model_count": None,
+                    "error": "Cannot connect to local vllm endpoint",
+                },
+            ]
+        }
+        result = format_status_message(running=True, api_data=api_data)
+
+        line = _status_line(result, "Generation")
+        assert "vllm (vLLM) http://localhost:8321 — healthy" in line
+        assert "mlx-community/Qwen2.5-3B-Instruct-4bit" in line
+        assert (
+            "vllm-vision (vLLM) http://localhost:8322 — unreachable "
+            "(Cannot connect to local vllm endpoint)"
+        ) in result
+        # Continuation lines carry no repeated label.
+        assert result.count("Generation:") == 1
+
+        absent = format_status_message(running=True, api_data={})
+        assert "Generation:" not in absent
+
+        empty = format_status_message(running=True, api_data={"generation_endpoints": []})
+        assert "Generation:" not in empty
+
     def test_stopped_status_no_details(self) -> None:
         result = format_status_message(
             running=False,

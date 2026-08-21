@@ -450,6 +450,36 @@ def format_status_message(
         elif isinstance(lmstudio, dict):
             lines.append(f"  {'Embeddings:':<{_LW}}LM Studio (stopped)")
 
+        generation_endpoints = data.get("generation_endpoints")
+        if isinstance(generation_endpoints, list):
+            printed = 0
+            for entry in generation_endpoints:
+                if not isinstance(entry, dict):
+                    continue
+                name = _safe_status_text(entry.get("name")) or "endpoint"
+                provider_label = _safe_status_text(entry.get("provider_label"))
+                api_base = _safe_status_text(entry.get("api_base")) or ""
+                origin = api_base.rstrip("/")
+                if origin.endswith("/v1"):
+                    origin = origin[: -len("/v1")]
+                if entry.get("healthy"):
+                    served = (
+                        _safe_status_text(entry.get("served_model"))
+                        or _safe_status_text(entry.get("model"))
+                        or "unknown model"
+                    )
+                    state = f"healthy, {served}"
+                else:
+                    error = _safe_status_text(entry.get("error")) or "unknown error"
+                    if len(error) > 80:
+                        error = f"{error[:77]}..."
+                    state = f"unreachable ({error})"
+                identity = f"{name} ({provider_label})" if provider_label else name
+                detail = f"{identity} {origin} — {state}" if origin else f"{identity} — {state}"
+                row_label = "Generation:" if printed == 0 else ""
+                lines.append(f"  {row_label:<{_LW}}{detail}")
+                printed += 1
+
         automation_loop = (
             data.get("system_services", {}).get("automation_loop")
             if isinstance(data.get("system_services"), dict)
