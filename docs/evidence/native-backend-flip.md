@@ -61,3 +61,56 @@ finish in place.
 - count: `0`
 - query: `list_tasks label=terminal priority=1` then count `is_closed=false`
 - query_timestamp: `2026-08-17T18:00:00Z`
+
+## TDD validation
+
+Exact command (red, green, and final-green):
+
+```bash
+GOBBY_TEST_PROTECT=1 uv run pytest tests/terminals/test_backend_selection.py tests/config/test_terminals.py -v --tb=short
+```
+
+Red (before `check_native_backend_flip` existed), collection failed:
+
+```
+ImportError: cannot import name 'check_native_backend_flip' from 'gobby.config.terminals'
+ERROR tests/terminals/test_backend_selection.py
+Interrupted: 1 error during collection
+1 error in 0.10s
+```
+
+Green and final-green (after the default flip, checker, evidence artifact, and rollback note):
+
+```
+tests/terminals/test_backend_selection.py::test_flip_preserves_explicit_and_external PASSED
+tests/terminals/test_backend_selection.py::test_flip_gate_rejects_every_nonconforming_artifact PASSED
+tests/config/test_terminals.py::test_shared_terminal_config_precedes_host_config PASSED
+3 passed in 1.05s
+```
+
+Test-quality audit:
+
+```bash
+uv run gobby test-quality audit tests/terminals/test_backend_selection.py tests/config/test_terminals.py --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high
+```
+
+```
+Files scanned: 2
+Tests scanned: 3
+Issues: 0
+New issues: 0
+Failing new issues >= high: 0
+```
+
+Test-types audit:
+
+```bash
+uv run gobby test-types audit tests/terminals/test_backend_selection.py tests/config/test_terminals.py --baseline .gobby/test-types-baseline.json --fail-on-new
+```
+
+```
+Files scanned: 2
+Errors: 0
+New errors: 0
+Failing new errors >= high: 0
+```
