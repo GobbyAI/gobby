@@ -30,7 +30,7 @@ def resolve_terminal_backend(
         config = getattr(daemon_config, "terminals", None)
         if isinstance(config, TerminalConfig):
             return config.default_backend
-        return "tmux"
+        return TerminalConfig().default_backend
     if requested == "native":
         return "native"
     if requested == "tmux":

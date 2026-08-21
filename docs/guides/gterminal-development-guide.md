@@ -69,3 +69,16 @@ Tag prefixes: `gterm-v*` and `gclient-v*`. **Publish `gobby-terminal` version
 *V* before tagging `gclient-v*` that depends on *V*.** `release-gclient.yml`
 preflights crates.io and fails before `cargo package` / `cargo publish` if that
 version is unpublished or yanked. Do not invent a combined workflow.
+
+## Default backend and rollback
+
+Gobby-owned launches use `terminals.default_backend: native`
+(`TerminalConfig.default_backend`). tmux remains the backend for externally
+discovered sessions (`ownership: external`) and stays selectable per spawn via
+`terminal_backend`. Evidence for the flip lives in
+`docs/evidence/native-backend-flip.md`.
+
+Rollback: set `terminals.default_backend` back to `tmux` in
+`src/gobby/install/shared/config/config.yaml` (and any overlay that copies it).
+Running native terminals finish in place — symmetric to the forward migration.
+Do not kill live native PTYs as part of the rollback.

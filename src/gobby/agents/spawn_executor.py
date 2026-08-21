@@ -125,7 +125,7 @@ def _default_backend(request: SpawnRequest) -> str:
     config = getattr(request.daemon_config, "terminals", None)
     if isinstance(config, TerminalConfig):
         return config.default_backend
-    return "tmux"
+    return TerminalConfig().default_backend
 
 
 def _spawn_in_doubt_seconds(request: SpawnRequest) -> float:

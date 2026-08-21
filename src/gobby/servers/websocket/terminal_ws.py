@@ -168,7 +168,7 @@ class TerminalWsMixin:
                 {"type": "terminal_create_result", "success": False, "request_id": request_id},
             )
             return
-        runtime = registry.resolve(getattr(self.terminal_config, "default_backend", "tmux"))
+        runtime = registry.resolve(getattr(self.terminal_config, "default_backend", "native"))
         command = data.get("command") or ["zsh"]
         if not isinstance(command, list):
             command = ["zsh"]

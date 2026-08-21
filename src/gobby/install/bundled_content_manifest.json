@@ -2,7 +2,7 @@
   "files": {
     "CLAUDE.md": "8996e013ec09fad69e4ff2cc82415af0ac1adcb9f103fa3d8ffa71e2e16f7494",
     "config/bootstrap.yaml": "8ce11e9592c70d51bb3a5d9541490592d62047d692d11c9f0012d1b036fa5864",
-    "config/config.yaml": "8f1edfa8b7966940bf866a7fcc996ab5f38fd3205de58b4522b12a55bf46b097",
+    "config/config.yaml": "78deb56e4c97f48d785ebd7976d85f197bfeb28a182f2219a306b0cbf8f19c9e",
     "config/tty_config.yaml": "3b70d450cc4cd2788308827cd2485b53d023009ff4e66b5ec4e65076f05a7fdb",
     "detection/agy.toml": "638c9dd6e275f978e6fdef4e29faa020363ec7c70319527fa1b24ced84317c13",
     "detection/claude.toml": "14d721df51c599ea6ef5df5f18964e847daad24bf72cb97c53ffe5173b95bfd6",
