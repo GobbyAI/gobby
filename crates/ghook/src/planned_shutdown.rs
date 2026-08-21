@@ -14,7 +14,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const DEFAULT_ALLOW_SECONDS: f64 = 120.0;
 const HEALTH_TIMEOUT: Duration = Duration::from_millis(350);
-const HEALTH_ENDPOINT: &str = "/api/admin/health";
+const HEALTH_ENDPOINT: &str = "/api/health";
 const ACTIVE_MARKER: &str = "shutdown_intent_active.json";
 const ALLOWED_SOURCES: [&str; 4] = ["cli_", "http_", "service_", "mcp_"];
 
@@ -312,7 +312,7 @@ mod tests {
             let mut buf = [0_u8; 1024];
             let n = stream.read(&mut buf).unwrap();
             let request = String::from_utf8_lossy(&buf[..n]);
-            assert!(request.contains("GET /api/admin/health HTTP/1.1"));
+            assert!(request.contains("GET /api/health HTTP/1.1"));
             stream
                 .write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n")
                 .unwrap();

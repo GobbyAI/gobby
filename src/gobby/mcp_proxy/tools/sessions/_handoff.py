@@ -21,6 +21,31 @@ if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
 
 
+def _is_bound_clear_successor(
+    session_manager: SessionManager,
+    caller_session_id: str | None,
+    parent_session: Any,
+) -> bool:
+    """Return whether the caller is the bound child of ``parent_session``."""
+    if not isinstance(caller_session_id, str):
+        return False
+    parent_id = getattr(parent_session, "id", None)
+    if not isinstance(parent_id, str):
+        return False
+    caller = session_manager.get(caller_session_id)
+    if caller is None or getattr(caller, "parent_session_id", None) != parent_id:
+        return False
+    parent_project_id = getattr(parent_session, "project_id", None)
+    caller_project_id = getattr(caller, "project_id", None)
+    if (
+        isinstance(parent_project_id, str)
+        and isinstance(caller_project_id, str)
+        and parent_project_id != caller_project_id
+    ):
+        return False
+    return True
+
+
 def register_handoff_tools(
     registry: InternalToolRegistry,
     session_manager: SessionManager | None,
@@ -286,14 +311,21 @@ def register_handoff_tools(
             }
 
         # In-place compaction reactivates the same row, so a session may read
-        # its own pre-compaction summary after it is active again. Every other
-        # target still requires handoff_ready — an open status exception would
-        # expose summaries from any active same-project peer.
+        # its own pre-compaction summary after it is active again. A bound
+        # clear_self successor may also read its direct predecessor after that
+        # row expires. Every other target still requires handoff_ready.
         caller_session_id = get_current_session_id()
         is_self_read = isinstance(caller_session_id, str) and caller_session_id == getattr(
             parent_session, "id", None
         )
-        if getattr(parent_session, "status", None) != "handoff_ready" and not is_self_read:
+        is_bound_successor = _is_bound_clear_successor(
+            session_manager, caller_session_id, parent_session
+        )
+        if (
+            getattr(parent_session, "status", None) != "handoff_ready"
+            and not is_self_read
+            and not is_bound_successor
+        ):
             return {
                 "success": False,
                 "found": False,

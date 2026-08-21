@@ -242,7 +242,7 @@ def test_http_auth_matrix(daemon_instance: DaemonInstance) -> None:
         timeout=15.0,
         follow_redirects=True,
     ) as client:
-        assert client.get("/api/admin/health").status_code == 200
+        assert client.get("/api/health").status_code == 200
         assert client.post("/mcp", json=_MCP_INITIALIZE).status_code == 401
         for method, path, payload in _protected_requests(unauthenticated_session):
             assert _request(client, method, path, payload).status_code == 401

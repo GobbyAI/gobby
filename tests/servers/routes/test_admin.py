@@ -12,7 +12,7 @@ from opentelemetry.sdk.metrics import MeterProvider
 from gobby.config.persistence import DatabasesConfig
 from gobby.hooks.runtime_compat import GhookRuntimeDiagnostic, GhookRuntimeState
 from gobby.mcp_proxy.models import ConnectionState, HealthState, MCPConnectionHealth
-from gobby.servers.routes.admin import create_admin_router
+from gobby.servers.routes.admin import create_admin_router, create_health_router
 from gobby.shutdown_intent import ShutdownIntent, read_shutdown_intent, write_shutdown_intent
 from gobby.telemetry import health_metrics
 from gobby.telemetry.health_metrics import (
@@ -951,6 +951,7 @@ class TestHealthEndpoint:
         app = FastAPI()
         router = create_admin_router(mock_server)
         app.include_router(router)
+        app.include_router(create_health_router(mock_server))
         return TestClient(app)
 
     @pytest.mark.parametrize(
@@ -982,7 +983,7 @@ class TestHealthEndpoint:
                 side_effect=lambda func, *args, **kwargs: func(*args, **kwargs),
             ) as mock_to_thread,
         ):
-            response = client.get("/api/admin/health")
+            response = client.get("/api/health")
 
         assert response.status_code == 200
         assert response.json()["status"] == expected_health
@@ -1006,7 +1007,7 @@ class TestHealthEndpoint:
         ):
             _init_llm_service(runner)
 
-        response = client.get("/api/admin/health")
+        response = client.get("/api/health")
 
         assert response.status_code == 200
         assert response.json()["status"] == "degraded"

@@ -67,10 +67,13 @@ pub(super) fn is_external_go_module(
     true
 }
 
-pub(super) fn rust_external_roots(import_context: &ImportResolutionContext) -> HashSet<String> {
+pub(super) fn rust_external_roots(
+    import_context: &ImportResolutionContext,
+    rel_path: &str,
+) -> HashSet<String> {
     let mut roots = import_context.rust_external_crates.clone();
     roots.extend(STANDARD_RUST_CRATES.iter().copied().map(ToOwned::to_owned));
-    if let Some(self_crate) = import_context.rust_self_crate_name.as_deref() {
+    if let Some(self_crate) = import_context.rust_self_crate_name_for(rel_path) {
         roots.remove(self_crate);
     }
     roots
@@ -240,11 +243,15 @@ pub(super) fn is_external_php_symbol(path: &str, import_context: &ImportResoluti
         })
 }
 
-pub(super) fn is_external_rust_root(root: &str, import_context: &ImportResolutionContext) -> bool {
+pub(super) fn is_external_rust_root(
+    root: &str,
+    rel_path: &str,
+    import_context: &ImportResolutionContext,
+) -> bool {
     if matches!(root, "crate" | "self" | "super") {
         return false;
     }
-    if import_context.rust_self_crate_name.as_deref() == Some(root) {
+    if import_context.rust_self_crate_name_for(rel_path) == Some(root) {
         return false;
     }
     import_context.rust_external_crates.contains(root) || STANDARD_RUST_CRATES.contains(&root)

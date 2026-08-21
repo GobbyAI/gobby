@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from importlib.resources import files
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -14,6 +15,7 @@ import yaml
 
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.event_handlers._session_start.handoff import (
+    SessionStartResolution,
     _bound_handoff_summary,
     prepare_compact_continuation_variables,
     resolve_session_start_identity,
@@ -22,8 +24,13 @@ from gobby.hooks.event_handlers._session_start.in_place_compact import (
     apply_in_place_compact_context_loss,
 )
 from gobby.hooks.events import HookEventType, HookResponse
+from gobby.hooks.session_types import HookSessionManager
 from gobby.hooks.tool_error_tracker import normalize_open_tool_error_records
 from gobby.llm.sdk_utils import HANDOFF_SUMMARY_INJECT_BUDGET
+from gobby.sessions.clear_continuation import (
+    ClearContinuationResolution,
+    stage_clear_attempt,
+)
 from gobby.sessions.compact_continuation import (
     COMPACT_HANDOFF_MARKER_VARIABLE,
     COMPACT_SELF_CONTINUE_PROMPT,
@@ -65,6 +72,7 @@ CLI_EXTERNAL_IDS = {
     "grok": "cccccccc-0000-4000-8000-000000000005",
 }
 TERMINAL_CONTEXT = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
+CLEAR_HANDOFF = "Continue epic #20539: bind the successor once and inject this handoff."
 _DEFAULT_TERMINAL_CONTEXT = object()
 
 
@@ -337,15 +345,27 @@ class TestResolveSessionStartIdentity:
         assert resolution.session is row
         assert "cwd/project drift" in caplog.text
 
-    def test_clear_source_skips_identity_resolution(self) -> None:
-        handler = _make_resolver_handler(_make_row())
+    @patch("gobby.hooks.event_handlers._session_start.handoff.resolve_clear_continuation")
+    def test_clear_source_resolves_marker_and_carries_predecessor(
+        self, mock_resolve_clear: MagicMock
+    ) -> None:
+        predecessor = _make_row(session_id="pred-clear-1")
+        mock_resolve_clear.return_value = ClearContinuationResolution(
+            predecessor=predecessor,
+            attempt_id="attempt-clear-1",
+        )
+        handler = _make_resolver_handler(predecessor)
+        input_data: dict[str, Any] = {
+            "source": "clear",
+            "terminal_context": {**TERMINAL_CONTEXT, "gobby_session_id": predecessor.id},
+        }
 
         resolution = resolve_session_start_identity(
             handler,
-            {"source": "clear"},
+            input_data,
             "clear",
-            external_id="ext-1",
-            machine_id="21000000-0000-4000-8000-000000000001",
+            external_id="ext-new",
+            machine_id=LOCAL_MACHINE_ID,
             project_id="project-1",
             cli_source="claude",
         )
@@ -353,7 +373,78 @@ class TestResolveSessionStartIdentity:
         assert not resolution.is_compact
         assert resolution.session is None
         assert resolution.session_source == "clear"
+        assert resolution.clear_predecessor is predecessor
+        assert resolution.clear_attempt_id == "attempt-clear-1"
+        assert resolution.clear_degrade_reason is None
+        mock_resolve_clear.assert_called_once()
+        kwargs = mock_resolve_clear.call_args.kwargs
+        assert kwargs["source"] == "claude"
+        assert kwargs["project_id"] == "project-1"
+        assert kwargs["machine_id"] == LOCAL_MACHINE_ID
+        assert kwargs["predecessor_hint"] == predecessor.id
         handler._session_manager.find_by_external_id.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "returned",
+        [
+            ClearContinuationResolution(),
+            ClearContinuationResolution(degrade_reason="expired"),
+            ClearContinuationResolution(degrade_reason="identity_mismatch"),
+            ClearContinuationResolution(degrade_reason="ambiguous"),
+            ClearContinuationResolution(degrade_reason="exception"),
+            ClearContinuationResolution(degrade_reason="cross_project"),
+            ClearContinuationResolution(degrade_reason="cross_machine"),
+        ],
+    )
+    @patch("gobby.hooks.event_handlers._session_start.handoff.resolve_clear_continuation")
+    def test_clear_unusable_marker_degrades_to_independent_start(
+        self,
+        mock_resolve_clear: MagicMock,
+        returned: ClearContinuationResolution,
+    ) -> None:
+        mock_resolve_clear.return_value = returned
+        handler = _make_resolver_handler(_make_row())
+
+        resolution = resolve_session_start_identity(
+            handler,
+            {"source": "clear", "terminal_context": dict(TERMINAL_CONTEXT)},
+            "clear",
+            external_id="ext-new",
+            machine_id=LOCAL_MACHINE_ID,
+            project_id="project-1",
+            cli_source="claude",
+        )
+
+        assert not resolution.is_compact
+        assert resolution.session is None
+        assert resolution.clear_predecessor is None
+        assert resolution.clear_attempt_id is None
+        assert resolution.session_source == "clear"
+        assert resolution.clear_degrade_reason == returned.degrade_reason
+        handler._session_manager.find_by_external_id.assert_not_called()
+
+    @patch("gobby.hooks.event_handlers._session_start.handoff.resolve_clear_continuation")
+    def test_clear_resolver_exception_degrades_to_independent_start(
+        self, mock_resolve_clear: MagicMock
+    ) -> None:
+        mock_resolve_clear.side_effect = RuntimeError("database unavailable")
+        handler = _make_resolver_handler(_make_row())
+
+        resolution = resolve_session_start_identity(
+            handler,
+            {"source": "clear", "terminal_context": dict(TERMINAL_CONTEXT)},
+            "clear",
+            external_id="ext-new",
+            machine_id=LOCAL_MACHINE_ID,
+            project_id="project-1",
+            cli_source="claude",
+        )
+
+        assert not resolution.is_compact
+        assert resolution.session is None
+        assert resolution.clear_predecessor is None
+        assert resolution.clear_attempt_id is None
+        assert resolution.clear_degrade_reason == "exception"
 
 
 class TestSessionStartInPlaceCompact:
@@ -1202,3 +1293,429 @@ class TestCompactSelfContinuation:
         assert COMPACT_SELF_CONTINUE_VARIABLE not in variables
         mock_schedule.assert_called_once()
         assert scheduled == []
+
+
+def _clear_start_event(
+    *,
+    external_id: str,
+    terminal_context: dict[str, Any] | None = None,
+    project_id: str = "project-1",
+    cli_source: str = "claude",
+) -> Any:
+    context = dict(TERMINAL_CONTEXT) if terminal_context is None else terminal_context
+    return make_event(
+        HookEventType.SESSION_START,
+        session_id=external_id,
+        source=cli_source,
+        data={
+            "source": "clear",
+            "cwd": "/some/dir",
+            "project_id": project_id,
+            "terminal_context": context,
+        },
+        metadata={},
+    )
+
+
+def _clear_resolution(
+    *,
+    predecessor: Any | None = None,
+    attempt_id: str | None = None,
+    degrade_reason: str | None = None,
+) -> SessionStartResolution:
+    return SessionStartResolution(
+        session=None,
+        session_source="clear",
+        clear_predecessor=predecessor,
+        clear_attempt_id=attempt_id,
+        clear_degrade_reason=degrade_reason,
+    )
+
+
+class TestSessionStartClearBinding:
+    """SessionStart(source=clear) binds a distinct successor after an atomic take."""
+
+    def _successor_row(self, session_id: str = "succ-clear-1") -> MagicMock:
+        row = _make_row(session_id=session_id, status="active")
+        row.parent_session_id = None
+        row.summary_markdown = None
+        return row
+
+    def test_clear_skips_live_predecessor_remap_and_registers_new_row(
+        self, mock_dependencies: dict[str, Any]
+    ) -> None:
+        predecessor = _make_row(session_id="pred-live-1", status="active")
+        successor = self._successor_row()
+        mock_dependencies["session_storage"].get.side_effect = (
+            lambda session_id: predecessor
+            if session_id == predecessor.id
+            else successor
+            if session_id == successor.id
+            else None
+        )
+        mock_dependencies["session_manager"].register_session.return_value = successor.id
+        mock_dependencies["task_manager"].list_tasks.return_value = []
+        handlers = EventHandlers(**mock_dependencies)
+        event = _clear_start_event(
+            external_id="new-ext-after-clear",
+            terminal_context={**TERMINAL_CONTEXT, "gobby_session_id": predecessor.id},
+        )
+        resolution = _clear_resolution(predecessor=predecessor, attempt_id="attempt-1")
+
+        with (
+            patch.object(handlers, "_handle_pre_created_session") as mock_precreated,
+            patch.object(handlers, "_activate_default_agent", return_value=None),
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.resolve_session_start_identity",
+                return_value=resolution,
+            ),
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.take_clear_handoff_marker",
+                return_value=True,
+            ),
+            patch("gobby.hooks.event_handlers._session_start.flow.seed_clear_handoff_variables"),
+            patch("gobby.hooks.event_handlers._session_start.flow.preserve_task_claim_state"),
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.schedule_clear_self_continuation",
+                return_value=True,
+            ),
+        ):
+            response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        mock_precreated.assert_not_called()
+        mock_dependencies["session_manager"].register_session.assert_called_once()
+        mock_dependencies["session_manager"].update.assert_not_called()
+        assert event.metadata["_platform_session_id"] == successor.id
+        assert event.metadata["_platform_session_id"] != predecessor.id
+
+    def test_clear_skips_inactive_precreated_early_return(
+        self, mock_dependencies: dict[str, Any]
+    ) -> None:
+        expired = _make_row(session_id="expired-ext-row", status="expired")
+        successor = self._successor_row("succ-after-expired")
+        mock_dependencies["session_storage"].get.side_effect = (
+            lambda session_id: expired
+            if session_id in {expired.id, "stale-ext"}
+            else successor
+            if session_id == successor.id
+            else None
+        )
+        mock_dependencies["session_manager"].register_session.return_value = successor.id
+        mock_dependencies["task_manager"].list_tasks.return_value = []
+        handlers = EventHandlers(**mock_dependencies)
+        event = _clear_start_event(external_id="stale-ext")
+
+        with (
+            patch.object(handlers, "_activate_default_agent", return_value=None),
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.resolve_session_start_identity",
+                return_value=_clear_resolution(),
+            ),
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.take_clear_handoff_marker"
+            ) as mock_take,
+        ):
+            response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        mock_dependencies["session_manager"].register_session.assert_called_once()
+        mock_take.assert_not_called()
+        assert event.metadata["_platform_session_id"] == successor.id
+
+    def test_clear_skips_web_chat_external_id_reuse(
+        self, mock_dependencies: dict[str, Any]
+    ) -> None:
+        web_chat = _make_row(session_id="web-chat-1", status="active")
+        web_chat.session_type = "web_chat"
+        successor = self._successor_row("succ-not-web")
+        mock_dependencies["session_storage"].find_by_external_id.return_value = web_chat
+        mock_dependencies["session_storage"].get.side_effect = (
+            lambda session_id: successor if session_id == successor.id else None
+        )
+        mock_dependencies["session_manager"].register_session.return_value = successor.id
+        mock_dependencies["task_manager"].list_tasks.return_value = []
+        handlers = EventHandlers(**mock_dependencies)
+        event = _clear_start_event(external_id="shared-ext")
+
+        with (
+            patch.object(handlers, "_handle_pre_created_session") as mock_precreated,
+            patch.object(handlers, "_activate_default_agent", return_value=None),
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.resolve_session_start_identity",
+                return_value=_clear_resolution(),
+            ),
+        ):
+            response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        mock_precreated.assert_not_called()
+        mock_dependencies["session_manager"].register_session.assert_called_once()
+        assert event.metadata["_platform_session_id"] == successor.id
+
+    def test_losing_take_skips_seed_claims_and_schedule(
+        self, mock_dependencies: dict[str, Any]
+    ) -> None:
+        predecessor = _make_row(session_id="pred-lost", status="active")
+        predecessor.summary_markdown = CLEAR_HANDOFF
+        successor = self._successor_row()
+        mock_dependencies["session_storage"].get.side_effect = (
+            lambda session_id: successor if session_id == successor.id else None
+        )
+        mock_dependencies["session_manager"].register_session.return_value = successor.id
+        mock_dependencies["task_manager"].list_tasks.return_value = []
+        handlers = EventHandlers(**mock_dependencies)
+        event = _clear_start_event(external_id="loser-ext")
+
+        with (
+            patch.object(handlers, "_activate_default_agent", return_value=None),
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.resolve_session_start_identity",
+                return_value=_clear_resolution(predecessor=predecessor, attempt_id="attempt-lost"),
+            ),
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.take_clear_handoff_marker",
+                return_value=False,
+            ) as mock_take,
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.seed_clear_handoff_variables"
+            ) as mock_seed,
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.preserve_task_claim_state"
+            ) as mock_claims,
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.schedule_clear_self_continuation"
+            ) as mock_schedule,
+        ):
+            response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        mock_take.assert_called_once()
+        assert mock_take.call_args.args[1] == predecessor.id
+        assert mock_take.call_args.kwargs["attempt_id"] == "attempt-lost"
+        assert mock_take.call_args.kwargs["successor_id"] == successor.id
+        mock_seed.assert_not_called()
+        mock_claims.assert_not_called()
+        mock_schedule.assert_not_called()
+        mock_dependencies["session_manager"].register_session.assert_called_once()
+        assert event.metadata["_platform_session_id"] == successor.id
+
+    def test_winning_take_seeds_transfers_claims_and_schedules(
+        self, mock_dependencies: dict[str, Any]
+    ) -> None:
+        predecessor = _make_row(session_id="pred-win", status="active")
+        predecessor.summary_markdown = CLEAR_HANDOFF
+        predecessor.seq_num = 88
+        successor = self._successor_row()
+        mock_dependencies["session_storage"].get.side_effect = (
+            lambda session_id: successor if session_id == successor.id else None
+        )
+        mock_dependencies["session_manager"].register_session.return_value = successor.id
+        mock_dependencies["session_manager"].db = MagicMock()
+        mock_dependencies["task_manager"].list_tasks.return_value = []
+        handlers = EventHandlers(**mock_dependencies)
+        event = _clear_start_event(external_id="winner-ext")
+
+        with (
+            patch.object(handlers, "_activate_default_agent", return_value=None),
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.resolve_session_start_identity",
+                return_value=_clear_resolution(predecessor=predecessor, attempt_id="attempt-win"),
+            ),
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.take_clear_handoff_marker",
+                return_value=True,
+            ) as mock_take,
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.seed_clear_handoff_variables"
+            ) as mock_seed,
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.preserve_task_claim_state"
+            ) as mock_claims,
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.schedule_clear_self_continuation",
+                return_value=True,
+            ) as mock_schedule,
+        ):
+            response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        mock_take.assert_called_once()
+        assert mock_take.call_args.kwargs["attempt_id"] == "attempt-win"
+        assert mock_take.call_args.kwargs["successor_id"] == successor.id
+        mock_seed.assert_called_once()
+        assert mock_seed.call_args.args[1] == successor.id
+        assert mock_seed.call_args.args[2] is predecessor
+        mock_claims.assert_called_once()
+        assert mock_claims.call_args.args[2] == successor.id
+        assert mock_claims.call_args.args[3] == predecessor.id
+        mock_schedule.assert_called_once()
+        assert mock_schedule.call_args.args[0] is successor
+        assert event.metadata["_platform_session_id"] == successor.id
+
+    def test_seed_failure_after_winning_take_still_transfers_and_schedules(
+        self, mock_dependencies: dict[str, Any]
+    ) -> None:
+        predecessor = _make_row(session_id="pred-seed-fail", status="active")
+        predecessor.summary_markdown = CLEAR_HANDOFF
+        successor = self._successor_row("succ-seed-fail")
+        mock_dependencies["session_storage"].get.side_effect = (
+            lambda session_id: successor if session_id == successor.id else None
+        )
+        mock_dependencies["session_manager"].register_session.return_value = successor.id
+        mock_dependencies["session_manager"].db = MagicMock()
+        mock_dependencies["task_manager"].list_tasks.return_value = []
+        handlers = EventHandlers(**mock_dependencies)
+        event = _clear_start_event(external_id="seed-fail-ext")
+
+        with (
+            patch.object(handlers, "_activate_default_agent", return_value=None),
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.resolve_session_start_identity",
+                return_value=_clear_resolution(
+                    predecessor=predecessor, attempt_id="attempt-seed-fail"
+                ),
+            ),
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.take_clear_handoff_marker",
+                return_value=True,
+            ),
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.seed_clear_handoff_variables",
+                side_effect=RuntimeError("seed exploded"),
+            ),
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.preserve_task_claim_state"
+            ) as mock_claims,
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.schedule_clear_self_continuation",
+                return_value=True,
+            ) as mock_schedule,
+        ):
+            response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        mock_claims.assert_called_once()
+        assert mock_claims.call_args.args[2] == successor.id
+        assert mock_claims.call_args.args[3] == predecessor.id
+        mock_schedule.assert_called_once()
+        assert mock_schedule.call_args.args[0] is successor
+        mock_dependencies["session_manager"].register_session.assert_called_once()
+        assert event.metadata["_platform_session_id"] == successor.id
+
+    def test_concurrent_session_starts_produce_one_bound_successor(
+        self, hub_db: HubDatabase
+    ) -> None:
+        project = LocalProjectManager(hub_db).create(
+            name="clear-bind-concurrent",
+            repo_path="/some/dir",
+        )
+        manager = SessionManager(hub_db)
+        predecessor = manager.register(
+            external_id="clear-pred-ext",
+            machine_id=LOCAL_MACHINE_ID,
+            source="claude",
+            project_id=project.id,
+            terminal_context=dict(TERMINAL_CONTEXT),
+        )
+        manager.update_summary(predecessor.id, summary_markdown=CLEAR_HANDOFF)
+        loaded = manager.get(predecessor.id)
+        assert loaded is not None
+        predecessor = loaded
+        stage_clear_attempt(
+            hub_db,
+            predecessor.id,
+            attempt_id="attempt-concurrent",
+            terminal_context=dict(TERMINAL_CONTEXT),
+            chat_context=None,
+        )
+        handlers = EventHandlers(
+            session_manager=cast(HookSessionManager, manager),
+            task_manager=MagicMock(),
+            session_coordinator=MagicMock(),
+            get_machine_id=lambda: LOCAL_MACHINE_ID,
+            resolve_project_id=lambda _project, _cwd: project.id,
+            logger=logging.getLogger("test.clear-bind-concurrent"),
+        )
+        events = [
+            _clear_start_event(
+                external_id="clear-succ-ext-a",
+                terminal_context={
+                    **TERMINAL_CONTEXT,
+                    "gobby_session_id": predecessor.id,
+                },
+                project_id=project.id,
+            ),
+            _clear_start_event(
+                external_id="clear-succ-ext-b",
+                terminal_context={
+                    **TERMINAL_CONTEXT,
+                    "gobby_session_id": predecessor.id,
+                },
+                project_id=project.id,
+            ),
+        ]
+        scheduled: list[Any] = []
+
+        def _schedule(session: Any, prompt: str, **_kwargs: Any) -> bool:
+            scheduled.append((session.id, prompt))
+            return True
+
+        with (
+            patch.object(handlers, "_activate_default_agent", return_value=None),
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.schedule_clear_self_continuation",
+                side_effect=_schedule,
+            ),
+            patch("gobby.hooks.event_handlers._session_start.flow.preserve_task_claim_state"),
+            ThreadPoolExecutor(max_workers=2) as pool,
+        ):
+            responses = list(pool.map(handlers.handle_session_start, events))
+
+        assert [response.decision for response in responses] == ["allow", "allow"]
+        successor_ids = [event.metadata.get("_platform_session_id") for event in events]
+        assert None not in successor_ids
+        assert successor_ids[0] != successor_ids[1]
+        assert predecessor.id not in successor_ids
+        parents = [
+            getattr(manager.get(session_id), "parent_session_id", None)
+            for session_id in successor_ids
+        ]
+        assert parents.count(predecessor.id) == 1
+        assert parents.count(None) == 1
+        winner_id = successor_ids[parents.index(predecessor.id)]
+        loser_id = successor_ids[0 if winner_id == successor_ids[1] else 1]
+        winner_vars = SessionVariableManager(hub_db).get_variables(winner_id)
+        loser_vars = SessionVariableManager(hub_db).get_variables(loser_id)
+        assert winner_vars.get("clear_handoff_inject_pending") is True
+        assert winner_vars.get("handoff_summary_injectable") == CLEAR_HANDOFF
+        assert loser_vars.get("clear_handoff_inject_pending") is not True
+        assert [session_id for session_id, _prompt in scheduled] == [winner_id]
+
+
+class TestClearHandoffRuleTemplate:
+    """Fossil session_start injection is gone; clear handoff is a turn_start rule."""
+
+    def test_fossil_template_replaced_by_clear_handoff_rule(self) -> None:
+        handoff_dir = files("gobby.install.shared").joinpath("workflows/rules/context-handoff")
+        fossil = handoff_dir.joinpath("inject-previous-session-summary.yaml")
+        clear = handoff_dir.joinpath("inject-clear-handoff.yaml")
+        assert not fossil.is_file()
+        assert clear.is_file()
+        payload = yaml.safe_load(clear.read_text(encoding="utf-8"))
+        rule = payload["rules"]["inject-clear-handoff-on-prompt"]
+        assert rule["event"] == "turn_start"
+        assert rule["priority"] == 11
+        assert "clear_handoff_inject_pending" in rule["when"]
+        template = next(
+            effect["template"]
+            for effect in rule["effects"]
+            if effect.get("type") == "inject_context"
+        )
+        assert "Continuation Context (deliberate clear)" in template
+        assert "Previous Session Context" not in template
+        assert "Durable Tool-Call Evidence" not in template
+        assert "Required Skill Reload" not in template
+        pending = next(effect for effect in rule["effects"] if effect.get("type") == "set_variable")
+        assert pending["variable"] == "clear_handoff_inject_pending"
+        assert pending["value"] is False

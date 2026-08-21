@@ -3644,7 +3644,7 @@ class TestHooksEndpoints:
                 assert all_started.wait(timeout=0.5)
 
                 control_started = time.perf_counter()
-                health_response = client.get("/api/admin/health")
+                health_response = client.get("/api/health")
                 mcp_response = client.get("/api/mcp/status")
                 control_elapsed = time.perf_counter() - control_started
 

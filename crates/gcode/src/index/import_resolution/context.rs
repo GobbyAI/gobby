@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 
 use super::js_local::js_candidate_files;
 use super::predicates::ruby_require_root;
-use super::rust_local::{rust_candidate_files, rust_import_target, rust_qualified_call_target};
+use super::rust_local::{
+    rust_candidate_files, rust_import_target, rust_qualified_call_target,
+    rust_source_root_for_rel_path,
+};
 
 mod apple;
 mod bindings;
@@ -22,7 +25,7 @@ pub(crate) use bindings::{
 pub(super) use package_metadata::{
     build_go_package_files, load_dart_external_packages, load_dart_self_package_name,
     load_go_module_path, load_js_external_packages, load_js_self_package_name,
-    load_rust_external_crates, load_rust_self_crate_name,
+    load_rust_external_crates, load_rust_self_crate_names,
 };
 pub(super) use python::{build_python_module_index, python_candidate_files};
 
@@ -49,7 +52,8 @@ pub struct ImportResolutionContext {
     /// directory-granular).
     pub(super) go_package_files: HashMap<String, Vec<String>>,
     pub(super) rust_external_crates: HashSet<String>,
-    pub(super) rust_self_crate_name: Option<String>,
+    /// `crates/gwiki/src` → `gobby_wiki`; a single-crate repo maps `src` → name.
+    pub(super) rust_self_crate_names: HashMap<String, String>,
     pub(super) java_local_classes: HashSet<String>,
     /// Maps a locally-declared fully-qualified class name (`pkg.Class`) to the
     /// project-relative files that declare it. A local single-type import
@@ -155,7 +159,7 @@ impl ImportResolutionContext {
     ) -> Option<LocalCallBinding> {
         let target = rust_import_target(
             rel_path,
-            self.rust_self_crate_name.as_deref(),
+            self.rust_self_crate_name_for(rel_path),
             &self.rust_external_crates,
             path,
         )?;
@@ -175,7 +179,7 @@ impl ImportResolutionContext {
     ) -> Option<LocalCallBinding> {
         let target = rust_qualified_call_target(
             rel_path,
-            self.rust_self_crate_name.as_deref(),
+            self.rust_self_crate_name_for(rel_path),
             &self.rust_external_crates,
             qualifier_path,
             name,
@@ -184,6 +188,13 @@ impl ImportResolutionContext {
             rust_candidate_files(&target.source_root, &target.module),
             target.name,
         ))
+    }
+
+    pub(super) fn rust_self_crate_name_for(&self, rel_path: &str) -> Option<&str> {
+        let source_root = rust_source_root_for_rel_path(rel_path)?;
+        self.rust_self_crate_names
+            .get(&source_root)
+            .map(String::as_str)
     }
 
     /// Candidate target files for a local Go package `module` (a self-module
@@ -381,7 +392,7 @@ pub fn build_import_resolution_context_with_overrides(
         go_module_path: load_go_module_path(root_path),
         go_package_files: build_go_package_files(root_path, candidate_files),
         rust_external_crates: load_rust_external_crates(root_path),
-        rust_self_crate_name: load_rust_self_crate_name(root_path),
+        rust_self_crate_names: load_rust_self_crate_names(root_path),
         java_local_classes: java_index.local_classes,
         java_class_files: java_index.class_files,
         csharp_local_roots: csharp_index.local_roots,

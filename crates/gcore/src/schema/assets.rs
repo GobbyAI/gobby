@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 pub const RUNNER_PROTOCOL_VERSION: u32 = 1;
 pub const BASELINE_VERSION: i32 = 375;
 pub const BASELINE_CHECKSUM: &str =
-    "8467fc42e29fec1f58986e7ac141c3cdcf8c6a417c61c73ff3cca63241e2a2cf";
+    "d19810005e6c931219781941ab1c63ecc057973dfe60e2d4a8b6a69f460c6dd0";
 pub const BASELINE_SQL: &str = include_str!("../../assets/schema/baseline.sql");
 pub const SEED_MANIFEST_JSON: &str = include_str!("../../assets/schema/seed.manifest.json");
 pub const CATALOG_MANIFEST_JSON: &str = include_str!("../../assets/schema/catalog.manifest.json");
@@ -171,6 +171,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
             "../../assets/schema/migrations/398_code_indexed_project_states_indexer_version.sql"
         ),
     },
+    EmbeddedMigration {
+        version: 399,
+        filename: "399_drain_orphan_binding_alias.sql",
+        checksum: "0043823579b2457d3a7df5d0697dfbe080aaff3aed4fe735166ec14e28acaefe",
+        sql: include_str!("../../assets/schema/migrations/399_drain_orphan_binding_alias.sql"),
+    },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 
@@ -180,6 +186,10 @@ pub(crate) const PRIOR_RECEIPT_CHECKSUMS: &[(i32, &str)] = &[
     (
         375,
         "ece3754752dbc72aaff4bbd3ebaa91a41305e4899e180012f8429c4f7467b1bf",
+    ),
+    (
+        375,
+        "8467fc42e29fec1f58986e7ac141c3cdcf8c6a417c61c73ff3cca63241e2a2cf",
     ),
     (
         377,

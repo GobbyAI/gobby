@@ -23,7 +23,7 @@ from gobby.runner_maintenance_resources import (
     resource_monitor_loop,
     run_resource_check,
 )
-from gobby.servers.routes.admin import create_admin_router
+from gobby.servers.routes.admin import create_admin_router, create_health_router
 from gobby.utils.status import format_status_message
 from tests.config_runtime_helpers import static_runtime_capture
 
@@ -250,6 +250,7 @@ def test_runtime_limit_degradation_is_visible_in_health_endpoint_and_recovers(
     server.get_runner.return_value = runner
     app = FastAPI()
     app.include_router(create_admin_router(server))
+    app.include_router(create_health_router(server))
     client = TestClient(app)
 
     def set_runtime_output_over_limit(over_limit: bool) -> None:
@@ -288,11 +289,11 @@ def test_runtime_limit_degradation_is_visible_in_health_endpoint_and_recovers(
     ):
         runtime_log.write_bytes(b"x" * (2 * _MB))
         run_monitor_tick()
-        over_limit_response = client.get("/api/admin/health")
+        over_limit_response = client.get("/api/health")
 
         runtime_log.write_bytes(b"x" * 1024)
         run_monitor_tick()
-        recovered_response = client.get("/api/admin/health")
+        recovered_response = client.get("/api/health")
 
     assert over_limit_response.status_code == 200
     assert over_limit_response.json()["status"] == "degraded"

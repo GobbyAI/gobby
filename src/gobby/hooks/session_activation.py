@@ -664,8 +664,11 @@ def _ensure_step_instance(
     variables: dict[str, Any],
     session: Any,
 ) -> bool:
+    # Step workflows belong to spawned agent runs. A persona-bound interactive
+    # session carries ``_agent_type`` too, and must never have one materialized.
+    # Same predicate as ``_missing_step_state`` so the two cannot drift.
     spawned = _bool_variable(variables.get("is_spawned_agent")) or _session_is_spawned(session)
-    if spawned and not _has_assigned_or_active_task(variables):
+    if not spawned or not _has_assigned_or_active_task(variables):
         return False
 
     agent_name = _resolved_agent_name(variables, None)

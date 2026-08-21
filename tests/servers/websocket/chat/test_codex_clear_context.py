@@ -58,6 +58,37 @@ async def test_clear_context_archives_old_thread_and_reattaches() -> None:
 
 
 @pytest.mark.asyncio
+async def test_clear_context_does_not_resume_prior_thread() -> None:
+    fake_client = SimpleNamespace(
+        archive_thread=AsyncMock(),
+        start_thread=AsyncMock(return_value=SimpleNamespace(id="new-thread", path=None)),
+        resume_thread=AsyncMock(return_value=SimpleNamespace(id="resumed-thread", path=None)),
+        is_connected=True,
+    )
+    backend = CodexWebChatBackend(client=fake_client)  # type: ignore[arg-type]
+    backend._health = ProviderBackendHealth(provider="codex", available=True)
+    session = CodexManagedChatSession(conversation_id="c", _backend=backend)
+    session._model = "gpt-5.6-sol"
+    session.chat_mode = "normal"
+    session._thread_id = "old-thread"
+    session.resume_session_id = "resume-me"
+    session.sdk_session_id = "old-thread"
+    backend._sessions_by_thread["old-thread"] = session
+
+    result = await session.clear_context()
+
+    assert result is True
+    fake_client.archive_thread.assert_awaited_once_with("old-thread")
+    fake_client.resume_thread.assert_not_awaited()
+    fake_client.start_thread.assert_awaited_once()
+    assert session._thread_id == "new-thread"
+    assert session.sdk_session_id == "new-thread"
+    assert session.resume_session_id is None
+    assert session.chat_mode == "normal"
+    assert session._model == "gpt-5.6-sol"
+
+
+@pytest.mark.asyncio
 async def test_clear_context_unavailable_backend_is_noop() -> None:
     backend, fake_client = _backend_with_fake_client()
     backend._health = ProviderBackendHealth(provider="codex", available=False)

@@ -12,6 +12,9 @@ pub(crate) struct ExternalImportBinding {
 pub(crate) enum LocalCallResolution {
     Named,
     DefaultExport,
+    /// Rust `Type::assoc()` through an imported type; resolved by the method's
+    /// `Type::assoc` qualified name inside the candidate files.
+    TypeMember,
 }
 
 /// A cross-file local import resolved at parse time to its candidate target
@@ -26,6 +29,9 @@ pub(crate) struct LocalCallBinding {
     /// The originally imported name (not the local alias).
     pub(crate) callee_name: String,
     pub(crate) resolution: LocalCallResolution,
+    /// The imported type name for `TypeMember` bindings (`Bar` in `Bar::new()`,
+    /// the original name even when the import is aliased).
+    pub(crate) qualifier: Option<String>,
 }
 
 impl LocalCallBinding {
@@ -34,6 +40,7 @@ impl LocalCallBinding {
             candidate_files,
             callee_name,
             resolution: LocalCallResolution::Named,
+            qualifier: None,
         }
     }
 
@@ -42,11 +49,32 @@ impl LocalCallBinding {
             candidate_files,
             callee_name: local_alias,
             resolution: LocalCallResolution::DefaultExport,
+            qualifier: None,
+        }
+    }
+
+    pub(crate) fn type_member(
+        candidate_files: Vec<String>,
+        qualifier: String,
+        callee_name: String,
+    ) -> Self {
+        Self {
+            candidate_files,
+            callee_name,
+            resolution: LocalCallResolution::TypeMember,
+            qualifier: Some(qualifier),
         }
     }
 
     pub(crate) fn is_default_export(&self) -> bool {
         self.resolution == LocalCallResolution::DefaultExport
+    }
+
+    pub(crate) fn type_member_qualifier(&self) -> Option<&str> {
+        match self.resolution {
+            LocalCallResolution::TypeMember => self.qualifier.as_deref(),
+            _ => None,
+        }
     }
 }
 
@@ -87,6 +115,12 @@ pub(crate) struct ImportBindings {
     /// post-write; Objective-C message sends use `local_member` by receiver
     /// type when the imported file declares an `@interface`/`@protocol`.
     pub(crate) objc_import_files: Vec<String>,
+    /// Local Rust `use` alias → the normalized use path it binds
+    /// (`use crate::search;` → `"search"` → `"crate::search"`;
+    /// `use crate::x as y;` → `"y"` → `"crate::x"`). `{self}` groups collapse
+    /// to the prefix before registration, so `use crate::search::{self, bm25}`
+    /// records both `"search"` and `"bm25"`.
+    pub(crate) rust_local_modules: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone)]

@@ -1,6 +1,6 @@
 """Terminal interaction tools for tmux-backed sessions.
 
-Exposes send_keys, capture_output, and compact_self as MCP tools on
+Exposes send_keys, capture_output, compact_self, and clear_self as MCP tools on
 gobby-sessions, enabling orchestration (heartbeat, pipelines, other agents)
 to interact with running terminal sessions.
 """
@@ -349,9 +349,18 @@ def register_terminal_tools(
     config_resolver: Callable[[], DaemonConfig | None] | None = None,
     web_chat_session_registry: WebChatSessionRegistry | None = None,
 ) -> None:
-    """Register send_keys and capture_output tools."""
+    """Register send_keys, capture_output, compact_self, and clear_self tools."""
 
     agent_run_manager = LocalAgentRunManager(db)
+    from gobby.mcp_proxy.tools.sessions._terminal_clear import register_clear_self_tool
+
+    register_clear_self_tool(
+        registry,
+        session_manager=session_manager,
+        db=db,
+        agent_run_manager=agent_run_manager,
+        web_chat_session_registry=web_chat_session_registry,
+    )
 
     @registry.tool(
         name="send_keys",

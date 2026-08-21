@@ -1,13 +1,14 @@
-"""Injected-context fencing is scoped to the session_start handoff templates.
+"""Injected-context fencing is scoped to the handoff templates.
 
-The contamination fix fences handoff/compact summaries with sentinels so the
-digest/summary pipeline strips them. Fencing must live in those two templates
+The contamination fix fences handoff/compact/clear summaries with sentinels so
+the digest/summary pipeline strips them. Fencing must live in those templates
 only — not in every ``inject_context`` effect — so per-turn injections (brevity,
 memory, task context) stay un-tagged.
 """
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,7 @@ import yaml
 
 import gobby
 from gobby.utils.injected_context import INJECTED_CONTEXT_BEGIN, INJECTED_CONTEXT_END
+from gobby.workflows.engine.effects import EffectsMixin
 
 pytestmark = pytest.mark.unit
 
@@ -34,7 +36,7 @@ def _inject_template(path: Path, rule_name: str) -> str:
 @pytest.mark.parametrize(
     ("filename", "rule_name"),
     [
-        ("inject-previous-session-summary.yaml", "inject-previous-session-summary"),
+        ("inject-clear-handoff.yaml", "inject-clear-handoff-on-prompt"),
         ("inject-compact-handoff.yaml", "inject-compact-handoff"),
     ],
 )
@@ -44,6 +46,12 @@ def test_handoff_templates_are_fenced(filename: str, rule_name: str) -> None:
     assert INJECTED_CONTEXT_BEGIN in template
     assert INJECTED_CONTEXT_END in template
     assert template.index(INJECTED_CONTEXT_BEGIN) < template.index(INJECTED_CONTEXT_END)
+
+
+def test_engine_inject_context_comment_cites_live_handoff_templates() -> None:
+    source = inspect.getsource(EffectsMixin._apply_effect)
+    assert "inject-previous-session-summary" not in source
+    assert "inject-clear-handoff.yaml" in source
 
 
 @pytest.mark.parametrize(

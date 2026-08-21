@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Iterator
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import (
     LocalTaskManager,
@@ -147,3 +149,37 @@ def test_expected_owner_does_not_stomp_replacement_owner(temp_db, sample_project
 
     assert error.value.claimed_by == replacement.id
     assert LocalTaskManager(temp_db).get_task(task.id).claimed_by_session_id == replacement.id
+
+
+def test_expected_owner_transfers_when_current_owner_matches(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    task = LocalTaskManager(temp_db).create_task(
+        sample_project["id"],
+        title="Predecessor-owned task",
+        validation_criteria="Test task completion is observable.",
+    )
+    session_manager = SessionManager(temp_db)
+    predecessor = session_manager.register(
+        external_id="predecessor-owner",
+        machine_id="21000000-0000-4000-8000-000000000001",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    successor = session_manager.register(
+        external_id="successor-owner",
+        machine_id="21000000-0000-4000-8000-000000000001",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    claim_task(temp_db, task.id, predecessor.id)
+
+    claimed = claim_task(
+        temp_db,
+        task.id,
+        successor.id,
+        expected_owner=predecessor.id,
+    )
+
+    assert claimed.claimed_by_session_id == successor.id
+    assert LocalTaskManager(temp_db).get_task(task.id).claimed_by_session_id == successor.id

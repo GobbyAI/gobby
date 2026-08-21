@@ -60,8 +60,7 @@ The complete unauthenticated HTTP surface is:
 | Match | Public surface | Reason |
 | --- | --- | --- |
 | Exact | `/` | Production SPA shell |
-| Exact | `/api/health` | Lifecycle health probe |
-| Exact | `/api/admin/health` | Startup/liveness probe |
+| Exact | `/api/health` | Lifecycle/liveness health probe |
 | Exact | `/api/admin/startup-progress` | CLI startup progress probe |
 | Prefix | `/api/auth/` | Login, logout, and auth status |
 | Prefix | `/api/comms/webhooks/` | Channel-signature validation runs in the route |
@@ -93,14 +92,13 @@ Unauthenticated protected API requests return `401` with:
 | `/assets/*` | `GET` | Production UI assets, mounted only when production UI mode is enabled and assets exist. |
 | `/{path}` | `GET` | Production UI SPA fallback, mounted only when production UI mode is enabled. Does not intercept `/api`, `/ws`, or `/health` paths. |
 
-Use `/api/admin/health` for daemon health checks. The main HTTP app does not
+Use `/api/health` for daemon health checks. The main HTTP app does not
 register a top-level `/health` REST route.
 
 ## Admin
 
 | Method | Route | Purpose |
 | --- | --- | --- |
-| `GET` | `/api/admin/health` | Lightweight startup health check. |
 | `GET` | `/api/admin/startup-progress` | Startup tracker state for CLI progress display. |
 | `GET` | `/api/admin/status` | Full daemon status, subsystem health, task/session counts, MCP health, and process metrics. |
 | `GET` | `/api/admin/metrics` | Prometheus text exposition. |

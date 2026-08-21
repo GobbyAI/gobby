@@ -15,16 +15,20 @@ from gobby.agents.sandbox import (
     web_chat_policy_mismatch_message,
     web_chat_sandbox_policy_hash,
 )
+from gobby.hooks.event_handlers._session_start.claims import preserve_task_claim_state
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.hooks.hook_types import SessionEndReason
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.tool_approvals import normalize_approved_tool_keys
 from gobby.servers.websocket.db import run_db
+from gobby.sessions.clear_continuation import commit_web_chat_clear_successor
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.utils.json_helpers import json_dumps
 from gobby.utils.machine_id import get_machine_id
+from gobby.workflows.state_manager import SessionVariableManager
 
+from ._clear_commit import rebind_live_clear_successor
 from ._session_binding import (
     _build_agent_identity_preamble,
     _first_configured_chat_binding,
@@ -213,6 +217,63 @@ class ChatSessionMixin:
             if effective_model is None:
                 effective_model = configured_binding[1]
         return effective_provider or "claude", effective_model
+
+    async def commit_clear_successor(
+        self,
+        *,
+        conversation_id: str,
+        session: ChatSessionProtocol,
+        predecessor_id: str,
+        attempt_id: str,
+    ) -> dict[str, Any]:
+        """Expire the predecessor and rebind the live wrapper to a force-new successor."""
+        session_manager = getattr(self, "session_manager", None)
+        db = getattr(session_manager, "db", None)
+        if db is None:
+            return {"ok": False, "reason": "session manager is not bound"}
+        try:
+            successor = await run_db(
+                self,
+                commit_web_chat_clear_successor,
+                db,
+                predecessor_id,
+                attempt_id=attempt_id,
+            )
+        except Exception:
+            logger.exception(
+                "Web-chat clear commit failed for predecessor %s",
+                predecessor_id,
+            )
+            return {"ok": False, "reason": "clear successor commit failed"}
+        if successor is None:
+            return {"ok": False, "reason": "clear successor commit returned no row"}
+        # Fan out while the live wrapper still resolves to the predecessor: the
+        # SESSION_END handler reads db_session_id from the wrapper.
+        await self._fire_session_end(conversation_id, reason=SessionEndReason.CLEAR)
+        rebind_live_clear_successor(self, session, successor)
+        self._transfer_clear_claims(predecessor_id, successor.id)
+        return {
+            "ok": True,
+            "successor_id": successor.id,
+            "predecessor_id": predecessor_id,
+            "seq_num": successor.seq_num,
+        }
+
+    def _transfer_clear_claims(self, predecessor_id: str, successor_id: str) -> None:
+        handler = getattr(self, "event_handlers", None)
+        session_manager = getattr(self, "session_manager", None)
+        db = getattr(session_manager, "db", None)
+        if handler is None or db is None:
+            return
+        sv_mgr = SessionVariableManager(db)
+        predecessor_vars = sv_mgr.get_variables(predecessor_id)
+        preserve_task_claim_state(
+            handler,
+            sv_mgr,
+            successor_id,
+            predecessor_id,
+            predecessor_vars,
+        )
 
     async def _create_chat_session_inner(
         self,
