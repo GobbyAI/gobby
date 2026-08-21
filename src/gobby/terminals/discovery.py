@@ -23,12 +23,22 @@ def generation_from_context(terminal_context: Mapping[str, Any]) -> dict[str, ob
         return None
     if not isinstance(pane, str) or not pane:
         return None
-    if not isinstance(pid, int) or not isinstance(start, int):
+    if isinstance(pid, int) and not isinstance(pid, bool) and isinstance(start, int):
+        return {
+            "socket_path": socket,
+            "server_pid": pid,
+            "server_start_time": start,
+            "pane_id": pane,
+        }
+    from gobby.sessions.tmux_context import query_tmux_generation
+
+    queried = query_tmux_generation(socket, pane)
+    if queried is None:
         return None
     return {
         "socket_path": socket,
-        "server_pid": pid,
-        "server_start_time": start,
+        "server_pid": queried["server_pid"],
+        "server_start_time": queried["server_start_time"],
         "pane_id": pane,
     }
 
@@ -68,6 +78,8 @@ def seed_external_terminal(
     )
     session_name = terminal_context.get("tmux_session")
     window_id = terminal_context.get("tmux_window")
+    if not isinstance(window_id, str):
+        window_id = terminal_context.get("tmux_window_id")
     title = terminal_context.get("tmux_pane_title")
     if not isinstance(session_name, str):
         session_name = None

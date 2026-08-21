@@ -4212,6 +4212,28 @@
     },
     {
       "activation": "live",
+      "default": 5000,
+      "description": "Backoff ceiling for transient tmux poll failures.",
+      "key": "terminal_host.tmux_poll_backoff_ceiling_ms",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 150,
+      "description": "Host capture-poll interval for tmux observers.",
+      "key": "terminal_host.tmux_poll_interval_ms",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
       "default": "tmux",
       "description": "Default TerminalRuntime backend for new Gobby-owned terminals.",
       "key": "terminals.default_backend",

@@ -22,6 +22,12 @@ from gobby.servers.routes.configuration_context import require_config_snapshot
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.attention import AttentionRosterSnapshot, AttentionState
 from gobby.storage.session_models import Session
+from gobby.terminals.runtime import (
+    Delivered,
+    IndeterminateWrite,
+    TerminalWriteError,
+    is_named_key,
+)
 from gobby.utils.hashing import is_sha256
 from gobby.utils.machine_id import require_machine_id
 
@@ -168,13 +174,16 @@ def create_attention_router(
         if injector is not None:
             await injector(pane, answer)
             return
-        await inject_attention_answer_to_tmux_target(
-            pane.target,
-            option=answer.option,
-            text=answer.text,
-            key=answer.key,
-            tmux_cmd=pane.tmux_cmd,
-        )
+        if pane.tmux_cmd:
+            await inject_attention_answer_to_tmux_target(
+                pane.target,
+                option=answer.option,
+                text=answer.text,
+                key=answer.key,
+                tmux_cmd=pane.tmux_cmd,
+            )
+            return
+        await _inject_via_runtime(server, pane, answer)
 
     @router.get("/roster")
     async def roster() -> dict[str, object]:
@@ -664,6 +673,36 @@ def _serialize_timestamp(value: object) -> str | None:
     return str(value)
 
 
+async def _inject_via_runtime(
+    server: HTTPServer,
+    pane: AttentionPane,
+    answer: AttentionAnswer,
+) -> None:
+    manager = getattr(server.services, "terminal_manager", None)
+    registry = getattr(server.services, "terminal_runtime_registry", None)
+    if manager is None or registry is None:
+        raise AttentionInjectionError(stage="none")
+    row = manager.get(pane.target)
+    if row is None:
+        raise AttentionInjectionError(stage="none")
+    runtime = registry.resolve(row.backend)
+    try:
+        if answer.key is not None:
+            if not is_named_key(answer.key):
+                raise AttentionInjectionError(stage="none")
+            result = await runtime.write_key(row, answer.key)
+        elif answer.option is not None:
+            result = await runtime.write_text(row, str(answer.option), True)
+        else:
+            result = await runtime.write_text(row, answer.text or "", True)
+    except TerminalWriteError as exc:
+        raise AttentionInjectionError(stage=exc.stage) from exc
+    if isinstance(result, IndeterminateWrite):
+        raise AttentionInjectionError(stage="partial")
+    if not isinstance(result, Delivered):
+        raise AttentionInjectionError(stage="none")
+
+
 async def _resolve_attention_pane(
     server: HTTPServer,
     state: AttentionState,
@@ -678,7 +717,8 @@ async def _resolve_attention_pane(
 
             async def capture_session_pane() -> str | None:
                 snapshot = await runtime.snapshot(row, 15)
-                return snapshot.text
+                text = snapshot.text
+                return text if isinstance(text, str) else None
 
             return AttentionPane(
                 target=row.id,
@@ -699,7 +739,8 @@ async def _resolve_attention_pane(
 
     async def capture_run_pane() -> str | None:
         snapshot = await runtime.snapshot(row, 15)
-        return snapshot.text
+        text = snapshot.text
+        return text if isinstance(text, str) else None
 
     return AttentionPane(
         target=row.id,

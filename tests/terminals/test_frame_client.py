@@ -179,6 +179,67 @@ async def test_frame_client_epoch_attach_and_queue() -> None:
     assert msg["type"] == "welcome"
 
 
+def test_bincode_varint_encodes_values_above_127() -> None:
+    payload = {
+        "type": "attach_terminal",
+        "host_terminal_id": "ht-1",
+        "reservation_id": None,
+        "locator": {
+            "socket_path": "/tmp/tmux-sock",
+            "server_pid": 18789,
+            "server_start_time": 1787291792,
+            "pane_id": "%0",
+        },
+    }
+    decoded = decode_frame(encode_frame(payload))
+    assert decoded["locator"]["server_pid"] == 18789
+    assert decoded["locator"]["server_start_time"] == 1787291792
+    # Bincode-2 single-byte varints go up to 250; protobuf uleb128 would split at 128.
+    small = encode_frame(
+        {
+            "type": "attach_terminal",
+            "host_terminal_id": "ht-1",
+            "reservation_id": None,
+            "locator": {
+                "socket_path": "/tmp/tmux-sock",
+                "server_pid": 64,
+                "server_start_time": 1,
+                "pane_id": "%0",
+            },
+        }
+    )
+    assert b"\x80\x01" not in small
+
+
+@pytest.mark.asyncio
+async def test_tmux_attach_requires_generation() -> None:
+    incoming = asyncio.StreamReader()
+    outgoing = asyncio.StreamReader()
+
+    class _Writer:
+        def write(self, data: bytes) -> None:
+            outgoing.feed_data(data)
+
+        async def drain(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+        async def wait_closed(self) -> None:
+            return None
+
+    client = FrameClient(incoming, _Writer())
+    locator = AttachLocator(
+        backend="tmux",
+        frame_host_epoch="epoch-1",
+        socket_path="/tmp/tmux.sock",
+        pane_id="%0",
+    )
+    with pytest.raises(FrameProtocolError, match="generation"):
+        await client.attach_terminal(locator)
+
+
 def test_frame_client_has_no_write_method() -> None:
     source = inspect.getsource(FrameClient)
     assert "def write(" not in source

@@ -582,6 +582,19 @@ class SessionLivenessMonitor:
         if expired_session is None:
             return False
 
+        manager = self.terminal_manager
+        if manager is not None:
+            try:
+                row = manager.get_live_for_session(session_id)
+                if row is not None:
+                    manager.mark_exited(row.id)
+            except Exception:
+                logger.warning(
+                    "SessionLivenessMonitor: failed to CAS terminal for session %s",
+                    session_id,
+                    exc_info=True,
+                )
+
         if self._dispatch_summaries_fn:
             try:
                 self._dispatch_summaries_fn(session_id, False, None)

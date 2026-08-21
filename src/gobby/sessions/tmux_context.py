@@ -60,6 +60,57 @@ def query_tmux_identity(
     return None
 
 
+def query_tmux_generation(
+    socket_path: str,
+    pane_id: str,
+    *,
+    command: str = "tmux",
+) -> dict[str, object] | None:
+    """Resolve pane generation (pid, start_time) plus window/session identity."""
+    if not socket_path or not pane_id.startswith("%") or not pane_id[1:].isdigit():
+        return None
+    try:
+        result = subprocess.run(
+            [
+                command,
+                "-S",
+                socket_path,
+                "display-message",
+                "-p",
+                "-t",
+                pane_id,
+                "#{pid}\t#{start_time}\t#{window_id}\t#{session_name}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=_TMUX_IDENTITY_TIMEOUT_SECONDS,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    parts = result.stdout.strip().split("\t")
+    if len(parts) != 4:
+        return None
+    pid_raw, start_raw, window_id, session_name = parts
+    if not (
+        pid_raw.isdigit()
+        and start_raw.isdigit()
+        and window_id.startswith("@")
+        and window_id[1:].isdigit()
+        and session_name
+    ):
+        return None
+    return {
+        "server_pid": int(pid_raw),
+        "server_start_time": int(start_raw),
+        "window_id": window_id,
+        "session_name": session_name,
+        "pane_id": pane_id,
+        "socket_path": socket_path,
+    }
+
+
 def get_tmux_socket_path(terminal_context: Mapping[str, Any] | None) -> str | None:
     """Return the stored tmux socket path, if present."""
     if not terminal_context:

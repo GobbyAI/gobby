@@ -15,6 +15,7 @@ from gobby.agents.tmux.text_injection import (
     send_enter_key_to_tmux_target,
     send_named_key_to_tmux_target,
 )
+from gobby.config.tmux import TmuxConfig
 from gobby.storage.terminals import (
     AttachLocator,
     Terminal,
@@ -104,6 +105,16 @@ class TmuxTerminalRuntime:
 
     def _cmd(self) -> list[str]:
         return self._sessions.base_args()
+
+    def _sessions_for(self, terminal: Terminal) -> TmuxSessionManager:
+        locator = terminal.locator or {}
+        socket_path = locator.get("socket_path")
+        if terminal.ownership == "external" and isinstance(socket_path, str) and socket_path:
+            return TmuxSessionManager(TmuxConfig(socket_name="", socket_path=socket_path))
+        return self._sessions
+
+    def _cmd_for(self, terminal: Terminal) -> list[str]:
+        return self._sessions_for(terminal).base_args()
 
     def _tmux_name(self, terminal: Terminal) -> str:
         return terminal.session_name or terminal.spawn_key or ""
@@ -204,17 +215,26 @@ class TmuxTerminalRuntime:
         return TerminalHandle(terminal_id=prepared.terminal_id, locator=locator)
 
     async def is_live(self, terminal: Terminal) -> bool:
+        locator = terminal.locator or {}
+        pane_id = locator.get("pane_id")
+        if isinstance(pane_id, str) and pane_id:
+            rc, stdout, _stderr = await self._sessions_for(terminal)._run(
+                "display-message", "-p", "-t", pane_id, "#{pane_dead}"
+            )
+            return rc == 0 and stdout.strip() != "1"
         name = self._tmux_name(terminal)
         if not name:
             return False
-        return await self._sessions.has_session(name)
+        return await self._sessions_for(terminal).has_session(name)
 
     async def snapshot(self, terminal: Terminal, lines: int = 50) -> SnapshotResult:
-        text = await self._sessions.capture_pane(self._capture_name(terminal), lines=lines)
+        text = await self._sessions_for(terminal).capture_pane(
+            self._capture_name(terminal), lines=lines
+        )
         return await self._snapshot_result(terminal, text or "")
 
     async def snapshot_full(self, terminal: Terminal) -> SnapshotResult:
-        text = await self._sessions.capture_full_pane(self._capture_name(terminal))
+        text = await self._sessions_for(terminal).capture_full_pane(self._capture_name(terminal))
         return await self._snapshot_result(terminal, text or "")
 
     def _capture_name(self, terminal: Terminal) -> str:
@@ -244,7 +264,7 @@ class TmuxTerminalRuntime:
     async def _history_bounds(self, terminal: Terminal) -> tuple[int | None, int | None]:
         target = self._target(terminal)
         try:
-            rc, stdout, _stderr = await self._run(
+            rc, stdout, _stderr = await self._sessions_for(terminal)._run(
                 "display-message",
                 "-t",
                 target,
@@ -270,13 +290,13 @@ class TmuxTerminalRuntime:
                 await paste_literal_text_to_tmux_target(
                     target,
                     body,
-                    tmux_cmd=self._cmd(),
+                    tmux_cmd=self._cmd_for(terminal),
                 )
                 payload_landed = True
             if submit:
                 if body and TMUX_TEXT_ENTER_DELAY_SECONDS > 0:
                     await asyncio.sleep(TMUX_TEXT_ENTER_DELAY_SECONDS)
-                await send_enter_key_to_tmux_target(target, tmux_cmd=self._cmd())
+                await send_enter_key_to_tmux_target(target, tmux_cmd=self._cmd_for(terminal))
             return Delivered()
         except TmuxTextInjectionTimeout:
             return IndeterminateWrite(detail="tmux send-keys timed out")
@@ -290,14 +310,14 @@ class TmuxTerminalRuntime:
     async def write_key(self, terminal: Terminal, key: NamedKey) -> WriteOutcome:
         target = self._target(terminal)
         try:
-            cursor, keypad, _paste = await self._query_flags(target)
+            cursor, keypad, _paste = await self._query_flags(terminal, target)
             named = _NAMED_TMUX_KEYS.get(key)
             if named is not None:
-                await send_named_key_to_tmux_target(target, named, tmux_cmd=self._cmd())
+                await send_named_key_to_tmux_target(target, named, tmux_cmd=self._cmd_for(terminal))
                 return Delivered()
             encoded = _encode_key(key, cursor_app=cursor, keypad_app=keypad)
             hex_bytes = [f"{byte:02x}" for byte in encoded]
-            await self._run("send-keys", "-t", target, "-H", *hex_bytes)
+            await self._sessions_for(terminal)._run("send-keys", "-t", target, "-H", *hex_bytes)
             return Delivered()
         except TmuxTextInjectionTimeout:
             return IndeterminateWrite(detail="tmux send-keys timed out")
@@ -313,9 +333,11 @@ class TmuxTerminalRuntime:
             raise InputPayloadTooLargeError("paste exceeds 1 MiB UTF-8")
         target = self._target(terminal)
         try:
-            _cursor, _keypad, bracketed = await self._query_flags(target)
+            _cursor, _keypad, bracketed = await self._query_flags(terminal, target)
             payload = f"\x1b[200~{text}\x1b[201~" if bracketed else text
-            await paste_literal_text_to_tmux_target(target, payload, tmux_cmd=self._cmd())
+            await paste_literal_text_to_tmux_target(
+                target, payload, tmux_cmd=self._cmd_for(terminal)
+            )
             return Delivered()
         except TmuxTextInjectionTimeout:
             return IndeterminateWrite(detail="tmux send-keys timed out")
@@ -345,17 +367,23 @@ class TmuxTerminalRuntime:
 
     async def attach_locator(self, terminal: Terminal) -> AttachLocator:
         locator = terminal.locator or {}
+        pid = locator.get("server_pid")
+        start = locator.get("server_start_time")
         return AttachLocator(
             backend="tmux",
-            frame_host_epoch=self._frame_host_epoch,
+            frame_host_epoch=self._frame_host_epoch or str(terminal.host_epoch or ""),
             socket_path=None
             if locator.get("socket_path") is None
             else str(locator.get("socket_path")),
             pane_id=None if locator.get("pane_id") is None else str(locator.get("pane_id")),
+            server_pid=pid if isinstance(pid, int) and not isinstance(pid, bool) else None,
+            server_start_time=(
+                start if isinstance(start, int) and not isinstance(start, bool) else None
+            ),
         )
 
-    async def _query_flags(self, target: str) -> tuple[bool, bool, bool]:
-        rc, stdout, _stderr = await self._run(
+    async def _query_flags(self, terminal: Terminal, target: str) -> tuple[bool, bool, bool]:
+        rc, stdout, _stderr = await self._sessions_for(terminal)._run(
             "display-message",
             "-t",
             target,

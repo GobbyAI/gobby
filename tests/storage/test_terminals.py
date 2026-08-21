@@ -662,6 +662,9 @@ def test_attach_locator_frame_host_epoch_by_backend(
         tmux_row.id, live_host_epoch=adopted_epoch, socket_dir=tmp_path
     )
     assert tmux_attach.frame_host_epoch == adopted_epoch
+    assert tmux_attach.host_socket == str(tmp_path / "gterm-frames.sock")
+    assert tmux_attach.server_pid == tmux_locator["server_pid"]
+    assert tmux_attach.server_start_time == tmux_locator["server_start_time"]
     stored = manager.get(tmux_row.id)
     assert stored is not None
     assert stored.host_epoch is None

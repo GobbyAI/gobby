@@ -133,6 +133,8 @@ class AttachLocator:
     host_terminal_id: str | None = None
     socket_path: str | None = None
     pane_id: str | None = None
+    server_pid: int | None = None
+    server_start_time: int | None = None
 
 
 @normalize_datetime_model(
@@ -574,6 +576,8 @@ class TerminalManager:
         row = self.get(terminal_id)
         if row is None:
             raise KeyError(terminal_id)
+        stored = row.locator or {}
+        host_socket = str(Path(socket_dir) / FRAMES_SOCKET_NAME)
         if row.backend == "native":
             if row.host_epoch != live_host_epoch:
                 raise HostEpochMismatchError("Live host epoch does not match the terminal row")
@@ -583,14 +587,23 @@ class TerminalManager:
             return AttachLocator(
                 backend="native",
                 frame_host_epoch=str(row.host_epoch),
-                host_socket=str(Path(socket_dir) / FRAMES_SOCKET_NAME),
+                host_socket=host_socket,
                 host_terminal_id=host_terminal_id,
             )
+        pid = stored.get("server_pid")
+        start = stored.get("server_start_time")
         return AttachLocator(
             backend="tmux",
             frame_host_epoch=live_host_epoch,
-            socket_path=None if row.locator is None else str(row.locator.get("socket_path")),
-            pane_id=None if row.locator is None else str(row.locator.get("pane_id")),
+            host_socket=host_socket,
+            socket_path=None
+            if stored.get("socket_path") is None
+            else str(stored.get("socket_path")),
+            pane_id=None if stored.get("pane_id") is None else str(stored.get("pane_id")),
+            server_pid=pid if isinstance(pid, int) and not isinstance(pid, bool) else None,
+            server_start_time=(
+                start if isinstance(start, int) and not isinstance(start, bool) else None
+            ),
         )
 
     def revalidate_tmux_generation(

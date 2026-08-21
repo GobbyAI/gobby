@@ -55,7 +55,7 @@ def create_terminals_router(server: HTTPServer) -> APIRouter:
             cursor_id=cursor_id,
             limit=page_size,
         )
-        serialized = [_row_json(row, _attach(manager, row)) for row in items]
+        serialized = [_row_json(row, _attach(server, manager, row)) for row in items]
         next_cursor = None
         if has_more and items:
             last = items[-1]
@@ -78,7 +78,7 @@ def create_terminals_router(server: HTTPServer) -> APIRouter:
         row = manager.get(terminal_id)
         if row is None:
             raise HTTPException(status_code=404, detail="terminal not found")
-        return _row_json(row, _attach(manager, row))
+        return _row_json(row, _attach(server, manager, row))
 
     return router
 
@@ -101,12 +101,28 @@ def _parse_cursor(raw: str | None) -> tuple[datetime | None, str | None]:
     return datetime.fromisoformat(created_at), terminal_id
 
 
-def _attach(manager: TerminalManager, row: Terminal) -> AttachLocator | None:
+def _live_host_epoch(server: HTTPServer, row: Terminal) -> str:
+    host = getattr(server.services, "terminal_host_manager", None)
+    epoch = getattr(host, "host_epoch", None) if host is not None else None
+    if isinstance(epoch, str) and epoch:
+        return epoch
+    return row.host_epoch or ""
+
+
+def _socket_dir(server: HTTPServer) -> Path:
+    host = getattr(server.services, "terminal_host_manager", None)
+    directory = getattr(host, "socket_dir", None) if host is not None else None
+    if isinstance(directory, Path):
+        return directory
+    return Path.home() / ".gobby"
+
+
+def _attach(server: HTTPServer, manager: TerminalManager, row: Terminal) -> AttachLocator | None:
     try:
         return manager.attach_locator(
             row.id,
-            live_host_epoch=row.host_epoch or "",
-            socket_dir=Path.home() / ".gobby",
+            live_host_epoch=_live_host_epoch(server, row),
+            socket_dir=_socket_dir(server),
         )
     except Exception:
         return None

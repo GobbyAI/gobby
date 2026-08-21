@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, Protocol
 
 from gobby.storage.terminals import AttachLocator
@@ -35,15 +36,25 @@ class FrameSocketWriter(Protocol):
     async def wait_closed(self) -> object: ...
 
 
+_SINGLE_BYTE_MAX = 250
+_U16_BYTE = 251
+_U32_BYTE = 252
+_U64_BYTE = 253
+
+
 def _uvarint(value: int) -> bytes:
+    """Bincode 2 `standard()` unsigned varint (not protobuf uleb128)."""
     if value < 0:
         raise FrameProtocolError("negative varint")
-    out = bytearray()
-    while value > 0x7F:
-        out.append((value & 0x7F) | 0x80)
-        value >>= 7
-    out.append(value)
-    return bytes(out)
+    if value <= _SINGLE_BYTE_MAX:
+        return bytes((value,))
+    if value <= 0xFFFF:
+        return bytes((_U16_BYTE,)) + value.to_bytes(2, "little")
+    if value <= 0xFFFFFFFF:
+        return bytes((_U32_BYTE,)) + value.to_bytes(4, "little")
+    if value <= 0xFFFFFFFFFFFFFFFF:
+        return bytes((_U64_BYTE,)) + value.to_bytes(8, "little")
+    raise FrameProtocolError("varint overflow")
 
 
 def _ivarint(value: int) -> bytes:
@@ -86,19 +97,19 @@ class _Reader:
         return chunk
 
     def uvarint(self) -> int:
-        shift = 0
-        result = 0
-        while True:
-            if self.remaining() <= 0:
-                raise FrameProtocolError("unexpected eof")
-            byte = self.data[self.offset]
-            self.offset += 1
-            result |= (byte & 0x7F) << shift
-            if byte < 0x80:
-                return result
-            shift += 7
-            if shift > 70:
-                raise FrameProtocolError("varint overflow")
+        if self.remaining() <= 0:
+            raise FrameProtocolError("unexpected eof")
+        byte = self.data[self.offset]
+        self.offset += 1
+        if byte <= _SINGLE_BYTE_MAX:
+            return byte
+        if byte == _U16_BYTE:
+            return int.from_bytes(self.take(2), "little")
+        if byte == _U32_BYTE:
+            return int.from_bytes(self.take(4), "little")
+        if byte == _U64_BYTE:
+            return int.from_bytes(self.take(8), "little")
+        raise FrameProtocolError("varint overflow")
 
     def ivarint(self) -> int:
         raw = self.uvarint()
@@ -434,21 +445,30 @@ class FrameClient:
         self._writer.write(encode_frame(payload))
         await self._writer.drain()
 
-    async def handshake(self, locator: AttachLocator) -> None:
+    async def handshake(
+        self,
+        locator: AttachLocator,
+        *,
+        local_token: str | None = None,
+        encoding: str = "semantic_frame",
+        cols: int = 80,
+        rows: int = 24,
+    ) -> None:
+        token = local_token if local_token is not None else _read_local_cli_token()
         await self._send(
             {
                 "type": "hello",
                 "version": PROTOCOL_VERSION,
-                "encoding": "terminal_ansi",
-                "local_token": "",
-                "cols": 80,
-                "rows": 24,
+                "encoding": encoding,
+                "local_token": token,
+                "cols": cols,
+                "rows": rows,
                 "tmux_identity": None,
             }
         )
         welcome = await self.read_message()
         if welcome.get("type") != "welcome":
-            raise FrameProtocolError("expected welcome")
+            raise FrameProtocolError(f"expected welcome, got {welcome.get('type')}")
         if str(welcome.get("host_epoch")) != locator.frame_host_epoch:
             await self.close()
             raise HostEpochChangedError("host epoch changed")
@@ -466,10 +486,14 @@ class FrameClient:
             "locator": None,
         }
         if locator.backend == "tmux" and locator.socket_path and locator.pane_id:
+            pid = locator.server_pid
+            start = locator.server_start_time
+            if not isinstance(pid, int) or not isinstance(start, int):
+                raise FrameProtocolError("tmux attach requires server generation")
             payload["locator"] = {
                 "socket_path": locator.socket_path,
-                "server_pid": 0,
-                "server_start_time": 0,
+                "server_pid": pid,
+                "server_start_time": start,
                 "pane_id": locator.pane_id,
             }
         await self._send(payload)
@@ -494,6 +518,14 @@ class FrameClient:
             raise FrameLagError("frame queue overflow")
         self._queue.append(message)
         self._queue_bytes += len(encoded)
+
+
+def _read_local_cli_token() -> str:
+    path = Path.home() / ".gobby" / "local_cli_token"
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
 
 
 __all__ = [
