@@ -741,3 +741,38 @@ async def test_gc_abort_request_raises_resumable_error(
 
     with pytest.raises(EmbeddingSwitchRunError, match="aborted"):
         await runner.gc(_journal(PHASE_GC))
+
+
+@pytest.mark.asyncio
+async def test_detect_provider_from_config_refuses_unidentifiable_server(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.ai import embedding_switch_runner
+    from gobby.config.app import DaemonConfig
+
+    config = DaemonConfig.model_validate({"embeddings": {"api_base": "http://localhost:9321/v1"}})
+
+    async def _no_match(_api_base: str, _api_key: str | None = None, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(embedding_switch_runner, "fingerprint_embedding_server", _no_match)
+
+    with pytest.raises(ValueError, match="--provider"):
+        await embedding_switch_runner.detect_provider_from_config(config)
+
+
+@pytest.mark.asyncio
+async def test_detect_provider_from_config_uses_fingerprint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.ai import embedding_switch_runner
+    from gobby.config.app import DaemonConfig
+
+    config = DaemonConfig.model_validate({"embeddings": {"api_base": "http://localhost:8323/v1"}})
+
+    async def _vllm(_api_base: str, _api_key: str | None = None, **_kwargs: object) -> str:
+        return "vllm"
+
+    monkeypatch.setattr(embedding_switch_runner, "fingerprint_embedding_server", _vllm)
+
+    assert await embedding_switch_runner.detect_provider_from_config(config) == "vllm"

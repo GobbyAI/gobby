@@ -17,6 +17,7 @@ from gobby.config.embedding_keys import (
 from gobby.storage.config_mutations import config_key_to_secret_name
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.secrets import SecretStore
+from gobby.utils.deps import fingerprint_embedding_server_sync
 
 
 @dataclass(frozen=True)
@@ -292,13 +293,11 @@ def _secret_present(
 
 def _embedding_provider(api_base: str | None, has_api_key: bool) -> str:
     if api_base:
-        lowered = api_base.lower()
-        if ":1234" in lowered:
-            return "lmstudio"
-        if ":11434" in lowered:
-            return "ollama"
-        if "api.openai.com" in lowered:
+        if "api.openai.com" in api_base.lower():
             return "openai"
+        fingerprinted = fingerprint_embedding_server_sync(api_base)
+        if fingerprinted is not None:
+            return fingerprinted
         return "openai-compatible"
     return "openai" if has_api_key else "openai-compatible"
 

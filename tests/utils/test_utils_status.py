@@ -82,6 +82,26 @@ class TestFormatStatusMessage:
         assert "localhost:60887" in result
         assert "localhost:60888" in result
 
+    def test_format_status_message_renders_fingerprinted_embedding_providers(self) -> None:
+        deps_info: dict[str, dict[str, object]] = {
+            "integrations": {
+                "embeddings_provider": "vllm",
+                "ollama": {"running": False},
+                "lmstudio": {"running": False},
+            }
+        }
+        result = format_status_message(running=True, deps_info=deps_info)
+        line = _status_line(result, "Embeddings")
+        assert "vLLM" in line
+        assert "Ollama" not in line
+        assert "stopped" not in line
+
+        deps_info["integrations"]["embeddings_provider"] = "openai-compatible"
+        result = format_status_message(running=True, deps_info=deps_info)
+        line = _status_line(result, "Embeddings")
+        assert "OpenAI-compatible endpoint" in line
+        assert "Ollama" not in line
+
     def test_stopped_status_no_details(self) -> None:
         result = format_status_message(
             running=False,

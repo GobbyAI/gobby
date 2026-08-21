@@ -50,7 +50,13 @@ def _configured_values() -> dict[str, Any]:
     }
 
 
-def test_snapshot_reports_complete_sections_and_secret_presence() -> None:
+def test_snapshot_reports_complete_sections_and_secret_presence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "gobby.cli._install_state.fingerprint_embedding_server_sync",
+        lambda _api_base: "lmstudio",
+    )
     state = snapshot_install_state(
         _ConfigStore(_configured_values()),  # type: ignore[arg-type]
         _SecretStore({"embedding-key", "falkor-key"}),  # type: ignore[arg-type]

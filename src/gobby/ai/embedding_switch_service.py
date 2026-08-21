@@ -99,7 +99,7 @@ class EmbeddingSwitchCoordinator:
         async with self._lock:
             self._raise_if_active()
             config = self._active_config()
-            provider_name = provider or detect_provider_from_config(config)
+            provider_name = provider or await detect_provider_from_config(config)
             journal = self._start_journal(
                 self.config_store,
                 catalog_key,

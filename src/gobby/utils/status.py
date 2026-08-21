@@ -434,6 +434,10 @@ def format_status_message(
                 lines.append(f"  {'Embeddings:':<{_LW}}LM Studio")
         elif configured_embeddings_provider == "openai":
             lines.append(f"  {'Embeddings:':<{_LW}}OpenAI")
+        elif configured_embeddings_provider == "vllm":
+            lines.append(f"  {'Embeddings:':<{_LW}}vLLM")
+        elif configured_embeddings_provider == "openai-compatible":
+            lines.append(f"  {'Embeddings:':<{_LW}}OpenAI-compatible endpoint")
         elif configured_embeddings_provider == "none":
             lines.append(f"  {'Embeddings:':<{_LW}}disabled")
         elif isinstance(ollama, dict) and ollama.get("running"):

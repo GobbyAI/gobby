@@ -53,6 +53,7 @@ from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.memories_models import Memory
 from gobby.storage.projects import LocalProjectManager
+from gobby.utils.deps import fingerprint_embedding_server
 
 logger = logging.getLogger(__name__)
 
@@ -117,15 +118,18 @@ class SwitchRunReport:
         return self.error is not None
 
 
-def detect_provider_from_config(config: DaemonConfig) -> str:
-    """Infer the provider from the active API base, matching the previous CLI behavior."""
+async def detect_provider_from_config(config: DaemonConfig) -> str:
+    """Fingerprint the active embedding server; never guess an unidentifiable one."""
     current_api_base = config.embeddings.api_base
+    provider: str | None = None
     if current_api_base:
-        if "11434" in current_api_base:
-            return "ollama"
-        if "1234" in current_api_base:
-            return "lmstudio"
-    return "ollama"
+        provider = await fingerprint_embedding_server(current_api_base, config.embeddings.api_key)
+    if provider is None:
+        raise ValueError(
+            "Cannot identify the embedding server at "
+            f"{current_api_base or '(unset api_base)'}; pass --provider explicitly."
+        )
+    return provider
 
 
 class EmbeddingSwitchRunner:

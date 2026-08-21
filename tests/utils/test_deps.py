@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import httpx
 import psycopg
 import pytest
 
@@ -422,6 +423,115 @@ def test_lmstudio_info_unexpected_exception_propagates() -> None:
         deps.get_lmstudio_info()
 
 
+class _FingerprintResponse:
+    def __init__(self, status_code: int, payload: object | None = None) -> None:
+        self.status_code = status_code
+        self._payload = payload
+
+    def json(self) -> object:
+        if self._payload is None:
+            raise ValueError("no JSON body")
+        return self._payload
+
+
+class _FingerprintClient:
+    """Async httpx.AsyncClient stand-in serving a fixed URL->response map."""
+
+    def __init__(self, responses: dict[str, _FingerprintResponse]) -> None:
+        self._responses = responses
+
+    async def __aenter__(self) -> "_FingerprintClient":
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        return None
+
+    async def get(self, url: str) -> _FingerprintResponse:
+        response = self._responses.get(url)
+        if response is None:
+            raise httpx.ConnectError(f"refused: {url}")
+        return response
+
+
+def _patch_fingerprint_client(
+    monkeypatch: pytest.MonkeyPatch, responses: dict[str, _FingerprintResponse]
+) -> None:
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **_kwargs: _FingerprintClient(responses),
+    )
+
+
+@pytest.mark.unit
+def test_fingerprint_embedding_server_identifies_custom_port_providers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_fingerprint_client(
+        monkeypatch,
+        {"http://localhost:9999/api/tags": _FingerprintResponse(200)},
+    )
+    assert deps.fingerprint_embedding_server_sync("http://localhost:9999/v1") == "ollama"
+
+    _patch_fingerprint_client(
+        monkeypatch,
+        {"http://localhost:9998/api/v1/models": _FingerprintResponse(200)},
+    )
+    assert deps.fingerprint_embedding_server_sync("http://localhost:9998/v1") == "lmstudio"
+
+
+@pytest.mark.unit
+def test_fingerprint_embedding_server_identifies_vllm_and_generic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_fingerprint_client(
+        monkeypatch,
+        {
+            "http://localhost:8323/v1/models": _FingerprintResponse(
+                200, {"data": [{"id": "Qwen/Qwen3-Embedding-0.6B", "owned_by": "vllm"}]}
+            )
+        },
+    )
+    assert deps.fingerprint_embedding_server_sync("http://localhost:8323/v1") == "vllm"
+
+    _patch_fingerprint_client(
+        monkeypatch,
+        {
+            "http://localhost:8443/v1/models": _FingerprintResponse(
+                200, {"data": [{"id": "some-model", "owned_by": "org"}]}
+            )
+        },
+    )
+    assert deps.fingerprint_embedding_server_sync("http://localhost:8443/v1") == "openai-compatible"
+
+
+@pytest.mark.unit
+def test_fingerprint_embedding_server_returns_none_when_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_fingerprint_client(monkeypatch, {})
+    assert deps.fingerprint_embedding_server_sync("http://localhost:9321/v1") is None
+
+
+@pytest.mark.unit
+def test_get_configured_embedding_provider_falls_back_for_unreachable_api_base(
+    temp_db: HubDatabase,
+) -> None:
+    _patch_config(
+        temp_db,
+        {
+            AI_EMBEDDING_API_BASE_KEY: "http://localhost:9321/v1",
+            AI_EMBEDDING_DIM_KEY: 1024,
+        },
+    )
+
+    with patch(
+        "gobby.utils.deps.fingerprint_embedding_server_sync",
+        return_value=None,
+    ):
+        assert deps.get_configured_embedding_provider(temp_db) == "openai-compatible"
+
+
 @pytest.mark.unit
 def test_get_configured_embedding_provider_detects_ollama(temp_db: HubDatabase) -> None:
     _patch_config(
@@ -432,7 +542,11 @@ def test_get_configured_embedding_provider_detects_ollama(temp_db: HubDatabase) 
         },
     )
 
-    assert deps.get_configured_embedding_provider(temp_db) == "ollama"
+    with patch(
+        "gobby.utils.deps.fingerprint_embedding_server_sync",
+        return_value="ollama",
+    ):
+        assert deps.get_configured_embedding_provider(temp_db) == "ollama"
 
 
 @pytest.mark.unit
@@ -445,7 +559,11 @@ def test_get_configured_embedding_provider_detects_lmstudio(temp_db: HubDatabase
         },
     )
 
-    assert deps.get_configured_embedding_provider(temp_db) == "lmstudio"
+    with patch(
+        "gobby.utils.deps.fingerprint_embedding_server_sync",
+        return_value="lmstudio",
+    ):
+        assert deps.get_configured_embedding_provider(temp_db) == "lmstudio"
 
 
 @pytest.mark.unit

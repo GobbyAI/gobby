@@ -6,6 +6,7 @@ Each function returns None if the tool is not installed/available.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -15,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
+import httpx
 import psycopg
 
 from gobby.config.bootstrap import BootstrapConfigError
@@ -390,16 +392,67 @@ def _strip_config_string(value: Any) -> Any:
     return value
 
 
-def _infer_embedding_provider_from_api_base(api_base: Any) -> str | None:
-    """Infer a local embeddings provider from the configured API base."""
-    normalized_api_base = _strip_config_string(api_base)
-    if not isinstance(normalized_api_base, str):
+async def fingerprint_embedding_server(
+    api_base: str,
+    api_key: str | None = None,
+    *,
+    timeout: float = 1.5,
+) -> str | None:
+    """Identify a local embedding server by probing its origin.
+
+    Ollama answers ``GET /api/tags``; LM Studio answers ``GET /api/v1/models``;
+    vLLM ``/v1/models`` entries carry ``owned_by: "vllm"``; any other
+    ``/v1/models`` 200 is generic openai-compatible. Unreachable or
+    unidentifiable servers return ``None``.
+    """
+    parsed = urlparse(api_base.strip())
+    if not parsed.scheme or not parsed.netloc:
         return None
-    api_base_lower = normalized_api_base.lower()
-    if ":1234" in api_base_lower:
-        return "lmstudio"
-    if ":11434" in api_base_lower:
-        return "ollama"
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    headers: dict[str, str] = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
+        for url, provider in (
+            (f"{origin}/api/tags", "ollama"),
+            (f"{origin}/api/v1/models", "lmstudio"),
+        ):
+            try:
+                response = await client.get(url)
+            except httpx.HTTPError:
+                continue
+            if response.status_code == 200:
+                return provider
+        try:
+            response = await client.get(f"{origin}/v1/models")
+        except httpx.HTTPError:
+            return None
+    if response.status_code != 200:
+        return None
+    try:
+        payload: Any = response.json()
+    except ValueError:
+        return "openai-compatible"
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if isinstance(data, list) and any(
+        isinstance(entry, dict) and entry.get("owned_by") == "vllm" for entry in data
+    ):
+        return "vllm"
+    return "openai-compatible"
+
+
+def fingerprint_embedding_server_sync(
+    api_base: str,
+    api_key: str | None = None,
+    *,
+    timeout: float = 1.5,
+) -> str | None:
+    """Sync wrapper over :func:`fingerprint_embedding_server` for CLI callers."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(fingerprint_embedding_server(api_base, api_key, timeout=timeout))
+    logger.warning("Cannot fingerprint embedding server: already in an event loop")
     return None
 
 
@@ -474,9 +527,14 @@ def get_configured_embedding_provider(
         if inferred_from_config == "none":
             return inferred_from_config
 
-        provider = _infer_embedding_provider_from_api_base(api_base)
-        if provider is not None:
-            return provider
+        if isinstance(api_base, str) and api_base and not _is_openai_cloud_api_base(api_base):
+            provider = fingerprint_embedding_server_sync(
+                api_base,
+                api_key if isinstance(api_key, str) and api_key else None,
+            )
+            if provider is not None:
+                return provider
+            return "openai-compatible"
 
         return inferred_from_config
     except (psycopg.Error, BootstrapConfigError, RuntimeError, OSError):
