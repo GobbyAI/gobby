@@ -17,6 +17,8 @@ from gobby.config.app import DaemonConfig
 from gobby.servers.local_provider_models import (
     LocalEndpointModelGroup,
     discover_local_endpoint_model_group,
+    probe_generation_endpoint,
+    probe_generation_endpoints,
 )
 from gobby.servers.routes.providers import _local_generation_provider_entries
 
@@ -980,3 +982,74 @@ async def _assert_catalog_matches_admission(
             assert (
                 resolved_modalities is not None and "image" in resolved_modalities
             ) is expect_image
+
+
+@pytest.mark.asyncio
+async def test_probe_generation_endpoint_vllm_resolves_auto_served_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    endpoint = GenerationEndpointConfig(
+        protocol="vllm",
+        wire_api="chat-completions",
+        api_base="http://localhost:8000/v1",
+        model="auto",
+    )
+
+    single = _FakeAsyncClient(
+        {_VLLM_MODELS_URL: _FakeResponse(_VLLM_MODELS_URL, {"data": [{"id": _VLLM_PROBED_ID}]})}
+    )
+    monkeypatch.setattr("gobby.servers.local_provider_models.httpx.AsyncClient", lambda: single)
+    result = await probe_generation_endpoint("vllm", endpoint)
+    assert result["healthy"] is True
+    assert result["served_model"] == _VLLM_PROBED_ID
+    assert result["model_count"] == 1
+    assert result["error"] is None
+    assert result["provider_label"] == "vLLM"
+    assert result["wire_api"] == "chat-completions"
+
+    multi = _FakeAsyncClient(
+        {
+            _VLLM_MODELS_URL: _FakeResponse(
+                _VLLM_MODELS_URL,
+                {"data": [{"id": _VLLM_PROBED_ID}, {"id": _VLLM_OTHER_ID}]},
+            )
+        }
+    )
+    monkeypatch.setattr("gobby.servers.local_provider_models.httpx.AsyncClient", lambda: multi)
+    result = await probe_generation_endpoint("vllm", endpoint)
+    assert result["healthy"] is False
+    assert result["error"] is not None
+    assert _VLLM_PROBED_ID in result["error"]
+    assert _VLLM_OTHER_ID in result["error"]
+
+    down = _FakeAsyncClient({})
+    monkeypatch.setattr("gobby.servers.local_provider_models.httpx.AsyncClient", lambda: down)
+    result = await probe_generation_endpoint("vllm", endpoint)
+    assert result["healthy"] is False
+    assert result["error"]
+
+
+@pytest.mark.asyncio
+async def test_probe_generation_endpoints_reports_configured_model_and_never_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert await probe_generation_endpoints({}) == []
+
+    studio = GenerationEndpointConfig(
+        protocol="lmstudio",
+        wire_api="chat-completions",
+        api_base="http://localhost:1234/v1",
+        model="qwen-coder",
+    )
+    models_url = "http://localhost:1234/v1/models"
+    fake = _FakeAsyncClient(
+        {models_url: _FakeResponse(models_url, {"data": [{"id": "qwen-coder"}]})}
+    )
+    monkeypatch.setattr("gobby.servers.local_provider_models.httpx.AsyncClient", lambda: fake)
+
+    results = await probe_generation_endpoints({"studio": studio})
+
+    assert len(results) == 1
+    assert results[0]["name"] == "studio"
+    assert results[0]["healthy"] is True
+    assert results[0]["served_model"] == "qwen-coder"

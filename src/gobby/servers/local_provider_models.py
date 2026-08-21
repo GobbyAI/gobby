@@ -537,3 +537,88 @@ def _headers(api_key: str | None) -> dict[str, str]:
 def _short_error(exc: BaseException) -> str:
     message = str(exc).strip()
     return message or exc.__class__.__name__
+
+
+async def probe_generation_endpoint(
+    endpoint_name: str,
+    endpoint: GenerationEndpointConfig,
+    *,
+    timeout: float = 1.5,
+) -> dict[str, Any]:
+    """Probe one configured generation endpoint's ``/v1/models`` for live health."""
+    result: dict[str, Any] = {
+        "name": endpoint_name,
+        "protocol": endpoint.protocol,
+        "provider_label": local_provider_display_label(endpoint.protocol),
+        "wire_api": endpoint.wire_api,
+        "api_base": endpoint.api_base,
+        "model": endpoint.model,
+        "healthy": False,
+        "served_model": None,
+        "model_count": None,
+        "error": None,
+    }
+    models_url = vllm_models_url(endpoint.api_base)
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await asyncio.wait_for(
+                client.get(models_url, headers=_headers(endpoint.api_key), timeout=timeout),
+                timeout,
+            )
+        response.raise_for_status()
+        payload: Any = response.json()
+    except Exception as exc:
+        result["error"] = _short_error(exc)
+        return result
+
+    served = [
+        model_id
+        for model in _model_list(payload)
+        if (model_id := _first_string(model, "id", "model", "name")) is not None
+    ]
+    result["model_count"] = len(served)
+    if endpoint.protocol == "vllm":
+        try:
+            result["served_model"] = select_vllm_served_model(
+                endpoint.model, served, api_base=endpoint.api_base
+            )
+        except LocalModelError as exc:
+            result["error"] = str(exc)
+            return result
+    else:
+        result["served_model"] = endpoint.model
+    result["healthy"] = True
+    return result
+
+
+async def probe_generation_endpoints(
+    endpoints: dict[str, GenerationEndpointConfig],
+    *,
+    timeout: float = 1.5,
+) -> list[dict[str, Any]]:
+    """Probe every configured generation endpoint concurrently; never raises."""
+    if not endpoints:
+        return []
+
+    async def _probe(name: str, endpoint: GenerationEndpointConfig) -> dict[str, Any]:
+        try:
+            return await probe_generation_endpoint(name, endpoint, timeout=timeout)
+        except Exception as exc:
+            return {
+                "name": name,
+                "protocol": getattr(endpoint, "protocol", None),
+                "provider_label": local_provider_display_label(
+                    str(getattr(endpoint, "protocol", "") or "")
+                ),
+                "wire_api": getattr(endpoint, "wire_api", None),
+                "api_base": getattr(endpoint, "api_base", None),
+                "model": getattr(endpoint, "model", None),
+                "healthy": False,
+                "served_model": None,
+                "model_count": None,
+                "error": _short_error(exc),
+            }
+
+    return list(
+        await asyncio.gather(*(_probe(name, endpoint) for name, endpoint in endpoints.items()))
+    )
