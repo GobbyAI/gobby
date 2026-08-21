@@ -862,6 +862,8 @@ def test_tool_binding_probe_evidence_gate() -> None:
     assert failed.available is False
     assert failed.reason is not None
     assert "probe" in failed.reason.lower()
+    assert "--enable-auto-tool-choice" in failed.reason
+    assert "--tool-call-parser" in failed.reason
     assert failed_endpoint.tool_chat is True
     assert failed_endpoint.probed_tools is False
 
@@ -874,3 +876,4 @@ def test_tool_binding_probe_evidence_gate() -> None:
     assert lm_studio.available is False
     assert lm_studio.reason is not None
     assert "probe" not in lm_studio.reason.lower()
+    assert "--enable-auto-tool-choice" not in lm_studio.reason

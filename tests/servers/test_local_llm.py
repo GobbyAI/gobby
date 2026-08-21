@@ -173,6 +173,7 @@ def _local_group(
     provider_type: GenerationEndpointProtocol,
     provider_label: str,
     model_id: str,
+    probed_tools: bool | None = None,
 ) -> LocalEndpointModelGroup:
     return LocalEndpointModelGroup(
         endpoint_name=endpoint_name,
@@ -187,6 +188,7 @@ def _local_group(
                 "is_default": True,
             }
         ],
+        probed_tools=probed_tools,
     )
 
 
@@ -200,6 +202,49 @@ def _catalog_by_type(
         codex_unavailable_reason=None,
     )
     return {entry["provider_type"]: entry for entry in entries}
+
+
+def test_failed_tool_probe_hides_routable_groups_from_web_chat() -> None:
+    catalog = _catalog_by_type(
+        [
+            _local_group(
+                endpoint_name="metal",
+                provider_type="vllm",
+                provider_label="vLLM",
+                model_id="Qwen/Qwen2.5-7B-Instruct",
+                probed_tools=False,
+            ),
+            _local_group(
+                endpoint_name="studio",
+                provider_type="lmstudio",
+                provider_label="LM Studio",
+                model_id="qwen-coder-32b",
+                probed_tools=False,
+            ),
+            _local_group(
+                endpoint_name="ollama",
+                provider_type="ollama",
+                provider_label="Ollama",
+                model_id="llama3.2:latest",
+                probed_tools=None,
+            ),
+        ]
+    )
+
+    assert catalog["vllm"]["supports_web_chat"] is False
+    assert catalog["vllm"]["available"] is False
+    assert "--enable-auto-tool-choice" in catalog["vllm"]["unavailable_reason"]
+    assert "--tool-call-parser" in catalog["vllm"]["unavailable_reason"]
+    assert "execution_provider" not in catalog["vllm"]
+
+    assert catalog["lmstudio"]["supports_web_chat"] is False
+    assert catalog["lmstudio"]["unavailable_reason"] == (
+        "Tool-calling probe failed; re-activate the endpoint after enabling tool calling"
+    )
+
+    assert catalog["ollama"]["supports_web_chat"] is True
+    assert catalog["ollama"]["execution_provider"] == "codex"
+    assert catalog["ollama"]["unavailable_reason"] is None
 
 
 def test_routable_transport_strategies(

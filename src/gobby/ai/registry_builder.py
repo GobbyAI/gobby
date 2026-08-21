@@ -7,6 +7,7 @@ from collections.abc import Callable, Mapping
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
+from gobby.agents.local_model import VLLM_TOOL_CALLING_HINT
 from gobby.ai.embeddings import EmbeddingService
 from gobby.ai.endpoints import endpoint_provider
 
@@ -637,10 +638,13 @@ def _tool_chat_endpoint_unavailable_reason(
 ) -> str | None:
     # probed_tools=False is activation evidence; config.tool_chat is never mutated.
     if endpoint.probed_tools is False:
-        return (
+        reason = (
             f"Tool-call probe failed for endpoint {name!r}; "
             "tool_chat remains configured but unavailable until a successful activation."
         )
+        if endpoint.protocol == "vllm":
+            reason = f"{reason} Fix: {VLLM_TOOL_CALLING_HINT}."
+        return reason
     if endpoint.wire_api == "responses":
         return None
     if endpoint.protocol not in OPENAI_CLIENT_PROTOCOLS:

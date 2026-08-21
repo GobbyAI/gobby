@@ -39,6 +39,7 @@ class LocalEndpointModelGroup:
     models: list[dict[str, Any]]
     source: str
     error: str | None = None
+    probed_tools: bool | None = None
 
     @property
     def provider(self) -> str:
@@ -75,6 +76,7 @@ async def discover_local_endpoint_model_group(
             models=models,
             source=source,
             error=NO_COMPLETION_MODELS_ERROR if capability_checked and not models else None,
+            probed_tools=endpoint.probed_tools,
         )
     except Exception as exc:
         logger.warning(
@@ -89,6 +91,7 @@ async def discover_local_endpoint_model_group(
             models=_merge_default_model(endpoint_name, endpoint, []),
             source="config",
             error=_short_error(exc),
+            probed_tools=endpoint.probed_tools,
         )
 
 

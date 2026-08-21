@@ -12,7 +12,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from gobby.config.ai import AIConfig, GenerationConfig
+from gobby.config.ai import AIConfig, GenerationConfig, GenerationEndpointConfig
 from gobby.config.app import DaemonConfig
 from gobby.providers.capabilities.models import (
     ActivationDescriptor,
@@ -513,6 +513,67 @@ class TestProviderModelsRoute:
         assert providers["codex"]["startup_error"] == "codex failed"
         assert providers["endpoint:studio"]["available"] is False
         assert providers["endpoint:studio"]["unavailable_reason"] == "codex failed"
+
+    def test_vllm_endpoint_with_failed_tool_probe_is_unavailable_for_web_chat(self) -> None:
+        app = FastAPI()
+        config = DaemonConfig(
+            ai=AIConfig(
+                generation=GenerationConfig(
+                    endpoints={
+                        "vllm": {
+                            "protocol": "vllm",
+                            "api_base": "http://localhost:8321/v1",
+                            "model": "auto",
+                            "tool_chat": True,
+                            "probed_model": "qwen-3b",
+                            "probed_json": True,
+                            "probed_tools": False,
+                            "input_modalities": ["text"],
+                        }
+                    }
+                )
+            )
+        )
+        server = _server_stub(config=config)
+        app.include_router(create_providers_router(server))
+        client = TestClient(app)
+
+        async def fake_discover(
+            name: str, endpoint: GenerationEndpointConfig
+        ) -> LocalEndpointModelGroup:
+            return LocalEndpointModelGroup(
+                endpoint_name=name,
+                provider_type="vllm",
+                provider_label="vLLM",
+                source="live",
+                models=[
+                    {
+                        "value": "endpoint:vllm/qwen-3b",
+                        "label": "Qwen 3B",
+                        "canonical_id": "qwen-3b",
+                    }
+                ],
+                probed_tools=endpoint.probed_tools,
+            )
+
+        with (
+            patch(
+                "gobby.servers.routes.providers.discover_local_endpoint_model_group",
+                side_effect=fake_discover,
+            ),
+            patch(
+                "gobby.servers.routes.providers.shutil.which",
+                side_effect=lambda b: f"/usr/local/bin/{b}",
+            ),
+        ):
+            response = client.get("/api/providers/models")
+
+        entry = {p["provider"]: p for p in response.json()["providers"]}["endpoint:vllm"]
+        assert entry["available"] is False
+        assert entry["supports_web_chat"] is False
+        assert "--enable-auto-tool-choice" in entry["unavailable_reason"]
+        assert "--tool-call-parser" in entry["unavailable_reason"]
+        assert "execution_provider" not in entry
 
     def test_models_route_keeps_lazy_acp_provider_available_after_warmup_failure(self) -> None:
         app = FastAPI()

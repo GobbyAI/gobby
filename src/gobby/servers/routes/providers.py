@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter
 
 from gobby.agents.codex_oss import codex_local_transport_strategy
+from gobby.agents.local_model import VLLM_TOOL_CALLING_HINT
 from gobby.ai.codex_endpoint import codex_endpoint_display_name
 from gobby.ai.endpoint_activation import modalities_for_served_model
 from gobby.ai.endpoints import endpoint_provider
@@ -190,6 +191,12 @@ def _local_generation_provider_entries(
             unavailable_reason = group.error
         elif not group.models:
             unavailable_reason = NO_COMPLETION_MODELS_ERROR
+        elif group.probed_tools is False:
+            unavailable_reason = (
+                f"Tool-calling probe failed; {VLLM_TOOL_CALLING_HINT}"
+                if group.provider_type == "vllm"
+                else "Tool-calling probe failed; re-activate the endpoint after enabling tool calling"
+            )
         elif not codex_installed:
             unavailable_reason = _CODEX_REQUIRED_REASON
         elif not codex_available:
