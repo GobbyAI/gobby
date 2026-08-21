@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import secrets
 import struct
 import tempfile
 import zlib
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,8 @@ from gobby.ai.vision import CodexEndpointVisionExtractAdapter, VisionExtractRequ
 from gobby.config.ai import GenerationEndpointConfig
 from gobby.config.app import DaemonConfig
 from gobby.llm.local_provider_adapters import create_local_provider_adapter
+
+logger = logging.getLogger(__name__)
 
 _TRANSIENT_STATUS_RE = re.compile(r"\b(?:429|5\d\d)\b")
 _RETRY_AFTER_RE = re.compile(r"retry-after\s*[:=]\s*(\d+(?:\.\d+)?)", re.IGNORECASE)
@@ -77,6 +80,7 @@ def _activation_result(
     input_modalities: list[str],
     probed_json: bool,
     probed_tools: bool | None,
+    diagnostics: dict[str, str],
 ) -> EndpointActivationResult:
     updated = endpoint.model_copy(
         update={
@@ -89,6 +93,7 @@ def _activation_result(
     return EndpointActivationResult(
         endpoint=updated,
         vision_enabled="image" in input_modalities,
+        diagnostics=diagnostics,
     )
 
 
@@ -96,6 +101,7 @@ def _activation_result(
 class EndpointActivationResult:
     endpoint: GenerationEndpointConfig
     vision_enabled: bool
+    diagnostics: dict[str, str] = field(default_factory=dict)
 
 
 def _client(endpoint_name: str, endpoint: GenerationEndpointConfig) -> CodexAppServerClient:
@@ -301,15 +307,36 @@ async def _probe_vision(
             await adapter.stop()
 
 
-def _sanitized_activation_error(exc: BaseException, api_key: str) -> EndpointActivationError:
-    message = str(exc)
+def _redact(message: str, api_key: str) -> str:
     if api_key:
         message = message.replace(api_key, "[REDACTED]")
+    return message
+
+
+def _degraded_probe(endpoint_name: str, probe: str, exc: BaseException, api_key: str) -> str:
+    """Record a degraded (non-fatal) probe failure and return its redacted message."""
+    message = _redact(str(exc), api_key)
+    logger.warning(
+        "Endpoint %r %s probe failed: %s; activation continues without it",
+        endpoint_name,
+        probe,
+        message,
+    )
+    return message
+
+
+def _sanitized_activation_error(
+    exc: BaseException,
+    api_key: str,
+    *,
+    transport: str = "Responses",
+) -> EndpointActivationError:
+    message = _redact(str(exc), api_key)
     if _AUTH_RE.search(message):
         return EndpointActivationError(
-            "Responses endpoint authentication failed; verify the configured secret"
+            f"{transport} endpoint authentication failed; verify the configured secret"
         )
-    return EndpointActivationError(f"Responses endpoint activation failed: {message}")
+    return EndpointActivationError(f"{transport} endpoint activation failed: {message}")
 
 
 async def probe_responses_endpoint(
@@ -323,6 +350,7 @@ async def probe_responses_endpoint(
     api_key = next(iter(codex_endpoint_env(endpoint).values()))
 
     async def probe_chain() -> EndpointActivationResult:
+        diagnostics: dict[str, str] = {}
         try:
             await _retry_activation(lambda: _probe_text(endpoint_name, endpoint))
         except Exception as exc:
@@ -332,8 +360,9 @@ async def probe_responses_endpoint(
         try:
             await _retry_activation(lambda: _probe_json(endpoint_name, endpoint))
             probed_json = True
-        except Exception:
+        except Exception as exc:
             probed_json = False
+            diagnostics["json"] = _degraded_probe(endpoint_name, "json", exc, api_key)
 
         probed_tools: bool | None
         if not endpoint.tool_chat:
@@ -344,21 +373,24 @@ async def probe_responses_endpoint(
                     lambda: _probe_tool_context_and_resume(endpoint_name, endpoint)
                 )
                 probed_tools = True
-            except Exception:
+            except Exception as exc:
                 probed_tools = False
+                diagnostics["tools"] = _degraded_probe(endpoint_name, "tools", exc, api_key)
 
         input_modalities = ["text"]
         try:
             await _retry_activation(lambda: _probe_vision(endpoint_name, endpoint, daemon_config))
             input_modalities = ["text", "image"]
-        except Exception:
+        except Exception as exc:
             input_modalities = ["text"]
+            diagnostics["vision"] = _degraded_probe(endpoint_name, "vision", exc, api_key)
         return _activation_result(
             endpoint,
             probed_model=endpoint.model,
             input_modalities=input_modalities,
             probed_json=probed_json,
             probed_tools=probed_tools,
+            diagnostics=diagnostics,
         )
 
     timeout_seconds = daemon_config.ai.generation.timeout_seconds
@@ -486,24 +518,26 @@ async def probe_chat_completions_endpoint(
     daemon_config: DaemonConfig,
 ) -> EndpointActivationResult:
     """Probe chat-completions endpoints and persist model-scoped evidence."""
-    del endpoint_name
     if endpoint.wire_api == "responses":
         raise ValueError("Chat-completions probing is only for chat-completions endpoints")
 
     async def probe_chain() -> EndpointActivationResult:
+        diagnostics: dict[str, str] = {}
+        api_key = endpoint.api_key or ""
         resolved_model = await _resolve_probe_model(endpoint)
         adapter = create_local_provider_adapter(endpoint)
         try:
             await _retry_activation(lambda: _probe_chat_text(adapter, resolved_model))
         except Exception as exc:
-            raise _sanitized_activation_error(exc, endpoint.api_key or "") from exc
+            raise _sanitized_activation_error(exc, api_key, transport="Chat-completions") from exc
 
         probed_json = False
         try:
             await _retry_activation(lambda: _probe_chat_json(adapter, resolved_model))
             probed_json = True
-        except Exception:
+        except Exception as exc:
             probed_json = False
+            diagnostics["json"] = _degraded_probe(endpoint_name, "json", exc, api_key)
 
         probed_tools: bool | None
         if not endpoint.tool_chat:
@@ -512,21 +546,24 @@ async def probe_chat_completions_endpoint(
             try:
                 await _retry_activation(lambda: _probe_chat_tools(adapter, resolved_model))
                 probed_tools = True
-            except Exception:
+            except Exception as exc:
                 probed_tools = False
+                diagnostics["tools"] = _degraded_probe(endpoint_name, "tools", exc, api_key)
 
         input_modalities = ["text"]
         try:
             await _retry_activation(lambda: _probe_chat_vision(adapter, resolved_model))
             input_modalities = ["text", "image"]
-        except Exception:
+        except Exception as exc:
             input_modalities = ["text"]
+            diagnostics["vision"] = _degraded_probe(endpoint_name, "vision", exc, api_key)
         return _activation_result(
             endpoint,
             probed_model=resolved_model,
             input_modalities=input_modalities,
             probed_json=probed_json,
             probed_tools=probed_tools,
+            diagnostics=diagnostics,
         )
 
     timeout_seconds = daemon_config.ai.generation.timeout_seconds

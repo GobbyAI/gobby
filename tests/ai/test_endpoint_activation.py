@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import struct
 from collections.abc import Callable, Mapping
 from types import SimpleNamespace
@@ -211,6 +212,13 @@ async def test_activation_does_not_retry_non_transient_failure(
     assert calls == 1
 
 
+_VLLM_FLAGLESS_TOOLS_400 = (
+    'Error code: 400 - {"object":"error","message":""auto" tool choice requires '
+    '--enable-auto-tool-choice and --tool-call-parser to be set","type":"BadRequestError",'
+    '"param":null,"code":400}'
+)
+
+
 def _chat_endpoint(**overrides: object) -> GenerationEndpointConfig:
     payload: dict[str, object] = {
         "protocol": "vllm",
@@ -292,14 +300,14 @@ class _FakeChatAdapter:
 
 
 class _FakeCompletions:
-    def __init__(self, *, succeed: bool = True) -> None:
-        self.succeed = succeed
+    def __init__(self, *, error: BaseException | None = None) -> None:
+        self.error = error
         self.calls: list[dict[str, object]] = []
 
     async def create(self, **kwargs: object) -> SimpleNamespace:
         self.calls.append(dict(kwargs))
-        if not self.succeed:
-            raise RuntimeError("tool calls unsupported")
+        if self.error is not None:
+            raise self.error
         message = SimpleNamespace(
             tool_calls=[SimpleNamespace(function=SimpleNamespace(name="gobby_probe_tool"))],
             content=None,
@@ -316,8 +324,8 @@ def _pin_probe_color(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def _tool_client(*, succeed: bool = True) -> tuple[object, _FakeCompletions]:
-    completions = _FakeCompletions(succeed=succeed)
+def _tool_client(*, error: BaseException | None = None) -> tuple[object, _FakeCompletions]:
+    completions = _FakeCompletions(error=error)
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     return client, completions
 
@@ -934,6 +942,7 @@ async def test_probe_outcome_table(monkeypatch: pytest.MonkeyPatch) -> None:
 
     json_adapter = _FakeChatAdapter()
     json_adapter.json_error = RuntimeError("json_object rejected")
+    json_adapter.vision_error = RuntimeError("image input unsupported")
     json_client, _json_completions = _tool_client()
     json_adapter.client = json_client
     monkeypatch.setattr(
@@ -948,9 +957,12 @@ async def test_probe_outcome_table(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     assert json_result.endpoint.probed_json is False
     assert json_adapter.json_calls[0]["allow_fallback"] is False
+    assert json_result.diagnostics["json"] == "json_object rejected"
+    assert json_result.diagnostics["vision"] == "image input unsupported"
+    assert "tools" not in json_result.diagnostics
 
     tool_adapter = _FakeChatAdapter()
-    tool_client, _tool_completions = _tool_client(succeed=False)
+    tool_client, _tool_completions = _tool_client(error=RuntimeError(_VLLM_FLAGLESS_TOOLS_400))
     tool_adapter.client = tool_client
     monkeypatch.setattr(
         endpoint_activation,
@@ -963,6 +975,8 @@ async def test_probe_outcome_table(monkeypatch: pytest.MonkeyPatch) -> None:
         DaemonConfig(),
     )
     assert tool_result.endpoint.probed_tools is False
+    assert "--enable-auto-tool-choice" in tool_result.diagnostics["tools"]
+    assert set(tool_result.diagnostics) == {"tools"}
 
     skipped_adapter = _FakeChatAdapter()
     monkeypatch.setattr(
@@ -977,6 +991,7 @@ async def test_probe_outcome_table(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     assert skipped.endpoint.probed_tools is None
     assert skipped_adapter.client is None
+    assert skipped.diagnostics == {}
 
     restored_adapter = _FakeChatAdapter()
     restored_client, _restored_completions = _tool_client()
@@ -999,6 +1014,66 @@ async def test_probe_outcome_table(monkeypatch: pytest.MonkeyPatch) -> None:
     assert restored.endpoint.probed_json is True
     assert restored.endpoint.probed_tools is True
     assert restored.endpoint.input_modalities == ["text", "image"]
+    assert restored.diagnostics == {}
+
+
+@pytest.mark.asyncio
+async def test_degraded_tool_probe_warning_is_redacted(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def _resolve(_endpoint: GenerationEndpointConfig) -> str:
+        return "vision-vlm"
+
+    monkeypatch.setattr(endpoint_activation, "resolve_vllm_served_model", _resolve)
+
+    adapter = _FakeChatAdapter()
+    client, _completions = _tool_client(error=RuntimeError("400 rejected credential local-secret"))
+    adapter.client = client
+    monkeypatch.setattr(
+        endpoint_activation,
+        "create_local_provider_adapter",
+        lambda _endpoint: adapter,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="gobby.ai.endpoint_activation"):
+        result = await probe_chat_completions_endpoint(
+            "local",
+            _chat_endpoint(api_key="local-secret"),
+            DaemonConfig(),
+        )
+
+    assert result.endpoint.probed_tools is False
+    assert result.diagnostics["tools"] == "400 rejected credential [REDACTED]"
+    warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "local-secret" not in caplog.text
+    assert "[REDACTED]" in caplog.text
+    assert "activation continues without it" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_chat_text_probe_failure_names_chat_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _resolve(_endpoint: GenerationEndpointConfig) -> str:
+        return "vision-vlm"
+
+    monkeypatch.setattr(endpoint_activation, "resolve_vllm_served_model", _resolve)
+
+    adapter = _FakeChatAdapter()
+    adapter.text = "nope"
+    monkeypatch.setattr(
+        endpoint_activation,
+        "create_local_provider_adapter",
+        lambda _endpoint: adapter,
+    )
+
+    with pytest.raises(EndpointActivationError) as exc_info:
+        await probe_chat_completions_endpoint("local", _chat_endpoint(), DaemonConfig())
+
+    assert str(exc_info.value).startswith("Chat-completions endpoint activation failed")
+    assert "Responses" not in str(exc_info.value)
 
 
 @pytest.mark.asyncio

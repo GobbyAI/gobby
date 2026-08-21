@@ -26,7 +26,13 @@ __all__ = [
     "vllm_api_base",
     "vllm_health_url",
     "vllm_models_url",
+    "VLLM_TOOL_CALLING_HINT",
 ]
+
+VLLM_TOOL_CALLING_HINT = (
+    "start vLLM with --enable-auto-tool-choice --tool-call-parser <parser> "
+    "(hermes for Qwen models), then re-activate the endpoint"
+)
 
 logger = logging.getLogger(__name__)
 
