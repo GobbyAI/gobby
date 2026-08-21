@@ -271,7 +271,7 @@ def _configured_endpoints(
     server: HTTPServer | None,
     wire_api: str,
 ) -> Iterator[tuple[str, Any]]:
-    config = getattr(getattr(server, "services", None), "config", None)
+    config = getattr(server, "config", None)
     generation = getattr(getattr(config, "ai", None), "generation", None)
     endpoints = getattr(generation, "endpoints", {})
     if not isinstance(endpoints, dict):

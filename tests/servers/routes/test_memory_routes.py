@@ -994,7 +994,7 @@ class TestEntityGraph:
     def test_entity_graph_caps_requests_at_operator_configured_limits(
         self, client: TestClient, mock_server: MagicMock
     ) -> None:
-        mock_server.services.config.ui = SimpleNamespace(
+        mock_server.config.ui = SimpleNamespace(
             knowledge_graph_limit=7,
             knowledge_graph_relationship_limit=13,
         )

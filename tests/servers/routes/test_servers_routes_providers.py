@@ -34,9 +34,16 @@ from gobby.servers.routes.providers import _configured_endpoints, create_provide
 pytestmark = pytest.mark.unit
 
 
-def _server_stub(**services: object) -> HTTPServer:
-    services.setdefault("config", DaemonConfig())
-    return cast(HTTPServer, SimpleNamespace(services=SimpleNamespace(**services)))
+def _server_stub(*, config: object | None = None, **services: object) -> HTTPServer:
+    # Mirror production shape: config lives on the server (HTTPServer.config
+    # property); ServiceContainer has no ``config`` attribute.
+    return cast(
+        HTTPServer,
+        SimpleNamespace(
+            config=DaemonConfig() if config is None else config,
+            services=SimpleNamespace(**services),
+        ),
+    )
 
 
 def _model(

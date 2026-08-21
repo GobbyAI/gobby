@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -453,6 +454,7 @@ async def test_openai_compatible_empty_discovery_uses_config_fallback(
 @pytest.mark.asyncio
 async def test_discovery_failure_falls_back_to_configured_default(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     endpoint = GenerationEndpointConfig(
         protocol="lmstudio",
@@ -465,11 +467,18 @@ async def test_discovery_failure_falls_back_to_configured_default(
         lambda: fake_client,
     )
 
-    group = await discover_local_endpoint_model_group("lm-studio", endpoint)
+    with caplog.at_level(logging.WARNING, logger="gobby.servers.local_provider_models"):
+        group = await discover_local_endpoint_model_group("lm-studio", endpoint)
 
     assert group.source == "config"
     assert group.error
     assert group.models == []
+    warnings = [
+        record
+        for record in caplog.records
+        if record.levelno == logging.WARNING and "lm-studio" in record.getMessage()
+    ]
+    assert len(warnings) == 1
 
 
 _VLLM_HEALTH_URL = "http://localhost:8000/health"

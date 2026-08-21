@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,6 +25,8 @@ LOCAL_PROVIDER_LABELS: dict[str, str] = {
     "vllm": "vLLM",
 }
 NO_COMPLETION_MODELS_ERROR = "No completion-capable models discovered"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -74,6 +77,11 @@ async def discover_local_endpoint_model_group(
             error=NO_COMPLETION_MODELS_ERROR if capability_checked and not models else None,
         )
     except Exception as exc:
+        logger.warning(
+            "Model discovery failed for endpoint %r: %s; falling back to configured models",
+            endpoint_name,
+            _short_error(exc),
+        )
         return LocalEndpointModelGroup(
             endpoint_name=endpoint_name,
             provider_type=endpoint.protocol,

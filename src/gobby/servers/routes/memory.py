@@ -387,11 +387,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
     ) -> dict[str, Any]:
         """Get FalkorDB knowledge graph entities and relationships, most recent first."""
         memory_manager = _require_falkordb_memory_manager(server)
-        ui_config = getattr(
-            getattr(getattr(server, "services", None), "config", None),
-            "ui",
-            None,
-        )
+        ui_config = getattr(getattr(server, "config", None), "ui", None)
         limit = _bounded_graph_limit(
             limit,
             getattr(ui_config, "knowledge_graph_limit", None),
