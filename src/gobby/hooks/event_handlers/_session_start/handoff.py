@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from gobby.hooks.context_limits import handoff_summary_inject_budget_for
+from gobby.sessions.clear_continuation import resolve_clear_continuation
 from gobby.sessions.compact_continuation import (
     COMPACT_HANDOFF_MARKER_VARIABLE,
     consume_compact_handoff_marker,
@@ -37,6 +38,9 @@ class SessionStartResolution:
     session: Any | None
     session_source: str
     blocked_reason: str | None = None
+    clear_predecessor: Any | None = None
+    clear_attempt_id: str | None = None
+    clear_degrade_reason: str | None = None
 
     @property
     def is_compact(self) -> bool:
@@ -60,8 +64,16 @@ def resolve_session_start_identity(
     Compact classification is one-shot: an explicit compact source, a
     handoff_ready row, or an expired row with an unconsumed compact marker.
     """
-    if session_source == "clear" or not handler._session_manager:
+    if not handler._session_manager:
         return SessionStartResolution(session=None, session_source=session_source)
+    if session_source == "clear":
+        return _resolve_clear_session_start(
+            handler,
+            input_data,
+            machine_id=machine_id,
+            project_id=project_id,
+            cli_source=cli_source,
+        )
 
     session = None
     drifted_project = False
@@ -191,6 +203,62 @@ def resolve_session_start_identity(
 
     input_data["source"] = "compact"
     return SessionStartResolution(session=session, session_source="compact")
+
+
+def _resolve_clear_session_start(
+    handler: Any,
+    input_data: dict[str, Any],
+    *,
+    machine_id: str,
+    project_id: str,
+    cli_source: str,
+) -> SessionStartResolution:
+    """Resolve a clear successor without reusing any existing session row."""
+    raw_context = input_data.get("terminal_context")
+    terminal_context = raw_context if isinstance(raw_context, dict) else None
+    predecessor_hint: str | None = None
+    if terminal_context is not None:
+        hint = terminal_context.get("gobby_session_id")
+        if isinstance(hint, str) and hint.strip():
+            predecessor_hint = hint.strip()
+    try:
+        resolved = resolve_clear_continuation(
+            handler._session_manager.db,
+            source=cli_source,
+            project_id=project_id,
+            machine_id=machine_id,
+            terminal_context=terminal_context,
+            predecessor_hint=predecessor_hint,
+        )
+    except Exception as e:
+        handler.logger.warning(
+            "Clear continuation lookup failed for project %s: %s",
+            project_id,
+            e,
+        )
+        return SessionStartResolution(
+            session=None,
+            session_source="clear",
+            clear_degrade_reason="exception",
+        )
+    if resolved.degrade_reason:
+        handler.logger.warning(
+            "Clear continuation degraded: %s",
+            resolved.degrade_reason,
+            extra={
+                "event": "clear_continuation_degraded",
+                "degrade_reason": resolved.degrade_reason,
+                "project_id": project_id,
+                "machine_id": machine_id,
+            },
+        )
+    return SessionStartResolution(
+        session=None,
+        session_source="clear",
+        clear_predecessor=resolved.predecessor,
+        clear_attempt_id=resolved.attempt_id,
+        clear_degrade_reason=resolved.degrade_reason,
+    )
 
 
 def rebind_resumed_session_start(

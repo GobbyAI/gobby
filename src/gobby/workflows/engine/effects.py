@@ -135,10 +135,11 @@ class EffectsMixin(DeliveryFormattingMixin):
                     ctx,
                     allowed_funcs,
                 )
-                # Injected-context fencing lives in the handoff/compact templates
-                # themselves (session_start only), not here, so per-turn injections
-                # (brevity, memory, task context) stay un-tagged. See
-                # context-handoff/inject-previous-session-summary.yaml.
+                # Injected-context fencing lives in the handoff templates
+                # themselves, not here, so per-turn injections (brevity, memory,
+                # task context) stay un-tagged. See
+                # context-handoff/inject-compact-handoff.yaml and
+                # context-handoff/inject-clear-handoff.yaml.
                 context_parts.append(template_text)
 
         elif effect.type == "set_display_content":

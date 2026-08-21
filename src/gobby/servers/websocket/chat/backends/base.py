@@ -169,6 +169,45 @@ class ManagedChatSessionBase:
     async def stop(self) -> None:
         await self._backend.detach_session(self)
 
+    def _reset_continuation_state(self) -> None:
+        """Drop per-provider continuation/resume identifiers before a fresh start."""
+        self.resume_session_id = None
+        self.sdk_session_id = None
+        for attr in ("_thread_id", "_turn_id", "_transcript_path"):
+            if hasattr(self, attr):
+                setattr(self, attr, None)
+
+    async def clear_context(self) -> bool:
+        """Stop, reset continuation state, and start a fresh backend session.
+
+        Returns True when the restart succeeds. A generic stop/start is not
+        enough on its own: attach paths resume when sdk/resume identifiers
+        remain, so those are cleared between stop and start.
+        """
+        selected_model = self.model
+        preserved_mode = self.chat_mode
+        try:
+            await self.stop()
+        except Exception:
+            logger.exception(
+                "Failed to stop %s session before context clear conversation=%s",
+                self.provider,
+                self.conversation_id,
+            )
+            return False
+        self._reset_continuation_state()
+        try:
+            await self.start(model=selected_model)
+        except Exception:
+            logger.exception(
+                "Failed to start %s session after context clear conversation=%s",
+                self.provider,
+                self.conversation_id,
+            )
+            return False
+        self.chat_mode = preserved_mode
+        return True
+
     async def switch_model(self, new_model: str) -> None:
         await self._backend.switch_model(self, new_model)
 

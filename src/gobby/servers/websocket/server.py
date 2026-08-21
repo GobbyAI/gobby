@@ -135,6 +135,10 @@ class WebSocketServer(
         self.web_chat_session_registry = (
             web_chat_session_registry if web_chat_session_registry else WebChatSessionRegistry()
         )
+        self.web_chat_session_registry.bind_clear_lifecycle(
+            self,
+            db=getattr(session_manager, "db", None) if session_manager is not None else None,
+        )
 
         # Persistent chat sessions keyed by conversation_id (survive disconnects)
         self._chat_sessions: dict[str, ChatSessionProtocol] = (
