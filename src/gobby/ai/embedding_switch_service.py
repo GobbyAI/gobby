@@ -95,19 +95,78 @@ class EmbeddingSwitchCoordinator:
             return None
         return self._run_id
 
-    async def start(self, catalog_key: str, provider: str | None) -> SwitchOperationStatus:
+    async def start(
+        self,
+        catalog_key: str,
+        provider: str | None,
+        api_base: str | None = None,
+    ) -> SwitchOperationStatus:
         async with self._lock:
             self._raise_if_active()
             config = self._active_config()
             provider_name = provider or await detect_provider_from_config(config)
+            target_model: str | None = None
+            target_api_base: str | None = None
+            if provider_name == "vllm":
+                target_model, target_api_base = await self._resolve_vllm_target(
+                    catalog_key, config, api_base
+                )
             journal = self._start_journal(
                 self.config_store,
                 catalog_key,
                 provider_name,
+                target_model=target_model,
+                target_api_base=target_api_base,
             )
             if isinstance(journal, tuple):
                 journal = journal[0]
             return self._launch(journal, "started")
+
+    async def _resolve_vllm_target(
+        self,
+        catalog_key: str,
+        config: Any,
+        api_base: str | None,
+    ) -> tuple[str, str]:
+        """Resolve the served model and pre-flight the dim before any staging."""
+        from gobby.agents.local_model import (
+            LocalModelError,
+            select_vllm_served_model,
+            vllm_served_model_ids,
+        )
+        from gobby.ai.embedding_catalog import get_spec_or_raise
+        from gobby.ai.embeddings import EmbeddingGenerationError, EmbeddingService
+
+        configured_api_base = config.embeddings.api_base
+        resolved_api_base = api_base or (
+            configured_api_base if isinstance(configured_api_base, str) else None
+        )
+        if not resolved_api_base:
+            raise ValueError(
+                "vllm embedding switch requires an api_base: pass --api-base or "
+                "configure ai.embeddings.api_base"
+            )
+        spec = get_spec_or_raise(catalog_key)
+        api_key = config.embeddings.api_key
+        try:
+            served = await vllm_served_model_ids(resolved_api_base, api_key)
+            target_model = select_vllm_served_model("auto", served, api_base=resolved_api_base)
+        except LocalModelError as exc:
+            raise ValueError(str(exc)) from exc
+        preflight = EmbeddingService(
+            model=target_model,
+            api_base=resolved_api_base,
+            api_key=api_key,
+            dim=spec.dim,
+        )
+        try:
+            await preflight.generate_embedding("dim pre-flight", max_retries=1)
+        except EmbeddingGenerationError as exc:
+            raise ValueError(
+                f"vllm embedding pre-flight failed for served model {target_model!r} "
+                f"at {resolved_api_base}: {exc}"
+            ) from exc
+        return target_model, resolved_api_base
 
     async def resume(self) -> SwitchOperationStatus:
         async with self._lock:
@@ -219,7 +278,15 @@ class EmbeddingSwitchCoordinator:
         if run_id is not None:
             raise EmbeddingSwitchTaskActive(f"Embedding switch {run_id} is already active")
 
-    def _start_default_journal(self, _store: Any, catalog_key: str, provider: str) -> Any:
+    def _start_default_journal(
+        self,
+        _store: Any,
+        catalog_key: str,
+        provider: str,
+        *,
+        target_model: str | None = None,
+        target_api_base: str | None = None,
+    ) -> Any:
         config = self._active_config()
         current_dim = config.embeddings.dim
         current_catalog_id = config.embeddings.catalog_id
@@ -233,7 +300,10 @@ class EmbeddingSwitchCoordinator:
                 current_catalog_id if isinstance(current_catalog_id, str) else None
             ),
             current_api_base=current_api_base if isinstance(current_api_base, str) else None,
-            target_api_base=_provider_api_base(provider),
+            target_api_base=(
+                target_api_base if target_api_base is not None else _provider_api_base(provider)
+            ),
+            target_model=target_model,
         )
         return journal
 

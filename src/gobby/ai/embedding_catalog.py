@@ -354,6 +354,21 @@ def get_spec(key: str) -> EmbeddingModelSpec | None:
     return _CATALOG.get(key)
 
 
+def catalog_model_for_provider(spec: EmbeddingModelSpec, provider: str) -> str | None:
+    """Map a catalog spec to the provider-native model reference.
+
+    vLLM returns ``None``: the served id is resolved live from the server's
+    ``/v1/models`` catalog, never from a bundled reference.
+    """
+    if provider == "ollama":
+        return spec.ollama_tag
+    if provider == "lmstudio":
+        return spec.lmstudio_ref
+    if provider == "vllm":
+        return None
+    return spec.key
+
+
 def get_spec_or_raise(key: str) -> EmbeddingModelSpec:
     """Return the spec for a catalog key, raising ValueError if not found."""
     spec = _CATALOG.get(key)

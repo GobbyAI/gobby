@@ -106,7 +106,9 @@ def _fake_coordinator(
         db=None,
         fence=None,
         runner_factory=factory,
-        start_journal=((lambda *_args: start_journal) if start_journal is not None else None),
+        start_journal=(
+            (lambda *_args, **_kwargs: start_journal) if start_journal is not None else None
+        ),
         load_journal=(lambda: load_journal) if load_journal is not None else None,
     )
     return coordinator, runners, events
@@ -582,7 +584,7 @@ async def test_abort_translates_runner_failure_to_terminal_status() -> None:
         db=None,
         fence=None,
         runner_factory=lambda _store, _db, control, _fence: FailingRunner(control),
-        start_journal=lambda *_args: FakeJournal("run-1"),
+        start_journal=lambda *_args, **_kwargs: FakeJournal("run-1"),
     )
     await coordinator.start("catalog", "provider")
 
@@ -607,7 +609,7 @@ async def test_background_failure_is_observed_with_run_context(
         db=None,
         fence=None,
         runner_factory=lambda *_args: FailingRunner(),
-        start_journal=lambda *_args: FakeJournal("run-1"),
+        start_journal=lambda *_args, **_kwargs: FakeJournal("run-1"),
     )
     callback_observed = asyncio.Event()
 
@@ -678,3 +680,102 @@ def test_managed_projection_accepts_unchanged_structural_row_revisions(
     completed = managed_embedding_projection(snapshot)[EMBEDDING_SWITCH_COMPLETED_KEY]
     assert isinstance(completed, CompletedSwitchRecord)
     assert completed.committed_revision == committed_revision
+
+
+def _vllm_switch_coordinator(
+    start_journal_calls: list[dict[str, Any]],
+) -> EmbeddingSwitchCoordinator:
+    def start_journal(_store: Any, catalog_key: str, provider: str, **kwargs: Any) -> FakeJournal:
+        start_journal_calls.append({"catalog_key": catalog_key, "provider": provider, **kwargs})
+        return FakeJournal("run-vllm")
+
+    class _IdleRunner:
+        async def run(self, _journal: Any) -> dict[str, Any]:
+            return {"completed": True}
+
+    config = SimpleNamespace(
+        embeddings=SimpleNamespace(api_base=None, api_key=None, dim=None, catalog_id=None)
+    )
+    coordinator = EmbeddingSwitchCoordinator(
+        config_store=None,
+        db=None,
+        fence=None,
+        runner_factory=lambda *_args: _IdleRunner(),
+        start_journal=start_journal,
+        config_runtime=SimpleNamespace(snapshot=SimpleNamespace(active=config)),
+    )
+    return coordinator
+
+
+@pytest.mark.asyncio
+async def test_start_vllm_resolves_served_model_before_opening_journal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_journal_calls: list[dict[str, Any]] = []
+    coordinator = _vllm_switch_coordinator(start_journal_calls)
+
+    served_requests: list[tuple[str, str | None]] = []
+
+    async def fake_served(api_base: str, api_key: str | None, **_kwargs: Any) -> list[str]:
+        served_requests.append((api_base, api_key))
+        return ["Qwen/Qwen3-Embedding-0.6B"]
+
+    monkeypatch.setattr("gobby.agents.local_model.vllm_served_model_ids", fake_served)
+    preflight = AsyncMock(return_value=[0.0] * 1024)
+    monkeypatch.setattr("gobby.ai.embeddings.EmbeddingService.generate_embedding", preflight)
+
+    status = await coordinator.start("qwen3-0.6b-q8", "vllm", api_base="http://localhost:8323/v1")
+
+    assert status.status == "started"
+    assert served_requests == [("http://localhost:8323/v1", None)]
+    preflight.assert_awaited_once()
+    assert start_journal_calls == [
+        {
+            "catalog_key": "qwen3-0.6b-q8",
+            "provider": "vllm",
+            "target_model": "Qwen/Qwen3-Embedding-0.6B",
+            "target_api_base": "http://localhost:8323/v1",
+        }
+    ]
+    await coordinator.task
+
+
+@pytest.mark.asyncio
+async def test_start_vllm_rejects_dim_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.ai.embeddings import EmbeddingGenerationError
+
+    start_journal_calls: list[dict[str, Any]] = []
+    coordinator = _vllm_switch_coordinator(start_journal_calls)
+
+    # Missing api_base: refused before any resolution.
+    with pytest.raises(ValueError, match="--api-base"):
+        await coordinator.start("qwen3-0.6b-q8", "vllm")
+
+    # Multiple served models: refused naming the ids.
+    async def two_models(_api_base: str, _api_key: str | None, **_kwargs: Any) -> list[str]:
+        return ["model-a", "model-b"]
+
+    monkeypatch.setattr("gobby.agents.local_model.vllm_served_model_ids", two_models)
+    with pytest.raises(ValueError, match="model-a.*model-b"):
+        await coordinator.start("qwen3-0.6b-q8", "vllm", api_base="http://localhost:8323/v1")
+
+    # Dim mismatch: the pre-flight embedding call fails before staging.
+    async def one_model(_api_base: str, _api_key: str | None, **_kwargs: Any) -> list[str]:
+        return ["Qwen/Qwen3-Embedding-0.6B"]
+
+    monkeypatch.setattr("gobby.agents.local_model.vllm_served_model_ids", one_model)
+    monkeypatch.setattr(
+        "gobby.ai.embeddings.EmbeddingService.generate_embedding",
+        AsyncMock(
+            side_effect=EmbeddingGenerationError(
+                "Embedding dimension mismatch for model=Qwen/Qwen3-Embedding-0.6B: "
+                "expected 1024, got 4096"
+            )
+        ),
+    )
+    with pytest.raises(ValueError, match="pre-flight.*dimension mismatch"):
+        await coordinator.start("qwen3-0.6b-q8", "vllm", api_base="http://localhost:8323/v1")
+
+    assert start_journal_calls == []

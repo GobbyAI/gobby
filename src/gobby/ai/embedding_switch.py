@@ -19,7 +19,11 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Protocol, cast
 
-from gobby.ai.embedding_catalog import EmbeddingModelSpec, get_spec_or_raise
+from gobby.ai.embedding_catalog import (
+    EmbeddingModelSpec,
+    catalog_model_for_provider,
+    get_spec_or_raise,
+)
 from gobby.config.embedding_keys import (
     AI_EMBEDDING_API_BASE_KEY,
     AI_EMBEDDING_CATALOG_KEY,
@@ -242,6 +246,7 @@ def start_switch(
     current_catalog_id: str | None = None,
     current_api_base: str | None = None,
     target_api_base: str | None | object = _TARGET_API_BASE_UNSET,
+    target_model: str | None = None,
 ) -> tuple[SwitchJournal, EmbeddingModelSpec]:
     """Open a switch journal and return it with the resolved spec.
 
@@ -256,6 +261,7 @@ def start_switch(
         current_catalog_id=current_catalog_id,
         current_api_base=current_api_base,
         target_api_base=target_api_base,
+        target_model=target_model,
     )
 
 
@@ -268,18 +274,20 @@ def _start_switch_unlocked(
     current_catalog_id: str | None,
     current_api_base: str | None,
     target_api_base: str | None | object,
+    target_model: str | None = None,
 ) -> tuple[SwitchJournal, EmbeddingModelSpec]:
     existing = _read_journal(config_store)
     if existing is not None and existing.phase not in (PHASE_ABORTED, PHASE_GC):
         raise SwitchAlreadyActiveError(existing)
 
     spec = get_spec_or_raise(catalog_key)
-    if provider == "ollama":
-        target_model = spec.ollama_tag
-    elif provider == "lmstudio":
-        target_model = spec.lmstudio_ref
-    else:
-        target_model = spec.key
+    if target_model is None:
+        target_model = catalog_model_for_provider(spec, provider)
+    if target_model is None:
+        raise ValueError(
+            f"Provider {provider!r} requires the target model to be resolved "
+            "before opening a switch journal"
+        )
     resolved_target_api_base = (
         current_api_base
         if target_api_base is _TARGET_API_BASE_UNSET

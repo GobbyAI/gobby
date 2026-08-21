@@ -48,6 +48,14 @@ _PROVIDER_CONFIG: dict[str, dict[str, Any]] = {
         "api_base": None,
         "dim": _DEFAULT_EMBEDDING_DIM,
     },
+    "vllm": {
+        # Operator-started server: the served id is resolved live from
+        # /v1/models and the api_base is always explicit, so neither has a
+        # bundled default. The dim is probed, never defaulted.
+        "model": None,
+        "api_base": None,
+        "dim": None,
+    },
     "none": {
         "model": None,
         "api_base": None,
@@ -120,7 +128,7 @@ def install_embedding(
     # When catalog_key is provided, use catalog refs for pulling.
     catalog_spec = None
     if catalog_key is not None:
-        from gobby.ai.embedding_catalog import get_spec
+        from gobby.ai.embedding_catalog import catalog_model_for_provider, get_spec
 
         catalog_spec = get_spec(catalog_key)
         if catalog_spec is None:
@@ -151,13 +159,16 @@ def install_embedding(
     cfg = _PROVIDER_CONFIG[provider]
     # When catalog_key is provided, use catalog values as defaults (overrides still win)
     if catalog_spec is not None:
-        if provider == "ollama":
-            catalog_model = catalog_spec.ollama_tag
-        elif provider == "lmstudio":
-            catalog_model = catalog_spec.lmstudio_ref
-        else:
-            catalog_model = catalog_spec.key
+        catalog_model = catalog_model_for_provider(catalog_spec, provider)
         model = model_override if model_override is not None else catalog_model
+        if model is None:
+            return {
+                "success": False,
+                "error": (
+                    f"Provider {provider!r} has no bundled catalog model reference; "
+                    "pass --embedding-model"
+                ),
+            }
         api_base = api_base_override if api_base_override is not None else cfg["api_base"]
         if dim_override is not None:
             dim = dim_override

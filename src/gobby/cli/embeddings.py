@@ -43,7 +43,14 @@ def doctor(ctx: click.Context) -> None:
 @click.option("--resume", is_flag=True, help="Resume an interrupted switch run.")
 @click.option("--abort", is_flag=True, help="Abort the current switch run.")
 @click.option(
-    "--provider", default=None, help="Provider to use (ollama, lmstudio). Auto-detected if omitted."
+    "--provider",
+    default=None,
+    help="Provider to use (ollama, lmstudio, vllm). Auto-detected by server fingerprint if omitted.",
+)
+@click.option(
+    "--api-base",
+    default=None,
+    help="Embedding server URL (required for --provider vllm unless already configured).",
 )
 @click.pass_context
 def switch(
@@ -53,6 +60,7 @@ def switch(
     resume: bool,
     abort: bool,
     provider: str | None,
+    api_base: str | None,
 ) -> None:
     """Switch the active embedding model (staged, two-phase, resumable).
 
@@ -83,7 +91,11 @@ def switch(
                 raise click.exceptions.Exit(1)
             response = client.call_http_api(
                 "/api/embeddings/switch/start",
-                json_data={"catalog_key": catalog_key, "provider": provider},
+                json_data={
+                    "catalog_key": catalog_key,
+                    "provider": provider,
+                    "api_base": api_base,
+                },
             )
         try:
             payload = response.json()
