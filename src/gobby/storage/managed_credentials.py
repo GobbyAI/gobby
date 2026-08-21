@@ -8,6 +8,7 @@ import secrets
 import tempfile
 import time
 from collections.abc import Mapping, Sequence
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -73,6 +74,8 @@ class _CredentialDatabase(Protocol):
         sql: str,
         params: Sequence[Any] | Mapping[str, Any] = (),
     ) -> list[Row]: ...
+
+    def transaction(self) -> AbstractContextManager[Transaction]: ...
 
 
 @dataclass(frozen=True)
