@@ -26,7 +26,7 @@ from gobby.config.feature_base import (
     iter_feature_default_configs,
     parse_feature_candidate,
 )
-from gobby.llm.local_provider_adapters import create_local_provider_adapter
+from gobby.llm.local_provider_adapters import OPENAI_CLIENT_PROTOCOLS
 from gobby.providers import AGY_UNAVAILABLE_REASON, ProviderMetadata, provider_metadata
 from gobby.servers.provider_model_defaults import AGY_MODELS
 
@@ -365,6 +365,7 @@ def _generation_endpoint_text_bindings(
                     ),
                     "protocol": endpoint.protocol,
                     "wire_api": endpoint.wire_api,
+                    "model": endpoint.model,
                     "probed_model": endpoint.probed_model,
                     "input_modalities": (
                         list(endpoint.input_modalities)
@@ -465,6 +466,7 @@ def _generation_endpoint_vision_bindings(
                     ),
                     "protocol": endpoint.protocol,
                     "wire_api": endpoint.wire_api,
+                    "model": endpoint.model,
                     "probed_model": endpoint.probed_model,
                     "input_modalities": list(endpoint.input_modalities),
                 },
@@ -641,9 +643,11 @@ def _tool_chat_endpoint_unavailable_reason(
         )
     if endpoint.wire_api == "responses":
         return None
-    client = create_local_provider_adapter(endpoint).client
-    if client is None:
-        return f"Local client for endpoint {name!r} is unavailable"
+    if endpoint.protocol not in OPENAI_CLIENT_PROTOCOLS:
+        return (
+            f"Local client for endpoint {name!r} is unavailable: "
+            f"{endpoint.protocol} endpoints use a native API without an OpenAI tool-calling client"
+        )
     return None
 
 

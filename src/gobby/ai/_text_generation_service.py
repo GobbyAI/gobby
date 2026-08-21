@@ -13,6 +13,12 @@ from typing import TYPE_CHECKING, Any, cast
 from gobby.agents.provider_capabilities import provider_reasoning_flag
 from gobby.agents.reasoning import normalize_reasoning_effort
 from gobby.ai._agy_models import normalize_agy_model_selection, resolve_agy_effort
+from gobby.ai._image_routing import (
+    LocalModalityResolver,
+    image_admission_diagnostic,
+    image_candidate_eligible,
+    image_transport_eligible,
+)
 from gobby.ai._text_generation_contracts import (
     TextGenerateAdapter,
     TextGenerateAdapterFactory,
@@ -55,10 +61,12 @@ logger = logging.getLogger("gobby.ai.text_generation")
 # or the Claude SDK that itself spawns the claude CLI) pay cold-start latency and
 # get the larger cli_candidate_timeout. Fast HTTP API lanes (local / OpenAI-
 # compatible) keep the tight candidate_timeout.
-_FEATURE_CLI_PROVIDERS: frozenset[str] = frozenset({"agy", "droid", "grok", "qwen"})
-_IMAGE_ELIGIBLE_PROTOCOLS: frozenset[str] = frozenset(
-    {"openai-compatible", "vllm", "lmstudio", "ollama"}
-)
+__all__ = [
+    "TextGenerationService",
+    "image_candidate_eligible",
+    "image_transport_eligible",
+]
+
 _SPAWN_COLD_ADAPTER_STYLES: frozenset[AIAdapterStyle] = frozenset(
     {
         AIAdapterStyle.CLI,
@@ -194,82 +202,6 @@ def _request_has_images(request: TextGenerationRequest) -> bool:
     return bool(request.images)
 
 
-def _binding_has_endpoint(binding: CapabilityBinding) -> bool:
-    return "endpoint" in binding.metadata or binding.provider.startswith("endpoint:")
-
-
-def _binding_input_modalities(
-    binding: CapabilityBinding,
-) -> tuple[str, ...] | None:
-    raw = binding.metadata.get("input_modalities")
-    if raw is None:
-        return None
-    if isinstance(raw, str):
-        return (raw,)
-    if isinstance(raw, Sequence) and not isinstance(raw, bytes | bytearray):
-        return tuple(str(item) for item in raw)
-    return None
-
-
-def image_transport_eligible(binding: CapabilityBinding) -> bool:
-    """Return whether a binding's transport may carry image inputs."""
-    if binding.provider in _FEATURE_CLI_PROVIDERS:
-        return False
-    if binding.provider == "claude":
-        return True
-    if not _binding_has_endpoint(binding):
-        return False
-    wire_api = binding.metadata.get("wire_api")
-    if wire_api == "responses":
-        return True
-    protocol = binding.metadata.get("protocol")
-    if protocol not in _IMAGE_ELIGIBLE_PROTOCOLS:
-        return False
-    return wire_api != "responses"
-
-
-def image_candidate_eligible(
-    binding: CapabilityBinding,
-    *,
-    model: str | None = None,
-) -> bool:
-    """Return whether a binding may be selected for an image-bearing request."""
-    if not image_transport_eligible(binding):
-        return False
-    if binding.provider == "claude":
-        return True
-    modalities = _binding_input_modalities(binding)
-    if modalities is None or "image" not in modalities:
-        return False
-    probed_model = binding.metadata.get("probed_model")
-    if isinstance(probed_model, str) and probed_model and model is not None:
-        return model == probed_model
-    return True
-
-
-def _image_modality_diagnostic(binding: CapabilityBinding, model: str | None) -> str:
-    label = f"{binding.provider}/{model}" if model else binding.provider
-    if not image_transport_eligible(binding):
-        return (
-            f"Image inputs are not supported by {label}: binding is not an image-eligible transport"
-        )
-    modalities = _binding_input_modalities(binding)
-    return (
-        f"Image inputs are not supported by {label}: "
-        f"input_modalities {None if modalities is None else list(modalities)} "
-        "do not include 'image'"
-    )
-
-
-def _image_selection_error(
-    rejected: list[tuple[TextGenerationRequest, CapabilityBinding]],
-) -> ValueError:
-    if rejected:
-        candidate, binding = rejected[0]
-        return ValueError(_image_modality_diagnostic(binding, candidate.model))
-    return ValueError("Image inputs are not supported by the selected candidate")
-
-
 def _normalize_agy_request(request: TextGenerationRequest) -> TextGenerationRequest:
     if request.provider != "agy":
         return request
@@ -298,10 +230,12 @@ class TextGenerationService:
         spawn_cold_max_concurrency: int = 3,
         circuit_breaker_failure_threshold: int = _CIRCUIT_BREAKER_FAILURE_THRESHOLD,
         circuit_breaker_cooldown_seconds: float = _CIRCUIT_BREAKER_COOLDOWN_SECONDS,
+        local_modality_resolver: LocalModalityResolver | None = None,
     ) -> None:
         if spawn_cold_max_concurrency < 1:
             raise ValueError("spawn_cold_max_concurrency must be >= 1")
         self._registry = registry
+        self._local_modality_resolver = local_modality_resolver
         self._adapters = dict(adapters or {})
         self._adapter_factories = dict(adapter_factories or {})
         self._candidate_timeout_seconds = candidate_timeout_seconds
@@ -465,7 +399,7 @@ class TextGenerationService:
             ) from exc
 
     async def _generate_result(self, request: TextGenerationRequest) -> LLMTextResult:
-        candidates = self._admitted_candidates(request)
+        candidates = await self._admitted_candidates(request)
         attempted_candidates: list[str] = []
         candidate_errors: list[tuple[str, str]] = []
         candidate_unavailable_errors: list[CapabilityUnavailableError] = []
@@ -513,7 +447,7 @@ class TextGenerationService:
             ) from exc
 
     async def _generate_json(self, request: TextGenerationRequest) -> dict[str, Any]:
-        candidates = self._admitted_candidates(request)
+        candidates = await self._admitted_candidates(request)
         attempted_candidates: list[str] = []
         candidate_errors: list[tuple[str, str]] = []
         candidate_unavailable_errors: list[CapabilityUnavailableError] = []
@@ -797,27 +731,35 @@ class TextGenerationService:
             reason=f"All {operation} candidates unavailable: {details}",
         )
 
-    def _admitted_candidates(
+    async def _admitted_candidates(
         self, request: TextGenerationRequest
     ) -> tuple[TextGenerationRequest, ...]:
         candidates = self._candidate_requests(request)
         if not _request_has_images(request):
             return candidates
         eligible: list[TextGenerationRequest] = []
-        rejected: list[tuple[TextGenerationRequest, CapabilityBinding]] = []
+        diagnostics: list[str] = []
+        selection_errors: list[Exception] = []
         for candidate in candidates:
             try:
                 binding = self._select_binding(candidate)
-            except Exception:
-                eligible.append(candidate)
+            except (CapabilityUnavailableError, ValueError) as exc:
+                selection_errors.append(exc)
                 continue
-            if image_candidate_eligible(binding, model=candidate.model):
+            diagnostic = await image_admission_diagnostic(
+                binding, candidate.model, self._local_modality_resolver
+            )
+            if diagnostic is None:
                 eligible.append(candidate)
             else:
-                rejected.append((candidate, binding))
+                diagnostics.append(diagnostic)
         if eligible:
             return tuple(eligible)
-        raise _image_selection_error(rejected)
+        if diagnostics:
+            raise ValueError(diagnostics[0])
+        if selection_errors:
+            raise selection_errors[0]
+        raise ValueError("Image inputs are not supported by the selected candidate")
 
     def _candidate_requests(
         self, request: TextGenerationRequest

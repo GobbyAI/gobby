@@ -79,11 +79,16 @@ class LocalProviderAdapter(Protocol):
         """Generate and parse JSON."""
 
 
+# Protocols served through an AsyncOpenAI client (``adapter.client`` is set);
+# lmstudio/ollama speak their native REST APIs and expose no OpenAI client.
+OPENAI_CLIENT_PROTOCOLS: frozenset[str] = frozenset({"openai-compatible", "vllm"})
+
+
 def create_local_provider_adapter(
     endpoint: GenerationEndpointConfig,
 ) -> LocalProviderAdapter:
     """Build the configured local provider adapter."""
-    if endpoint.protocol in {"openai-compatible", "vllm"}:
+    if endpoint.protocol in OPENAI_CLIENT_PROTOCOLS:
         return OpenAICompatibleLocalProviderAdapter(endpoint)
     if endpoint.protocol == "lmstudio":
         return LMStudioLocalProviderAdapter(endpoint)

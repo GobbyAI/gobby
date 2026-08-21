@@ -28,12 +28,17 @@ from gobby.ai import (
     TextGenerationService,
     build_daemon_text_generation_service,
 )
+from gobby.ai._image_routing import LocalModelModalities
 from gobby.ai._text_generation_builder import (
     _daemon_text_generation_adapter_factories,
     _responses_text_generate_adapter_factory,
 )
 from gobby.ai._text_generation_helpers import _CandidateTimeoutError, _coerce_text_result
-from gobby.ai._text_generation_service import _gate_reasoning_effort, image_transport_eligible
+from gobby.ai._text_generation_service import (
+    _gate_reasoning_effort,
+    image_candidate_eligible,
+    image_transport_eligible,
+)
 from gobby.ai.text_generation import (
     ONE_SHOT_DIRECTIVE,
     FeatureGenerationUnavailableError,
@@ -4706,3 +4711,111 @@ async def test_run_cli_text_generation_command_rejects_unaccepted_exit(
             env_overrides={},
             accepted_exit_codes=frozenset({53, 55}),
         )
+
+
+@pytest.mark.asyncio
+async def test_image_admission_does_not_fail_open_on_selection_errors() -> None:
+    vision = RecordingAdapter("endpoint:vision")
+    registry = AICapabilityRegistry(
+        [_endpoint_binding("endpoint:vision", "qwen-vl", protocol="openai-compatible")]
+    )
+    service = TextGenerationService(registry, {"endpoint:vision": vision})
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="caption",
+            candidates=("endpoint:missing/llama", "endpoint:vision/qwen-vl"),
+            images=[_gif_data_url()],
+        )
+    )
+    assert result.provider == "endpoint:vision"
+    assert [request.model for request in vision.requests] == ["qwen-vl"]
+
+    with pytest.raises(CapabilityUnavailableError):
+        await service.generate_result(
+            TextGenerationRequest(
+                prompt="caption",
+                provider="endpoint:missing",
+                model="llama",
+                images=[_gif_data_url()],
+            )
+        )
+    assert len(vision.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_image_admission_consults_local_modality_resolver() -> None:
+    vision = RecordingAdapter("endpoint:vllm")
+    binding = _endpoint_binding("endpoint:vllm", "auto", protocol="vllm", input_modalities=None)
+    calls: list[tuple[str, str | None]] = []
+    verdicts: list[LocalModelModalities] = []
+
+    async def resolver(endpoint_name: str, model: str | None) -> LocalModelModalities:
+        calls.append((endpoint_name, model))
+        return verdicts.pop(0)
+
+    service = TextGenerationService(
+        AICapabilityRegistry([binding]),
+        {"endpoint:vllm": vision},
+        local_modality_resolver=resolver,
+    )
+    request = TextGenerationRequest(
+        prompt="caption",
+        provider="endpoint:vllm",
+        model="auto",
+        images=[_gif_data_url()],
+    )
+
+    verdicts.append(
+        LocalModelModalities(model="Qwen/Qwen2.5-VL", input_modalities=("text", "image"))
+    )
+    result = await service.generate_result(request)
+    assert result.provider == "endpoint:vllm"
+    assert vision.requests[0].model == "auto"
+    assert calls == [("vllm", "auto")]
+
+    verdicts.append(LocalModelModalities(model="Qwen/Qwen2.5-VL", input_modalities=("text",)))
+    with pytest.raises(ValueError, match=r"endpoint:vllm/Qwen/Qwen2\.5-VL: input_modalities"):
+        await service.generate_result(request)
+
+    verdicts.append(
+        LocalModelModalities(
+            model=None,
+            input_modalities=None,
+            error="model: auto requires exactly one served vLLM model; found 2: a, b",
+        )
+    )
+    with pytest.raises(ValueError, match="requires exactly one served vLLM model"):
+        await service.generate_result(request)
+    assert len(vision.requests) == 1
+
+
+def _probed_binding(protocol: str, default_model: str, probed_model: str) -> CapabilityBinding:
+    return CapabilityBinding(
+        capability=AICapability.TEXT_GENERATE,
+        provider="endpoint:local",
+        adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+        available=True,
+        models=(default_model,),
+        metadata={
+            "endpoint": "local",
+            "protocol": protocol,
+            "wire_api": "chat-completions",
+            "model": default_model,
+            "probed_model": probed_model,
+            "input_modalities": ["text", "image"],
+        },
+    )
+
+
+def test_static_image_predicate_scopes_probe_evidence_to_the_requested_model() -> None:
+    vllm_auto = _probed_binding("vllm", "auto", "Qwen/Qwen2.5-VL")
+    assert image_candidate_eligible(vllm_auto) is True
+    assert image_candidate_eligible(vllm_auto, model="auto") is True
+    assert image_candidate_eligible(vllm_auto, model="Qwen/Qwen2.5-VL") is True
+    assert image_candidate_eligible(vllm_auto, model="other-served-id") is False
+
+    lmstudio = _probed_binding("lmstudio", "text-llm", "vision-vlm")
+    assert image_candidate_eligible(lmstudio) is False
+    assert image_candidate_eligible(lmstudio, model="text-llm") is False
+    assert image_candidate_eligible(lmstudio, model="vision-vlm") is True

@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from typing import Any
 from unittest.mock import MagicMock
 
 import httpx
 import pytest
 
-from gobby.ai._text_generation_service import image_candidate_eligible
-from gobby.ai.registry import AIAdapterStyle, AICapability, CapabilityBinding
+from gobby.ai import AICapabilityRegistry, TextGenerationRequest, TextGenerationService
+from gobby.ai._text_generation_builder import build_local_modality_resolver
+from gobby.ai.registry_builder import _generation_endpoint_text_bindings
 from gobby.config.ai import GenerationEndpointConfig
+from gobby.config.app import DaemonConfig
 from gobby.servers.local_provider_models import (
     LocalEndpointModelGroup,
     discover_local_endpoint_model_group,
@@ -739,42 +742,6 @@ def _catalog_payload_models(group: LocalEndpointModelGroup) -> list[dict[str, An
     return models
 
 
-def _routing_binding(
-    protocol: str,
-    endpoint_name: str,
-    entry: dict[str, Any],
-) -> CapabilityBinding:
-    return CapabilityBinding(
-        capability=AICapability.TEXT_GENERATE,
-        provider=f"endpoint:{endpoint_name}",
-        adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
-        available=True,
-        models=(str(entry["canonical_id"]),),
-        metadata={
-            "endpoint": endpoint_name,
-            "protocol": protocol,
-            "wire_api": "chat-completions",
-            "input_modalities": entry.get("input_modalities"),
-        },
-    )
-
-
-def _assert_modalities_match_predicate(
-    protocol: str,
-    endpoint_name: str,
-    models: list[dict[str, Any]],
-) -> None:
-    for entry in models:
-        assert "input_modalities" in entry
-        modalities = entry.get("input_modalities")
-        expect_image = isinstance(modalities, list) and "image" in modalities
-        binding = _routing_binding(protocol, endpoint_name, entry)
-        model_id = str(entry["canonical_id"])
-        assert image_candidate_eligible(binding, model=model_id) is expect_image
-        if entry.get("is_default") is True:
-            assert image_candidate_eligible(binding) is expect_image
-
-
 @pytest.mark.asyncio
 async def test_lmstudio_vlm_classified(monkeypatch: pytest.MonkeyPatch) -> None:
     vision_modalities = ["text", "image"]
@@ -832,14 +799,12 @@ async def test_modalities_match_routing_predicate(monkeypatch: pytest.MonkeyPatc
     vision_modalities = ["text", "image"]
 
     _patch_discovery_client(monkeypatch, _lmstudio_catalog_client())
-    lmstudio = await discover_local_endpoint_model_group(
-        "studio",
-        GenerationEndpointConfig(
-            protocol="lmstudio",
-            api_base="http://localhost:1234/v1",
-            model=_LMSTUDIO_VLM_ID,
-        ),
+    lmstudio_endpoint = GenerationEndpointConfig(
+        protocol="lmstudio",
+        api_base="http://localhost:1234/v1",
+        model=_LMSTUDIO_VLM_ID,
     )
+    lmstudio = await discover_local_endpoint_model_group("studio", lmstudio_endpoint)
     lmstudio_models = _catalog_payload_models(lmstudio)
     lmstudio_default = _default_entry(lmstudio_models)
     assert lmstudio_default is not None
@@ -847,17 +812,16 @@ async def test_modalities_match_routing_predicate(monkeypatch: pytest.MonkeyPatc
     assert _entry_by_canonical(lmstudio_models, _LMSTUDIO_VLM_ID)["input_modalities"] == (
         vision_modalities
     )
-    _assert_modalities_match_predicate("lmstudio", "studio", lmstudio_models)
+    assert _entry_by_canonical(lmstudio_models, _LMSTUDIO_LLM_ID)["input_modalities"] == ["text"]
+    await _assert_catalog_matches_admission("studio", lmstudio_endpoint, lmstudio_models)
 
     _patch_discovery_client(monkeypatch, _ollama_catalog_client())
-    ollama = await discover_local_endpoint_model_group(
-        "ollama-local",
-        GenerationEndpointConfig(
-            protocol="ollama",
-            api_base="http://localhost:11434",
-            model=_OLLAMA_VISION_ID,
-        ),
+    ollama_endpoint = GenerationEndpointConfig(
+        protocol="ollama",
+        api_base="http://localhost:11434",
+        model=_OLLAMA_VISION_ID,
     )
+    ollama = await discover_local_endpoint_model_group("ollama-local", ollama_endpoint)
     ollama_models = _catalog_payload_models(ollama)
     ollama_default = _default_entry(ollama_models)
     assert ollama_default is not None
@@ -866,19 +830,19 @@ async def test_modalities_match_routing_predicate(monkeypatch: pytest.MonkeyPatc
         vision_modalities
     )
     assert _entry_by_canonical(ollama_models, _OLLAMA_TEXT_ID)["input_modalities"] == ["text"]
-    _assert_modalities_match_predicate("ollama", "ollama-local", ollama_models)
+    await _assert_catalog_matches_admission("ollama-local", ollama_endpoint, ollama_models)
 
-    _patch_discovery_client(monkeypatch, _vllm_client(_two_vllm_models_payload()))
-    vllm = await discover_local_endpoint_model_group(
-        "vllm-local",
-        GenerationEndpointConfig(
-            protocol="vllm",
-            api_base="http://localhost:8000/v1",
-            model=_VLLM_PROBED_ID,
-            probed_model=_VLLM_PROBED_ID,
-            input_modalities=vision_modalities,
-        ),
+    two_model_client = _vllm_client(_two_vllm_models_payload())
+    _patch_discovery_client(monkeypatch, two_model_client)
+    _patch_vllm_resolver_client(monkeypatch, two_model_client)
+    vllm_endpoint = GenerationEndpointConfig(
+        protocol="vllm",
+        api_base="http://localhost:8000/v1",
+        model=_VLLM_PROBED_ID,
+        probed_model=_VLLM_PROBED_ID,
+        input_modalities=vision_modalities,
     )
+    vllm = await discover_local_endpoint_model_group("vllm-local", vllm_endpoint)
     vllm_models = _catalog_payload_models(vllm)
     vllm_default = _default_entry(vllm_models)
     assert vllm_default is not None
@@ -887,4 +851,123 @@ async def test_modalities_match_routing_predicate(monkeypatch: pytest.MonkeyPatc
         vision_modalities
     )
     assert _entry_by_canonical(vllm_models, _VLLM_OTHER_ID).get("input_modalities") is None
-    _assert_modalities_match_predicate("vllm", "vllm-local", vllm_models)
+    await _assert_catalog_matches_admission("vllm-local", vllm_endpoint, vllm_models)
+
+
+@pytest.mark.asyncio
+async def test_vllm_auto_admission_matches_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    vision_modalities = ["text", "image"]
+    single_model_client = _vllm_client({"data": [{"id": _VLLM_PROBED_ID}]})
+    _patch_discovery_client(monkeypatch, single_model_client)
+    _patch_vllm_resolver_client(monkeypatch, single_model_client)
+    auto_endpoint = GenerationEndpointConfig(
+        protocol="vllm",
+        api_base="http://localhost:8000/v1",
+        model="auto",
+        probed_model=_VLLM_PROBED_ID,
+        input_modalities=vision_modalities,
+    )
+
+    group = await discover_local_endpoint_model_group("vllm-auto", auto_endpoint)
+    models = _catalog_payload_models(group)
+    default = _default_entry(models)
+    assert default is not None
+    assert default["canonical_id"] == "auto"
+    assert default["input_modalities"] == vision_modalities
+    await _assert_catalog_matches_admission("vllm-auto", auto_endpoint, models)
+
+    two_model_client = _vllm_client(_two_vllm_models_payload())
+    _patch_discovery_client(monkeypatch, two_model_client)
+    _patch_vllm_resolver_client(monkeypatch, two_model_client)
+    service, adapter = _admission_service("vllm-auto", auto_endpoint)
+    with pytest.raises(ValueError, match="requires exactly one served vLLM model"):
+        await service.generate_result(_image_request("vllm-auto", "auto"))
+    assert adapter.requests == []
+
+
+class _RecordingTextAdapter:
+    def __init__(self) -> None:
+        self.requests: list[TextGenerationRequest] = []
+
+    async def generate(self, request: TextGenerationRequest) -> str:
+        self.requests.append(request)
+        return "captioned"
+
+
+_IMAGE_DATA_URL = "data:image/gif;base64," + base64.standard_b64encode(b"GIF89a").decode("utf-8")
+
+
+def _patch_vllm_resolver_client(
+    monkeypatch: pytest.MonkeyPatch, fake_client: _FakeAsyncClient
+) -> None:
+    monkeypatch.setattr("gobby.agents.local_model.httpx.AsyncClient", lambda: fake_client)
+
+
+def _image_request(endpoint_name: str, model: str) -> TextGenerationRequest:
+    return TextGenerationRequest(
+        prompt="caption",
+        provider=f"endpoint:{endpoint_name}",
+        model=model,
+        images=[_IMAGE_DATA_URL],
+    )
+
+
+def _admission_service(
+    endpoint_name: str,
+    endpoint: GenerationEndpointConfig,
+    catalog_models: list[dict[str, Any]] | None = None,
+) -> tuple[TextGenerationService, _RecordingTextAdapter]:
+    config = DaemonConfig(ai={"generation": {"endpoints": {endpoint_name: endpoint}}})
+    # Catalog ids become routable the way production makes them routable: as
+    # feature-candidate models for the endpoint provider.
+    feature_models = {
+        f"endpoint:{endpoint_name}": tuple(
+            str(entry["canonical_id"]) for entry in catalog_models or ()
+        )
+    }
+    bindings = _generation_endpoint_text_bindings(config, feature_models)
+    assert [binding.provider for binding in bindings] == [f"endpoint:{endpoint_name}"]
+    adapter = _RecordingTextAdapter()
+    service = TextGenerationService(
+        AICapabilityRegistry(list(bindings)),
+        {bindings[0].provider: adapter},
+        local_modality_resolver=build_local_modality_resolver(config),
+    )
+    return service, adapter
+
+
+async def _assert_catalog_matches_admission(
+    endpoint_name: str,
+    endpoint: GenerationEndpointConfig,
+    models: list[dict[str, Any]],
+) -> None:
+    """Every catalog row's modalities must agree with live image admission.
+
+    Bindings come from the real registry builder and admission runs through
+    ``TextGenerationService`` with the production modality resolver against
+    the same fake discovery fixtures that produced the catalog.
+    """
+    service, adapter = _admission_service(endpoint_name, endpoint, models)
+    config = DaemonConfig(ai={"generation": {"endpoints": {endpoint_name: endpoint}}})
+    resolver = build_local_modality_resolver(config)
+    assert models
+    for entry in models:
+        assert "input_modalities" in entry
+        modalities = entry.get("input_modalities")
+        expect_image = isinstance(modalities, list) and "image" in modalities
+        canonical_id = str(entry["canonical_id"])
+        adapter.requests.clear()
+        if expect_image:
+            await service.generate_result(_image_request(endpoint_name, canonical_id))
+            assert [request.model for request in adapter.requests] == [canonical_id]
+        else:
+            with pytest.raises(ValueError, match="Image inputs are not supported"):
+                await service.generate_result(_image_request(endpoint_name, canonical_id))
+            assert adapter.requests == []
+        if entry.get("is_default") is True:
+            resolved = await resolver(endpoint_name, None)
+            assert resolved.error is None
+            resolved_modalities = resolved.input_modalities
+            assert (
+                resolved_modalities is not None and "image" in resolved_modalities
+            ) is expect_image
