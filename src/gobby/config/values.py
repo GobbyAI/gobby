@@ -241,6 +241,10 @@ def clear_stale_generation_endpoint_probe_evidence(
             continue
         for field in _GENERATION_ENDPOINT_EVIDENCE_FIELDS:
             key = f"{prefix}{field}"
+            if key in unset_set:
+                # The key is already being removed outright; writing None here
+                # would collide with the unset and block whole-endpoint deletion.
+                continue
             values[key] = None
             cleared.append(key)
     return tuple(cleared)

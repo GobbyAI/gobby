@@ -757,6 +757,29 @@ def _values_service(snapshot: ConfigSnapshot) -> tuple[ConfigValuesService, _Val
 
 
 @pytest.mark.asyncio
+async def test_unset_of_every_endpoint_key_deletes_the_endpoint() -> None:
+    """Whole-endpoint deletion must not resurrect evidence keys as None writes (#20681)."""
+    desired, stored, prefix = _probed_chat_config()
+    snapshot = _snapshot(
+        4,
+        desired=desired,
+        desired_values=stored,
+        desired_secrets={f"{prefix}.api_key": "local-secret"},
+    )
+    service, mutations = _values_service(snapshot)
+    await service.patch_flat(
+        expected_revision=4,
+        values={},
+        unset=frozenset(stored),
+    )
+    expected_revision, patch = mutations.calls[0]
+    assert expected_revision == 4
+    assert patch.unset == frozenset(stored)
+    assert not patch.values
+    assert not patch.secrets
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("api_key", "expect_cleared"),
     [
