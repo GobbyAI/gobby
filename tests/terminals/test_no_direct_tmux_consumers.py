@@ -194,3 +194,44 @@ def test_write_path_consumers_are_backend_neutral() -> None:
 def test_remaining_runtime_test_seams_are_owned() -> None:
     hits = _direct_hits(_TEST_SEAM_PATHS)
     assert hits == [], f"named test seams still patch tmux managers: {hits}"
+
+
+_FIELD_SWEEP_ALLOWED = {
+    "src/gobby/runner_lifecycle_processes.py",
+    "src/gobby/agents/spawn_models.py",
+    "src/gobby/agents/spawn_executor.py",
+    "src/gobby/agents/resume_executor.py",
+    "src/gobby/agents/spawners/base.py",
+    "src/gobby/mcp_proxy/tools/spawn_agent/_failure_cleanup.py",
+    "src/gobby/mcp_proxy/tools/spawn_agent/_runtime.py",
+    "src/gobby/mcp_proxy/tools/spawn_agent/_execution.py",
+    "src/gobby/mcp_proxy/tools/spawn_agent/_health.py",
+    "src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py",
+}
+
+
+def test_repo_wide_field_sweep_is_empty() -> None:
+    import re
+
+    field = re.compile(r"\btmux_session_name\b")
+    hits: list[str] = []
+    for root_name in ("src", "web"):
+        root = ROOT / root_name
+        if not root.exists():
+            continue
+        for path in root.rglob("*"):
+            if not path.is_file():
+                continue
+            if "__pycache__" in path.parts or "node_modules" in path.parts:
+                continue
+            rel = str(path.relative_to(ROOT))
+            if rel.startswith("src/gobby/agents/tmux/"):
+                continue
+            if rel in _FIELD_SWEEP_ALLOWED:
+                continue
+            if "terminal_context" in rel or rel.endswith("tmux_context.py"):
+                continue
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            if field.search(text):
+                hits.append(rel)
+    assert hits == [], f"tmux_session_name remains outside the 2.5 remainder: {hits}"

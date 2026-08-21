@@ -17,6 +17,8 @@ from websockets.exceptions import ConnectionClosed
 from gobby.agents.tmux.pty_bridge import TmuxPTYBridge
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
+from gobby.servers.websocket.terminal_ws import TerminalWsMixin
+from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.utils.json_helpers import json_dumps
 from gobby.utils.machine_id import require_machine_id
 
@@ -27,7 +29,7 @@ _DEFAULT_CONFIG = TmuxConfig(socket_name="")
 _GOBBY_CONFIG = TmuxConfig(socket_name="gobby")
 
 
-class TmuxMixin:
+class TmuxMixin(TerminalWsMixin):
     """Mixin providing tmux session management handlers for WebSocketServer.
 
     Requires on the host class:
@@ -42,7 +44,9 @@ class TmuxMixin:
     # Declared as TYPE_CHECKING-only protocol hints to avoid shadowing real methods.
     if TYPE_CHECKING:
 
-        async def broadcast_terminal_output(self, run_id: str, data: str) -> None: ...
+        async def broadcast_terminal_output(
+            self, terminal_id: str, data: str, attachment_id: str | None = None
+        ) -> None: ...
         async def _send_error(
             self, websocket: Any, message: str, request_id: str | None = None, code: str = "ERROR"
         ) -> None: ...
@@ -54,6 +58,7 @@ class TmuxMixin:
         self._tmux_mgr_default = TmuxSessionManager(_DEFAULT_CONFIG)
         # Track which client owns which bridge (for cleanup on disconnect)
         self._tmux_client_bridges: dict[Any, set[str]] = {}  # websocket -> {streaming_id}
+        self.lease_registry = TerminalLeaseRegistry()
 
     async def _cleanup_tmux(self) -> None:
         """Clean up all tmux bridges. Call from WebSocketServer.stop."""
@@ -69,6 +74,7 @@ class TmuxMixin:
         """Clean up bridges owned by a disconnecting client."""
         from gobby.agents.pty_reader import get_pty_reader_manager
 
+        self._leases().finalize_websocket(websocket, "ws_close")
         bridge_ids = self._tmux_client_bridges.pop(websocket, set())
         if not bridge_ids:
             return
@@ -296,7 +302,7 @@ class TmuxMixin:
                 logger.warning("Failed to list %s tmux sessions: %s", socket_name, e)
 
         response: dict[str, Any] = {
-            "type": "tmux_sessions_list",
+            "type": "terminal_list",
             "sessions": sessions,
             "live_cli_session_ids": live_cli_session_ids,
         }
@@ -370,7 +376,7 @@ class TmuxMixin:
             self._tmux_client_bridges[websocket].add(streaming_id)
 
             response: dict[str, Any] = {
-                "type": "tmux_attach_result",
+                "type": "terminal_attach_result",
                 "success": True,
                 "streaming_id": streaming_id,
                 "session_name": session_name,
@@ -406,7 +412,7 @@ class TmuxMixin:
             client_bridges.discard(streaming_id)
 
         response: dict[str, Any] = {
-            "type": "tmux_detach_result",
+            "type": "terminal_detach_result",
             "success": True,
             "streaming_id": streaming_id,
         }
@@ -441,7 +447,7 @@ class TmuxMixin:
             await self._broadcast_tmux_event("session_created", info.name, socket)
 
             response: dict[str, Any] = {
-                "type": "tmux_create_result",
+                "type": "terminal_create_result",
                 "success": True,
                 "session_name": info.name,
                 "pane_pid": info.pane_pid,
@@ -520,7 +526,7 @@ class TmuxMixin:
                 await self._broadcast_tmux_event("session_killed", session_name, socket)
 
             response: dict[str, Any] = {
-                "type": "tmux_kill_result",
+                "type": "terminal_kill_result",
                 "success": success,
                 "session_name": session_name,
                 "expired_session_ids": expired_session_ids,
@@ -586,7 +592,7 @@ class TmuxMixin:
             return
 
         response: dict[str, Any] = {
-            "type": "tmux_refresh_result",
+            "type": "terminal_refresh_result",
             "success": True,
             "session_name": session_name,
             "socket": socket,
@@ -610,7 +616,7 @@ class TmuxMixin:
 
         message = json_dumps(
             {
-                "type": "tmux_session_event",
+                "type": "terminal_event",
                 "event": event,
                 "session_name": session_name,
                 "socket": socket,
@@ -622,7 +628,7 @@ class TmuxMixin:
             try:
                 subs = getattr(ws, "subscriptions", None)
                 if subs is not None:
-                    if "tmux_session_event" not in subs and "*" not in subs:
+                    if "terminal_event" not in subs and "*" not in subs:
                         continue
                 await ws.send(message)
             except ConnectionClosed:

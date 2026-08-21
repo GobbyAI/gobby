@@ -1,0 +1,1 @@
+{"items":[{"agent_run_id":null,"backend":"tmux","dims":{"cols":80,"rows":24},"ownership":"gobby","session_id":null,"state":"live","terminal_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","title":"sess"}],"limit":100,"next_cursor":null,"request_id":"req-list-1","type":"terminal_list"}

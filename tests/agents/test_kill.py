@@ -412,14 +412,14 @@ class TestKillAgent:
         agent_run.terminal_id = "gobby-run-123"
         mock_close_tmux.return_value = {
             "success": True,
-            "method": "tmux_kill_session",
+            "method": "terminal_kill",
             "terminal_id": "gobby-run-123",
         }
 
         res = await kill_agent(agent_run, mock_db, close_terminal=True)
 
         assert res["success"] is True
-        assert res["method"] == "tmux_kill_session"
+        assert res["method"] == "terminal_kill"
         assert res["terminal_close"] == mock_close_tmux.return_value
         mock_close_tmux.assert_awaited_once_with(
             agent_run,

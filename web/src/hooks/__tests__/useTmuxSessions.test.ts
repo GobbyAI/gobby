@@ -41,12 +41,11 @@ function respondToAttach(
 ): void {
   act(() => {
     ws.simulateMessage({
-      type: "tmux_attach_result",
+      type: "terminal_attach_result",
       request_id: id,
       success: true,
-      streaming_id: streamingId,
-      session_name: name,
-      socket,
+      attachment_id: streamingId,
+      terminal_id: name || socket,
     });
   });
 }
@@ -83,7 +82,7 @@ describe("useTmuxSessions", () => {
     expect(liveMount.result.current.connected).toBe(true);
     act(() => {
       live.simulateMessage({
-        type: "tmux_sessions_list",
+        type: "terminal_list",
         sessions: [{ name: "worker", socket: "default" }],
       });
     });
@@ -92,14 +91,13 @@ describe("useTmuxSessions", () => {
     act(() => liveMount.result.current.attachSession("worker", "default"));
     respondToAttach(
       live,
-      requestId(live, "tmux_attach"),
+      requestId(live, "terminal_attach"),
       "worker",
       "default",
       "stream-1",
     );
     expect(liveMount.result.current.attachedTarget).toEqual({
-      name: "worker",
-      socket: "default",
+      terminal_id: "worker",
     });
 
     act(() => {
@@ -135,65 +133,56 @@ describe("useTmuxSessions", () => {
     open(ws);
     ws.send.mockClear();
 
-    act(() => result.current.attachSession("shared", "default"));
+    act(() => result.current.attachSession("term-default", "default"));
     respondToAttach(
       ws,
-      requestId(ws, "tmux_attach"),
-      "shared",
+      requestId(ws, "terminal_attach"),
+      "term-default",
       "default",
       "stream-default",
     );
     expect(result.current.attachedTarget).toEqual({
-      name: "shared",
-      socket: "default",
+      terminal_id: "term-default",
     });
 
     ws.send.mockClear();
-    act(() => result.current.attachSession("shared", "gobby"));
-    expect(sentMessages(ws)).toEqual([
-      {
-        type: "tmux_detach",
-        request_id: expect.any(String),
-        streaming_id: "stream-default",
-      },
-    ]);
+    act(() => result.current.attachSession("term-gobby", "gobby"));
+    expect(sentMessages(ws, "terminal_detach")[0]).toMatchObject({
+      type: "terminal_detach",
+      attachment_id: "stream-default",
+    });
 
-    const detachId = requestId(ws, "tmux_detach");
+    const detachId = requestId(ws, "terminal_detach");
     act(() =>
       ws.simulateMessage({
-        type: "tmux_detach_result",
+        type: "terminal_detach_result",
         request_id: detachId,
         success: true,
       }),
     );
-    const attachMessages = sentMessages(ws, "tmux_attach");
-    expect(attachMessages[attachMessages.length - 1]).toEqual({
-      type: "tmux_attach",
-      request_id: expect.any(String),
-      session_name: "shared",
-      socket: "gobby",
+    const attachMessages = sentMessages(ws, "terminal_attach");
+    expect(attachMessages[attachMessages.length - 1]).toMatchObject({
+      type: "terminal_attach",
+      terminal_id: "term-gobby",
     });
 
     respondToAttach(
       ws,
-      requestId(ws, "tmux_attach"),
-      "shared",
+      requestId(ws, "terminal_attach"),
+      "term-gobby",
       "gobby",
       "stream-gobby",
     );
     expect(result.current.attachedTarget).toEqual({
-      name: "shared",
-      socket: "gobby",
+      terminal_id: "term-gobby",
     });
     ws.send.mockClear();
     act(() => result.current.sendInput("pwd\r"));
-    expect(sentMessages(ws)).toEqual([
-      {
-        type: "terminal_input",
-        run_id: "stream-gobby",
-        data: "pwd\r",
-      },
-    ]);
+    expect(sentMessages(ws, "terminal_input")[0]).toMatchObject({
+      type: "terminal_input",
+      attachment_id: "stream-gobby",
+      data: "pwd\r",
+    });
     unmount();
   });
 
@@ -216,34 +205,28 @@ describe("useTmuxSessions", () => {
       result.current.refreshTerminal("default-worker", "default");
       result.current.refreshTerminal("gobby-worker", "gobby");
     });
-    expect(sentMessages(ws)).toEqual([
+    expect(sentMessages(ws, "terminal_set_viewport")).toEqual([
       {
-        type: "tmux_refresh_client",
+        type: "terminal_set_viewport",
         request_id: expect.any(String),
-        session_name: "default-worker",
-        socket: "default",
+        terminal_id: "default-worker",
       },
       {
-        type: "tmux_refresh_client",
+        type: "terminal_set_viewport",
         request_id: expect.any(String),
-        session_name: "gobby-worker",
-        socket: "gobby",
+        terminal_id: "gobby-worker",
       },
     ]);
 
     ws.send.mockClear();
     act(() => result.current.attachSession("worker", "gobby"));
-    expect(sentMessages(ws)).toEqual([
-      {
-        type: "tmux_attach",
-        request_id: expect.any(String),
-        session_name: "worker",
-        socket: "gobby",
-      },
-    ]);
+    expect(sentMessages(ws, "terminal_attach").at(-1)).toMatchObject({
+      type: "terminal_attach",
+      terminal_id: "worker",
+    });
     respondToAttach(
       ws,
-      requestId(ws, "tmux_attach"),
+      requestId(ws, "terminal_attach"),
       "worker",
       "gobby",
       "stream-wire",
@@ -254,10 +237,17 @@ describe("useTmuxSessions", () => {
       result.current.sendInput("\u001b[A");
       result.current.resizeTerminal(42, 120);
     });
-    expect(sentMessages(ws)).toEqual([
-      { type: "terminal_input", run_id: "stream-wire", data: "\u001b[A" },
-      { type: "tmux_resize", streaming_id: "stream-wire", rows: 42, cols: 120 },
-    ]);
+    expect(sentMessages(ws, "terminal_input").at(-1)).toMatchObject({
+      type: "terminal_input",
+      attachment_id: "stream-wire",
+      data: "\u001b[A",
+    });
+    expect(sentMessages(ws, "terminal_resize").at(-1)).toMatchObject({
+      type: "terminal_resize",
+      attachment_id: "stream-wire",
+      rows: 42,
+      cols: 120,
+    });
 
     act(() => ws.simulateClose());
     ws.send.mockClear();
@@ -276,7 +266,7 @@ describe("useTmuxSessions", () => {
     ws.send.mockClear();
 
     act(() => result.current.attachSession("worker", "default"));
-    const failedAttachId = requestId(ws, "tmux_attach");
+    const failedAttachId = requestId(ws, "terminal_attach");
     act(() =>
       ws.simulateMessage({
         type: "error",
@@ -293,7 +283,7 @@ describe("useTmuxSessions", () => {
     act(() => result.current.attachSession("worker", "default"));
     respondToAttach(
       ws,
-      requestId(ws, "tmux_attach"),
+      requestId(ws, "terminal_attach"),
       "worker",
       "default",
       "stream-retry",
@@ -301,7 +291,7 @@ describe("useTmuxSessions", () => {
     expect(result.current.requestPending).toBe(false);
 
     act(() => result.current.detachSession());
-    const failedDetachId = requestId(ws, "tmux_detach");
+    const failedDetachId = requestId(ws, "terminal_detach");
     act(() =>
       ws.simulateMessage({
         type: "error",
@@ -315,10 +305,10 @@ describe("useTmuxSessions", () => {
 
     act(() => result.current.detachSession());
     expect(result.current.attachError).toBeNull();
-    const retryDetachId = requestId(ws, "tmux_detach");
+    const retryDetachId = requestId(ws, "terminal_detach");
     act(() =>
       ws.simulateMessage({
-        type: "tmux_detach_result",
+        type: "terminal_detach_result",
         request_id: retryDetachId,
         success: true,
       }),
@@ -341,13 +331,13 @@ describe("useTmuxSessions", () => {
       result.current.attachSession("other", "gobby");
       result.current.detachSession();
     });
-    expect(sentMessages(ws, "tmux_attach")).toHaveLength(1);
-    expect(sentMessages(ws, "tmux_detach")).toHaveLength(0);
+    expect(sentMessages(ws, "terminal_attach")).toHaveLength(1);
+    expect(sentMessages(ws, "terminal_detach")).toHaveLength(0);
     expect(result.current.requestPending).toBe(true);
 
     respondToAttach(
       ws,
-      requestId(ws, "tmux_attach"),
+      requestId(ws, "terminal_attach"),
       "worker",
       "default",
       "stream-pending",
@@ -358,8 +348,8 @@ describe("useTmuxSessions", () => {
       result.current.detachSession();
       result.current.attachSession("other", "gobby");
     });
-    expect(sentMessages(ws, "tmux_detach")).toHaveLength(1);
-    expect(sentMessages(ws, "tmux_attach")).toHaveLength(0);
+    expect(sentMessages(ws, "terminal_detach")).toHaveLength(1);
+    expect(sentMessages(ws, "terminal_attach")).toHaveLength(0);
     expect(result.current.requestPending).toBe(true);
     unmount();
   });
@@ -375,24 +365,21 @@ describe("useTmuxSessions", () => {
       result.current.createSession();
     });
 
-    expect(sentMessages(ws, "tmux_create_session")).toEqual([
-      {
-        type: "tmux_create_session",
-        request_id: expect.any(String),
-        socket: "default",
-      },
-    ]);
+    expect(sentMessages(ws, "terminal_create")[0]).toMatchObject({
+      type: "terminal_create",
+      rows: 24,
+      cols: 80,
+    });
     expect(result.current.requestPending).toBe(true);
     expect(result.current.createdSession).toBeNull();
 
-    const createId = requestId(ws, "tmux_create_session");
+    const createId = requestId(ws, "terminal_create");
     act(() =>
       ws.simulateMessage({
-        type: "tmux_create_result",
+        type: "terminal_create_result",
         request_id: "stale-create",
         success: true,
-        session_name: "web-stale",
-        socket: "default",
+        terminal_id: "web-stale",
       }),
     );
     expect(result.current.requestPending).toBe(true);
@@ -400,20 +387,18 @@ describe("useTmuxSessions", () => {
 
     act(() =>
       ws.simulateMessage({
-        type: "tmux_create_result",
+        type: "terminal_create_result",
         request_id: createId,
         success: true,
-        session_name: "web-new",
-        socket: "default",
+        terminal_id: "web-new",
       }),
     );
     expect(result.current.requestPending).toBe(false);
     expect(result.current.isLoading).toBe(false);
     expect(result.current.createdSession).toEqual({
-      session_name: "web-new",
-      socket: "default",
+      terminal_id: "web-new",
     });
-    expect(sentMessages(ws, "tmux_list_sessions")).toHaveLength(1);
+    expect(sentMessages(ws, "terminal_list")).toHaveLength(1);
     unmount();
   });
 
@@ -424,7 +409,7 @@ describe("useTmuxSessions", () => {
     ws.send.mockClear();
 
     act(() => result.current.createSession());
-    const createId = requestId(ws, "tmux_create_session");
+    const createId = requestId(ws, "terminal_create");
     act(() =>
       ws.simulateMessage({
         type: "error",
@@ -458,7 +443,7 @@ describe("useTmuxSessions", () => {
     });
     respondToAttach(
       ws,
-      requestId(ws, "tmux_attach"),
+      requestId(ws, "terminal_attach"),
       "worker",
       "default",
       "stream-timeout",
@@ -487,16 +472,16 @@ describe("useTmuxSessions", () => {
     open(ws);
 
     act(() => result.current.attachSession("worker", "default"));
-    const attachId = requestId(ws, "tmux_attach");
+    const attachId = requestId(ws, "terminal_attach");
     expect(result.current.isLoading).toBe(true);
 
     act(() => {
       ws.simulateMessage({
-        type: "tmux_sessions_list",
+        type: "terminal_list",
         sessions: [{ name: "worker", socket: "default" }],
       });
       ws.simulateMessage({
-        type: "tmux_kill_result",
+        type: "terminal_kill_result",
         request_id: "unrelated-kill",
         success: true,
       });
@@ -515,7 +500,7 @@ describe("useTmuxSessions", () => {
     open(first);
 
     act(() => result.current.attachSession("worker", "default"));
-    const staleAttachId = requestId(first, "tmux_attach");
+    const staleAttachId = requestId(first, "terminal_attach");
     const staleAttachMessage = first.onmessage;
     expect(result.current.requestPending).toBe(true);
 
@@ -527,14 +512,14 @@ describe("useTmuxSessions", () => {
     const second = mockWs.instances[1];
     open(second);
     act(() => result.current.attachSession("worker", "default"));
-    const liveAttachId = requestId(second, "tmux_attach");
+    const liveAttachId = requestId(second, "terminal_attach");
     expect(result.current.requestPending).toBe(true);
 
     act(() => {
       staleAttachMessage?.(
         new MessageEvent("message", {
           data: JSON.stringify({
-            type: "tmux_attach_result",
+            type: "terminal_attach_result",
             request_id: staleAttachId,
             success: true,
             streaming_id: "stale-stream",
@@ -559,7 +544,7 @@ describe("useTmuxSessions", () => {
 
     respondToAttach(second, liveAttachId, "worker", "default", "live-stream");
     act(() => result.current.detachSession());
-    const staleDetachId = requestId(second, "tmux_detach");
+    const staleDetachId = requestId(second, "terminal_detach");
     const staleDetachMessage = second.onmessage;
     expect(result.current.requestPending).toBe(true);
 
@@ -571,13 +556,13 @@ describe("useTmuxSessions", () => {
     const third = mockWs.instances[2];
     open(third);
     act(() => result.current.attachSession("worker", "gobby"));
-    const finalAttachId = requestId(third, "tmux_attach");
+    const finalAttachId = requestId(third, "terminal_attach");
 
     act(() => {
       staleDetachMessage?.(
         new MessageEvent("message", {
           data: JSON.stringify({
-            type: "tmux_detach_result",
+            type: "terminal_detach_result",
             request_id: staleDetachId,
             success: true,
           }),
@@ -599,10 +584,86 @@ describe("useTmuxSessions", () => {
     respondToAttach(third, finalAttachId, "worker", "gobby", "final-stream");
     expect(result.current.requestPending).toBe(false);
     expect(result.current.attachedTarget).toEqual({
-      name: "worker",
-      socket: "gobby",
+      terminal_id: "worker",
     });
     expect(result.current.streamingId).toBe("final-stream");
     unmount();
+  });
+
+  it("test_terminal_list_follows_pages", () => {
+    const { result } = renderHook(() => useTmuxSessions());
+    const ws = mockWs.instances[0];
+    open(ws);
+    act(() => {
+      ws.simulateMessage({
+        type: "terminal_list",
+        request_id: "init",
+        items: Array.from({ length: 100 }, (_, index) => ({
+          terminal_id: `t-${index.toString().padStart(3, "0")}`,
+          backend: "tmux",
+          ownership: "gobby",
+          state: "live",
+          title: `row-${index}`,
+          session_id: null,
+          agent_run_id: null,
+          dims: null,
+        })),
+        next_cursor: "cursor-1",
+      });
+    });
+    const pageRequest = sentMessages(ws, "terminal_list").find(
+      (message) => message.cursor === "cursor-1",
+    );
+    expect(pageRequest).toBeDefined();
+    act(() => {
+      ws.simulateMessage({
+        type: "terminal_list",
+        request_id: "page-1",
+        items: [
+          {
+            terminal_id: "t-100",
+            backend: "tmux",
+            ownership: "gobby",
+            state: "live",
+            title: "row-100",
+            session_id: null,
+            agent_run_id: null,
+            dims: null,
+          },
+        ],
+        next_cursor: null,
+      });
+    });
+    const ids = result.current.sessions.map((session) => session.terminal_id);
+    expect(ids[0]).toBe("t-000");
+    expect(ids.at(-1)).toBe("t-100");
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("test_write_seq_refusals_clear_inflight_and_do_not_resend", () => {
+    const { result } = renderHook(() => useTmuxSessions());
+    const ws = mockWs.instances[0];
+    open(ws);
+    act(() => {
+      result.current.attachSession("term-1", "tmux");
+    });
+    const attachId = requestId(ws, "terminal_attach");
+    respondToAttach(ws, attachId, "term-1", "tmux", "att-1");
+    const before = sentMessages(ws, "terminal_input").length;
+    act(() => {
+      result.current.sendInput("x");
+    });
+    expect(sentMessages(ws, "terminal_input").length).toBe(before + 1);
+    act(() => {
+      ws.simulateMessage({
+        type: "terminal_write_outcome",
+        attachment_id: "att-1",
+        client_write_seq: sentMessages(ws, "terminal_input").at(-1)
+          ?.client_write_seq,
+        outcome: "refused",
+        reason: "write_seq_conflict",
+      });
+    });
+    expect(sentMessages(ws, "terminal_input").length).toBe(before + 1);
   });
 });

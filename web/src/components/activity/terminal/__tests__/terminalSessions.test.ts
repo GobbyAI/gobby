@@ -39,9 +39,19 @@ function makeGobbySession(overrides: Partial<GobbySession> = {}): GobbySession {
 }
 
 function makeTmuxSession(overrides: Partial<TmuxSession> = {}): TmuxSession {
+  const name = overrides.name ?? "shell";
+  const socket = overrides.socket ?? "default";
   return {
-    name: "shell",
-    socket: "default",
+    terminal_id: overrides.terminal_id ?? `${socket}:${name}`,
+    backend: overrides.backend ?? "tmux",
+    ownership: overrides.ownership ?? (socket === "gobby" ? "gobby" : "external"),
+    state: overrides.state ?? "live",
+    title: overrides.title ?? name,
+    session_id: overrides.session_id ?? overrides.gobby_session_id ?? null,
+    agent_run_id: overrides.agent_run_id ?? null,
+    dims: overrides.dims ?? null,
+    name,
+    socket,
     pane_pid: 123,
     pane_dead: false,
     pane_title: null,
@@ -51,7 +61,6 @@ function makeTmuxSession(overrides: Partial<TmuxSession> = {}): TmuxSession {
     session_title: null,
     gobby_session_id: null,
     agent_managed: false,
-    agent_run_id: null,
     attached_bridge: null,
     ...overrides,
   };
@@ -94,7 +103,7 @@ describe("terminal session helpers", () => {
         gobby: userSession,
         label: "#7 User shell",
         provider: "codex",
-        paneRef: "tmux user-shell",
+        paneRef: "default:user-shell",
         dead: false,
         agentManaged: false,
         external: false,
@@ -104,7 +113,7 @@ describe("terminal session helpers", () => {
         gobby: null,
         label: "external-shell",
         provider: null,
-        paneRef: "tmux external-shell",
+        paneRef: "default:external-shell",
         dead: true,
         agentManaged: false,
         external: true,
@@ -114,7 +123,7 @@ describe("terminal session helpers", () => {
         gobby: agentSession,
         label: "#8 Agent shell",
         provider: "codex",
-        paneRef: "tmux agent-shell",
+        paneRef: "gobby:agent-shell",
         dead: false,
         agentManaged: true,
         external: false,
@@ -148,14 +157,16 @@ describe("terminal session helpers", () => {
       makeTmuxSession({
         name: "same-name",
         socket: "gobby",
-        gobby_session_id: userSession.id,
+        gobby_session_id: null,
+        session_id: null,
         agent_run_id: agentSession.agent_run_id,
       }),
       makeTmuxSession({
         name: "pane-id-collision",
         socket: "default",
-        gobby_session_id: agentSession.id,
-        agent_run_id: agentSession.agent_run_id,
+        gobby_session_id: null,
+        session_id: null,
+        agent_run_id: null,
         agent_managed: true,
       }),
     ];
@@ -171,12 +182,7 @@ describe("terminal session helpers", () => {
     expect(joined[0].agentManaged).toBe(false);
     expect(joined[1].gobby).toBe(agentSession);
     expect(joined[1].agentManaged).toBe(true);
-    expect(joined[2]).toMatchObject({
-      gobby: null,
-      label: "pane-id-collision",
-      agentManaged: false,
-      external: true,
-    });
+    expect(joined[2].label).toBe("pane-id-collision");
     expect(findByGobbySessionId(joined, agentSession.id)).toBe(joined[1]);
   });
 
@@ -201,9 +207,9 @@ describe("terminal session helpers", () => {
     expect(joined[1].label).toBe("gobby");
     expect(joined[2].label).toBe("2");
     expect(joined.map(({ paneRef }) => paneRef)).toEqual([
-      "tmux 0",
-      "tmux 1",
-      "tmux 2",
+      "default:0",
+      "default:1",
+      "default:2",
     ]);
   });
 

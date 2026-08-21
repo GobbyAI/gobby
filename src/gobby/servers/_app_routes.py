@@ -52,6 +52,7 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
         create_source_control_router,
         create_stages_router,
         create_tasks_router,
+        create_terminals_router,
         create_traces_router,
         create_variable_definitions_router,
         create_voice_router,
@@ -66,6 +67,7 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
     app.include_router(create_agent_spawn_router(server))
     app.include_router(create_agents_router(server))
     app.include_router(create_attention_router(server))
+    app.include_router(create_terminals_router(server))
     app.include_router(create_build_router(server))
     app.include_router(create_chat_attachments_router(server))
     app.include_router(create_chat_router(server))

@@ -52,6 +52,7 @@ def create_lifespan(
             "database": server.services.database,
             "session_manager": server.services.session_manager,
             "memory_manager": server.services.memory_manager,
+            "terminal_manager": getattr(server.services, "terminal_manager", None),
         }
         if (
             server.services.agent_runner is not None
@@ -290,6 +291,7 @@ def create_lifespan(
                 ),
                 message_processor_resolver=lambda: server.message_processor,
                 tmux_config=config.tmux if config else None,
+                terminal_manager=getattr(server.services, "terminal_manager", None),
             )
             app.state.liveness_monitor = liveness_monitor
             app.state.hook_manager.event_handlers.set_liveness_monitor(liveness_monitor)

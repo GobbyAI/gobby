@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Self, cast
 
 from fastapi import APIRouter, HTTPException
@@ -456,6 +457,7 @@ async def _load_roster_entries(
                 "task": task_cache.get(run.task_id) if run.task_id is not None else None,
                 "provider": run.provider,
                 "model": run.model,
+                "terminal": _run_terminal_block(server, run),
                 "tmux": _run_tmux_payload(server, run),
                 "last_activity_at": _serialize_timestamp(run.updated_at),
                 **_metadata_payload(snapshot, entry_id),
@@ -482,6 +484,7 @@ async def _load_roster_entries(
                 "task": None,
                 "provider": session.source,
                 "model": session.model,
+                "terminal": _session_terminal_block(server, session),
                 "tmux": _session_tmux_payload(terminal_context),
                 "last_activity_at": _serialize_timestamp(session.updated_at),
                 **_metadata_payload(snapshot, entry_id),
@@ -567,6 +570,53 @@ def _serialize_attention(state: AttentionState | None) -> dict[str, object] | No
     }
 
 
+def _run_terminal_block(server: HTTPServer, run: Any) -> dict[str, object] | None:
+    terminal_id = getattr(run, "terminal_id", None)
+    if not isinstance(terminal_id, str) or not terminal_id:
+        return None
+    manager = getattr(server.services, "terminal_manager", None)
+    if manager is None:
+        return None
+    row = manager.get(terminal_id)
+    if row is None:
+        return None
+    try:
+        attach = manager.attach_locator(
+            terminal_id,
+            live_host_epoch=row.host_epoch or "",
+            socket_dir=Path.home() / ".gobby",
+        )
+    except Exception:
+        attach = None
+    return {
+        "terminal_id": terminal_id,
+        "backend": row.backend,
+        "attach": None if attach is None else asdict(attach),
+    }
+
+
+def _session_terminal_block(server: HTTPServer, session: Any) -> dict[str, object] | None:
+    manager = getattr(server.services, "terminal_manager", None)
+    if manager is None:
+        return None
+    row = manager.get_live_for_session(session.id)
+    if row is None:
+        return None
+    try:
+        attach = manager.attach_locator(
+            row.id,
+            live_host_epoch=row.host_epoch or "",
+            socket_dir=Path.home() / ".gobby",
+        )
+    except Exception:
+        attach = None
+    return {
+        "terminal_id": row.id,
+        "backend": row.backend,
+        "attach": None if attach is None else asdict(attach),
+    }
+
+
 def _run_tmux_payload(server: HTTPServer, run: Any) -> dict[str, object] | None:
     terminal_id = getattr(run, "terminal_id", None)
     if not isinstance(terminal_id, str) or not terminal_id:
@@ -619,7 +669,6 @@ async def _resolve_attention_pane(
     state: AttentionState,
 ) -> AttentionPane | None:
     services = server.services
-    session_manager = services.session_manager
     manager = getattr(services, "terminal_manager", None)
     registry = getattr(services, "terminal_runtime_registry", None)
     if state.session_id is not None and manager is not None and registry is not None:

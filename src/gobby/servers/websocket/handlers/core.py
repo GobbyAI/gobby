@@ -298,7 +298,7 @@ class HandlerMixin:
             websocket: Client WebSocket connection
             data: Parsed terminal input message
         """
-        run_id = data.get("run_id")
+        run_id = data.get("terminal_id") or data.get("run_id")
         input_data = data.get("data")
 
         if not run_id or input_data is None:

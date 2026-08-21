@@ -111,6 +111,7 @@ class SessionLivenessMonitor:
         message_processor_resolver: Callable[[], SessionMessageProcessor | None] | None = None,
         poll_interval: float = _DEFAULT_POLL_INTERVAL,
         tmux_config: TmuxConfig | None = None,
+        terminal_manager: Any | None = None,
     ) -> None:
         self._session_manager = session_storage
         self._dispatch_summaries_fn = dispatch_summaries_fn
@@ -118,6 +119,7 @@ class SessionLivenessMonitor:
         self._message_processor_resolver = message_processor_resolver or (lambda: None)
         self._poll_interval = poll_interval
         self._tmux_config = tmux_config
+        self.terminal_manager = terminal_manager
         self._task: asyncio.Task[None] | None = None
         # session_id -> monotonic timestamp when we handled it
         self._recently_handled: dict[str, float] = {}

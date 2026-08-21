@@ -175,10 +175,10 @@ async function installTerminalSocket(page: Page): Promise<TerminalHarness> {
         return;
       }
 
-      if (message.type === "tmux_list_sessions") {
+      if (message.type === "terminal_list") {
         ws.send(
           JSON.stringify({
-            type: "tmux_sessions_list",
+            type: "terminal_list",
             sessions: MOCK_SESSIONS,
             live_cli_session_ids: [],
           }),
@@ -186,11 +186,11 @@ async function installTerminalSocket(page: Page): Promise<TerminalHarness> {
         return;
       }
 
-      if (message.type === "tmux_attach") {
+      if (message.type === "terminal_attach") {
         const sessionName = String(message.session_name);
         ws.send(
           JSON.stringify({
-            type: "tmux_attach_result",
+            type: "terminal_attach_result",
             request_id: message.request_id,
             success: true,
             streaming_id: STREAM_IDS[sessionName],
@@ -199,10 +199,10 @@ async function installTerminalSocket(page: Page): Promise<TerminalHarness> {
         return;
       }
 
-      if (message.type === "tmux_detach") {
+      if (message.type === "terminal_detach") {
         ws.send(
           JSON.stringify({
-            type: "tmux_detach_result",
+            type: "terminal_detach_result",
             request_id: message.request_id,
             success: true,
           }),
@@ -210,7 +210,7 @@ async function installTerminalSocket(page: Page): Promise<TerminalHarness> {
         return;
       }
 
-      if (message.type === "tmux_resize") {
+      if (message.type === "terminal_resize") {
         const streamingId = String(message.streaming_id);
         if (!outputSent.has(streamingId)) {
           outputSent.add(streamingId);
@@ -325,7 +325,7 @@ test("forwards composer input and detaches before switching terminal sessions", 
     "Default foreground text for comparison",
   );
   await expect
-    .poll(() => messagesOfType(harness, "tmux_attach"))
+    .poll(() => messagesOfType(harness, "terminal_attach"))
     .toContainEqual(
       expect.objectContaining({
         session_name: "test-session",
@@ -357,14 +357,14 @@ test("forwards composer input and detaches before switching terminal sessions", 
   await expect(terminal).toContainText("Second session output");
 
   await expect
-    .poll(() => messagesOfType(harness, "tmux_detach"))
+    .poll(() => messagesOfType(harness, "terminal_detach"))
     .toContainEqual(
       expect.objectContaining({
         streaming_id: STREAM_IDS["test-session"],
       }),
     );
   await expect
-    .poll(() => messagesOfType(harness, "tmux_attach"))
+    .poll(() => messagesOfType(harness, "terminal_attach"))
     .toContainEqual(
       expect.objectContaining({
         session_name: "second-session",
@@ -373,12 +373,12 @@ test("forwards composer input and detaches before switching terminal sessions", 
     );
   const firstDetachIndex = harness.messages.findIndex(
     (message) =>
-      message.type === "tmux_detach" &&
+      message.type === "terminal_detach" &&
       message.streaming_id === STREAM_IDS["test-session"],
   );
   const secondAttachIndex = harness.messages.findIndex(
     (message) =>
-      message.type === "tmux_attach" &&
+      message.type === "terminal_attach" &&
       message.session_name === "second-session",
   );
 

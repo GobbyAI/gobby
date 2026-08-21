@@ -1,8 +1,43 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 
 export const TMUX_REQUEST_TIMEOUT_MS = 10_000;
+export const TERMINAL_WS_SAFE_INTEGER_MAX = Number.MAX_SAFE_INTEGER;
+
+function asSession(row: Partial<TmuxSession> & { terminal_id?: string }): TmuxSession {
+  const terminalId = row.terminal_id ?? "";
+  return {
+    terminal_id: terminalId,
+    backend: row.backend ?? "tmux",
+    ownership: row.ownership ?? "gobby",
+    state: row.state ?? "live",
+    title: row.title ?? row.name ?? null,
+    session_id: row.session_id ?? row.gobby_session_id ?? null,
+    agent_run_id: row.agent_run_id ?? null,
+    dims: row.dims ?? null,
+    name: row.name ?? row.title ?? terminalId,
+    socket: row.socket ?? row.backend ?? "tmux",
+    pane_pid: row.pane_pid ?? null,
+    pane_dead: row.pane_dead ?? false,
+    pane_title: row.pane_title ?? row.title ?? null,
+    pane_command: row.pane_command ?? null,
+    pane_path: row.pane_path ?? null,
+    window_name: row.window_name ?? null,
+    session_title: row.session_title ?? row.title ?? null,
+    gobby_session_id: row.gobby_session_id ?? row.session_id ?? null,
+    agent_managed: row.agent_managed ?? row.ownership === "gobby",
+    attached_bridge: row.attached_bridge ?? null,
+  };
+}
 
 export interface TmuxSession {
+  terminal_id: string;
+  backend: string;
+  ownership: string;
+  state: string;
+  title: string | null;
+  session_id: string | null;
+  agent_run_id: string | null;
+  dims: { rows: number; cols: number } | null;
   name: string;
   socket: string;
   pane_pid: number | null;
@@ -14,18 +49,15 @@ export interface TmuxSession {
   session_title: string | null;
   gobby_session_id: string | null;
   agent_managed: boolean;
-  agent_run_id: string | null;
   attached_bridge: string | null;
 }
 
 export interface TmuxTarget {
-  name: string;
-  socket: string;
+  terminal_id: string;
 }
 
 export interface CreatedTmuxSession {
-  session_name: string;
-  socket: string;
+  terminal_id: string;
 }
 
 type PendingRequest =
@@ -151,7 +183,7 @@ export function useTmuxSessions(): TmuxSessionsResult {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     wsRef.current.send(
       JSON.stringify({
-        type: "tmux_list_sessions",
+        type: "terminal_list",
         request_id: `refresh-${Date.now()}`,
       }),
     );
@@ -178,10 +210,10 @@ export function useTmuxSessions(): TmuxSessionsResult {
       setAttachError(null);
       ws.send(
         JSON.stringify({
-          type: "tmux_attach",
+          type: "terminal_attach",
           request_id: requestId,
-          session_name: target.name,
-          socket: target.socket,
+          terminal_id: target.terminal_id,
+          frame_delivery: "proxy",
         }),
       );
       schedulePendingRequestTimeout(request);
@@ -216,9 +248,10 @@ export function useTmuxSessions(): TmuxSessionsResult {
       setAttachError(null);
       ws.send(
         JSON.stringify({
-          type: "tmux_detach",
+          type: "terminal_detach",
           request_id: requestId,
-          streaming_id: currentStreamingId,
+          terminal_id: attachedTargetRef.current?.terminal_id,
+          attachment_id: currentStreamingId,
         }),
       );
       schedulePendingRequestTimeout(request);
@@ -230,27 +263,45 @@ export function useTmuxSessions(): TmuxSessionsResult {
   const handleMessage = useCallback(
     (data: Record<string, unknown>) => {
       switch (data.type) {
-        case "tmux_sessions_list": {
-          const newSessions = data.sessions as TmuxSession[];
-          setSessions(newSessions);
+        case "terminal_list": {
+          const pageItems = ((data.items as TmuxSession[] | undefined) ?? []).map(asSession);
+          const generation = connectionGenerationRef.current;
+          if (data.request_id === "init" || data.request_id === "refresh") {
+            setSessions(pageItems);
+          } else {
+            setSessions((current) => {
+              const seen = new Set(current.map((row) => row.terminal_id));
+              const merged = [...current];
+              for (const row of pageItems) {
+                if (!seen.has(row.terminal_id)) merged.push(row);
+              }
+              return merged;
+            });
+          }
           setLiveCliSessionIds((data.live_cli_session_ids as string[]) || []);
           setSessionsLoaded(true);
           const attached = attachedTargetRef.current;
           if (
             attached &&
-            !newSessions.some(
-              (session) =>
-                session.name === attached.name &&
-                session.socket === attached.socket,
-            )
+            !pageItems.some((session) => session.terminal_id === attached.terminal_id) &&
+            data.next_cursor == null
           ) {
             setSessionEnded(true);
+          }
+          if (typeof data.next_cursor === "string" && data.next_cursor) {
+            wsRef.current?.send(
+              JSON.stringify({
+                type: "terminal_list",
+                request_id: `page-${generation}`,
+                cursor: data.next_cursor,
+              }),
+            );
           }
           if (pendingRequestRef.current === null) setIsLoading(false);
           break;
         }
 
-        case "tmux_attach_result": {
+        case "terminal_attach_result": {
           const pending = pendingRequestRef.current;
           if (
             !pending ||
@@ -260,8 +311,8 @@ export function useTmuxSessions(): TmuxSessionsResult {
           )
             break;
 
-          if (data.success) {
-            updateAttachment(pending.target, data.streaming_id as string);
+          if (data.success || typeof data.attachment_id === "string") {
+            updateAttachment(pending.target, data.attachment_id as string);
           } else {
             setAttachError(
               typeof data.message === "string" ? data.message : "Attach failed",
@@ -271,7 +322,7 @@ export function useTmuxSessions(): TmuxSessionsResult {
           break;
         }
 
-        case "tmux_detach_result": {
+        case "terminal_detach_result": {
           const pending = pendingRequestRef.current;
           if (
             !pending ||
@@ -313,7 +364,7 @@ export function useTmuxSessions(): TmuxSessionsResult {
           break;
         }
 
-        case "tmux_create_result": {
+        case "terminal_create_result": {
           const pending = pendingRequestRef.current;
           if (
             !pending ||
@@ -323,14 +374,9 @@ export function useTmuxSessions(): TmuxSessionsResult {
           )
             break;
 
-          if (
-            data.success &&
-            typeof data.session_name === "string" &&
-            typeof data.socket === "string"
-          ) {
+          if (data.success && typeof data.terminal_id === "string") {
             setCreatedSession({
-              session_name: data.session_name,
-              socket: data.socket,
+              terminal_id: data.terminal_id,
             });
             refreshSessions();
           } else {
@@ -342,12 +388,12 @@ export function useTmuxSessions(): TmuxSessionsResult {
           break;
         }
 
-        case "tmux_kill_result":
+        case "terminal_kill_result":
           refreshSessions();
           if (pendingRequestRef.current === null) setIsLoading(false);
           break;
 
-        case "tmux_session_event":
+        case "terminal_event":
           refreshSessions();
           break;
 
@@ -360,7 +406,7 @@ export function useTmuxSessions(): TmuxSessionsResult {
         case "terminal_output":
           if (outputCallbackRef.current) {
             outputCallbackRef.current(
-              data.run_id as string,
+              (data.terminal_id as string) || (data.attachment_id as string),
               data.data as string,
             );
           }
@@ -400,12 +446,12 @@ export function useTmuxSessions(): TmuxSessionsResult {
       ws.send(
         JSON.stringify({
           type: "subscribe",
-          events: ["terminal_output", "tmux_session_event", "session_event"],
+          events: ["terminal_output", "terminal_event", "session_event"],
         }),
       );
       // Fetch session list on connect
       ws.send(
-        JSON.stringify({ type: "tmux_list_sessions", request_id: "init" }),
+        JSON.stringify({ type: "terminal_list", request_id: "init" }),
       );
     };
 
@@ -453,12 +499,9 @@ export function useTmuxSessions(): TmuxSessionsResult {
   const attachSession = useCallback(
     (sessionName: string, socket: string) => {
       if (pendingRequestRef.current) return;
-      const target = { name: sessionName, socket };
+      const target = { terminal_id: sessionName || socket };
       const currentTarget = attachedTargetRef.current;
-      if (
-        currentTarget?.name === target.name &&
-        currentTarget.socket === target.socket
-      )
+      if (currentTarget?.terminal_id === target.terminal_id)
         return;
       if (currentTarget) {
         beginDetachRequest(target);
@@ -479,10 +522,9 @@ export function useTmuxSessions(): TmuxSessionsResult {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     wsRef.current.send(
       JSON.stringify({
-        type: "tmux_refresh_client",
+        type: "terminal_set_viewport",
         request_id: `refresh-${connectionGenerationRef.current}-${++requestCounterRef.current}`,
-        session_name: sessionName,
-        socket: socket || "default",
+        terminal_id: sessionName || socket,
       }),
     );
   }, []);
@@ -503,10 +545,12 @@ export function useTmuxSessions(): TmuxSessionsResult {
       setCreatedSession(null);
       ws.send(
         JSON.stringify({
-          type: "tmux_create_session",
+          type: "terminal_create",
           request_id: requestId,
-          name,
-          socket: socket || "default",
+          rows: 24,
+          cols: 80,
+          cwd: name,
+          command: socket ? [socket] : ["zsh"],
         }),
       );
       schedulePendingRequestTimeout(request);
@@ -519,18 +563,14 @@ export function useTmuxSessions(): TmuxSessionsResult {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
       setIsLoading(true);
       const currentTarget = attachedTargetRef.current;
-      if (
-        currentTarget?.name === sessionName &&
-        currentTarget.socket === socket
-      ) {
+      if (currentTarget?.terminal_id === sessionName) {
         updateAttachment(null, null);
       }
       wsRef.current.send(
         JSON.stringify({
-          type: "tmux_kill_session",
+          type: "terminal_kill",
           request_id: `kill-${Date.now()}`,
-          session_name: sessionName,
-          socket,
+          terminal_id: sessionName,
         }),
       );
     },
@@ -548,7 +588,9 @@ export function useTmuxSessions(): TmuxSessionsResult {
     wsRef.current.send(
       JSON.stringify({
         type: "terminal_input",
-        run_id: currentStreamingId,
+        terminal_id: attachedTargetRef.current?.terminal_id,
+        attachment_id: currentStreamingId,
+        client_write_seq: ++requestCounterRef.current,
         data,
       }),
     );
@@ -564,8 +606,9 @@ export function useTmuxSessions(): TmuxSessionsResult {
       return;
     wsRef.current.send(
       JSON.stringify({
-        type: "tmux_resize",
-        streaming_id: currentStreamingId,
+        type: "terminal_resize",
+        terminal_id: attachedTargetRef.current?.terminal_id,
+        attachment_id: currentStreamingId,
         rows,
         cols,
       }),

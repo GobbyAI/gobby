@@ -457,6 +457,44 @@ class TerminalManager:
         )
         return [Terminal.from_row(row) for row in rows]
 
+    def list_page(
+        self,
+        project_id: str,
+        *,
+        states: tuple[str, ...] | None = None,
+        backend: str | None = None,
+        cursor_created_at: datetime | None = None,
+        cursor_id: str | None = None,
+        limit: int = 100,
+    ) -> tuple[list[Terminal], bool]:
+        """Stable (created_at, id) page for REST and WS inventory."""
+        filters = ["project_id = %s"]
+        params: list[object] = [str(UUID(project_id))]
+        if states:
+            filters.append("state = ANY(%s)")
+            params.append(list(states))
+        if backend:
+            filters.append("backend = %s")
+            params.append(backend)
+        if cursor_created_at is not None and cursor_id is not None:
+            filters.append("(created_at, id) > (%s, %s)")
+            params.extend([cursor_created_at, str(UUID(cursor_id))])
+        params.append(limit + 1)
+        rows = self.db.fetchall(
+            f"""
+            SELECT * FROM terminals
+            WHERE {' AND '.join(filters)}
+            ORDER BY created_at ASC, id ASC
+            LIMIT %s
+            """,
+            tuple(params),
+        )
+        items = [Terminal.from_row(row) for row in rows]
+        has_more = len(items) > limit
+        if has_more:
+            items = items[:limit]
+        return items, has_more
+
     def list_orphaned_by_epoch(self, host_epoch: str) -> list[Terminal]:
         """Orphaned native rows for a vanished host epoch."""
         rows = self.db.fetchall(

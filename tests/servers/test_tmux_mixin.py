@@ -98,7 +98,7 @@ class TestTmuxListSessions:
             await server._handle_tmux_list_sessions(ws, {"request_id": "r1"})
 
         msg = ws.last_message()
-        assert msg["type"] == "tmux_sessions_list"
+        assert msg["type"] == "terminal_list"
         assert msg["sessions"] == []
         assert msg["request_id"] == "r1"
 
@@ -238,7 +238,7 @@ class TestTmuxDetach:
                     ws, {"request_id": "r1", "streaming_id": "test-stream"}
                 )
 
-        results = ws.messages_of_type("tmux_detach_result")
+        results = ws.messages_of_type("terminal_detach_result")
         assert len(results) == 1
         assert results[0]["success"] is True
 
@@ -276,7 +276,7 @@ class TestTmuxCreateSession:
                 ws, {"request_id": "r1", "name": "new-session"}
             )
 
-        results = ws.messages_of_type("tmux_create_result")
+        results = ws.messages_of_type("terminal_create_result")
         assert len(results) == 1
         assert results[0]["success"] is True
         assert results[0]["session_name"] == "new-session"
@@ -299,8 +299,12 @@ class TestTmuxKillSession:
         ws = MockWebSocket()
         mock_run = MagicMock()
         mock_run.id = "ar-1"
-        mock_run.tmux_session_name = "agent-sess"
+        mock_run.terminal_id = "term-agent"
         mock_run.mode = "tmux"
+        mock_row = MagicMock()
+        mock_row.session_name = "agent-sess"
+        server.terminal_manager = MagicMock()
+        server.terminal_manager.get.return_value = mock_row
 
         mock_session_mgr = MagicMock()
         mock_arm = MagicMock()
@@ -364,7 +368,7 @@ class TestTmuxKillSession:
 
         mock_session_mgr.update_status.assert_called_once_with("sess-1", "expired")
         server.broadcast_session_event.assert_not_awaited()
-        results = ws.messages_of_type("tmux_kill_result")
+        results = ws.messages_of_type("terminal_kill_result")
         assert results[0]["success"] is True
         assert results[0]["expired_session_ids"] == ["sess-1"]
 
@@ -417,7 +421,7 @@ class TestTmuxKillSession:
         mock_session_mgr.update_status.assert_not_called()
         assert mock_session_mgr.update_status.call_count == 0
         assert not mock_session_mgr.update_status.called
-        results = ws.messages_of_type("tmux_kill_result")
+        results = ws.messages_of_type("terminal_kill_result")
         assert results[0]["expired_session_ids"] == []
 
 
@@ -483,21 +487,18 @@ class TestTmuxRefreshClient:
             patch.object(manager, "has_session", new_callable=AsyncMock, return_value=True),
             patch.object(manager, "refresh_client", new_callable=AsyncMock) as refresh_client,
         ):
-            await server._handle_message(
+            await server._handle_tmux_refresh_client(
                 ws,
-                json.dumps(
-                    {
-                        "type": "tmux_refresh_client",
-                        "request_id": "refresh-1",
-                        "session_name": "demo",
-                        "socket": socket,
-                    }
-                ),
+                {
+                    "request_id": "refresh-1",
+                    "session_name": "demo",
+                    "socket": socket,
+                },
             )
 
         refresh_client.assert_awaited_once_with("demo")
         assert ws.last_message() == {
-            "type": "tmux_refresh_result",
+            "type": "terminal_refresh_result",
             "success": True,
             "request_id": "refresh-1",
             "session_name": "demo",
@@ -524,16 +525,13 @@ class TestTmuxRefreshClient:
                 new_callable=AsyncMock,
             ) as refresh_client,
         ):
-            await server._handle_message(
+            await server._handle_tmux_refresh_client(
                 ws,
-                json.dumps(
-                    {
-                        "type": "tmux_refresh_client",
-                        "request_id": "refresh-missing",
-                        "session_name": "missing",
-                        "socket": "gobby",
-                    }
-                ),
+                {
+                    "request_id": "refresh-missing",
+                    "session_name": "missing",
+                    "socket": "gobby",
+                },
             )
 
         refresh_client.assert_not_awaited()
