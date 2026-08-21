@@ -141,7 +141,7 @@ class ChatMessage(BaseModel):
 class ToolPolicyPayload(BaseModel):
     """Caller-declared tool policy for a tool_chat request."""
 
-    cli: Literal["gcode"]
+    cli: Literal["gcode", "gwiki"]
     tools: tuple[str, ...] = Field(min_length=1)
     allow_mutation: Literal[False] = False
 

@@ -1649,6 +1649,25 @@ def test_chat_completions_returns_openai_shape_with_investigation(
     assert request.speed_mode == "standard"
 
 
+def test_chat_completions_accepts_gwiki_tool_policy(
+    client: TestClient,
+    server_with_llm: MagicMock,
+) -> None:
+    service = _FakeToolChatService(_chat_result())
+    server_with_llm.services.tool_chat_service = service
+
+    payload = _valid_tool_chat_payload()
+    payload["tool_policy"] = {"cli": "gwiki", "tools": ["compile", "upkeep"]}
+    response = client.post("/api/llm/chat/completions", json=payload)
+
+    assert response.status_code == 200
+    assert len(service.requests) == 1
+    request = service.requests[0]
+    assert request.tool_policy.cli == "gwiki"
+    assert request.tool_policy.tools == ("compile", "upkeep")
+    assert request.tool_policy.allow_mutation is False
+
+
 def test_chat_completions_uses_verified_agent_session_claim(
     client: TestClient,
     server_with_llm: MagicMock,
@@ -1670,7 +1689,7 @@ def test_chat_completions_uses_verified_agent_session_claim(
 @pytest.mark.parametrize(
     "tool_policy",
     [
-        {"cli": "gwiki", "tools": ["search"]},
+        {"cli": "droid", "tools": ["search"]},
         {"cli": "gcode", "tools": ["index"], "allow_mutation": True},
     ],
 )
