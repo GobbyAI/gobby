@@ -223,7 +223,7 @@ routability is protocol-specific and always requires the Codex CLI:
 | Protocol | Transport | Picker |
 | --- | --- | --- |
 | `lmstudio`, `ollama` | Codex OSS (`--oss --local-provider`) | Shown when discovery is healthy with at least one eligible chat model |
-| `vllm` | Codex config-override (`wire_api="chat"`, provider id `gobby-vllm-<endpoint>`) — not `--oss` | Same health + Codex CLI gate as OSS backends; `model: auto` is resolved before attach so the sentinel never reaches Codex |
+| `vllm` | Codex config-override (`wire_api="chat"`, provider id `gobby-vllm-<endpoint>`) — not `--oss` | Same health + Codex CLI gate as OSS backends; `model: auto` is resolved before attach so the sentinel never reaches Codex. The server must run with `--enable-auto-tool-choice` and a model-matched tool-call parser; an endpoint whose activation tool probe failed (`probed_tools: false`) is hidden from the picker until re-activation succeeds |
 | `openai-compatible` | none | Catalog-only: visible in Settings, hidden from the picker |
 
 Unavailable groups stay in Settings and stay hidden from the picker.

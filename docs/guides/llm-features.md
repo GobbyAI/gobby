@@ -86,6 +86,19 @@ unauthenticated. When the key is set, Codex web chat and agent spawn put the
 resolved secret only in the child environment as `GOBBY_CODEX_ENDPOINT_API_KEY`
 (`env_key`); it never appears on argv or in serialized `-c` override values.
 
+### Tool calling (required for Codex web chat and agent spawn)
+
+Start vLLM with `--enable-auto-tool-choice --tool-call-parser <parser>`
+(`hermes` for Qwen models). The parser must match the model family — LM Studio
+and Ollama infer this from the model template, vLLM does not. A server started
+without these flags returns HTTP 400 on every request that carries `tools`.
+
+Activate the endpoint with `tool_chat: true` (the default) so the activation
+probe exercises a real tool call. A failed probe persists
+`probed_tools: false`, logs a WARNING, returns the server error in the
+activate response's `probe_diagnostics.tools`, and hides the endpoint from the
+web-chat picker until a re-activation succeeds.
+
 Paired selectors for the same endpoint. Auto becomes the picker/candidate value
 `endpoint:vllm` after the single served id is resolved:
 
