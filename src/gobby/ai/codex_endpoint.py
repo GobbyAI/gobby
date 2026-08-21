@@ -40,6 +40,8 @@ def _vllm_chat_config_overrides(
     *,
     model: str | None,
 ) -> tuple[str, ...]:
+    from gobby.agents.local_model import vllm_api_base
+
     provider_id = codex_vllm_provider_id(endpoint_name)
     selected_model = model or endpoint.model
     quote = json.dumps
@@ -51,7 +53,7 @@ def _vllm_chat_config_overrides(
     lines.extend(
         [
             f"model_providers.{provider_id}.name={quote(f'vLLM ({endpoint_name})')}",
-            f"model_providers.{provider_id}.base_url={quote(endpoint.api_base)}",
+            f"model_providers.{provider_id}.base_url={quote(vllm_api_base(endpoint.api_base))}",
         ]
     )
     if endpoint.api_key:

@@ -440,7 +440,7 @@ async def test_resume_vllm_endpoint_uses_config_override(
     build_cli = MagicMock(return_value=(["codex", "resume"], {}))
     monkeypatch.setattr(resume_executor, "build_cli_command", build_cli)
     ensure_local_model = AsyncMock(return_value="Qwen/Qwen2.5-7B-Instruct")
-    monkeypatch.setattr("gobby.agents.local_model.ensure_local_model", ensure_local_model)
+    monkeypatch.setattr(resume_executor, "ensure_local_model", ensure_local_model)
 
     result = await resume_executor.resume_agent_run(
         _original_run(),
@@ -704,3 +704,47 @@ async def test_successor_metadata_strips_inherited_protocol_keys(
         successor_metadata["daemon_stop_resume_planned_tmux_title"]
         == f"gobby-resume-{_SUCCESSOR_ID}"
     )
+
+
+@pytest.mark.asyncio
+async def test_resume_vllm_endpoint_reports_unresolved_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unresolved $secret: api_key fails the resume contract instead of raising."""
+    metadata = _resume_metadata()
+    metadata["model"] = "endpoint:metal/Qwen/Qwen2.5-7B-Instruct"
+    runner = _runner(storage=MagicMock())
+    spawner = MagicMock()
+    spawner.spawn.return_value = _spawn_result()
+    _patch_common(monkeypatch, spawner=spawner, finalize=AsyncMock())
+    monkeypatch.setattr(resume_executor, "build_cli_command", MagicMock())
+    monkeypatch.setattr(
+        resume_executor,
+        "ensure_local_model",
+        AsyncMock(return_value="Qwen/Qwen2.5-7B-Instruct"),
+    )
+
+    result = await resume_executor.resume_agent_run(
+        _original_run(),
+        resume_metadata=metadata,
+        runner=runner,
+        session_manager=MagicMock(),
+        daemon_config=DaemonConfig(
+            ai={
+                "generation": {
+                    "endpoints": {
+                        "metal": {
+                            "protocol": "vllm",
+                            "api_base": "http://127.0.0.1:8000/v1",
+                            "api_key": "$secret:missing",
+                            "model": "Qwen/Qwen2.5-7B-Instruct",
+                        }
+                    }
+                }
+            }
+        ),
+    )
+
+    assert result.success is False
+    assert "secret" in (result.error or "")
+    spawner.spawn.assert_not_called()

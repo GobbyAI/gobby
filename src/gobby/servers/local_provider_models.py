@@ -10,8 +10,9 @@ import httpx
 
 from gobby.agents.local_model import (
     LocalModelError,
-    _vllm_models_url,
     select_vllm_served_model,
+    vllm_health_url,
+    vllm_models_url,
 )
 from gobby.ai.endpoints import ENDPOINT_PROVIDER_PREFIX
 from gobby.config.ai import GenerationEndpointConfig, GenerationEndpointProtocol
@@ -320,8 +321,8 @@ async def _discover_vllm_models(
     endpoint_name: str,
     endpoint: GenerationEndpointConfig,
 ) -> list[dict[str, Any]]:
-    models_url = _vllm_models_url(endpoint.api_base)
-    health_url = f"{models_url.removesuffix('/v1/models')}/health"
+    models_url = vllm_models_url(endpoint.api_base)
+    health_url = vllm_health_url(endpoint.api_base)
     headers = _headers(endpoint.api_key)
     async with httpx.AsyncClient() as client:
         health = await client.get(health_url, headers=headers, timeout=10.0)

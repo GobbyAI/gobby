@@ -210,11 +210,16 @@ class OpenAICompatibleLocalProviderAdapter:
         self._endpoint = endpoint
         self._client: Any | None = None
         api_key = endpoint.api_key or "not-needed"
+        base_url = endpoint.api_base
+        if endpoint.protocol == "vllm":
+            from gobby.agents.local_model import vllm_api_base
+
+            base_url = vllm_api_base(endpoint.api_base)
         try:
             from openai import AsyncOpenAI
 
             self._client = AsyncOpenAI(
-                base_url=endpoint.api_base,
+                base_url=base_url,
                 api_key=api_key,
                 timeout=_LOCAL_OPENAI_TIMEOUT,
                 max_retries=_LOCAL_OPENAI_MAX_RETRIES,

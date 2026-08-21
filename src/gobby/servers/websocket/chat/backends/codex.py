@@ -48,6 +48,23 @@ from gobby.sessions.transcript_normalization import normalize_transcript_records
 from gobby.sessions.transcripts.base import ParsedMessage, ParsedToolEvent
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 
+
+def local_model_preflight_message(
+    endpoint: GenerationEndpointConfig,
+    error: LocalModelError,
+) -> str:
+    """Describe a failed local-model pre-flight without hiding the resolver's diagnosis.
+
+    For non-owning runtimes such as vLLM the only remedy is a config change, so
+    the served-model list / connection failure in ``error`` is the actionable
+    part of the message.
+    """
+    return (
+        "Codex local model pre-flight failed "
+        f"(protocol={endpoint.protocol}, model={endpoint.model}): {error}"
+    )
+
+
 logger = logging.getLogger(__name__)
 
 _CODEX_PROVIDER_ID = "codex"
@@ -409,11 +426,7 @@ class CodexWebChatBackend:
             try:
                 session._model = await ensure_local_model(local_endpoint, run_manager=None)
             except LocalModelError as exc:
-                raise RuntimeError(
-                    "Codex local model pre-flight failed "
-                    f"(protocol={local_endpoint.protocol}, "
-                    f"model={local_endpoint.model})"
-                ) from exc
+                raise RuntimeError(local_model_preflight_message(local_endpoint, exc)) from exc
 
         if session._thread_id:
             thread = await self._client.resume_thread(session._thread_id)

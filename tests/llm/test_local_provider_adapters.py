@@ -884,3 +884,21 @@ async def test_local_vision_preserves_successful_output(provider: str, tmp_path:
     )
 
     assert result.text == expected
+
+
+@pytest.mark.parametrize(
+    "api_base",
+    [
+        pytest.param("http://127.0.0.1:8000", id="bare-origin"),
+        pytest.param("http://127.0.0.1:8000/", id="trailing-slash"),
+        pytest.param("http://127.0.0.1:8000/v1/", id="v1-trailing-slash"),
+    ],
+)
+def test_vllm_adapter_normalizes_client_base_url(api_base: str) -> None:
+    """The generation client uses the same {origin}/v1 base the resolver discovers on."""
+    endpoint = GenerationEndpointConfig(protocol="vllm", api_base=api_base, model="auto")
+
+    with patch("openai.AsyncOpenAI") as mock_cls:
+        create_local_provider_adapter(endpoint)
+
+    assert mock_cls.call_args.kwargs["base_url"] == "http://127.0.0.1:8000/v1"

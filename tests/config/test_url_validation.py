@@ -91,6 +91,8 @@ def test_validate_endpoint_url_accepts_http_urls_with_hosts(url: str) -> None:
         pytest.param("https:///v1", id="missing-host"),
         pytest.param("https://bad host/v1", id="whitespace-in-host"),
         pytest.param("https://api.example.com:invalid/v1", id="invalid-port"),
+        pytest.param("https://user:token@vllm.internal/v1", id="embedded-credentials"),
+        pytest.param("https://token@vllm.internal/v1", id="embedded-username"),
     ],
 )
 def test_validate_endpoint_url_rejects_invalid_scheme_or_host(url: str) -> None:

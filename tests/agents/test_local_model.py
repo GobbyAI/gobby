@@ -324,14 +324,19 @@ async def test_vllm_auto_resolves_before_wire(monkeypatch: pytest.MonkeyPatch) -
 
 @pytest.mark.asyncio
 async def test_vllm_models_url_normalization(monkeypatch: pytest.MonkeyPatch) -> None:
-    models_url = "http://localhost:8000/v1/models"
-    api_bases = (
-        "http://localhost:8000",
-        "http://localhost:8000/",
-        "http://localhost:8000/v1",
-        "http://localhost:8000/v1/",
+    cases = (
+        ("http://localhost:8000", "http://localhost:8000"),
+        ("http://localhost:8000/", "http://localhost:8000"),
+        ("http://localhost:8000/v1", "http://localhost:8000"),
+        ("http://localhost:8000/v1/", "http://localhost:8000"),
+        ("https://gw.example/models/vllm/v1", "https://gw.example/models/vllm"),
+        ("https://gw.example/models/vllm", "https://gw.example/models/vllm"),
     )
-    for api_base in api_bases:
+    for api_base, origin in cases:
+        models_url = f"{origin}/v1/models"
+        assert local_model.vllm_api_base(api_base) == f"{origin}/v1"
+        assert local_model.vllm_models_url(api_base) == models_url
+        assert local_model.vllm_health_url(api_base) == f"{origin}/health"
         fake_client = _FakeAsyncClient(
             {("GET", models_url): [_openai_models_response(models_url, ["only-model"])]}
         )
@@ -346,3 +351,39 @@ async def test_vllm_models_url_normalization(monkeypatch: pytest.MonkeyPatch) ->
 
         assert resolved == "only-model"
         _assert_vllm_discovery_only(fake_client, models_url)
+
+
+class _RaisingAsyncClient(_FakeAsyncClient):
+    def __init__(self, error: Exception) -> None:
+        super().__init__({})
+        self._error = error
+
+    async def get(self, url: str, **kwargs: Any) -> _FakeResponse:
+        self.calls.append(("GET", url, kwargs))
+        raise self._error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "fragment"),
+    [
+        pytest.param(httpx.ReadTimeout("read timed out"), "Timed out", id="read-timeout"),
+        pytest.param(httpx.ConnectTimeout("connect timed out"), "Timed out", id="connect-timeout"),
+        pytest.param(httpx.ConnectError("refused"), "Cannot connect", id="connect-error"),
+        pytest.param(httpx.RemoteProtocolError("closed"), "Cannot connect", id="protocol-error"),
+    ],
+)
+async def test_vllm_resolver_maps_httpx_request_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    fragment: str,
+) -> None:
+    _patch_httpx_client(monkeypatch, _RaisingAsyncClient(error))
+    endpoint = GenerationEndpointConfig(
+        protocol="vllm",
+        api_base="http://localhost:8000/v1",
+        model="auto",
+    )
+
+    with pytest.raises(local_model.LocalModelError, match=fragment):
+        await local_model.resolve_vllm_served_model(endpoint)
