@@ -338,7 +338,7 @@ def test_routable_transport_strategies(
     assert vllm_backend.client._global_args == ()
     overrides = vllm_backend.client._config_overrides
     assert 'model_provider="gobby-vllm-metal"' in overrides
-    assert 'model_providers.gobby-vllm-metal.wire_api="chat"' in overrides
+    assert 'model_providers.gobby-vllm-metal.wire_api="responses"' in overrides
     assert 'model_providers.gobby-vllm-metal.name="vLLM (metal)"' in overrides
     assert not any(item.startswith("model=") for item in overrides)
     assert "auto" not in repr(overrides)
@@ -393,7 +393,7 @@ def test_vllm_env_key_credential_transport(
     assert secret not in serialized
     assert 'model_provider="gobby-vllm-metal"' in serialized
     assert 'model="Qwen/Qwen2.5-7B-Instruct"' in serialized
-    assert 'model_providers.gobby-vllm-metal.wire_api="chat"' in serialized
+    assert 'model_providers.gobby-vllm-metal.wire_api="responses"' in serialized
     assert f'model_providers.gobby-vllm-metal.env_key="{CODEX_ENDPOINT_API_KEY_ENV}"' in serialized
     assert f'shell_environment_policy.exclude=["{CODEX_ENDPOINT_API_KEY_ENV}"]' in serialized
 

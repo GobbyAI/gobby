@@ -1,4 +1,4 @@
-"""Invocation-scoped Codex configuration for Responses and vLLM chat endpoints."""
+"""Invocation-scoped Codex configuration for Responses and vLLM endpoints."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def _is_vllm_auto_model(model: str) -> bool:
     return model.strip() == _VLLM_AUTO_MODEL
 
 
-def _vllm_chat_config_overrides(
+def _vllm_config_overrides(
     endpoint_name: str,
     endpoint: GenerationEndpointConfig,
     *,
@@ -58,7 +58,7 @@ def _vllm_chat_config_overrides(
     )
     if endpoint.api_key:
         lines.append(f"model_providers.{provider_id}.env_key={quote(CODEX_ENDPOINT_API_KEY_ENV)}")
-    lines.append(f"model_providers.{provider_id}.wire_api={quote('chat')}")
+    lines.append(f"model_providers.{provider_id}.wire_api={quote('responses')}")
     if endpoint.api_key:
         lines.append(f"shell_environment_policy.exclude={quote([CODEX_ENDPOINT_API_KEY_ENV])}")
     lines.append("features.shell_snapshot=false")
@@ -71,9 +71,9 @@ def codex_endpoint_config_overrides(
     *,
     model: str | None = None,
 ) -> tuple[str, ...]:
-    """Build secret-free Codex config overrides for Responses or vLLM chat."""
+    """Build secret-free Codex config overrides for Responses or vLLM endpoints."""
     if endpoint.protocol == "vllm":
-        return _vllm_chat_config_overrides(endpoint_name, endpoint, model=model)
+        return _vllm_config_overrides(endpoint_name, endpoint, model=model)
     if endpoint.wire_api != "responses":
         raise ValueError("Codex endpoint overrides require wire_api='responses'")
     provider_id = codex_endpoint_provider_id(endpoint_name)

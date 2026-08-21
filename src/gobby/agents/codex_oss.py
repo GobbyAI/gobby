@@ -26,7 +26,7 @@ def codex_local_transport_strategy(
     """Return the Codex web-chat/spawn transport for a local endpoint protocol.
 
     LM Studio and Ollama keep ``--oss --local-provider``. vLLM uses invocation
-    config overrides with ``wire_api="chat"``. Generic OpenAI-compatible
+    config overrides with ``wire_api="responses"``. Generic OpenAI-compatible
     endpoints have no Codex transport.
     """
     normalized = protocol.strip().lower() if isinstance(protocol, str) else ""

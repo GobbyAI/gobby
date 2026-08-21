@@ -117,7 +117,7 @@ vLLM and vllm-metal share the Gobby protocol value `vllm`.
 |---------|--------------------|----------------|-------|
 | LM Studio | `http://localhost:1234` | `lmstudio` | `lms` CLI; web chat via Codex OSS |
 | Ollama | `http://localhost:11434` | `ollama` | `ollama` CLI; web chat via Codex OSS |
-| vLLM | `http://localhost:8000/v1` | `vllm` | CUDA/ROCm hosts; web chat via Codex config-override (`wire_api="chat"`), not `--oss`. Tool calling requires `--enable-auto-tool-choice --tool-call-parser <parser>` (`hermes` for Qwen) |
+| vLLM | `http://localhost:8000/v1` | `vllm` | CUDA/ROCm hosts; web chat via Codex config-override (`wire_api="responses"`), not `--oss`. Tool calling requires `--enable-auto-tool-choice --tool-call-parser <parser>` (`hermes` for Qwen) |
 | vllm-metal | `http://localhost:8000/v1` | `vllm` | Apple Silicon/MLX plugin; same protocol as canonical vLLM, including the `--enable-auto-tool-choice --tool-call-parser <parser>` tool-calling flags. Install: [vllm-metal installation](https://docs.vllm.ai/projects/vllm-metal/en/latest/installation/) |
 
 Copy-pasteable endpoint YAML, the `model: auto` exactly-one rule, and API-key

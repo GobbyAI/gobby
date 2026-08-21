@@ -104,7 +104,7 @@ async def test_vllm_spawn_env_key_transport() -> None:
     assert _VLLM_SECRET not in serialized
     assert 'model_provider="gobby-vllm-metal"' in serialized
     assert 'model="Qwen/Qwen2.5-7B-Instruct"' in serialized
-    assert 'model_providers.gobby-vllm-metal.wire_api="chat"' in serialized
+    assert 'model_providers.gobby-vllm-metal.wire_api="responses"' in serialized
     assert f'model_providers.gobby-vllm-metal.env_key="{CODEX_ENDPOINT_API_KEY_ENV}"' in serialized
     assert f'shell_environment_policy.exclude=["{CODEX_ENDPOINT_API_KEY_ENV}"]' in serialized
 
@@ -123,7 +123,7 @@ async def test_vllm_spawn_env_key_transport() -> None:
     assert "--local-provider" not in cmd
     assert "-c" in cmd
     assert 'model_provider="gobby-vllm-metal"' in cmd
-    assert 'model_providers.gobby-vllm-metal.wire_api="chat"' in cmd
+    assert 'model_providers.gobby-vllm-metal.wire_api="responses"' in cmd
     assert f'model_providers.gobby-vllm-metal.env_key="{CODEX_ENDPOINT_API_KEY_ENV}"' in cmd
     assert f'shell_environment_policy.exclude=["{CODEX_ENDPOINT_API_KEY_ENV}"]' in cmd
     assert _VLLM_SECRET not in argv

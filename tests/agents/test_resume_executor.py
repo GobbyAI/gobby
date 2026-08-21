@@ -471,7 +471,7 @@ async def test_resume_vllm_endpoint_uses_config_override(
     assert build_kwargs["model"] == "Qwen/Qwen2.5-7B-Instruct"
     overrides = build_kwargs["config_overrides"]
     assert 'model_provider="gobby-vllm-metal"' in overrides
-    assert 'model_providers.gobby-vllm-metal.wire_api="chat"' in overrides
+    assert 'model_providers.gobby-vllm-metal.wire_api="responses"' in overrides
     assert f'model_providers.gobby-vllm-metal.env_key="{CODEX_ENDPOINT_API_KEY_ENV}"' in overrides
     assert f'shell_environment_policy.exclude=["{CODEX_ENDPOINT_API_KEY_ENV}"]' in overrides
     assert "--oss" not in repr(build_kwargs)
