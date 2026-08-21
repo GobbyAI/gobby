@@ -117,6 +117,9 @@ def register_generation_endpoint_routes(
                 "model": f"endpoint:{endpoint_name}/{activated.model}",
                 "input_modalities": activated.input_modalities,
                 "probed_model": activated.probed_model,
+                "probed_json": activated.probed_json,
+                "probed_tools": activated.probed_tools,
+                "probe_diagnostics": probe_result.diagnostics,
             }
         )
 

@@ -438,6 +438,63 @@ def test_endpoint_activation_omits_unchanged_secret(monkeypatch: pytest.MonkeyPa
     assert "ai.generation.endpoints.openrouter.api_key" not in values
 
 
+def test_endpoint_activation_response_reports_probe_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _EndpointService()
+    app = FastAPI()
+    router = APIRouter(prefix="/api/config")
+    register_generation_endpoint_routes(
+        router,
+        cast(ConfigurationRouteContext, _FakeContext(service)),
+    )
+    app.include_router(router)
+
+    async def probe(
+        _name: str,
+        endpoint: GenerationEndpointConfig,
+        _config: DaemonConfig,
+    ) -> EndpointActivationResult:
+        probed = endpoint.model_copy(
+            update={
+                "probed_model": endpoint.model,
+                "input_modalities": ["text"],
+                "probed_json": True,
+                "probed_tools": False,
+            }
+        )
+        return EndpointActivationResult(
+            endpoint=probed,
+            vision_enabled=False,
+            diagnostics={"tools": "400: tools request rejected"},
+        )
+
+    monkeypatch.setattr(
+        "gobby.servers.routes.configuration_generation_endpoints.probe_chat_completions_endpoint",
+        probe,
+    )
+    response = TestClient(app).put(
+        "/api/config/generation-endpoints/vllm/activate",
+        json={
+            "expected_revision": 3,
+            "protocol": "vllm",
+            "wire_api": "chat-completions",
+            "api_base": "http://localhost:8321/v1",
+            "model": "auto",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["probed_json"] is True
+    assert body["probed_tools"] is False
+    assert body["probe_diagnostics"] == {"tools": "400: tools request rejected"}
+    _revision, values = service.calls[0]
+    assert values["ai.generation.endpoints.vllm.probed_json"] is True
+    assert values["ai.generation.endpoints.vllm.probed_tools"] is False
+    assert not any("diagnostic" in key for key in values)
+
+
 _VOICE_KEY = "voice.openai_compatible_audio"
 
 
