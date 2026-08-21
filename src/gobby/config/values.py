@@ -162,25 +162,71 @@ def reject_unprobed_responses_endpoints(
         )
 
 
+def reject_unverified_generation_endpoint_evidence(
+    values: Mapping[str, object],
+    unset: Collection[str],
+    resolved_paths: Mapping[str, tuple[str, ...]],
+    previous_values: Mapping[str, object],
+    *,
+    document: bool = False,
+) -> None:
+    """Reject non-probe mutations that would assert new probe evidence.
+
+    ``probed_model`` / ``input_modalities`` / ``probed_json`` / ``probed_tools``
+    are activation-owned: only the activate route (``probe_verified=True``) may
+    set or change them. Clearing evidence (``None`` or omission) is always
+    allowed because it removes trust rather than asserting it; an unchanged
+    re-import of exported evidence passes.
+    """
+    del unset  # omission/unset only clears evidence, which is never a forgery
+    for key, value in values.items():
+        if not key.startswith(_GENERATION_ENDPOINT_PREFIX):
+            continue
+        segment, _, field = key.removeprefix(_GENERATION_ENDPOINT_PREFIX).partition(".")
+        if field not in _GENERATION_ENDPOINT_EVIDENCE_FIELDS:
+            continue
+        if value is None or value == previous_values.get(key):
+            continue
+        path = resolved_paths.get(key, tuple(key.split(".")))
+        path_root = "content" if document else "values"
+        action = (
+            f"Re-import the exported evidence unchanged or activate endpoint {segment!r}"
+            if document
+            else f"/api/config/generation-endpoints/{segment}/activate"
+        )
+        raise ConfigValuesError(
+            "probe_required",
+            (
+                f"Probe evidence {field!r} for endpoint {segment!r} is activation-owned; "
+                f"save it through /api/config/generation-endpoints/{segment}/activate"
+            ),
+            (path_root, *path),
+            action=action,
+        )
+
+
 def clear_stale_generation_endpoint_probe_evidence(
     values: dict[str, object],
     *,
     desired: DaemonConfig,
+    previous_values: Mapping[str, object],
     unset: Collection[str] = (),
-    secret_keys: Collection[str] = (),
+    secret_updates: Mapping[str, SecretUpdate] | None = None,
     probe_verified: bool = False,
 ) -> tuple[str, ...]:
     """Clear persisted probe evidence when a non-probe mutation changes identity.
 
     Identity is previous-versus-next after secret handling, never payload-key
-    presence: a resubmitted ``MASKED_SECRET`` api_key is not a change. Returns
-    the evidence keys that were cleared so callers can keep validation/wire
-    views in sync.
+    presence: a resubmitted ``MASKED_SECRET`` api_key, the stored ``$secret:``
+    reference, or a plaintext equal to the resolved secret is not a change.
+    ``previous_values`` are the stored raw values (references, not plaintext)
+    while ``desired`` carries the resolved runtime config. Returns the evidence
+    keys that were cleared so callers can keep validation/wire views in sync.
     """
     if probe_verified:
         return ()
     unset_set = set(unset)
-    secret_set = set(secret_keys)
+    secrets = dict(secret_updates or {})
     cleared: list[str] = []
     for name, endpoint in desired.ai.generation.endpoints.items():
         prefix = f"{_GENERATION_ENDPOINT_PREFIX}{encode_dynamic_segment(name)}."
@@ -188,8 +234,9 @@ def clear_stale_generation_endpoint_probe_evidence(
             endpoint,
             prefix,
             values,
+            previous_values,
             unset_set,
-            secret_set,
+            secrets,
         ):
             continue
         for field in _GENERATION_ENDPOINT_EVIDENCE_FIELDS:
@@ -203,8 +250,9 @@ def _generation_endpoint_identity_changed(
     endpoint: GenerationEndpointConfig,
     prefix: str,
     values: Mapping[str, object],
+    previous_values: Mapping[str, object],
     unset: set[str],
-    secret_keys: set[str],
+    secret_updates: Mapping[str, SecretUpdate],
 ) -> bool:
     previous = {
         "protocol": endpoint.protocol,
@@ -219,10 +267,17 @@ def _generation_endpoint_identity_changed(
         if key in values and values[key] != previous[field]:
             return True
     api_key = f"{prefix}api_key"
-    if api_key in unset or api_key in secret_keys:
-        return True
-    if api_key in values and values[api_key] != endpoint.api_key:
-        return True
+    if api_key in unset:
+        return endpoint.api_key is not None
+    if api_key in secret_updates:
+        # New plaintext (PATCH) or a masked/plaintext re-import: compare against
+        # the resolved secret, never against the stored reference.
+        return secret_updates[api_key].plaintext != endpoint.api_key
+    if api_key in values:
+        raw = values[api_key]
+        if raw in (None, ""):
+            return endpoint.api_key is not None
+        return raw != previous_values.get(api_key) and raw != endpoint.api_key
     return False
 
 
@@ -342,18 +397,21 @@ class ConfigValuesService:
         for key in unset:
             path = resolved_paths.setdefault(key, tuple(key.split(".")))
             self._authorize(key, path)
+        anchored = self._anchored_snapshot(expected_revision)
         if not probe_verified:
-            self._reject_unprobed_responses_endpoints(
+            reject_unprobed_responses_endpoints(values, unset, resolved_paths, anchored.desired)
+            reject_unverified_generation_endpoint_evidence(
                 values,
                 unset,
                 resolved_paths,
-                expected_revision=expected_revision,
+                anchored.desired_values,
             )
         clear_stale_generation_endpoint_probe_evidence(
             value_updates,
-            desired=self._anchored_snapshot(expected_revision).desired,
+            desired=anchored.desired,
+            previous_values=anchored.desired_values,
             unset=unset,
-            secret_keys=secret_updates,
+            secret_updates=secret_updates,
             probe_verified=probe_verified,
         )
 
@@ -456,22 +514,6 @@ class ConfigValuesService:
                 ("values", *path),
             ) from exc
         return value
-
-    def _reject_unprobed_responses_endpoints(
-        self,
-        values: Mapping[str, object],
-        unset: Collection[str],
-        resolved_paths: Mapping[str, tuple[str, ...]],
-        *,
-        expected_revision: int,
-    ) -> None:
-        """Require the probe-gated activation route for responses-wire endpoints."""
-        reject_unprobed_responses_endpoints(
-            values,
-            unset,
-            resolved_paths,
-            self._anchored_snapshot(expected_revision).desired,
-        )
 
     def _authorize(self, key: str, path: tuple[str, ...]) -> RegistrySpec:
         try:

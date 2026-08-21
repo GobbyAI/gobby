@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import struct
 from collections.abc import Callable, Mapping
 from types import SimpleNamespace
 from typing import Any, cast
@@ -24,8 +25,9 @@ from gobby.config.app import DaemonConfig
 from gobby.config.documents import ConfigDocumentsService
 from gobby.config.runtime import ConfigSnapshot, RuntimeSecretBinding
 from gobby.config.secret_mask import MASKED_SECRET
-from gobby.config.values import ConfigValuesService
+from gobby.config.values import ConfigValuesError, ConfigValuesService
 from gobby.llm.base import LLMTextResult
+from gobby.llm.local_provider_adapters import create_local_provider_adapter
 from gobby.runtime_grants.service import _vision_extract_enabled
 from gobby.storage.config_mutations import ConfigMutationResult, ConfigPatch
 from gobby.storage.config_repository import ConfigRepository
@@ -231,7 +233,7 @@ class _FakeChatAdapter:
         self.headers = headers if headers is not None else {}
         self.client = client
         self.text = "GOBBY_K3_TEXT_OK and more"
-        self.vision_text = "I received an image."
+        self.vision_text = "Red."
         self.json_result: dict[str, object] = {"ok": True}
         self.json_error: BaseException | None = None
         self.vision_error: BaseException | None = None
@@ -303,6 +305,15 @@ class _FakeCompletions:
             content=None,
         )
         return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+
+@pytest.fixture(autouse=True)
+def _pin_probe_color(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        endpoint_activation,
+        "_probe_color",
+        lambda: ("red", endpoint_activation._solid_color_png((255, 0, 0), 8)),
+    )
 
 
 def _tool_client(*, succeed: bool = True) -> tuple[object, _FakeCompletions]:
@@ -398,8 +409,10 @@ _CANDIDATE_REPOSITORY = ConfigRepository(
 
 
 def _probed_chat_config() -> tuple[DaemonConfig, dict[str, object], str]:
+    # Shaped like ConfigRepository.runtime_candidate output: the resolved
+    # plaintext lives in DaemonConfig while desired_values keeps the reference.
     endpoint = _chat_endpoint(
-        api_key="$secret:local_key",
+        api_key="local-secret",
         probed_model="vision-vlm",
         input_modalities=["text", "image"],
         probed_json=True,
@@ -694,15 +707,185 @@ async def test_identity_change_invalidates_modalities() -> None:
     assert preserved.values.get(f"{prefix}.input_modalities") == ["text", "image"]
 
 
+def _endpoint_yaml(**overrides: object) -> str:
+    endpoint: dict[str, object] = {
+        "protocol": "vllm",
+        "wire_api": "chat-completions",
+        "api_base": "http://127.0.0.1:8000/v1",
+        "model": "vision-vlm",
+        "api_key": MASKED_SECRET,
+        "tool_chat": True,
+        "probed_model": "vision-vlm",
+        "input_modalities": ["text", "image"],
+        "probed_json": True,
+        "probed_tools": True,
+    }
+    endpoint.update(overrides)
+    return yaml.safe_dump({"ai": {"generation": {"endpoints": {"local": endpoint}}}})
+
+
+def _documents_service(
+    snapshot: ConfigSnapshot,
+) -> tuple[ConfigDocumentsService, _DocumentMutations]:
+    mutations = _DocumentMutations()
+    service = ConfigDocumentsService(
+        runtime=_DocumentRuntime(snapshot),
+        mutations=mutations,
+        runtime_candidate=lambda overrides: _CANDIDATE_REPOSITORY.runtime_candidate(overrides, {}),
+        resolve_secret=lambda name: "local-secret" if name == "local_key" else None,
+        run_blocking=_inline,
+    )
+    return service, mutations
+
+
+def _values_service(snapshot: ConfigSnapshot) -> tuple[ConfigValuesService, _ValuesMutations]:
+    mutations = _ValuesMutations()
+    service = ConfigValuesService(
+        runtime=_ValuesRuntime(snapshot),
+        mutations=mutations,
+        run_blocking=_inline,
+    )
+    return service, mutations
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("api_key", "expect_cleared"),
+    [
+        pytest.param(MASKED_SECRET, False, id="masked"),
+        pytest.param("$secret:local_key", False, id="stored-reference"),
+        pytest.param("local-secret", False, id="plaintext-equal"),
+        pytest.param("rotated-secret", True, id="plaintext-different"),
+        pytest.param(None, True, id="unset"),
+    ],
+)
+async def test_yaml_import_api_key_identity(api_key: str | None, expect_cleared: bool) -> None:
+    desired, stored, prefix = _probed_chat_config()
+    snapshot = _snapshot(
+        4,
+        desired=desired,
+        desired_values=stored,
+        desired_secrets={f"{prefix}.api_key": "local-secret"},
+    )
+    service, mutations = _documents_service(snapshot)
+
+    await service.replace_yaml(expected_revision=4, content=_endpoint_yaml(api_key=api_key))
+
+    patch = mutations.calls[0][2]
+    assert _evidence_cleared(patch, prefix) is expect_cleared
+    if not expect_cleared:
+        assert patch.values.get(f"{prefix}.probed_model") == "vision-vlm"
+
+
+@pytest.mark.asyncio
+async def test_patch_rejects_unverified_probe_evidence() -> None:
+    desired, stored, prefix = _probed_chat_config()
+    snapshot = _snapshot(4, desired=desired, desired_values=stored)
+    service, mutations = _values_service(snapshot)
+    text_only = _snapshot(
+        4,
+        desired=DaemonConfig(
+            ai={
+                "generation": {
+                    "endpoints": {
+                        "local": _chat_endpoint(
+                            api_key="local-secret",
+                            probed_model="vision-vlm",
+                            input_modalities=["text"],
+                            probed_json=True,
+                            probed_tools=False,
+                        )
+                    }
+                }
+            }
+        ),
+        desired_values={
+            **stored,
+            f"{prefix}.input_modalities": ["text"],
+            f"{prefix}.probed_tools": False,
+        },
+    )
+    forging_service, forging_mutations = _values_service(text_only)
+
+    for field, value in (
+        ("input_modalities", ["text", "image"]),
+        ("probed_tools", True),
+        ("probed_model", "other-vlm"),
+        ("probed_json", False),
+    ):
+        with pytest.raises(ConfigValuesError) as excinfo:
+            await forging_service.patch_flat(
+                expected_revision=4,
+                values={f"{prefix}.{field}": value},
+            )
+        assert excinfo.value.code == "probe_required"
+        assert excinfo.value.action == "/api/config/generation-endpoints/local/activate"
+        assert excinfo.value.path == ("values", "ai", "generation", "endpoints", "local", field)
+    assert forging_mutations.calls == []
+
+    with pytest.raises(ConfigValuesError) as created:
+        await service.patch_flat(
+            expected_revision=4,
+            values={
+                f"{prefix.replace('local', 'fresh')}.protocol": "vllm",
+                f"{prefix.replace('local', 'fresh')}.api_base": "http://127.0.0.1:8001/v1",
+                f"{prefix.replace('local', 'fresh')}.model": "auto",
+                f"{prefix.replace('local', 'fresh')}.input_modalities": ["text", "image"],
+            },
+        )
+    assert created.value.code == "probe_required"
+
+    await service.patch_flat(
+        expected_revision=4,
+        values={f"{prefix}.tool_chat": False, f"{prefix}.input_modalities": ["text", "image"]},
+    )
+    await service.patch_flat(
+        expected_revision=4,
+        values={f"{prefix}.input_modalities": None, f"{prefix}.probed_tools": None},
+    )
+    await service.patch_flat(
+        expected_revision=4,
+        values={f"{prefix}.probed_model": "other-vlm", f"{prefix}.input_modalities": ["text"]},
+        probe_verified=True,
+    )
+    assert len(mutations.calls) == 3
+    assert mutations.calls[0][1].values[f"{prefix}.input_modalities"] == ["text", "image"]
+    assert mutations.calls[1][1].values[f"{prefix}.input_modalities"] is None
+    assert mutations.calls[2][1].values[f"{prefix}.probed_model"] == "other-vlm"
+
+
+@pytest.mark.asyncio
+async def test_yaml_import_rejects_unverified_probe_evidence() -> None:
+    desired, stored, prefix = _probed_chat_config()
+    snapshot = _snapshot(
+        4,
+        desired=desired,
+        desired_values={**stored, f"{prefix}.probed_tools": False},
+        desired_secrets={f"{prefix}.api_key": "local-secret"},
+    )
+    service, mutations = _documents_service(snapshot)
+
+    with pytest.raises(ConfigValuesError) as excinfo:
+        await service.replace_yaml(expected_revision=4, content=_endpoint_yaml(probed_tools=True))
+    assert excinfo.value.code == "probe_required"
+    assert excinfo.value.path[0] == "content"
+    assert "activate endpoint 'local'" in (excinfo.value.action or "")
+    assert mutations.calls == []
+
+    await service.replace_yaml(expected_revision=4, content=_endpoint_yaml(probed_tools=False))
+    await service.replace_yaml(expected_revision=4, content=_endpoint_yaml(probed_tools=None))
+    assert len(mutations.calls) == 2
+    assert mutations.calls[0][2].values[f"{prefix}.probed_tools"] is False
+
+
 @pytest.mark.asyncio
 async def test_optional_credentials_activation(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: list[_FakeChatAdapter] = []
 
     def _adapter(endpoint: GenerationEndpointConfig) -> _FakeChatAdapter:
-        headers = {}
-        if endpoint.api_key:
-            headers["Authorization"] = f"Bearer {endpoint.api_key}"
-        adapter = _FakeChatAdapter(headers=headers)
+        real_client = create_local_provider_adapter(endpoint).client
+        assert real_client is not None
+        adapter = _FakeChatAdapter(headers=dict(real_client.auth_headers))
         client, _completions = _tool_client()
         adapter.client = client
         captured.append(adapter)
@@ -857,6 +1040,57 @@ async def test_vision_probe_bootstrap(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     assert text_only.endpoint.input_modalities == ["text"]
     assert text_only.vision_enabled is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reply", "expect_image"),
+    [
+        pytest.param("red", True, id="exact"),
+        pytest.param("The square is RED.", True, id="sentence"),
+        pytest.param("blue", False, id="wrong-color"),
+        pytest.param("It is red, or maybe green.", False, id="hedged"),
+        pytest.param("I received an image.", False, id="image-blind"),
+        pytest.param("I cannot see images.", False, id="refusal"),
+        pytest.param("", False, id="empty"),
+    ],
+)
+async def test_vision_probe_requires_the_shown_color(
+    monkeypatch: pytest.MonkeyPatch, reply: str, expect_image: bool
+) -> None:
+    async def _resolve(_endpoint: GenerationEndpointConfig) -> str:
+        return "vision-vlm"
+
+    monkeypatch.setattr(endpoint_activation, "resolve_vllm_served_model", _resolve)
+    adapter = _FakeChatAdapter()
+    adapter.vision_text = reply
+    client, _completions = _tool_client()
+    adapter.client = client
+    monkeypatch.setattr(
+        endpoint_activation,
+        "create_local_provider_adapter",
+        lambda _endpoint: adapter,
+    )
+
+    result = await probe_chat_completions_endpoint("local", _chat_endpoint(), DaemonConfig())
+
+    assert result.vision_enabled is expect_image
+    assert ("image" in (result.endpoint.input_modalities or [])) is expect_image
+    vision_call = next(call for call in adapter.generate_calls if call.get("images"))
+    assert "red, green, or blue" in str(vision_call["prompt"])
+
+
+def test_probe_color_renders_a_valid_solid_png(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.undo()  # drop the autouse color pin; exercise the real picker
+    seen: set[str] = set()
+    for _ in range(60):
+        color, png = endpoint_activation._probe_color()
+        seen.add(color)
+        assert png.startswith(b"\x89PNG\r\n\x1a\n")
+        width, height, depth, color_type = struct.unpack(">IIBB", png[16:26])
+        assert (width, height, depth, color_type) == (64, 64, 8, 2)
+        assert len(png) < 2048
+    assert seen == {"red", "green", "blue"}
 
 
 @pytest.mark.asyncio

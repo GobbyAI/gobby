@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
+import random
 import re
+import struct
 import tempfile
+import zlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,9 +34,16 @@ _TRANSIENT_STATUS_RE = re.compile(r"\b(?:429|5\d\d)\b")
 _RETRY_AFTER_RE = re.compile(r"retry-after\s*[:=]\s*(\d+(?:\.\d+)?)", re.IGNORECASE)
 _AUTH_RE = re.compile(r"\b(?:401|403)\b|auth(?:entication|orization)?|api key", re.IGNORECASE)
 _PROBE_TOKEN = "GOBBY_K3_CONTEXT_7F3A"
-_PNG_1X1 = base64.b64decode(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nQAAAABJRU5ErkJggg=="
+# Vision probes show a randomly chosen solid-color square and accept only a
+# reply that names that color and no other, so a text-only model (or a server
+# that silently drops image parts) cannot pass by acknowledging "an image".
+_PROBE_COLORS: tuple[tuple[str, tuple[int, int, int]], ...] = (
+    ("red", (255, 0, 0)),
+    ("green", (0, 255, 0)),
+    ("blue", (0, 0, 255)),
 )
+_PROBE_COLOR_NAMES: frozenset[str] = frozenset(name for name, _ in _PROBE_COLORS)
+_PROBE_IMAGE_SIZE = 64
 _CHAT_PROBE_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
@@ -253,9 +262,10 @@ async def _probe_vision(
     endpoint: GenerationEndpointConfig,
     daemon_config: DaemonConfig,
 ) -> None:
+    color, image_bytes = _probe_color()
     with tempfile.TemporaryDirectory(prefix="gobby-endpoint-vision-") as temp_dir:
         image_path = Path(temp_dir) / "probe.png"
-        image_path.write_bytes(_PNG_1X1)
+        image_path.write_bytes(image_bytes)
         client = _client(endpoint_name, endpoint)
         try:
             await client.start()
@@ -268,11 +278,10 @@ async def _probe_vision(
             text, _, _ = await _collect_turn(
                 client,
                 thread.id,
-                "State that you received an image.",
+                _VISION_PROBE_PROMPT,
                 images=[str(image_path)],
             )
-            if not text:
-                raise EndpointActivationError("Responses image-input probe returned no text")
+            _check_vision_probe_reply("Responses", text, color)
         finally:
             await client.stop()
 
@@ -283,7 +292,7 @@ async def _probe_vision(
                     image_path=str(image_path),
                     provider=f"endpoint:{endpoint_name}",
                     model=endpoint.model,
-                    context="Describe the single-pixel image.",
+                    context="Describe the solid-color image.",
                 )
             )
             if not extracted:
@@ -412,18 +421,63 @@ async def _probe_chat_tools(adapter: Any, model: str) -> None:
 
 
 async def _probe_chat_vision(adapter: Any, model: str) -> None:
+    color, image_bytes = _probe_color()
     with tempfile.TemporaryDirectory(prefix="gobby-endpoint-vision-") as temp_dir:
         image_path = Path(temp_dir) / "probe.png"
-        image_path.write_bytes(_PNG_1X1)
+        image_path.write_bytes(image_bytes)
         result = await adapter.generate_text_result(
-            "State that you received an image.",
+            _VISION_PROBE_PROMPT,
             system_prompt="You are a vision assistant.",
             model=model,
             max_tokens=64,
             images=[str(image_path)],
         )
-        if not result.text.strip():
-            raise EndpointActivationError("Chat-completions vision probe returned no text")
+    _check_vision_probe_reply("Chat-completions", result.text, color)
+
+
+def _probe_color() -> tuple[str, bytes]:
+    """Pick the probe color at random and render its solid PNG."""
+    name, rgb = random.choice(_PROBE_COLORS)  # noqa: S311 - probe variety, not security
+    return name, _solid_color_png(rgb, _PROBE_IMAGE_SIZE)
+
+
+def _solid_color_png(rgb: tuple[int, int, int], size: int) -> bytes:
+    """Render a ``size``×``size`` 8-bit RGB PNG filled with ``rgb``."""
+
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        crc = zlib.crc32(kind + payload) & 0xFFFFFFFF
+        return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", crc)
+
+    row = b"\x00" + bytes(rgb) * size
+    header = struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", zlib.compress(row * size))
+        + chunk(b"IEND", b"")
+    )
+
+
+_VISION_PROBE_PROMPT = (
+    "The attached image is a single solid color. Reply with exactly one word "
+    "naming that color: red, green, or blue."
+)
+
+
+def _vision_probe_reply_matches(text: str, expected: str) -> bool:
+    """Accept only a reply naming ``expected`` and no other probe color."""
+    named = {word for word in re.findall(r"[a-z]+", text.lower()) if word in _PROBE_COLOR_NAMES}
+    return named == {expected}
+
+
+def _check_vision_probe_reply(transport: str, text: str, expected: str) -> None:
+    if not text.strip():
+        raise EndpointActivationError(f"{transport} vision probe returned no text")
+    if not _vision_probe_reply_matches(text, expected):
+        raise EndpointActivationError(
+            f"{transport} vision probe did not identify the {expected} image "
+            f"(reply: {text.strip()[:80]!r})"
+        )
 
 
 async def probe_chat_completions_endpoint(

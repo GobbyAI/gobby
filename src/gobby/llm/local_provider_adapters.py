@@ -214,7 +214,9 @@ class OpenAICompatibleLocalProviderAdapter:
     def __init__(self, endpoint: GenerationEndpointConfig) -> None:
         self._endpoint = endpoint
         self._client: Any | None = None
-        api_key = endpoint.api_key or "not-needed"
+        # Keyless local endpoints send no Authorization header: the SDK emits
+        # none for an empty api_key.
+        api_key = endpoint.api_key or ""
         base_url = endpoint.api_base
         if endpoint.protocol == "vllm":
             from gobby.agents.local_model import vllm_api_base

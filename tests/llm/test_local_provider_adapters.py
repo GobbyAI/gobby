@@ -902,3 +902,28 @@ def test_vllm_adapter_normalizes_client_base_url(api_base: str) -> None:
         create_local_provider_adapter(endpoint)
 
     assert mock_cls.call_args.kwargs["base_url"] == "http://127.0.0.1:8000/v1"
+
+
+@pytest.mark.parametrize("protocol", ["openai-compatible", "vllm"])
+def test_keyless_local_endpoint_sends_no_authorization_header(protocol: str) -> None:
+    keyless = create_local_provider_adapter(
+        GenerationEndpointConfig(
+            protocol=protocol,
+            api_base="http://localhost:8000/v1",
+            model="local-model",
+        )
+    )
+    keyed = create_local_provider_adapter(
+        GenerationEndpointConfig(
+            protocol=protocol,
+            api_base="http://localhost:8000/v1",
+            model="local-model",
+            api_key="local-secret",
+        )
+    )
+
+    assert keyless.client is not None
+    assert keyless.client.api_key == ""
+    assert keyless.client.auth_headers == {}
+    assert keyed.client is not None
+    assert keyed.client.auth_headers == {"Authorization": "Bearer local-secret"}
