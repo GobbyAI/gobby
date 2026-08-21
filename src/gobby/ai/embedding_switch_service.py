@@ -289,7 +289,7 @@ class EmbeddingSwitchCoordinator:
     ) -> Any:
         config = self._active_config()
         current_dim = config.embeddings.dim
-        current_catalog_id = config.embeddings.catalog_id
+        current_catalog_id = config.embeddings.catalog_key
         current_api_base = config.embeddings.api_base
         journal, _spec = start_switch(
             self.config_store,

@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -779,3 +779,42 @@ async def test_start_vllm_rejects_dim_mismatch(
         await coordinator.start("qwen3-0.6b-q8", "vllm", api_base="http://localhost:8323/v1")
 
     assert start_journal_calls == []
+
+
+def test_default_journal_reads_catalog_key_from_real_embeddings_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_start_default_journal must read EmbeddingsConfig.catalog_key (#20680)."""
+    captured: dict[str, Any] = {}
+
+    def fake_start_switch(_store: Any, catalog_key: str, provider: str, **kwargs: Any) -> Any:
+        captured["catalog_key"] = catalog_key
+        captured["provider"] = provider
+        captured.update(kwargs)
+        return "journal", "spec"
+
+    monkeypatch.setattr(
+        "gobby.ai.embedding_switch_service.start_switch",
+        fake_start_switch,
+    )
+    coordinator = EmbeddingSwitchCoordinator(
+        config_store=None,
+        db=None,
+        fence=None,
+        runner_factory=cast(Any, lambda *_args: None),
+    )
+
+    journal = coordinator._start_default_journal(
+        None,
+        "qwen3-0.6b-q8",
+        "vllm",
+        target_model="mlx-community/Qwen3-Embedding-0.6B-8bit",
+        target_api_base="http://localhost:8323/v1",
+    )
+
+    assert journal == "journal"
+    assert captured["catalog_key"] == "qwen3-0.6b-q8"
+    assert captured["provider"] == "vllm"
+    assert captured["current_catalog_id"] is None
+    assert captured["target_model"] == "mlx-community/Qwen3-Embedding-0.6B-8bit"
+    assert captured["target_api_base"] == "http://localhost:8323/v1"
