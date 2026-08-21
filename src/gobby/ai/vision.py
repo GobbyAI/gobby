@@ -100,6 +100,12 @@ class VisionExtractService:
                 await adapter.stop()
 
 
+def _extraction_prompt(context: str | None, default: str) -> str:
+    if context:
+        return f"{context}\n\n{default}"
+    return default
+
+
 class ClaudeVisionExtractAdapter:
     """Native vision_extract adapter backed by Claude SDK primitives."""
 
@@ -109,11 +115,18 @@ class ClaudeVisionExtractAdapter:
         self._provider = ClaudeLLMProvider(config)
 
     async def extract(self, request: VisionExtractRequest) -> str:
-        return await self._provider.describe_image(
-            request.image_path,
-            context=request.context,
-            model=request.model,
+        prompt = _extraction_prompt(
+            request.context,
+            "Please describe this image in detail, focusing on the key visual "
+            "elements and any text visible.",
         )
+        result = await self._provider.generate_text_result(
+            prompt,
+            system_prompt="You are a vision assistant that describes images in detail.",
+            model=request.model,
+            images=[request.image_path],
+        )
+        return result.text
 
 
 class LocalVisionExtractAdapter:
@@ -125,11 +138,18 @@ class LocalVisionExtractAdapter:
         self._provider = LocalLLMProvider(config, endpoint_name=endpoint_name)
 
     async def extract(self, request: VisionExtractRequest) -> str:
-        return await self._provider.describe_image(
-            request.image_path,
-            context=request.context,
-            model=request.model,
+        prompt = _extraction_prompt(
+            request.context,
+            "Please describe this image in detail, focusing on key visual elements, "
+            "any text visible, and the overall context or meaning.",
         )
+        result = await self._provider.generate_text_result(
+            prompt,
+            model=request.model,
+            max_tokens=1024,
+            images=[request.image_path],
+        )
+        return result.text
 
 
 class CodexEndpointVisionExtractAdapter:
@@ -203,7 +223,7 @@ def _daemon_vision_extract_adapters(config: DaemonConfig) -> dict[str, VisionExt
         "claude": ClaudeVisionExtractAdapter(config),
     }
     for name, endpoint in config.ai.generation.endpoints.items():
-        if endpoint.vision_extract:
+        if endpoint.input_modalities is not None and "image" in endpoint.input_modalities:
             adapter: VisionExtractAdapter
             if endpoint.wire_api == "responses":
                 adapter = CodexEndpointVisionExtractAdapter(config, name)

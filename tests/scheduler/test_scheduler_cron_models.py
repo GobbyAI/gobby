@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
@@ -11,6 +12,8 @@ import pytest
 from gobby.storage.cron_models import CronJob, CronRun, CronRunChild
 
 pytestmark = pytest.mark.unit
+
+_TS = datetime(2026, 2, 10, 12, 0, 0, tzinfo=UTC)
 
 
 # --- croniter dependency tests (#7618) ---
@@ -41,7 +44,7 @@ def test_croniter_every_5_minutes() -> None:
 # --- CronJob dataclass tests (#7619) ---
 
 
-def _make_mock_row(data: dict) -> MagicMock:
+def _make_mock_row(data: Mapping[str, object]) -> MagicMock:
     """Create a mock dict[str, object] with given data."""
     row = MagicMock()
     row.__getitem__ = lambda self, key: data[key]
@@ -58,8 +61,8 @@ def test_cron_job_creation() -> None:
         schedule_type="cron",
         action_type="agent_spawn",
         action_config={"prompt": "check email", "provider": "claude"},
-        created_at="2026-02-10T12:00:00+00:00",
-        updated_at="2026-02-10T12:00:00+00:00",
+        created_at=_TS,
+        updated_at=_TS,
         cron_expr="0 7 * * *",
         timezone="America/Los_Angeles",
     )
@@ -112,8 +115,8 @@ def test_cron_job_to_dict() -> None:
         schedule_type="cron",
         action_type="shell",
         action_config={"command": "echo"},
-        created_at="2026-02-10T12:00:00",
-        updated_at="2026-02-10T12:00:00",
+        created_at=_TS,
+        updated_at=_TS,
         cron_expr="0 7 * * *",
     )
     d = job.to_dict()
@@ -135,8 +138,8 @@ def test_cron_job_to_brief() -> None:
         schedule_type="cron",
         action_type="shell",
         action_config={"command": "echo"},
-        created_at="2026-02-10T12:00:00",
-        updated_at="2026-02-10T12:00:00",
+        created_at=_TS,
+        updated_at=_TS,
         cron_expr="0 7 * * *",
     )
     brief = job.to_brief()
@@ -190,8 +193,8 @@ def test_cron_run_creation() -> None:
     run = CronRun(
         id="cr-abc123",
         cron_job_id="cj-abc123",
-        triggered_at="2026-02-10T12:00:00+00:00",
-        created_at="2026-02-10T12:00:00+00:00",
+        triggered_at=_TS,
+        created_at=_TS,
     )
     assert run.id == "cr-abc123"
     assert run.status == "pending"
@@ -230,8 +233,8 @@ def test_cron_run_to_dict() -> None:
     run = CronRun(
         id="cr-abc123",
         cron_job_id="cj-abc123",
-        triggered_at="2026-02-10T12:00:00+00:00",
-        created_at="2026-02-10T12:00:00+00:00",
+        triggered_at=_TS,
+        created_at=_TS,
         status="failed",
         error="Timeout",
     )
@@ -249,8 +252,8 @@ def test_cron_run_to_dict_includes_child() -> None:
     run = CronRun(
         id="cr-child",
         cron_job_id="cj-child",
-        triggered_at="2026-02-10T12:00:00+00:00",
-        created_at="2026-02-10T12:00:00+00:00",
+        triggered_at=_TS,
+        created_at=_TS,
         status="dispatched",
         agent_run_id="ar-child",
         child=CronRunChild(

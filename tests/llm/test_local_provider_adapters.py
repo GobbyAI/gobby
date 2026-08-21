@@ -2,27 +2,32 @@
 
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 from types import SimpleNamespace, TracebackType
-from typing import Any
+from typing import Any, get_args
 from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
 from openai import APIConnectionError, AuthenticationError, BadRequestError
+from pydantic import ValidationError
 
-from gobby.config.ai import GenerationEndpointConfig
+from gobby.config.ai import (
+    GenerationConfig,
+    GenerationEndpointConfig,
+    GenerationEndpointProtocol,
+)
 from gobby.llm import local_provider_adapters as adapters
 from gobby.llm.base import (
     LLMProviderError,
     VisionInputError,
-    VisionProviderError,
-    VisionProviderUnavailableError,
 )
 from gobby.llm.local_provider_adapters import (
     LMStudioLocalProviderAdapter,
     OllamaLocalProviderAdapter,
     OpenAICompatibleLocalProviderAdapter,
+    create_local_provider_adapter,
 )
 
 pytestmark = pytest.mark.unit
@@ -120,6 +125,54 @@ def test_openai_compatible_adapter_uses_openai_sdk() -> None:
     assert adapters._LOCAL_OPENAI_OVERALL_TIMEOUT_SECONDS == 120.0
 
 
+def test_create_adapter_vllm() -> None:
+    assert "vllm" in get_args(GenerationEndpointProtocol)
+    config = GenerationConfig(
+        endpoints={
+            "local-vllm": GenerationEndpointConfig(
+                protocol="vllm",
+                api_base="http://127.0.0.1:8000/v1",
+                model="qwen2.5-vl",
+                api_key="test-key",
+            )
+        }
+    )
+    endpoint = config.endpoints["local-vllm"]
+    assert endpoint.protocol == "vllm"
+
+    with patch("openai.AsyncOpenAI") as mock_cls:
+        adapter = create_local_provider_adapter(endpoint)
+
+    assert isinstance(adapter, OpenAICompatibleLocalProviderAdapter)
+    assert adapter.client is mock_cls.return_value
+    assert adapter.client is not None
+    vllm_adapter_classes = [
+        name
+        for name, value in vars(adapters).items()
+        if isinstance(value, type) and "vllm" in name.lower()
+    ]
+    assert vllm_adapter_classes == []
+    mock_cls.assert_called_once_with(
+        base_url="http://127.0.0.1:8000/v1",
+        api_key="test-key",
+        timeout=adapters._LOCAL_OPENAI_TIMEOUT,
+        max_retries=0,
+    )
+
+
+def test_vllm_rejects_responses_wire() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="wire_api='responses' requires protocol='openai-compatible'",
+    ):
+        GenerationEndpointConfig(
+            protocol="vllm",
+            wire_api="responses",
+            api_base="http://127.0.0.1:8000/v1",
+            model="qwen2.5-vl",
+        )
+
+
 @pytest.mark.asyncio
 async def test_openai_compatible_adapter_forwards_reasoning_effort() -> None:
     endpoint = GenerationEndpointConfig(
@@ -154,6 +207,55 @@ async def test_openai_compatible_adapter_forwards_reasoning_effort() -> None:
     assert completions.calls[0]["reasoning_effort"] == "high"
     assert completions.calls[1]["reasoning_effort"] == "low"
     assert completions.calls[1]["response_format"] == {"type": "json_object"}
+
+
+def _gif_data_url() -> str:
+    encoded = base64.standard_b64encode(b"GIF89a").decode("utf-8")
+    return f"data:image/gif;base64,{encoded}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protocol", ["openai-compatible", "vllm"])
+async def test_generate_with_images(protocol: str) -> None:
+    endpoint = GenerationEndpointConfig(
+        protocol=protocol,
+        api_base="http://localhost:8000/v1",
+        model="local-vlm",
+        api_key="test-key",
+    )
+    completions = _FakeOpenAICompletions()
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+
+    with patch("openai.AsyncOpenAI", return_value=fake_client):
+        adapter = OpenAICompatibleLocalProviderAdapter(endpoint)
+
+    text_only = await adapter.generate_text_result(
+        "caption this",
+        system_prompt="system",
+        model="local-vlm",
+        max_tokens=64,
+    )
+    image_result = await adapter.generate_text_result(
+        "caption this",
+        system_prompt="system",
+        model="local-vlm",
+        max_tokens=64,
+        images=[_gif_data_url()],
+    )
+
+    assert text_only.text == "local reply"
+    assert image_result.text == "local reply"
+    text_messages = completions.calls[0]["messages"]
+    image_messages = completions.calls[1]["messages"]
+    assert text_messages[1] == {"role": "user", "content": "caption this"}
+    content = image_messages[1]["content"]
+    assert isinstance(content, list)
+    image_block = next(part for part in content if part["type"] == "image_url")
+    text_block = next(part for part in content if part["type"] == "text")
+    assert image_block["image_url"]["url"].startswith("data:image/gif;base64,")
+    assert text_block["text"] == "caption this"
+    assert completions.calls[1]["model"] == "local-vlm"
+    assert "auto" not in completions.calls[1]["model"]
 
 
 @pytest.mark.asyncio
@@ -579,6 +681,81 @@ async def test_lmstudio_json_forwards_max_tokens(monkeypatch: pytest.MonkeyPatch
     assert fake_client.calls[0][2]["json"]["max_output_tokens"] == 73
 
 
+@pytest.mark.asyncio
+async def test_native_image_serialization_ported(monkeypatch: pytest.MonkeyPatch) -> None:
+    data_url = _gif_data_url()
+    encoded = base64.standard_b64encode(b"GIF89a").decode("utf-8")
+
+    lm_client = _FakeAsyncClient(
+        {
+            ("POST", "http://localhost:1234/api/v1/chat"): [
+                _FakeResponse(
+                    "POST",
+                    "http://localhost:1234/api/v1/chat",
+                    json_data={"output": [{"type": "message", "content": "lm vision"}]},
+                )
+            ]
+        }
+    )
+    monkeypatch.setattr("gobby.llm.local_provider_adapters.httpx.AsyncClient", lambda: lm_client)
+    lm_result = await LMStudioLocalProviderAdapter(
+        GenerationEndpointConfig(
+            protocol="lmstudio",
+            api_base="http://localhost:1234/v1",
+            model="google/gemma",
+            api_key="token",
+        )
+    ).generate_text_result(
+        "caption this",
+        system_prompt="system",
+        model="google/gemma",
+        max_tokens=1024,
+        images=[data_url],
+    )
+    lm_payload = lm_client.calls[0][2]["json"]
+    assert lm_result.text == "lm vision"
+    assert lm_payload["input"] == [
+        {"type": "image", "data_url": data_url},
+        {"type": "message", "content": "caption this"},
+    ]
+    assert lm_payload["system_prompt"] == "system"
+    assert lm_payload["max_output_tokens"] == 1024
+
+    ollama_client = _FakeAsyncClient(
+        {
+            ("POST", "http://localhost:11434/api/chat"): [
+                _FakeResponse(
+                    "POST",
+                    "http://localhost:11434/api/chat",
+                    json_data={"message": {"role": "assistant", "content": "ollama vision"}},
+                )
+            ]
+        }
+    )
+    monkeypatch.setattr(
+        "gobby.llm.local_provider_adapters.httpx.AsyncClient", lambda: ollama_client
+    )
+    ollama_result = await OllamaLocalProviderAdapter(
+        GenerationEndpointConfig(
+            protocol="ollama",
+            api_base="http://localhost:11434/v1",
+            model="llava",
+        )
+    ).generate_text_result(
+        "caption this",
+        system_prompt="system",
+        model="llava",
+        max_tokens=1024,
+        images=[data_url],
+    )
+    ollama_payload = ollama_client.calls[0][2]["json"]
+    user_message = ollama_payload["messages"][-1]
+    assert ollama_result.text == "ollama vision"
+    assert user_message["role"] == "user"
+    assert user_message["content"] == "caption this"
+    assert user_message["images"] == [encoded]
+
+
 def _vision_adapter(provider: str) -> Any:
     endpoint = GenerationEndpointConfig(
         protocol=provider,
@@ -607,10 +784,12 @@ async def test_local_vision_missing_file_raises_input_error(provider: str) -> No
     adapter = _vision_adapter(provider)
 
     with pytest.raises(VisionInputError, match="Image not found"):
-        await adapter.describe_image(
-            "/missing/image.png",
-            context=None,
+        await adapter.generate_text_result(
+            "caption this",
+            system_prompt=None,
             model="vision-model",
+            max_tokens=1024,
+            images=["/missing/image.png"],
         )
 
 
@@ -626,10 +805,12 @@ async def test_local_vision_unreadable_file_raises_input_error(
 
     with patch.object(Path, "open", side_effect=PermissionError("denied")):
         with pytest.raises(VisionInputError, match="Failed to read") as exc_info:
-            await adapter.describe_image(
-                str(image_path),
-                context=None,
+            await adapter.generate_text_result(
+                "caption this",
+                system_prompt=None,
                 model="vision-model",
+                max_tokens=1024,
+                images=[str(image_path)],
             )
 
     assert isinstance(exc_info.value.__cause__, PermissionError)
@@ -642,11 +823,13 @@ async def test_local_vision_uninitialised_client_raises_provider_error(tmp_path:
     adapter = _vision_adapter("openai-compatible")
     adapter._client = None
 
-    with pytest.raises(VisionProviderUnavailableError, match="not initialised"):
-        await adapter.describe_image(
-            str(image_path),
-            context=None,
+    with pytest.raises(RuntimeError, match="not initialised"):
+        await adapter.generate_text_result(
+            "caption this",
+            system_prompt=None,
             model="vision-model",
+            max_tokens=1024,
+            images=[str(image_path)],
         )
 
 
@@ -666,14 +849,14 @@ async def test_local_vision_provider_failure_raises_structured_error(
     else:
         adapter._post_chat = AsyncMock(side_effect=RuntimeError("provider failed"))
 
-    with pytest.raises(VisionProviderError, match="provider failed") as exc_info:
-        await adapter.describe_image(
-            str(image_path),
-            context=None,
+    with pytest.raises(RuntimeError, match="provider failed"):
+        await adapter.generate_text_result(
+            "caption this",
+            system_prompt=None,
             model="vision-model",
+            max_tokens=1024,
+            images=[str(image_path)],
         )
-
-    assert isinstance(exc_info.value.__cause__, RuntimeError)
 
 
 @pytest.mark.asyncio
@@ -692,10 +875,55 @@ async def test_local_vision_preserves_successful_output(provider: str, tmp_path:
             return_value={"message": {"role": "assistant", "content": expected}}
         )
 
-    result = await adapter.describe_image(
-        str(image_path),
-        context=None,
+    result = await adapter.generate_text_result(
+        "caption this",
+        system_prompt=None,
         model="vision-model",
+        max_tokens=1024,
+        images=[str(image_path)],
     )
 
-    assert result == expected
+    assert result.text == expected
+
+
+@pytest.mark.parametrize(
+    "api_base",
+    [
+        pytest.param("http://127.0.0.1:8000", id="bare-origin"),
+        pytest.param("http://127.0.0.1:8000/", id="trailing-slash"),
+        pytest.param("http://127.0.0.1:8000/v1/", id="v1-trailing-slash"),
+    ],
+)
+def test_vllm_adapter_normalizes_client_base_url(api_base: str) -> None:
+    """The generation client uses the same {origin}/v1 base the resolver discovers on."""
+    endpoint = GenerationEndpointConfig(protocol="vllm", api_base=api_base, model="auto")
+
+    with patch("openai.AsyncOpenAI") as mock_cls:
+        create_local_provider_adapter(endpoint)
+
+    assert mock_cls.call_args.kwargs["base_url"] == "http://127.0.0.1:8000/v1"
+
+
+@pytest.mark.parametrize("protocol", ["openai-compatible", "vllm"])
+def test_keyless_local_endpoint_sends_no_authorization_header(protocol: str) -> None:
+    keyless = create_local_provider_adapter(
+        GenerationEndpointConfig(
+            protocol=protocol,
+            api_base="http://localhost:8000/v1",
+            model="local-model",
+        )
+    )
+    keyed = create_local_provider_adapter(
+        GenerationEndpointConfig(
+            protocol=protocol,
+            api_base="http://localhost:8000/v1",
+            model="local-model",
+            api_key="local-secret",
+        )
+    )
+
+    assert keyless.client is not None
+    assert keyless.client.api_key == ""
+    assert keyless.client.auth_headers == {}
+    assert keyed.client is not None
+    assert keyed.client.auth_headers == {"Authorization": "Bearer local-secret"}

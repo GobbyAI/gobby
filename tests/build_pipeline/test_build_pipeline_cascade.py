@@ -2,34 +2,37 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from gobby.build.service import BuildOptions, BuildResult, build
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task
 
 pytestmark = pytest.mark.unit
 
 
-async def _build(input_ref: str, opts: BuildOptions, db: object, project_id: str) -> BuildResult:
+async def _build(
+    input_ref: str, opts: BuildOptions, db: HubDatabase, project_id: str
+) -> BuildResult:
     return await build(input_ref, opts, db=db, project_id=project_id)
 
 
-def _options(**overrides: object) -> BuildOptions:
-    values = {
-        "quick": False,
-        "skip_stages": ["qa"],
-        "isolation": "none",
+def _options(*, assigned_agent: str | None = None) -> BuildOptions:
+    return BuildOptions(
+        quick=False,
+        skip_stages=["qa"],
+        isolation="none",
         # A request that names an isolation marks it explicit, matching the
         # entry layer; otherwise resolve_build_profile_options overlays the
         # profile default back over the test's value.
-        "isolation_explicit": True,
-        "no_merge": False,
-        "pr": None,
-        "target_branch": "main",
-        "assigned_agent": None,
-    }
-    values.update(overrides)
-    return BuildOptions(**values)
+        isolation_explicit=True,
+        no_merge=False,
+        pr=None,
+        target_branch="main",
+        assigned_agent=assigned_agent,
+    )
 
 
 def _tree(task_manager: LocalTaskManager, project_id: str) -> tuple[Task, list[Task]]:
@@ -79,8 +82,8 @@ def _tree(task_manager: LocalTaskManager, project_id: str) -> tuple[Task, list[T
 
 @pytest.mark.asyncio
 async def test_build_epic_cascades_resolved_dispatch_state_to_subtree(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     task_manager = LocalTaskManager(temp_db)
     epic, descendants = _tree(task_manager, sample_project["id"])
@@ -110,8 +113,8 @@ async def test_build_epic_cascades_resolved_dispatch_state_to_subtree(
 
 @pytest.mark.asyncio
 async def test_build_epic_does_not_cascade_agent_skills(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     task_manager = LocalTaskManager(temp_db)
     epic, descendants = _tree(task_manager, sample_project["id"])

@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict
 
-from gobby.ai.endpoint_activation import EndpointActivationError, probe_responses_endpoint
-from gobby.config.ai import GenerationConfig, GenerationEndpointConfig
+from gobby.ai.endpoint_activation import (
+    EndpointActivationError,
+    probe_chat_completions_endpoint,
+    probe_responses_endpoint,
+)
+from gobby.config.ai import (
+    GenerationConfig,
+    GenerationEndpointConfig,
+    GenerationEndpointProtocol,
+    GenerationWireAPI,
+)
 from gobby.config.app import DaemonConfig
 from gobby.config.registry import encode_dynamic_segment
 from gobby.config.values import ConfigValuesError
@@ -21,13 +28,12 @@ class ActivateGenerationEndpointRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     expected_revision: ConfigRevision
-    protocol: Literal["openai-compatible"] = "openai-compatible"
-    wire_api: Literal["responses"] = "responses"
+    protocol: GenerationEndpointProtocol = "openai-compatible"
+    wire_api: GenerationWireAPI = "responses"
     api_base: str
     model: str
     api_key: str | None = None
     tool_chat: bool = True
-    vision_extract: bool = True
 
 
 def register_generation_endpoint_routes(
@@ -48,7 +54,7 @@ def register_generation_endpoint_routes(
             current_config = service.desired_config()
         except ConfigValuesError as exc:
             return JSONResponse(content=exc.public_body(), status_code=exc.status_code)
-        if not api_key:
+        if request.wire_api == "responses" and not api_key:
             raise HTTPException(
                 status_code=422,
                 detail={
@@ -64,7 +70,6 @@ def register_generation_endpoint_routes(
             api_key=api_key,
             model=request.model,
             tool_chat=request.tool_chat,
-            vision_extract=request.vision_extract,
         )
         try:
             GenerationConfig(endpoints={endpoint_name: endpoint})
@@ -73,7 +78,12 @@ def register_generation_endpoint_routes(
 
         probe_config = _probe_config(current_config, endpoint_name, endpoint)
         try:
-            probe_result = await probe_responses_endpoint(endpoint_name, endpoint, probe_config)
+            if request.wire_api == "responses":
+                probe_result = await probe_responses_endpoint(endpoint_name, endpoint, probe_config)
+            else:
+                probe_result = await probe_chat_completions_endpoint(
+                    endpoint_name, endpoint, probe_config
+                )
         except (EndpointActivationError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -84,7 +94,10 @@ def register_generation_endpoint_routes(
             f"{prefix}.api_base": activated.api_base,
             f"{prefix}.model": activated.model,
             f"{prefix}.tool_chat": activated.tool_chat,
-            f"{prefix}.vision_extract": activated.vision_extract,
+            f"{prefix}.probed_model": activated.probed_model,
+            f"{prefix}.input_modalities": activated.input_modalities,
+            f"{prefix}.probed_json": activated.probed_json,
+            f"{prefix}.probed_tools": activated.probed_tools,
         }
         if request.api_key and request.api_key != stored_api_key:
             values[f"{prefix}.api_key"] = request.api_key
@@ -100,9 +113,10 @@ def register_generation_endpoint_routes(
             content={
                 **mutation,
                 "endpoint": endpoint_name,
-                "provider": "codex",
+                "provider": "codex" if activated.wire_api == "responses" else request.protocol,
                 "model": f"endpoint:{endpoint_name}/{activated.model}",
-                "vision_extract": probe_result.vision_enabled,
+                "input_modalities": activated.input_modalities,
+                "probed_model": activated.probed_model,
             }
         )
 

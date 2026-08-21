@@ -108,8 +108,50 @@ name = "my-crate"
     );
 
     assert_eq!(
-        load_rust_self_crate_name(tempdir.path()).as_deref(),
+        load_rust_self_crate_names(tempdir.path())
+            .get("src")
+            .map(String::as_str),
         Some("my_crate")
+    );
+}
+
+#[test]
+fn loads_rust_workspace_member_self_crate_names() {
+    let tempdir = TempDir::new().expect("tempdir");
+    manifest_dir(
+        tempdir.path(),
+        "",
+        r#"
+[package]
+name = "root-pkg"
+
+[workspace]
+members = ["crates/app", "extras/*"]
+"#,
+    );
+    manifest_dir(
+        tempdir.path(),
+        "crates/app",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    manifest_dir(
+        tempdir.path(),
+        "extras/tools",
+        r#"
+[package]
+name = "my-tools"
+"#,
+    );
+
+    let names = load_rust_self_crate_names(tempdir.path());
+    assert_eq!(names.get("src").map(String::as_str), Some("root_pkg"));
+    assert_eq!(names.get("crates/app/src").map(String::as_str), Some("app"));
+    assert_eq!(
+        names.get("extras/tools/src").map(String::as_str),
+        Some("my_tools")
     );
 }
 
@@ -299,7 +341,7 @@ end
     assert!(!extracted.bindings.external_roots.contains_key("JSON"));
 
     let mut bindings = ImportBindings::default();
-    seed_import_bindings("elixir", &context, &mut bindings);
+    seed_import_bindings("elixir", &context, &mut bindings, "lib/runtime.ex");
     assert_eq!(
         bindings
             .external_roots

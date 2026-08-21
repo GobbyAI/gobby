@@ -17,7 +17,7 @@ from gobby.ai import (
 )
 from gobby.ai.vision import CodexEndpointVisionExtractAdapter
 from gobby.config.app import DaemonConfig
-from gobby.llm.base import VisionProviderError
+from gobby.llm.base import LLMTextResult, VisionProviderError
 
 pytestmark = pytest.mark.unit
 
@@ -60,17 +60,23 @@ class _FakeNativeVisionProvider:
     def __init__(self, config: DaemonConfig, endpoint_name: str | None = None) -> None:
         self.config = config
         self.endpoint_name = endpoint_name
-        self.calls: list[tuple[str, str | None, str | None]] = []
+        self.calls: list[tuple[str, str | None, str | None, tuple[str, ...]]] = []
         self.__class__.last_instance = self
 
-    async def describe_image(
+    async def generate_text_result(
         self,
-        image_path: str,
-        context: str | None = None,
+        prompt: str,
+        system_prompt: str | None = None,
         model: str | None = None,
-    ) -> str:
-        self.calls.append((image_path, context, model))
-        return "described"
+        max_tokens: int | None = None,
+        *,
+        reasoning_effort: str | None = None,
+        caller: str | None = None,
+        images: list[str] | None = None,
+    ) -> LLMTextResult:
+        del max_tokens, reasoning_effort, caller
+        self.calls.append((prompt, system_prompt, model, tuple(images or ())))
+        return LLMTextResult(text="described")
 
 
 def _registry() -> AICapabilityRegistry:
@@ -178,7 +184,12 @@ async def test_claude_vision_adapter_forwards_image_context_and_model(
     assert provider.config is config
     assert provider.endpoint_name is None
     assert result == "described"
-    assert provider.calls == [("/tmp/screenshot.png", "settings page", "vision-model")]
+    assert len(provider.calls) == 1
+    prompt, system_prompt, model, images = provider.calls[0]
+    assert "settings page" in prompt
+    assert system_prompt == "You are a vision assistant that describes images in detail."
+    assert model == "vision-model"
+    assert images == ("/tmp/screenshot.png",)
 
 
 @pytest.mark.asyncio
@@ -203,4 +214,8 @@ async def test_local_vision_adapter_forwards_image_context_and_model(
     assert provider.config is config
     assert provider.endpoint_name == "lm-studio"
     assert result == "described"
-    assert provider.calls == [("/tmp/screenshot.png", "settings page", "vision-model")]
+    assert len(provider.calls) == 1
+    prompt, _system_prompt, model, images = provider.calls[0]
+    assert "settings page" in prompt
+    assert model == "vision-model"
+    assert images == ("/tmp/screenshot.png",)

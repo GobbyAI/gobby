@@ -451,7 +451,7 @@ class TestProcess:
         assert [
             condition.match.value
             for condition in filters.should
-            if isinstance(condition, FieldCondition)
+            if isinstance(condition, FieldCondition) and isinstance(condition.match, MatchValue)
         ] == ["proj-42", True]
 
     @pytest.mark.asyncio

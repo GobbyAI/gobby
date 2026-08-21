@@ -231,7 +231,8 @@ def test_vision_and_audio_follow_configured_bindings() -> None:
                                 "vision": GenerationEndpointConfig(
                                     api_base="http://127.0.0.1:9/v1",
                                     model="vision-model",
-                                    vision_extract=True,
+                                    probed_model="vision-model",
+                                    input_modalities=["text", "image"],
                                 )
                             }
                         }
@@ -256,3 +257,93 @@ def test_text_generate_stays_daemon_when_embeddings_model_missing() -> None:
     grant = _issue(SuccessiveCaptureRuntime(snapshot, snapshot), now=now)
     assert isinstance(grant.capabilities.embed, AIUnavailableCapability)
     assert isinstance(grant.capabilities.text_generate, AIDaemonCapability)
+
+
+@pytest.mark.unit
+def test_vision_grant_follows_probe_evidence() -> None:
+    now = 1_700_000_000
+    image_config = daemon_config()
+    image_config = image_config.model_copy(
+        update={
+            "ai": image_config.ai.model_copy(
+                update={
+                    "generation": image_config.ai.generation.model_copy(
+                        update={
+                            "endpoints": {
+                                "vision": GenerationEndpointConfig(
+                                    api_base="http://127.0.0.1:9/v1",
+                                    model="vision-model",
+                                    probed_model="vision-model",
+                                    input_modalities=["text", "image"],
+                                )
+                            }
+                        }
+                    )
+                }
+            )
+        }
+    )
+    image_grant = _issue(
+        SuccessiveCaptureRuntime(
+            config_snapshot(image_config, revision=41),
+            config_snapshot(image_config, revision=41),
+        ),
+        now=now,
+    )
+    assert isinstance(image_grant.capabilities.vision_extract, AIDaemonCapability)
+
+    degraded_config = image_config.model_copy(
+        update={
+            "ai": image_config.ai.model_copy(
+                update={
+                    "generation": image_config.ai.generation.model_copy(
+                        update={
+                            "endpoints": {
+                                "vision": GenerationEndpointConfig(
+                                    api_base="http://127.0.0.1:9/v1",
+                                    model="vision-model",
+                                    probed_model="vision-model",
+                                    input_modalities=["text"],
+                                )
+                            }
+                        }
+                    )
+                }
+            )
+        }
+    )
+    degraded_grant = _issue(
+        SuccessiveCaptureRuntime(
+            config_snapshot(degraded_config, revision=42),
+            config_snapshot(degraded_config, revision=42),
+        ),
+        now=now,
+    )
+    assert isinstance(degraded_grant.capabilities.vision_extract, AIUnavailableCapability)
+
+    cleared_config = image_config.model_copy(
+        update={
+            "ai": image_config.ai.model_copy(
+                update={
+                    "generation": image_config.ai.generation.model_copy(
+                        update={
+                            "endpoints": {
+                                "vision": GenerationEndpointConfig(
+                                    api_base="http://127.0.0.1:9/v1",
+                                    model="vision-model",
+                                )
+                            }
+                        }
+                    )
+                }
+            )
+        }
+    )
+    cleared_grant = _issue(
+        SuccessiveCaptureRuntime(
+            config_snapshot(cleared_config, revision=43),
+            config_snapshot(cleared_config, revision=43),
+        ),
+        now=now,
+    )
+    assert isinstance(cleared_grant.capabilities.vision_extract, AIUnavailableCapability)

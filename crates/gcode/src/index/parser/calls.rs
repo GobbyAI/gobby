@@ -127,6 +127,8 @@ pub(in crate::index::parser) fn materialize_call(
         if local_target.is_none() && external_target.is_none() && !external_shadowed {
             import_resolution::resolve_rust_local_qualified_callee(
                 ctx.import_context,
+                ctx.import_bindings,
+                ctx.symbols,
                 ctx.rel_path,
                 &site.callee_name,
                 qualifier_path,
@@ -417,7 +419,14 @@ pub(in crate::index::parser) fn materialize_call(
         // Cross-file local import: record the original name plus the candidate
         // target files. The post-write pass resolves it against `code_symbols`
         // to a real indexed id (or degrades it to unresolved).
-        call = if local_binding.is_default_export() {
+        let type_member_qualifier = local_binding.type_member_qualifier().map(ToOwned::to_owned);
+        call = if let Some(qualifier) = type_member_qualifier {
+            call.with_local_type_member_target(
+                local_binding.callee_name,
+                &qualifier,
+                local_binding.candidate_files,
+            )
+        } else if local_binding.is_default_export() {
             call.with_local_default_import_target(
                 local_binding.callee_name,
                 local_binding.candidate_files,

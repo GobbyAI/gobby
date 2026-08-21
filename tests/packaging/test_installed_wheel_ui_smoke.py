@@ -95,11 +95,19 @@ def _allocate_distinct_high_ports() -> tuple[int, int]:
     )
 
 
-def _write_config(config_path: Path, database_url: str, http_port: int, ws_port: int) -> None:
+def _write_config(
+    config_path: Path,
+    database_url: str,
+    files_home: Path,
+    http_port: int,
+    ws_port: int,
+) -> None:
     config_path.write_text(
         "\n".join(
             [
                 f'database_url: "{database_url}"',
+                # A local bootstrap owns its datastores and must name their files root.
+                f'files_home: "{files_home}"',
                 f"daemon_port: {http_port}",
                 'bind_host: "127.0.0.1"',
                 f"websocket_port: {ws_port}",
@@ -172,8 +180,10 @@ def test_installed_wheel_serves_packaged_index_html(tmp_path: Path) -> None:
     gobby_home = home / ".gobby"
     gobby_home.mkdir(parents=True)
     config_path = tmp_path / "config.yaml"
+    files_home = tmp_path / "files"
+    files_home.mkdir()
     http_port, ws_port = _allocate_distinct_high_ports()
-    _write_config(config_path, database_url, http_port, ws_port)
+    _write_config(config_path, database_url, files_home, http_port, ws_port)
 
     env = os.environ.copy()
     # The child daemon already has isolated HOME/GOBBY_HOME and an explicit config.

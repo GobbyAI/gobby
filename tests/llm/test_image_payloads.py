@@ -14,7 +14,13 @@ from unittest.mock import patch
 import pytest
 
 from gobby.llm.base import VisionInputError
-from gobby.llm.image_payloads import MAX_IMAGE_BYTES, prepare_image_data
+from gobby.llm.image_payloads import (
+    MAX_IMAGE_BYTES,
+    MAX_REQUEST_IMAGE_BYTES,
+    MAX_REQUEST_IMAGES,
+    prepare_image_data,
+    prepare_image_inputs,
+)
 
 
 async def test_oversized_image_is_rejected_before_open_or_encoding(tmp_path: Path) -> None:
@@ -108,3 +114,65 @@ async def test_image_preparation_does_not_block_event_loop() -> None:
         finally:
             release.set()
             await task
+
+
+def _gif_data_url() -> str:
+    encoded = base64.standard_b64encode(b"GIF89a").decode("utf-8")
+    return f"data:image/gif;base64,{encoded}"
+
+
+async def test_data_url_is_decoded() -> None:
+    path, mime_type, encoded, data_url = await prepare_image_data(_gif_data_url())
+
+    assert path is None
+    assert mime_type == "image/gif"
+    assert encoded == base64.standard_b64encode(b"GIF89a").decode("utf-8")
+    assert data_url == _gif_data_url()
+
+
+async def test_disallowed_mime_is_rejected(tmp_path: Path) -> None:
+    bmp_path = tmp_path / "image.bmp"
+    bmp_path.write_bytes(b"BM")
+    with pytest.raises(VisionInputError, match=r"Disallowed image MIME type .*image/bmp"):
+        await prepare_image_data(str(bmp_path))
+
+    with pytest.raises(VisionInputError, match="Disallowed image MIME type"):
+        await prepare_image_data("data:image/bmp;base64,Qk0=")
+
+
+async def test_relative_path_is_rejected() -> None:
+    with pytest.raises(VisionInputError, match="Image path must be absolute: relative.png"):
+        await prepare_image_data("relative.png")
+
+
+async def test_malformed_data_url_is_rejected() -> None:
+    with pytest.raises(VisionInputError, match="Malformed data URL"):
+        await prepare_image_data("data:image/png")
+
+
+async def test_invalid_base64_data_url_is_rejected() -> None:
+    with pytest.raises(VisionInputError, match="Invalid image base64"):
+        await prepare_image_data("data:image/png;base64,!!!!")
+
+
+async def test_image_count_limit_names_offending_input() -> None:
+    images = [_gif_data_url() for _ in range(MAX_REQUEST_IMAGES)] + ["data:image/gif;base64,extra"]
+    with pytest.raises(
+        VisionInputError,
+        match=r"Too many images \(max 8\): data:image/gif;base64,extra",
+    ):
+        await prepare_image_inputs(images)
+
+
+async def test_aggregate_decoded_size_limit_names_offending_input(tmp_path: Path) -> None:
+    paths = []
+    for index in range(5):
+        path = tmp_path / f"image-{index}.png"
+        path.write_bytes(b"x" * MAX_IMAGE_BYTES)
+        paths.append(str(path))
+
+    with pytest.raises(
+        VisionInputError,
+        match=rf"Images exceed {MAX_REQUEST_IMAGE_BYTES} byte aggregate limit: {paths[-1]}",
+    ):
+        await prepare_image_inputs(paths)

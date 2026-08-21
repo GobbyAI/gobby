@@ -3,7 +3,6 @@
 import asyncio
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -318,22 +317,3 @@ def test_auth_mode_default_is_subscription(claude_config: DaemonConfig) -> None:
     with mock_claude_sdk(mock_query):
         provider = ClaudeLLMProvider(claude_config)
         assert provider.auth_mode == "subscription"
-
-
-@pytest.mark.asyncio
-async def test_describe_image_subscription_mode(
-    claude_config: DaemonConfig,
-    tmp_path: Path,
-) -> None:
-    """Test describe_image uses SDK in subscription mode."""
-    # Create a test image file
-    test_image = tmp_path / "test.png"
-    test_image.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
-
-    async def mock_query(_prompt: str, _options: object) -> AsyncIterator[object]:
-        yield MockAssistantMessage([MockTextBlock("Image description from SDK")])
-
-    with mock_claude_sdk(mock_query):
-        provider = ClaudeLLMProvider(claude_config)
-        description = await provider.describe_image(str(test_image))
-        assert "Image description from SDK" in description

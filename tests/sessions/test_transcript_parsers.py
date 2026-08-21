@@ -630,12 +630,23 @@ class TestClaudeRecordEnvelopes:
             "fork-context-ref",
             "summary",
             "file-history-snapshot",
+            "custom-title",
+            "atis-latch",
         ],
     )
-    def test_known_envelope_records_are_dropped(self, parser, record_type) -> None:
+    def test_known_envelope_records_are_dropped(
+        self, parser, record_type, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        logged: list[str] = []
+        monkeypatch.setattr(
+            parser.error_log,
+            "log_unknown_block",
+            lambda _index, _session, block_type, _raw: logged.append(block_type),
+        )
         line = json.dumps({"type": record_type, "foo": "bar", "timestamp": "2024-01-01T12:00:00Z"})
         assert parser._expand_line(line, 0) == []
         assert parser.parse_line(line, 0) is None
+        assert logged == []
 
     def test_queued_command_attachment_emits_user_message(self, parser) -> None:
         data = {

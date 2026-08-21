@@ -221,12 +221,16 @@ fn inheritance_pending_status_keeps_graph_only_owner() {
 mod serial_db {
     use super::super::super::IndexOutcome;
     use super::super::super::file::write_parsed_file_facts;
-    use super::super::super::local_imports::resolve_local_import_inheritance;
+    use super::super::super::local_imports::{
+        resolve_local_import_calls, resolve_local_import_inheritance,
+        resolve_project_local_import_inheritance,
+    };
     use super::super::super::sink::PostgresCodeFactSink;
     use crate::db;
     use crate::index::api;
     use crate::models::{
-        CallTargetKind, HeritageKind, IndexedProject, InheritanceRelation, ParseResult, Symbol,
+        CallRelation, CallTargetKind, HeritageKind, IndexedProject, InheritanceRelation,
+        ParseResult, Symbol,
     };
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -270,6 +274,292 @@ mod serial_db {
         let row = inheritance_row(&mut conn, &project_id);
         assert_eq!(row.target_kind, "local_import");
         assert_eq!(row.target_module.as_deref(), Some("src/base.py"));
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    fn inheritance_reexported_base_promotes_via_module_root_subtree() {
+        let (mut conn, project_id, _cleanup) = seeded_project("gcode-inherit-reexport-py");
+        write_pending_heritage(
+            &mut conn,
+            &project_id,
+            HeritageSeed {
+                owner: "pkg/derived.py",
+                hash: "hash-d",
+                derived: "Derived",
+                target: "Base",
+                candidate: "pkg/__init__.py",
+                language: "python",
+                kind: "class",
+                source: b"from pkg import Base\nclass Derived(Base):\n    pass\n",
+            },
+        );
+        write_named_symbol(
+            &mut conn,
+            &project_id,
+            SymbolSeed {
+                rel: "pkg/impl.py",
+                hash: "hash-b",
+                name: "Base",
+                kind: "class",
+                language: "python",
+                source: b"class Base:\n    pass\n",
+            },
+        );
+        let owners = resolve_local_import_inheritance(
+            &mut conn,
+            &project_id,
+            &["pkg/__init__.py".to_string()],
+        )
+        .expect("promote python reexport");
+        assert_eq!(owners, vec!["pkg/derived.py".to_string()]);
+        let after = inheritance_row(&mut conn, &project_id);
+        assert_eq!(after.target_kind, "symbol");
+        assert!(after.target_symbol_id.is_some());
+        assert!(after.target_module.is_none());
+        assert_eq!(count_inheritance(&mut conn, &project_id), 1);
+
+        let (mut conn, project_id, _cleanup) = seeded_project("gcode-inherit-reexport-rs");
+        write_pending_heritage(
+            &mut conn,
+            &project_id,
+            HeritageSeed {
+                owner: "src/store/client.rs",
+                hash: "hash-c",
+                derived: "Client",
+                target: "Store",
+                candidate: "src/store/mod.rs",
+                language: "rust",
+                kind: "type",
+                source: b"impl Store for Client {}\n",
+            },
+        );
+        write_named_symbol(
+            &mut conn,
+            &project_id,
+            SymbolSeed {
+                rel: "src/store/types.rs",
+                hash: "hash-t",
+                name: "Store",
+                kind: "type",
+                language: "rust",
+                source: b"pub trait Store {}\n",
+            },
+        );
+        let repair = resolve_project_local_import_inheritance(&mut conn, &project_id)
+            .expect("promote rust reexport via repair");
+        assert_eq!(repair.owners, vec!["src/store/client.rs".to_string()]);
+        assert_eq!(repair.pending, 1);
+        assert_eq!(repair.resolved, 1);
+        let after = inheritance_row(&mut conn, &project_id);
+        assert_eq!(after.target_kind, "symbol");
+        assert!(after.target_symbol_id.is_some());
+        assert_eq!(count_inheritance(&mut conn, &project_id), 1);
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    fn inheritance_ambiguous_subtree_stays_retryable() {
+        let (mut conn, project_id, _cleanup) = seeded_project("gcode-inherit-ambiguous");
+        write_pending_heritage(
+            &mut conn,
+            &project_id,
+            HeritageSeed {
+                owner: "pkg/derived.py",
+                hash: "hash-d",
+                derived: "Derived",
+                target: "Base",
+                candidate: "pkg/__init__.py",
+                language: "python",
+                kind: "class",
+                source: b"from pkg import Base\nclass Derived(Base):\n    pass\n",
+            },
+        );
+        write_named_symbol(
+            &mut conn,
+            &project_id,
+            SymbolSeed {
+                rel: "pkg/a.py",
+                hash: "hash-a",
+                name: "Base",
+                kind: "class",
+                language: "python",
+                source: b"class Base:\n    pass\n",
+            },
+        );
+        write_named_symbol(
+            &mut conn,
+            &project_id,
+            SymbolSeed {
+                rel: "pkg/b.py",
+                hash: "hash-b",
+                name: "Base",
+                kind: "class",
+                language: "python",
+                source: b"class Base:\n    pass\n",
+            },
+        );
+        resolve_local_import_inheritance(&mut conn, &project_id, &["pkg/__init__.py".to_string()])
+            .expect("ambiguous subtree");
+        let row = inheritance_row(&mut conn, &project_id);
+        assert_eq!(row.target_kind, "local_import");
+        assert_eq!(row.target_module.as_deref(), Some("pkg/__init__.py"));
+        assert_eq!(count_inheritance(&mut conn, &project_id), 1);
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    fn inheritance_plain_file_candidate_does_not_widen() {
+        let (mut conn, project_id, _cleanup) = seeded_project("gcode-inherit-plain");
+        write_pending_heritage(
+            &mut conn,
+            &project_id,
+            HeritageSeed {
+                owner: "pkg/derived.py",
+                hash: "hash-d",
+                derived: "Derived",
+                target: "Base",
+                candidate: "pkg/api.py",
+                language: "python",
+                kind: "class",
+                source: b"from pkg.api import Base\nclass Derived(Base):\n    pass\n",
+            },
+        );
+        write_named_symbol(
+            &mut conn,
+            &project_id,
+            SymbolSeed {
+                rel: "pkg/impl.py",
+                hash: "hash-b",
+                name: "Base",
+                kind: "class",
+                language: "python",
+                source: b"class Base:\n    pass\n",
+            },
+        );
+        resolve_local_import_inheritance(&mut conn, &project_id, &["pkg/api.py".to_string()])
+            .expect("plain file miss");
+        let row = inheritance_row(&mut conn, &project_id);
+        assert_eq!(row.target_kind, "local_import");
+        assert_eq!(row.target_module.as_deref(), Some("pkg/api.py"));
+
+        let (mut conn, project_id, _cleanup) = seeded_project("gcode-inherit-nested");
+        write_pending_heritage(
+            &mut conn,
+            &project_id,
+            HeritageSeed {
+                owner: "pkg/derived.py",
+                hash: "hash-d",
+                derived: "Derived",
+                target: "Base",
+                candidate: "pkg/__init__.py",
+                language: "python",
+                kind: "class",
+                source: b"from pkg import Base\nclass Derived(Base):\n    pass\n",
+            },
+        );
+        let helper_rel = "pkg/impl.py";
+        let helper_hash = "hash-h";
+        let helper = type_symbol(
+            &project_id,
+            helper_rel,
+            helper_hash,
+            "Helper",
+            0,
+            "python",
+            "class",
+        );
+        let mut method = type_symbol(
+            &project_id,
+            helper_rel,
+            helper_hash,
+            "Base",
+            20,
+            "python",
+            "method",
+        );
+        method.parent_symbol_id = Some(helper.id.clone());
+        let parse = ParseResult {
+            symbols: vec![helper, method],
+            imports: Vec::new(),
+            calls: Vec::new(),
+            inheritance: Vec::new(),
+            source: b"class Helper:\n    def Base(self):\n        pass\n".to_vec(),
+        };
+        write_facts(
+            &mut conn,
+            &project_id,
+            helper_rel,
+            "python",
+            helper_hash,
+            parse,
+        );
+        resolve_local_import_inheritance(&mut conn, &project_id, &["pkg/__init__.py".to_string()])
+            .expect("nested method miss");
+        let row = inheritance_row(&mut conn, &project_id);
+        assert_eq!(row.target_kind, "local_import");
+        assert_eq!(row.target_module.as_deref(), Some("pkg/__init__.py"));
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    fn call_through_imported_type_promotes_to_its_method() {
+        let (mut conn, project_id, _cleanup) = seeded_project("gcode-type-member-hit");
+        let bar = foo_symbol(&project_id, "Bar", 0, "type", None);
+        let mut bar_new = foo_symbol(&project_id, "new", 20, "method", Some(&bar));
+        bar_new.qualified_name = "Bar::new".to_string();
+        let method_id = bar_new.id.clone();
+        write_foo_symbols(&mut conn, &project_id, vec![bar, bar_new]);
+        write_type_member_call(&mut conn, &project_id);
+
+        let resolved =
+            resolve_local_import_calls(&mut conn, &project_id, &["src/app.rs".to_string()])
+                .expect("promote Bar::new");
+        assert_eq!(resolved, 1);
+        let row = call_row(&mut conn, &project_id, "new");
+        assert_eq!(row.target_kind, "symbol");
+        assert_eq!(row.symbol_id.map(|id| id.to_string()), Some(method_id));
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    fn call_through_imported_type_never_binds_free_function_or_other_type() {
+        let (mut conn, project_id, _cleanup) = seeded_project("gcode-type-member-miss");
+        let bar = foo_symbol(&project_id, "Bar", 0, "type", None);
+        let free_new = foo_symbol(&project_id, "new", 20, "function", None);
+        let baz = foo_symbol(&project_id, "Baz", 40, "type", None);
+        let mut baz_new = foo_symbol(&project_id, "new", 60, "method", Some(&baz));
+        baz_new.qualified_name = "Baz::new".to_string();
+        write_foo_symbols(&mut conn, &project_id, vec![bar, free_new, baz, baz_new]);
+        write_type_member_call(&mut conn, &project_id);
+
+        let resolved =
+            resolve_local_import_calls(&mut conn, &project_id, &["src/app.rs".to_string()])
+                .expect("resolve Bar::new miss");
+        assert_eq!(resolved, 0);
+        let row = call_row(&mut conn, &project_id, "new");
+        assert_eq!(row.target_kind, "unresolved");
+        assert!(row.symbol_id.is_none());
     }
 
     #[test]
@@ -563,6 +853,166 @@ mod serial_db {
         write_facts(conn, project_id, rel, "python", hash, parse);
     }
 
+    struct HeritageSeed<'a> {
+        owner: &'a str,
+        hash: &'a str,
+        derived: &'a str,
+        target: &'a str,
+        candidate: &'a str,
+        language: &'a str,
+        kind: &'a str,
+        source: &'a [u8],
+    }
+
+    fn write_pending_heritage(
+        conn: &mut postgres::Client,
+        project_id: &str,
+        seed: HeritageSeed<'_>,
+    ) {
+        let source_id = Symbol::make_id(
+            project_id,
+            seed.owner,
+            seed.hash,
+            seed.derived,
+            seed.kind,
+            0,
+        );
+        let parse = ParseResult {
+            symbols: vec![type_symbol(
+                project_id,
+                seed.owner,
+                seed.hash,
+                seed.derived,
+                0,
+                seed.language,
+                seed.kind,
+            )],
+            imports: Vec::new(),
+            calls: Vec::new(),
+            inheritance: vec![InheritanceRelation {
+                source_symbol_id: Some(source_id),
+                source_name: seed.derived.to_string(),
+                source_kind: CallTargetKind::Symbol,
+                source_external_module: None,
+                target_symbol_id: None,
+                target_name: seed.target.to_string(),
+                target_kind: CallTargetKind::LocalImport,
+                target_external_module: Some(seed.candidate.to_string()),
+                heritage_kind: HeritageKind::Inherits,
+                file_path: seed.owner.to_string(),
+                content_hash: seed.hash.to_string(),
+                line: 2,
+            }],
+            source: seed.source.to_vec(),
+        };
+        write_facts(
+            conn,
+            project_id,
+            seed.owner,
+            seed.language,
+            seed.hash,
+            parse,
+        );
+    }
+
+    struct SymbolSeed<'a> {
+        rel: &'a str,
+        hash: &'a str,
+        name: &'a str,
+        kind: &'a str,
+        language: &'a str,
+        source: &'a [u8],
+    }
+
+    fn write_named_symbol(conn: &mut postgres::Client, project_id: &str, seed: SymbolSeed<'_>) {
+        let symbol = type_symbol(
+            project_id,
+            seed.rel,
+            seed.hash,
+            seed.name,
+            0,
+            seed.language,
+            seed.kind,
+        );
+        let parse = ParseResult {
+            symbols: vec![symbol],
+            imports: Vec::new(),
+            calls: Vec::new(),
+            inheritance: Vec::new(),
+            source: seed.source.to_vec(),
+        };
+        write_facts(conn, project_id, seed.rel, seed.language, seed.hash, parse);
+    }
+
+    const FOO_REL: &str = "src/foo.rs";
+    const FOO_HASH: &str = "hash-foo";
+
+    fn foo_symbol(
+        project_id: &str,
+        name: &str,
+        byte_start: usize,
+        kind: &str,
+        parent: Option<&Symbol>,
+    ) -> Symbol {
+        let mut symbol = type_symbol(
+            project_id, FOO_REL, FOO_HASH, name, byte_start, "rust", kind,
+        );
+        symbol.parent_symbol_id = parent.map(|parent| parent.id.clone());
+        symbol
+    }
+
+    fn write_foo_symbols(conn: &mut postgres::Client, project_id: &str, symbols: Vec<Symbol>) {
+        let parse = ParseResult {
+            symbols,
+            imports: Vec::new(),
+            calls: Vec::new(),
+            inheritance: Vec::new(),
+            source: b"pub struct Bar;\nimpl Bar { pub fn new() -> Self { Bar } }\n".to_vec(),
+        };
+        write_facts(conn, project_id, FOO_REL, "rust", FOO_HASH, parse);
+    }
+
+    /// `src/app.rs` calling `Bar::new()` through `use crate::foo::Bar;`.
+    fn write_type_member_call(conn: &mut postgres::Client, project_id: &str) {
+        let rel = "src/app.rs";
+        let hash = "hash-app";
+        let go = type_symbol(project_id, rel, hash, "go", 0, "rust", "function");
+        let call = CallRelation::new(go.id.clone(), "new".to_string(), rel.to_string(), 4)
+            .with_local_type_member_target(
+                "new".to_string(),
+                "Bar",
+                vec!["src/foo.rs".to_string(), "src/foo/mod.rs".to_string()],
+            );
+        let parse = ParseResult {
+            symbols: vec![go],
+            imports: Vec::new(),
+            calls: vec![call],
+            inheritance: Vec::new(),
+            source: b"use crate::foo::Bar;\nfn go() {\n    Bar::new();\n}\n".to_vec(),
+        };
+        write_facts(conn, project_id, rel, "rust", hash, parse);
+    }
+
+    struct CallRow {
+        target_kind: String,
+        symbol_id: Option<uuid::Uuid>,
+    }
+
+    fn call_row(conn: &mut postgres::Client, project_id: &str, callee_name: &str) -> CallRow {
+        let project_uuid = db::id_param(project_id).expect("uuid");
+        let row = conn
+            .query_one(
+                "SELECT callee_target_kind, callee_symbol_id
+                 FROM code_calls WHERE project_id = $1 AND callee_name = $2",
+                &[&project_uuid, &callee_name],
+            )
+            .expect("load call");
+        CallRow {
+            target_kind: row.get(0),
+            symbol_id: row.get(1),
+        }
+    }
+
     fn write_base_symbol(conn: &mut postgres::Client, project_id: &str, hash: &str) {
         let rel = "src/base.py";
         let parse = ParseResult {
@@ -608,7 +1058,7 @@ mod serial_db {
         let hash = "hash-type";
         let parse = ParseResult {
             symbols: vec![type_symbol(
-                project_id, rel, hash, "Type", 0, "rust", "struct",
+                project_id, rel, hash, "Type", 0, "rust", "type",
             )],
             imports: Vec::new(),
             calls: Vec::new(),

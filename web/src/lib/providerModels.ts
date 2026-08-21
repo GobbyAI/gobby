@@ -48,6 +48,7 @@ const PROVIDER_LABELS: Record<string, string> = {
 const ENDPOINT_LABELS: Record<string, string> = {
   "lm-studio": "LM Studio",
   ollama: "Ollama",
+  vllm: "vLLM",
 };
 
 // Providers that must never be offered as a choice anywhere in the web UI
@@ -246,6 +247,28 @@ export function resolveModelValueForProvider(
   );
 }
 
+export function inputModalityChips(
+  inputModalities?: readonly string[] | null,
+): Array<"Text" | "Image"> {
+  if (!inputModalities) return [];
+  const chips: Array<"Text" | "Image"> = [];
+  if (inputModalities.includes("text")) chips.push("Text");
+  if (inputModalities.includes("image")) chips.push("Image");
+  return chips;
+}
+
+function isEndpointBackedOption(
+  option: ProviderModelOption | null,
+  ownerProvider: string | null | undefined,
+  requestedModel: string | null | undefined,
+): boolean {
+  return (
+    Boolean(option?.value.startsWith("endpoint:")) ||
+    Boolean(ownerProvider?.startsWith("endpoint:")) ||
+    Boolean(requestedModel?.trim().startsWith("endpoint:"))
+  );
+}
+
 export function modelSupportsImageInput(
   catalog: ProviderModelEntry[],
   provider: string | null | undefined,
@@ -257,6 +280,16 @@ export function modelSupportsImageInput(
     getModelsForSelection(catalog, normalizedProvider, model),
     model,
   );
+  const owner = option
+    ? catalog.find((entry) =>
+        entry.models.some((candidate) => candidate.value === option.value),
+      )
+    : catalog.find(
+        (entry) => normalizeProvider(entry.provider) === normalizedProvider,
+      );
+  if (isEndpointBackedOption(option, owner?.provider, model)) {
+    return Boolean(option?.input_modalities?.includes("image"));
+  }
   return option?.input_modalities
     ? option.input_modalities.includes("image")
     : true;

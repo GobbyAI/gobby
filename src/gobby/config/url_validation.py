@@ -25,6 +25,8 @@ def validate_endpoint_url(
         raise ValueError(f"{field_name} must use {expected}")
     if parsed.hostname is None or any(character.isspace() for character in parsed.netloc):
         raise ValueError(f"{field_name} must include a valid host")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError(f"{field_name} must not embed credentials; use api_key or $secret:NAME")
     try:
         _ = parsed.port
     except ValueError as exc:

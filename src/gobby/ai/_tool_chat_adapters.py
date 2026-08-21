@@ -35,6 +35,9 @@ _DEFAULT_MAX_TOKENS = 8000
 # Given the selected binding, return an AsyncOpenAI-compatible client whose
 # ``chat.completions.create`` accepts ``tools``/``tool_choice``.
 OpenAIClientFactory = Callable[[CapabilityBinding], Any]
+# Given the selected binding and the requested model (None = binding default),
+# return the model id to put on the wire (vllm ``auto`` -> the served id).
+OpenAIModelResolver = Callable[[CapabilityBinding, str | None], Awaitable[str]]
 
 
 class OpenAICompatibleToolChatAdapter:
@@ -45,8 +48,22 @@ class OpenAICompatibleToolChatAdapter:
     caller's read/whitelisted CLI surface, run in ``cwd=project_path``.
     """
 
-    def __init__(self, client_factory: OpenAIClientFactory) -> None:
+    def __init__(
+        self,
+        client_factory: OpenAIClientFactory,
+        *,
+        model_resolver: OpenAIModelResolver | None = None,
+    ) -> None:
         self._client_factory = client_factory
+        self._model_resolver = model_resolver
+
+    async def _wire_model(self, request: ToolChatRequest, binding: CapabilityBinding) -> str:
+        if self._model_resolver is not None:
+            return await self._model_resolver(binding, request.model)
+        model = request.model or next(iter(binding.models), None)
+        if model is None:
+            raise ValueError("openai_compatible tool_chat binding has no model to call")
+        return model
 
     async def chat(self, request: ToolChatRequest, binding: CapabilityBinding) -> ToolChatResult:
         limits = request.effective_limits
@@ -58,9 +75,7 @@ class OpenAICompatibleToolChatAdapter:
             subprocess_env=request.managed_subprocess_env,
             managed_execution_id=request.managed_execution_id,
         )
-        model = request.model or next(iter(binding.models), None)
-        if model is None:
-            raise ValueError("openai_compatible tool_chat binding has no model to call")
+        model = await self._wire_model(request, binding)
 
         client = self._client_factory(binding)
         tools = runtime.openai_schemas()

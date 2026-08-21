@@ -112,7 +112,7 @@ or hooks are disabled; Claude's existing fail-open Stop behavior is unchanged.
 
 Running `ghook --version` writes
 `$GOBBY_HOME/bin/.ghook-runtime.json` with the binary's `schema_version` and
-`ghook_version`. The daemon reads this stamp for `/api/admin/health` and
+`ghook_version`. The daemon reads this stamp for `/api/health` and
 `/api/admin/status`, and `gobby status` renders incompatible states as health
 issues. Diagnostics use explicit `absent`, `compatible`, `malformed`,
 `schema_mismatch`, and `stale_version` states.

@@ -46,7 +46,7 @@ export interface ProviderModelOption {
   canonical_id?: string;
   context_length?: number | null;
   context_length_source?: string;
-  input_modalities?: string[];
+  input_modalities?: string[] | null;
   supports_tools?: boolean;
   execution_provider?: string;
   reasoning?: ProviderModelReasoning;

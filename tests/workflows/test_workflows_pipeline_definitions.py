@@ -342,7 +342,9 @@ class TestStepOutputReferences:
             ],
         )
         assert len(pipeline.steps) == 2
-        assert "$step1.output" in pipeline.steps[1].prompt
+        prompt = pipeline.steps[1].prompt
+        assert prompt is not None
+        assert "$step1.output" in prompt
 
     def test_valid_nested_output_reference(self) -> None:
         """Test that nested $step.output.field references are valid."""
@@ -356,7 +358,9 @@ class TestStepOutputReferences:
                 ),
             ],
         )
-        assert "$analyze.output.summary" in pipeline.steps[1].prompt
+        prompt = pipeline.steps[1].prompt
+        assert prompt is not None
+        assert "$analyze.output.summary" in prompt
 
     def test_output_reference_in_condition(self) -> None:
         """Test that $step.output references work in conditions."""
@@ -371,7 +375,9 @@ class TestStepOutputReferences:
                 ),
             ],
         )
-        assert "$test.output.exit_code" in pipeline.steps[1].condition
+        condition = pipeline.steps[1].condition
+        assert condition is not None
+        assert "$test.output.exit_code" in condition
 
     def test_output_reference_in_pipeline_outputs(self) -> None:
         """Test that $step.output references work in pipeline outputs."""
@@ -398,4 +404,6 @@ class TestStepOutputReferences:
                 PipelineStep(id="process", exec="./process.sh $inputs.target"),
             ],
         )
-        assert "$inputs.target" in pipeline.steps[0].exec
+        exec_command = pipeline.steps[0].exec
+        assert exec_command is not None
+        assert "$inputs.target" in exec_command

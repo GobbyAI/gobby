@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import binascii
 import os
+import time
 from pathlib import Path
 
 import pytest
@@ -191,7 +192,7 @@ async def test_cleanup_expired_proxy_attachments_uses_retention_window(
         [{"name": "fresh.txt", "base64": "bmV3"}],
     )
     old_dir = old_paths[0].parent
-    monkeypatch.setattr(attachment_helpers.time, "time", lambda: 1_000.0)
+    monkeypatch.setattr(time, "time", lambda: 1_000.0)
     old_mtime = 1_000.0 - attachment_helpers.PROXY_ATTACHMENT_RETENTION_SECONDS - 10
     old_dir.touch()
 
@@ -216,7 +217,7 @@ async def test_cleanup_expired_proxy_attachments_keeps_directory_with_fresh_chil
         [{"name": "fresh.txt", "base64": "bmV3"}],
     )
     session_dir = paths[0].parent
-    monkeypatch.setattr(attachment_helpers.time, "time", lambda: 1_000.0)
+    monkeypatch.setattr(time, "time", lambda: 1_000.0)
     old_mtime = 1_000.0 - attachment_helpers.PROXY_ATTACHMENT_RETENTION_SECONDS - 10
     fresh_mtime = 1_000.0
     os.utime(session_dir, (old_mtime, old_mtime))

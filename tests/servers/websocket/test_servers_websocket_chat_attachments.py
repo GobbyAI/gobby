@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,6 +19,7 @@ from gobby.servers.chat_attachment_files import (
 )
 from gobby.servers.chat_attachment_limits import ChatAttachmentLimits
 from gobby.servers.websocket.chat_attachments import (
+    PreparedMessageAttachments,
     append_prepared_attachment_context,
     legacy_attachment_items,
     partition_attachment_items,
@@ -90,12 +92,7 @@ def test_resolve_attachment_dir_uses_files_home_personal_tree(tmp_path: Path) ->
     resolved = resolve_attachment_dir(PERSONAL_PROJECT_ID, ATT_ID_1)
 
     assert resolved == (
-        files_home
-        / "_personal"
-        / "attachments"
-        / PERSONAL_PROJECT_ID
-        / ATT_ID_1[:2]
-        / ATT_ID_1
+        files_home / "_personal" / "attachments" / PERSONAL_PROJECT_ID / ATT_ID_1[:2] / ATT_ID_1
     )
     assert not (get_gobby_home() / "projects").exists()
     assert attachment_relative_locator(PERSONAL_PROJECT_ID, ATT_ID_1, "note.txt") == (
@@ -304,8 +301,14 @@ def test_partition_attachment_items_splits_stored_ids_and_legacy_items() -> None
     ]
 
 
+class _StubPreparedAttachments(PreparedMessageAttachments):
+    @property
+    def prompt_context(self) -> str | None:
+        return "Attached files:\n- /tmp/a.txt"
+
+
 def test_append_prepared_attachment_context() -> None:
-    prepared = SimpleNamespace(prompt_context="Attached files:\n- /tmp/a.txt")
+    prepared = _StubPreparedAttachments(records=[])
 
     assert append_prepared_attachment_context("Look", prepared) == (
         "Look\n\nAttached files:\n- /tmp/a.txt"
@@ -325,11 +328,10 @@ def test_prepared_attachment_context_hides_local_path() -> None:
         mime_type="text/plain",
         size_bytes=1,
         local_path="",
-        created_at="2026-01-01T00:00:00+00:00",
-        updated_at="2026-01-01T00:00:00+00:00",
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2026, 1, 1, tzinfo=UTC),
         bound_at=None,
     )
-    from gobby.servers.websocket.chat_attachments import PreparedMessageAttachments
 
     prepared = PreparedMessageAttachments(records=[record])
 

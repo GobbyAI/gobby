@@ -1,14 +1,14 @@
 """Pre-flight model management for local model endpoints.
 
 Ensures the configured model is loaded before spawning a local agent.
-Handles model swapping with active-agent conflict detection.
+Handles model swapping with active-agent conflict detection for LM Studio
+and Ollama. vLLM is non-owning: Gobby never load/unload/keep-alive/swap.
 """
 
 from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlparse
 
 import httpx
 
@@ -18,7 +18,15 @@ if TYPE_CHECKING:
     from gobby.config.ai import GenerationEndpointConfig
     from gobby.storage.agents import LocalAgentRunManager
 
-__all__ = ["ensure_local_model", "LocalModelError"]
+__all__ = [
+    "ensure_local_model",
+    "LocalModelError",
+    "resolve_vllm_served_model",
+    "select_vllm_served_model",
+    "vllm_api_base",
+    "vllm_health_url",
+    "vllm_models_url",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -42,11 +50,36 @@ def count_active_local_agents(run_manager: LocalAgentRunManager) -> int:
 
 
 def _origin(api_base: str) -> str:
-    normalized = api_base.rstrip("/")
-    parsed = urlparse(normalized)
-    if parsed.scheme and parsed.netloc:
-        return f"{parsed.scheme}://{parsed.netloc}"
-    return normalized
+    """Return ``api_base`` without a trailing ``/v1`` segment or slash.
+
+    The path prefix is preserved so endpoints served behind an ingress
+    (``https://gw/models/vllm/v1``) keep their mount point.
+    """
+    base = api_base.strip().rstrip("/")
+    if base.endswith("/v1"):
+        base = base[: -len("/v1")].rstrip("/")
+    return base
+
+
+def vllm_api_base(api_base: str) -> str:
+    """Return the canonical ``{origin}/v1`` base for every vLLM wire request.
+
+    ``api_base`` configured with or without a trailing ``/v1`` (or slash)
+    yields exactly one base, so the resolver, discovery, the generation
+    client, and the Codex override block never build ``/v1/v1/...`` nor a
+    bare-origin ``/chat/completions``.
+    """
+    return f"{_origin(api_base)}/v1"
+
+
+def vllm_models_url(api_base: str) -> str:
+    """Return the single ``{origin}/v1/models`` discovery URL for ``api_base``."""
+    return f"{vllm_api_base(api_base)}/models"
+
+
+def vllm_health_url(api_base: str) -> str:
+    """Return the ``{origin}/health`` probe URL for ``api_base``."""
+    return f"{_origin(api_base)}/health"
 
 
 def _headers(api_key: str | None) -> dict[str, str]:
@@ -194,9 +227,10 @@ async def ensure_local_model(
     config: GenerationEndpointConfig,
     run_manager: LocalAgentRunManager | None = None,
 ) -> str:
-    """Ensure the configured model is loaded at the local endpoint.
+    """Ensure the configured model is available at the local endpoint.
 
     Pre-flight check before spawning a local agent:
+    - vllm: non-owning GET /v1/models lookup via resolve_vllm_served_model
     - If model is "auto": use whatever is already loaded (no load/unload)
     - If configured model is already loaded → return
     - If different model loaded and no active local agents → swap
@@ -220,6 +254,9 @@ async def ensure_local_model(
                 "inspect loaded local models."
             )
         return config.model
+
+    if config.protocol == "vllm":
+        return await resolve_vllm_served_model(config)
 
     async with httpx.AsyncClient() as client:
         try:
@@ -333,3 +370,85 @@ async def _ensure_ollama_model(
     await _set_ollama_keep_alive(client, config, config.model, -1)
     logger.info("Loaded Ollama model: %s", config.model)
     return config.model
+
+
+def _vllm_served_model_ids(payload: Any) -> list[str]:
+    if not isinstance(payload, dict):
+        return []
+    models = payload.get("data")
+    if not isinstance(models, list):
+        models = payload.get("models")
+    if not isinstance(models, list):
+        return []
+    ids: list[str] = []
+    for model in models:
+        if not isinstance(model, dict):
+            continue
+        for key in ("id", "model", "name"):
+            value = model.get(key)
+            if isinstance(value, str) and value.strip():
+                ids.append(value.strip())
+                break
+    return ids
+
+
+def _format_served_models(served: list[str]) -> str:
+    return ", ".join(served) if served else "(none)"
+
+
+def select_vllm_served_model(endpoint: GenerationEndpointConfig, served: list[str]) -> str:
+    """Apply the auto-exactly-one / explicit-present rule to a served catalog."""
+    requested = endpoint.model.strip()
+    if requested == "auto":
+        if len(served) == 1:
+            logger.info("Auto-detected vLLM model: %s", served[0])
+            return served[0]
+        raise LocalModelError(
+            "model: auto requires exactly one served vLLM model; "
+            f"found {len(served)}: {_format_served_models(served)}"
+        )
+    if requested in served:
+        return requested
+    raise LocalModelError(
+        f"vLLM endpoint at {endpoint.api_base} does not serve model {requested!r}. "
+        f"Served models: {_format_served_models(served)}"
+    )
+
+
+async def resolve_vllm_served_model(endpoint: GenerationEndpointConfig) -> str:
+    """Resolve a vLLM endpoint's model id from GET {origin}/v1/models.
+
+    ``model: auto`` maps to the single served model. Zero or multiple served
+    models raise ``LocalModelError`` naming them. An explicit model is verified
+    present and never loaded. The literal sentinel ``auto`` is never sent on
+    the wire.
+    """
+    models_url = vllm_models_url(endpoint.api_base)
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(
+                models_url,
+                headers=_headers(endpoint.api_key),
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            payload: Any = response.json()
+        except httpx.TimeoutException as e:
+            raise LocalModelError(
+                f"Timed out waiting for the vllm endpoint at {endpoint.api_base} "
+                f"to answer GET {models_url}."
+            ) from e
+        except httpx.RequestError as e:
+            raise LocalModelError(
+                f"Cannot connect to local vllm endpoint at {endpoint.api_base}: {e}"
+            ) from e
+        except httpx.HTTPStatusError as e:
+            raise LocalModelError(
+                f"Local vllm endpoint returned error: {e.response.status_code}"
+            ) from e
+        except ValueError as e:
+            raise LocalModelError(
+                f"vLLM endpoint at {endpoint.api_base} returned invalid model catalog JSON"
+            ) from e
+
+    return select_vllm_served_model(endpoint, _vllm_served_model_ids(payload))

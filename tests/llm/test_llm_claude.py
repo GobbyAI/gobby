@@ -1,8 +1,8 @@
 """Tests for ClaudeLLMProvider edge cases and error handling.
 
 Focuses on auth_mode selection, _is_transient_error classification,
-_retry_async logic, _prepare_image_data, generate_json,
-stream_with_mcp_tools, and describe_image.
+_retry_async logic, _prepare_image_data, generate_json, and
+stream_with_mcp_tools.
 """
 
 import logging
@@ -19,8 +19,6 @@ from gobby.config.app import DaemonConfig
 from gobby.llm.base import (
     LLMProviderError,
     VisionInputError,
-    VisionProviderError,
-    VisionProviderUnavailableError,
 )
 
 pytestmark = pytest.mark.unit
@@ -37,7 +35,7 @@ JSON_SCHEMA = {
 
 
 class MockAssistantMessage:
-    def __init__(self, content: list) -> None:
+    def __init__(self, content: list[Any]) -> None:
         self.content = content
 
 
@@ -86,7 +84,7 @@ class MockTextBlock:
 
 
 class MockToolUseBlock:
-    def __init__(self, id: str, name: str, input: dict) -> None:
+    def __init__(self, id: str, name: str, input: dict[str, Any]) -> None:
         self.id = id
         self.name = name
         self.input = input
@@ -338,7 +336,7 @@ class TestExecuteSdkQuery:
     ) -> None:
         from gobby.llm.claude_runtime import execute_sdk_query
 
-        options = MockClaudeAgentOptions()
+        options = _mock_agent_options()
 
         async def failure_with_stderr() -> str:
             assert callable(options.stderr)
@@ -373,7 +371,7 @@ class TestExecuteSdkQuery:
             execute_sdk_query,
         )
 
-        options = MockClaudeAgentOptions()
+        options = _mock_agent_options()
         call_count = 0
         caplog.clear()
 
@@ -415,7 +413,7 @@ class TestExecuteSdkQuery:
             execute_sdk_query,
         )
 
-        options = MockClaudeAgentOptions()
+        options = _mock_agent_options()
         call_count = 0
         caplog.clear()
 
@@ -464,7 +462,7 @@ class TestExecuteSdkQuery:
         from gobby.llm.claude_errors import ClaudeSDKProviderFailure
         from gobby.llm.claude_runtime import execute_sdk_query
 
-        options = MockClaudeAgentOptions()
+        options = _mock_agent_options()
 
         async def failed() -> str:
             raise ClaudeSDKProviderFailure(
@@ -505,7 +503,7 @@ class TestExecuteSdkQuery:
         """Non-shutdown ExceptionGroups should follow the normal diagnostics path."""
         from gobby.llm.claude_runtime import execute_sdk_query
 
-        options = MockClaudeAgentOptions()
+        options = _mock_agent_options()
         caplog.clear()
 
         async def grouped_failure() -> str:
@@ -664,18 +662,18 @@ class TestPrepareImageData:
         assert len(result) == 4
         assert result[1] == "image/png"
 
-    async def test_unknown_mime_defaults_to_png(
+    async def test_disallowed_mime_raises(
         self, claude_config: DaemonConfig, tmp_path: Path
     ) -> None:
-        """Unknown extensions default to image/png."""
+        """Non-image MIME types are rejected rather than defaulted."""
+        from gobby.llm.base import VisionInputError
         from gobby.llm.image_payloads import prepare_image_data
 
         img_path = tmp_path / "test.xyz"
         img_path.write_bytes(b"data")
 
-        result = await prepare_image_data(str(img_path))
-        assert isinstance(result, tuple)
-        assert result[1] == "image/png"
+        with pytest.raises(VisionInputError, match="Disallowed image MIME type"):
+            await prepare_image_data(str(img_path))
 
     async def test_read_error(self, claude_config: DaemonConfig, tmp_path: Path) -> None:
         """Raises a structured input error when the file can't be read."""
@@ -719,7 +717,7 @@ class TestGenerateText:
     async def test_generate_text_sdk_passes_reasoning_effort(
         self, claude_config: DaemonConfig
     ) -> None:
-        captured_kwargs: list[dict[str, object]] = []
+        captured_kwargs: list[dict[str, Any]] = []
 
         async def mock_query(prompt: str, options: Any) -> object:
             captured_kwargs.append(options.kwargs)
@@ -742,7 +740,7 @@ class TestGenerateText:
         """One-shot textgen shares one stable cwd so Claude materializes a
         single ~/.claude/projects slug, and auto-memory stays off (#20450)."""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        captured_kwargs: list[dict[str, object]] = []
+        captured_kwargs: list[dict[str, Any]] = []
 
         async def mock_query(prompt: str, options: Any) -> AsyncIterator[object]:
             captured_kwargs.append(options.kwargs)
@@ -772,7 +770,7 @@ class TestGenerateText:
         # turns (1)" on reasoning/continuation-heavy prompts instead of returning
         # text. Guard bounded headroom (>1) AND that tools stay disabled so the
         # extra turns can never become an agent action-loop.
-        captured_kwargs: list[dict[str, object]] = []
+        captured_kwargs: list[dict[str, Any]] = []
 
         async def mock_query(prompt: str, options: Any) -> object:
             captured_kwargs.append(options.kwargs)
@@ -838,7 +836,7 @@ class TestGenerateText:
     async def test_generate_text_sdk_omits_reasoning_effort_when_auto_or_unset(
         self, claude_config: DaemonConfig
     ) -> None:
-        captured_kwargs: list[dict[str, object]] = []
+        captured_kwargs: list[dict[str, Any]] = []
         replies = iter(["auto reply", "default reply"])
 
         async def mock_query(prompt: str, options: Any) -> object:
@@ -865,7 +863,7 @@ class TestGenerateText:
     async def test_generate_text_sdk_passes_unverified_reasoning_effort(
         self, claude_config: DaemonConfig
     ) -> None:
-        captured_kwargs: list[dict[str, object]] = []
+        captured_kwargs: list[dict[str, Any]] = []
 
         async def mock_query(prompt: str, options: Any) -> object:
             captured_kwargs.append(options.kwargs)
@@ -890,7 +888,7 @@ class TestGenerateAgentic:
     async def test_generate_agentic_defaults_to_readonly_tools(
         self, claude_config: DaemonConfig
     ) -> None:
-        captured_kwargs: list[dict[str, object]] = []
+        captured_kwargs: list[dict[str, Any]] = []
 
         async def mock_query(prompt: str, options: Any) -> object:
             captured_kwargs.append(options.kwargs)
@@ -937,7 +935,8 @@ class TestGenerateAgentic:
                 await query_fn()
             except RuntimeError:
                 pass
-            return await query_fn()
+            text: str = await query_fn()
+            return text
 
         with (
             mock_claude_sdk(mock_query),
@@ -996,7 +995,7 @@ class TestGenerateJson:
         """Internal SDK calls isolate settings with setting_sources=[]."""
         captured_sources: list[list[str] | None] = []
 
-        async def mock_query(prompt: str, options: object) -> object:
+        async def mock_query(prompt: str, options: Any) -> object:
             captured_sources.append(options.setting_sources)
             yield MockResultMessage(structured_output={"isolated": True})
 
@@ -1035,7 +1034,8 @@ class TestGenerateJson:
             **kwargs: object,
         ) -> dict[str, Any]:
             captured["operation"] = operation
-            return await query_fn()
+            payload: dict[str, Any] = await query_fn()
+            return payload
 
         with mock_claude_sdk(mock_query):
             from gobby.llm.claude import ClaudeLLMProvider
@@ -1067,7 +1067,7 @@ class TestGenerateJson:
     async def test_generate_json_sdk_omits_reasoning_effort_when_auto(
         self, claude_config: DaemonConfig
     ) -> None:
-        captured_kwargs: list[dict[str, object]] = []
+        captured_kwargs: list[dict[str, Any]] = []
 
         async def mock_query(prompt: str, options: Any) -> object:
             captured_kwargs.append(options.kwargs)
@@ -1276,125 +1276,6 @@ class TestGenerateTextProviderFailures:
         assert excinfo.value.classification == "error_result"
         assert "model refused: prompt too long" in str(excinfo.value)
         assert "model refused: prompt too long" in caplog.text
-
-
-# ─── describe_image tests ───────────────────────────────────────────────
-
-
-class TestDescribeImage:
-    """Tests for describe_image method."""
-
-    @pytest.mark.asyncio
-    async def test_describe_image_sdk_no_cli(self, claude_config: DaemonConfig) -> None:
-        """Raises a structured provider error when CLI is not found."""
-        with patch("gobby.llm.claude_cli.shutil.which", return_value=None):
-            from gobby.llm.claude import ClaudeLLMProvider
-
-            provider = ClaudeLLMProvider(claude_config)
-            with pytest.raises(VisionProviderUnavailableError, match="Claude CLI not found"):
-                await provider.describe_image("/path/to/image.png")
-
-    @pytest.mark.asyncio
-    async def test_describe_image_sdk_missing_file_raises_input_error(
-        self, claude_config: DaemonConfig
-    ) -> None:
-        from gobby.llm.claude import ClaudeLLMProvider
-
-        provider = ClaudeLLMProvider(claude_config)
-        provider._sdk_client._verify_cli_path = AsyncMock(return_value="/bin/claude")
-
-        with pytest.raises(VisionInputError, match="not found"):
-            await provider.describe_image("/missing/image.png")
-
-    @pytest.mark.asyncio
-    async def test_describe_image_sdk_unreadable_file_raises_input_error(
-        self, claude_config: DaemonConfig, tmp_path: Path
-    ) -> None:
-        from gobby.llm.claude import ClaudeLLMProvider
-
-        image_path = tmp_path / "image.png"
-        image_path.write_bytes(b"image")
-        provider = ClaudeLLMProvider(claude_config)
-        provider._sdk_client._verify_cli_path = AsyncMock(return_value="/bin/claude")
-
-        with patch.object(Path, "open", side_effect=PermissionError("denied")):
-            with pytest.raises(VisionInputError, match="Failed to read"):
-                await provider.describe_image(str(image_path))
-
-    @pytest.mark.asyncio
-    async def test_describe_image_sdk_failure_raises_provider_error(
-        self, claude_config: DaemonConfig, tmp_path: Path
-    ) -> None:
-        from gobby.llm.claude import ClaudeLLMProvider
-
-        image_path = tmp_path / "image.png"
-        image_path.write_bytes(b"image")
-        provider = ClaudeLLMProvider(claude_config)
-        provider._sdk_client._verify_cli_path = AsyncMock(return_value="/bin/claude")
-
-        with patch(
-            "gobby.llm.claude_sdk.execute_sdk_query",
-            new=AsyncMock(side_effect=RuntimeError("SDK failed")),
-        ):
-            with pytest.raises(VisionProviderError, match="SDK failed") as exc_info:
-                await provider.describe_image(str(image_path))
-
-        assert isinstance(exc_info.value.__cause__, RuntimeError)
-
-    @pytest.mark.asyncio
-    async def test_describe_image_sdk_preserves_successful_output(
-        self, claude_config: DaemonConfig, tmp_path: Path
-    ) -> None:
-        from gobby.llm.claude import ClaudeLLMProvider
-
-        image_path = tmp_path / "image.png"
-        image_path.write_bytes(b"image")
-        provider = ClaudeLLMProvider(claude_config)
-        provider._sdk_client._verify_cli_path = AsyncMock(return_value="/bin/claude")
-
-        with patch(
-            "gobby.llm.claude_sdk.execute_sdk_query",
-            new=AsyncMock(return_value="A blue diagram"),
-        ):
-            result = await provider.describe_image(str(image_path))
-
-        assert result == "A blue diagram"
-
-    @pytest.mark.asyncio
-    async def test_describe_image_sdk_uses_fixed_cwd(
-        self,
-        claude_config: DaemonConfig,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        from gobby.llm.claude import ClaudeLLMProvider
-
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        image_path = tmp_path / "image.png"
-        image_path.write_bytes(b"image")
-        provider = ClaudeLLMProvider(claude_config)
-        provider._sdk_client._verify_cli_path = AsyncMock(return_value="/bin/claude")
-        captured_cwds: list[str] = []
-
-        async def capture_options(
-            _operation: str,
-            _query: Any,
-            options: Any,
-            _logger: Any,
-            **_kwargs: Any,
-        ) -> str:
-            captured_cwds.append(options.cwd)
-            return "A blue diagram"
-
-        with patch(
-            "gobby.llm.claude_sdk.execute_sdk_query",
-            new=AsyncMock(side_effect=capture_options),
-        ):
-            result = await provider.describe_image(str(image_path))
-
-        assert result == "A blue diagram"
-        assert captured_cwds == [str(tmp_path / ".gobby" / "tmp" / "textgen")]
-        assert "gobby-textgen-" not in captured_cwds[0]
 
 
 # ─── generate_text no backend ────────────────────────────────────────────

@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
 from gobby.storage.cron_models import CronRun, CronRunChild
 
 pytestmark = pytest.mark.unit
+
+_TRIGGERED_AT = datetime(2026, 1, 22, 0, 0, 0, tzinfo=UTC)
+_STARTED_AT = datetime(2026, 1, 22, 0, 0, 1, tzinfo=UTC)
+_COMPLETED_AT = datetime(2026, 1, 22, 0, 1, 0, tzinfo=UTC)
 
 
 class TestCronRunToBrief:
@@ -17,10 +23,10 @@ class TestCronRunToBrief:
         run = CronRun(
             id="run-123",
             cron_job_id="job-456",
-            triggered_at="2026-01-22T00:00:00+00:00",
-            created_at="2026-01-22T00:00:00+00:00",
-            started_at="2026-01-22T00:00:01+00:00",
-            completed_at="2026-01-22T00:01:00+00:00",
+            triggered_at=_TRIGGERED_AT,
+            created_at=_TRIGGERED_AT,
+            started_at=_STARTED_AT,
+            completed_at=_COMPLETED_AT,
             status="completed",
             output="Long output string that could be very large...",
             error=None,
@@ -37,10 +43,10 @@ class TestCronRunToBrief:
         run = CronRun(
             id="run-brief",
             cron_job_id="job-brief",
-            triggered_at="2026-01-22T00:00:00+00:00",
-            created_at="2026-01-22T00:00:00+00:00",
-            started_at="2026-01-22T00:00:01+00:00",
-            completed_at="2026-01-22T00:01:00+00:00",
+            triggered_at=_TRIGGERED_AT,
+            created_at=_TRIGGERED_AT,
+            started_at=_STARTED_AT,
+            completed_at=_COMPLETED_AT,
             status="failed",
             error="Connection timeout",
             agent_run_id="ar-abc",
@@ -63,8 +69,8 @@ class TestCronRunToBrief:
         run = CronRun(
             id="run-exc",
             cron_job_id="job-exc",
-            triggered_at="2026-01-22T00:00:00+00:00",
-            created_at="2026-01-22T00:00:00+00:00",
+            triggered_at=_TRIGGERED_AT,
+            created_at=_TRIGGERED_AT,
             output="Very large output that would waste tokens...",
         )
 
@@ -78,8 +84,8 @@ class TestCronRunToBrief:
         run = CronRun(
             id="run-child",
             cron_job_id="job-child",
-            triggered_at="2026-01-22T00:00:00+00:00",
-            created_at="2026-01-22T00:00:00+00:00",
+            triggered_at=_TRIGGERED_AT,
+            created_at=_TRIGGERED_AT,
             status="dispatched",
             pipeline_execution_id="pe-child",
             child=CronRunChild(

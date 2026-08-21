@@ -222,7 +222,7 @@ def _wait_for_daemon_health(
 def _is_daemon_healthy(http_port: int) -> bool:
     """Check whether the daemon health endpoint is currently healthy."""
     try:
-        response = httpx.get(f"http://localhost:{http_port}/api/admin/health", timeout=1.0)
+        response = httpx.get(f"http://localhost:{http_port}/api/health", timeout=1.0)
         return response.status_code == 200
     except httpx.TimeoutException:
         return False
@@ -853,7 +853,7 @@ def health(ctx: click.Context) -> None:
         sys.exit(1)
 
     try:
-        response = httpx.get(f"http://localhost:{http_port}/api/admin/health", timeout=2.0)
+        response = httpx.get(f"http://localhost:{http_port}/api/health", timeout=2.0)
         if response.status_code == 200:
             try:
                 health_payload = response.json()

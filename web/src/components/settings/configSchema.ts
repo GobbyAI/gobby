@@ -59,8 +59,17 @@ export function resolveSchemaNode(
   for (const part of dottedPath.split(".")) {
     const props = current.properties as Record<string, SchemaNode> | undefined;
     const next = props?.[part];
-    if (!next || typeof next !== "object") return null;
-    current = resolveRef(next, defs);
+    if (next && typeof next === "object") {
+      current = resolveRef(next, defs);
+      continue;
+    }
+    // Open maps (`dict[str, T]`) expose the item schema as additionalProperties.
+    const additional = current.additionalProperties;
+    if (additional && typeof additional === "object") {
+      current = resolveRef(additional as SchemaNode, defs);
+      continue;
+    }
+    return null;
   }
   return current;
 }

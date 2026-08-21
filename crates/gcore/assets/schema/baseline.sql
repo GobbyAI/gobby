@@ -555,7 +555,6 @@ CREATE TABLE code_indexed_project_states (
     total_symbols integer DEFAULT 0 NOT NULL,
     last_indexed_at timestamp with time zone,
     index_duration_ms integer,
-    indexer_version text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );

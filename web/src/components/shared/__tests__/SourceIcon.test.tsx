@@ -47,6 +47,17 @@ describe("SourceIcon", () => {
     expect(container.querySelector("circle")).toBeNull();
   });
 
+  it("renders the vLLM icon as an inline svg, not the fallback circle", () => {
+    const { container } = render(<SourceIcon source="vllm" size={16} />);
+
+    const icon = container.querySelector("svg.source-icon-vllm");
+    expect(icon).toBeTruthy();
+    expect(icon?.querySelector("path")).toBeTruthy();
+    expect(icon?.getAttribute("fill")).toBe("currentColor");
+    expect(container.querySelector("circle")).toBeNull();
+    expect(container.querySelector("img.source-icon-vllm")).toBeNull();
+  });
+
   it("renders provider assets as images when available", () => {
     const { container } = render(<SourceIcon source="claude" size={16} />);
 

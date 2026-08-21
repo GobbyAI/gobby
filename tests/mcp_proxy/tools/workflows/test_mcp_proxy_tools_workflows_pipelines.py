@@ -91,7 +91,7 @@ class TestAutoSubscribeLineage:
         registry = MagicMock()
         registry.register.side_effect = RuntimeError("register failed")
 
-        result = _auto_subscribe_lineage(
+        _auto_subscribe_lineage(
             completion_registry=registry,
             completion_id="pe-1",
             session_id="sess-1",
@@ -99,7 +99,6 @@ class TestAutoSubscribeLineage:
             continuation_prompt=None,
             db=None,
         )
-        assert result is None
         assert registry.register.call_count == 1
 
 
@@ -370,8 +369,7 @@ class TestRegisterExposedPipelineTools:
         )
 
         registry = InternalToolRegistry("test")
-        result = _register_exposed_pipeline_tools(registry, None, lambda: None)
-        assert result is None
+        _register_exposed_pipeline_tools(registry, None, lambda: None)
         assert registry._tools == {}
 
     def test_handles_discovery_error(self) -> None:
@@ -383,8 +381,7 @@ class TestRegisterExposedPipelineTools:
         loader = MagicMock()
         loader.discover_pipelines_sync.side_effect = RuntimeError("discover failed")
 
-        result = _register_exposed_pipeline_tools(registry, loader, lambda: None)
-        assert result is None
+        _register_exposed_pipeline_tools(registry, loader, lambda: None)
         assert registry._tools == {}
 
     def test_skips_non_exposed_pipelines(self) -> None:

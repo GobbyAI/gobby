@@ -56,7 +56,7 @@ reads, terminal-context injection, or enqueue.
 A marker is accepted when its `timestamp` is fresh and either its `intent` is
 `stop` or `restart`, or its `source` starts with `cli_`, `http_`, `service_`, or
 `mcp_`.
-If `{daemon_url}/api/admin/health` is unreachable during that fresh window,
+If `{daemon_url}/api/health` is unreachable during that fresh window,
 `ghook` prints `{"continue":true}` and exits 0. This check is an aliveness
 probe only: any HTTP response from the endpoint counts as reachable, including
 4xx/5xx, and does not imply the daemon is healthy.

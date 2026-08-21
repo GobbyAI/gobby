@@ -23,7 +23,6 @@ def _endpoint(api_key: str = "sk-test-secret") -> GenerationEndpointConfig:
         api_key=api_key,
         model="moonshotai/kimi-k3",
         tool_chat=True,
-        vision_extract=True,
     )
 
 
@@ -77,3 +76,18 @@ def test_codex_overrides_reject_chat_completions_endpoint() -> None:
 
     with pytest.raises(ValueError, match="wire_api='responses'"):
         codex_endpoint_config_overrides("openrouter", endpoint)
+
+
+@pytest.mark.parametrize(
+    "api_base",
+    [
+        pytest.param("http://127.0.0.1:8000", id="bare-origin"),
+        pytest.param("http://127.0.0.1:8000/v1/", id="v1-trailing-slash"),
+    ],
+)
+def test_vllm_override_base_url_is_normalized(api_base: str) -> None:
+    endpoint = GenerationEndpointConfig(protocol="vllm", api_base=api_base, model="served-model")
+
+    overrides = codex_endpoint_config_overrides("metal", endpoint)
+
+    assert 'model_providers.gobby-vllm-metal.base_url="http://127.0.0.1:8000/v1"' in overrides

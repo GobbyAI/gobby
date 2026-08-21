@@ -404,7 +404,7 @@ for attempt in $(seq 1 60); do
   sleep 1
 done
 test "$startup_done" = "true"
-curl --fail --silent "http://127.0.0.1:$ACCEPT_HTTP_PORT/api/admin/health" \
+curl --fail --silent "http://127.0.0.1:$ACCEPT_HTTP_PORT/api/health" \
   | tee "$ACCEPT_EVIDENCE/daemon-health.json"
 GOBBY_HOME="$LOCAL_ACCEPT_HOME" uv run gobby status \
   | tee "$ACCEPT_EVIDENCE/remote-mode-status.txt"

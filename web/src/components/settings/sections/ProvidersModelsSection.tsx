@@ -1,17 +1,25 @@
 import { useEffect, useState } from "react";
-import { NumberField, SwitchField, TextField } from "../../activity/fields";
+import {
+  NumberField,
+  SwitchField,
+  TextField,
+  type FieldOption,
+} from "../../activity/fields";
 import {
   BoundedSelectField,
   KeyValueMapField,
   KeyValueRowsField,
   StringListField,
 } from "../fields";
+import { Chip } from "../../ui/Chip";
 import {
   fetchProviderModelCatalog,
   getModelsForProvider,
   getOrderedProviders,
   getProviderDisplayName,
+  inputModalityChips,
   type ProviderModelEntry,
+  type ProviderModelOption,
 } from "../../../lib/providerModels";
 import type { UseSettingsReturn } from "../../../hooks/useSettings";
 import { SettingsSection, type SettingsSectionFields } from "./SettingsSection";
@@ -24,6 +32,7 @@ import {
   decodeDynamicMapRows,
   encodeDynamicMapRows,
 } from "./configAccessors";
+import { enumOptionsAt } from "../configSchema";
 import {
   NumberConfigField,
   SchemaSelectField,
@@ -118,13 +127,8 @@ const GENERATION_PREFIX = "ai.generation";
 const GENERATION_ENDPOINTS_PATH = `${GENERATION_PREFIX}.endpoints`;
 const PROFILE_DEFAULTS_PATH = `${GENERATION_PREFIX}.profile_defaults`;
 const CONTEXT_WINDOW_PATH = "context_window_overrides";
-
-// `GenerationEndpointConfig.protocol` enum from the daemon schema.
-const ENDPOINT_PROTOCOL_OPTIONS = [
-  { value: "openai-compatible", label: "OpenAI-compatible" },
-  { value: "lmstudio", label: "LM Studio" },
-  { value: "ollama", label: "Ollama" },
-];
+const OPENAI_COMPATIBLE_PROTOCOL = "openai-compatible";
+const CHAT_COMPLETIONS_WIRE_API = "chat-completions";
 
 interface GenerationEndpoint {
   protocol?: string;
@@ -133,7 +137,82 @@ interface GenerationEndpoint {
   model?: string;
   api_key?: string | null;
   tool_chat?: boolean;
-  vision_extract?: boolean;
+}
+
+function omitVisionExtract(
+  endpoint: GenerationEndpoint & { vision_extract?: boolean },
+): GenerationEndpoint {
+  const { vision_extract: _unused, ...rest } = endpoint;
+  return rest;
+}
+
+function sanitizeEndpointMap(
+  endpoints: Record<string, GenerationEndpoint>,
+): Record<string, GenerationEndpoint> {
+  return Object.fromEntries(
+    Object.entries(endpoints).map(([slug, endpoint]) => [
+      slug,
+      omitVisionExtract(endpoint),
+    ]),
+  );
+}
+
+function endpointEnumOptions(
+  schema: Record<string, unknown> | null,
+  slug: string,
+  field: "protocol" | "wire_api",
+): FieldOption[] {
+  return enumOptionsAt(
+    schema,
+    `${GENERATION_ENDPOINTS_PATH}.${slug || "_"}.${field}`,
+  );
+}
+
+function protocolForcesChatCompletions(protocol: string): boolean {
+  return protocol !== OPENAI_COMPATIBLE_PROTOCOL;
+}
+
+function inputModalitiesForEndpoint(
+  catalog: ProviderModelEntry[],
+  slug: string,
+  configuredModel?: string,
+): string[] | null | undefined {
+  if (!slug) return undefined;
+  const groupName = `endpoint:${slug}`.toLowerCase();
+  const group = catalog.find(
+    (entry) => entry.provider.toLowerCase() === groupName,
+  );
+  const fromGroup = group?.models ?? [];
+  const fromScattered = catalog.flatMap((entry) =>
+    entry.models.filter((model) => {
+      const value = model.value.toLowerCase();
+      return value === groupName || value.startsWith(`${groupName}/`);
+    }),
+  );
+  const models: ProviderModelOption[] =
+    fromGroup.length > 0 ? fromGroup : fromScattered;
+  if (models.length === 0) return undefined;
+
+  const trimmed = configuredModel?.trim() ?? "";
+  const isAuto = trimmed === "" || trimmed.toLowerCase() === "auto";
+  if (isAuto) {
+    return (
+      models.find((model) => model.is_default) ??
+      models.find((model) => model.value.toLowerCase() === groupName)
+    )?.input_modalities;
+  }
+
+  const needle = trimmed.toLowerCase();
+  return models.find((model) => {
+    const value = model.value.toLowerCase();
+    const canonical = model.canonical_id?.toLowerCase();
+    return (
+      value === needle ||
+      canonical === needle ||
+      value === `${groupName}/${needle}` ||
+      value.endsWith(`/${needle}`)
+    );
+  })?.input_modalities;
 }
 
 function featurePromptPaths(spec: FeatureSpec): string[] {
@@ -286,24 +365,58 @@ function GenerationEndpointEditor({
   slug,
   value,
   onChange,
+  schema,
+  catalog,
 }: {
   slug: string;
   value: GenerationEndpoint;
   onChange: (next: GenerationEndpoint) => void;
+  schema: Record<string, unknown> | null;
+  catalog: ProviderModelEntry[];
 }) {
   const name = slug || "new endpoint";
+  const protocol = value.protocol ?? OPENAI_COMPATIBLE_PROTOCOL;
   const patch = (partial: Partial<GenerationEndpoint>) =>
-    onChange({ ...value, ...partial });
+    onChange(omitVisionExtract({ ...value, ...partial }));
+  const wireApiVisible = !protocolForcesChatCompletions(protocol);
+  const chips = inputModalityChips(
+    inputModalitiesForEndpoint(catalog, slug, value.model),
+  );
 
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-3">
+      {chips.length > 0 ? (
+        <div className="capability-chips" aria-label={`Capabilities (${name})`}>
+          {chips.map((label) => (
+            <Chip key={label} className="capability-chip">
+              {label}
+            </Chip>
+          ))}
+        </div>
+      ) : null}
       <BoundedSelectField
         label="Protocol"
         ariaLabel={`Protocol (${name})`}
-        value={value.protocol ?? "openai-compatible"}
-        options={ENDPOINT_PROTOCOL_OPTIONS}
-        onChange={(protocol) => patch({ protocol })}
+        value={protocol}
+        options={endpointEnumOptions(schema, slug, "protocol")}
+        onChange={(nextProtocol) =>
+          patch({
+            protocol: nextProtocol,
+            wire_api: protocolForcesChatCompletions(nextProtocol)
+              ? CHAT_COMPLETIONS_WIRE_API
+              : (value.wire_api ?? CHAT_COMPLETIONS_WIRE_API),
+          })
+        }
       />
+      {wireApiVisible ? (
+        <BoundedSelectField
+          label="Wire API"
+          ariaLabel={`Wire API (${name})`}
+          value={value.wire_api ?? CHAT_COMPLETIONS_WIRE_API}
+          options={endpointEnumOptions(schema, slug, "wire_api")}
+          onChange={(wire_api) => patch({ wire_api })}
+        />
+      ) : null}
       <TextField
         label="API base"
         ariaLabel={`API base (${name})`}
@@ -330,17 +443,23 @@ function GenerationEndpointEditor({
         value={Boolean(value.tool_chat)}
         onChange={(tool_chat) => patch({ tool_chat })}
       />
-      <SwitchField
-        label="Vision extract"
-        ariaLabel={`Vision extract (${name})`}
-        value={Boolean(value.vision_extract)}
-        onChange={(vision_extract) => patch({ vision_extract })}
-      />
     </div>
   );
 }
 
 function GenerationGroup({ fields }: { fields: SettingsSectionFields }) {
+  const [catalog, setCatalog] = useState<ProviderModelEntry[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchProviderModelCatalog().then((entries) => {
+      if (!cancelled) setCatalog(entries);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <Subsection
       title="Generation"
@@ -358,23 +477,27 @@ function GenerationGroup({ fields }: { fields: SettingsSectionFields }) {
       <KeyValueMapField<GenerationEndpoint>
         label="Generation endpoints"
         ariaLabel="Generation endpoint"
-        value={asMap<GenerationEndpoint>(
-          fields.getValue(GENERATION_ENDPOINTS_PATH),
+        value={sanitizeEndpointMap(
+          asMap<GenerationEndpoint>(fields.getValue(GENERATION_ENDPOINTS_PATH)),
         )}
         keyPlaceholder="endpoint slug"
         addLabel="Add endpoint"
         createValue={() => ({
-          protocol: "openai-compatible",
-          wire_api: "chat-completions",
+          protocol: OPENAI_COMPATIBLE_PROTOCOL,
+          wire_api: CHAT_COMPLETIONS_WIRE_API,
           api_base: "",
           model: "",
         })}
-        onChange={(next) => fields.setValue(GENERATION_ENDPOINTS_PATH, next)}
+        onChange={(next) =>
+          fields.setValue(GENERATION_ENDPOINTS_PATH, sanitizeEndpointMap(next))
+        }
         renderValue={(endpoint, onValueChange, key) => (
           <GenerationEndpointEditor
             slug={key}
             value={endpoint}
             onChange={onValueChange}
+            schema={fields.schema}
+            catalog={catalog}
           />
         )}
       />

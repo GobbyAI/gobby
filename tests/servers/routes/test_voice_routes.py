@@ -505,9 +505,11 @@ class TestVoiceRoutes:
         server_with_voice: MagicMock,
     ) -> None:
         server_with_voice.config.voice = VoiceConfig(enabled=True)
-        server_with_voice.services.config_store.get.side_effect = (
-            lambda key: 4 if key == "chat.attachment_max_file_bytes" else None
-        )
+        # No ready runtime epoch: the route falls back to the config store snapshot.
+        server_with_voice.services.config_runtime = None
+        server_with_voice.services.config_store.read_snapshot.return_value.values = {
+            "chat.attachment_max_file_bytes": 4,
+        }
 
         with patch.object(voice_module, "build_daemon_audio_service") as build_service:
             response = client.post(

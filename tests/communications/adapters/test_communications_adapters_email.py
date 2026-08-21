@@ -1,9 +1,12 @@
 """Tests for gobby.communications.adapters.email."""
 
-from collections.abc import Callable
+import asyncio
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from email.message import EmailMessage
 from pathlib import Path
-from types import SimpleNamespace
+from types import SimpleNamespace, TracebackType
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aioimaplib
@@ -14,6 +17,8 @@ from gobby.communications.adapters.email import EmailAdapter
 from gobby.communications.models import ChannelConfig, CommsMessage
 
 pytestmark = pytest.mark.unit
+
+_TIMESTAMP = datetime(2024, 1, 1, tzinfo=UTC)
 
 
 @pytest.fixture
@@ -82,7 +87,7 @@ class TestEmailAdapter:
     ) -> None:
         config.config_json["password"] = "$secret:MISSING"
 
-        def resolver(ref):
+        def resolver(ref: str) -> str | None:
             return None
 
         with pytest.raises(ValueError, match="Could not resolve Email password"):
@@ -325,7 +330,7 @@ class TestEmailAdapter:
         msg2.add_alternative("<b>HTML</b>", subtype="html")
 
         # poll() now uses string num_str (decoded from bytes) for fetch/store
-        def fetch_side_effect(num, query):
+        def fetch_side_effect(num: str, query: str) -> SimpleNamespace:
             if num == "1":
                 return SimpleNamespace(result="OK", lines=[b"1 (RFC822)", bytes(msg1)])
             if num == "2":
@@ -468,7 +473,7 @@ class TestEmailOAuth2:
         """Missing OAuth2 client_id raises ValueError."""
         oauth2_config.config_json["oauth2_client_id"] = "$secret:MISSING"
 
-        def bad_resolver(ref):
+        def bad_resolver(ref: str) -> str | None:
             if ref == "$secret:MISSING":
                 return None
             return oauth2_resolver(ref)
@@ -554,8 +559,8 @@ async def test_send_message_with_threading(
         channel_type="email",
         name="test",
         enabled=True,
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=_TIMESTAMP,
+        updated_at=_TIMESTAMP,
         config_json={
             "from_address": "bot@example.com",
             "smtp_host": "smtp.example.com",
@@ -575,7 +580,7 @@ async def test_send_message_with_threading(
         content="Thread reply",
         metadata_json={"platform_destination": "user@example.com", "subject": "Re: Original"},
         platform_thread_id="<original-msg-id@example.com>",
-        created_at="2024-01-01T00:00:00Z",
+        created_at=_TIMESTAMP,
     )
 
     msg_id = await adapter.send_message(msg)
@@ -612,8 +617,8 @@ async def test_poll_marks_messages_as_seen(
         channel_type="email",
         name="test",
         enabled=True,
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=_TIMESTAMP,
+        updated_at=_TIMESTAMP,
         config_json={"from_address": "bot@example.com", "imap_host": "imap.example.com"},
     )
 
@@ -648,8 +653,8 @@ async def test_poll_does_not_mark_unparsed_fetch_as_seen(
         channel_type="email",
         name="test",
         enabled=True,
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=_TIMESTAMP,
+        updated_at=_TIMESTAMP,
         config_json={"from_address": "bot@example.com", "imap_host": "imap.example.com"},
     )
 
@@ -741,8 +746,8 @@ async def test_initialize_rejects_plaintext_smtp_credentials(
         channel_type="email",
         name="test",
         enabled=True,
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=_TIMESTAMP,
+        updated_at=_TIMESTAMP,
         config_json={
             "from_address": "bot@example.com",
             "smtp_host": "smtp.example.com",
@@ -757,15 +762,15 @@ async def test_initialize_rejects_plaintext_smtp_credentials(
 
 @pytest.mark.asyncio
 async def test_initialize_allows_plaintext_smtp_credentials_with_override(
-    adapter, mock_secret_resolver
+    adapter: EmailAdapter, mock_secret_resolver: Callable[[str], str | None]
 ) -> None:
     config = ChannelConfig(
         id="test",
         channel_type="email",
         name="test",
         enabled=True,
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=_TIMESTAMP,
+        updated_at=_TIMESTAMP,
         config_json={
             "from_address": "bot@example.com",
             "smtp_host": "smtp.example.com",
@@ -799,8 +804,8 @@ async def test_imap_reconnect_catches_abort(
         channel_type="email",
         name="test",
         enabled=True,
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=_TIMESTAMP,
+        updated_at=_TIMESTAMP,
         config_json={"from_address": "bot@example.com", "imap_host": "imap.example.com"},
     )
 
@@ -823,20 +828,30 @@ async def test_imap_reconnect_catches_abort(
 
 @pytest.mark.asyncio
 async def test_reconnect_checks_are_lock_guarded(adapter: EmailAdapter) -> None:
-    class RecordingAsyncLock:
+    class RecordingAsyncLock(asyncio.Lock):
         def __init__(self) -> None:
+            super().__init__()
             self.enter_count = 0
 
         async def __aenter__(self) -> None:
             self.enter_count += 1
 
-        async def __aexit__(self, exc_type, exc, tb) -> None:
+        async def __aexit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            tb: TracebackType | None,
+        ) -> None:
             return None
 
     smtp_lock = RecordingAsyncLock()
     imap_lock = RecordingAsyncLock()
 
-    async def recording_retry(coro_factory, max_retries=3, backoff_base=0.5):
+    async def recording_retry(
+        coro_factory: Callable[[], Awaitable[Any]],
+        max_retries: int = 3,
+        backoff_base: float = 0.5,
+    ) -> Any:
         return await coro_factory()
 
     adapter._smtp_client = AsyncMock()
@@ -844,10 +859,10 @@ async def test_reconnect_checks_are_lock_guarded(adapter: EmailAdapter) -> None:
     adapter._imap_client = AsyncMock()
     adapter._smtp_connection_lock = smtp_lock
     adapter._imap_connection_lock = imap_lock
-    adapter._retry = recording_retry  # type: ignore[method-assign]
 
-    await adapter._ensure_smtp_connected()
-    await adapter._ensure_imap_connected()
+    with patch.object(adapter, "_retry", recording_retry):
+        await adapter._ensure_smtp_connected()
+        await adapter._ensure_imap_connected()
 
     assert smtp_lock.enter_count == 1
     assert imap_lock.enter_count == 1
@@ -862,8 +877,8 @@ async def test_poll_rejects_comma_separated_from_injection(
         channel_type="email",
         name="test",
         enabled=True,
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=_TIMESTAMP,
+        updated_at=_TIMESTAMP,
         config_json={"from_address": "bot@example.com", "imap_host": "imap.example.com"},
     )
 
@@ -899,8 +914,8 @@ async def test_poll_decodes_body_using_part_charset(
         channel_type="email",
         name="test",
         enabled=True,
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=_TIMESTAMP,
+        updated_at=_TIMESTAMP,
         config_json={"from_address": "bot@example.com", "imap_host": "imap.example.com"},
     )
 
@@ -931,15 +946,15 @@ async def test_poll_decodes_body_using_part_charset(
 
 @pytest.mark.asyncio
 async def test_poll_returns_already_marked_messages_after_mark_seen_failure(
-    adapter, mock_secret_resolver
+    adapter: EmailAdapter, mock_secret_resolver: Callable[[str], str | None]
 ) -> None:
     config = ChannelConfig(
         id="test",
         channel_type="email",
         name="test",
         enabled=True,
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=_TIMESTAMP,
+        updated_at=_TIMESTAMP,
         config_json={"from_address": "bot@example.com", "imap_host": "imap.example.com"},
     )
 
@@ -949,10 +964,12 @@ async def test_poll_returns_already_marked_messages_after_mark_seen_failure(
         MockIMAP.return_value = mock_imap_inst
         await adapter.initialize(config, mock_secret_resolver)
 
-        async def single_try_retry(coro_factory, max_retries=3, backoff_base=0.5):
+        async def single_try_retry(
+            coro_factory: Callable[[], Awaitable[Any]],
+            max_retries: int = 3,
+            backoff_base: float = 0.5,
+        ) -> Any:
             return await coro_factory()
-
-        adapter._retry = single_try_retry  # type: ignore[method-assign]
 
         mock_imap_inst.search.return_value = _imap_response("OK", [b"1 2"])
         first_email = b"From: user@example.com\r\nMessage-ID: <m1>\r\n\r\nFirst"
@@ -966,7 +983,8 @@ async def test_poll_returns_already_marked_messages_after_mark_seen_failure(
             _imap_response("NO", [b"store failed"]),
         ]
 
-        messages = await adapter.poll()
+        with patch.object(adapter, "_retry", single_try_retry):
+            messages = await adapter.poll()
 
     assert [message.platform_message_id for message in messages] == ["<m1>"]
     assert mock_imap_inst.store.call_count == 2
@@ -982,8 +1000,8 @@ async def test_smtp_reconnect_on_failure(
         channel_type="email",
         name="test",
         enabled=True,
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=_TIMESTAMP,
+        updated_at=_TIMESTAMP,
         config_json={"from_address": "bot@example.com", "smtp_host": "smtp.example.com"},
     )
 
@@ -1018,8 +1036,8 @@ async def test_smtp_reconnect_on_noop_exception(
         channel_type="email",
         name="test",
         enabled=True,
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=_TIMESTAMP,
+        updated_at=_TIMESTAMP,
         config_json={"from_address": "bot@example.com", "smtp_host": "smtp.example.com"},
     )
 
@@ -1056,8 +1074,8 @@ async def test_send_attachment_uses_async_file_read(
         channel_type="email",
         name="test",
         enabled=True,
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=_TIMESTAMP,
+        updated_at=_TIMESTAMP,
         config_json={
             "from_address": "bot@example.com",
             "smtp_host": "smtp.example.com",
@@ -1076,7 +1094,7 @@ async def test_send_attachment_uses_async_file_read(
         direction="outbound",
         content="See attached",
         metadata_json={"subject": "File"},
-        created_at="2024-01-01T00:00:00Z",
+        created_at=_TIMESTAMP,
     )
     attachment = CommsAttachment(
         id="att_1",

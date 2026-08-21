@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter
 
 from gobby.servers.routes.admin._config import register_config_routes
-from gobby.servers.routes.admin._health import register_health_routes
+from gobby.servers.routes.admin._health import create_health_router, register_health_routes
 from gobby.servers.routes.admin._lease import register_lease_routes
 from gobby.servers.routes.admin._lifecycle import register_lifecycle_routes
 from gobby.servers.routes.admin._stats import register_stats_routes
@@ -20,6 +20,7 @@ from gobby.servers.routes.admin._usage import register_usage_routes
 
 __all__ = [
     "create_admin_router",
+    "create_health_router",
 ]
 
 if TYPE_CHECKING:

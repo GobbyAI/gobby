@@ -3,10 +3,12 @@ use postgres::Client;
 use crate::schema;
 
 mod ids;
+mod local_callee;
 mod queries;
 mod resolution;
 
 pub use ids::*;
+pub use local_callee::*;
 pub use queries::*;
 pub use resolution::*;
 

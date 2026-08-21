@@ -23,7 +23,9 @@ from gobby.config.runtime import ConfigSnapshot
 from gobby.config.secret_mask import MASKED_SECRET
 from gobby.config.values import (
     ConfigValuesError,
+    clear_stale_generation_endpoint_probe_evidence,
     reject_unprobed_responses_endpoints,
+    reject_unverified_generation_endpoint_evidence,
 )
 from gobby.config.voice_secrets import (
     mask_structured_references,
@@ -248,6 +250,27 @@ class ConfigDocumentsService:
             if key not in snapshot.desired_values or snapshot.desired_values[key] != value
         }
         omitted = frozenset(set(snapshot.desired_values) - set(wire_values))
+        reject_unverified_generation_endpoint_evidence(
+            changed_values,
+            omitted,
+            {key: tuple(key.split(".")) for key in changed_values},
+            snapshot.desired_values,
+            document=True,
+        )
+        # A namespace replace resets omitted keys and ``None`` secrets, so both
+        # read as "unset" for endpoint identity.
+        reset_keys = omitted | {key for key, value in wire_values.items() if value is None}
+        cleared = clear_stale_generation_endpoint_probe_evidence(
+            values,
+            desired=snapshot.desired,
+            previous_values=snapshot.desired_values,
+            unset=reset_keys,
+            secret_updates=secrets,
+            probe_verified=False,
+        )
+        for key in cleared:
+            validation_values[key] = None
+            wire_values[key] = None
         reject_unprobed_responses_endpoints(
             changed_values,
             omitted,

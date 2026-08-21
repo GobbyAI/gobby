@@ -21,7 +21,7 @@ from gobby.mcp_proxy.services.recommendation import RecommendationService
 from gobby.mcp_proxy.services.result_offload import _WRAPPER_MUTATION_RESERVE
 from gobby.mcp_proxy.services.server_mgmt import ServerManagementService
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.mcp_proxy.tools.results import create_results_registry
+from gobby.mcp_proxy.tools.results import _MAX_SLICE_CHARS, create_results_registry
 from gobby.mcp_proxy.tools.sessions._terminal_handoff import _capture_handoff_configs
 from gobby.mcp_proxy.tools.skills import hub_tools, search_skills
 from gobby.mcp_proxy.tools.skills._context import SkillsContext
@@ -416,7 +416,9 @@ async def test_results_schema_stays_pinned_and_live_bound_error_is_visible() -> 
 
     schema = registry.get_schema("get_tool_result")
     assert schema is not None
-    assert schema["inputSchema"]["properties"]["limit"]["maximum"] == initial_limit
+    # The advertised maximum is pinned to the static slice ceiling; the live
+    # envelope bound is enforced per call below (#20158).
+    assert schema["inputSchema"]["properties"]["limit"]["maximum"] == _MAX_SLICE_CHARS
 
     active["index"] = 1
     result = await registry.call(

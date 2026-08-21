@@ -19,6 +19,9 @@ from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.integration
 
+_TS = datetime(2024, 1, 1, tzinfo=UTC)
+_TS_PLUS_ONE_SECOND = datetime(2024, 1, 1, 0, 0, 1, tzinfo=UTC)
+
 
 @pytest.fixture
 def comms_store(temp_db: HubDatabase) -> LocalCommunicationsStore:
@@ -87,8 +90,8 @@ def test_identity_crud(comms_store: LocalCommunicationsStore) -> None:
         name="Test",
         enabled=True,
         config_json={},
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=_TS,
+        updated_at=_TS,
     )
     comms_store.create_channel(channel)
 
@@ -101,8 +104,8 @@ def test_identity_crud(comms_store: LocalCommunicationsStore) -> None:
         session_id=None,
         project_id=None,  # Should use store's project_id
         metadata_json={"role": "admin"},
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=_TS,
+        updated_at=_TS,
     )
     saved = comms_store.create_identity(identity)
     assert str(uuid.UUID(saved.id)) == saved.id
@@ -153,8 +156,8 @@ def test_resolve_identity_creates_real_store_identity_with_timestamps(
         name="Resolve Test",
         enabled=True,
         config_json={},
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=_TS,
+        updated_at=_TS,
     )
     comms_store.create_channel(channel)
 
@@ -196,8 +199,8 @@ def test_message_crud(comms_store: LocalCommunicationsStore) -> None:
             name="Msg",
             enabled=True,
             config_json={},
-            created_at="2024-01-01T00:00:00Z",
-            updated_at="2024-01-01T00:00:00Z",
+            created_at=_TS,
+            updated_at=_TS,
         )
     )
     comms_store.create_identity(
@@ -205,8 +208,8 @@ def test_message_crud(comms_store: LocalCommunicationsStore) -> None:
             id="cccccccc-2222-4ccc-8ccc-cccccccc0001",
             channel_id="cccccccc-1111-4ccc-8ccc-cccccccc0003",
             external_user_id="u1",
-            created_at="2024-01-01T00:00:00Z",
-            updated_at="2024-01-01T00:00:00Z",
+            created_at=_TS,
+            updated_at=_TS,
         )
     )
 
@@ -222,7 +225,7 @@ def test_message_crud(comms_store: LocalCommunicationsStore) -> None:
         session_id=None,
         status="sent",
         metadata_json={"tokens": 10},
-        created_at="2024-01-01T00:00:00Z",
+        created_at=_TS,
     )
     saved = comms_store.create_message(message)
     assert str(uuid.UUID(saved.id)) == saved.id
@@ -296,8 +299,8 @@ def test_create_message_deduplicates_channel_platform_message_id(
             name="Dedup",
             enabled=True,
             config_json={},
-            created_at="2024-01-01T00:00:00Z",
-            updated_at="2024-01-01T00:00:00Z",
+            created_at=_TS,
+            updated_at=_TS,
         )
     )
 
@@ -308,7 +311,7 @@ def test_create_message_deduplicates_channel_platform_message_id(
             direction="inbound",
             content="first",
             platform_message_id="platform-1",
-            created_at="2024-01-01T00:00:00Z",
+            created_at=_TS,
         )
     )
     duplicate = comms_store.create_message(
@@ -318,7 +321,7 @@ def test_create_message_deduplicates_channel_platform_message_id(
             direction="inbound",
             content="second",
             platform_message_id="platform-1",
-            created_at="2024-01-01T00:00:01Z",
+            created_at=_TS_PLUS_ONE_SECOND,
         )
     )
 
@@ -340,8 +343,8 @@ def test_routing_rule_crud(comms_store: LocalCommunicationsStore) -> None:
             name="Rule",
             enabled=True,
             config_json={},
-            created_at="2024-01-01T00:00:00Z",
-            updated_at="2024-01-01T00:00:00Z",
+            created_at=_TS,
+            updated_at=_TS,
         )
     )
 
@@ -354,8 +357,8 @@ def test_routing_rule_crud(comms_store: LocalCommunicationsStore) -> None:
         priority=10,
         enabled=True,
         config_json={},
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=_TS,
+        updated_at=_TS,
     )
     saved = comms_store.create_routing_rule(rule)
     assert saved.id == rule.id

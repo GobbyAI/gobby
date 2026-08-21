@@ -1,16 +1,21 @@
-"""Activation probes for Codex-backed Responses generation endpoints."""
+"""Activation probes for generation endpoints."""
 
 from __future__ import annotations
 
 import asyncio
-import base64
+import json
 import re
+import secrets
+import struct
 import tempfile
+import zlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from gobby.adapters.codex_impl.client import CodexAppServerClient
+from gobby.agents.local_model import resolve_vllm_served_model
 from gobby.ai._text_generation_adapters import CodexCLITextGenerateAdapter
 from gobby.ai._text_generation_contracts import TextGenerationRequest
 from gobby.ai.codex_endpoint import (
@@ -23,18 +28,68 @@ from gobby.ai.codex_endpoint import (
 from gobby.ai.vision import CodexEndpointVisionExtractAdapter, VisionExtractRequest
 from gobby.config.ai import GenerationEndpointConfig
 from gobby.config.app import DaemonConfig
+from gobby.llm.local_provider_adapters import create_local_provider_adapter
 
 _TRANSIENT_STATUS_RE = re.compile(r"\b(?:429|5\d\d)\b")
 _RETRY_AFTER_RE = re.compile(r"retry-after\s*[:=]\s*(\d+(?:\.\d+)?)", re.IGNORECASE)
 _AUTH_RE = re.compile(r"\b(?:401|403)\b|auth(?:entication|orization)?|api key", re.IGNORECASE)
 _PROBE_TOKEN = "GOBBY_K3_CONTEXT_7F3A"
-_PNG_1X1 = base64.b64decode(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nQAAAABJRU5ErkJggg=="
+# Vision probes show a randomly chosen solid-color square and accept only a
+# reply that names that color and no other, so a text-only model (or a server
+# that silently drops image parts) cannot pass by acknowledging "an image".
+_PROBE_COLORS: tuple[tuple[str, tuple[int, int, int]], ...] = (
+    ("red", (255, 0, 0)),
+    ("green", (0, 255, 0)),
+    ("blue", (0, 0, 255)),
 )
+_PROBE_COLOR_NAMES: frozenset[str] = frozenset(name for name, _ in _PROBE_COLORS)
+_PROBE_IMAGE_SIZE = 64
+_CHAT_PROBE_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "gobby_probe_tool",
+        "description": "Report that the tool-call probe succeeded.",
+        "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+}
 
 
 class EndpointActivationError(RuntimeError):
-    """A Responses endpoint failed its mandatory activation contract."""
+    """A generation endpoint failed its mandatory activation contract."""
+
+
+def modalities_for_served_model(
+    endpoint: GenerationEndpointConfig,
+    model: str,
+) -> list[str] | None:
+    """Return persisted probe modalities for ``model``, else unknown."""
+    if endpoint.probed_model is None or endpoint.probed_model != model:
+        return None
+    if endpoint.input_modalities is None:
+        return None
+    return list(endpoint.input_modalities)
+
+
+def _activation_result(
+    endpoint: GenerationEndpointConfig,
+    *,
+    probed_model: str,
+    input_modalities: list[str],
+    probed_json: bool,
+    probed_tools: bool | None,
+) -> EndpointActivationResult:
+    updated = endpoint.model_copy(
+        update={
+            "probed_model": probed_model,
+            "input_modalities": input_modalities,
+            "probed_json": probed_json,
+            "probed_tools": probed_tools,
+        }
+    )
+    return EndpointActivationResult(
+        endpoint=updated,
+        vision_enabled="image" in input_modalities,
+    )
 
 
 @dataclass(frozen=True)
@@ -83,6 +138,28 @@ async def _probe_text(endpoint_name: str, endpoint: GenerationEndpointConfig) ->
     )
     if "GOBBY_K3_TEXT_OK" not in text:
         raise EndpointActivationError("Responses text probe returned an unexpected response")
+
+
+async def _probe_json(endpoint_name: str, endpoint: GenerationEndpointConfig) -> None:
+    adapter = CodexCLITextGenerateAdapter(
+        timeout_seconds=120.0,
+        env=codex_endpoint_env(endpoint),
+        config_overrides=codex_endpoint_config_overrides(endpoint_name, endpoint),
+    )
+    text = await adapter.generate(
+        TextGenerationRequest(
+            prompt='Reply with JSON object {"ok": true} and nothing else.',
+            provider="codex",
+            model=endpoint.model,
+            caller="generation-endpoint-activation",
+        )
+    )
+    try:
+        parsed = json.loads(text.strip())
+    except json.JSONDecodeError as exc:
+        raise EndpointActivationError("Responses JSON probe returned non-JSON") from exc
+    if not isinstance(parsed, dict):
+        raise EndpointActivationError("Responses JSON probe returned a non-object")
 
 
 async def _collect_turn(
@@ -185,9 +262,10 @@ async def _probe_vision(
     endpoint: GenerationEndpointConfig,
     daemon_config: DaemonConfig,
 ) -> None:
+    color, image_bytes = _probe_color()
     with tempfile.TemporaryDirectory(prefix="gobby-endpoint-vision-") as temp_dir:
         image_path = Path(temp_dir) / "probe.png"
-        image_path.write_bytes(_PNG_1X1)
+        image_path.write_bytes(image_bytes)
         client = _client(endpoint_name, endpoint)
         try:
             await client.start()
@@ -200,11 +278,10 @@ async def _probe_vision(
             text, _, _ = await _collect_turn(
                 client,
                 thread.id,
-                "State that you received an image.",
+                _VISION_PROBE_PROMPT,
                 images=[str(image_path)],
             )
-            if not text:
-                raise EndpointActivationError("Responses image-input probe returned no text")
+            _check_vision_probe_reply("Responses", text, color)
         finally:
             await client.stop()
 
@@ -215,7 +292,7 @@ async def _probe_vision(
                     image_path=str(image_path),
                     provider=f"endpoint:{endpoint_name}",
                     model=endpoint.model,
-                    context="Describe the single-pixel image.",
+                    context="Describe the solid-color image.",
                 )
             )
             if not extracted:
@@ -225,7 +302,9 @@ async def _probe_vision(
 
 
 def _sanitized_activation_error(exc: BaseException, api_key: str) -> EndpointActivationError:
-    message = str(exc).replace(api_key, "[REDACTED]")
+    message = str(exc)
+    if api_key:
+        message = message.replace(api_key, "[REDACTED]")
     if _AUTH_RE.search(message):
         return EndpointActivationError(
             "Responses endpoint authentication failed; verify the configured secret"
@@ -246,18 +325,41 @@ async def probe_responses_endpoint(
     async def probe_chain() -> EndpointActivationResult:
         try:
             await _retry_activation(lambda: _probe_text(endpoint_name, endpoint))
-            await _retry_activation(lambda: _probe_tool_context_and_resume(endpoint_name, endpoint))
         except Exception as exc:
             raise _sanitized_activation_error(exc, api_key) from exc
 
-        if not endpoint.vision_extract:
-            return EndpointActivationResult(endpoint=endpoint, vision_enabled=False)
+        probed_json = False
+        try:
+            await _retry_activation(lambda: _probe_json(endpoint_name, endpoint))
+            probed_json = True
+        except Exception:
+            probed_json = False
+
+        probed_tools: bool | None
+        if not endpoint.tool_chat:
+            probed_tools = None
+        else:
+            try:
+                await _retry_activation(
+                    lambda: _probe_tool_context_and_resume(endpoint_name, endpoint)
+                )
+                probed_tools = True
+            except Exception:
+                probed_tools = False
+
+        input_modalities = ["text"]
         try:
             await _retry_activation(lambda: _probe_vision(endpoint_name, endpoint, daemon_config))
+            input_modalities = ["text", "image"]
         except Exception:
-            text_only = endpoint.model_copy(update={"vision_extract": False})
-            return EndpointActivationResult(endpoint=text_only, vision_enabled=False)
-        return EndpointActivationResult(endpoint=endpoint, vision_enabled=True)
+            input_modalities = ["text"]
+        return _activation_result(
+            endpoint,
+            probed_model=endpoint.model,
+            input_modalities=input_modalities,
+            probed_json=probed_json,
+            probed_tools=probed_tools,
+        )
 
     timeout_seconds = daemon_config.ai.generation.timeout_seconds
     try:
@@ -266,4 +368,172 @@ async def probe_responses_endpoint(
     except TimeoutError as exc:
         raise EndpointActivationError(
             f"Responses endpoint activation timed out after {timeout_seconds:g} seconds"
+        ) from exc
+
+
+async def _resolve_probe_model(endpoint: GenerationEndpointConfig) -> str:
+    if endpoint.protocol == "vllm":
+        return await resolve_vllm_served_model(endpoint)
+    return endpoint.model
+
+
+async def _probe_chat_text(adapter: Any, model: str) -> None:
+    result = await adapter.generate_text_result(
+        "Reply with exactly GOBBY_K3_TEXT_OK.",
+        system_prompt=None,
+        model=model,
+        max_tokens=64,
+    )
+    if "GOBBY_K3_TEXT_OK" not in result.text:
+        raise EndpointActivationError("Chat-completions text probe returned an unexpected response")
+
+
+async def _probe_chat_json(adapter: Any, model: str) -> None:
+    parsed = await adapter.generate_json(
+        'Reply with JSON {"ok": true} and nothing else.',
+        system_prompt="You are a helpful assistant. Respond with valid JSON.",
+        model=model,
+        max_tokens=64,
+        allow_fallback=False,
+    )
+    if not isinstance(parsed, dict):
+        raise EndpointActivationError("Chat-completions JSON probe returned a non-object")
+
+
+async def _probe_chat_tools(adapter: Any, model: str) -> None:
+    client = getattr(adapter, "client", None)
+    if client is None:
+        raise EndpointActivationError("Endpoint adapter has no client for tool probing")
+    response = await client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": "Call gobby_probe_tool now."}],
+        tools=[_CHAT_PROBE_TOOL],
+        tool_choice={
+            "type": "function",
+            "function": {"name": "gobby_probe_tool"},
+        },
+        max_tokens=64,
+    )
+    message = response.choices[0].message
+    tool_calls = getattr(message, "tool_calls", None) or []
+    if not tool_calls:
+        raise EndpointActivationError("Chat-completions tool probe returned no tool call")
+
+
+async def _probe_chat_vision(adapter: Any, model: str) -> None:
+    color, image_bytes = _probe_color()
+    with tempfile.TemporaryDirectory(prefix="gobby-endpoint-vision-") as temp_dir:
+        image_path = Path(temp_dir) / "probe.png"
+        image_path.write_bytes(image_bytes)
+        result = await adapter.generate_text_result(
+            _VISION_PROBE_PROMPT,
+            system_prompt="You are a vision assistant.",
+            model=model,
+            max_tokens=64,
+            images=[str(image_path)],
+        )
+    _check_vision_probe_reply("Chat-completions", result.text, color)
+
+
+def _probe_color() -> tuple[str, bytes]:
+    """Pick the probe color at random and render its solid PNG."""
+    name, rgb = secrets.choice(_PROBE_COLORS)
+    return name, _solid_color_png(rgb, _PROBE_IMAGE_SIZE)
+
+
+def _solid_color_png(rgb: tuple[int, int, int], size: int) -> bytes:
+    """Render a ``size``×``size`` 8-bit RGB PNG filled with ``rgb``."""
+
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        crc = zlib.crc32(kind + payload) & 0xFFFFFFFF
+        return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", crc)
+
+    row = b"\x00" + bytes(rgb) * size
+    header = struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", zlib.compress(row * size))
+        + chunk(b"IEND", b"")
+    )
+
+
+_VISION_PROBE_PROMPT = (
+    "The attached image is a single solid color. Reply with exactly one word "
+    "naming that color: red, green, or blue."
+)
+
+
+def _vision_probe_reply_matches(text: str, expected: str) -> bool:
+    """Accept only a reply naming ``expected`` and no other probe color."""
+    named = {word for word in re.findall(r"[a-z]+", text.lower()) if word in _PROBE_COLOR_NAMES}
+    return named == {expected}
+
+
+def _check_vision_probe_reply(transport: str, text: str, expected: str) -> None:
+    if not text.strip():
+        raise EndpointActivationError(f"{transport} vision probe returned no text")
+    if not _vision_probe_reply_matches(text, expected):
+        raise EndpointActivationError(
+            f"{transport} vision probe did not identify the {expected} image "
+            f"(reply: {text.strip()[:80]!r})"
+        )
+
+
+async def probe_chat_completions_endpoint(
+    endpoint_name: str,
+    endpoint: GenerationEndpointConfig,
+    daemon_config: DaemonConfig,
+) -> EndpointActivationResult:
+    """Probe chat-completions endpoints and persist model-scoped evidence."""
+    del endpoint_name
+    if endpoint.wire_api == "responses":
+        raise ValueError("Chat-completions probing is only for chat-completions endpoints")
+
+    async def probe_chain() -> EndpointActivationResult:
+        resolved_model = await _resolve_probe_model(endpoint)
+        adapter = create_local_provider_adapter(endpoint)
+        try:
+            await _retry_activation(lambda: _probe_chat_text(adapter, resolved_model))
+        except Exception as exc:
+            raise _sanitized_activation_error(exc, endpoint.api_key or "") from exc
+
+        probed_json = False
+        try:
+            await _retry_activation(lambda: _probe_chat_json(adapter, resolved_model))
+            probed_json = True
+        except Exception:
+            probed_json = False
+
+        probed_tools: bool | None
+        if not endpoint.tool_chat:
+            probed_tools = None
+        else:
+            try:
+                await _retry_activation(lambda: _probe_chat_tools(adapter, resolved_model))
+                probed_tools = True
+            except Exception:
+                probed_tools = False
+
+        input_modalities = ["text"]
+        try:
+            await _retry_activation(lambda: _probe_chat_vision(adapter, resolved_model))
+            input_modalities = ["text", "image"]
+        except Exception:
+            input_modalities = ["text"]
+        return _activation_result(
+            endpoint,
+            probed_model=resolved_model,
+            input_modalities=input_modalities,
+            probed_json=probed_json,
+            probed_tools=probed_tools,
+        )
+
+    timeout_seconds = daemon_config.ai.generation.timeout_seconds
+    try:
+        async with asyncio.timeout(timeout_seconds):
+            return await probe_chain()
+    except TimeoutError as exc:
+        raise EndpointActivationError(
+            f"Chat-completions endpoint activation timed out after {timeout_seconds:g} seconds"
         ) from exc

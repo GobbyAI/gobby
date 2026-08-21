@@ -39,7 +39,7 @@ Refreshed 2026-07-10 after the monorepo merge and 0.5.0 branch work.
 - Daemon auth is landing on the 0.5.0 branch
   (`.gobby/plans/daemon-auth-0-5-0.md`): `/api/config/*` and `/api/tasks`
   require `Authorization: Bearer` with the install-scoped token from
-  `~/.gobby/local_cli_token`, while `/api/admin/health` stays public. Auth
+  `~/.gobby/local_cli_token`, while `/api/health` stays public. Auth
   semantics are part of every frozen contract
 - Python owns the live daemon, schema policy, fixtures, and rollout control
 - Rust does not yet have a `gobby-daemon` crate
@@ -114,7 +114,7 @@ The readiness gate is met when all of the following are true:
 - The daemon-auth enforcement flip has landed, so 401 bodies and header
   semantics are final before fixtures are captured on authenticated routes
 - The first migration surfaces are frozen as exact contracts:
-  - `GET /api/admin/health`
+  - `GET /api/health`
   - `GET /api/config/schema`
   - `GET /api/config/values`
   - `GET /api/tasks`
@@ -241,7 +241,7 @@ owned by Python.
 
 - Freeze exact contracts for the first four migration surfaces
 - Contracts include auth semantics: the bearer requirement, the exact 401
-  body, and the `X-Gobby-Local-Token` header alias; `/api/admin/health` stays
+  body, and the `X-Gobby-Local-Token` header alias; `/api/health` stays
   public
 - Contracts state the global exception-handler quirk explicitly: uncaught
   errors return HTTP 200 with
@@ -259,19 +259,19 @@ owned by Python.
 
 ### Backlog-Ready Atomic Items
 
-- `R0-01` Define the exact contract for `GET /api/admin/health`
+- `R0-01` Define the exact contract for `GET /api/health`
 - `R0-02` Define the exact contract for `GET /api/config/schema`
 - `R0-03` Define the exact contract for `GET /api/config/values`
 - `R0-04` Define the reduced v1 contract for `GET /api/tasks`
-- `R0-05` Capture success fixtures for `GET /api/admin/health`
+- `R0-05` Capture success fixtures for `GET /api/health`
 - `R0-06` Capture success fixtures for `GET /api/config/schema`
 - `R0-07` Capture success fixtures for `GET /api/config/values`
 - `R0-08` Capture success fixtures for `GET /api/tasks`
-- `R0-09` Capture error fixtures for `GET /api/admin/health`
+- `R0-09` Capture error fixtures for `GET /api/health`
 - `R0-10` Capture error fixtures for `GET /api/config/schema`
 - `R0-11` Capture error fixtures for `GET /api/config/values`
 - `R0-12` Capture error fixtures for `GET /api/tasks`
-- `R0-13` Capture degraded-daemon fixtures for `GET /api/admin/health`
+- `R0-13` Capture degraded-daemon fixtures for `GET /api/health`
 - `R0-14` Capture degraded-daemon fixtures for `GET /api/config/schema`
 - `R0-15` Capture degraded-daemon fixtures for `GET /api/config/values`
 - `R0-16` Capture degraded-daemon fixtures for `GET /api/tasks`
@@ -383,16 +383,16 @@ read-only boundaries first.
 
 - `R3-01` Scaffold the `gobby-daemon` crate and basic HTTP server
 - `R3-02` Implement shared request context and JSON error behavior in Rust
-- `R3-03` Implement `GET /api/admin/health` in Rust
+- `R3-03` Implement `GET /api/health` in Rust
 - `R3-04` Implement `GET /api/config/schema` in Rust
 - `R3-05` Implement `GET /api/config/values` in Rust
-- `R3-06` Enable compare mode for `GET /api/admin/health`
+- `R3-06` Enable compare mode for `GET /api/health`
 - `R3-07` Enable compare mode for `GET /api/config/schema`
 - `R3-08` Enable compare mode for `GET /api/config/values`
-- `R3-09` Enable opt-in delegation for `GET /api/admin/health`
+- `R3-09` Enable opt-in delegation for `GET /api/health`
 - `R3-10` Enable opt-in delegation for `GET /api/config/schema`
 - `R3-11` Enable opt-in delegation for `GET /api/config/values`
-- `R3-12` Prove route-scoped rollback for `GET /api/admin/health`
+- `R3-12` Prove route-scoped rollback for `GET /api/health`
 - `R3-13` Prove route-scoped rollback for `GET /api/config/schema`
 - `R3-14` Prove route-scoped rollback for `GET /api/config/values`
 

@@ -31,6 +31,7 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
         create_embeddings_router,
         create_files_router,
         create_github_triage_router,
+        create_health_router,
         create_hooks_router,
         create_hub_files_proxy_router,
         create_llm_router,
@@ -62,6 +63,7 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
     from gobby.servers.routes.auth import create_auth_router
 
     app.include_router(create_auth_router(server))
+    app.include_router(create_health_router(server))
     app.include_router(create_admin_router(server))
     app.include_router(create_agent_spawn_router(server))
     app.include_router(create_agents_router(server))

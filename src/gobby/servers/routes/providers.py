@@ -10,8 +10,9 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter
 
-from gobby.agents.codex_oss import CODEX_OSS_LOCAL_PROVIDERS
+from gobby.agents.codex_oss import codex_local_transport_strategy
 from gobby.ai.codex_endpoint import codex_endpoint_display_name
+from gobby.ai.endpoint_activation import modalities_for_served_model
 from gobby.ai.endpoints import endpoint_provider
 from gobby.providers import provider_metadata
 from gobby.providers.capabilities.models import ModelCapability, ProviderSnapshot
@@ -164,6 +165,12 @@ async def _local_generation_model_groups(
     )
 
 
+def _local_catalog_model(model: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(model)
+    payload["input_modalities"] = model.get("input_modalities")
+    return payload
+
+
 def _local_generation_provider_entries(
     groups: list[LocalEndpointModelGroup],
     *,
@@ -174,10 +181,9 @@ def _local_generation_provider_entries(
     provider_type_counts = Counter(group.provider_type for group in groups)
     entries: list[dict[str, Any]] = []
     for group in groups:
-        # LM Studio/Ollama chat-completions endpoints execute through the
-        # Codex OSS runtime (see WebChatRuntimeManager); generic
-        # OpenAI-compatible endpoints have no web-chat transport (#19161).
-        routable = group.provider_type in CODEX_OSS_LOCAL_PROVIDERS
+        # LM Studio/Ollama execute through Codex OSS; vLLM uses config-override
+        # chat-wire transport; generic OpenAI-compatible stays catalog-only.
+        routable = codex_local_transport_strategy(group.provider_type) is not None
         if not routable:
             unavailable_reason: str | None = _GENERIC_LOCAL_UNAVAILABLE_REASON
         elif group.error:
@@ -197,7 +203,7 @@ def _local_generation_provider_entries(
         entry: dict[str, Any] = {
             "provider": group.provider,
             "available": available,
-            "models": group.models,
+            "models": [_local_catalog_model(model) for model in group.models],
             "source": group.source,
             "startup_error": group.error,
             "display_name": display_name,
@@ -301,7 +307,7 @@ def _configured_endpoint_provider_entries(server: HTTPServer | None) -> list[dic
 def _responses_endpoint_models(server: HTTPServer | None) -> list[dict[str, Any]]:
     models: list[dict[str, Any]] = []
     for endpoint_name, endpoint in _configured_endpoints(server, "responses"):
-        modalities = ["text", "image"] if endpoint.vision_extract else ["text"]
+        modalities = modalities_for_served_model(endpoint, endpoint.model)
         models.append(
             {
                 "value": f"{endpoint_provider(endpoint_name)}/{endpoint.model}",

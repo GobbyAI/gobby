@@ -212,7 +212,6 @@ fn heritage_endpoint(
     module: Option<&str>,
 ) -> Option<(HeritageEndpoint, String, Option<String>)> {
     match kind {
-        CallTargetKind::LocalImport => None,
         CallTargetKind::Symbol => {
             let id = symbol_id.filter(|id| !id.is_empty())?;
             Some((HeritageEndpoint::Symbol, id.to_string(), None))
@@ -227,7 +226,7 @@ fn heritage_endpoint(
                 Some(module.unwrap_or_default().to_string()),
             ))
         }
-        CallTargetKind::Unresolved => {
+        CallTargetKind::LocalImport | CallTargetKind::Unresolved => {
             if name.is_empty() {
                 return None;
             }

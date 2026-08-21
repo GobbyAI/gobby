@@ -103,7 +103,9 @@ def test_dockerfile_uses_manifest_build_args_and_initdb_seed(repo_root: Path) ->
     assert 'test -n "$PG_SEARCH_VERSION"' in dockerfile
     assert 'test -n "$PG_SEARCH_SHA256"' in dockerfile
     assert "sha256sum -c -" in dockerfile
-    assert "postgresql-18-pgaudit=18.0-2.pgdg13+1" in dockerfile
+    assert "'postgresql-18-pgaudit=18.*'" in dockerfile
+    assert "'curl=8.14.1-*'" in dockerfile
+    assert "'ca-certificates=20250419*'" in dockerfile
     assert "postgresql-18-pg-search_${PG_SEARCH_VERSION}-1PARADEDB-trixie_${arch}.deb" in dockerfile
     assert "COPY initdb.d/ /docker-entrypoint-initdb.d/" in dockerfile
 

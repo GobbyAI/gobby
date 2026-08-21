@@ -9,7 +9,7 @@ Tests cover:
 """
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Literal
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -51,7 +51,7 @@ class ConcreteAdapter(BaseAdapter):
     def __init__(
         self,
         translate_result: HookEvent | None = None,
-        response_result: dict | None = None,
+        response_result: dict[str, Any] | None = None,
     ):
         """Initialize the concrete test adapter.
 
@@ -62,11 +62,11 @@ class ConcreteAdapter(BaseAdapter):
         self._translate_result = translate_result
         self._response_result = response_result or {}
 
-    def translate_to_hook_event(self, native_event: dict) -> HookEvent | None:
+    def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent | None:
         """Return pre-configured translation result."""
         return self._translate_result
 
-    def translate_from_hook_response(self, response: HookResponse) -> dict:
+    def translate_from_hook_response(self, response: HookResponse) -> dict[str, Any]:
         """Return pre-configured response result."""
         return self._response_result
 
@@ -76,7 +76,7 @@ class IncompleteAdapter(BaseAdapter):
 
     source = SessionSource.QWEN
 
-    def translate_to_hook_event(self, native_event: dict) -> HookEvent | None:
+    def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent | None:
         """Only implement one abstract method."""
         return None
 
@@ -84,10 +84,10 @@ class IncompleteAdapter(BaseAdapter):
 class MissingSourceAdapter(BaseAdapter):
     """Adapter that implements methods but does not declare its source."""
 
-    def translate_to_hook_event(self, native_event: dict) -> HookEvent | None:
+    def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent | None:
         return None
 
-    def translate_from_hook_response(self, response: HookResponse) -> dict:
+    def translate_from_hook_response(self, response: HookResponse) -> dict[str, Any]:
         return {}
 
 
@@ -96,19 +96,28 @@ class MissingSourceAdapter(BaseAdapter):
 # =============================================================================
 
 
+def _instantiate(adapter_cls: Any) -> object:
+    """Call ``adapter_cls`` at runtime so tests can observe ABC enforcement.
+
+    The parameter is ``Any`` on purpose: these tests deliberately instantiate
+    abstract classes, which mypy would otherwise reject statically.
+    """
+    return adapter_cls()
+
+
 class TestBaseAdapterAbstract:
     """Tests for BaseAdapter abstract class properties."""
 
     def test_cannot_instantiate_base_adapter_directly(self) -> None:
         """BaseAdapter cannot be instantiated directly."""
         with pytest.raises(TypeError, match="Can't instantiate abstract class"):
-            BaseAdapter()
+            _instantiate(BaseAdapter)
 
     def test_cannot_instantiate_incomplete_adapter(self) -> None:
         """Adapter missing abstract methods cannot be instantiated."""
         # IncompleteAdapter is missing translate_from_hook_response
         with pytest.raises(TypeError, match="Can't instantiate abstract class"):
-            IncompleteAdapter()
+            _instantiate(IncompleteAdapter)
 
     def test_concrete_adapter_instantiation(self) -> None:
         """Concrete adapter with all methods can be instantiated."""
@@ -123,7 +132,7 @@ class TestBaseAdapterAbstract:
     def test_cannot_instantiate_adapter_without_source(self) -> None:
         """Adapter missing source cannot be instantiated."""
         with pytest.raises(TypeError, match="Can't instantiate abstract class"):
-            MissingSourceAdapter()
+            _instantiate(MissingSourceAdapter)
 
 
 class TestBaseAdapterSubclassing:
@@ -139,7 +148,9 @@ class TestBaseAdapterSubclassing:
         """Concrete subclass can override handle_native."""
 
         class CustomAdapter(ConcreteAdapter):
-            def handle_native(self, native_event: dict, hook_manager: "HookManager") -> dict:
+            def handle_native(
+                self, native_event: dict[str, Any], hook_manager: "HookManager"
+            ) -> dict[str, Any]:
                 return {"overridden": True}
 
         adapter = CustomAdapter()
@@ -155,19 +166,19 @@ class TestBaseAdapterSubclassing:
         class QwenTestAdapter(BaseAdapter):
             source = SessionSource.QWEN
 
-            def translate_to_hook_event(self, native_event: dict) -> HookEvent | None:
+            def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent | None:
                 return None
 
-            def translate_from_hook_response(self, response: HookResponse) -> dict:
+            def translate_from_hook_response(self, response: HookResponse) -> dict[str, Any]:
                 return {}
 
         class CodexTestAdapter(BaseAdapter):
             source = SessionSource.CODEX
 
-            def translate_to_hook_event(self, native_event: dict) -> HookEvent | None:
+            def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent | None:
                 return None
 
-            def translate_from_hook_response(self, response: HookResponse) -> dict:
+            def translate_from_hook_response(self, response: HookResponse) -> dict[str, Any]:
                 return {}
 
         qwen_adapter = QwenTestAdapter()
@@ -210,11 +221,11 @@ class TestTranslateToHookEvent:
             source = SessionSource.CLAUDE
             received_event = None
 
-            def translate_to_hook_event(self, native_event: dict) -> HookEvent | None:
+            def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent | None:
                 InspectingAdapter.received_event = native_event
                 return None
 
-            def translate_from_hook_response(self, response: HookResponse) -> dict:
+            def translate_from_hook_response(self, response: HookResponse) -> dict[str, Any]:
                 return {}
 
         adapter = InspectingAdapter()
@@ -254,10 +265,10 @@ class TestTranslateFromHookResponse:
             source = SessionSource.CLAUDE
             received_response = None
 
-            def translate_to_hook_event(self, native_event: dict) -> HookEvent | None:
+            def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent | None:
                 return None
 
-            def translate_from_hook_response(self, response: HookResponse) -> dict:
+            def translate_from_hook_response(self, response: HookResponse) -> dict[str, Any]:
                 InspectingAdapter.received_response = response
                 return {"processed": True}
 
@@ -290,7 +301,9 @@ class TestHandleNative:
         manager.handle.return_value = HookResponse(decision="allow")
         return manager
 
-    def test_handle_native_full_roundtrip(self, sample_hook_event, mock_hook_manager) -> None:
+    def test_handle_native_full_roundtrip(
+        self, sample_hook_event: HookEvent, mock_hook_manager: MagicMock
+    ) -> None:
         """handle_native performs full translate -> process -> translate cycle."""
         adapter = ConcreteAdapter(
             translate_result=sample_hook_event,
@@ -306,7 +319,7 @@ class TestHandleNative:
         assert result == {"decision": "allow", "continue": True}
 
     def test_handle_native_does_not_stamp_daemon_machine_id(
-        self, sample_hook_event, mock_hook_manager
+        self, sample_hook_event: HookEvent, mock_hook_manager: MagicMock
     ) -> None:
         """handle_native preserves client-provided machine identity only."""
         adapter = ConcreteAdapter(
@@ -323,7 +336,9 @@ class TestHandleNative:
         handled_event = mock_hook_manager.handle.call_args.args[0]
         assert handled_event.machine_id is None
 
-    def test_handle_native_returns_empty_when_event_is_none(self, mock_hook_manager) -> None:
+    def test_handle_native_returns_empty_when_event_is_none(
+        self, mock_hook_manager: MagicMock
+    ) -> None:
         """handle_native returns empty dict when translate returns None."""
         adapter = ConcreteAdapter(translate_result=None)
 
@@ -335,7 +350,9 @@ class TestHandleNative:
         # Should return empty dict
         assert result == {}
 
-    def test_handle_native_passes_hook_response_to_translate(self, sample_hook_event) -> None:
+    def test_handle_native_passes_hook_response_to_translate(
+        self, sample_hook_event: HookEvent
+    ) -> None:
         """handle_native passes HookResponse from manager to translate method."""
         expected_response = HookResponse(
             decision="deny",
@@ -350,10 +367,10 @@ class TestHandleNative:
             source = SessionSource.CLAUDE
             received_response = None
 
-            def translate_to_hook_event(self, native_event: dict) -> HookEvent | None:
+            def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent | None:
                 return sample_hook_event
 
-            def translate_from_hook_response(self, response: HookResponse) -> dict:
+            def translate_from_hook_response(self, response: HookResponse) -> dict[str, Any]:
                 VerifyingAdapter.received_response = response
                 return {"decision": response.decision}
 
@@ -364,9 +381,17 @@ class TestHandleNative:
         assert VerifyingAdapter.received_response is expected_response
         assert result["decision"] == "deny"
 
-    def test_handle_native_with_various_response_decisions(self, sample_hook_event) -> None:
+    def test_handle_native_with_various_response_decisions(
+        self, sample_hook_event: HookEvent
+    ) -> None:
         """handle_native works with all response decision types."""
-        decisions = ["allow", "deny", "ask", "block", "modify"]
+        decisions: list[Literal["allow", "deny", "ask", "block", "modify"]] = [
+            "allow",
+            "deny",
+            "ask",
+            "block",
+            "modify",
+        ]
 
         for decision in decisions:
             mock_manager = MagicMock()
@@ -382,7 +407,7 @@ class TestHandleNative:
             assert result["decision"] == decision
 
     def test_handle_native_preserves_native_event(
-        self, sample_hook_event, mock_hook_manager
+        self, sample_hook_event: HookEvent, mock_hook_manager: MagicMock
     ) -> None:
         """handle_native passes native event unchanged to translate."""
         received_events = []
@@ -390,11 +415,11 @@ class TestHandleNative:
         class TrackingAdapter(BaseAdapter):
             source = SessionSource.CLAUDE
 
-            def translate_to_hook_event(self, native_event: dict) -> HookEvent | None:
+            def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent | None:
                 received_events.append(native_event)
                 return sample_hook_event
 
-            def translate_from_hook_response(self, response: HookResponse) -> dict:
+            def translate_from_hook_response(self, response: HookResponse) -> dict[str, Any]:
                 return {}
 
         adapter = TrackingAdapter()
@@ -431,7 +456,7 @@ class TestHandleNativeEdgeCases:
 
         assert result == {"status": "ok"}
 
-    def test_handle_native_with_complex_response(self, sample_hook_event) -> None:
+    def test_handle_native_with_complex_response(self, sample_hook_event: HookEvent) -> None:
         """handle_native handles complex translated responses."""
         mock_manager = MagicMock()
         mock_manager.handle.return_value = HookResponse(
@@ -462,7 +487,7 @@ class TestHandleNativeEdgeCases:
         assert "hookSpecificOutput" in result
         assert result["hookSpecificOutput"]["additionalContext"] == "Injected context"
 
-    def test_handle_native_multiple_calls(self, sample_hook_event) -> None:
+    def test_handle_native_multiple_calls(self, sample_hook_event: HookEvent) -> None:
         """handle_native can be called multiple times."""
         mock_manager = MagicMock()
         mock_manager.handle.return_value = HookResponse(decision="allow")
@@ -497,7 +522,7 @@ class TestAdapterIntegration:
         class LifecycleAdapter(BaseAdapter):
             source = SessionSource.CLAUDE
 
-            def translate_to_hook_event(self, native_event: dict) -> HookEvent | None:
+            def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent | None:
                 event_type_map = {
                     "session-start": HookEventType.SESSION_START,
                     "pre-tool-use": HookEventType.BEFORE_TOOL,
@@ -517,7 +542,7 @@ class TestAdapterIntegration:
                     data=native_event.get("input_data", {}),
                 )
 
-            def translate_from_hook_response(self, response: HookResponse) -> dict:
+            def translate_from_hook_response(self, response: HookResponse) -> dict[str, Any]:
                 return {"continue": response.decision == "allow"}
 
         adapter = LifecycleAdapter()
@@ -554,7 +579,7 @@ class TestAdapterIntegration:
         class BlockingAdapter(BaseAdapter):
             source = SessionSource.CLAUDE
 
-            def translate_to_hook_event(self, native_event: dict) -> HookEvent | None:
+            def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent | None:
                 return HookEvent(
                     event_type=HookEventType.BEFORE_TOOL,
                     session_id="blocking-session",
@@ -563,8 +588,8 @@ class TestAdapterIntegration:
                     data=native_event.get("input_data", {}),
                 )
 
-            def translate_from_hook_response(self, response: HookResponse) -> dict:
-                result = {"continue": response.decision == "allow"}
+            def translate_from_hook_response(self, response: HookResponse) -> dict[str, Any]:
+                result: dict[str, Any] = {"continue": response.decision == "allow"}
                 if response.reason:
                     result["stopReason"] = response.reason
                 if response.system_message:
@@ -594,7 +619,7 @@ class TestAdapterIntegration:
         class ContextAdapter(BaseAdapter):
             source = SessionSource.CLAUDE
 
-            def translate_to_hook_event(self, native_event: dict) -> HookEvent | None:
+            def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent | None:
                 return HookEvent(
                     event_type=HookEventType.SESSION_START,
                     session_id="context-session",
@@ -603,8 +628,8 @@ class TestAdapterIntegration:
                     data={},
                 )
 
-            def translate_from_hook_response(self, response: HookResponse) -> dict:
-                result = {"continue": True}
+            def translate_from_hook_response(self, response: HookResponse) -> dict[str, Any]:
+                result: dict[str, Any] = {"continue": True}
                 if response.context:
                     result["result"] = response.context
                 return result
@@ -637,7 +662,7 @@ class TestAdapterErrorHandling:
         class SafeAdapter(BaseAdapter):
             source = SessionSource.CLAUDE
 
-            def translate_to_hook_event(self, native_event: dict) -> HookEvent | None:
+            def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent | None:
                 return HookEvent(
                     event_type=HookEventType.SESSION_START,
                     session_id="error-session",
@@ -646,7 +671,7 @@ class TestAdapterErrorHandling:
                     data={},
                 )
 
-            def translate_from_hook_response(self, response: HookResponse) -> dict:
+            def translate_from_hook_response(self, response: HookResponse) -> dict[str, Any]:
                 return {"status": "ok"}
 
         adapter = SafeAdapter()
@@ -663,10 +688,10 @@ class TestAdapterErrorHandling:
         class FailingAdapter(BaseAdapter):
             source = SessionSource.CLAUDE
 
-            def translate_to_hook_event(self, native_event: dict) -> HookEvent | None:
+            def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent | None:
                 raise ValueError("Translation failed")
 
-            def translate_from_hook_response(self, response: HookResponse) -> dict:
+            def translate_from_hook_response(self, response: HookResponse) -> dict[str, Any]:
                 return {}
 
         adapter = FailingAdapter()

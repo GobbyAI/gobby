@@ -18,6 +18,7 @@ from gobby.mcp_proxy.tools.workflows._agents import (
     update_agent_step_workflow,
 )
 from gobby.storage.definitions import AgentDefinitionManager
+from gobby.storage.definitions._shared import DefinitionSource
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.workflows.definitions import AgentDefinitionBody
 
@@ -32,7 +33,7 @@ def _setup(db: PostgresHubDatabase) -> AgentDefinitionManager:
 def _insert_agent(
     mgr: AgentDefinitionManager,
     name: str = "test-agent",
-    source: str = "installed",
+    source: DefinitionSource = "installed",
     enabled: bool = True,
     tags: list[str] | None = None,
     **overrides: object,

@@ -29,26 +29,101 @@ ai:
         wire_api: chat-completions
         api_base: http://localhost:11434
         model: qwen3
+      vllm:
+        protocol: vllm
+        wire_api: chat-completions
+        api_base: http://localhost:8000/v1
+        model: auto
+        api_key: $secret:VLLM_API_KEY
       generic:
         protocol: openai-compatible
         wire_api: chat-completions
-        api_base: http://localhost:8000/v1
+        api_base: http://localhost:8080/v1
         model: local-model
     profile_defaults:
       feature_low:
         - claude/haiku
         - codex/gpt-5.6-luna
         - endpoint:lm-studio/google/gemma-4-26b-a4b-qat
+        - endpoint:vllm
 ```
 
-Feature candidates use `endpoint:<name>/<model>` to pin a specific endpoint.
-Selection skips to the next candidate when the endpoint is unavailable or does not
-serve the model. Direct HTTP text generation uses `provider="endpoint:<name>"`
-with `model="<model>"`.
+Feature candidates use `endpoint:<name>` for the endpoint default or
+`endpoint:<name>/<model>` to pin a served id (slashes in the model id are
+preserved). Selection skips to the next candidate when the endpoint is
+unavailable or does not serve the model. Direct HTTP text generation uses
+`provider="endpoint:<name>"` with `model="<model>"`.
 
-Bare `endpoint` is invalid; selectors and providers must name an endpoint. Vision
-extraction is exposed through named providers such as `endpoint:lm-studio`, only for
-endpoints configured with `vision_extract: true`.
+Bare `endpoint` is invalid; selectors and providers must name an endpoint.
+Vision extraction (`vision_extract`) is a capability-registry route, not an
+endpoint config field. Named providers such as `endpoint:lm-studio` or
+`endpoint:vllm` expose it only after an activation probe or advertised catalog
+records `image` in `input_modalities`. A `vision_extract:` key on the endpoint
+document 422s on save (`extra=forbid`).
+
+## vLLM endpoints
+
+Canonical vLLM and the vllm-metal Apple Silicon/MLX plugin share one Gobby
+protocol: `vllm`. Gobby never starts, stops, loads, or unloads the server — start
+it yourself, then point a named endpoint at the OpenAI-compatible API.
+
+### Copy-pasteable config
+
+```yaml
+ai:
+  generation:
+    endpoints:
+      vllm:
+        protocol: vllm
+        wire_api: chat-completions
+        api_base: http://localhost:8000/v1
+        model: auto
+        api_key: $secret:VLLM_API_KEY
+```
+
+`wire_api` must be `chat-completions`. Omit `api_key` when the server is
+unauthenticated. When the key is set, Codex web chat and agent spawn put the
+resolved secret only in the child environment as `GOBBY_CODEX_ENDPOINT_API_KEY`
+(`env_key`); it never appears on argv or in serialized `-c` override values.
+
+Paired selectors for the same endpoint. Auto becomes the picker/candidate value
+`endpoint:vllm` after the single served id is resolved:
+
+```yaml
+model: auto
+```
+
+Pin a served id (`endpoint:vllm/Qwen/Qwen2.5-7B-Instruct` as the candidate):
+
+```yaml
+model: Qwen/Qwen2.5-7B-Instruct
+```
+
+### `model: auto`
+
+`model: auto` succeeds only when `GET /v1/models` returns exactly one served
+model. Zero or multiple served models is an error that names them, for example
+`model: auto requires exactly one served vLLM model; found 2: llama-3, mistral`.
+Gobby never sends the literal `auto` on the wire.
+
+List served ids against the normalized origin before activation. If
+`api_base` is `http://localhost:8000/v1`, the origin is `http://localhost:8000`:
+
+```bash
+curl http://localhost:8000/v1/models
+```
+
+Do not call `{api_base}/v1/models` (`http://localhost:8000/v1/v1/models`) — that
+doubles the suffix. `api_base` values with or without a trailing `/v1` both
+resolve to `{origin}/v1/models`. Authenticated servers need
+`-H "Authorization: Bearer <key>"`.
+
+### vllm-metal (Apple Silicon)
+
+On Apple Silicon, install the MLX plugin from the official guide:
+[vllm-metal installation](https://docs.vllm.ai/projects/vllm-metal/en/latest/installation/).
+Use the same Gobby protocol (`vllm`), the same `wire_api: chat-completions`, and
+the same `api_base` shape. There is no `vllm-metal` protocol value.
 
 ## Feature Routes
 
@@ -78,10 +153,19 @@ passes `code_index.symbol_summary.profile` and `code_index.symbol_summary.candid
 
 `vision_extract` is capability-registry routed. The `/api/llm/vision/extract` route builds
 `VisionExtractService`, selects an `AICapability.VISION_EXTRACT` binding, and invokes the
-provider adapter. It is not routed through low/mid/high feature profiles.
+provider adapter. It is not routed through low/mid/high feature profiles. For generation
+endpoints the binding exists only when probed or advertised `input_modalities` includes
+`image` — there is no endpoint `vision_extract` config field.
 
 File and image ingestion belongs to gwiki. MCP `wiki_attach` / `wiki_ingest`, HTTP
 `/api/wiki/attach`, and `GwikiGateway.ingest_file` route those files through the gwiki
 gateway/CLI path rather than memory storage or feature-profile helper calls.
 
-_Last verified: 2026-07-12_
+## See Also
+
+- [providers-and-models.md](providers-and-models.md) — web-chat backends, including the
+  Codex config-override transport for vLLM
+- [system-requirements.md](system-requirements.md) — local generation runtime table
+- [configuration.md](configuration.md) — daemon and project configuration
+
+_Last verified: 2026-08-20_

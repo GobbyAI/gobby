@@ -26,7 +26,7 @@ async def check_daemon_http_health(
     base_url: str | None = None,
 ) -> bool:
     """Check if daemon is healthy via HTTP."""
-    url = (base_url.rstrip("/") if base_url else f"http://localhost:{port}") + "/api/admin/health"
+    url = (base_url.rstrip("/") if base_url else f"http://localhost:{port}") + "/api/health"
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(url, timeout=timeout)

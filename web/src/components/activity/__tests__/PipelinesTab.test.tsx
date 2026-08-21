@@ -253,7 +253,9 @@ describe("PipelinesTab", () => {
       ),
     ).toBe(true);
     expect(executionCalls.some((url) => url.includes("offset=100"))).toBe(true);
-  });
+    // Renders 101 rows across three page loads plus a poll; shared CI runners
+    // need well over vitest's 5s default for this one.
+  }, 20_000);
 
   it("discards a stale execution response after the filter changes", async () => {
     mockFetch.resetRoutes();

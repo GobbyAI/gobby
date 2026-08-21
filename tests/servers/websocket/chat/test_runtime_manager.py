@@ -133,6 +133,16 @@ class TestWebChatRuntimeManager:
         assert "droid" in health
         assert health["droid"]["provider"] == "droid"
 
+    def test_health_reports_removed_local_selector_instead_of_raising(self) -> None:
+        manager = WebChatRuntimeManager(codex_client=None)
+
+        health = manager.health("local:studio")
+
+        assert health.provider == "local:studio"
+        assert health.available is False
+        assert health.startup_error is not None
+        assert "removed local: selector" in health.startup_error
+
     def test_acp_backends_expose_grok_and_qwen_only(self) -> None:
         manager = WebChatRuntimeManager(codex_client=None)
 
@@ -1034,8 +1044,10 @@ class TestCodexBackend:
         message = str(exc_info.value)
         assert "protocol=ollama" in message
         assert "model=ollama/qwen3-coder" in message
+        # The resolver's diagnosis is the actionable part (#20646); credentials
+        # never travel with it.
+        assert message.endswith(": model not loaded")
         assert "api_base=http://localhost:11434" not in message
-        assert "model not loaded" not in message
         assert "secret-token" not in message
         assert "api_key" not in message
         assert exc_info.value.__cause__ is failure

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from gobby.workflows.definitions import WorkflowDefinition, WorkflowStep, WorkflowTransition
 from gobby.workflows.agent_models import AgentDefinitionBody, AgentStepWorkflowBody
+from gobby.workflows.definitions import WorkflowDefinition, WorkflowStep, WorkflowTransition
 from gobby.workflows.dry_run import (
     EvaluationItem,
     WorkflowEvaluation,
@@ -18,9 +19,15 @@ from gobby.workflows.dry_run import (
 pytestmark = pytest.mark.unit
 
 
+def _detail(item: EvaluationItem) -> dict[str, Any]:
+    """Return an item's detail payload, asserting the finding carries one."""
+    assert item.detail is not None
+    return item.detail
+
+
 def _make_step(
     name: str,
-    transitions: list[dict[str, str]] | None = None,
+    transitions: list[dict[str, Any]] | None = None,
     on_enter: list[dict[str, str]] | None = None,
     on_exit: list[dict[str, str]] | None = None,
     description: str | None = None,
@@ -165,7 +172,7 @@ class TestStructuralValidation:
 
         unreachable_items = [i for i in result.warnings if i.code == "UNREACHABLE_STEP"]
         assert len(unreachable_items) == 1
-        assert unreachable_items[0].detail["step"] == "orphan"
+        assert _detail(unreachable_items[0])["step"] == "orphan"
 
     @pytest.mark.asyncio
     async def test_dead_end_uses_runtime_exit_condition(self, mock_loader: MagicMock) -> None:
@@ -189,7 +196,7 @@ class TestStructuralValidation:
 
         dead_items = [i for i in result.warnings if i.code == "DEAD_END_STEP"]
         assert len(dead_items) == 1
-        assert dead_items[0].detail["step"] == "dead"
+        assert _detail(dead_items[0])["step"] == "dead"
 
     @pytest.mark.asyncio
     async def test_last_step_is_not_implicitly_terminal(self, mock_loader: MagicMock) -> None:
@@ -203,7 +210,7 @@ class TestStructuralValidation:
         result = await evaluate_agent_definition(_as_agent(definition))
 
         dead_items = [i for i in result.warnings if i.code == "DEAD_END_STEP"]
-        assert [item.detail["step"] for item in dead_items] == ["last"]
+        assert [_detail(item)["step"] for item in dead_items] == ["last"]
 
     @pytest.mark.asyncio
     async def test_duplicate_step_names(self, mock_loader: MagicMock) -> None:
@@ -234,7 +241,7 @@ class TestStructuralValidation:
 
         undef_items = [i for i in result.warnings if i.code == "UNDEFINED_VARIABLE_REF"]
         assert len(undef_items) == 1
-        assert undef_items[0].detail["variable"] == "unknown_var"
+        assert _detail(undef_items[0])["variable"] == "unknown_var"
 
     @pytest.mark.asyncio
     async def test_builtin_variable_not_flagged(self, mock_loader: MagicMock) -> None:
@@ -321,7 +328,9 @@ class TestConditionValidation:
     @pytest.mark.asyncio
     async def test_broken_exit_condition_is_error(self, mock_loader: MagicMock) -> None:
         result = await evaluate_agent_definition(
-            _as_agent(_make_definition(steps=[_make_step("done")], exit_condition="current_step =="))
+            _as_agent(
+                _make_definition(steps=[_make_step("done")], exit_condition="current_step ==")
+            )
         )
 
         assert not result.valid
@@ -422,7 +431,7 @@ class TestSemanticValidation:
         result = await evaluate_agent_definition(_as_agent(definition))
 
         findings = [i for i in result.warnings if i.code == "ACTION_NOT_EXECUTED"]
-        assert [item.detail["field"] for item in findings] == ["on_enter"]
+        assert [_detail(item)["field"] for item in findings] == ["on_enter"]
 
     @pytest.mark.asyncio
     async def test_unknown_mcp_handler_target(self, mock_loader: MagicMock) -> None:
@@ -544,7 +553,7 @@ class TestUnsupportedLifecycleActions:
         result = await evaluate_agent_definition(_as_agent(_make_definition(steps=steps)))
 
         fields = {
-            item.detail["field"] for item in result.warnings if item.code == "ACTION_NOT_EXECUTED"
+            _detail(item)["field"] for item in result.warnings if item.code == "ACTION_NOT_EXECUTED"
         }
         assert fields == {"on_enter", "on_exit", "on_transition"}
 

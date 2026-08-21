@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import logging
 import math
+import mimetypes
 import os
 import shlex
 import shutil
@@ -28,6 +30,7 @@ from gobby.ai._text_generation_helpers import (
 )
 from gobby.ai.codex_endpoint import codex_model_config_override
 from gobby.config.app import DaemonConfig
+from gobby.llm.image_payloads import prepare_image_inputs
 from gobby.llm.textgen_cwd import neutral_textgen_cwd
 
 if TYPE_CHECKING:
@@ -103,6 +106,7 @@ class ClaudeTextGenerateAdapter:
             max_tokens=request.max_tokens,
             reasoning_effort=request.reasoning_effort,
             caller=request.caller,
+            images=request.images,
         )
 
     async def generate_json(self, request: TextGenerationRequest) -> dict[str, Any]:
@@ -134,6 +138,7 @@ class LocalTextGenerateAdapter:
             max_tokens=request.max_tokens,
             reasoning_effort=request.reasoning_effort,
             caller=request.caller,
+            images=request.images,
         )
 
     async def generate_json(self, request: TextGenerationRequest) -> dict[str, Any]:
@@ -535,7 +540,13 @@ class CodexCLITextGenerateAdapter:
             raise FileNotFoundError("Codex CLI not found in PATH")
         return path
 
-    def build_command(self, request: TextGenerationRequest, *, output_path: Path) -> list[str]:
+    def build_command(
+        self,
+        request: TextGenerationRequest,
+        *,
+        output_path: Path,
+        image_paths: Sequence[str] = (),
+    ) -> list[str]:
         command = [
             self._resolve_command_path(),
             "--ask-for-approval",
@@ -568,6 +579,8 @@ class CodexCLITextGenerateAdapter:
         if request.model and not self._config_overrides:
             command.extend(["--model", request.model])
         _extend_reasoning_args(command, "codex", request.reasoning_effort)
+        for image_path in image_paths:
+            command.extend(["--image", image_path])
         # Intentionally no ``--cd``: one-shot generation runs in a neutral temp dir,
         # never the project directory (avoids the project-context startup tax).
         # Codex ``exec`` reads instructions from stdin when the prompt arg is ``-``.
@@ -580,15 +593,39 @@ class CodexCLITextGenerateAdapter:
         request = _with_one_shot_directive(request)
         with neutral_textgen_cwd() as cwd:
             output_path = cwd / "last-message.txt"
+            image_paths = await _materialize_codex_image_paths(request.images, cwd)
             await _run_cli_text_generation_command(
                 "Codex",
-                self.build_command(request, output_path=output_path),
+                self.build_command(
+                    request,
+                    output_path=output_path,
+                    image_paths=image_paths,
+                ),
                 neutral_cwd=cwd,
                 timeout_seconds=self._timeout_seconds,
                 env_overrides=self._env,
                 stdin_input=_compose_prompt(request),
             )
             return output_path.read_text(encoding="utf-8").strip()
+
+
+async def _materialize_codex_image_paths(
+    images: Sequence[str] | None,
+    cwd: Path,
+) -> list[str]:
+    if not images:
+        return []
+    prepared = await prepare_image_inputs(images)
+    paths: list[str] = []
+    for index, (path, mime_type, encoded, _data_url) in enumerate(prepared):
+        if path is not None:
+            paths.append(str(path))
+            continue
+        suffix = mimetypes.guess_extension(mime_type) or ".bin"
+        dest = cwd / f"image-{index}{suffix}"
+        dest.write_bytes(base64.standard_b64decode(encoded))
+        paths.append(str(dest))
+    return paths
 
 
 def _droid_isolated_env(base_env: Mapping[str, str], temp_home: Path) -> dict[str, str]:

@@ -1,6 +1,7 @@
 import asyncio
 import json
 from collections.abc import Callable
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt
@@ -35,8 +36,8 @@ def _teams_config() -> ChannelConfig:
         channel_type="teams",
         name="test",
         enabled=True,
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2024, 1, 1, tzinfo=UTC),
         config_json={
             "app_id": "$secret:TEAMS_APP_ID",
             "app_password": "$secret:TEAMS_APP_PASSWORD",
@@ -86,7 +87,7 @@ async def test_concurrent_refresh(
 
     call_count = 0
 
-    async def counting_post(*args, **kwargs):
+    async def counting_post(*args: str, **kwargs: object) -> MagicMock:
         nonlocal call_count
         # First call is the token refresh, subsequent are the send
         call_count += 1
@@ -109,7 +110,7 @@ async def test_concurrent_refresh(
             "service_url": "https://smba.trafficmanager.net/teams/",
             "platform_destination": "conv_123",
         },
-        created_at="2024-01-01T00:00:00Z",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
     )
 
     with patch.object(adapter._client, "post", side_effect=counting_post):
@@ -146,7 +147,7 @@ async def test_send_message(
             "service_url": "https://smba.trafficmanager.net/teams/",
             "platform_destination": "conv_123",
         },
-        created_at="2024-01-01T00:00:00Z",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
     )
 
     with patch.object(adapter._client, "post", new_callable=AsyncMock) as mock_post:

@@ -29,6 +29,7 @@ class TextGenerationRequest:
     candidate_timeout_seconds: float | None = None
     cli_candidate_timeout_seconds: float | None = None
     total_timeout_seconds: float | None = None
+    images: list[str] | None = None
     json_schema: dict[str, Any] | None = field(default=None, compare=False, repr=False)
     output_validator: Callable[[str], str | None] | None = field(
         default=None,

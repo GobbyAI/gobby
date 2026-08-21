@@ -263,7 +263,7 @@ class TestMCPConfigManagerLoadServers:
 
     def test_load_servers_warns_and_preserves_first_duplicate_name(
         self,
-        tmp_path,
+        tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Duplicate server names are ignored after the first valid entry."""

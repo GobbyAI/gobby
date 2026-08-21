@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
 from urllib.parse import urlencode
@@ -15,6 +16,8 @@ from gobby.communications.adapters.sms import SMSAdapter
 from gobby.communications.models import ChannelConfig, CommsMessage
 
 pytestmark = pytest.mark.unit
+
+_TS = datetime(2024, 1, 1, tzinfo=UTC)
 
 
 @pytest.fixture
@@ -29,8 +32,8 @@ def channel_config() -> ChannelConfig:
             "auth_token": "$secret:COMMS_SMS_AUTH_TOKEN_TEST",
             "from_number": "+1234567890",
         },
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=_TS,
+        updated_at=_TS,
     )
 
 
@@ -97,8 +100,8 @@ async def test_initialize_missing_config(adapter: SMSAdapter, secret_resolver: A
         name="Test SMS",
         enabled=True,
         config_json={"auth_token": "$secret:COMMS_SMS_AUTH_TOKEN_TEST"},
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=_TS,
+        updated_at=_TS,
     )
     with pytest.raises(ValueError, match="account_sid is required in config_json"):
         await adapter.initialize(config, secret_resolver)
@@ -122,7 +125,7 @@ async def test_send_message_success(
             channel_id="gobby-internal-channel",
             direction="outbound",
             content="Hello world",
-            created_at="2024-01-01T00:00:00Z",
+            created_at=_TS,
             metadata_json={"platform_destination": "+0987654321"},
         )
 
@@ -224,8 +227,8 @@ async def test_messaging_service_sid(secret_resolver: Any) -> None:
             "auth_token": "$secret:COMMS_SMS_AUTH_TOKEN_TEST",
             "messaging_service_sid": "MG12345",
         },
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=_TS,
+        updated_at=_TS,
     )
 
     adapter = SMSAdapter()
@@ -242,7 +245,7 @@ async def test_messaging_service_sid(secret_resolver: Any) -> None:
             channel_id="gobby-internal-channel",
             direction="outbound",
             content="Hello",
-            created_at="2024-01-01T00:00:00Z",
+            created_at=_TS,
             metadata_json={"platform_destination": "+0987654321"},
         )
         await adapter.send_message(message)

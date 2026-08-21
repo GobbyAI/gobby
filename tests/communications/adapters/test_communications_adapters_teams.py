@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -15,6 +16,8 @@ from gobby.communications.adapters.teams import TeamsAdapter
 from gobby.communications.models import ChannelConfig, CommsMessage
 
 pytestmark = pytest.mark.unit
+
+_TIMESTAMP = datetime(2024, 1, 1, tzinfo=UTC)
 
 
 @pytest.fixture
@@ -28,8 +31,8 @@ def channel_config() -> ChannelConfig:
             "app_id": "$secret:COMMS_TEAMS_APP_ID_TEST",
             "app_password": "$secret:COMMS_TEAMS_APP_PASSWORD_TEST",
         },
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=_TIMESTAMP,
+        updated_at=_TIMESTAMP,
     )
 
 
@@ -131,7 +134,7 @@ async def test_send_message_success(
                 "service_url": "https://smba.trafficmanager.net/apis/",
                 "platform_destination": "conv-1",
             },
-            created_at="2024-01-01T00:00:00Z",
+            created_at=_TIMESTAMP,
         )
 
         msg_id = await adapter.send_message(message)
@@ -176,7 +179,7 @@ async def test_send_message_adaptive_card(
                 "service_url": "https://smba.trafficmanager.net/apis/",
                 "platform_destination": "conv-1",
             },
-            created_at="2024-01-01T00:00:00Z",
+            created_at=_TIMESTAMP,
         )
 
         await adapter.send_message(message)
@@ -385,8 +388,6 @@ async def test_token_refresh_lock(
             refresh_call_count += 1
             await original_refresh()
 
-        adapter._refresh_token = counting_refresh
-
         # Mock send response
         mock_send_resp = MagicMock()
         mock_send_resp.status_code = 200
@@ -402,14 +403,15 @@ async def test_token_refresh_lock(
                 "service_url": "https://smba.trafficmanager.net/apis/",
                 "platform_destination": "conv-1",
             },
-            created_at="2024-01-01T00:00:00Z",
+            created_at=_TIMESTAMP,
         )
 
         # Fire two concurrent sends — only one should trigger refresh
-        await asyncio.gather(
-            adapter.send_message(message),
-            adapter.send_message(message),
-        )
+        with patch.object(adapter, "_refresh_token", counting_refresh):
+            await asyncio.gather(
+                adapter.send_message(message),
+                adapter.send_message(message),
+            )
 
         assert refresh_call_count == 1
         assert mock_client.post.call_count == 4

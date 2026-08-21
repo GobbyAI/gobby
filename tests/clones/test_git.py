@@ -7,13 +7,11 @@ Uses mock subprocess calls to test git command execution.
 import logging
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-if TYPE_CHECKING:
-    from gobby.clones.git import CloneGitManager
+from gobby.clones.git import CloneGitManager
 
 pytestmark = pytest.mark.unit
 

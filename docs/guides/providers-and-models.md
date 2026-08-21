@@ -217,6 +217,17 @@ The web chat provider controls use:
 - Chat session state for selected provider, model, and reasoning effort.
 - Per-send `speed_mode`, which resets to `standard` for the next send.
 
+Configured `ai.generation.endpoints` appear as `endpoint:<name>` groups. Web-chat
+routability is protocol-specific and always requires the Codex CLI:
+
+| Protocol | Transport | Picker |
+| --- | --- | --- |
+| `lmstudio`, `ollama` | Codex OSS (`--oss --local-provider`) | Shown when discovery is healthy with at least one eligible chat model |
+| `vllm` | Codex config-override (`wire_api="chat"`, provider id `gobby-vllm-<endpoint>`) — not `--oss` | Same health + Codex CLI gate as OSS backends; `model: auto` is resolved before attach so the sentinel never reaches Codex |
+| `openai-compatible` | none | Catalog-only: visible in Settings, hidden from the picker |
+
+Unavailable groups stay in Settings and stay hidden from the picker.
+
 Relevant UI owners include `ProviderPicker`,
 `ChatInputModelControls`, `web/src/lib/providerModels.ts`, and
 `web/src/hooks/useChat/*`.
@@ -290,6 +301,7 @@ speed result reporting.
 - [web-ui.md](web-ui.md)
 - [agents.md](agents.md)
 - [configuration.md](configuration.md)
+- [llm-features.md](llm-features.md)
 - [observability.md](observability.md)
 
-_Last verified: 2026-08-04_
+_Last verified: 2026-08-20_

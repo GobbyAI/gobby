@@ -20,11 +20,13 @@ from gobby.ai.registry import (
     _normalize_binding_model,
     _normalize_provider,
 )
+from gobby.config.ai import GenerationEndpointConfig
 from gobby.config.feature_base import (
     candidate_labels,
     iter_feature_default_configs,
     parse_feature_candidate,
 )
+from gobby.llm.local_provider_adapters import OPENAI_CLIENT_PROTOCOLS
 from gobby.providers import AGY_UNAVAILABLE_REASON, ProviderMetadata, provider_metadata
 from gobby.servers.provider_model_defaults import AGY_MODELS
 
@@ -363,7 +365,13 @@ def _generation_endpoint_text_bindings(
                     ),
                     "protocol": endpoint.protocol,
                     "wire_api": endpoint.wire_api,
-                    "vision_extract": endpoint.vision_extract,
+                    "model": endpoint.model,
+                    "probed_model": endpoint.probed_model,
+                    "input_modalities": (
+                        list(endpoint.input_modalities)
+                        if endpoint.input_modalities is not None
+                        else None
+                    ),
                 },
             )
         )
@@ -431,7 +439,7 @@ def _generation_endpoint_vision_bindings(
     endpoints = config.ai.generation.endpoints
     bindings: list[CapabilityBinding] = []
     for name, endpoint in endpoints.items():
-        if not endpoint.vision_extract:
+        if endpoint.input_modalities is None or "image" not in endpoint.input_modalities:
             continue
         provider = endpoint_provider(name)
         bindings.append(
@@ -458,7 +466,9 @@ def _generation_endpoint_vision_bindings(
                     ),
                     "protocol": endpoint.protocol,
                     "wire_api": endpoint.wire_api,
-                    "vision_extract": True,
+                    "model": endpoint.model,
+                    "probed_model": endpoint.probed_model,
+                    "input_modalities": list(endpoint.input_modalities),
                 },
             )
         )
@@ -581,31 +591,64 @@ def _generation_endpoint_tool_bindings(
             continue
         provider = endpoint_provider(name)
         models = _generation_endpoint_models(provider, endpoint.model, feature_models_by_provider)
+        adapter_style = (
+            AIAdapterStyle.DAEMON
+            if endpoint.wire_api == "responses"
+            else AIAdapterStyle.OPENAI_COMPATIBLE
+        )
+        metadata: dict[str, object] = {
+            "display_name": name,
+            "api_base": endpoint.api_base,
+            "endpoint": name,
+            "execution_provider": ("codex" if endpoint.wire_api == "responses" else provider),
+            "protocol": endpoint.protocol,
+            "wire_api": endpoint.wire_api,
+            "supports_tools": True,
+        }
+        unavailable_reason = _tool_chat_endpoint_unavailable_reason(name, endpoint)
+        if unavailable_reason is not None:
+            metadata["supports_tools"] = False
+            bindings.append(
+                CapabilityBinding.unavailable(
+                    AICapability.TOOL_CHAT,
+                    provider,
+                    adapter_style=adapter_style,
+                    reason=unavailable_reason,
+                    models=models,
+                    metadata=metadata,
+                )
+            )
+            continue
         bindings.append(
             CapabilityBinding(
                 capability=AICapability.TOOL_CHAT,
                 provider=provider,
-                adapter_style=(
-                    AIAdapterStyle.DAEMON
-                    if endpoint.wire_api == "responses"
-                    else AIAdapterStyle.OPENAI_COMPATIBLE
-                ),
+                adapter_style=adapter_style,
                 available=True,
                 models=models,
-                metadata={
-                    "display_name": name,
-                    "api_base": endpoint.api_base,
-                    "endpoint": name,
-                    "execution_provider": (
-                        "codex" if endpoint.wire_api == "responses" else provider
-                    ),
-                    "protocol": endpoint.protocol,
-                    "wire_api": endpoint.wire_api,
-                    "supports_tools": True,
-                },
+                metadata=metadata,
             )
         )
     return tuple(bindings)
+
+
+def _tool_chat_endpoint_unavailable_reason(
+    name: str, endpoint: GenerationEndpointConfig
+) -> str | None:
+    # probed_tools=False is activation evidence; config.tool_chat is never mutated.
+    if endpoint.probed_tools is False:
+        return (
+            f"Tool-call probe failed for endpoint {name!r}; "
+            "tool_chat remains configured but unavailable until a successful activation."
+        )
+    if endpoint.wire_api == "responses":
+        return None
+    if endpoint.protocol not in OPENAI_CLIENT_PROTOCOLS:
+        return (
+            f"Local client for endpoint {name!r} is unavailable: "
+            f"{endpoint.protocol} endpoints use a native API without an OpenAI tool-calling client"
+        )
+    return None
 
 
 def _vision_extract_adapter_style(provider: str) -> AIAdapterStyle | None:

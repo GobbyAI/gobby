@@ -8,10 +8,12 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN test -n "$PG_SEARCH_VERSION" \
     && test -n "$PG_SEARCH_SHA256" \
     && apt-get update \
+    # Pin upstream versions; glob the Debian/PGDG revision because point releases
+    # retire superseded revisions from the archive and break exact pins.
     && apt-get install -y --no-install-recommends \
-        ca-certificates=20250419 \
-        curl=8.14.1-2+deb13u3 \
-        postgresql-18-pgaudit=18.0-2.pgdg13+1 \
+        'ca-certificates=20250419*' \
+        'curl=8.14.1-*' \
+        'postgresql-18-pgaudit=18.*' \
     && arch="$(dpkg --print-architecture)" \
     && curl -fsSL \
         "https://github.com/paradedb/paradedb/releases/download/v${PG_SEARCH_VERSION}/postgresql-18-pg-search_${PG_SEARCH_VERSION}-1PARADEDB-trixie_${arch}.deb" \

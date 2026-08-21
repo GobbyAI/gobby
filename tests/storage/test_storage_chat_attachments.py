@@ -10,7 +10,7 @@ import pytest
 
 import gobby.storage.chat_attachments as chat_attachments
 from gobby.storage import chat_messages
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import ChatAttachmentMutation, HubDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.sessions import SessionManager
 
@@ -108,7 +108,7 @@ def test_bind_attachments_uses_immediate_transaction_for_read_validate_update(
     transaction_immediate.assert_called_once()
     assert isinstance(
         transaction_immediate.call_args.args[0],
-        chat_attachments.ChatAttachmentMutation,
+        ChatAttachmentMutation,
     )
     assert records[0].conversation_id == "conv-1"
     assert records[0].message_id == "msg-1"
@@ -228,7 +228,7 @@ def test_delete_unbound_attachment_uses_immediate_transaction(
     transaction_immediate.assert_called_once()
     assert isinstance(
         transaction_immediate.call_args.args[0],
-        chat_attachments.ChatAttachmentMutation,
+        ChatAttachmentMutation,
     )
     remaining = chat_attachments.get_attachment(temp_db, attachment_id, require_published=True)
     assert remaining is not None

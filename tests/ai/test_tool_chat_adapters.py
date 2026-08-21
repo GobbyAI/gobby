@@ -480,3 +480,32 @@ async def test_repo_mcp_tool_handler_executes_then_denies(
     exhausted = await bounded_handler({"args": []})
     assert exhausted["is_error"] is True
     assert '"error_code":"tool_call_budget_exhausted"' in exhausted["content"][0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_openai_loop_puts_resolved_model_on_the_wire() -> None:
+    client = _FakeClient([_FakeResponse(_FakeMessage(content="done"))])
+    seen: list[tuple[str, str | None]] = []
+
+    async def resolver(binding: CapabilityBinding, model: str | None) -> str:
+        seen.append((binding.provider, model))
+        return "Qwen/Qwen2.5-VL-7B-Instruct"
+
+    adapter = OpenAICompatibleToolChatAdapter(
+        client_factory=lambda _binding: client,
+        model_resolver=resolver,
+    )
+    binding = CapabilityBinding(
+        capability=AICapability.TOOL_CHAT,
+        provider="endpoint:vllm-local",
+        adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+        available=True,
+        models=("auto",),
+        metadata={"endpoint": "vllm-local", "protocol": "vllm"},
+    )
+
+    result = await adapter.chat(_request(model="auto"), binding)
+
+    assert seen == [("endpoint:vllm-local", "auto")]
+    assert client.chat.completions.calls[0]["model"] == "Qwen/Qwen2.5-VL-7B-Instruct"
+    assert result.model == "Qwen/Qwen2.5-VL-7B-Instruct"
