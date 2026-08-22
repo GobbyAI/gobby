@@ -165,3 +165,14 @@ def test_ui_exposure_mode_rejects_unknown_value(tmp_path: Path) -> None:
 
 def test_ui_exposure_is_machine_local_only() -> None:
     assert "ui_expose" not in BootstrapConfig(ui_expose="tailscale").to_config_dict()
+
+
+def test_loading_a_missing_bootstrap_never_writes_one(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+
+    assert load_bootstrap(str(home / "bootstrap.yaml")) == BootstrapConfig()
+    with pytest.raises(BootstrapConfigError, match="database_url is required"):
+        load_bootstrap(str(home / "bootstrap.yaml"), resolve_database_url=True)
+
+    assert list(home.iterdir()) == []

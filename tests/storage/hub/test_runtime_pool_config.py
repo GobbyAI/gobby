@@ -11,7 +11,10 @@ from gobby.storage.hub.runtime import apply_destructive_batch, runtime_hub_datab
 pytestmark = pytest.mark.unit
 
 
-def test_runtime_database_receives_resolved_pool_config() -> None:
+def test_runtime_database_receives_resolved_pool_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", raising=False)
     pool_config = PostgresPoolConfig(
         min_size=3,
         max_size=13,

@@ -299,3 +299,37 @@ class TestClearCache:
 
         assert first is None
         assert second is None
+
+
+class TestReadOnlyHome:
+    """A present identity is readable where the home denies writes (#20712)."""
+
+    def test_existing_id_is_read_without_lock_or_permission_repair(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        home = tmp_path / "home"
+        home.mkdir()
+        machine_id_file = home / "machine_id"
+        machine_id_file.write_text("sandboxed-identity\n")
+
+        def deny_write(*args: object, **kwargs: object) -> None:
+            raise PermissionError(1, "Operation not permitted")
+
+        monkeypatch.setattr("gobby.utils.machine_id.get_machine_id_file", lambda: machine_id_file)
+        monkeypatch.setattr("gobby.utils.machine_id.exclusive_file_lock", deny_write)
+        monkeypatch.setattr(Path, "chmod", deny_write)
+
+        assert _get_or_create_machine_id() == "sandboxed-identity"
+        assert sorted(p.name for p in home.iterdir()) == ["machine_id"]
+
+    def test_missing_id_still_takes_the_creation_lock(self, tmp_path: Path) -> None:
+        machine_id_file = tmp_path / "machine_id"
+
+        with (
+            patch("gobby.utils.machine_id.get_machine_id_file", return_value=machine_id_file),
+            patch("gobby.utils.machine_id._generate_machine_id", return_value="fresh-id"),
+        ):
+            assert _get_or_create_machine_id() == "fresh-id"
+
+        assert machine_id_file.read_text() == "fresh-id"
+        assert (tmp_path / ".machine_id.lock").exists()

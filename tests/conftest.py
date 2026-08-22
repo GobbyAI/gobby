@@ -29,6 +29,12 @@ def _ensure_isolated_bootstrap() -> None:
     if raw_home is None or not raw_home.strip():
         return
     home = Path(raw_home).expanduser()
+    operator_home = Path.home() / ".gobby"
+    if home.resolve(strict=False) == operator_home.resolve(strict=False):
+        # The daemon exports its own home to every process it spawns. That is
+        # the operator's state, not an isolated home: never provision it, even
+        # when a sandbox hides its bootstrap (#20712).
+        return
     bootstrap = home / "bootstrap.yaml"
     if bootstrap.exists():
         return

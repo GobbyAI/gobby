@@ -10,6 +10,7 @@ from gobby.config.bootstrap import (
     load_bootstrap,
 )
 from gobby.config.postgres_pool import PostgresPoolConfig
+from gobby.storage.hub.managed import managed_grant_path, managed_hub_database
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.maintenance_epoch import admitted_database_url
 
@@ -20,7 +21,21 @@ def runtime_hub_database(
     *,
     apply_migrations: bool = True,
 ) -> Iterator[HubDatabase]:
-    """Yield the active runtime hub database and close it afterwards."""
+    """Yield the active runtime hub database and close it afterwards.
+
+    A managed execution (``GOBBY_MANAGED_EXECUTION_BOOTSTRAP`` set) opens the hub
+    through its grant instead of the operator bootstrap, whatever ``config_file``
+    says: the grant is the execution's only credential and its privilege boundary.
+    """
+    grant_path = managed_grant_path()
+    if grant_path is not None:
+        db = managed_hub_database(grant_path)
+        try:
+            yield db
+        finally:
+            db.close()
+        return
+
     config = load_bootstrap(config_file, resolve_database_url=True)
     if not config.database_url:
         raise RuntimeError(HUB_BACKEND_DATABASE_URL_REQUIRED)

@@ -84,19 +84,40 @@ def _get_or_create_machine_id() -> str:
         OSError: If file operations fail
     """
     machine_id_file = get_machine_id_file()
+    existing = _read_machine_id(machine_id_file)
+    if existing is not None:
+        return existing
     with exclusive_file_lock(machine_id_file):
-        # Check if file exists and has content
-        if machine_id_file.exists():
-            machine_id_file.chmod(0o600)
-            content = machine_id_file.read_text().strip()
-            if content:
-                return content
+        existing = _read_machine_id(machine_id_file)
+        if existing is not None:
+            return existing
 
         # Generate new ID and save with atomic permissions
         new_id = _generate_machine_id()
         durable_replace_text(machine_id_file, new_id)
 
         return new_id
+
+
+def _read_machine_id(machine_id_file: Path) -> str | None:
+    """Return the present identity without taking the creation lock.
+
+    ``durable_replace_text`` publishes the file atomically, so a lock-free read
+    sees either nothing or a complete identity. Managed executions run in
+    sandboxes that deny writes under the Gobby home, which rules out the lock
+    sidecar and the permission repair while the identity itself stays readable.
+    """
+    try:
+        content = machine_id_file.read_text().strip()
+    except FileNotFoundError:
+        return None
+    if not content:
+        return None
+    try:
+        machine_id_file.chmod(0o600)
+    except PermissionError:
+        pass
+    return content
 
 
 def _generate_machine_id() -> str:
