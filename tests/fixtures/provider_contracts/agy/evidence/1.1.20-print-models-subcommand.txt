@@ -1,0 +1,51 @@
+$ agy models
+--- stdout ---
+gemini-3.7-flash-high	Gemini 3.7 Flash (High)
+gemini-3.7-flash-medium	Gemini 3.7 Flash (Medium)
+gemini-3.7-flash-low	Gemini 3.7 Flash (Low)
+gemini-3.6-flash-high	Gemini 3.6 Flash (High)
+gemini-3.6-flash-medium	Gemini 3.6 Flash (Medium)
+gemini-3.6-flash-low	Gemini 3.6 Flash (Low)
+gemini-3.5-flash-high	Gemini 3.5 Flash (High)
+gemini-3.5-flash-medium	Gemini 3.5 Flash (Medium)
+gemini-3.5-flash-low	Gemini 3.5 Flash (Low)
+gemini-3.1-pro-high	Gemini 3.1 Pro (High)
+gemini-3.1-pro-low	Gemini 3.1 Pro (Low)
+claude-sonnet-4-6	Claude Sonnet 4.6 (Thinking)
+claude-opus-4-6-thinking	Claude Opus 4.6 (Thinking)
+gpt-oss-120b-medium	GPT-OSS 120B (Medium)
+--- stderr ---
+Fetching available models...
+--- exit 0 ---
+
+$ agy models --output-format json
+--- stdout ---
+--- stderr ---
+Usage: agy models [flags]
+
+List available models
+
+Flags:
+  -h      Show help
+  --help  Show help
+Error: flags provided but not defined: -output-format
+--- exit 1 ---
+
+$ agy models --output-format stream-json
+--- stdout ---
+--- stderr ---
+Usage: agy models [flags]
+
+List available models
+
+Flags:
+  -h      Show help
+  --help  Show help
+Error: flags provided but not defined: -output-format
+--- exit 1 ---
+
+$ agy --effort bogus -p hi
+--- stdout ---
+--- stderr ---
+Error: invalid model selection (--model "" --effort "bogus"): invalid --effort "bogus" (valid: low, medium, high)
+--- exit 1 ---

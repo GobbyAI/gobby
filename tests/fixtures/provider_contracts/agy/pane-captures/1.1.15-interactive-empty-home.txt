@@ -1,0 +1,56 @@
+# AGY 1.1.18 interactive pane capture — record 1.1.15
+# source: tmux capture-pane -p -S -200 -t agy-unauth (1.1.15-interactive-empty-home.txt); HOME= (empty) agy: `Failed to start: $HOME is not defined`, exit 1
+# scrubbed: $HOME→~, user→<USER>, email→<REDACTED>, workspace→<WORKSPACE>, ids→<CONVERSATION_ID>, scratch→<PROBE_SCRATCH>
+
+ERROR: logging before google.Init: E0822 07:19:13.609697       1 main.go:606] Failed to redirect output for CLI: resolving log directory: getting home directory: $HOME is not defined
+ERROR: logging before google.Init: I0822 07:19:13.611348       1 resolver.go:85] Model ID gpt-oss-120b-medium not in local config, defaulting to CCPA
+ERROR: logging before google.Init: I0822 07:19:13.611370       1 resolver.go:111] Model resolved via default
+ERROR: logging before google.Init: E0822 07:19:13.611384       1 main.go:161] failed to resolve CLI settings path for model backend selection: getting home directory: $HOME is not defined
+ERROR: logging before google.Init: I0822 07:19:13.611473      70 server.go:1478] Starting language server process with pid 98672
+ERROR: logging before google.Init: E0822 07:19:13.611581      70 server.go:1457] Failed to get AppDataDir for crash reporter: $HOME is not defined: $HOME is not defined
+ERROR: logging before google.Init: W0822 07:19:13.611680      70 server.go:400] failed to load secplugins config at startup: $HOME is not defined: $HOME is not defined
+ERROR: logging before google.Init: E0822 07:19:13.611753      70 main.go:760] CLI failed to start - $HOME is not defined: $HOME is not defined
+(1) attached stack trace
+  -- stack trace:
+  | google3/third_party/jetski/language_server/language_server.setUpInstallationID
+  | 	third_party/jetski/language_server/server.go:435
+  | google3/third_party/jetski/language_server/language_server.CreateLanguageServerAndServe
+  | 	third_party/jetski/language_server/server.go:1521
+  | main.main.func4
+  | 	third_party/jetski/cmd/cli/main.go:758
+Wraps: (2) attached stack trace
+  -- stack trace:
+  | google3/third_party/jetski/fs/local/local.GeminiDir
+  | 	third_party/jetski/fs/local/local.go:28
+  | google3/third_party/jetski/fs/local/local.(*FS).GeminiDir
+  | 	third_party/jetski/fs/local/os.go:147
+  | google3/third_party/jetski/fs/local/local.(*FSWithLogging).GeminiDir
+  | 	third_party/jetski/fs/local/fs_logging_decorator.go:138
+  | google3/third_party/jetski/fs/local/local.geminiRelToAbsPath
+  | 	third_party/jetski/fs/local/local.go:160
+  | google3/third_party/jetski/fs/local/local.AppDataDir
+  | 	third_party/jetski/fs/local/local.go:43
+  | google3/third_party/jetski/language_server/language_server.setUpInstallationID
+  | 	third_party/jetski/language_server/server.go:433
+  | [...repeated from below...]
+Wraps: (3) attached stack trace
+  -- stack trace:
+  | google3/third_party/jetski/fs/local/local.HomeDir
+  | 	third_party/jetski/fs/local/local.go:68
+  | google3/third_party/jetski/fs/local/local.homeRelToAbsPath
+  | 	third_party/jetski/fs/local/local.go:144
+  | google3/third_party/jetski/fs/local/local.SetGeminiDir
+  | 	third_party/jetski/fs/local/local.go:133
+  | google3/third_party/jetski/language_server/language_server.setUpFS
+  | 	third_party/jetski/language_server/server.go:381
+  | google3/third_party/jetski/language_server/language_server.CreateLanguageServerAndServe
+  | 	third_party/jetski/language_server/server.go:1481
+  | main.main.func4
+  | 	third_party/jetski/cmd/cli/main.go:758
+  | runtime.goexit
+  | 	third_party/go/gc/src/runtime/asm_arm64.s:1039
+Wraps: (4) $HOME is not defined
+Wraps: (5) $HOME is not defined
+Error types: (1) *withstack.withStack (2) *withstack.withStack (3) *withstack.withStack (4) *errutil.withPrefix (5) *errors.errorString
+Failed to start: $HOME is not defined: $HOME is not defined
+agy exited rc=1

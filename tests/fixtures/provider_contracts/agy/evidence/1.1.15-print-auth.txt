@@ -1,0 +1,39 @@
+$ security find-generic-password -s antigravity 2>&1 | head -3; security dump-keychain 2>/dev/null | awk '/antigravity|gemini|Antigravity/' | sort -u | head
+--- stdout ---
+security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain.
+    "acct"<blob>="Antigravity IDE Key"
+    "acct"<blob>="Antigravity IDE"
+    "acct"<blob>="Antigravity Key"
+    "acct"<blob>="Antigravity"
+    "acct"<blob>="antigravity"
+    "svce"<blob>="Antigravity IDE Safe Storage"
+    "svce"<blob>="Antigravity Safe Storage"
+    "svce"<blob>="gemini"
+    0x00000007 <blob>="Antigravity IDE Safe Storage"
+    0x00000007 <blob>="Antigravity Safe Storage"
+--- stderr ---
+--- exit 0 ---
+
+$ env -i HOME=~ PATH=/usr/bin:/bin:~/.local/bin ~/.local/bin/agy -p '/usage' --output-format json --print-timeout 1m
+--- stdout ---
+{"conversation_id":"","status":"SUCCESS","response":"Gemini Models\tWeekly Limit Remaining\t0%\t2026-08-27T08:53:33Z\nClaude and GPT models\tWeekly Limit Remaining\t99%\t2026-08-29T08:43:38Z\n","duration_seconds":0,"num_turns":0,"usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":0},"command":{"name":"usage","data":{"description":"Within each group, models share a weekly limit. Quota is consumed proportionally to the cost of the tokens. Thus, limits will last longer with shorter tasks or using more cost-effective models. Your weekly limit is tied directly to your individual tier.","groups":[{"name":"Gemini Models","description":"Models within this group: Gemini Flash, Gemini Pro","buckets":[{"id":"gemini-weekly","name":"Weekly Limit Remaining","description":"You have hit your weekly limit, it refreshes in 5 days. If on a supported paid plan, you can use AI credits in the interim or upgrade to a higher tier.","window":"weekly","remaining_fraction":0,"reset_time":"2026-08-27T08:53:33Z"}]},{"name":"Claude and GPT models","description":"Models within this group: Claude Opus, Claude Sonnet, GPT-OSS","buckets":[{"id":"3p-weekly","name":"Weekly Limit Remaining","description":"You have used some of your weekly limit, it will fully refresh in 6 days, 23 hours.","window":"weekly","remaining_fraction":0.994983971118927,"reset_time":"2026-08-29T08:43:38Z"}]}]}}}
+--- stderr ---
+--- exit 0 ---
+
+$ env GOOGLE_API_KEY=<REDACTED> GEMINI_API_KEY=<REDACTED> GOOGLE_APPLICATION_CREDENTIALS=/nonexistent/creds.json ~/.local/bin/agy -p 'reply with exactly: ok' --output-format json --print-timeout 2m --model gpt-oss-120b-medium --add-dir <WORKSPACE>
+--- stdout ---
+{"conversation_id":"<CONVERSATION_ID>","status":"SUCCESS","response":"ok\n","duration_seconds":17.139128,"num_turns":1,"usage":{"input_tokens":12762,"output_tokens":27,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":12789}}
+--- stderr ---
+--- exit 0 ---
+
+$ env HOME=<PROBE_SCRATCH>/fakehome ~/.local/bin/agy -p '/usage' --output-format json --print-timeout 1m
+--- stdout ---
+{"conversation_id":"","status":"ERROR","response":"","error":"authentication failed or timed out","duration_seconds":0,"num_turns":0,"usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":0}}
+--- stderr ---
+Authentication required. Please visit the URL to log in:
+  https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=<REDACTED>&code_challenge=<REDACTED>&code_challenge_method=S256&prompt=consent&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.email+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.profile+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcclog+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fexperimentsandconfigs+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Faicode+openid&state=<REDACTED>
+
+Waiting for authentication (timeout 60s)...
+Or, paste the authorization=<REDACTED> here and press Enter:
+Error: authentication timed out.
+--- exit 1 ---

@@ -1,0 +1,5 @@
+$ agy -p 'what command were you running before? one line' --output-format json --sandbox=false --dangerously-skip-permissions --add-dir <WORKSPACE> --print-timeout 2m --model gpt-oss-120b-medium --conversation <CONVERSATION_ID>
+--- stdout ---
+{"conversation_id":"<CONVERSATION_ID>","status":"SUCCESS","response":"The command I ran was:\n\n```bash\nsleep 40; echo finished-after-sleep\n```\n","duration_seconds":144.825136,"num_turns":2,"usage":{"input_tokens":26000,"output_tokens":415,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":26415}}
+--- stderr ---
+--- exit 0 ---

@@ -1,0 +1,50 @@
+# AGY 1.1.18 interactive pane capture — record 1.1.9
+# source: tmux capture-pane -p -S -200 -t agy-gate0 (1.1.9-netprobe.txt); `run: echo netprobe` while lsof sampled the agy process tree (evidence/1.1.9-interactive-net.txt)
+# scrubbed: $HOME→~, user→<USER>, email→<REDACTED>, workspace→<WORKSPACE>, ids→<CONVERSATION_ID>, scratch→<PROBE_SCRATCH>
+
+
+      ▄▀▀▄        Antigravity CLI 1.1.18
+     ▀▀▀▀▀▀       <REDACTED> (Antigravity Starter Quota)
+    ▀▀▀▀▀▀▀▀      GPT-OSS 120B (Medium)
+   ▄▀▀    ▀▀▄     <WORKSPACE>
+  ▄▀▀      ▀▀▄
+
+────────────────────────────────────────────────────────────
+> describe the image file img.png in this directory: what color is it and what size?
+
+▸ Thought for 2s
+  The user asks: "describe the image file img.png in this directory: what color is...
+
+● ListDir(<WORKSPACE>) (ctrl+o to expand)
+
+▸ Thought for 6m 2s
+  We have a directory listing showing img.png sizeBytes 168. Need color descriptio...
+  I don’t have a way to directly render or analyze the raw contents of img.png from the filesystem. Could you let me know what the image looks like (e.g., its predominant color(s) or any notable
+  features), or provide a brief description? That will let me give you the information you need.
+
+────────────────────────────────────────────────────────────
+> run: sh -c 'echo boom >&2; exit 7'
+
+▸ Thought for 10s
+  The user wants to run the command: `sh -c 'echo boom >&2; exit 7'`. They want us...
+
+● Bash(sh -c 'echo boom >&2; exit 7') (ctrl+o to expand)
+
+  The command finished with exit code 7 and wrote “boom” to stderr.
+
+────────────────────────────────────────────────────────────
+> run: echo netprobe
+
+▸ Thought for 1s
+  The user wants to run a command: "echo netprobe". We need to run it in the works...
+
+● Bash(echo netprobe) (ctrl+o to expand)
+
+  The command executed successfully and printed:
+
+    netprobe
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+? for shortcuts                                                                                                                                                                    GPT-OSS 120B (Medium)

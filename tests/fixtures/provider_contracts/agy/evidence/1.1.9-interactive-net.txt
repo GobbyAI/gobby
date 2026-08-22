@@ -1,0 +1,75 @@
+$ bash net-interactive.sh 150   (sampler for the interactive `run: echo netprobe` turn; see README 1.1.9)
+--- report ---
+agy pid 71810
+--- remote-hosts ---
+172.217.113.4 
+172.217.115.4 
+172.217.116.4 
+173.194.47.132 yumciaj-in-f132.1e100.net. 
+34.54.84.110 110.84.54.34.bc.googleusercontent.com. 
+--- log-hosts ---
+  14 daily-cloudcode-pa.googleapis.com
+--- process-tree ---
+71810 16103 agy --sandbox=false --dangerously-skip-permissions --model gpt-oss-120b-medium --add-dir <WORKSPACE>
+71816 71810 ~/Projects/gobby/.venv/bin/python3 ~/Projects/gobby/.venv/bin/gobby mcp-server
+--- open-files ---
+~/.gemini/antigravity-cli/brain/<CONVERSATION_ID>
+~/.gemini/antigravity-cli/brain/<CONVERSATION_ID>/.system_generated
+~/.gemini/antigravity-cli/brain/<CONVERSATION_ID>/.user_uploaded
+~/.gemini/antigravity-cli/brain/<CONVERSATION_ID>/scratch
+<AGY_APP_DATA>/conversations/<CONVERSATION_ID>.db
+<AGY_APP_DATA>/conversations/<CONVERSATION_ID>.db-shm
+<AGY_APP_DATA>/conversations/<CONVERSATION_ID>.db-wal
+<AGY_APP_DATA>/crashes/crash_71810_<CONVERSATION_ID>.log
+<AGY_APP_DATA>/knowledge
+<AGY_APP_DATA>/knowledge/knowledge.lock
+<AGY_APP_DATA>/log/cli-20260822_063927.log
+<AGY_APP_DATA>/presence/<CONVERSATION_ID>.lock
+~/.gemini/config/projects
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/default-cli-project.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+~/.gemini/config/projects/<PROJECT_UUID>.json
+<WORKSPACE>
+--- written-files ---
+<AGY_APP_DATA>/bin/agentapi
+~/.gemini/antigravity-cli/brain/<CONVERSATION_ID>/.system_generated/logs/chunks/transcript/00000000.jsonl
+~/.gemini/antigravity-cli/brain/<CONVERSATION_ID>/.system_generated/logs/chunks/transcript_full/00000000.jsonl
+~/.gemini/antigravity-cli/brain/<CONVERSATION_ID>/.system_generated/logs/transcript.jsonl
+~/.gemini/antigravity-cli/brain/<CONVERSATION_ID>/.system_generated/logs/transcript_full.jsonl
+<AGY_APP_DATA>/conversations/<CONVERSATION_ID>.db
+<AGY_APP_DATA>/history.jsonl
+<AGY_APP_DATA>/log/cli-20260822_063927.log

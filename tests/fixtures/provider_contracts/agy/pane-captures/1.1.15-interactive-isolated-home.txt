@@ -1,0 +1,18 @@
+# AGY 1.1.18 interactive pane capture — record 1.1.15
+# source: tmux capture-pane -p -S -200 -t agy-unauth (1.1.15-interactive-isolated-home.txt); HOME=$(mktemp -d) agy: not signed in, login-method menu; exited with C-c C-c, nothing selected
+# scrubbed: $HOME→~, user→<USER>, email→<REDACTED>, workspace→<WORKSPACE>, ids→<CONVERSATION_ID>, scratch→<PROBE_SCRATCH>
+
+
+     ▄▀▀▄
+    ▀▀▀▀▀▀
+   ▀▀▀▀▀▀▀▀
+  ▄▀▀    ▀▀▄
+ ▄▀▀      ▀▀▄
+
+ Welcome to the Antigravity CLI. You are currently not signed in.
+
+ Select login method:
+ > 1. Google OAuth
+   2. Use a Google Cloud project
+
+ [Use arrow keys to navigate, Enter to select]

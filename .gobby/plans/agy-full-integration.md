@@ -554,12 +554,12 @@ table is its projection.
 | 1.1.12 controlled-tool bridge | **confirmed (supported)** | `PreToolUse` `decision:"deny"` + `reason` → `tool ERROR` `TOOL_ERROR "tool call denied by pre-tool hook: …"`, no `PostToolUse`, `result ERROR`, exit 0. MCP tools are `call_mcp_tool{ServerName,ToolName,Arguments}`. |
 | 1.1.13 `--print-timeout` | **re-confirmed unchanged** (+delta) | Go syntax, default `5m0s`, no disable sentinel, expiry exit 1. Delta: under `json|stream-json` the payload is a stdout `result{status:ERROR}`; per turn under stream input. |
 | 1.1.14 terminal plan menu | **confirmed** | `shift+tab` cycles modes; `ctrl+r`/`/artifact` review with `y`/`n`/`shift+a`/`p`/`esc`; permission prompt `1`/`2`/`3`/`4`/`esc`. |
-| 1.1.15 auth footprint | **confirmed** | Keychain item `svce=gemini acct=antigravity`; env API-key vars ignored; foreign `HOME` fails (OAuth prompt, exit 1). |
+| 1.1.15 auth footprint | **confirmed** | Keychain item `svce=gemini acct=antigravity`; env API-key vars ignored; foreign `HOME`: a `-p` turn prints the OAuth URL and exits 1 after the 60 s auth timeout, an interactive launch stops at the `not signed in` login-method menu, `models` exits 1 immediately with `Please sign in` (1.1.20). |
 | 1.1.16 compaction | **negative** | No compaction/context-pressure record; `checkpoint` fires at step 1 of every conversation. |
 | 1.1.17 interactive dispatch | **confirmed** | All five events; key sets identical to print mode; negatives (no `PostToolUse` on `TOOL_ERROR`, no `Stop` on interrupt/exit) apply to both modes. |
 | 1.1.18 `--input-format stream-json` | **confirmed** | Launch without `-p`; one `result` per turn; EOF → exit 0; per-turn timeout; `--conversation` accepted; SIGINT → `result ERROR "context canceled"` exit 1 (no in-flight cancel); malformed line fatal. |
 | 1.1.19 usage/quota | **confirmed; `/credits` negative** | `/usage` shape `groups[].buckets[].{id,name,window,remaining_fraction,reset_time}`, `num_turns 0`; `/quota` alias; `/credits` exit 1; exhausted = `remaining_fraction 0` + turn `result ERROR "Individual quota reached"`. |
-| 1.1.20 models | **disproven (placement)** | `agy models --output-format json` exit 1; `agy --output-format json models` → `command.data.models[].{id,label}`; no default marker; default via `-p "/model"`; effort is the id suffix. |
+| 1.1.20 models | **disproven (placement)** | `agy models --output-format json` exit 1; `agy --output-format json models` → `command.data.models[].{id,label}`; no default marker; default via `-p "/model"`; effort is the id suffix; unauthenticated (isolated `HOME`) → immediate exit 1, empty stdout, stderr `Please sign in`, no OAuth prompt. |
 | 1.1.21 `/hooks` | **confirmed** | `hooks[].{name,enabled,source,actions[].{event,type,command,timeout_seconds}}`; disabled shows `enabled:false`; malformed shows without warning; unknown events vanish. |
 | 1.1.22 transcript layout | **confirmed** | Parser input `transcript_full.jsonl`; `transcript.jsonl` is the truncated twin; `chunks/` byte-identical copies. |
 | 1.1.23 `--mode` | **confirmed** | Headless `plan` writes `brain/<id>/<name>.md`, no approval record; `accept-edits` writes without prompting; `bogus` → warning. |
@@ -2908,8 +2908,11 @@ authenticates, and the CLI ignores `GOOGLE_API_KEY`, `GEMINI_API_KEY`, and
 `GOOGLE_APPLICATION_CREDENTIALS`. So the allowlist and credential maps gain an
 explicit **empty** agy row, a test proves those three ambient variables are stripped
 from the spawned environment, and `_SUPPORTED_AUTH_CLIS` does not admit agy (no
-in-scope caller needs auth-CLI inference; a foreign `HOME` simply fails auth with an
-OAuth prompt and exit 1, which the spawner surfaces as a launch failure). The proof lives at the process boundary, not the helper:
+in-scope caller needs auth-CLI inference; under a foreign `HOME` a headless turn prints
+the OAuth URL and exits 1 after the 60 s auth timeout, an interactive launch stops at
+the `You are currently not signed in` login-method menu, and `models` exits 1 at once
+with `Please sign in` — records 1.1.15/1.1.20 — which the spawner surfaces as a launch
+failure). The proof lives at the process boundary, not the helper:
 `make_spawn_env` (`agents/spawners/base.py`) copies `os.environ` and tmux
 children inherit the daemon environment, so helper-level allowlist tests cannot
 establish runtime absence. Terminal stripping and sandbox credential masking
@@ -3110,9 +3113,19 @@ and the current model comes from `-p "/model"` → `command.data {id, label, eff
 is_default}`. The 1.1.18 list has 14 entries: `gemini-3.7-flash-{high,medium,low}`,
 `gemini-3.6-flash-{high,medium,low}`, `gemini-3.5-flash-{high,medium,low}`,
 `gemini-3.1-pro-{high,low}`, `claude-sonnet-4-6`, `claude-opus-4-6-thinking`,
-`gpt-oss-120b-medium`. The unauthenticated exit was not reproducible (Keychain auth
-cannot be removed non-destructively); a foreign `HOME` yields the command envelope with
-`status: ERROR, error: "authentication failed or timed out"` and exit 1.
+`gpt-oss-120b-medium`. The unauthenticated exit **is** recorded (record 1.1.20,
+`command-captures.json` entries `1.1.20 unauthenticated …`, `evidence/1.1.20-print-models.txt`;
+probed under `HOME=$(mktemp -d)` so the real Keychain item and `~/.gemini` stay
+untouched): `agy --output-format json models`, its `stream-json` twin, and bare
+`agy models` all exit 1 **immediately** with **empty stdout** — no command envelope, no
+OAuth prompt, no wait — and stderr `Error: Please sign in to view available models.
+Launch the CLI without arguments to sign in.` (the `Fetching available models...`
+progress line precedes it). Only an agent *turn* or `/usage` under a foreign `HOME`
+prints the OAuth URL and fails after the 60 s auth timeout with the
+`status: ERROR, error: "authentication failed or timed out"` envelope (record 1.1.15);
+the collector never sees that shape. So the collector's unauthenticated branch keys on
+**exit 1 + empty stdout** (stderr carries the reason for the recorded failure), not on
+an envelope parse.
 
 Add `AgyCollector` in the new module `src/gobby/providers/capabilities/collectors/agy.py`
 (`provider = "agy"`, one `SourceSpec` keyed `agy_models_cli`), modelled on
@@ -3123,7 +3136,9 @@ label}`) into `ModelCapability`/`ModelRoute` rows — family and effort derived 
 `label`, context window from the bundled family table since the CLI reports none — with
 per-field `FactProvenance` (`agy_models_cli` for id/label/effort, `bundled` for the
 window), and raises a typed `AgySourceError` on absent binary, sub-floor
-version (read from the 2.5 support record, never probed here), nonzero exit, or shape
+version (read from the 2.5 support record, never probed here), nonzero exit — including
+the unauthenticated form: exit 1, empty stdout, stderr `Please sign in` (record 1.1.20),
+surfaced as an `unauthenticated` source failure so the UI can say so — or shape
 mismatch so the coordinator records a source failure and keeps the prior snapshot.
 Register it in `_default_collectors`. Replace the static fallback with a bundled AGY seed
 in `seed.py` generated from the 1.1.20 fixture, and delete `_agy_snapshot_payload` plus
@@ -3170,7 +3185,7 @@ this plan closes only the `gemini-3.5-flash` mismatch.
 - 6.3.6 - `GEMINI_FAMILY_MODELS` and `AGY_MODELS` agree on the canonical `gemini-3.5-flash` default effort, with a parity test pinning both consumers to the fixture-recorded value. test: `tests/providers/capabilities/collectors/test_providers_capabilities_collectors_agy.py`.
 - 6.3.7 - A failed live refresh retains the prior (bundled or live) AGY snapshot with the source failure recorded, and a sub-floor support record yields a typed source failure rather than a live snapshot, proven by a test seeding the bundled snapshot before a failed live refresh. test: `tests/providers/capabilities/collectors/test_providers_capabilities_collectors_agy.py`.
 - 6.3.8 - Default-effort normalization through the text-generation consumer matches the fixture-recorded AGY efforts. test: `tests/ai/test_text_generation.py`.
-- 6.3.9 - `AgyCollector` is registered in `_default_collectors`, parses the 1.1.20 envelope (`command.data.models[].{id,label}`, effort from the id suffix) from the fixture into a valid `ProviderSnapshot` (passes `validate_snapshot`), and raises a typed source error on absent binary, sub-floor support record, nonzero exit, or shape mismatch, with the coordinator retaining the prior snapshot and recording the failure. test: `tests/providers/capabilities/collectors/test_providers_capabilities_collectors_agy.py`.
+- 6.3.9 - `AgyCollector` is registered in `_default_collectors`, parses the 1.1.20 envelope (`command.data.models[].{id,label}`, effort from the id suffix) from the fixture into a valid `ProviderSnapshot` (passes `validate_snapshot`), and raises a typed source error on absent binary, sub-floor support record, nonzero exit (including the record-1.1.20 unauthenticated form: exit 1, empty stdout, stderr `Please sign in`, no OAuth prompt), or shape mismatch, with the coordinator retaining the prior snapshot and recording the failure. test: `tests/providers/capabilities/collectors/test_providers_capabilities_collectors_agy.py`.
 - 6.3.10 - `_agy_snapshot_payload` and the `name == "agy"` branch are deleted from `list_provider_models`; AGY is served through `_matrix_snapshot_payload` with `refresh.sources[].source_key == "agy_models_cli"` when live and `bundled` when seeded. symbol: `list_provider_models`. file: `src/gobby/servers/routes/providers.py`.
 - 6.3.11 - `_context_window_for_agy_model` resolves a Gemini-family AGY window from the collector-supplied store fact, proven with a seeded store. symbol: `_context_window_for_agy_model`. file: `src/gobby/sessions/context_usage.py`.
 

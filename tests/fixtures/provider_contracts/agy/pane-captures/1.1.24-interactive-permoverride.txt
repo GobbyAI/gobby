@@ -1,0 +1,33 @@
+# AGY 1.1.18 interactive pane capture — record 1.1.24
+# source: tmux capture-pane -p -S -200 -t agy-gate0 (1.1.24-x5c-permoverride.txt); PreToolUse allow + permissionOverrides (no skip flag, fresh session): native permission prompt still shown
+# scrubbed: $HOME→~, user→<USER>, email→<REDACTED>, workspace→<WORKSPACE>, ids→<CONVERSATION_ID>, scratch→<PROBE_SCRATCH>
+
+
+      ▄▀▀▄        Antigravity CLI 1.1.18
+     ▀▀▀▀▀▀       <REDACTED> (Antigravity Starter Quota)
+    ▀▀▀▀▀▀▀▀      GPT-OSS 120B (Medium)
+   ▄▀▀    ▀▀▄     <WORKSPACE>
+  ▄▀▀      ▀▀▄
+
+────────────────────────────────────────────────────────────
+> run: echo permov-probe
+
+▸ Thought for 2s
+  The user asks to run: "echo permov-probe". Need to run command in workspace dire...
+
+● Bash(echo permov-probe) (ctrl+o to expand)
+
+Command
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+Requesting permission for:
+   echo permov-probe
+
+Do you want to proceed?
+> 1. Yes
+  2. Yes, and always allow in this conversation for commands that start with 'echo'
+  3. Yes, and always allow for commands that start with 'echo' (Persist to settings.json)
+  4. No
+
+  ↑/↓ Navigate · tab Amend · ctrl+g edit/expand command
+esc to cancel                                                                                                                                                                      GPT-OSS 120B (Medium)

@@ -1,10 +1,6 @@
-# AGY 1.1.18 interactive pane capture — record 1.1.8
-# source: tmux capture-pane -p -S -200 -t agy-gate0 (1.1.8-exit-second-cc.txt); second C-c exits: `Resume with -c` hint, pane dead with status 0; no Stop hook fires
+# AGY 1.1.18 interactive pane capture — record 1.1.13
+# source: tmux capture-pane -p -S -200 -t agy-gate0 (1.1.13-print-timeout.txt); session launched with --print-timeout 8s: `run: sleep 25; echo done` completes (inert interactively)
 # scrubbed: $HOME→~, user→<USER>, email→<REDACTED>, workspace→<WORKSPACE>, ids→<CONVERSATION_ID>, scratch→<PROBE_SCRATCH>
-
-
-Resume with -c (or command below):
-agy --conversation=<CONVERSATION_ID>
 
 
       ▄▀▀▄        Antigravity CLI 1.1.18
@@ -14,42 +10,30 @@ agy --conversation=<CONVERSATION_ID>
   ▄▀▀      ▀▀▄
 
 ────────────────────────────────────────────────────────────
-> run: ls -la
+> run: sleep 25; echo done
+
+▸ Thought for 10s
+  User wants to run a command: "sleep 25; echo done". Must run in workspace root. ...
+
+● Bash(sleep 25; echo done) (ctrl+o to expand)
 
 ▸ Thought for 1s
-  User asks to run "ls -la". Must execute within user's workspace. Workspace path ...
+  The user wants to "run: sleep 25; echo done". The command was started asynchrono...
+  The command has been started in the background:
 
-● Bash(ls -la) (ctrl+o to expand)
+    sleep 25; echo done
 
-▸ Thought for 15s
-  We have run ls -la in the workspace directory. Need to output result to user. Pr...
-  Here’s the directory listing for your active workspace:
+  When it finishes, you’ll receive a notification with the output (done). No further action is needed on your part.
 
-    total 16
-    drwxr-xr-x@  5 <USER>  staff  160 Aug 22 06:35 .
-    drwx------@ 14 <USER>  staff  448 Aug 22 06:36 ..
-    -rw-r--r--@  1 <USER>  staff  168 Aug 22 06:35 img.png
-    -rw-r--r--@  1 <USER>  staff   12 Aug 22 06:35 note.txt
-    drwxr-xr-x@  2 <USER>  staff   64 Aug 22 06:35 sub
+▸ Thought for 1s
+  The user gave a system message indicating that the background task completed and...
+  The background task has finished successfully:
 
-  Let me know what you’d like to do next (e.g., view a file, edit something, run another command, etc.).
+    done
 
-────────────────────────────────────────────────────────────
-> what shell command did you run earlier in this conversation? answer in one line
-
-▸ Thought for 2s
-  User asks: "what shell command did you run earlier in this conversation? answer ...
-  ls -la
+  Let me know if you’d like to run another command or need anything else.
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 >
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-
-Resume with -c (or command below):
-agy --conversation=<CONVERSATION_ID>
-
-
-
-
-
-Pane is dead (status 0, Sat Aug 22 06:39:16 2026)
+? for shortcuts                                                                                                                                                                    GPT-OSS 120B (Medium)

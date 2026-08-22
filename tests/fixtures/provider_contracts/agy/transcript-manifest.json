@@ -184,5 +184,31 @@
       "content"
     ],
     "content_head": "Created At: 2026-08-22T03:26:27-05:00\nCompleted At: 2026-08-22T03:26:27-05:00\n\nThe command exited with code 0.\nOutput:\n<truncated 24 bytes>\n"
+  },
+  "interactive_layout_pass3": {
+    "command": "python3 layout.py <CONVERSATION_ID> …  (evidence/1.1.22-interactive-layout.txt)",
+    "conversation": "<CONVERSATION_ID> (the pass-3 interactive session: 1.1.4, 1.1.9, 1.1.10, 1.1.24 turns)",
+    "files": [
+      "56588 .system_generated/logs/chunks/transcript/00000000.jsonl",
+      "56360 .system_generated/logs/chunks/transcript_full/00000000.jsonl",
+      "56588 .system_generated/logs/transcript.jsonl",
+      "56360 .system_generated/logs/transcript_full.jsonl",
+      "992 .system_generated/messages/<CONVERSATION_ID>.json",
+      "45 .system_generated/messages/read.json",
+      "17 .system_generated/tasks/task-86.log",
+      "359 .system_generated/tasks/task-88.log"
+    ],
+    "chunk_identity": [
+      "cmp transcript.jsonl chunks/transcript/00000000.jsonl: identical",
+      "cmp transcript_full.jsonl chunks/transcript_full/00000000.jsonl: identical"
+    ],
+    "record_type_census": "census: {'USER_EXPLICIT/USER_INPUT': 16, 'SYSTEM/CHECKPOINT': 1, 'MODEL/PLANNER_RESPONSE': 44, 'MODEL/GENERIC': 10, 'SYSTEM_SDK/USER_INPUT': 1, 'SYSTEM_SDK/EPHEMERAL_MESSAGE': 1, 'SYSTEM/SYSTEM_MESSAGE': 14, 'SYSTEM/ERROR_MESSAGE': 1}",
+    "new_record_types_seen_interactively": {
+      "SYSTEM_SDK/USER_INPUT": "the PreInvocation injectSteps.userMessage, wrapped in <USER_REQUEST>",
+      "SYSTEM_SDK/EPHEMERAL_MESSAGE": "the PreInvocation injectSteps.ephemeralMessage verbatim",
+      "SYSTEM/ERROR_MESSAGE": "Error: model output error … (after a hook-blocked tool call)"
+    },
+    "nonzero_exit_interactive": "MODEL/GENERIC content 'The command exited with code 7.\\nOutput:\\nboom' (same free-text shape as print mode; no RUN_COMMAND record, no exit_code field)",
+    "hook_blocked_tool_steps": "leave no GENERIC record and no PostToolUse; only the following PLANNER_RESPONSE.thinking mentions the block"
   }
 }

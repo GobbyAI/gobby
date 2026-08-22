@@ -1,0 +1,188 @@
+$ python3 inputfmt.py eof   (inputfmt.py: see README 1.1.18)
+--- report ---
+cmd: agy --input-format stream-json --output-format stream-json --sandbox=false --dangerously-skip-permissions --add-dir <WORKSPACE> --print-timeout 2m --model gpt-oss-120b-medium
+[   0.0] >> {"event": "user", "message": {"content": "reply with exactly: before-eof"}}
+[   2.4] init {"model": "gpt-oss-120b-medium", "cwd": "<WORKSPACE>", "permission_mode": "always-proceed"}
+[   6.2] result {"conversation_id": "<CONVERSATION_ID>", "status": "SUCCESS", "duration_seconds": 3.528411, "num_turns": 1, "usage": {"input_tokens": 12103, "output_tokens": 39, "thinking_tokens": 0, "cache_read_tokens": 0, "total_tokens": 12142}}
+[   6.3] closing stdin (EOF)
+[   6.4] exit code 0
+conversation ids: ['<CONVERSATION_ID>']
+--- stdout ---
+{"event":"init","conversation_id":"<CONVERSATION_ID>","init":{"model":"gpt-oss-120b-medium","cwd":"<WORKSPACE>","tools":["ask_custom_permission","ask_permission","ask_question","browser_click_element","browser_drag_pixel_to_pixel","browser_get_dom","browser_get_network_request","browser_input","browser_list_network_requests","browser_mouse_down","browser_mouse_up","browser_move_mouse","browser_press_key","browser_refresh_page","browser_resize_window","browser_scroll","browser_scroll_dom","browser_select_option","browser_subagent","call_mcp_tool","capture_browser_console_logs","capture_browser_screenshot","click_browser_pixel","command_status","define_subagent","delete_knowledge","execute_browser_javascript","find_by_name","finish","generate_image","grep_search","invoke_subagent","list_browser_pages","list_dir","list_permissions","list_resources","manage_inbox","manage_subagents","manage_task","multi_replace_file_content","notebook_edit","notebook_execution","open_browser_url","read_browser_page","read_resource","read_url_content","replace_file_content","run_command","schedule","search_web","sed_file","send_command_input","send_message","view_file","wait","wait_5_seconds","write_to_file"],"permission_mode":"always-proceed"}}
+{"event":"step_update","step_update":{"conversation_id":"<CONVERSATION_ID>","step_index":0,"state":"DONE","step_type":"user_input"}}
+{"event":"step_update","step_update":{"conversation_id":"<CONVERSATION_ID>","step_index":1,"state":"DONE","step_type":"checkpoint","duration_seconds":1.680839}}
+{"event":"step_update","step_update":{"conversation_id":"<CONVERSATION_ID>","step_index":2,"state":"DONE","step_type":"agent_response","text_delta":"before-eof\n","duration_seconds":1.723382,"usage":{"input_tokens":12103,"output_tokens":39,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":12142}}}
+{"event":"result","result":{"conversation_id":"<CONVERSATION_ID>","status":"SUCCESS","response":"before-eof\n","duration_seconds":3.528411,"num_turns":1,"usage":{"input_tokens":12103,"output_tokens":39,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":12142}}}
+--- stderr ---
+
+$ python3 inputfmt.py conv <CONVERSATION_ID>
+--- report ---
+cmd: agy --input-format stream-json --output-format stream-json --sandbox=false --dangerously-skip-permissions --add-dir <WORKSPACE> --print-timeout 2m --model gpt-oss-120b-medium --conversation <CONVERSATION_ID>
+[   0.0] >> {"event": "user", "message": {"content": "reply with exactly: one"}}
+[   2.4] init {"model": "gpt-oss-120b-medium", "cwd": "<WORKSPACE>", "permission_mode": "always-proceed"}
+[   2.6] step_update {"conversation_id": "<CONVERSATION_ID>", "step_index": 6, "state": "DONE", "step_type": "system_message", "duration_seconds": 0.000642}
+[   4.0] result {"conversation_id": "<CONVERSATION_ID>", "status": "SUCCESS", "duration_seconds": 901.527079, "num_turns": 3, "usage": {"input_tokens": 37926, "output_tokens": 180, "thinking_tokens": 0, "cache_read_tokens": 0, "total_tokens": 38106}}
+[   4.1] >> {"event": "user", "message": {"content": "what did you reply last time? one word"}}
+[  47.6] result {"conversation_id": "<CONVERSATION_ID>", "status": "SUCCESS", "duration_seconds": 945.000829, "num_turns": 4, "usage": {"input_tokens": 51024, "output_tokens": 242, "thinking_tokens": 0, "cache_read_tokens": 0, "total_tokens": 51266}}
+[  47.7] closing stdin (EOF)
+[  47.7] exit code 0
+conversation ids: ['<CONVERSATION_ID>']
+--- stdout ---
+{"event":"init","conversation_id":"<CONVERSATION_ID>","init":{"model":"gpt-oss-120b-medium","cwd":"<WORKSPACE>","tools":["ask_custom_permission","ask_permission","ask_question","browser_click_element","browser_drag_pixel_to_pixel","browser_get_dom","browser_get_network_request","browser_input","browser_list_network_requests","browser_mouse_down","browser_mouse_up","browser_move_mouse","browser_press_key","browser_refresh_page","browser_resize_window","browser_scroll","browser_scroll_dom","browser_select_option","browser_subagent","call_mcp_tool","capture_browser_console_logs","capture_browser_screenshot","click_browser_pixel","command_status","define_subagent","delete_knowledge","execute_browser_javascript","find_by_name","finish","generate_image","grep_search","invoke_subagent","list_browser_pages","list_dir","list_permissions","list_resources","manage_inbox","manage_subagents","manage_task","multi_replace_file_content","notebook_edit","notebook_execution","open_browser_url","read_browser_page","read_resource","read_url_content","replace_file_content","run_command","schedule","search_web","sed_file","send_command_input","send_message","view_file","wait","wait_5_seconds","write_to_file"],"permission_mode":"always-proceed"}}
+{"event":"step_update","step_update":{"conversation_id":"<CONVERSATION_ID>","step_index":5,"state":"DONE","step_type":"user_input"}}
+{"event":"step_update","step_update":{"conversation_id":"<CONVERSATION_ID>","step_index":6,"state":"DONE","step_type":"system_message","duration_seconds":0.000642}}
+{"event":"step_update","step_update":{"conversation_id":"<CONVERSATION_ID>","step_index":7,"state":"ACTIVE","step_type":"agent_response","text_delta":"All subagents have been"}}
+{"event":"step_update","step_update":{"conversation_id":"<CONVERSATION_ID>","step_index":7,"state":"ACTIVE","step_type":"agent_response","text_delta":" terminated due to the server restart. Let me know if you’d like to start any"}}
+{"event":"step_update","step_update":{"conversation_id":"<CONVERSATION_ID>","step_index":7,"state":"DONE","step_type":"agent_response","text_delta":" subagents or resume work.\n","duration_seconds":1.152787,"usage":{"input_tokens":12341,"output_tokens":105,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":12446}}}
+{"event":"result","result":{"conversation_id":"<CONVERSATION_ID>","status":"SUCCESS","response":"All subagents have been terminated due to the server restart. Let me know if you’d like to start any subagents or resume work.\n","duration_seconds":901.527079,"num_turns":3,"usage":{"input_tokens":37926,"output_tokens":180,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":38106}}}
+{"event":"step_update","step_update":{"conversation_id":"<CONVERSATION_ID>","step_index":8,"state":"DONE","step_type":"user_input"}}
+{"event":"step_update","step_update":{"conversation_id":"<CONVERSATION_ID>","step_index":9,"state":"DONE","step_type":"agent_response","text_delta":"one\n","duration_seconds":42.923921,"usage":{"input_tokens":13098,"output_tokens":62,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":13160}}}
+{"event":"result","result":{"conversation_id":"<CONVERSATION_ID>","status":"SUCCESS","response":"one\n","duration_seconds":945.000829,"num_turns":4,"usage":{"input_tokens":51024,"output_tokens":242,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":51266}}}
+--- stderr ---
+
+$ python3 inputfmt.py idle
+--- report ---
+cmd: agy --input-format stream-json --output-format stream-json --sandbox=false --dangerously-skip-permissions --add-dir <WORKSPACE> --print-timeout 20s --model gpt-oss-120b-medium
+[   0.0] >> {"event": "user", "message": {"content": "reply with exactly: t1"}}
+[   2.8] init {"model": "gpt-oss-120b-medium", "cwd": "<WORKSPACE>", "permission_mode": "always-proceed"}
+[   6.2] result {"conversation_id": "<CONVERSATION_ID>", "status": "SUCCESS", "duration_seconds": 3.100872, "num_turns": 1, "usage": {"input_tokens": 12100, "output_tokens": 46, "thinking_tokens": 0, "cache_read_tokens": 0, "total_tokens": 12146}}
+idle 25s
+alive after idle: True
+[  31.3] >> {"event": "user", "message": {"content": "reply with exactly: t2"}}
+[  41.8] result {"conversation_id": "<CONVERSATION_ID>", "status": "SUCCESS", "duration_seconds": 38.644318, "num_turns": 2, "usage": {"input_tokens": 24928, "output_tokens": 90, "thinking_tokens": 0, "cache_read_tokens": 0, "total_tokens": 25018}}
+[  42.0] closing stdin (EOF)
+[  42.1] exit code 0
+conversation ids: ['<CONVERSATION_ID>']
+--- stdout ---
+{"event":"init","conversation_id":"<CONVERSATION_ID>","init":{"model":"gpt-oss-120b-medium","cwd":"<WORKSPACE>","tools":["ask_custom_permission","ask_permission","ask_question","browser_click_element","browser_drag_pixel_to_pixel","browser_get_dom","browser_get_network_request","browser_input","browser_list_network_requests","browser_mouse_down","browser_mouse_up","browser_move_mouse","browser_press_key","browser_refresh_page","browser_resize_window","browser_scroll","browser_scroll_dom","browser_select_option","browser_subagent","call_mcp_tool","capture_browser_console_logs","capture_browser_screenshot","click_browser_pixel","command_status","define_subagent","delete_knowledge","execute_browser_javascript","find_by_name","finish","generate_image","grep_search","invoke_subagent","list_browser_pages","list_dir","list_permissions","list_resources","manage_inbox","manage_subagents","manage_task","multi_replace_file_content","notebook_edit","notebook_execution","open_browser_url","read_browser_page","read_resource","read_url_content","replace_file_content","run_command","schedule","search_web","sed_file","send_command_input","send_message","view_file","wait","wait_5_seconds","write_to_file"],"permission_mode":"always-proceed"}}
+{"event":"step_update","step_update":{"conversation_id":"<CONVERSATION_ID>","step_index":0,"state":"DONE","step_type":"user_input"}}
+{"event":"step_update","step_update":{"conversation_id":"<CONVERSATION_ID>","step_index":1,"state":"DONE","step_type":"checkpoint","duration_seconds":1.7690510000000002}}
+{"event":"step_update","step_update":{"conversation_id":"<CONVERSATION_ID>","step_index":2,"state":"DONE","step_type":"agent_response","text_delta":"t1\n","duration_seconds":1.166809,"usage":{"input_tokens":12100,"output_tokens":46,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":12146}}}
+{"event":"result","result":{"conversation_id":"<CONVERSATION_ID>","status":"SUCCESS","response":"t1\n","duration_seconds":3.100872,"num_turns":1,"usage":{"input_tokens":12100,"output_tokens":46,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":12146}}}
+{"event":"step_update","step_update":{"conversation_id":"<CONVERSATION_ID>","step_index":3,"state":"DONE","step_type":"user_input"}}
+{"event":"step_update","step_update":{"conversation_id":"<CONVERSATION_ID>","step_index":4,"state":"ACTIVE","step_type":"agent_response","text_delta":"t2"}}
+{"event":"step_update","step_update":{"conversation_id":"<CONVERSATION_ID>","step_index":4,"state":"DONE","step_type":"agent_response","text_delta":"\n","duration_seconds":10.005921,"usage":{"input_tokens":12828,"output_tokens":44,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":12872}}}
+{"event":"result","result":{"conversation_id":"<CONVERSATION_ID>","status":"SUCCESS","response":"t2\n","duration_seconds":38.644318,"num_turns":2,"usage":{"input_tokens":24928,"output_tokens":90,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":25018}}}
+--- stderr ---
+
+$ python3 inputfmt.py cancel
+--- report ---
+cmd: agy --input-format stream-json --output-format stream-json --sandbox=false --dangerously-skip-permissions --add-dir <WORKSPACE> --print-timeout 2m --model gpt-oss-120b-medium
+[   0.0] >> {"event": "user", "message": {"content": "run: sleep 30; echo slept"}}
+[   2.3] init {"model": "gpt-oss-120b-medium", "cwd": "<WORKSPACE>", "permission_mode": "always-proceed"}
+[  20.8] step_update {"conversation_id": "<CONVERSATION_ID>", "step_index": 3, "state": "ACTIVE", "step_type": "tool", "tool_name": "run_command", "tool_info": {"name": "run_command", "parameters": {"CommandLine": "sleep 30; echo slept"}}}
+[  21.1] sending SIGINT to agy pid 88685
+[  21.2] result {"conversation_id": "<CONVERSATION_ID>", "status": "ERROR", "error": "context canceled", "duration_seconds": 18.736567, "num_turns": 1, "usage": {"input_tokens": 12100, "output_tokens": 362, "thinking_tokens": 0, "cache_read_tokens": 0, "tot
+[  24.2] alive after SIGINT: False rc=1
+[  24.2] exit code 1
+conversation ids: ['<CONVERSATION_ID>']
+--- stdout ---
+{"event":"init","conversation_id":"<CONVERSATION_ID>","init":{"model":"gpt-oss-120b-medium","cwd":"<WORKSPACE>","tools":["ask_custom_permission","ask_permission","ask_question","browser_click_element","browser_drag_pixel_to_pixel","browser_get_dom","browser_get_network_request","browser_input","browser_list_network_requests","browser_mouse_down","browser_mouse_up","browser_move_mouse","browser_press_key","browser_refresh_page","browser_resize_window","browser_scroll","browser_scroll_dom","browser_select_option","browser_subagent","call_mcp_tool","capture_browser_console_logs","capture_browser_screenshot","click_browser_pixel","command_status","define_subagent","delete_knowledge","execute_browser_javascript","find_by_name","finish","generate_image","grep_search","invoke_subagent","list_browser_pages","list_dir","list_permissions","list_resources","manage_inbox","manage_subagents","manage_task","multi_replace_file_content","notebook_edit","notebook_execution","open_browser_url","read_browser_page","read_resource","read_url_content","replace_file_content","run_command","schedule","search_web","sed_file","send_command_input","send_message","view_file","wait","wait_5_seconds","write_to_file"],"permission_mode":"always-proceed"}}
+{"event":"step_update","step_update":{"conversation_id":"<CONVERSATION_ID>","step_index":0,"state":"DONE","step_type":"user_input"}}
+{"event":"step_update","step_update":{"conversation_id":"<CONVERSATION_ID>","step_index":1,"state":"DONE","step_type":"checkpoint","duration_seconds":9.319006}}
+{"event":"step_update","step_update":{"conversation_id":"<CONVERSATION_ID>","step_index":2,"state":"DONE","step_type":"agent_response","duration_seconds":8.727751,"usage":{"input_tokens":12100,"output_tokens":362,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":12462}}}
+{"event":"step_update","step_update":{"conversation_id":"<CONVERSATION_ID>","step_index":3,"state":"ACTIVE","step_type":"tool","tool_name":"run_command","tool_info":{"name":"run_command","parameters":{"CommandLine":"sleep 30; echo slept"}}}}
+{"event":"result","result":{"conversation_id":"<CONVERSATION_ID>","status":"ERROR","response":"","error":"context canceled","duration_seconds":18.736567,"num_turns":1,"usage":{"input_tokens":12100,"output_tokens":362,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":12462}}}
+--- stderr ---
+
+$ python3 inputfmt.py shapes
+--- report ---
+cmd: agy --input-format stream-json --output-format stream-json --sandbox=false --dangerously-skip-permissions --add-dir <WORKSPACE> --print-timeout 2m --model gpt-oss-120b-medium -p
+[   0.0] >> reply with exactly: alpha
+process exited rc=2
+[   8.1] exit code 2
+conversation ids: []
+--- stdout ---
+--- stderr ---
+flag needs an argument: -p
+Usage of agy:
+  --add-dir                       Add a directory to the workspace (repeatable) (default [])
+  --agent                         Agent for the current CLI session
+  -c                              Short alias for --continue
+  --continue                      Continue the most recent conversation
+  --conversation                  Resume a previous conversation by ID
+  --dangerously-skip-permissions  Auto-approve all tool permission requests without prompting
+  --disable-slash-commands        Disable slash command and skill expansion in print mode
+  --effort                        Reasoning effort for the current CLI session (low|medium|high)
+  -i                              Short alias for --prompt-interactive
+  --input-format                  Input format for print mode (text, stream-json). stream-json reads one NDJSON message per line from stdin and runs a turn for each; it requires --output-format stream-json (default text)
+  --json-schema                   Optional JSON schema string or path to a schema file to enforce structured output (for stream-json, only applicable to the final result)
+  --log-file                      Override CLI log file path
+  --mode                          Set the agent execution mode for this session (accept-edits, plan)
+  --model                         Model for the current CLI session
+  --new-project                   Create a new project for this session
+  --output-format                 Output format for print mode (text, json, stream-json) (default text)
+  -p                              Short alias for --print
+  --print                         Run a single prompt non-interactively and print the response
+  --print-timeout                 Timeout for print mode wait (default 5m0s)
+  --project                       Project ID or project name for the current CLI session
+  --prompt                        Alias for --print
+  --prompt-interactive            Run an initial prompt interactively and continue the session
+  --sandbox                       Run in a sandbox with terminal restrictions enabled
+
+Available subcommands:
+  agent           List available agents
+  agents          List available agents
+  changelog       Show changelog and release notes
+  help            Show help for subcommands
+  install         Configure environment paths and shell settings
+  mcp             Manage MCP servers (add, remove, list, enable, disable)
+  models          List available models
+  plugin          Manage plugins (install, uninstall, list, enable, disable)
+  plugins         Alias for plugin
+  update          Update CLI
+
+$ python3 inputfmt.py shapes2
+--- report ---
+cmd: agy --input-format stream-json --output-format stream-json --sandbox=false --dangerously-skip-permissions --add-dir <WORKSPACE> --print-timeout 2m --model gpt-oss-120b-medium
+[   0.0] >> reply with exactly: alpha
+[   2.8] init {"model": "gpt-oss-120b-medium", "cwd": "<WORKSPACE>", "permission_mode": "always-proceed"}
+[   2.8] result {"conversation_id": "<CONVERSATION_ID>", "status": "ERROR", "error": "failed to decode stream input: invalid character 'r' looking for beginning of value", "duration_seconds": 0, "num_turns": 0, "usage": {"input_tokens": 0, "output_tokens": 
+process exited rc=1
+[   8.1] exit code 1
+conversation ids: ['<CONVERSATION_ID>']
+--- stdout ---
+{"event":"init","conversation_id":"<CONVERSATION_ID>","init":{"model":"gpt-oss-120b-medium","cwd":"<WORKSPACE>","tools":["ask_custom_permission","ask_permission","ask_question","browser_click_element","browser_drag_pixel_to_pixel","browser_get_dom","browser_get_network_request","browser_input","browser_list_network_requests","browser_mouse_down","browser_mouse_up","browser_move_mouse","browser_press_key","browser_refresh_page","browser_resize_window","browser_scroll","browser_scroll_dom","browser_select_option","browser_subagent","call_mcp_tool","capture_browser_console_logs","capture_browser_screenshot","click_browser_pixel","command_status","define_subagent","delete_knowledge","execute_browser_javascript","find_by_name","finish","generate_image","grep_search","invoke_subagent","list_browser_pages","list_dir","list_permissions","list_resources","manage_inbox","manage_subagents","manage_task","multi_replace_file_content","notebook_edit","notebook_execution","open_browser_url","read_browser_page","read_resource","read_url_content","replace_file_content","run_command","schedule","search_web","sed_file","send_command_input","send_message","view_file","wait","wait_5_seconds","write_to_file"],"permission_mode":"always-proceed"}}
+{"event":"result","result":{"conversation_id":"<CONVERSATION_ID>","status":"ERROR","response":"","error":"failed to decode stream input: invalid character 'r' looking for beginning of value","duration_seconds":0,"num_turns":0,"usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":0}}}
+--- stderr ---
+
+$ python3 inputfmt.py shapes3
+--- report ---
+cmd: agy --input-format stream-json --output-format stream-json --sandbox=false --dangerously-skip-permissions --add-dir <WORKSPACE> --print-timeout 2m --model gpt-oss-120b-medium
+[   0.0] >> {"prompt": "reply with exactly: beta"}
+[   2.3] init {"model": "gpt-oss-120b-medium", "cwd": "<WORKSPACE>", "permission_mode": "always-proceed"}
+[   2.3] result {"conversation_id": "<CONVERSATION_ID>", "status": "ERROR", "error": "stream input message is missing the \"event\" field", "duration_seconds": 0, "num_turns": 0, "usage": {"input_tokens": 0, "output_tokens": 0, "thinking_tokens": 0, "cache_
+process exited rc=1
+[   8.1] exit code 1
+conversation ids: ['<CONVERSATION_ID>']
+--- stdout ---
+{"event":"init","conversation_id":"<CONVERSATION_ID>","init":{"model":"gpt-oss-120b-medium","cwd":"<WORKSPACE>","tools":["ask_custom_permission","ask_permission","ask_question","browser_click_element","browser_drag_pixel_to_pixel","browser_get_dom","browser_get_network_request","browser_input","browser_list_network_requests","browser_mouse_down","browser_mouse_up","browser_move_mouse","browser_press_key","browser_refresh_page","browser_resize_window","browser_scroll","browser_scroll_dom","browser_select_option","browser_subagent","call_mcp_tool","capture_browser_console_logs","capture_browser_screenshot","click_browser_pixel","command_status","define_subagent","delete_knowledge","execute_browser_javascript","find_by_name","finish","generate_image","grep_search","invoke_subagent","list_browser_pages","list_dir","list_permissions","list_resources","manage_inbox","manage_subagents","manage_task","multi_replace_file_content","notebook_edit","notebook_execution","open_browser_url","read_browser_page","read_resource","read_url_content","replace_file_content","run_command","schedule","search_web","sed_file","send_command_input","send_message","view_file","wait","wait_5_seconds","write_to_file"],"permission_mode":"always-proceed"}}
+{"event":"result","result":{"conversation_id":"<CONVERSATION_ID>","status":"ERROR","response":"","error":"stream input message is missing the \"event\" field","duration_seconds":0,"num_turns":0,"usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":0}}}
+--- stderr ---
+
+$ python3 inputfmt.py shapes4
+--- report ---
+cmd: agy --input-format stream-json --output-format stream-json --sandbox=false --dangerously-skip-permissions --add-dir <WORKSPACE> --print-timeout 2m --model gpt-oss-120b-medium
+[   0.0] >> {"event": "bogus_event"}
+[   2.5] init {"model": "gpt-oss-120b-medium", "cwd": "<WORKSPACE>", "permission_mode": "always-proceed"}
+[  60.1] >> {"event": "user", "message": {"content": "reply with exactly: beta"}}
+[  65.9] result {"conversation_id": "<CONVERSATION_ID>", "status": "SUCCESS", "duration_seconds": 5.568657, "num_turns": 1, "usage": {"input_tokens": 12762, "output_tokens": 49, "thinking_tokens": 0, "cache_read_tokens": 0, "total_tokens": 12811}}
+[  65.9] >> {"event": "user", "message": {"role": "user", "content": [{"type": "text", "text": "reply with exactly: gamma"}]}}
+[  66.9] result {"conversation_id": "<CONVERSATION_ID>", "status": "SUCCESS", "duration_seconds": 6.628119, "num_turns": 2, "usage": {"input_tokens": 25585, "output_tokens": 75, "thinking_tokens": 0, "cache_read_tokens": 0, "total_tokens": 25660}}
+[  67.1] >> {"event": "user", "message": {"content": [{"type": "image", "source": "x"}]}}
+[  67.1] result {"conversation_id": "<CONVERSATION_ID>", "status": "ERROR", "error": "stream input content block type \"image\" is not supported (only \"text\")", "duration_seconds": 6.628119, "num_turns": 2, "usage": {"input_tokens": 25585, "output_tokens"
+process exited rc=1
+[  67.4] exit code 1
+conversation ids: ['<CONVERSATION_ID>']
+--- stdout ---
+{"event":"init","conversation_id":"<CONVERSATION_ID>","init":{"model":"gpt-oss-120b-medium","cwd":"<WORKSPACE>","tools":["ask_custom_permission","ask_permission","ask_question","browser_click_element","browser_drag_pixel_to_pixel","browser_get_dom","browser_get_network_request","browser_input","browser_list_network_requests","browser_mouse_down","browser_mouse_up","browser_move_mouse","browser_press_key","browser_refresh_page","browser_resize_window","browser_scroll","browser_scroll_dom","browser_select_option","browser_subagent","call_mcp_tool","capture_browser_console_logs","capture_browser_screenshot","click_browser_pixel","command_status","define_subagent","delete_knowledge","execute_browser_javascript","find_by_name","finish","generate_image","grep_search","invoke_subagent","list_browser_pages","list_dir","list_permissions","list_resources","manage_inbox","manage_subagents","manage_task","multi_replace_file_content","notebook_edit","notebook_execution","open_browser_url","read_browser_page","read_resource","read_url_content","replace_file_content","run_command","schedule","search_web","sed_file","send_command_input","send_message","view_file","wait","wait_5_seconds","write_to_file"],"permission_mode":"always-proceed"}}
+{"event":"step_update","step_update":{"conversation_id":"<CONVERSATION_ID>","step_index":0,"state":"DONE","step_type":"user_input"}}
+{"event":"step_update","step_update":{"conversation_id":"<CONVERSATION_ID>","step_index":1,"state":"DONE","step_type":"checkpoint","duration_seconds":4.44887}}
+{"event":"step_update","step_update":{"conversation_id":"<CONVERSATION_ID>","step_index":2,"state":"DONE","step_type":"agent_response","text_delta":"beta\n","duration_seconds":1.009123,"usage":{"input_tokens":12762,"output_tokens":49,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":12811}}}
+{"event":"result","result":{"conversation_id":"<CONVERSATION_ID>","status":"SUCCESS","response":"beta\n","duration_seconds":5.568657,"num_turns":1,"usage":{"input_tokens":12762,"output_tokens":49,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":12811}}}
+{"event":"step_update","step_update":{"conversation_id":"<CONVERSATION_ID>","step_index":3,"state":"DONE","step_type":"user_input"}}
+{"event":"step_update","step_update":{"conversation_id":"<CONVERSATION_ID>","step_index":4,"state":"DONE","step_type":"agent_response","text_delta":"gamma\n","duration_seconds":0.666073,"usage":{"input_tokens":12823,"output_tokens":26,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":12849}}}
+{"event":"result","result":{"conversation_id":"<CONVERSATION_ID>","status":"SUCCESS","response":"gamma\n","duration_seconds":6.628119,"num_turns":2,"usage":{"input_tokens":25585,"output_tokens":75,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":25660}}}
+{"event":"result","result":{"conversation_id":"<CONVERSATION_ID>","status":"ERROR","response":"","error":"stream input content block type \"image\" is not supported (only \"text\")","duration_seconds":6.628119,"num_turns":2,"usage":{"input_tokens":25585,"output_tokens":75,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":25660}}}
+--- stderr ---
+warning: ignoring unsupported stream input message event "bogus_event"

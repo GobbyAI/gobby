@@ -1,0 +1,7 @@
+$ date +%s; agy -p 'reply with exactly: ok2' --output-format json --sandbox=false --dangerously-skip-permissions --add-dir <WORKSPACE> --print-timeout 3m --model gpt-oss-120b-medium --conversation <CONVERSATION_ID>; date +%s
+--- stdout ---
+1787388425
+{"conversation_id":"<CONVERSATION_ID>","status":"SUCCESS","response":"ok2\n","duration_seconds":213.192009,"num_turns":2,"usage":{"input_tokens":25696,"output_tokens":92,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":25788}}
+1787388430
+--- stderr ---
+--- exit 0 ---

@@ -1,0 +1,17 @@
+$ agy -p "/usage" --output-format json
+--- stdout ---
+{"conversation_id":"","status":"SUCCESS","response":"Gemini Models\tWeekly Limit Remaining\t70%\t2026-08-27T08:53:33Z\nClaude and GPT models\tWeekly Limit Remaining\t100%\t2026-08-29T08:24:58Z\n","duration_seconds":0,"num_turns":0,"usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":0},"command":{"name":"usage","data":{"description":"Within each group, models share a weekly limit. Quota is consumed proportionally to the cost of the tokens. Thus, limits will last longer with shorter tasks or using more cost-effective models. Your weekly limit is tied directly to your individual tier.","groups":[{"name":"Gemini Models","description":"Models within this group: Gemini Flash, Gemini Pro","buckets":[{"id":"gemini-weekly","name":"Weekly Limit Remaining","description":"You have used some of your weekly limit, it will fully refresh in 5 days.","window":"weekly","remaining_fraction":0.7005872130393982,"reset_time":"2026-08-27T08:53:33Z"}]},{"name":"Claude and GPT models","description":"Models within this group: Claude Opus, Claude Sonnet, GPT-OSS","buckets":[{"id":"3p-weekly","name":"Weekly Limit Remaining","window":"weekly","remaining_fraction":1,"reset_time":"2026-08-29T08:24:58Z"}]}]}}}
+--- stderr ---
+--- exit 0 ---
+
+$ agy -p "/quota" --output-format json
+--- stdout ---
+{"conversation_id":"","status":"SUCCESS","response":"Gemini Models\tWeekly Limit Remaining\t70%\t2026-08-27T08:53:33Z\nClaude and GPT models\tWeekly Limit Remaining\t100%\t2026-08-29T08:25:01Z\n","duration_seconds":0,"num_turns":0,"usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":0},"command":{"name":"usage","data":{"description":"Within each group, models share a weekly limit. Quota is consumed proportionally to the cost of the tokens. Thus, limits will last longer with shorter tasks or using more cost-effective models. Your weekly limit is tied directly to your individual tier.","groups":[{"name":"Gemini Models","description":"Models within this group: Gemini Flash, Gemini Pro","buckets":[{"id":"gemini-weekly","name":"Weekly Limit Remaining","description":"You have used some of your weekly limit, it will fully refresh in 5 days.","window":"weekly","remaining_fraction":0.7005872130393982,"reset_time":"2026-08-27T08:53:33Z"}]},{"name":"Claude and GPT models","description":"Models within this group: Claude Opus, Claude Sonnet, GPT-OSS","buckets":[{"id":"3p-weekly","name":"Weekly Limit Remaining","window":"weekly","remaining_fraction":1,"reset_time":"2026-08-29T08:25:01Z"}]}]}}}
+--- stderr ---
+--- exit 0 ---
+
+$ agy -p "/credits" --output-format json
+--- stdout ---
+{"conversation_id":"","status":"ERROR","response":"","error":"/credits failed: retrieving credits: no credits info found","duration_seconds":0,"num_turns":0,"usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":0}}
+--- stderr ---
+--- exit 1 ---

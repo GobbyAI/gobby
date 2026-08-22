@@ -1,10 +1,6 @@
 # AGY 1.1.18 interactive pane capture — record 1.1.8
-# source: tmux capture-pane -p -S -200 -t agy-gate0 (1.1.8-exit-second-cc.txt); second C-c exits: `Resume with -c` hint, pane dead with status 0; no Stop hook fires
+# source: tmux capture-pane -p -S -200 -t agy-gate0 (1.1.8-exit-first-cc.txt); first C-c at idle arms exit: status line reads `press ctrl+c again to exit`; no hook fires
 # scrubbed: $HOME→~, user→<USER>, email→<REDACTED>, workspace→<WORKSPACE>, ids→<CONVERSATION_ID>, scratch→<PROBE_SCRATCH>
-
-
-Resume with -c (or command below):
-agy --conversation=<CONVERSATION_ID>
 
 
       ▄▀▀▄        Antigravity CLI 1.1.18
@@ -44,12 +40,4 @@ agy --conversation=<CONVERSATION_ID>
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 >
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-
-Resume with -c (or command below):
-agy --conversation=<CONVERSATION_ID>
-
-
-
-
-
-Pane is dead (status 0, Sat Aug 22 06:39:16 2026)
+press ctrl+c again to exit                                                                                                                                                         GPT-OSS 120B (Medium)
