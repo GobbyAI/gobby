@@ -543,6 +543,39 @@ def test_production_size_growth_accepts_explicit_new_split_target(tmp_path: Path
     assert not any(issue.code == "production-size-growth" for issue in result.issues)
 
 
+def test_production_size_growth_excludes_test_module_outside_tests_directory(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "src" / "runner_tests.rs"
+    source_path.parent.mkdir()
+    source_path.write_text("fn case() {}\n" * 850, encoding="utf-8")
+
+    result = _lint_plan_text(
+        tmp_path,
+        """
+        > **Plan ID:** production-size-test-module
+
+        # Production Size Test Module
+
+        ## P1: Work
+        `kind: framing`
+
+        ### 1.1 Extend test module [category: test]
+        `kind: deliverable`
+
+        Target: `src/runner_tests.rs::case`
+
+        Update test coverage.
+
+        **Acceptance:**
+        - 1.1.1 - Test coverage is complete. test: `src/runner_tests.rs::case`.
+        """,
+        project_root=tmp_path,
+    )
+
+    assert not any(issue.code == "production-size-growth" for issue in result.issues)
+
+
 @pytest.mark.parametrize(
     ("trigger", "missing_carrier"),
     [

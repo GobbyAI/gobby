@@ -557,6 +557,11 @@ def _is_hand_maintained_production_path(file_path: str, source_path: Path) -> bo
         return False
     if any(part in _NON_PRODUCTION_PARTS for part in relative.parts):
         return False
+    stem = relative.stem.lower()
+    if stem in {"conftest", "tests"} or stem.startswith("test_"):
+        return False
+    if stem.endswith(("_test", "_tests", ".test", ".spec")):
+        return False
     return source_path.is_file() and not has_generated_header(source_path)
 
 
