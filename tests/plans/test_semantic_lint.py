@@ -576,6 +576,43 @@ def test_production_size_growth_excludes_test_module_outside_tests_directory(
     assert not any(issue.code == "production-size-growth" for issue in result.issues)
 
 
+def test_production_size_growth_accepts_split_verb_on_separate_body_line(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "src" / "large.py"
+    source_path.parent.mkdir()
+    source_path.write_text("value = 1\n" * 850, encoding="utf-8")
+
+    result = _lint_plan_text(
+        tmp_path,
+        """
+        > **Plan ID:** production-size-wrapped-split
+
+        # Production Size Wrapped Split
+
+        ## P1: Work
+        `kind: framing`
+
+        ### 1.1 Split large module [category: code]
+        `kind: deliverable`
+
+        Targets:
+        - `src/large.py::run`
+        - `src/large_helpers.py`
+
+        Split the module across a smaller helper.
+        The new file is `large_helpers.py`.
+
+        **Acceptance:**
+        - 1.1.1 - Behavior is complete. file: `src/large.py`.
+        - 1.1.2 - Helpers move to the new module. file: `src/large_helpers.py`.
+        """,
+        project_root=tmp_path,
+    )
+
+    assert not any(issue.code == "production-size-growth" for issue in result.issues)
+
+
 @pytest.mark.parametrize(
     ("trigger", "missing_carrier"),
     [

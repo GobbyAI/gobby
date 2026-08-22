@@ -597,13 +597,10 @@ def _has_new_split_target(
     }
     if not candidates:
         return False
-    for line in section_body_lines(plan_doc, section, before_acceptance=True):
-        if _SPLIT_MOVE_RE.search(line) is None:
-            continue
-        mentioned = find_file_paths_in_text(line)
-        if candidates.intersection(mentioned):
-            return True
-    return False
+    return any(
+        _SPLIT_MOVE_RE.search(line) is not None
+        for line in section_body_lines(plan_doc, section, before_acceptance=True)
+    )
 
 
 def _bare_target_paths(plan_doc: PlanDocument, section: PlanSection) -> set[str]:
