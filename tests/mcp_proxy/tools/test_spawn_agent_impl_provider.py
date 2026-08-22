@@ -329,6 +329,7 @@ class TestProviderResolution:
         spawn_request = mock_execute.call_args[0][0]
         assert spawn_request.sandbox_config is not None
         assert spawn_request.sandbox_config.enabled is True
+        assert spawn_request.sandbox_config.backend == "srt"
         assert spawn_request.sandbox_config.mode == "restrictive"
         assert spawn_request.sandbox_config.allow_network is False
         assert spawn_request.sandbox_config.extra_write_paths == ["/tmp/agent-write"]

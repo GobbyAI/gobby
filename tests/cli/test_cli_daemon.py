@@ -1960,10 +1960,10 @@ class TestDaemonCommandsIntegration:
     @patch("gobby.cli.daemon.time.sleep")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
     @pytest.mark.parametrize(
-        ("effective_ui_mode", "expected_ui_port"),
-        [("dev", 60889), ("production", 60887)],
+        ("agent_sandbox_enabled", "web_chat_sandbox_enabled"),
+        [(True, False), (False, True)],
     )
-    def test_start_displays_startup_summary(
+    def test_start_stops_when_srt_preflight_fails(
         self,
         mock_load_config: MagicMock,
         mock_sleep: MagicMock,
@@ -1976,14 +1976,16 @@ class TestDaemonCommandsIntegration:
         mock_daemon_config: MagicMock,
         temp_dir: Path,
         clean_pid_file: Path,
-        effective_ui_mode: str,
-        expected_ui_port: int,
+        agent_sandbox_enabled: bool,
+        web_chat_sandbox_enabled: bool,
     ) -> None:
-        """Test that start command displays startup summary."""
+        """Test that start fails closed when managed SRT is unavailable."""
         mock_load_config.return_value = mock_daemon_config
         mock_daemon_config.ui.enabled = True
-        mock_daemon_config.agent_sandbox.enabled = True
+        mock_daemon_config.agent_sandbox.enabled = agent_sandbox_enabled
         mock_daemon_config.agent_sandbox.backend = "srt"
+        mock_daemon_config.web_chat_sandbox.enabled = web_chat_sandbox_enabled
+        mock_daemon_config.web_chat_sandbox.backend = "srt"
         mock_kill_daemons.return_value = 0
         mock_is_port_available.return_value = True
 
@@ -2000,6 +2002,10 @@ class TestDaemonCommandsIntegration:
             runner.isolated_filesystem(temp_dir=str(temp_dir)),
             patch("gobby.cli.daemon.Path.home", return_value=temp_dir),
             patch(
+                "gobby.cli.daemon.admit_direct_start",
+                return_value=(MagicMock(), None),
+            ),
+            patch(
                 "gobby.cli.runtime.get_cli_runtime",
                 return_value=MagicMock(operational_config=mock_daemon_config),
             ),
@@ -2011,26 +2017,19 @@ class TestDaemonCommandsIntegration:
                 "gobby.agents.srt_runtime.verify_srt_installation",
                 side_effect=SrtRuntimeError("managed runtime unavailable"),
             ),
-            patch("gobby.cli.daemon.resolve_ui_mode") as mock_resolve_ui_mode,
-            patch("gobby.cli.daemon.spawn_ui_server", create=True) as mock_spawn_ui_server,
         ):
-            mock_resolve_ui_mode.return_value.display = effective_ui_mode
-            mock_resolve_ui_mode.return_value.effective = effective_ui_mode
-            mock_resolve_ui_mode.return_value.source_web_dir = temp_dir
             gobby_dir = temp_dir / ".gobby"
             gobby_dir.mkdir(parents=True, exist_ok=True)
             (gobby_dir / "logs").mkdir(parents=True, exist_ok=True)
 
             result = runner.invoke(cli, ["start"])
 
-            assert result.exit_code == 0
-            assert "Gobby daemon ready" in result.output
-            assert "agent_sandbox.backend = provider-native" in result.output
+            assert result.exit_code == 1
             assert (
-                f"Web UI:    http://localhost:{expected_ui_port}/ ({effective_ui_mode})"
-                in result.output
+                "Managed SRT sandbox preflight failed: managed runtime unavailable" in result.output
             )
-            mock_spawn_ui_server.assert_not_called()
+            assert "Gobby daemon ready" not in result.output
+            mock_popen.assert_not_called()
 
     def test_cli_has_all_daemon_commands(self, runner: CliRunner) -> None:
         """Test that CLI has all daemon management commands."""

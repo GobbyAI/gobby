@@ -24,6 +24,7 @@ from gobby.servers.chat_session import ChatSession
 from gobby.servers.websocket.chat.backends import (
     CodexManagedChatSession,
     CodexWebChatBackend,
+    DroidManagedChatSession,
     GrokManagedChatSession,
     GrokWebChatBackend,
     QwenManagedChatSession,
@@ -176,11 +177,13 @@ class TestWebChatRuntimeManager:
         assert manager.get_acp_session_info("grok", "s1") == {"sessionId": "s1", "cwd": "/repo"}
         assert manager.acp_session_infos() == {("grok", "s1"): {"sessionId": "s1", "cwd": "/repo"}}
 
-    def test_create_session_rejects_droid_without_sensitive_path_enforcement(self) -> None:
+    def test_create_session_uses_srt_for_droid(self) -> None:
         manager = WebChatRuntimeManager(codex_client=None)
 
-        with pytest.raises(RuntimeError, match="droid cannot prove the sensitive-root contract"):
-            manager.create_session(provider="droid", conversation_id="conv-droid")
+        session = manager.create_session(provider="droid", conversation_id="conv-droid")
+
+        assert isinstance(session, DroidManagedChatSession)
+        assert manager.sandbox_config.backend == "srt"
 
     def test_create_session_routes_codex_local_selector_to_oss_backend(self) -> None:
         config = DaemonConfig(

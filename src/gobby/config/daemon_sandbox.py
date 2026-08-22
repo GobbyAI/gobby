@@ -14,16 +14,16 @@ class DaemonOwnedSandboxConfig(BaseModel):
         default=True,
         description="Enable sandboxing for daemon-owned runtimes in this category.",
     )
-    backend: Literal["srt", "provider-native"] = Field(
-        default="provider-native",
-        description="Host sandbox backend. Managed agents default this field to SRT.",
+    backend: Literal["srt"] = Field(
+        default="srt",
+        description="Managed Sandbox Runtime backend.",
     )
     mode: Literal["permissive", "restrictive"] = Field(
         default="permissive",
         description="Sandbox strictness level for daemon-owned runtimes.",
     )
     allow_network: bool = Field(
-        default=True,
+        default=False,
         description="Allow daemon-owned runtimes to access the network.",
     )
     extra_read_paths: list[str] = Field(

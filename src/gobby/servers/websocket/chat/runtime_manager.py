@@ -12,7 +12,6 @@ from gobby.agents.codex_oss import (
     codex_oss_provider_for_local_endpoint,
     codex_oss_supported_provider_clause,
 )
-from gobby.agents.provider_capabilities import provider_capabilities
 from gobby.agents.sandbox import (
     SandboxConfig,
     web_chat_policy_mismatch_message,
@@ -269,16 +268,11 @@ class WebChatRuntimeManager:
         reasoning_effort: str | None = None,
     ) -> ChatSessionProtocol:
         """Create a provider-specific session wrapper for web chat."""
-        sandbox_config = self._refresh_sandbox_config()
+        self._refresh_sandbox_config()
         if provider not in {"claude", "codex", "droid", "grok", "qwen", "agy"}:
             raise RuntimeError(f"Unsupported web chat provider: {provider}")
         if provider == "agy":
             raise RuntimeError("AGY has no documented machine transport for live web chat yet")
-        if (
-            sandbox_config.enabled
-            and not provider_capabilities(provider).sensitive_path_enforcement
-        ):
-            raise RuntimeError(f"{provider} cannot prove the sensitive-root contract")
         if provider == "qwen":
             return QwenManagedChatSession(
                 conversation_id=conversation_id,

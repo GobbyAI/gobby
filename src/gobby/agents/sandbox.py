@@ -110,23 +110,17 @@ def daemon_owned_sandbox_config(
     config: Any | None,
     *,
     default_enabled: bool = True,
-    default_backend: Literal["srt", "provider-native"] = "provider-native",
-    default_allow_network: bool = True,
+    default_allow_network: bool = False,
 ) -> SandboxConfig:
     """Resolve daemon-owned sandbox config into the internal runtime model."""
     if config is None:
         return SandboxConfig(
             enabled=default_enabled,
-            backend=default_backend,
+            backend="srt",
             mode=_DAEMON_OWNED_SANDBOX_MODE,
             allow_network=default_allow_network,
         )
 
-    raw_backend = getattr(config, "backend", default_backend)
-    backend = cast(
-        Literal["srt", "provider-native"],
-        raw_backend if raw_backend in {"srt", "provider-native"} else default_backend,
-    )
     raw_mode = getattr(config, "mode", _DAEMON_OWNED_SANDBOX_MODE)
     mode = cast(
         Literal["permissive", "restrictive"],
@@ -138,7 +132,7 @@ def daemon_owned_sandbox_config(
 
     return SandboxConfig(
         enabled=bool(getattr(config, "enabled", default_enabled)),
-        backend=backend,
+        backend="srt",
         mode=mode,
         allow_network=(
             raw_allow_network if isinstance(raw_allow_network, bool) else default_allow_network
@@ -161,8 +155,7 @@ def web_chat_sandbox_config(daemon_config: Any | None) -> SandboxConfig:
     return daemon_owned_sandbox_config(
         raw_config,
         default_enabled=True,
-        default_backend="provider-native",
-        default_allow_network=True,
+        default_allow_network=False,
     )
 
 
@@ -172,7 +165,6 @@ def agent_sandbox_config(daemon_config: Any | None) -> SandboxConfig:
     return daemon_owned_sandbox_config(
         raw_config,
         default_enabled=True,
-        default_backend="srt",
         default_allow_network=False,
     )
 

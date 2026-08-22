@@ -383,11 +383,7 @@ def run_daemon_setup(project_path: Path, *, configure_ide_settings: bool) -> Non
     try:
         srt_result = install_srt_runtime()
     except SrtRuntimeError as exc:
-        click.echo(
-            "Warning: Failed to install managed Sandbox Runtime "
-            f"({exc}). Set agent_sandbox.backend = provider-native to use the "
-            "provider sandbox until SRT is available."
-        )
+        raise click.ClickException(f"Failed to install managed Sandbox Runtime: {exc}") from exc
     else:
         action = "Installed" if srt_result.installed else "Verified"
         click.echo(f"{action} managed Sandbox Runtime {srt_result.version}: {srt_result.path}")

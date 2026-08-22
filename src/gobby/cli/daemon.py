@@ -485,19 +485,14 @@ def start(ctx: click.Context, verbose: bool) -> None:
             _step("Docker services started")
 
         config = get_cli_runtime(ctx).operational_config
-        sandbox = config.agent_sandbox
-        if sandbox.enabled and sandbox.backend == "srt":
+        if config.agent_sandbox.enabled or config.web_chat_sandbox.enabled:
             from gobby.agents.srt_runtime import SrtRuntimeError, verify_srt_installation
 
             try:
                 verify_srt_installation()
             except SrtRuntimeError as exc:
-                click.secho(
-                    "warning: managed SRT sandbox preflight failed: "
-                    f"{exc}. Set agent_sandbox.backend = provider-native to use the "
-                    "provider sandbox until SRT is available.",
-                    fg="yellow",
-                )
+                _step(f"Managed SRT sandbox preflight failed: {exc}", error=True)
+                sys.exit(1)
 
         if svc.get("installed"):
             _step("Starting via OS service manager...")

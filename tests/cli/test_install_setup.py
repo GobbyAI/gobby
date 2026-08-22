@@ -234,7 +234,7 @@ class TestRunDaemonSetup:
     @patch("gobby.cli.install_setup._install_gcode")
     @patch("gobby.cli.install_setup._install_ghook")
     @patch("gobby.cli.installers.ide_config.configure_vscode_family_terminal_integration")
-    def test_run_daemon_setup_continues_when_srt_install_fails(
+    def test_run_daemon_setup_stops_when_srt_install_fails(
         self,
         mock_ide: MagicMock,
         mock_ghook: MagicMock,
@@ -246,7 +246,6 @@ class TestRunDaemonSetup:
         mock_srt: MagicMock,
         mock_impeccable: MagicMock,
         tmp_path: Path,
-        capsys: pytest.CaptureFixture[str],
     ) -> None:
         mock_srt.side_effect = SrtRuntimeError("Node.js 20.11 or newer is required")
         mock_impeccable.return_value = MagicMock(
@@ -264,16 +263,18 @@ class TestRunDaemonSetup:
 
         with patch("gobby.cli.installers.tmux_config.configure_tmux_clipboard") as mock_tmux:
             mock_tmux.return_value = {"success": True, "updated": False}
-            run_daemon_setup(tmp_path, configure_ide_settings=True)
+            with pytest.raises(click.ClickException) as exc_info:
+                run_daemon_setup(tmp_path, configure_ide_settings=True)
 
-        output = capsys.readouterr().out
-        assert "Node.js 20.11 or newer is required" in output
-        assert "agent_sandbox.backend = provider-native" in output
-        mock_impeccable.assert_called_once_with()
-        mock_gcode.assert_called_once()
-        mock_ghook.assert_called_once()
-        mock_ide.assert_called_once()
-        mock_tmux.assert_called_once_with()
+        assert exc_info.value.message == (
+            "Failed to install managed Sandbox Runtime: Node.js 20.11 or newer is required"
+        )
+        assert exc_info.value.exit_code == 1
+        mock_impeccable.assert_not_called()
+        mock_gcode.assert_not_called()
+        mock_ghook.assert_not_called()
+        mock_ide.assert_not_called()
+        mock_tmux.assert_not_called()
 
     @patch("gobby.cli.install_setup_impeccable.install_impeccable_cli")
     @patch("gobby.cli.install_setup_srt.install_srt_runtime")
