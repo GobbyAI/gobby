@@ -161,6 +161,94 @@ def test_prepare_next_round_after_finalized_checkpoint_from_other_session(
     assert service.get_evidence(next_round.evidence_id).session_id == successor.id
 
 
+def _finalize_round_two(
+    service: PlanReviewEvidenceService,
+    project_id: str,
+    session_id: str,
+    plan_path: Path,
+) -> tuple[str, str]:
+    """Finalize a round-2 fence under ``session_id``; return (evidence_id, plan_hash)."""
+    prepared = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=2,
+        session_id=session_id,
+    )
+    run = LocalAgentRunManager(service.db).create(
+        parent_session_id=session_id,
+        provider="codex",
+        prompt="review",
+    )
+    service.bind_evidence_run(prepared.evidence_id, run.id)
+    round_result = {
+        "verdict": "needs_review",
+        "findings": [],
+        "coverage_attestation": coverage_attestation(
+            evidence_id=prepared.evidence_id,
+            shadow_valid=False,
+        ),
+    }
+    ensure_checkpoint(
+        plan_path,
+        service.render_plan_changelog_round(prepared.evidence_id, round_result),
+    )
+    service.finalize_plan_review_evidence(prepared.evidence_id, round_result)
+    return prepared.evidence_id, prepared.plan_hash
+
+
+def test_reconcile_tolerates_session_rekey_on_finalized_evidence(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+) -> None:
+    """Session-identity unification re-keys finalized rows; their fences keep the old id."""
+    service, project_id, session_id, plan_path = review_setup
+    evidence_id, _plan_hash = _finalize_round_two(service, project_id, session_id, plan_path)
+    successor = SessionManager(service.db).register(
+        external_id="review-evidence-unified-successor",
+        machine_id=require_machine_id(),
+        source="claude",
+        project_id=project_id,
+    )
+    with service.db.transaction() as conn:
+        conn.execute(
+            "UPDATE plan_review_evidence SET session_id = %s WHERE evidence_id = %s",
+            (successor.id, evidence_id),
+        )
+    assert service.get_evidence(evidence_id).session_id == successor.id
+    assert session_id.encode("utf-8") in plan_path.read_bytes()
+
+    next_round = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=3,
+        session_id=successor.id,
+    )
+
+    assert next_round.evidence_id != evidence_id
+    assert service.get_evidence(evidence_id).finalized_at is not None
+
+
+def test_reconcile_still_rejects_hash_drift_on_finalized_evidence(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+) -> None:
+    service, project_id, session_id, plan_path = review_setup
+    evidence_id, plan_hash = _finalize_round_two(service, project_id, session_id, plan_path)
+    drifted = plan_path.read_bytes().replace(
+        plan_hash.encode("utf-8"), ("f" * len(plan_hash)).encode("utf-8")
+    )
+    assert drifted != plan_path.read_bytes()
+    plan_path.write_bytes(drifted)
+
+    with pytest.raises(ReviewEvidenceError, match="lineage mismatch") as drift:
+        service.prepare_plan_review_round(
+            project_id=project_id,
+            plan_path=plan_path,
+            round_number=3,
+            session_id=session_id,
+        )
+    assert drift.value.code == "checkpoint_reconciliation_error"
+    assert evidence_id in plan_path.read_text(encoding="utf-8")
+
+
 def test_reconcile_rejects_checkpoint_session_forgery(
     review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
 ) -> None:

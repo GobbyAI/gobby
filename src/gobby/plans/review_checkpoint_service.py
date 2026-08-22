@@ -177,10 +177,15 @@ class ReviewCheckpointService:
                 ) from exc
             # Lineage binds the fence to the durable row, not to the caller:
             # any session may drain checkpoints left by an expired session.
+            # The session comparison guards the finalize-from-fence path below
+            # against a forged fence; a finalized row has nothing left to
+            # finalize, and session-identity unification may have re-keyed it
+            # onto a successor session after its fence was rendered.
+            session_matches = evidence.session_id == checkpoint["session_id"]
             lineage_matches = (
                 evidence.project_id == project_id
                 and evidence.plan_path == plan_path
-                and evidence.session_id == checkpoint["session_id"]
+                and (session_matches or evidence.finalized_at is not None)
                 and evidence.round_number == checkpoint["round_number"]
                 and evidence.plan_hash == checkpoint["plan_hash"]
             )
