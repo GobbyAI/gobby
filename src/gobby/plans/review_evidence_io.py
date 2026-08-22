@@ -13,7 +13,14 @@ from typing import cast
 
 import yaml
 
-from gobby.plans.parser import PLAN_HEADING_REGEX, PlanKind, compute_fence_mask, parse_plan
+from gobby.plans.parser import (
+    PLAN_HEADING_REGEX,
+    ParseMode,
+    PlanDocument,
+    PlanKind,
+    compute_fence_mask,
+    parse_plan,
+)
 from gobby.plans.review_evidence_models import (
     ReviewEvidenceError,
     SectionHash,
@@ -303,17 +310,28 @@ def _validate_round_entry_plan(plan_path: Path, current: bytes, updated: bytes) 
             "round entry must modify only the V1 Plan Changelog section",
         )
     try:
-        with TemporaryDirectory(prefix="gobby-plan-review-") as temp_dir:
-            temp_path = Path(temp_dir) / plan_path.name
-            temp_path.write_bytes(updated)
-            parse_plan(temp_path, parse_mode="draft")
-    except ReviewEvidenceError:
-        raise
-    except (OSError, ValueError) as exc:
+        parse_plan_bytes(plan_path.name, updated)
+    except ReviewEvidenceError as exc:
         raise ReviewEvidenceError(
             "invalid_round_entry",
             f"plan does not parse after round entry: {exc}",
         ) from exc
+
+
+def parse_plan_bytes(
+    plan_name: str,
+    content: bytes,
+    *,
+    parse_mode: ParseMode = "draft",
+) -> PlanDocument:
+    """Parse plan bytes under ``plan_name`` without touching the real plan file."""
+    try:
+        with TemporaryDirectory(prefix="gobby-plan-review-") as temp_dir:
+            temp_path = Path(temp_dir) / plan_name
+            temp_path.write_bytes(content)
+            return parse_plan(temp_path, parse_mode=parse_mode)
+    except (OSError, ValueError) as exc:
+        raise ReviewEvidenceError("invalid_plan", f"plan does not parse: {exc}") from exc
 
 
 def render_manifest_plan(

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -14,6 +14,7 @@ from gobby.plans.review_coverage import (
     validate_review_coverage,
 )
 from gobby.plans.review_evidence_io import (
+    atomic_write_bytes,
     build_section_manifest,
     normalize_plan_path,
     parse_checkpoints,
@@ -27,6 +28,7 @@ from gobby.plans.review_evidence_models import (
 from gobby.plans.review_evidence_store import PlanReviewEvidenceStore
 from gobby.plans.review_findings import validate_plan_review_findings
 from gobby.plans.review_manifest_service import ReviewManifestService
+from gobby.plans.review_repairs import apply_repairs, select_accepted_repairs
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import (
     HubDatabase,
@@ -596,6 +598,74 @@ class PlanReviewEvidenceService:
             authorize_attempt=self.authorize_current_attempt,
             verify_reviewed_bytes=self._verify_reviewed_bytes,
         )
+
+    def apply_plan_review_repairs(
+        self,
+        evidence_id: str,
+        accepted_finding_ids: Sequence[str],
+        *,
+        plan_path: str | Path | None = None,
+    ) -> dict[str, object]:
+        """Apply the accepted findings' typed repairs to the plan under the evidence lock."""
+        evidence = self.get_evidence(evidence_id)
+        if plan_path is None:
+            resolved = self._evidence_path(evidence)
+        else:
+            resolved, relative_path = self._resolve_plan_path(evidence.project_id, plan_path)
+            if relative_path != evidence.plan_path:
+                raise ReviewEvidenceError(
+                    "wrong_plan",
+                    f"evidence belongs to {evidence.plan_path}, not {relative_path}",
+                )
+        if not evidence.is_interactive:
+            raise ReviewEvidenceError(
+                "not_interactive_evidence",
+                "repairs apply only to interactive review evidence",
+            )
+        mutation = PlanReviewEvidenceMutation(
+            project_id=evidence.project_id,
+            plan_path=evidence.plan_path,
+        )
+        with self.db.transaction_immediate(mutation) as transaction:
+            locked = self.store.require(evidence_id, transaction=transaction, for_update=True)
+            if locked.finalized_at is None:
+                raise ReviewEvidenceError(
+                    "evidence_not_finalized",
+                    "finalize the rejection checkpoint before applying repairs",
+                )
+            if locked.expired_at is not None:
+                raise ReviewEvidenceError("evidence_replay", "evidence is expired")
+            round_result = locked.round_result or {}
+            if round_result.get("verdict") != "needs_review":
+                raise ReviewEvidenceError(
+                    "not_rejection_round",
+                    "repairs apply only to needs_review rounds",
+                )
+            repairs, skipped = select_accepted_repairs(locked, accepted_finding_ids)
+            current = resolved.read_bytes()
+            plan_hash_before = hashlib.sha256(current).hexdigest()
+            result: dict[str, object] = {
+                "ok": True,
+                "evidence_id": evidence_id,
+                "changed": False,
+                "applied": [],
+                "skipped": skipped,
+                "diff": "",
+                "plan_hash_before": plan_hash_before,
+                "plan_hash_after": plan_hash_before,
+            }
+            if not accepted_finding_ids:
+                return result
+            outcome = apply_repairs(current, plan_name=resolved.name, repairs=repairs)
+            result["applied"] = outcome.applied
+            result["skipped"] = [*skipped, *outcome.skipped]
+            if outcome.updated == current:
+                return result
+            atomic_write_bytes(resolved, outcome.updated)
+            result["changed"] = True
+            result["diff"] = outcome.diff
+            result["plan_hash_after"] = hashlib.sha256(outcome.updated).hexdigest()
+            return result
 
     def _snapshot_document(self, evidence: PlanReviewEvidence) -> PlanDocument:
         return self.manifests.snapshot_document(evidence)
