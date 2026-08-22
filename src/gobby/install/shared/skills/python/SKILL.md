@@ -1,7 +1,7 @@
 ---
 name: python
 description: "Enforces default Python coding standards for agents writing or refactoring Python: project configuration, typing, error handling, testing, async, performance, and boundary validation. Use before editing Python unless the repo provides stricter local rules."
-version: "1.1.0"
+version: "1.2.0"
 category: development
 triggers: python, py, pyi, pyproject.toml, uv, ruff, mypy, pytest, tox, nox, typing, asyncio
 sources:
@@ -22,11 +22,35 @@ Apply repository packaging, interpreter, type-checker, framework, and generated-
 
 - Preserve Python constraints, build backend, dependency groups, lockfiles, package
   layout, type-checker mode, pytest config, and generated files.
-- Diagnostic hook: treat type-checker and Ruff findings as value-flow evidence;
-  avoid `Any`, `cast`, `# type: ignore`, and disabled rules before fixing the contract.
+- Treat type-checker and Ruff findings as value-flow evidence and fix the underlying
+  contract before considering a suppression.
 
 For package, tool, type-checker, and test setup:
 `get_skill_file(name="python", path="references/configuration.md")`
+
+## Lint and Type Suppressions
+
+`# noqa` and `# type: ignore` disable defect detection. Suppressions are a last resort
+and are allowed only when every requirement below is satisfied:
+
+1. Investigate the diagnostic and attempt a root-cause fix using accurate types,
+   control flow, a narrow adapter, a `Protocol`, or a local stub.
+2. Confirm the remaining diagnostic comes from exactly one of these conditions:
+   - incorrect or incomplete third-party type information outside repository control;
+   - a confirmed linter or type-checker defect or unsupported language feature;
+   - runtime-required dynamic behavior or import side effect the analyzer cannot model
+     without changing program behavior.
+3. Limit the suppression to one expression or statement and name the exact diagnostic:
+   `# noqa: <rule-code>` or `# type: ignore[<error-code>]`.
+4. Add an adjacent comment that identifies the external limitation and explains why
+   runtime behavior is safe. Link the upstream issue when one exists.
+5. Add or retain a regression test for the runtime behavior and rerun focused lint,
+   type-check, and test commands.
+
+Bare suppressions are prohibited, including unqualified `# noqa` and
+`# type: ignore`. File-wide ignores, configuration exclusions, and relaxed checker
+settings are also prohibited as substitutes for fixing diagnostics. Repository policy
+may forbid suppressions even under the conditions above.
 
 ## Type System
 

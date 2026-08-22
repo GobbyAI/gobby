@@ -24,7 +24,7 @@ def test_python_skill_parses_with_references() -> None:
     parsed = SkillLoader().load_skill(SKILL_DIR, validate=False)
 
     assert parsed.name == "python"
-    assert parsed.version == "1.1.0"
+    assert parsed.version == "1.2.0"
     assert parsed.get_category() == "development"
     assert parsed.triggers is not None
     assert {
@@ -56,6 +56,21 @@ def test_python_skill_parses_with_references() -> None:
         "references/testing.md",
         "references/types.md",
     }
+
+
+def test_python_skill_allows_suppressions_only_for_enumerated_last_resorts() -> None:
+    """Require a narrow, documented allowlist for noqa and type-ignore comments."""
+    content = SkillLoader().load_skill(SKILL_DIR, validate=False).content
+
+    assert "Suppressions are a last resort" in content
+    assert "incorrect or incomplete third-party type information" in content
+    assert "confirmed linter or type-checker defect" in content
+    assert "runtime-required dynamic behavior or import side effect" in content
+    assert "# noqa: <rule-code>" in content
+    assert "# type: ignore[<error-code>]" in content
+    assert "Bare suppressions are prohibited" in content
+    assert "adjacent comment" in content
+    assert "regression test" in content
 
 
 def test_synced_python_skill_is_searchable(temp_db: HubDatabase) -> None:

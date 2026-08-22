@@ -223,6 +223,28 @@ def test_python_skill_loads_strict_typed_config_pattern() -> None:
     assert result.has_behavioral_delta
 
 
+def test_python_skill_restricts_suppressions_to_last_resort_conditions() -> None:
+    """Verify Python suppressions require failed root-cause fixes and narrow exceptions."""
+    result = run_recorded_skill_scenario(SCENARIOS / "python/last-resort-suppressions.yaml")
+
+    assert result.baseline.action_names == (
+        "add_bare_noqa",
+        "add_bare_type_ignore",
+        "respond",
+    )
+    assert result.loaded.action_names == (
+        "inspect_diagnostics",
+        "attempt_root_cause_fixes",
+        "confirm_allowed_external_conditions",
+        "add_rule_specific_suppressions",
+        "document_safety_justifications",
+        "add_regression_tests",
+        "run_validation",
+        "respond",
+    )
+    assert result.has_behavioral_delta
+
+
 def test_json_skill_loads_strict_config_schema_pattern() -> None:
     """Verify JSON work loads references before config and schema changes."""
     result = run_recorded_skill_scenario(SCENARIOS / "json/strict-config-schema-boundaries.yaml")
