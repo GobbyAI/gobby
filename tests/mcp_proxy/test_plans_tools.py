@@ -412,6 +412,7 @@ async def test_plan_tool_schemas_and_happy_path(
         "render_plan_changelog_round",
         "append_plan_changelog_round",
         "finalize_plan_review_evidence",
+        "apply_plan_review_repairs",
         "checkpoint_plan_review_lesson_mint",
     } <= names
     assert registry.get_schema("create_plan") is not None
@@ -970,3 +971,36 @@ async def test_prepare_review_round_explicit_session_wins_over_ambient_context(
     assert result["ok"] is True
     evidence = PlanReviewEvidenceService(temp_db).get_evidence(result["evidence_id"])
     assert evidence.session_id == explicit_session.id
+
+
+async def test_apply_plan_review_repairs_registered(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    coverage_executor: CoverageExecutor,
+) -> None:
+    project_id = LocalProjectManager(temp_db).create(name="plans", repo_path=str(tmp_path)).id
+    registry = create_plan_registry(
+        temp_db,
+        default_project_id=project_id,
+        coverage_executor=coverage_executor,
+    )
+
+    schema = registry.get_schema("apply_plan_review_repairs")
+    assert schema is not None
+    input_schema = schema["inputSchema"]
+    assert set(input_schema["properties"]) == {"evidence_id", "accepted_finding_ids"}
+    assert set(input_schema["required"]) == {"evidence_id", "accepted_finding_ids"}
+    assert input_schema["properties"]["accepted_finding_ids"]["items"] == {"type": "string"}
+
+    expected = {"ok": True, "evidence_id": "evidence-1", "changed": False}
+    with patch(
+        "gobby.plans.review_evidence.PlanReviewEvidenceService.apply_plan_review_repairs",
+        return_value=expected,
+    ) as apply:
+        result = await registry.call(
+            "apply_plan_review_repairs",
+            {"evidence_id": "evidence-1", "accepted_finding_ids": ["F1", "F2"]},
+        )
+
+    assert result == expected
+    apply.assert_called_once_with("evidence-1", ["F1", "F2"])

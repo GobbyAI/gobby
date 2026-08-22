@@ -443,6 +443,35 @@ def register_review_evidence_tools(
         func=finalize_plan_review_evidence,
     )
 
+    def apply_plan_review_repairs(
+        evidence_id: str,
+        accepted_finding_ids: list[str],
+    ) -> dict[str, object]:
+        try:
+            return service.apply_plan_review_repairs(evidence_id, accepted_finding_ids)
+        except (ReviewEvidenceError, OSError, psycopg.Error) as exc:
+            return _error_payload(exc, "apply_plan_review_repairs_failed")
+
+    registry.register(
+        name="apply_plan_review_repairs",
+        description=(
+            "Apply the typed repairs carried by accepted findings of a finalized "
+            "needs_review round to the plan file; idempotent and all-or-nothing."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "evidence_id": {"type": "string"},
+                "accepted_finding_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+            },
+            "required": ["evidence_id", "accepted_finding_ids"],
+        },
+        func=apply_plan_review_repairs,
+    )
+
     def checkpoint_plan_review_lesson_mint(
         evidence_id: str,
         status: str,

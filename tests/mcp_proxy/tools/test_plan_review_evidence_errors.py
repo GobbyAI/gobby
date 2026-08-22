@@ -115,6 +115,12 @@ async def test_bound_round_prepare_returns_structured_error() -> None:
             {"evidence_id": "evidence-1", "round_result": {}},
             "finalize_plan_review_evidence_failed",
         ),
+        (
+            "apply_plan_review_repairs",
+            "apply_plan_review_repairs",
+            {"evidence_id": "evidence-1", "accepted_finding_ids": ["F1"]},
+            "apply_plan_review_repairs_failed",
+        ),
     ],
 )
 @pytest.mark.parametrize(
@@ -136,3 +142,23 @@ def test_review_evidence_write_boundaries_return_structured_expected_errors(
     result = tool(**arguments)
 
     assert result == {"ok": False, "error": fallback, "message": str(error)}
+
+
+def test_apply_plan_review_repairs_error_envelope() -> None:
+    service = MagicMock()
+    service.apply_plan_review_repairs.side_effect = ReviewEvidenceError(
+        "evidence_not_finalized",
+        "finalize the rejection checkpoint before applying repairs",
+    )
+
+    tool = _registry(service).get_tool("apply_plan_review_repairs")
+    assert tool is not None
+    result = tool(evidence_id="evidence-1", accepted_finding_ids=["F1"])
+
+    assert result == {
+        "ok": False,
+        "error": "evidence_not_finalized",
+        "message": "finalize the rejection checkpoint before applying repairs",
+        "retryable": False,
+    }
+    service.apply_plan_review_repairs.assert_called_once_with("evidence-1", ["F1"])
