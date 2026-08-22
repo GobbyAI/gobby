@@ -322,6 +322,41 @@ class TestStalledBuffer:
         assert self.detector.has_unsubmitted_input("❯\n") is False
         assert self.detector.has_unsubmitted_input("$\n") is False
 
+    @pytest.mark.parametrize("prompt", ["❯", "$", ">"])
+    def test_fingerprints_supported_prompt_forms(self, prompt: str) -> None:
+        fingerprint = self.detector.unsubmitted_input_fingerprint(f"{prompt} draft text\n")
+
+        assert fingerprint is not None
+
+    def test_fingerprint_normalizes_whitespace(self) -> None:
+        compact = self.detector.unsubmitted_input_fingerprint("❯ draft text\n")
+        spaced = self.detector.unsubmitted_input_fingerprint("  ❯   draft\t text  \n")
+
+        assert compact == spaced
+
+    def test_fingerprint_changes_with_draft_text(self) -> None:
+        first = self.detector.unsubmitted_input_fingerprint("❯ first draft\n")
+        second = self.detector.unsubmitted_input_fingerprint("❯ second draft\n")
+
+        assert first is not None
+        assert second is not None
+        assert first != second
+
+    @pytest.mark.parametrize("prompt", ["❯", "$", ">"])
+    def test_bare_prompt_has_no_fingerprint(self, prompt: str) -> None:
+        assert self.detector.unsubmitted_input_fingerprint(f"{prompt}\n") is None
+
+    @pytest.mark.parametrize(
+        "output",
+        [
+            "❯ queued draft\n❯ Press up to edit queued messages\n",
+            "❯ Continue working on your task.\n❯ Press up to edit queued messages\n",
+        ],
+        ids=["queued-message", "queued-continuation"],
+    )
+    def test_queued_input_has_no_fingerprint(self, output: str) -> None:
+        assert self.detector.unsubmitted_input_fingerprint(output) is None
+
 
 class TestStopHookBlocked:
     """Tests for detecting agents blocked by stop hooks."""

@@ -17,6 +17,7 @@ def make_step_instance(
     variables: dict[str, Any] | None = None,
     steps: list[str] | None = None,
     step_workflow_id: str | None = None,
+    status_message: str | None = None,
 ) -> AgentStepInstance:
     """Build a detached typed instance for fixtures and isolated tests."""
     names = list(steps or (current_step, "implement"))
@@ -29,7 +30,13 @@ def make_step_instance(
             surfaces=["spawn", "persona"],
             step_workflow=AgentStepWorkflowBody(
                 variables=dict(variables or {}),
-                steps=[WorkflowStep(name=name) for name in names],
+                steps=[
+                    WorkflowStep(
+                        name=name,
+                        status_message=status_message if name == current_step else None,
+                    )
+                    for name in names
+                ],
             ),
         ),
         session_id=session_id,

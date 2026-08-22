@@ -731,6 +731,384 @@ def _make_terminal_run(
     return stored_run
 
 
+def _make_progress_stagnation_monitor(
+    *,
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    sample_session: dict[str, Any],
+    suggested_action: str = "stop",
+    layer: str = "progress_stagnation",
+    tmux_config: TmuxConfig | None = None,
+    requested_reasoning_effort: str | None = None,
+) -> tuple[AgentLifecycleMonitor, AgentRun, MagicMock]:
+    stuck_detector = MagicMock()
+    stuck_detector.is_stuck.return_value = StuckDetectionResult(
+        is_stuck=True,
+        reason="No progress events for 634 seconds",
+        layer=layer,
+        suggested_action=suggested_action,
+    )
+    monitor = AgentLifecycleMonitor(
+        detection_registry=DETECTION_REGISTRY,
+        agent_run_manager=agent_run_manager,
+        db=temp_db,
+        stuck_detector=stuck_detector,
+        tmux_config=tmux_config
+        or TmuxConfig(idle_timeout_seconds=60, idle_reprompt_delay_seconds=300),
+    )
+    run = _make_terminal_run(
+        agent_run_manager,
+        sample_session,
+        run_id=_rid("run-progress-draft-grace"),
+        tmux_session_name="gobby-progress-draft-grace",
+        requested_reasoning_effort=requested_reasoning_effort,
+    )
+    return monitor, run, stuck_detector
+
+
+@pytest.mark.parametrize("suggested_action", ["stop", "escalate"])
+async def test_progress_stagnation_visible_draft_starts_grace_without_telemetry(
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    sample_session: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+    suggested_action: str,
+) -> None:
+    monitor, run, _stuck_detector = _make_progress_stagnation_monitor(
+        agent_run_manager=agent_run_manager,
+        temp_db=temp_db,
+        sample_session=sample_session,
+        suggested_action=suggested_action,
+    )
+    caplog.set_level(logging.INFO, logger=lifecycle_monitor_module.__name__)
+
+    with (
+        patch.object(
+            monitor._tmux,
+            "capture_pane",
+            new_callable=AsyncMock,
+            return_value="❯ private draft contents\n",
+        ),
+        patch.object(
+            monitor._cleanup_handler,
+            "cleanup_agent",
+            new_callable=AsyncMock,
+        ) as cleanup_agent,
+        patch.object(lifecycle_monitor_module, "inc_counter") as inc_counter,
+    ):
+        handled = await monitor.check_autonomous_stuck_agents()
+
+    assert handled == 0
+    assert run.id in monitor._draft_grace_observations
+    assert run.id not in monitor._stuck_interventions
+    cleanup_agent.assert_not_awaited()
+    inc_counter.assert_not_called()
+    grace_logs = [
+        record.getMessage()
+        for record in caplog.records
+        if "Deferring autonomous progress stagnation" in record.getMessage()
+    ]
+    assert len(grace_logs) == 1
+    assert "private draft contents" not in grace_logs[0]
+
+
+async def test_unchanged_draft_within_grace_remains_active(
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    sample_session: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monitor, _run, _stuck_detector = _make_progress_stagnation_monitor(
+        agent_run_manager=agent_run_manager,
+        temp_db=temp_db,
+        sample_session=sample_session,
+    )
+    caplog.set_level(logging.INFO, logger=lifecycle_monitor_module.__name__)
+
+    with (
+        patch.object(
+            monitor._tmux,
+            "capture_pane",
+            new_callable=AsyncMock,
+            return_value="❯ stable draft\n",
+        ),
+        patch.object(
+            monitor._cleanup_handler,
+            "cleanup_agent",
+            new_callable=AsyncMock,
+        ) as cleanup_agent,
+        patch.object(lifecycle_monitor_module, "inc_counter") as inc_counter,
+    ):
+        handled = [
+            await monitor.check_autonomous_stuck_agents(),
+            await monitor.check_autonomous_stuck_agents(),
+        ]
+
+    assert handled == [0, 0]
+    cleanup_agent.assert_not_awaited()
+    inc_counter.assert_not_called()
+    assert (
+        sum(
+            "Deferring autonomous progress stagnation" in record.getMessage()
+            for record in caplog.records
+        )
+        == 1
+    )
+
+
+async def test_changed_draft_resets_grace_window(
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    sample_session: dict[str, Any],
+) -> None:
+    monitor, run, _stuck_detector = _make_progress_stagnation_monitor(
+        agent_run_manager=agent_run_manager,
+        temp_db=temp_db,
+        sample_session=sample_session,
+    )
+
+    with (
+        patch.object(
+            monitor._tmux,
+            "capture_pane",
+            new_callable=AsyncMock,
+            side_effect=["❯ first draft\n", "❯ changed draft\n", "❯ changed draft\n"],
+        ),
+        patch.object(
+            monitor._cleanup_handler,
+            "cleanup_agent",
+            new_callable=AsyncMock,
+        ) as cleanup_agent,
+    ):
+        first = await monitor.check_autonomous_stuck_agents()
+        first_observation = monitor._draft_grace_observations[run.id]
+        changed = await monitor.check_autonomous_stuck_agents()
+        changed_observation = monitor._draft_grace_observations[run.id]
+        unchanged = await monitor.check_autonomous_stuck_agents()
+
+    assert [first, changed, unchanged] == [0, 0, 0]
+    assert changed_observation[0] != first_observation[0]
+    assert monitor._draft_grace_observations[run.id] == changed_observation
+    cleanup_agent.assert_not_awaited()
+
+
+async def test_unchanged_draft_past_grace_cleans_up_once(
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    sample_session: dict[str, Any],
+) -> None:
+    monitor, run, _stuck_detector = _make_progress_stagnation_monitor(
+        agent_run_manager=agent_run_manager,
+        temp_db=temp_db,
+        sample_session=sample_session,
+    )
+
+    with (
+        patch.object(
+            monitor._tmux,
+            "capture_pane",
+            new_callable=AsyncMock,
+            return_value="❯ expired draft\n",
+        ) as capture_pane,
+        patch.object(
+            monitor._cleanup_handler,
+            "cleanup_agent",
+            new_callable=AsyncMock,
+        ) as cleanup_agent,
+        patch.object(lifecycle_monitor_module, "inc_counter") as inc_counter,
+    ):
+        first = await monitor.check_autonomous_stuck_agents()
+        fingerprint, _first_seen = monitor._draft_grace_observations[run.id]
+        monitor._draft_grace_observations[run.id] = (fingerprint, time.monotonic() - 300)
+        expired = await monitor.check_autonomous_stuck_agents()
+        duplicate = await monitor.check_autonomous_stuck_agents()
+
+    assert [first, expired, duplicate] == [0, 1, 0]
+    cleanup_agent.assert_awaited_once_with(
+        run,
+        terminal_payload="autonomous stuck: No progress events for 634 seconds",
+    )
+    inc_counter.assert_called_once_with("agent_lifecycle_autonomous_stuck_detected_total", 1)
+    assert capture_pane.await_count == 2
+    assert run.id not in monitor._draft_grace_observations
+
+
+async def test_resumed_progress_clears_draft_grace(
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    sample_session: dict[str, Any],
+) -> None:
+    monitor, run, stuck_detector = _make_progress_stagnation_monitor(
+        agent_run_manager=agent_run_manager,
+        temp_db=temp_db,
+        sample_session=sample_session,
+    )
+
+    with (
+        patch.object(
+            monitor._tmux,
+            "capture_pane",
+            new_callable=AsyncMock,
+            return_value="❯ draft\n",
+        ),
+    ):
+        assert await monitor.check_autonomous_stuck_agents() == 0
+        stuck_detector.is_stuck.return_value = StuckDetectionResult(is_stuck=False)
+        assert await monitor.check_autonomous_stuck_agents() == 0
+
+    assert run.id not in monitor._draft_grace_observations
+
+
+async def test_run_removal_clears_draft_grace(
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    sample_session: dict[str, Any],
+) -> None:
+    monitor, run, _stuck_detector = _make_progress_stagnation_monitor(
+        agent_run_manager=agent_run_manager,
+        temp_db=temp_db,
+        sample_session=sample_session,
+    )
+
+    with (
+        patch.object(
+            monitor._tmux,
+            "capture_pane",
+            new_callable=AsyncMock,
+            return_value="❯ draft\n",
+        ),
+    ):
+        assert await monitor.check_autonomous_stuck_agents() == 0
+    with patch.object(monitor, "_get_active_terminal_runs", return_value=[]):
+        assert await monitor.check_autonomous_stuck_agents() == 0
+
+    assert run.id not in monitor._draft_grace_observations
+
+
+@pytest.mark.parametrize(
+    ("pane_result", "missing_tmux", "layer"),
+    [
+        ("❯\n", False, "progress_stagnation"),
+        (None, False, "progress_stagnation"),
+        (RuntimeError("capture failed"), False, "progress_stagnation"),
+        ("❯ draft\n", True, "progress_stagnation"),
+        ("❯ draft\n", False, "tool_loop"),
+    ],
+    ids=["no-draft", "no-pane", "capture-failure", "missing-tmux", "other-layer"],
+)
+async def test_noneligible_draft_boundaries_preserve_immediate_enforcement(
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    sample_session: dict[str, Any],
+    pane_result: str | Exception | None,
+    missing_tmux: bool,
+    layer: str,
+) -> None:
+    monitor, stored_run, _stuck_detector = _make_progress_stagnation_monitor(
+        agent_run_manager=agent_run_manager,
+        temp_db=temp_db,
+        sample_session=sample_session,
+        layer=layer,
+    )
+    run = replace(stored_run, tmux_session_name=None) if missing_tmux else stored_run
+    monitor._draft_grace_observations[run.id] = ("previous", 1.0)
+    capture_pane = (
+        AsyncMock(side_effect=pane_result)
+        if isinstance(pane_result, Exception)
+        else AsyncMock(return_value=pane_result)
+    )
+
+    with (
+        patch.object(monitor, "_get_active_terminal_runs", return_value=[run]),
+        patch.object(monitor._tmux, "capture_pane", new=capture_pane),
+        patch.object(
+            monitor._cleanup_handler,
+            "cleanup_agent",
+            new_callable=AsyncMock,
+        ) as cleanup_agent,
+    ):
+        handled = await monitor.check_autonomous_stuck_agents()
+
+    assert handled == 1
+    cleanup_agent.assert_awaited_once_with(
+        run,
+        terminal_payload="autonomous stuck: No progress events for 634 seconds",
+    )
+    assert run.id not in monitor._draft_grace_observations
+    if missing_tmux or layer != "progress_stagnation":
+        capture_pane.assert_not_awaited()
+    else:
+        capture_pane.assert_awaited_once_with("gobby-progress-draft-grace", lines=15)
+
+
+async def test_nonfatal_progress_stagnation_action_is_not_deferred(
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    sample_session: dict[str, Any],
+) -> None:
+    monitor, _run, _stuck_detector = _make_progress_stagnation_monitor(
+        agent_run_manager=agent_run_manager,
+        temp_db=temp_db,
+        sample_session=sample_session,
+        suggested_action="change_approach",
+    )
+
+    with (
+        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock) as capture_pane,
+        patch.object(
+            monitor._tmux,
+            "send_keys",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as send_keys,
+    ):
+        handled = await monitor.check_autonomous_stuck_agents()
+
+    assert handled == 1
+    capture_pane.assert_not_awaited()
+    send_keys.assert_awaited_once_with("gobby-progress-draft-grace", "Enter", literal=True)
+
+
+async def test_xhigh_draft_grace_uses_scaled_idle_window(
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    sample_session: dict[str, Any],
+) -> None:
+    monitor, run, _stuck_detector = _make_progress_stagnation_monitor(
+        agent_run_manager=agent_run_manager,
+        temp_db=temp_db,
+        sample_session=sample_session,
+        requested_reasoning_effort="xhigh",
+        tmux_config=TmuxConfig(idle_timeout_seconds=100, idle_reprompt_delay_seconds=300),
+    )
+
+    with (
+        patch.object(
+            monitor._tmux,
+            "capture_pane",
+            new_callable=AsyncMock,
+            return_value="❯ long reasoning draft\n",
+        ),
+        patch.object(
+            monitor._cleanup_handler,
+            "cleanup_agent",
+            new_callable=AsyncMock,
+        ) as cleanup_agent,
+    ):
+        first = await monitor.check_autonomous_stuck_agents()
+        fingerprint, _first_seen = monitor._draft_grace_observations[run.id]
+        monitor._draft_grace_observations[run.id] = (fingerprint, time.monotonic() - 400)
+        scaled_window = await monitor.check_autonomous_stuck_agents()
+        monitor._draft_grace_observations[run.id] = (fingerprint, time.monotonic() - 500)
+        expired = await monitor.check_autonomous_stuck_agents()
+
+    assert [first, scaled_window, expired] == [0, 0, 1]
+    cleanup_agent.assert_awaited_once_with(
+        run,
+        terminal_payload="autonomous stuck: No progress events for 634 seconds",
+    )
+
+
 def _make_dispatched_stage_run(
     *,
     agent_run_manager: LocalAgentRunManager,
@@ -1963,6 +2341,7 @@ class TestCheckIdleAgents:
                 child.id,
                 agent_name="planner",
                 current_step="plan",
+                status_message='submit_for_review(stage_name="planning"), then end_agent_run',
             )
         )
         run = _make_terminal_run(
@@ -1989,7 +2368,7 @@ class TestCheckIdleAgents:
             literal=False,
         )
         prompt = mock_send.call_args_list[1].args[1]
-        assert "Workflow: planner-steps. Current step: plan." in prompt
+        assert "Workflow: planner. Current step: plan." in prompt
         assert 'submit_for_review(stage_name="planning")' in prompt
         assert "end_agent_run" in prompt
 

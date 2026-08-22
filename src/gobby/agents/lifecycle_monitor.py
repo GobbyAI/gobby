@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, cast
 
@@ -210,6 +211,7 @@ class AgentLifecycleMonitor:
         self._project_manager = project_manager
         self._stuck_detector = stuck_detector
         self._stuck_interventions: dict[str, tuple[str | None, str | None, str]] = {}
+        self._draft_grace_observations: dict[str, tuple[str, float]] = {}
         self._reconciliation_callback: Callable[[], Awaitable[int]] | None = None
         self._non_task_resume_callback: Callable[[], Awaitable[int]] | None = None
         self._running = False
@@ -558,18 +560,22 @@ class AgentLifecycleMonitor:
         """Check active autonomous sessions with the production stuck detector."""
         if self._stuck_detector is None:
             self._stuck_interventions.clear()
+            self._draft_grace_observations.clear()
             return 0
 
         runs = await self._run_db(self._get_active_terminal_runs)
         active_run_ids = {run.id for run in runs}
         for run_id in self._stuck_interventions.keys() - active_run_ids:
             self._stuck_interventions.pop(run_id, None)
+        for run_id in self._draft_grace_observations.keys() - active_run_ids:
+            self._draft_grace_observations.pop(run_id, None)
 
         handled = 0
         for run in runs:
             session_id = run.child_session_id or run.claimed_session_id or run.parent_session_id
             if not session_id:
                 self._stuck_interventions.pop(run.id, None)
+                self._draft_grace_observations.pop(run.id, None)
                 continue
             try:
                 result = await self._run_db(self._stuck_detector.is_stuck, session_id)
@@ -578,10 +584,13 @@ class AgentLifecycleMonitor:
                 continue
             if not result.is_stuck:
                 self._stuck_interventions.pop(run.id, None)
+                self._draft_grace_observations.pop(run.id, None)
                 continue
 
             fingerprint = self._stuck_intervention_fingerprint(result)
             if self._stuck_interventions.get(run.id) == fingerprint:
+                continue
+            if await self._defer_stagnation_for_unsubmitted_input(run, result):
                 continue
             self._stuck_interventions[run.id] = fingerprint
 
@@ -599,12 +608,65 @@ class AgentLifecycleMonitor:
                     run,
                     terminal_payload=f"autonomous stuck: {result.reason or result.layer}",
                 )
+                self._draft_grace_observations.pop(run.id, None)
             elif run.tmux_session_name:
                 await self._tmux.send_keys(run.tmux_session_name, "Enter", literal=True)
 
         if handled:
             inc_counter("agent_lifecycle_autonomous_stuck_detected_total", handled)
         return handled
+
+    async def _defer_stagnation_for_unsubmitted_input(
+        self,
+        run: AgentRun,
+        result: StuckDetectionResult,
+    ) -> bool:
+        """Defer fatal progress stagnation while visible draft input keeps changing."""
+        if result.layer != "progress_stagnation" or result.suggested_action not in {
+            "stop",
+            "escalate",
+        }:
+            self._draft_grace_observations.pop(run.id, None)
+            return False
+
+        tmux_name = run.tmux_session_name
+        if tmux_name is None:
+            self._draft_grace_observations.pop(run.id, None)
+            return False
+        try:
+            pane_output = await self._tmux.capture_pane(tmux_name, lines=15)
+        except Exception:
+            logger.warning(
+                "Failed to inspect draft input for autonomous run %s",
+                run.id,
+                exc_info=True,
+            )
+            self._draft_grace_observations.pop(run.id, None)
+            return False
+        if pane_output is None:
+            self._draft_grace_observations.pop(run.id, None)
+            return False
+
+        draft_fingerprint = self._idle_detector.for_provider(
+            run.provider
+        ).unsubmitted_input_fingerprint(pane_output)
+        if draft_fingerprint is None:
+            self._draft_grace_observations.pop(run.id, None)
+            return False
+
+        now = time.monotonic()
+        grace_seconds = self._idle_check_handler._idle_reprompt_delay_seconds_for_run(run)
+        observation = self._draft_grace_observations.get(run.id)
+        if observation is None or observation[0] != draft_fingerprint:
+            self._draft_grace_observations[run.id] = (draft_fingerprint, now)
+            logger.info(
+                "Deferring autonomous progress stagnation for run %s by %s seconds: "
+                "unsubmitted input is visible",
+                run.id,
+                grace_seconds,
+            )
+            return True
+        return now - observation[1] < grace_seconds
 
     async def check_completed_task_agents(self) -> int:
         """Complete active task-bound runs whose authoritative task is closed."""

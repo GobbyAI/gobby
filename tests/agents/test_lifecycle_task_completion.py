@@ -241,7 +241,10 @@ async def test_open_task_preserves_autonomous_stuck_cleanup(
     )
     cleanup_agent = AsyncMock()
 
-    with patch.object(monitor._cleanup_handler, "cleanup_agent", new=cleanup_agent):
+    with (
+        patch.object(monitor._tmux, "capture_pane", new=AsyncMock(return_value=None)),
+        patch.object(monitor._cleanup_handler, "cleanup_agent", new=cleanup_agent),
+    ):
         completed = await monitor.check_completed_task_agents()
         stuck = await monitor.check_autonomous_stuck_agents()
 

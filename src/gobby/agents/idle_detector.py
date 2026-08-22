@@ -8,6 +8,7 @@ pane analysis only runs when the session appears stale.
 
 from __future__ import annotations
 
+import hashlib
 import time
 from dataclasses import dataclass
 
@@ -71,20 +72,28 @@ class IdleDetector:
             detector.clear_state(run_id)
         self._states.pop(run_id, None)
 
-    def has_unsubmitted_input(self, pane_output: str) -> bool:
-        """Return whether pane output shows text typed at a prompt but not submitted."""
+    def unsubmitted_input_fingerprint(self, pane_output: str) -> str | None:
+        """Fingerprint normalized draft lines typed at a provider prompt."""
         manifest = self._manifest()
         if manifest is None:
-            return False
+            return None
         if manifest.match_rule("queued_continuation", pane_output).match is not None:
-            return False
+            return None
         if manifest.match_rule("queued_message", pane_output).match is not None:
-            return False
-        for line in pane_output.strip().splitlines():
+            return None
+
+        draft_lines: list[str] = []
+        for line in pane_output.splitlines():
             stripped = line.strip()
             if manifest.match_rule("stalled_input", stripped).match is not None:
-                return True
-        return False
+                draft_lines.append(" ".join(stripped.split()))
+        if not draft_lines:
+            return None
+        return hashlib.sha256("\n".join(draft_lines).encode()).hexdigest()
+
+    def has_unsubmitted_input(self, pane_output: str) -> bool:
+        """Return whether pane output shows text typed at a prompt but not submitted."""
+        return self.unsubmitted_input_fingerprint(pane_output) is not None
 
     def detect(self, pane_output: str) -> str:
         """Classify pane output as 'idle', 'context_full', or 'active'.
