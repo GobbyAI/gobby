@@ -22,6 +22,7 @@ from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.plans import LocalPlanManager, PlanRecord
 from gobby.storage.tasks import Task, TaskNotFoundError
 from gobby.tasks.expansion_qa_coverage import run_expansion_qa_coverage as run_qa_coverage
+from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import get_current_session_id
 
 logger = logging.getLogger(__name__)
@@ -710,20 +711,24 @@ def _register_qa_tools(registry: InternalToolRegistry, ctx: RegistryContext) -> 
 def _register_plan_validation_tool(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
     async def validate_plan_file(plan_file: str) -> dict[str, Any]:
         service = _build_expansion_service(ctx)
-        repo_path = None
-        project_ctx = ctx.get_current_project_id()
-        if project_ctx:
-            repo_path_str = ctx.get_project_repo_path(project_ctx)
-            repo_path = repo_path_str if repo_path_str else None
+        expected_project_id = ctx.get_current_project_id()
+        project_context = get_project_context()
+        if project_context is None and expected_project_id:
+            repo_path = ctx.get_project_repo_path(expected_project_id)
+            project_context = {
+                "id": expected_project_id,
+                "project_path": repo_path,
+            }
+        context_path = project_context.get("project_path") if project_context else None
         plan_path = (
-            Path(repo_path) / plan_file
-            if repo_path and not Path(plan_file).is_absolute()
+            Path(context_path) / plan_file
+            if isinstance(context_path, str) and context_path and not Path(plan_file).is_absolute()
             else Path(plan_file)
         )
         return service.validate_plan_file(
             plan_path,
-            project_id=project_ctx,
-            project_root=Path(repo_path) if repo_path else None,
+            project_context=project_context,
+            expected_project_id=expected_project_id,
             code_index=CodeIndexStorage(ctx.task_manager.db),
             require_symbol_validation=True,
         )

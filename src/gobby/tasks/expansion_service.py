@@ -62,6 +62,7 @@ class ExpansionService:
     _contract_phase_index = _contract._contract_phase_index
     _parse_contract_plan = _contract._parse_contract_plan
     compile_run = _compile.compile_run
+    _plan_validation_project_context = _compile._plan_validation_project_context
     compile_and_apply_run = _compile.compile_and_apply_run
     normalize_compiled_spec = _compile.normalize_compiled_spec
     _list_agent_definitions_for_selection = _compile._list_agent_definitions_for_selection

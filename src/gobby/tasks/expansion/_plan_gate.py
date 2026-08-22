@@ -95,14 +95,13 @@ def _validate_plan_for_agent_spawn(
     from gobby.tasks.expansion._validate import validate_plan_file
 
     project_context = get_project_context(plan_path.parent)
-    project_id = project_context.get("id") if project_context is not None else None
-    project_path = project_context.get("project_path") if project_context is not None else None
-    project_root = Path(project_path) if isinstance(project_path, str) else None
+    task = task_manager.get_task(task_id)
+    expected_project_id = getattr(task, "project_id", None)
     result = validate_plan_file(
         None,
         plan_path,
-        project_id=project_id if isinstance(project_id, str) else None,
-        project_root=project_root,
+        project_context=project_context,
+        expected_project_id=(expected_project_id if isinstance(expected_project_id, str) else None),
         code_index=code_index,
         require_symbol_validation=True,
     )

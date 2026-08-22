@@ -278,30 +278,30 @@ def create_plan_registry(
     def validate_plan(plan_file: str) -> dict[str, Any]:
         from gobby.tasks.expansion._validate import validate_plan_file as _validate
 
-        project_id: str | None = None
-        project_root: Path | None = None
         project_context = get_project_context()
-        if project_context is not None:
-            context_project_id = project_context.get("id")
-            if isinstance(context_project_id, str) and context_project_id:
-                project_id = context_project_id
-            context_project_path = project_context.get("project_path")
-            if isinstance(context_project_path, str) and context_project_path:
-                project_root = Path(context_project_path)
-        elif default_project_id:
-            project_id = default_project_id
-            project = LocalProjectManager(db).get(default_project_id)
+        context_project_id = (
+            project_context.get("id") if project_context is not None else default_project_id
+        )
+        if isinstance(context_project_id, str) and (
+            project_context is None or not project_context.get("project_path")
+        ):
+            project = LocalProjectManager(db).get(context_project_id)
             if project is not None and project.repo_path:
-                project_root = Path(project.repo_path)
+                project_context = {
+                    "id": context_project_id,
+                    "project_path": project.repo_path,
+                    **(project_context or {}),
+                }
 
         plan_path = Path(plan_file)
-        if project_root is not None and not plan_path.is_absolute():
-            plan_path = project_root / plan_path
+        context_path = project_context.get("project_path") if project_context is not None else None
+        if isinstance(context_path, str) and context_path and not plan_path.is_absolute():
+            plan_path = Path(context_path) / plan_path
         return _validate(
             None,
             plan_path,
-            project_id=project_id,
-            project_root=project_root,
+            project_context=project_context,
+            expected_project_id=default_project_id,
             code_index=code_index,
             require_symbol_validation=True,
         )

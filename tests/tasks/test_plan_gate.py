@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import threading
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -18,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import psycopg
 import pytest
 
+from gobby.code_index.models import CODE_INDEX_UUID_NAMESPACE
 from gobby.tasks.expansion import _plan_gate as plan_gate_module
 from gobby.tasks.expansion._plan_gate import (
     PLANNING_AGENTS,
@@ -111,21 +113,30 @@ def _make_task_manager_with_artifact(plan_file_path: str | None) -> MagicMock:
 
 
 class _FreshZeroSymbolIndex:
-    def __init__(self, source_path: Path) -> None:
+    def __init__(
+        self,
+        source_path: Path,
+        *,
+        primary_project_id: str = "project-1",
+        project_ids: set[str] | None = None,
+    ) -> None:
         self.source_path = source_path
+        self.primary_project_id = primary_project_id
+        self.project_ids = project_ids or {primary_project_id}
 
     def get_project_stats(self, project_id: str) -> object:
-        assert project_id == "project-1"
+        assert project_id in self.project_ids
         return object()
 
-    def get_file(self, project_id: str, file_path: str) -> SimpleNamespace:
-        assert project_id == "project-1"
+    def get_file(self, project_id: str, file_path: str) -> SimpleNamespace | None:
+        if project_id != self.primary_project_id:
+            return None
         assert file_path == "src/foo.py"
         content_hash = hashlib.sha256(self.source_path.read_bytes()).hexdigest()
         return SimpleNamespace(content_hash=content_hash, symbol_count=0)
 
     def get_symbols_for_file(self, project_id: str, file_path: str) -> list[object]:
-        assert project_id == "project-1"
+        assert project_id == self.primary_project_id
         assert file_path == "src/foo.py"
         return []
 
@@ -217,6 +228,38 @@ def test_planner_spawn_against_fresh_index_passes(
         task_id="t1",
         task_manager=manager,
         code_index=_FreshZeroSymbolIndex(source_path),
+    )
+
+    assert result is None
+
+
+def test_planner_spawn_passes_complete_isolated_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _write_clean_plan(tmp_path / "clean.md")
+    source_path = tmp_path / "src" / "foo.py"
+    source_path.parent.mkdir()
+    source_path.write_text("", encoding="utf-8")
+    manager = _make_task_manager_with_artifact(str(plan))
+    overlay_id = str(uuid.uuid5(CODE_INDEX_UUID_NAMESPACE, str(tmp_path.resolve())))
+    project_context = {
+        "id": "project-1",
+        "project_path": str(tmp_path),
+        "parent_project_id": "project-1",
+        "parent_project_path": str(tmp_path.parent / "parent"),
+    }
+    monkeypatch.setattr(plan_gate_module, "get_project_context", lambda _path: project_context)
+
+    result = validate_plan_for_agent_spawn(
+        agent_name="planner",
+        task_id="t1",
+        task_manager=manager,
+        code_index=_FreshZeroSymbolIndex(
+            source_path,
+            primary_project_id=overlay_id,
+            project_ids={overlay_id, "project-1"},
+        ),
     )
 
     assert result is None

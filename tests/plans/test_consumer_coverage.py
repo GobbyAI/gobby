@@ -18,6 +18,10 @@ pytestmark = pytest.mark.unit
 PROJECT_ID = "project-1"
 
 
+def _project_context(root: Path) -> dict[str, str]:
+    return {"id": PROJECT_ID, "project_path": str(root)}
+
+
 @dataclass(frozen=True)
 class _IndexedFile:
     content_hash: str
@@ -123,8 +127,7 @@ def _validate(
 ) -> SymbolValidationResult:
     return validate_symbol_targets(
         _plan(tmp_path, extra_deliverable),
-        project_id=PROJECT_ID,
-        project_root=tmp_path,
+        project_context=_project_context(tmp_path),
         code_index=index,
         required=True,
         consumer_coverage_blocking=blocking,
@@ -228,8 +231,7 @@ def test_consumer_coverage_missing_index_emits_one_nonblocking_skip(tmp_path: Pa
 
     result = validate_symbol_targets(
         _plan(tmp_path),
-        project_id=PROJECT_ID,
-        project_root=tmp_path,
+        project_context=_project_context(tmp_path),
         code_index=_UnavailableIndex(tmp_path),
         required=False,
         consumer_coverage_blocking=True,
@@ -258,8 +260,7 @@ def test_plan_validation_surfaces_consumer_coverage_by_mode(
     result = validate_plan_file(
         None,
         plan_doc.source_path,
-        project_id=PROJECT_ID,
-        project_root=tmp_path,
+        project_context=_project_context(tmp_path),
         code_index=_Index(tmp_path, usages=["tests/test_consumer.py"]),
         require_symbol_validation=True,
         consumer_coverage_blocking=blocking,

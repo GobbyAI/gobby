@@ -98,14 +98,11 @@ async def compile_run(
 
     plan_doc = self._parse_contract_plan(run, task)
     if plan_doc is not None:
-        project = self.project_manager.get(task.project_id)
-        project_root = (
-            Path(project.repo_path) if project is not None and project.repo_path else None
-        )
+        project_context = _plan_validation_project_context(self, plan_doc.source_path, task)
         plan_validation = self.validate_plan_file(
             plan_doc.source_path,
-            project_id=task.project_id,
-            project_root=project_root,
+            project_context=project_context,
+            expected_project_id=task.project_id,
             code_index=CodeIndexStorage(self.db),
             require_symbol_validation=True,
             consumer_coverage_blocking=True,
@@ -157,6 +154,20 @@ async def compile_run(
     if refreshed is None:
         raise RuntimeError(f"Expansion run {run_id} disappeared after compile")
     return cast(ExpansionRun, refreshed)
+
+
+def _plan_validation_project_context(
+    self: Any,
+    plan_path: Path,
+    task: Task,
+) -> dict[str, Any] | None:
+    project_context = get_project_context(plan_path.parent)
+    if project_context is not None:
+        return project_context
+    project = self.project_manager.get(task.project_id)
+    if project is None or not project.repo_path:
+        return None
+    return {"id": task.project_id, "project_path": project.repo_path}
 
 
 async def compile_and_apply_run(

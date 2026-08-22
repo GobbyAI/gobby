@@ -5,7 +5,8 @@ use postgres::{Client, GenericClient};
 
 use super::assets::{
     BASELINE_CHECKSUM, BASELINE_SQL, BASELINE_VERSION, EmbeddedMigration, MIGRATIONS,
-    PRIOR_RECEIPT_CHECKSUMS, sha256_hex,
+    PRIOR_RECEIPT_CHECKSUMS, TOOL_CHAT_OVERLAY_PREDECESSOR_CHECKSUM,
+    WORKTREE_PRE_OVERLAY_BASELINE_CHECKSUM, sha256_hex,
 };
 use super::baseline_refresh::{RefreshMode, baseline_refresh_statement_for_mode};
 use super::error::SchemaError;
@@ -26,7 +27,7 @@ pub(crate) const PREDECESSOR_BASELINE_CHECKSUM: &str =
 pub(crate) const PARENT_BASELINE_CHECKSUM: &str =
     "2d3f79a8a6aef0426d6604956d3edc2d8c5e89e01b6bced2643a88e55da342e5";
 pub(crate) const WORKTREE_BASELINE_CHECKSUM: &str =
-    "7477af06f3e54121b97f6af26e68efab79712d187bef7f1773a80e023a4faee6";
+    "648d01b53b9f77338894de16557f4c7c75e8c1bbca4146d263bd690723955440";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ApplyReport {
@@ -367,6 +368,8 @@ fn recognized_baseline_receipt(
     Ok(match checksum.as_deref() {
         Some(BASELINE_CHECKSUM) => Some(BaselineState::AlreadyBaselined),
         Some(prior) if prior_baseline_receipt(prior) => Some(BaselineState::AlreadyBaselined),
+        Some(TOOL_CHAT_OVERLAY_PREDECESSOR_CHECKSUM) => Some(BaselineState::ParentBaseline),
+        Some(WORKTREE_PRE_OVERLAY_BASELINE_CHECKSUM) => Some(BaselineState::PredecessorBaseline),
         Some(PREDECESSOR_BASELINE_CHECKSUM) => Some(BaselineState::PredecessorBaseline),
         Some(PARENT_BASELINE_CHECKSUM) => Some(BaselineState::ParentBaseline),
         Some(WORKTREE_BASELINE_CHECKSUM) => Some(BaselineState::WorktreeBaseline),

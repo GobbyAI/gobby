@@ -23,6 +23,7 @@ from gobby.storage.plans import LocalPlanManager, PlanNotFoundError
 from gobby.storage.projects import LocalProjectManager
 from gobby.tasks.expansion._validate import validate_plan_file
 from gobby.utils.json_helpers import json_dumps
+from gobby.utils.project_context import get_project_context
 
 from ._plan_validation_output import emit_plan_validation_messages, raise_plan_validation_failed
 from .utils import resolve_project_ref
@@ -334,25 +335,23 @@ def _validate_plan_for_cli(
         return structural_result
 
     require_symbol_validation = project_ref is not None or mode == "expansion"
-    project_id = _project_id(project_ref)
-    if project_id is None:
+    expected_project_id = _project_id(project_ref) if project_ref is not None else None
+    project_context = get_project_context(Path.cwd())
+    if project_context is None:
         result = validate_plan_file(
             None,
             plan_path,
+            expected_project_id=expected_project_id,
             require_symbol_validation=require_symbol_validation,
             consumer_coverage_blocking=mode == "expansion",
         )
     else:
         db = _open_db()
-        project = LocalProjectManager(db).get(project_id)
-        project_root = (
-            Path(project.repo_path) if project is not None and project.repo_path else None
-        )
         result = validate_plan_file(
             None,
             plan_path,
-            project_id=project_id,
-            project_root=project_root,
+            project_context=project_context,
+            expected_project_id=expected_project_id,
             code_index=CodeIndexStorage(db),
             require_symbol_validation=require_symbol_validation,
             consumer_coverage_blocking=mode == "expansion",

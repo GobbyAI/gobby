@@ -11,12 +11,14 @@ compiler cannot turn into a phase hierarchy. The validator must surface this as
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
 
 from gobby.storage.tasks import LocalTaskManager
+from gobby.tasks.expansion import _compile as compile_module
 from gobby.tasks.expansion_service import ExpansionService
 
 pytestmark = pytest.mark.unit
@@ -313,3 +315,29 @@ def test_validate_plan_file_rejects_unknown_manifest_task_type(
 
     assert result["valid"] is False
     assert any("Invalid task_type 'guide'" in error for error in result["errors"])
+
+
+def test_expansion_plan_context_preserves_isolation_markers(
+    service: ExpansionService,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan_path = tmp_path / "plan.md"
+    project_context = {
+        "id": "project-1",
+        "project_path": str(tmp_path),
+        "parent_project_id": "project-1",
+        "parent_project_path": str(tmp_path.parent / "parent"),
+    }
+    monkeypatch.setattr(
+        compile_module,
+        "get_project_context",
+        lambda _path: project_context,
+    )
+
+    result = service._plan_validation_project_context(
+        plan_path,
+        cast(Any, SimpleNamespace(project_id="project-1")),
+    )
+
+    assert result == project_context

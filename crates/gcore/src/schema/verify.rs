@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use super::assets::{
     BASELINE_CHECKSUM, BASELINE_VERSION, CATALOG_MANIFEST_JSON, MIGRATIONS,
-    PRIOR_RECEIPT_CHECKSUMS, SEED_MANIFEST_JSON,
+    PRIOR_RECEIPT_CHECKSUMS, SEED_MANIFEST_JSON, TOOL_CHAT_OVERLAY_PREDECESSOR_CHECKSUM,
+    WORKTREE_PRE_OVERLAY_BASELINE_CHECKSUM,
 };
 use super::error::SchemaError;
 
@@ -255,6 +256,8 @@ fn verify_receipts(client: &mut Client, schema: &str) -> Result<usize, SchemaErr
                 .filter(|(expected_filename, expected_checksum)| {
                     filename == expected_filename
                         && (checksum == expected_checksum
+                            || checksum == TOOL_CHAT_OVERLAY_PREDECESSOR_CHECKSUM
+                            || checksum == WORKTREE_PRE_OVERLAY_BASELINE_CHECKSUM
                             || PRIOR_RECEIPT_CHECKSUMS.iter().any(
                                 |(prior_version, prior_checksum)| {
                                     prior_version == version && prior_checksum == checksum

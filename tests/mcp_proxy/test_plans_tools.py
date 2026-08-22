@@ -7,6 +7,7 @@ import hashlib
 import textwrap
 import threading
 import time
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,7 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.code_index.models import IndexedFile, IndexedProject
+from gobby.code_index.models import CODE_INDEX_UUID_NAMESPACE, IndexedFile, IndexedProject
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.mcp_proxy.server import GobbyDaemonTools
 from gobby.mcp_proxy.tools import plans as plans_tools
@@ -645,6 +646,63 @@ async def test_validate_plan_returns_valid_for_canonical_plan(
 
 
 @pytest.mark.asyncio
+async def test_validate_plan_uses_complete_isolated_context(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    parent_root = tmp_path / "parent"
+    worktree_root = tmp_path / "worktree"
+    parent_root.mkdir()
+    worktree_root.mkdir()
+    project_id = _create_indexed_project(temp_db, parent_root)
+    plan_path = _write_plan(worktree_root)
+    indexed_path = worktree_root / "docs" / "demo.md"
+    indexed_path.parent.mkdir(parents=True)
+    indexed_path.write_text("Worktree demo.\n", encoding="utf-8")
+    content_hash = hashlib.sha256(indexed_path.read_bytes()).hexdigest()
+    overlay_id = str(uuid.uuid5(CODE_INDEX_UUID_NAMESPACE, str(worktree_root.resolve())))
+    code_index = CodeIndexStorage(temp_db)
+    code_index.upsert_project_stats(
+        IndexedProject(
+            id=overlay_id,
+            root_path=str(worktree_root),
+            total_files=1,
+            total_symbols=0,
+        )
+    )
+    code_index.upsert_file(
+        IndexedFile(
+            id=IndexedFile.make_id(overlay_id, "docs/demo.md", content_hash),
+            project_id=overlay_id,
+            file_path="docs/demo.md",
+            language="markdown",
+            content_hash=content_hash,
+            symbol_count=0,
+            byte_size=indexed_path.stat().st_size,
+        )
+    )
+    registry = create_plan_registry(temp_db)
+    token = set_project_context(
+        {
+            "id": project_id,
+            "project_path": str(worktree_root),
+            "parent_project_id": project_id,
+            "parent_project_path": str(parent_root),
+        }
+    )
+    try:
+        result = await registry.call(
+            "validate_plan",
+            {"plan_file": str(plan_path.relative_to(worktree_root))},
+        )
+    finally:
+        reset_project_context(token)
+
+    assert result["valid"] is True
+    assert result["symbol_validation"]["status"] == "passed"
+
+
+@pytest.mark.asyncio
 async def test_validate_plan_returns_same_payload_as_tasks_ops(
     temp_db: HubDatabase, tmp_path: Path
 ) -> None:
@@ -667,8 +725,7 @@ async def test_validate_plan_returns_same_payload_as_tasks_ops(
     service = ExpansionService(task_manager=LocalTaskManager(temp_db), llm_service=MagicMock())
     tasks_ops_result = service.validate_plan_file(
         plan_path,
-        project_id=project_id,
-        project_root=tmp_path,
+        project_context={"id": project_id, "project_path": str(tmp_path)},
         code_index=CodeIndexStorage(temp_db),
         require_symbol_validation=True,
     )

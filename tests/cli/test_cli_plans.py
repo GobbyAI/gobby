@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,6 +13,7 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli.plans import _root_ref_from_file, plans
+from gobby.code_index.models import CODE_INDEX_UUID_NAMESPACE
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager
 from gobby.storage.projects import LocalProjectManager
@@ -35,16 +37,26 @@ class _FakeDb:
 
 
 class _FakeIndex:
-    def __init__(self, root: Path, *, available: bool = True) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        available: bool = True,
+        primary_project_id: str = "project-1",
+        project_ids: set[str] | None = None,
+    ) -> None:
         self.root = root
         self.available = available
+        self.primary_project_id = primary_project_id
+        self.project_ids = project_ids or {primary_project_id}
 
     def get_project_stats(self, project_id: str) -> object | None:
-        assert project_id == "project-1"
+        assert project_id in self.project_ids
         return object() if self.available else None
 
     def get_file(self, project_id: str, file_path: str) -> SimpleNamespace | None:
-        assert project_id == "project-1"
+        if project_id != self.primary_project_id:
+            return None
         assert file_path == "docs/demo.md"
         source_path = self.root / file_path
         if not source_path.exists():
@@ -53,7 +65,7 @@ class _FakeIndex:
         return SimpleNamespace(content_hash=content_hash, symbol_count=0)
 
     def get_symbols_for_file(self, project_id: str, file_path: str) -> list[_Symbol]:
-        assert project_id == "project-1"
+        assert project_id == self.primary_project_id
         assert file_path == "docs/demo.md"
         return []
 
@@ -296,6 +308,7 @@ def test_validate_command_runs_semantic_lint_without_project(
 ) -> None:
     plan = _write_contract_plan(tmp_path)
     monkeypatch.setattr(plans_module, "resolve_project_ref", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(plans_module, "get_project_context", lambda *_args, **_kwargs: None)
 
     result = CliRunner().invoke(plans, ["validate", str(plan)])
 
@@ -338,6 +351,11 @@ def test_validate_helper_uses_auto_resolved_fresh_project_index(
         "resolve_project_ref",
         lambda *_args, **_kwargs: "project-1",
     )
+    monkeypatch.setattr(
+        plans_module,
+        "get_project_context",
+        lambda *_args, **_kwargs: {"id": "project-1", "project_path": str(tmp_path)},
+    )
     monkeypatch.setattr(plans_module, "_open_db", lambda: _FakeDb())
     monkeypatch.setattr(
         plans_module,
@@ -369,6 +387,11 @@ def test_validate_helper_explicit_project_fails_closed_without_index(
         "resolve_project_ref",
         lambda *_args, **_kwargs: "project-1",
     )
+    monkeypatch.setattr(
+        plans_module,
+        "get_project_context",
+        lambda *_args, **_kwargs: {"id": "project-1", "project_path": str(tmp_path)},
+    )
     monkeypatch.setattr(plans_module, "_open_db", lambda: _FakeDb())
     monkeypatch.setattr(
         plans_module,
@@ -396,9 +419,64 @@ def test_validate_helper_expansion_mode_fails_closed_without_project(
 ) -> None:
     plan = _write_contract_plan(tmp_path)
     monkeypatch.setattr(plans_module, "resolve_project_ref", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(plans_module, "get_project_context", lambda *_args, **_kwargs: None)
 
     result = plans_module._validate_plan_for_cli(plan, None, mode="expansion")
 
     assert result["valid"] is False
     assert result["symbol_validation"]["status"] == "failed"
+    assert result["symbol_validation"]["issues"][0]["code"] == "symbol_index_unavailable"
+
+
+def test_validate_helper_uses_isolated_overlay_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _write_contract_plan(tmp_path)
+    docs_path = tmp_path / "docs" / "demo.md"
+    docs_path.parent.mkdir()
+    docs_path.write_text("demo\n", encoding="utf-8")
+    overlay_id = str(uuid.uuid5(CODE_INDEX_UUID_NAMESPACE, str(tmp_path.resolve())))
+    project_context = {
+        "id": "project-1",
+        "project_path": str(tmp_path),
+        "parent_project_id": "project-1",
+        "parent_project_path": str(tmp_path.parent / "parent"),
+    }
+    monkeypatch.setattr(plans_module, "resolve_project_ref", lambda *_args, **_kwargs: "project-1")
+    monkeypatch.setattr(plans_module, "get_project_context", lambda *_args: project_context)
+    monkeypatch.setattr(plans_module, "_open_db", lambda: _FakeDb())
+    monkeypatch.setattr(
+        plans_module,
+        "CodeIndexStorage",
+        lambda _db: _FakeIndex(
+            tmp_path,
+            primary_project_id=overlay_id,
+            project_ids={overlay_id, "project-1"},
+        ),
+    )
+
+    result = plans_module._validate_plan_for_cli(plan, "gobby", mode="standard")
+
+    assert result["valid"] is True
+    assert result["symbol_validation"]["status"] == "passed"
+
+
+def test_validate_helper_rejects_explicit_project_context_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _write_contract_plan(tmp_path)
+    monkeypatch.setattr(plans_module, "resolve_project_ref", lambda *_args, **_kwargs: "other")
+    monkeypatch.setattr(
+        plans_module,
+        "get_project_context",
+        lambda *_args: {"id": "project-1", "project_path": str(tmp_path)},
+    )
+    monkeypatch.setattr(plans_module, "_open_db", lambda: _FakeDb())
+    monkeypatch.setattr(plans_module, "CodeIndexStorage", lambda _db: _FakeIndex(tmp_path))
+
+    result = plans_module._validate_plan_for_cli(plan, "other", mode="standard")
+
+    assert result["valid"] is False
     assert result["symbol_validation"]["issues"][0]["code"] == "symbol_index_unavailable"

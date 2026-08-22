@@ -66,6 +66,9 @@ pub(crate) const REFRESH_STATEMENT_PREFIXES: &[&str] = &[
     "GRANT EXECUTE ON FUNCTION gobby_agent_auth.load_interactive_credential_material(",
     "GRANT EXECUTE ON FUNCTION gobby_agent_auth.lookup_interactive_principal(",
     "GRANT EXECUTE ON FUNCTION gobby_agent_auth.rotate_interactive_principal(",
+    "CREATE OR REPLACE FUNCTION gobby_agent_auth.issue_tool_principal(",
+    "GRANT SELECT (id, project_id, machine_id, worktree_path, agent_session_id)",
+    "GRANT SELECT (id, project_id, machine_id, clone_path, agent_session_id)",
 ];
 
 pub(crate) const TYPED_DOMAIN_REFRESH_PREFIXES: &[&str] = &[
@@ -133,6 +136,9 @@ pub(crate) const RUNTIME_BOUNDARY_REFRESH_PREFIXES: &[&str] = &[
     "GRANT EXECUTE ON FUNCTION gobby_agent_auth.load_interactive_credential_material(",
     "GRANT EXECUTE ON FUNCTION gobby_agent_auth.lookup_interactive_principal(",
     "GRANT EXECUTE ON FUNCTION gobby_agent_auth.rotate_interactive_principal(",
+    "CREATE OR REPLACE FUNCTION gobby_agent_auth.issue_tool_principal(",
+    "GRANT SELECT (id, project_id, machine_id, worktree_path, agent_session_id)",
+    "GRANT SELECT (id, project_id, machine_id, clone_path, agent_session_id)",
 ];
 
 /// Statement prefixes this hop is allowed to drop from the predecessor fixture
@@ -158,6 +164,32 @@ pub(crate) const REMOVED_STATEMENT_PREFIXES: &[&str] = &[
     "GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE workflow_definitions",
     "GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE workflow_instances",
     "GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE legacy_copy_ledger",
+    concat!(
+        "CREATE OR REPLACE FUNCTION gobby_agent_auth.issue_tool_principal(\n",
+        "    p_execution_id UUID,\n",
+        "    p_session_id UUID,\n",
+        "    p_machine_id UUID,\n",
+        "    p_expires_at TIMESTAMPTZ,\n",
+        "    p_password TEXT\n",
+        ")\n",
+        "RETURNS TABLE(role_name NAME, credential_generation INTEGER)\n",
+        "LANGUAGE plpgsql\n",
+        "SECURITY DEFINER\n",
+        "SET search_path = gobby_agent_auth, pg_temp\n",
+        "SET createrole_self_grant = ''\n",
+        "AS $function$\n",
+        "DECLARE\n",
+        "    v_project_id UUID;\n",
+        "    v_role_name NAME;",
+    ),
+    concat!(
+        "GRANT SELECT (id, project_id, machine_id, worktree_path)\n",
+        "    ON public.worktrees TO gobby_agent_issuer",
+    ),
+    concat!(
+        "GRANT SELECT (id, project_id, machine_id, clone_path)\n",
+        "    ON public.clones TO gobby_agent_issuer",
+    ),
 ];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -5703,6 +5703,9 @@ SET createrole_self_grant = ''
 AS $function$
 DECLARE
     v_project_id UUID;
+    v_workspace_count INTEGER;
+    v_workspace_path TEXT;
+    v_overlay_project_id UUID;
     v_role_name NAME;
     v_binding_id UUID;
 BEGIN
@@ -5735,6 +5738,29 @@ BEGIN
             USING ERRCODE = '23503';
     END IF;
 
+    SELECT count(*), min(workspace.workspace_path)
+    INTO v_workspace_count, v_workspace_path
+    FROM (
+        SELECT worktree.worktree_path AS workspace_path
+        FROM public.worktrees AS worktree
+        WHERE worktree.agent_session_id = p_session_id
+          AND worktree.project_id = v_project_id
+          AND worktree.machine_id = p_machine_id
+        UNION ALL
+        SELECT clone.clone_path AS workspace_path
+        FROM public.clones AS clone
+        WHERE clone.agent_session_id = p_session_id
+          AND clone.project_id = v_project_id
+          AND clone.machine_id = p_machine_id
+    ) AS workspace;
+    IF v_workspace_count > 1 THEN
+        RAISE EXCEPTION 'tool-chat principal session has multiple isolation workspaces'
+            USING ERRCODE = '23514';
+    END IF;
+    IF v_workspace_count = 1 THEN
+        v_overlay_project_id := code_index_project_id(v_workspace_path);
+    END IF;
+
     v_role_name := (
         'gobby_agent_' || replace(p_execution_id::TEXT, '-', '') || '_1'
     )::NAME;
@@ -5752,11 +5778,11 @@ BEGIN
     );
     INSERT INTO principal_bindings (
         role_name, owner_kind, managed_execution_id, agent_run_id,
-        session_id, project_id, issuing_machine_id, expires_at,
+        session_id, project_id, code_overlay_project_id, issuing_machine_id, expires_at,
         credential_generation
     ) VALUES (
         v_role_name, 'tool_chat', p_execution_id, NULL,
-        p_session_id, v_project_id, p_machine_id, p_expires_at, 1
+        p_session_id, v_project_id, v_overlay_project_id, p_machine_id, p_expires_at, 1
     ) RETURNING id INTO v_binding_id;
     INSERT INTO principal_audit_events (
         binding_id, event_type, managed_execution_id, role_name,
@@ -5976,9 +6002,9 @@ $function$;
 
 GRANT SELECT (id, machine_id, worktree_id, clone_id)
     ON public.agent_runs TO gobby_agent_issuer;
-GRANT SELECT (id, project_id, machine_id, worktree_path)
+GRANT SELECT (id, project_id, machine_id, worktree_path, agent_session_id)
     ON public.worktrees TO gobby_agent_issuer;
-GRANT SELECT (id, project_id, machine_id, clone_path)
+GRANT SELECT (id, project_id, machine_id, clone_path, agent_session_id)
     ON public.clones TO gobby_agent_issuer;
 
 CREATE OR REPLACE FUNCTION gobby_agent_auth.current_code_overlay_project_id()

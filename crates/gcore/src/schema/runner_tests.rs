@@ -702,6 +702,74 @@ fn parent_only_lineage_refreshes_runtime_objects() -> anyhow::Result<()> {
         .query_one("SELECT to_regclass('deployment_runtime') IS NOT NULL", &[])?
         .get(0);
     assert!(after);
+    let refreshed_tool_issuer: String = client
+        .query_one(
+            "SELECT pg_get_functiondef( \
+                 'gobby_agent_auth.issue_tool_principal(uuid,uuid,uuid,timestamptz,text)'::regprocedure \
+             )",
+            &[],
+        )?
+        .get(0);
+    assert!(refreshed_tool_issuer.contains("agent_session_id"));
+    assert!(refreshed_tool_issuer.contains("code_overlay_project_id"));
+    let issuer_can_read_workspace_session: bool = client
+        .query_one(
+            "SELECT has_column_privilege( \
+                 'gobby_agent_issuer', 'worktrees', 'agent_session_id', 'SELECT' \
+             ) AND has_column_privilege( \
+                 'gobby_agent_issuer', 'clones', 'agent_session_id', 'SELECT' \
+             )",
+            &[],
+        )?
+        .get(0);
+    assert!(issuer_can_read_workspace_session);
+    let checksum: String = client
+        .query_one(
+            "SELECT checksum FROM schema_migrations WHERE version = $1",
+            &[&BASELINE_VERSION],
+        )?
+        .get(0);
+    assert_eq!(checksum, BASELINE_CHECKSUM);
+    Ok(())
+}
+
+#[test]
+fn prior_current_baseline_refreshes_tool_chat_overlay_issuer() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+    install_parent_baseline(&mut client)?;
+    client.execute(
+        "UPDATE schema_migrations SET checksum = $1 WHERE version = $2",
+        &[
+            &super::assets::TOOL_CHAT_OVERLAY_PREDECESSOR_CHECKSUM,
+            &BASELINE_VERSION,
+        ],
+    )?;
+    let before: String = client
+        .query_one(
+            "SELECT pg_get_functiondef( \
+                 'gobby_agent_auth.issue_tool_principal(uuid,uuid,uuid,timestamptz,text)'::regprocedure \
+             )",
+            &[],
+        )?
+        .get(0);
+    assert!(!before.contains("agent_session_id"));
+
+    let report = SchemaRunner::new(&mut client, "public")?.apply()?;
+    assert!(report.baseline_applied);
+    let after: String = client
+        .query_one(
+            "SELECT pg_get_functiondef( \
+                 'gobby_agent_auth.issue_tool_principal(uuid,uuid,uuid,timestamptz,text)'::regprocedure \
+             )",
+            &[],
+        )?
+        .get(0);
+    assert!(after.contains("agent_session_id"));
     let checksum: String = client
         .query_one(
             "SELECT checksum FROM schema_migrations WHERE version = $1",
@@ -721,6 +789,13 @@ fn worktree_only_lineage_adds_typed_domain_then_copy_migrations() -> anyhow::Res
         return Ok(());
     };
     install_worktree_baseline(&mut client)?;
+    client.execute(
+        "UPDATE schema_migrations SET checksum = $1 WHERE version = $2",
+        &[
+            &super::assets::WORKTREE_PRE_OVERLAY_BASELINE_CHECKSUM,
+            &BASELINE_VERSION,
+        ],
+    )?;
     let agents_before: bool = client
         .query_one("SELECT to_regclass('agent_definitions') IS NOT NULL", &[])?
         .get(0);
@@ -740,7 +815,7 @@ fn worktree_only_lineage_adds_typed_domain_then_copy_migrations() -> anyhow::Res
 }
 
 #[test]
-fn isolated_gcode_principal_reads_parent_and_writes_only_its_overlay() -> anyhow::Result<()> {
+fn tool_chat_principal_reads_parent_and_writes_only_its_worktree_overlay() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -754,9 +829,7 @@ fn isolated_gcode_principal_reads_parent_and_writes_only_its_overlay() -> anyhow
     let owner_user_id = Uuid::new_v4();
     let project_id = Uuid::new_v4();
     let unrelated_project_id = Uuid::new_v4();
-    let parent_session_id = Uuid::new_v4();
-    let child_session_id = Uuid::new_v4();
-    let agent_run_id = Uuid::new_v4();
+    let session_id = Uuid::new_v4();
     let worktree_id = Uuid::new_v4();
     let execution_id = Uuid::new_v4();
     let overlay_project_id = Uuid::parse_str("bee23f80-d127-5e8f-9dd1-30670378e19a")?;
@@ -779,45 +852,22 @@ fn isolated_gcode_principal_reads_parent_and_writes_only_its_overlay() -> anyhow
     )?;
     client.execute(
         "INSERT INTO sessions(id, external_id, machine_id, source, project_id) \
-         VALUES ($1, 'schema-parent', $2, 'test', $3)",
-        &[&parent_session_id, &machine_id, &project_id],
+         VALUES ($1, 'schema-tool-chat', $2, 'test', $3)",
+        &[&session_id, &machine_id, &project_id],
     )?;
     client.execute(
-        "INSERT INTO worktrees(id, project_id, machine_id, branch_name, worktree_path) \
-         VALUES ($1, $2, $3, 'schema-test', '/tmp/gobby-rls-overlay')",
-        &[&worktree_id, &project_id, &machine_id],
-    )?;
-    client.execute(
-        "INSERT INTO agent_runs(id, machine_id, parent_session_id, provider, prompt, worktree_id) \
-         VALUES ($1, $2, $3, 'test', 'schema test', $4)",
-        &[&agent_run_id, &machine_id, &parent_session_id, &worktree_id],
-    )?;
-    client.execute(
-        "INSERT INTO sessions( \
-             id, external_id, machine_id, source, project_id, parent_session_id, agent_run_id \
-         ) VALUES ($1, 'schema-child', $2, 'test', $3, $4, $5)",
-        &[
-            &child_session_id,
-            &machine_id,
-            &project_id,
-            &parent_session_id,
-            &agent_run_id,
-        ],
+        "INSERT INTO worktrees( \
+             id, project_id, machine_id, branch_name, worktree_path, agent_session_id \
+         ) VALUES ($1, $2, $3, 'schema-test', '/tmp/gobby-rls-overlay', $4)",
+        &[&worktree_id, &project_id, &machine_id, &session_id],
     )?;
 
     let role_name: String = client
         .query_one(
-            "SELECT role_name::TEXT FROM gobby_agent_auth.issue_principal( \
-                 $1, 'agent_run', $2, $3, $4, \
-                 clock_timestamp() + INTERVAL '10 minutes', $5 \
+            "SELECT role_name::TEXT FROM gobby_agent_auth.issue_tool_principal( \
+                 $1, $2, $3, clock_timestamp() + INTERVAL '10 minutes', $4 \
              )",
-            &[
-                &execution_id,
-                &child_session_id,
-                &agent_run_id,
-                &machine_id,
-                &password,
-            ],
+            &[&execution_id, &session_id, &machine_id, &password],
         )?
         .get(0);
     let bound_overlay_id: Option<Uuid> = client
@@ -916,6 +966,14 @@ fn isolated_gcode_principal_reads_parent_and_writes_only_its_overlay() -> anyhow
                 0,
                 "isolated principal must not delete parent facts",
             );
+            let other_overlay_id = Uuid::new_v4();
+            let error = scoped
+                .execute(
+                    "INSERT INTO code_indexed_projects(id) VALUES ($1)",
+                    &[&other_overlay_id],
+                )
+                .expect_err("writes to another overlay must fail RLS");
+            assert_eq!(error.code(), Some(&SqlState::INSUFFICIENT_PRIVILEGE));
             let error = scoped
                 .execute(
                     "UPDATE code_indexed_project_states SET machine_id = $1 \
@@ -936,6 +994,151 @@ fn isolated_gcode_principal_reads_parent_and_writes_only_its_overlay() -> anyhow
     validation?;
     revoke_result?;
     assert_gcode_rls_policies(&mut client)?;
+    Ok(())
+}
+
+#[test]
+fn tool_chat_principal_binding_handles_clone_parent_and_ambiguous_workspaces() -> anyhow::Result<()>
+{
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+    install_baseline(&mut client)?;
+
+    let owner_user_id = Uuid::new_v4();
+    let machine_id = Uuid::new_v4();
+    let project_id = Uuid::new_v4();
+    let clone_session_id = Uuid::new_v4();
+    let parent_session_id = Uuid::new_v4();
+    let ambiguous_session_id = Uuid::new_v4();
+    client.execute(
+        "INSERT INTO users(id, email, name, password_hash) \
+         VALUES ($1, 'tool-binding@example.invalid', 'Tool Binding', 'test-only')",
+        &[&owner_user_id],
+    )?;
+    client.execute(
+        "INSERT INTO machines(id, hostname, owner_user_id) VALUES ($1, 'tool-binding', $2)",
+        &[&machine_id, &owner_user_id],
+    )?;
+    client.execute(
+        "INSERT INTO projects(id, name, repo_path) \
+         VALUES ($1, 'tool-binding', '/tmp/gobby-tool-binding')",
+        &[&project_id],
+    )?;
+    client.execute(
+        "INSERT INTO sessions(id, external_id, machine_id, source, project_id) VALUES \
+             ($1, 'tool-clone', $4, 'test', $5), \
+             ($2, 'tool-parent', $4, 'test', $5), \
+             ($3, 'tool-ambiguous', $4, 'test', $5)",
+        &[
+            &clone_session_id,
+            &parent_session_id,
+            &ambiguous_session_id,
+            &machine_id,
+            &project_id,
+        ],
+    )?;
+    client.execute(
+        "INSERT INTO clones( \
+             id, project_id, machine_id, branch_name, clone_path, agent_session_id \
+         ) VALUES ($1, $2, $3, 'clone', '/tmp/gobby-tool-clone', $4), \
+                  ($5, $2, $3, 'ambiguous-clone', '/tmp/gobby-ambiguous-clone', $6)",
+        &[
+            &Uuid::new_v4(),
+            &project_id,
+            &machine_id,
+            &clone_session_id,
+            &Uuid::new_v4(),
+            &ambiguous_session_id,
+        ],
+    )?;
+    client.execute(
+        "INSERT INTO worktrees( \
+             id, project_id, machine_id, branch_name, worktree_path, agent_session_id \
+         ) VALUES ($1, $2, $3, 'ambiguous-worktree', '/tmp/gobby-ambiguous-worktree', $4)",
+        &[
+            &Uuid::new_v4(),
+            &project_id,
+            &machine_id,
+            &ambiguous_session_id,
+        ],
+    )?;
+
+    let clone_execution_id = Uuid::new_v4();
+    let clone_password = format!("gobby-tool-clone-{}", Uuid::new_v4().simple());
+    client.query_one(
+        "SELECT role_name FROM gobby_agent_auth.issue_tool_principal( \
+             $1, $2, $3, clock_timestamp() + INTERVAL '10 minutes', $4 \
+         )",
+        &[
+            &clone_execution_id,
+            &clone_session_id,
+            &machine_id,
+            &clone_password,
+        ],
+    )?;
+    let clone_overlay: Option<Uuid> = client
+        .query_one(
+            "SELECT code_overlay_project_id FROM gobby_agent_auth.principal_bindings \
+             WHERE managed_execution_id = $1",
+            &[&clone_execution_id],
+        )?
+        .get(0);
+    let expected_clone_overlay: Uuid = client
+        .query_one(
+            "SELECT gobby_agent_auth.code_index_project_id('/tmp/gobby-tool-clone')",
+            &[],
+        )?
+        .get(0);
+    assert_eq!(clone_overlay, Some(expected_clone_overlay));
+    client.query_one(
+        "SELECT gobby_agent_auth.revoke_principal($1, 1)",
+        &[&clone_execution_id],
+    )?;
+
+    let parent_execution_id = Uuid::new_v4();
+    let parent_password = format!("gobby-tool-parent-{}", Uuid::new_v4().simple());
+    client.query_one(
+        "SELECT role_name FROM gobby_agent_auth.issue_tool_principal( \
+             $1, $2, $3, clock_timestamp() + INTERVAL '10 minutes', $4 \
+         )",
+        &[
+            &parent_execution_id,
+            &parent_session_id,
+            &machine_id,
+            &parent_password,
+        ],
+    )?;
+    let parent_overlay: Option<Uuid> = client
+        .query_one(
+            "SELECT code_overlay_project_id FROM gobby_agent_auth.principal_bindings \
+             WHERE managed_execution_id = $1",
+            &[&parent_execution_id],
+        )?
+        .get(0);
+    assert_eq!(parent_overlay, None);
+    client.query_one(
+        "SELECT gobby_agent_auth.revoke_principal($1, 1)",
+        &[&parent_execution_id],
+    )?;
+
+    let ambiguous_error = client
+        .query_one(
+            "SELECT role_name FROM gobby_agent_auth.issue_tool_principal( \
+                 $1, $2, $3, clock_timestamp() + INTERVAL '10 minutes', $4 \
+             )",
+            &[
+                &Uuid::new_v4(),
+                &ambiguous_session_id,
+                &machine_id,
+                &format!("gobby-tool-ambiguous-{}", Uuid::new_v4().simple()),
+            ],
+        )
+        .expect_err("multiple session workspaces must fail closed");
+    assert_eq!(ambiguous_error.code(), Some(&SqlState::CHECK_VIOLATION));
     Ok(())
 }
 

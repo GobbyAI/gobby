@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Iterable
+import uuid
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol, cast
 
 import psycopg
 
+from gobby.code_index.models import CODE_INDEX_UUID_NAMESPACE
 from gobby.plans.parser import Kind, PlanDocument
 from gobby.plans.semantic_lint import has_generated_header, iter_target_block_lines
 
@@ -62,6 +64,21 @@ class SymbolIndexStorage(Protocol):
     def get_symbols_for_file(self, project_id: str, file_path: str) -> list[Any]: ...
 
     def get_symbol_usages(self, project_id: str, symbol_id: str) -> list[str]: ...
+
+
+@dataclass(frozen=True)
+class SymbolValidationScope:
+    """Resolved filesystem and code-index scope for symbol validation."""
+
+    filesystem_root: Path
+    primary_project_id: str
+    parent_project_id: str | None = None
+
+    @property
+    def project_ids(self) -> tuple[str, ...]:
+        if self.parent_project_id is None:
+            return (self.primary_project_id,)
+        return (self.primary_project_id, self.parent_project_id)
 
 
 @dataclass(frozen=True)
@@ -180,8 +197,8 @@ def parse_symbol_targets(
 def validate_symbol_targets(
     plan_doc: PlanDocument,
     *,
-    project_id: str | None,
-    project_root: Path | None,
+    project_context: Mapping[str, Any] | None,
+    expected_project_id: str | None = None,
     code_index: Any | None,
     required: bool,
     consumer_coverage_blocking: bool = False,
@@ -191,9 +208,13 @@ def validate_symbol_targets(
     targets, parse_issues = parse_symbol_targets(plan_doc)
     has_exact_targets = any(target.symbol is not None for target in targets)
 
+    scope, scope_error = _resolve_validation_scope(
+        project_context,
+        expected_project_id=expected_project_id,
+    )
     unavailable = _unavailable_context_issue(
-        project_id=project_id,
-        project_root=project_root,
+        scope=scope,
+        scope_error=scope_error,
         code_index=code_index,
         required=required,
     )
@@ -207,22 +228,26 @@ def validate_symbol_targets(
         )
 
     storage = _index_storage(code_index)
-    assert project_id is not None
-    assert project_root is not None
-    try:
-        project_stats = storage.get_project_stats(project_id)
-    except psycopg.Error as exc:
-        return _index_read_failure(
-            required,
-            f"Code index is unavailable: {exc}",
-            consumer_coverage=has_exact_targets,
-        )
-    if project_stats is None:
-        return _index_read_failure(
-            required,
-            f"No code index is available for project {project_id}",
-            consumer_coverage=has_exact_targets,
-        )
+    assert scope is not None
+    primary_project_stats: Any | None = None
+    for project_id in scope.project_ids:
+        try:
+            project_stats = storage.get_project_stats(project_id)
+        except psycopg.Error as exc:
+            return _index_read_failure(
+                required,
+                f"Code index is unavailable: {exc}",
+                consumer_coverage=has_exact_targets,
+            )
+        if project_stats is None:
+            return _index_read_failure(
+                required,
+                f"No code index is available for project {project_id}",
+                consumer_coverage=has_exact_targets,
+            )
+        if project_id == scope.primary_project_id:
+            primary_project_stats = project_stats
+    assert primary_project_stats is not None
 
     issues = list(parse_issues)
     checked_targets = _unique(target.reference for target in targets)
@@ -235,8 +260,7 @@ def validate_symbol_targets(
         issues.extend(
             _validate_file_targets(
                 storage,
-                project_id=project_id,
-                project_root=project_root,
+                scope=scope,
                 file_path=file_path,
                 targets=file_targets,
             )
@@ -244,8 +268,8 @@ def validate_symbol_targets(
 
     if has_exact_targets:
         skip_reason = _consumer_coverage_skip_reason(
-            project_stats,
-            project_root,
+            primary_project_stats,
+            scope.filesystem_root,
             issues,
         )
         if skip_reason is not None:
@@ -254,8 +278,7 @@ def validate_symbol_targets(
             issues.extend(
                 _validate_consumer_coverage(
                     storage,
-                    project_id=project_id,
-                    project_root=project_root,
+                    scope=scope,
                     targets=targets,
                     blocking=consumer_coverage_blocking,
                 )
@@ -421,13 +444,12 @@ def _normalize_target_path(value: str) -> str | None:
 def _validate_file_targets(
     storage: SymbolIndexStorage,
     *,
-    project_id: str,
-    project_root: Path,
+    scope: SymbolValidationScope,
     file_path: str,
     targets: list[SymbolTarget],
 ) -> list[SymbolValidationIssue]:
     try:
-        indexed_file = storage.get_file(project_id, file_path)
+        selected_project_id, indexed_file = _visible_indexed_file(storage, scope, file_path)
     except psycopg.Error as exc:
         return [
             SymbolValidationIssue(
@@ -439,7 +461,7 @@ def _validate_file_targets(
     if indexed_file is None:
         return _validate_unindexed_targets(targets)
 
-    current_path = project_root / file_path
+    current_path = scope.filesystem_root / file_path
     current_hash = _file_sha256(current_path)
     if current_hash is None or current_hash != str(indexed_file.content_hash):
         return [
@@ -454,7 +476,7 @@ def _validate_file_targets(
         ]
 
     try:
-        symbols = storage.get_symbols_for_file(project_id, file_path)
+        symbols = storage.get_symbols_for_file(selected_project_id, file_path)
     except psycopg.Error as exc:
         return [
             SymbolValidationIssue(
@@ -548,18 +570,24 @@ def _validate_unindexed_targets(targets: list[SymbolTarget]) -> list[SymbolValid
 def _validate_consumer_coverage(
     storage: SymbolIndexStorage,
     *,
-    project_id: str,
-    project_root: Path,
+    scope: SymbolValidationScope,
     targets: tuple[SymbolTarget, ...],
     blocking: bool,
 ) -> list[SymbolValidationIssue]:
     targeted_files = {target.file_path for target in targets}
     exact_targets = [target for target in targets if target.symbol is not None]
-    usage_cache: dict[str, list[str]] = {}
+    usage_cache: dict[tuple[str, str], list[str]] = {}
     issues: list[SymbolValidationIssue] = []
     for target in exact_targets:
         try:
-            symbols = storage.get_symbols_for_file(project_id, target.file_path)
+            selected_project_id, indexed_file = _visible_indexed_file(
+                storage,
+                scope,
+                target.file_path,
+            )
+            if indexed_file is None:
+                continue
+            symbols = storage.get_symbols_for_file(selected_project_id, target.file_path)
         except psycopg.Error:
             return [_consumer_coverage_skipped("code index usages are unavailable")]
         matches = [
@@ -570,16 +598,21 @@ def _validate_consumer_coverage(
         if len(matches) != 1:
             continue
         symbol_id = str(matches[0].id)
-        if symbol_id not in usage_cache:
+        usage_key = (selected_project_id, symbol_id)
+        if usage_key not in usage_cache:
             try:
-                usage_cache[symbol_id] = storage.get_symbol_usages(project_id, symbol_id)
+                usage_cache[usage_key] = storage.get_symbol_usages(
+                    selected_project_id,
+                    symbol_id,
+                )
             except (AttributeError, psycopg.Error):
                 return [_consumer_coverage_skipped("code index usages are unavailable")]
         missing = sorted(
             {
                 consumer
-                for consumer in usage_cache[symbol_id]
-                if consumer not in targeted_files and _is_owned_consumer(project_root, consumer)
+                for consumer in usage_cache[usage_key]
+                if consumer not in targeted_files
+                and _is_owned_consumer(scope.filesystem_root, consumer)
             }
         )
         if not missing:
@@ -661,18 +694,92 @@ def _index_storage(code_index: Any) -> SymbolIndexStorage:
     return cast(SymbolIndexStorage, storage)
 
 
+def _visible_indexed_file(
+    storage: SymbolIndexStorage,
+    scope: SymbolValidationScope,
+    file_path: str,
+) -> tuple[str, Any | None]:
+    selected_project_id = scope.primary_project_id
+    indexed_file = storage.get_file(selected_project_id, file_path)
+    if indexed_file is None and scope.parent_project_id is not None:
+        selected_project_id = scope.parent_project_id
+        indexed_file = storage.get_file(selected_project_id, file_path)
+    return selected_project_id, indexed_file
+
+
+def _resolve_validation_scope(
+    project_context: Mapping[str, Any] | None,
+    *,
+    expected_project_id: str | None,
+) -> tuple[SymbolValidationScope | None, str | None]:
+    if project_context is None:
+        return None, "project context is missing"
+
+    project_id = _nonempty_context_string(project_context.get("id"))
+    project_path = _nonempty_context_string(project_context.get("project_path"))
+    if project_id is None or project_path is None:
+        return None, "project context requires id and project_path"
+
+    parent_id_value = project_context.get("parent_project_id")
+    parent_path_value = project_context.get("parent_project_path")
+    has_parent_id = parent_id_value is not None
+    has_parent_path = parent_path_value is not None
+    if has_parent_id != has_parent_path:
+        return None, "isolation context requires parent_project_id and parent_project_path together"
+
+    filesystem_root = _canonical_root(Path(project_path))
+    logical_project_id = project_id
+    primary_project_id = project_id
+    parent_project_id: str | None = None
+    if has_parent_id:
+        parent_project_id = _nonempty_context_string(parent_id_value)
+        parent_project_path = _nonempty_context_string(parent_path_value)
+        if parent_project_id is None or parent_project_path is None:
+            return None, "isolation parent fields must be non-empty strings"
+        if project_id != parent_project_id:
+            return None, "isolation context id does not match parent_project_id"
+        logical_project_id = parent_project_id
+        primary_project_id = str(uuid.uuid5(CODE_INDEX_UUID_NAMESPACE, str(filesystem_root)))
+
+    if expected_project_id is not None and expected_project_id != logical_project_id:
+        return (
+            None,
+            f"project context does not match the requested logical project {expected_project_id}",
+        )
+    return (
+        SymbolValidationScope(
+            filesystem_root=filesystem_root,
+            primary_project_id=primary_project_id,
+            parent_project_id=parent_project_id,
+        ),
+        None,
+    )
+
+
+def _nonempty_context_string(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _canonical_root(path: Path) -> Path:
+    try:
+        return path.expanduser().resolve()
+    except OSError:
+        return path.expanduser().absolute()
+
+
 def _unavailable_context_issue(
     *,
-    project_id: str | None,
-    project_root: Path | None,
+    scope: SymbolValidationScope | None,
+    scope_error: str | None,
     code_index: Any | None,
     required: bool,
 ) -> SymbolValidationIssue | None:
     missing: list[str] = []
-    if project_id is None:
-        missing.append("project id")
-    if project_root is None:
-        missing.append("project root")
+    if scope is None:
+        missing.append(scope_error or "project scope")
     if code_index is None:
         missing.append("code index")
     if not missing:

@@ -76,12 +76,9 @@ def validate_plan_cmd(plan_file: str) -> None:
     if not plan_path.is_absolute():
         plan_path = Path.cwd() / plan_path
     project_context = get_project_context(cwd=Path.cwd())
-    project_id = project_context.get("id") if project_context is not None else None
-    project_path = project_context.get("project_path") if project_context is not None else None
     result = service.validate_plan_file(
         plan_path,
-        project_id=project_id if isinstance(project_id, str) else None,
-        project_root=Path(project_path) if isinstance(project_path, str) else None,
+        project_context=project_context,
         code_index=CodeIndexStorage(service.db),
         require_symbol_validation=True,
         consumer_coverage_blocking=True,

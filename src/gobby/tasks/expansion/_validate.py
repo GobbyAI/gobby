@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -26,13 +27,15 @@ def validate_plan_file(
     self: Any,
     plan_path: Path,
     *,
-    project_id: str | None = None,
-    project_root: Path | None = None,
+    project_context: Mapping[str, Any] | None = None,
+    expected_project_id: str | None = None,
     code_index: Any | None = None,
     require_symbol_validation: bool = False,
     consumer_coverage_blocking: bool = False,
 ) -> dict[str, Any]:
     """Validate a plan file against the Plan-Coverage Contract."""
+    project_path = project_context.get("project_path") if project_context is not None else None
+    project_root = Path(project_path) if isinstance(project_path, str) and project_path else None
     skipped_symbols = skipped_symbol_validation().to_dict()
     if not plan_path.exists():
         return {
@@ -96,8 +99,8 @@ def validate_plan_file(
         }
     symbol_validation = validate_symbol_targets(
         plan_doc,
-        project_id=project_id,
-        project_root=project_root,
+        project_context=project_context,
+        expected_project_id=expected_project_id,
         code_index=code_index,
         required=require_symbol_validation,
         consumer_coverage_blocking=consumer_coverage_blocking,

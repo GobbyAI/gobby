@@ -3,10 +3,14 @@ use sha2::{Digest, Sha256};
 pub const RUNNER_PROTOCOL_VERSION: u32 = 1;
 pub const BASELINE_VERSION: i32 = 375;
 pub const BASELINE_CHECKSUM: &str =
-    "d19810005e6c931219781941ab1c63ecc057973dfe60e2d4a8b6a69f460c6dd0";
+    "ec222a7f8b3c486abfff05eda4ed02995d272a132ad2fdadb1dd90edbccb2ce1";
 pub const BASELINE_SQL: &str = include_str!("../../assets/schema/baseline.sql");
 pub const SEED_MANIFEST_JSON: &str = include_str!("../../assets/schema/seed.manifest.json");
 pub const CATALOG_MANIFEST_JSON: &str = include_str!("../../assets/schema/catalog.manifest.json");
+pub(crate) const TOOL_CHAT_OVERLAY_PREDECESSOR_CHECKSUM: &str =
+    "d19810005e6c931219781941ab1c63ecc057973dfe60e2d4a8b6a69f460c6dd0";
+pub(crate) const WORKTREE_PRE_OVERLAY_BASELINE_CHECKSUM: &str =
+    "7477af06f3e54121b97f6af26e68efab79712d187bef7f1773a80e023a4faee6";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct EmbeddedMigration {
