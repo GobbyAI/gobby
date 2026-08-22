@@ -8,7 +8,11 @@ from typing import Any
 
 from gobby.plans.parser import Kind, PlanParseError, parse_plan
 from gobby.plans.semantic_lint import lint_plan_document
-from gobby.plans.symbol_targets import skipped_symbol_validation, validate_symbol_targets
+from gobby.plans.symbol_targets import (
+    CONSUMER_COVERAGE,
+    skipped_symbol_validation,
+    validate_symbol_targets,
+)
 from gobby.tasks.categories import DEVELOPMENT_FORWARD_LEAF_CATEGORIES, IMPLEMENTATION_DOMAINS
 from gobby.tasks.expansion._common import (
     _CONTRACT_PHASE_ID_RE,
@@ -26,6 +30,7 @@ def validate_plan_file(
     project_root: Path | None = None,
     code_index: Any | None = None,
     require_symbol_validation: bool = False,
+    consumer_coverage_blocking: bool = False,
 ) -> dict[str, Any]:
     """Validate a plan file against the Plan-Coverage Contract."""
     skipped_symbols = skipped_symbol_validation().to_dict()
@@ -80,7 +85,7 @@ def validate_plan_file(
             "warnings": warnings,
             "symbol_validation": skipped_symbols,
         }
-    semantic_lint = lint_plan_document(plan_doc)
+    semantic_lint = lint_plan_document(plan_doc, project_root=project_root)
     if not semantic_lint.valid:
         return {
             "valid": False,
@@ -95,12 +100,19 @@ def validate_plan_file(
         project_root=project_root,
         code_index=code_index,
         required=require_symbol_validation,
+        consumer_coverage_blocking=consumer_coverage_blocking,
     )
+    consumer_warnings = [
+        issue.message
+        for issue in symbol_validation.issues
+        if issue.code == CONSUMER_COVERAGE and not issue.blocking
+    ]
+    validation_warnings = [*warnings, *consumer_warnings]
     if symbol_validation.errors:
         return {
             "valid": False,
             "errors": symbol_validation.errors,
-            "warnings": warnings,
+            "warnings": validation_warnings,
             "semantic_lint": semantic_lint.to_dict(),
             "symbol_validation": symbol_validation.to_dict(),
         }
@@ -111,7 +123,7 @@ def validate_plan_file(
         "phases": phases,
         "deliverable_count": len(deliverables),
         "contract_plan": True,
-        "warnings": warnings,
+        "warnings": validation_warnings,
         "symbol_validation": symbol_validation.to_dict(),
     }
 

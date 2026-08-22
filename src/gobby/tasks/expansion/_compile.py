@@ -108,6 +108,7 @@ async def compile_run(
             project_root=project_root,
             code_index=CodeIndexStorage(self.db),
             require_symbol_validation=True,
+            consumer_coverage_blocking=True,
         )
         if not plan_validation["valid"]:
             errors = "; ".join(plan_validation["errors"])

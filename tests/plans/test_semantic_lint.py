@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from gobby.plans.parser import parse_plan
-from gobby.plans.semantic_lint import lint_plan_document
+from gobby.plans.semantic_lint import SemanticLintResult, lint_plan_document
 
 pytestmark = pytest.mark.unit
 
@@ -39,6 +39,18 @@ def _lint(tmp_path: Path, deliverable_body: str) -> list[str]:
     return lint_plan_document(
         parse_plan(_write_plan(tmp_path, deliverable_body), parse_mode="draft")
     ).errors
+
+
+def _lint_plan_text(
+    tmp_path: Path,
+    plan_text: str,
+    *,
+    project_root: Path | None = None,
+) -> SemanticLintResult:
+    plan_path = tmp_path / "multi-section-plan.md"
+    plan_path.write_text(textwrap.dedent(plan_text).lstrip(), encoding="utf-8")
+    plan_doc = parse_plan(plan_path, parse_mode="draft")
+    return lint_plan_document(plan_doc, project_root=project_root)
 
 
 def test_complete_target_inventory_passes(tmp_path: Path) -> None:
@@ -381,3 +393,243 @@ def test_mjs_body_mention_without_target_fails(tmp_path: Path) -> None:
 
     assert any("target-coverage" in error for error in errors)
     assert any("src/scripts/detect.mjs" in error for error in errors)
+
+
+def test_shared_target_ordering_reports_each_unordered_pair_once(tmp_path: Path) -> None:
+    result = _lint_plan_text(
+        tmp_path,
+        """
+        > **Plan ID:** shared-target-ordering
+
+        # Shared Target Ordering
+
+        ## P1: Work
+        `kind: framing`
+
+        ### 1.1 First owner [category: code]
+        `kind: deliverable`
+
+        Target: `src/shared.py::first`
+
+        Implement the first owner.
+
+        **Acceptance:**
+        - 1.1.1 - First owner is complete. file: `src/shared.py`.
+
+        ### 1.2 Second owner [category: code]
+        `kind: deliverable`
+
+        Target: `src/shared.py::second`
+
+        Implement the second owner.
+
+        **Acceptance:**
+        - 1.2.1 - Second owner is complete. file: `src/shared.py`.
+        """,
+    )
+
+    issues = [issue for issue in result.issues if issue.code == "shared-target-ordering"]
+    assert len(issues) == 1
+    assert issues[0].details == {
+        "file_path": "src/shared.py",
+        "sections": ["1.1", "1.2"],
+    }
+
+
+def test_shared_target_ordering_accepts_phase_dependency(tmp_path: Path) -> None:
+    result = _lint_plan_text(
+        tmp_path,
+        """
+        > **Plan ID:** shared-target-phase-ordering
+
+        # Shared Target Phase Ordering
+
+        ## P1: Foundation
+        `kind: framing`
+
+        ### 1.1 First owner [category: code]
+        `kind: deliverable`
+
+        Target: `src/shared.py::first`
+
+        Implement the first owner.
+
+        **Acceptance:**
+        - 1.1.1 - First owner is complete. file: `src/shared.py`.
+
+        ## P2: Follow-up
+        `kind: framing`
+
+        ### 2.1 Second owner [category: code] (depends: P1)
+        `kind: deliverable`
+
+        Target: `src/shared.py::second`
+
+        Implement the second owner.
+
+        **Acceptance:**
+        - 2.1.1 - Second owner is complete. file: `src/shared.py`.
+        """,
+    )
+
+    assert not any(issue.code == "shared-target-ordering" for issue in result.issues)
+
+
+def test_production_size_growth_reports_threshold_and_ceiling(tmp_path: Path) -> None:
+    source_path = tmp_path / "src" / "large.py"
+    source_path.parent.mkdir()
+    source_path.write_text("value = 1\n" * 850, encoding="utf-8")
+
+    result = _lint_plan_text(
+        tmp_path,
+        """
+        > **Plan ID:** production-size-growth
+
+        # Production Size Growth
+
+        ## P1: Work
+        `kind: framing`
+
+        ### 1.1 Extend large module [category: code]
+        `kind: deliverable`
+
+        Target: `src/large.py::run`
+
+        Implement more behavior.
+
+        **Acceptance:**
+        - 1.1.1 - Behavior is complete. file: `src/large.py`.
+        """,
+        project_root=tmp_path,
+    )
+
+    issues = [issue for issue in result.issues if issue.code == "production-size-growth"]
+    assert len(issues) == 1
+    assert "850 lines" in issues[0].message
+    assert "1,000" in issues[0].message
+
+
+def test_production_size_growth_accepts_explicit_new_split_target(tmp_path: Path) -> None:
+    source_path = tmp_path / "src" / "large.py"
+    source_path.parent.mkdir()
+    source_path.write_text("value = 1\n" * 850, encoding="utf-8")
+
+    result = _lint_plan_text(
+        tmp_path,
+        """
+        > **Plan ID:** production-size-split
+
+        # Production Size Split
+
+        ## P1: Work
+        `kind: framing`
+
+        ### 1.1 Split large module [category: code]
+        `kind: deliverable`
+
+        Targets:
+        - `src/large.py::run`
+        - `src/large_helpers.py`
+
+        Split `src/large.py` and move helpers into `src/large_helpers.py`.
+
+        **Acceptance:**
+        - 1.1.1 - Behavior is complete. file: `src/large.py`.
+        - 1.1.2 - Helpers move to the new module. file: `src/large_helpers.py`.
+        """,
+        project_root=tmp_path,
+    )
+
+    assert not any(issue.code == "production-size-growth" for issue in result.issues)
+
+
+@pytest.mark.parametrize(
+    ("trigger", "missing_carrier"),
+    [
+        (
+            "crates/gcore/assets/schema/migrations/401_example.sql",
+            "crates/gcore/assets/schema/catalog.manifest.json",
+        ),
+        (
+            "src/gobby/config/example.py",
+            "crates/gcore/assets/config/runtime_config_contract.json",
+        ),
+    ],
+)
+def test_derived_carriers_reports_static_trigger_table_omissions(
+    tmp_path: Path,
+    trigger: str,
+    missing_carrier: str,
+) -> None:
+    result = _lint_plan_text(
+        tmp_path,
+        f"""
+        > **Plan ID:** derived-carriers
+
+        # Derived Carriers
+
+        ## P1: Work
+        `kind: framing`
+
+        ### 1.1 Change source [category: code]
+        `kind: deliverable`
+
+        Target: `{trigger}`
+
+        Implement the source change.
+
+        **Acceptance:**
+        - 1.1.1 - Source change is complete. file: `{trigger}`.
+        """,
+        project_root=tmp_path,
+    )
+
+    issues = [issue for issue in result.issues if issue.code == "derived-carriers"]
+    assert len(issues) == 1
+    assert missing_carrier in issues[0].message
+
+
+def test_derived_carriers_accepts_carriers_in_dependent_deliverable(tmp_path: Path) -> None:
+    result = _lint_plan_text(
+        tmp_path,
+        """
+        > **Plan ID:** derived-carriers-dependent
+
+        # Derived Carriers In Dependent Deliverable
+
+        ## P1: Work
+        `kind: framing`
+
+        ### 1.1 Add migration [category: code]
+        `kind: deliverable`
+
+        Target: `crates/gcore/assets/schema/migrations/401_example.sql`
+
+        Implement the migration.
+
+        **Acceptance:**
+        - 1.1.1 - Migration is complete. file: `crates/gcore/assets/schema/migrations/401_example.sql`.
+
+        ### 1.2 Regenerate carriers [category: code] (depends: 1.1)
+        `kind: deliverable`
+
+        Targets:
+        - `crates/gcore/assets/schema/catalog.manifest.json`
+        - `crates/gcore/src/grant/bundle.rs`
+        - `crates/gcore/tests/schema_contract.rs`
+        - `crates/gdaemon/tests/cli_contract.rs`
+        - `src/gobby/storage/schema_expected_identity.json`
+
+        Regenerate the derived carriers.
+
+        **Acceptance:**
+        - 1.2.1 - Catalog is regenerated. file: `crates/gcore/assets/schema/catalog.manifest.json`.
+        - 1.2.2 - Grant bundle is regenerated. file: `crates/gcore/src/grant/bundle.rs`.
+        - 1.2.3 - Schema contract is regenerated. file: `crates/gcore/tests/schema_contract.rs`.
+        - 1.2.4 - CLI contract is regenerated. file: `crates/gdaemon/tests/cli_contract.rs`.
+        - 1.2.5 - Expected identity is regenerated. file: `src/gobby/storage/schema_expected_identity.json`.
+        """,
+        project_root=tmp_path,
+    )
+
+    assert not any(issue.code == "derived-carriers" for issue in result.issues)

@@ -340,6 +340,7 @@ def _validate_plan_for_cli(
             None,
             plan_path,
             require_symbol_validation=require_symbol_validation,
+            consumer_coverage_blocking=mode == "expansion",
         )
     else:
         db = _open_db()
@@ -354,25 +355,28 @@ def _validate_plan_for_cli(
             project_root=project_root,
             code_index=CodeIndexStorage(db),
             require_symbol_validation=require_symbol_validation,
+            consumer_coverage_blocking=mode == "expansion",
         )
     return _with_symbol_validation_warnings(result)
 
 
 def _with_symbol_validation_warnings(result: dict[str, Any]) -> dict[str, Any]:
     envelope = result.get("symbol_validation")
-    if not isinstance(envelope, dict) or envelope.get("status") != "skipped":
+    if not isinstance(envelope, dict):
         return result
     issues = envelope.get("issues")
     messages = (
         [
             issue["message"]
             for issue in issues
-            if isinstance(issue, dict) and isinstance(issue.get("message"), str)
+            if isinstance(issue, dict)
+            and issue.get("blocking") is False
+            and isinstance(issue.get("message"), str)
         ]
         if isinstance(issues, list)
         else []
     )
-    result["warnings"] = [*result.get("warnings", []), *messages]
+    result["warnings"] = list(dict.fromkeys([*result.get("warnings", []), *messages]))
     return result
 
 

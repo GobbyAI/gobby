@@ -5,9 +5,17 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from itertools import combinations
+from pathlib import Path, PurePosixPath
 from typing import Any
 
-from gobby.plans.parser import ArtifactKind, Kind, PlanDocument, PlanSection
+from gobby.plans.parser import (
+    ArtifactKind,
+    Kind,
+    PlanDocument,
+    PlanSection,
+    extract_section_dependencies,
+)
 
 _TARGET_LINE_RE = re.compile(r"^\s*Targets?\s*:\s*(?P<rest>.*)$", re.IGNORECASE)
 _ACCEPTANCE_RE = re.compile(r"^\s*\*\*Acceptance:\*\*\s*$")
@@ -86,6 +94,32 @@ _KNOWN_FILE_SUFFIXES = frozenset(
         ".yml",
     }
 )
+PRODUCTION_SIZE_GROWTH_THRESHOLD = 850
+PRODUCTION_SIZE_CEILING = 1_000
+_PRODUCTION_SUFFIXES = frozenset(
+    {".py", ".ts", ".tsx", ".css", ".rs", ".js", ".mjs", ".cjs", ".sh"}
+)
+_NON_PRODUCTION_PARTS = frozenset({"fixtures", "node_modules", "tests", "vendor"})
+_PHASE_ID_RE = re.compile(r"^P\d+$")
+_SPLIT_MOVE_RE = re.compile(r"\b(?:split|move)\b", re.IGNORECASE)
+_GENERATED_HEADER_RE = re.compile(r"\b(?:auto[- ]?)?generated\b", re.IGNORECASE)
+_SCHEMA_TRIGGER_PREFIX = "crates/gcore/assets/schema/migrations/"
+_SCHEMA_TRIGGER_PATHS = frozenset(
+    {
+        "crates/gcore/assets/schema/baseline.sql",
+        "crates/gcore/src/schema/assets.rs",
+    }
+)
+_SCHEMA_DERIVED_CARRIERS = frozenset(
+    {
+        "crates/gcore/assets/schema/catalog.manifest.json",
+        "crates/gcore/src/grant/bundle.rs",
+        "crates/gcore/tests/schema_contract.rs",
+        "crates/gdaemon/tests/cli_contract.rs",
+        "src/gobby/storage/schema_expected_identity.json",
+    }
+)
+_CONFIG_DERIVED_CARRIERS = frozenset({"crates/gcore/assets/config/runtime_config_contract.json"})
 
 
 @dataclass(frozen=True)
@@ -136,8 +170,12 @@ class SemanticLintResult:
         }
 
 
-def lint_plan_document(plan_doc: PlanDocument) -> SemanticLintResult:
-    """Run pure Markdown semantic lint against a parsed plan document."""
+def lint_plan_document(
+    plan_doc: PlanDocument,
+    *,
+    project_root: Path | None = None,
+) -> SemanticLintResult:
+    """Run deterministic semantic lint against a parsed plan document."""
     issues: list[SemanticLintIssue] = []
     for section in plan_doc.sections:
         if section.kind is not Kind.deliverable:
@@ -146,6 +184,10 @@ def lint_plan_document(plan_doc: PlanDocument) -> SemanticLintResult:
         table_issue = _lint_table_row_decomposition(plan_doc, section)
         if table_issue is not None:
             issues.append(table_issue)
+        if project_root is not None:
+            issues.extend(_lint_production_size_growth(plan_doc, section, project_root))
+    issues.extend(_lint_shared_target_ordering(plan_doc))
+    issues.extend(_lint_derived_carriers(plan_doc))
     return SemanticLintResult(tuple(issues))
 
 
@@ -335,6 +377,244 @@ def _path_covered_by_targets(path: str, targets: frozenset[str]) -> bool:
     if "/" in path:
         return False
     return any(target.rsplit("/", 1)[-1] == path for target in targets)
+
+
+def _lint_shared_target_ordering(plan_doc: PlanDocument) -> list[SemanticLintIssue]:
+    deliverables = _deliverables(plan_doc)
+    graph = _dependency_graph(plan_doc, deliverables)
+    sections_by_file: dict[str, list[str]] = {}
+    for section in deliverables:
+        for file_path in collect_target_inventory(plan_doc, section):
+            sections_by_file.setdefault(file_path, []).append(section.section_id)
+
+    issues: list[SemanticLintIssue] = []
+    for file_path, section_ids in sorted(sections_by_file.items()):
+        for first, second in combinations(dict.fromkeys(section_ids), 2):
+            if _has_dependency_path(graph, first, second) or _has_dependency_path(
+                graph, second, first
+            ):
+                continue
+            issues.append(
+                SemanticLintIssue(
+                    code="shared-target-ordering",
+                    section_id=second,
+                    message=(
+                        f"sections {first} and {second} both target {file_path} but have no "
+                        "dependency path between them"
+                    ),
+                    details={"file_path": file_path, "sections": [first, second]},
+                )
+            )
+    return issues
+
+
+def _lint_production_size_growth(
+    plan_doc: PlanDocument,
+    section: PlanSection,
+    project_root: Path,
+) -> list[SemanticLintIssue]:
+    issues: list[SemanticLintIssue] = []
+    targets = collect_target_inventory(plan_doc, section)
+    for file_path in sorted(targets):
+        source_path = project_root / file_path
+        if not _is_hand_maintained_production_path(file_path, source_path):
+            continue
+        line_count = _line_count(source_path)
+        if line_count < PRODUCTION_SIZE_GROWTH_THRESHOLD:
+            continue
+        if _has_new_split_target(plan_doc, section, project_root, file_path):
+            continue
+        issues.append(
+            SemanticLintIssue(
+                code="production-size-growth",
+                section_id=section.section_id,
+                line=section.source_span[0],
+                message=(
+                    f"target {file_path} has {line_count:,} lines and is already near the "
+                    f"{PRODUCTION_SIZE_CEILING:,}-line production ceiling; target a new "
+                    "same-extension file and name the split or move in this deliverable"
+                ),
+                details={
+                    "file_path": file_path,
+                    "line_count": line_count,
+                    "threshold": PRODUCTION_SIZE_GROWTH_THRESHOLD,
+                    "ceiling": PRODUCTION_SIZE_CEILING,
+                },
+            )
+        )
+    return issues
+
+
+def _lint_derived_carriers(plan_doc: PlanDocument) -> list[SemanticLintIssue]:
+    deliverables = _deliverables(plan_doc)
+    graph = _dependency_graph(plan_doc, deliverables)
+    targets_by_section = {
+        section.section_id: collect_target_inventory(plan_doc, section) for section in deliverables
+    }
+    issues: list[SemanticLintIssue] = []
+    for section in deliverables:
+        triggers_by_carriers: dict[frozenset[str], set[str]] = {}
+        for target in targets_by_section[section.section_id]:
+            required = _required_derived_carriers(target)
+            if required:
+                triggers_by_carriers.setdefault(required, set()).add(target)
+        for required, triggers in triggers_by_carriers.items():
+            eligible_sections = {
+                candidate.section_id
+                for candidate in deliverables
+                if candidate.section_id == section.section_id
+                or _has_dependency_path(graph, candidate.section_id, section.section_id)
+            }
+            available = set().union(
+                *(targets_by_section[section_id] for section_id in eligible_sections)
+            )
+            missing = sorted(required - available)
+            if not missing:
+                continue
+            issues.append(
+                SemanticLintIssue(
+                    code="derived-carriers",
+                    section_id=section.section_id,
+                    line=section.source_span[0],
+                    message=(
+                        f"targets {', '.join(sorted(triggers))} require derived carrier "
+                        f"Targets in the same or a dependent deliverable: {', '.join(missing)}"
+                    ),
+                    details={
+                        "triggers": sorted(triggers),
+                        "missing_carriers": missing,
+                    },
+                )
+            )
+    return issues
+
+
+def _deliverables(plan_doc: PlanDocument) -> list[PlanSection]:
+    return [section for section in plan_doc.sections if section.kind is Kind.deliverable]
+
+
+def _dependency_graph(
+    plan_doc: PlanDocument,
+    deliverables: list[PlanSection],
+) -> dict[str, set[str]]:
+    sections_by_id = {section.section_id: section for section in plan_doc.sections}
+    deliverable_ids = {section.section_id for section in deliverables}
+    phase_members: dict[str, set[str]] = {}
+    for section in deliverables:
+        phase_id = _section_phase_id(section, sections_by_id)
+        if phase_id is not None:
+            phase_members.setdefault(phase_id, set()).add(section.section_id)
+
+    graph: dict[str, set[str]] = {section.section_id: set() for section in deliverables}
+    for section in deliverables:
+        for dependency in extract_section_dependencies(section.title):
+            if dependency in deliverable_ids:
+                graph[section.section_id].add(dependency)
+            elif dependency in phase_members:
+                graph[section.section_id].update(phase_members[dependency] - {section.section_id})
+    return graph
+
+
+def _section_phase_id(
+    section: PlanSection,
+    sections_by_id: dict[str, PlanSection],
+) -> str | None:
+    current: PlanSection | None = section
+    seen: set[str] = set()
+    while current is not None and current.section_id not in seen:
+        seen.add(current.section_id)
+        if _PHASE_ID_RE.fullmatch(current.section_id):
+            return current.section_id
+        current = sections_by_id.get(current.parent_id) if current.parent_id is not None else None
+    return None
+
+
+def _has_dependency_path(graph: dict[str, set[str]], start: str, target: str) -> bool:
+    pending = list(graph.get(start, ()))
+    seen: set[str] = set()
+    while pending:
+        current = pending.pop()
+        if current == target:
+            return True
+        if current in seen:
+            continue
+        seen.add(current)
+        pending.extend(graph.get(current, ()))
+    return False
+
+
+def _required_derived_carriers(file_path: str) -> frozenset[str]:
+    if file_path.startswith(_SCHEMA_TRIGGER_PREFIX) or file_path in _SCHEMA_TRIGGER_PATHS:
+        return _SCHEMA_DERIVED_CARRIERS
+    if file_path.startswith("src/gobby/config/") and _suffix(file_path) == ".py":
+        return _CONFIG_DERIVED_CARRIERS
+    return frozenset()
+
+
+def _is_hand_maintained_production_path(file_path: str, source_path: Path) -> bool:
+    relative = PurePosixPath(file_path)
+    if _suffix(file_path) not in _PRODUCTION_SUFFIXES:
+        return False
+    if any(part in _NON_PRODUCTION_PARTS for part in relative.parts):
+        return False
+    return source_path.is_file() and not has_generated_header(source_path)
+
+
+def has_generated_header(path: Path) -> bool:
+    """Return whether a file's opening lines carry a generated marker."""
+    try:
+        with path.open(encoding="utf-8", errors="ignore") as source:
+            header = "".join(next(source, "") for _ in range(5))
+    except OSError:
+        return False
+    return _GENERATED_HEADER_RE.search(header) is not None
+
+
+def _line_count(path: Path) -> int:
+    try:
+        with path.open("rb") as source:
+            return sum(1 for _ in source)
+    except OSError:
+        return 0
+
+
+def _has_new_split_target(
+    plan_doc: PlanDocument,
+    section: PlanSection,
+    project_root: Path,
+    large_file: str,
+) -> bool:
+    extension = _suffix(large_file)
+    candidates = {
+        target
+        for target in _bare_target_paths(plan_doc, section)
+        if _suffix(target) == extension and not (project_root / target).exists()
+    }
+    if not candidates:
+        return False
+    for line in section_body_lines(plan_doc, section, before_acceptance=True):
+        if _SPLIT_MOVE_RE.search(line) is None:
+            continue
+        mentioned = find_file_paths_in_text(line)
+        if candidates.intersection(mentioned):
+            return True
+    return False
+
+
+def _bare_target_paths(plan_doc: PlanDocument, section: PlanSection) -> set[str]:
+    paths: set[str] = set()
+    for line in iter_target_block_lines(plan_doc, section):
+        matches = [match.group(1).strip() for match in _BACKTICK_RE.finditer(line)]
+        candidates = matches or [
+            token.strip() for token in _BULLET_RE.sub("", line, count=1).split(",") if token.strip()
+        ]
+        for candidate in candidates:
+            if "::" in candidate:
+                continue
+            normalized = normalize_file_path(candidate)
+            if normalized is not None:
+                paths.add(normalized)
+    return paths
 
 
 def _lint_table_row_decomposition(

@@ -12,7 +12,7 @@ from typing import Any, Literal, Protocol, cast
 import psycopg
 
 from gobby.plans.parser import Kind, PlanDocument
-from gobby.plans.semantic_lint import iter_target_block_lines
+from gobby.plans.semantic_lint import has_generated_header, iter_target_block_lines
 
 INDEX_UNAVAILABLE = "symbol_index_unavailable"
 INDEX_STALE = "symbol_index_stale"
@@ -23,6 +23,7 @@ INVALID_WILDCARD_REASON = "target_wildcard_reason_invalid"
 UUID_REFERENCE = "target_uuid_forbidden"
 SCOPE_CONFLICT = "target_scope_conflict"
 MALFORMED_REFERENCE = "target_reference_malformed"
+CONSUMER_COVERAGE = "consumer-coverage"
 
 SYMBOL_TARGET_ISSUE_CODES = frozenset(
     {
@@ -35,6 +36,7 @@ SYMBOL_TARGET_ISSUE_CODES = frozenset(
         UUID_REFERENCE,
         SCOPE_CONFLICT,
         MALFORMED_REFERENCE,
+        CONSUMER_COVERAGE,
     }
 )
 
@@ -58,6 +60,8 @@ class SymbolIndexStorage(Protocol):
     def get_file(self, project_id: str, file_path: str) -> Any | None: ...
 
     def get_symbols_for_file(self, project_id: str, file_path: str) -> list[Any]: ...
+
+    def get_symbol_usages(self, project_id: str, symbol_id: str) -> list[str]: ...
 
 
 @dataclass(frozen=True)
@@ -180,8 +184,12 @@ def validate_symbol_targets(
     project_root: Path | None,
     code_index: Any | None,
     required: bool,
+    consumer_coverage_blocking: bool = False,
 ) -> SymbolValidationResult:
     """Validate parsed targets against a fresh project code index."""
+
+    targets, parse_issues = parse_symbol_targets(plan_doc)
+    has_exact_targets = any(target.symbol is not None for target in targets)
 
     unavailable = _unavailable_context_issue(
         project_id=project_id,
@@ -190,9 +198,12 @@ def validate_symbol_targets(
         required=required,
     )
     if unavailable is not None:
+        issues = [unavailable]
+        if has_exact_targets:
+            issues.append(_consumer_coverage_skipped("project code index is unavailable"))
         return SymbolValidationResult(
             status="failed" if required else "skipped",
-            issues=(unavailable,),
+            issues=tuple(issues),
         )
 
     storage = _index_storage(code_index)
@@ -201,14 +212,18 @@ def validate_symbol_targets(
     try:
         project_stats = storage.get_project_stats(project_id)
     except psycopg.Error as exc:
-        return _index_read_failure(required, f"Code index is unavailable: {exc}")
+        return _index_read_failure(
+            required,
+            f"Code index is unavailable: {exc}",
+            consumer_coverage=has_exact_targets,
+        )
     if project_stats is None:
         return _index_read_failure(
             required,
             f"No code index is available for project {project_id}",
+            consumer_coverage=has_exact_targets,
         )
 
-    targets, parse_issues = parse_symbol_targets(plan_doc)
     issues = list(parse_issues)
     checked_targets = _unique(target.reference for target in targets)
     checked_symbols = _unique(target.reference for target in targets if target.symbol is not None)
@@ -226,6 +241,25 @@ def validate_symbol_targets(
                 targets=file_targets,
             )
         )
+
+    if has_exact_targets:
+        skip_reason = _consumer_coverage_skip_reason(
+            project_stats,
+            project_root,
+            issues,
+        )
+        if skip_reason is not None:
+            issues.append(_consumer_coverage_skipped(skip_reason))
+        else:
+            issues.extend(
+                _validate_consumer_coverage(
+                    storage,
+                    project_id=project_id,
+                    project_root=project_root,
+                    targets=targets,
+                    blocking=consumer_coverage_blocking,
+                )
+            )
 
     if not required and any(issue.code in {INDEX_UNAVAILABLE, INDEX_STALE} for issue in issues):
         return SymbolValidationResult(
@@ -511,6 +545,106 @@ def _validate_unindexed_targets(targets: list[SymbolTarget]) -> list[SymbolValid
     return issues
 
 
+def _validate_consumer_coverage(
+    storage: SymbolIndexStorage,
+    *,
+    project_id: str,
+    project_root: Path,
+    targets: tuple[SymbolTarget, ...],
+    blocking: bool,
+) -> list[SymbolValidationIssue]:
+    targeted_files = {target.file_path for target in targets}
+    exact_targets = [target for target in targets if target.symbol is not None]
+    usage_cache: dict[str, list[str]] = {}
+    issues: list[SymbolValidationIssue] = []
+    for target in exact_targets:
+        try:
+            symbols = storage.get_symbols_for_file(project_id, target.file_path)
+        except psycopg.Error:
+            return [_consumer_coverage_skipped("code index usages are unavailable")]
+        matches = [
+            symbol
+            for symbol in symbols
+            if str(symbol.qualified_name) == target.symbol and getattr(symbol, "id", None)
+        ]
+        if len(matches) != 1:
+            continue
+        symbol_id = str(matches[0].id)
+        if symbol_id not in usage_cache:
+            try:
+                usage_cache[symbol_id] = storage.get_symbol_usages(project_id, symbol_id)
+            except (AttributeError, psycopg.Error):
+                return [_consumer_coverage_skipped("code index usages are unavailable")]
+        missing = sorted(
+            {
+                consumer
+                for consumer in usage_cache[symbol_id]
+                if consumer not in targeted_files and _is_owned_consumer(project_root, consumer)
+            }
+        )
+        if not missing:
+            continue
+        issues.append(
+            SymbolValidationIssue(
+                code=CONSUMER_COVERAGE,
+                message=(
+                    f"consumer-coverage: section {target.section_id}: symbol "
+                    f"`{target.reference}` has consumers missing from Targets: "
+                    f"{', '.join(missing)}"
+                ),
+                section_id=target.section_id,
+                file_path=target.file_path,
+                symbol=target.symbol,
+                blocking=blocking,
+            )
+        )
+    return issues
+
+
+def _consumer_coverage_skip_reason(
+    project_stats: Any,
+    project_root: Path,
+    issues: list[SymbolValidationIssue],
+) -> str | None:
+    if any(issue.code in {INDEX_UNAVAILABLE, INDEX_STALE} for issue in issues):
+        return "code index does not cover the plan checkout"
+    indexed_root = getattr(project_stats, "root_path", None)
+    if not isinstance(indexed_root, str) or not indexed_root:
+        return None
+    try:
+        roots_match = Path(indexed_root).resolve() == project_root.resolve()
+    except OSError:
+        roots_match = False
+    if roots_match:
+        return None
+    if (project_root / ".git").is_file():
+        return "code index does not cover this worktree checkout (#20664)"
+    return f"code index covers {indexed_root}, not plan checkout {project_root}"
+
+
+def _consumer_coverage_skipped(reason: str) -> SymbolValidationIssue:
+    return SymbolValidationIssue(
+        code=CONSUMER_COVERAGE,
+        message=f"consumer-coverage skipped: {reason}",
+        blocking=False,
+    )
+
+
+def _is_owned_consumer(project_root: Path, file_path: str) -> bool:
+    candidate = PurePosixPath(file_path)
+    if candidate.is_absolute() or not candidate.parts or ".." in candidate.parts:
+        return False
+    if any(part in {"node_modules", "vendor"} for part in candidate.parts):
+        return False
+    root = project_root.resolve()
+    source_path = (project_root / candidate.as_posix()).resolve()
+    try:
+        source_path.relative_to(root)
+    except ValueError:
+        return False
+    return source_path.is_file() and not has_generated_header(source_path)
+
+
 def _file_sha256(path: Path) -> str | None:
     try:
         digest = hashlib.sha256()
@@ -551,16 +685,24 @@ def _unavailable_context_issue(
     )
 
 
-def _index_read_failure(required: bool, message: str) -> SymbolValidationResult:
+def _index_read_failure(
+    required: bool,
+    message: str,
+    *,
+    consumer_coverage: bool = False,
+) -> SymbolValidationResult:
+    issues = [
+        SymbolValidationIssue(
+            code=INDEX_UNAVAILABLE,
+            message=message,
+            blocking=required,
+        )
+    ]
+    if consumer_coverage:
+        issues.append(_consumer_coverage_skipped("project code index is unavailable"))
     return SymbolValidationResult(
         status="failed" if required else "skipped",
-        issues=(
-            SymbolValidationIssue(
-                code=INDEX_UNAVAILABLE,
-                message=message,
-                blocking=required,
-            ),
-        ),
+        issues=tuple(issues),
     )
 
 

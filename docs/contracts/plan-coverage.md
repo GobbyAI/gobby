@@ -158,6 +158,34 @@ planned branch checkout. This authoring evidence adds no semantic-lint behavior.
 
 A bare extension such as `.tsx` is not a path and never requires an entry.
 
+### Validator Lints
+
+Plan validation applies four additional inventory lints:
+
+| Code | Trigger | Required disposition |
+| --- | --- | --- |
+| `shared-target-ordering` | The same path appears in two or more deliverable Targets inventories. Matching is path-exact and ignores symbol scope. | Every pair of owners must have a dependency path in either direction. A `(depends: P<N>)` reference expands to every deliverable in that phase. |
+| `production-size-growth` | A targeted hand-maintained `.py`, `.ts`, `.tsx`, `.css`, `.rs`, `.js`, `.mjs`, `.cjs`, or `.sh` file currently has at least 850 lines. | Add a new bare-path Target with the same extension and name its split or move in the deliverable body. The production ceiling remains 1,000 lines. Files under `tests/`, `fixtures/`, `vendor/`, or `node_modules/`, and files with a generated header marker, are excluded. |
+| `derived-carriers` | A Target matches one of the source rows below. | Target every required carrier in the same deliverable or in a deliverable that transitively depends on it. |
+| `consumer-coverage` | An exact symbol Target has owned call or import consumers in the code index. | Target every same-repository consumer, including tests. Vendor, `node_modules`, and generated files are excluded. Missing consumers warn in standard validation and error in expansion validation. |
+
+`production-size-growth` deliberately uses a simple decomposition heuristic: the
+new same-extension Target must not exist yet, must use bare-path scope, and must
+appear on a body line containing `split` or `move`.
+
+`derived-carriers` uses this static trigger table:
+
+| Source Target | Required carrier Targets |
+| --- | --- |
+| Any path under `crates/gcore/assets/schema/migrations/`; `crates/gcore/assets/schema/baseline.sql`; or `crates/gcore/src/schema/assets.rs` | `crates/gcore/assets/schema/catalog.manifest.json`; `crates/gcore/src/grant/bundle.rs`; `crates/gcore/tests/schema_contract.rs`; `crates/gdaemon/tests/cli_contract.rs`; `src/gobby/storage/schema_expected_identity.json` |
+| Any Python model Target under `src/gobby/config/` | `crates/gcore/assets/config/runtime_config_contract.json` |
+
+Consumer coverage uses active `code_calls` and `code_imports` rows for the
+indexed checkout. When the index is unavailable or its recorded root does not
+cover the plan checkout, the validator emits one non-blocking
+`consumer-coverage skipped: <reason>` warning and emits no consumer omissions.
+Worktree-root mismatches cite the overlay visibility gap tracked by #20664.
+
 ## Deferrals
 
 `kind: deferred`

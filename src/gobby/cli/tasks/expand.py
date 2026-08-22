@@ -84,6 +84,7 @@ def validate_plan_cmd(plan_file: str) -> None:
         project_root=Path(project_path) if isinstance(project_path, str) else None,
         code_index=CodeIndexStorage(service.db),
         require_symbol_validation=True,
+        consumer_coverage_blocking=True,
     )
     if not result["valid"]:
         raise_plan_validation_failed(result)

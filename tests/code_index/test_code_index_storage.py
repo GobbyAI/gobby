@@ -444,6 +444,39 @@ def test_find_files_importing_modules(code_storage: CodeIndexStorage) -> None:
     assert results == [{"file_path": "src/api.py"}]
 
 
+def test_get_symbol_usages_combines_active_calls_and_imports(
+    code_storage: CodeIndexStorage,
+    sample_symbols: list[Symbol],
+) -> None:
+    target = sample_symbols[0]
+    code_storage.upsert_symbols(sample_symbols)
+    _upsert_test_file(code_storage, "src/caller.py")
+    _upsert_test_file(code_storage, "tests/test_importer.py")
+    code_storage.upsert_calls(
+        PROJECT_ID,
+        "src/caller.py",
+        [
+            CallRelation(
+                caller_symbol_id=CALLER_SYMBOL_ID,
+                callee_symbol_id=target.id,
+                callee_name=target.name,
+                file_path="src/caller.py",
+                line=7,
+            )
+        ],
+    )
+    code_storage.upsert_imports(
+        PROJECT_ID,
+        "tests/test_importer.py",
+        [ImportRelation(source_file="tests/test_importer.py", target_module="app")],
+    )
+
+    assert code_storage.get_symbol_usages(PROJECT_ID, target.id) == [
+        "src/caller.py",
+        "tests/test_importer.py",
+    ]
+
+
 # ── Files ───────────────────────────────────────────────────────────────
 
 

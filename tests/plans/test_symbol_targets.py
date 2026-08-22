@@ -36,6 +36,7 @@ class _IndexedFile:
 @dataclass(frozen=True)
 class _Symbol:
     qualified_name: str
+    id: str = "symbol-id"
 
 
 class _Index:
@@ -61,6 +62,10 @@ class _Index:
     def get_symbols_for_file(self, project_id: str, file_path: str) -> list[_Symbol]:
         assert project_id == PROJECT_ID
         return self.symbols.get(file_path, [])
+
+    def get_symbol_usages(self, project_id: str, symbol_id: str) -> list[str]:
+        assert project_id == PROJECT_ID
+        return []
 
 
 def _write_plan(tmp_path: Path, targets: str) -> Path:
@@ -121,6 +126,7 @@ def test_issue_codes_are_unique_and_stable() -> None:
         "target_uuid_forbidden",
         "target_scope_conflict",
         "target_reference_malformed",
+        "consumer-coverage",
     }
 
 
