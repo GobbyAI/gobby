@@ -32,6 +32,9 @@ class _MetadataStore:
     def get_context_window(self, model: str) -> None:
         return None
 
+    def get_model_metadata(self, model: str) -> None:
+        return None
+
 
 def _resolver(
     provider: str,
@@ -39,6 +42,7 @@ def _resolver(
     *,
     support: ReasoningSupport = ReasoningSupport.KNOWN,
     efforts: tuple[str, ...] | None = ("low", "medium", "high"),
+    default_effort: str | None = None,
 ) -> CapabilityResolver:
     capability = ModelCapability(
         canonical_model=model,
@@ -51,7 +55,7 @@ def _resolver(
         max_output_tokens=None,
         reasoning=support,
         supported_efforts=efforts,
-        default_effort=None,
+        default_effort=default_effort,
         latency_class=None,
         input_modalities=None,
         supports_tools=None,
@@ -62,9 +66,9 @@ def _resolver(
     return CapabilityResolver(_Store(snapshot), _MetadataStore())
 
 
-def test_normalize_reasoning_effort_treats_auto_as_unset() -> None:
-    assert normalize_reasoning_effort("auto") is None
-    assert normalize_reasoning_effort(" AUTO ") is None
+def test_normalize_reasoning_effort_preserves_auto() -> None:
+    assert normalize_reasoning_effort("auto") == "auto"
+    assert normalize_reasoning_effort(" AUTO ") == "auto"
     assert normalize_reasoning_effort("") is None
     assert normalize_reasoning_effort("High") == "high"
 
@@ -154,7 +158,7 @@ def test_transport_without_reasoning_flag_is_rejected(
     assert result.effective_effort is None
 
 
-def test_absent_reasoning_request_skips_resolution() -> None:
+def test_auto_without_metadata_is_preserved_as_unverified() -> None:
     result = resolve_spawn_reasoning(
         provider="droid",
         model="gpt-5.4",
@@ -162,6 +166,42 @@ def test_absent_reasoning_request_skips_resolution() -> None:
         reasoning_required=True,
     )
 
+    assert result.requested_effort == "auto"
+    assert result.status == "unverified"
+    assert result.effective_effort is None
+    assert result.reasoning_required is True
+
+
+def test_spawn_auto_persists_concrete_native_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        reasoning,
+        "_get_capability_resolver",
+        lambda: _resolver("codex", "gpt-5.6-luna", default_effort="medium"),
+    )
+
+    result = resolve_spawn_reasoning(
+        provider="codex",
+        model="gpt-5.6-luna",
+        requested_effort="auto",
+        reasoning_required=False,
+    )
+
+    assert result.requested_effort == "auto"
+    assert result.effective_effort == "medium"
+    assert result.status == "applied"
+
+
+def test_none_reasoning_request_skips_resolution() -> None:
+    result = resolve_spawn_reasoning(
+        provider="droid",
+        model="gpt-5.4",
+        requested_effort=None,
+        reasoning_required=True,
+    )
+
     assert result.status == "not_requested"
+    assert result.requested_effort is None
     assert result.effective_effort is None
     assert result.reasoning_required is False

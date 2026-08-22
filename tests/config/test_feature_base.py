@@ -70,8 +70,9 @@ class TestFeatureProfile:
         )
 
     def test_default_reasoning_for_profile_is_auto_unset(self) -> None:
-        for profile in FeatureProfile:
-            assert default_reasoning_for_profile(profile) is None
+        assert default_reasoning_for_profile(FeatureProfile.LOW) == "auto"
+        assert default_reasoning_for_profile(FeatureProfile.MID) is None
+        assert default_reasoning_for_profile(FeatureProfile.HIGH) is None
 
     def test_profiles_use_cloud_only_candidates(self) -> None:
         for candidates in DEFAULT_PROFILE_CANDIDATES.values():
@@ -125,8 +126,15 @@ class TestFeatureDefaultConfig:
             "high",
         ]
 
-    @pytest.mark.parametrize("reasoning_effort", ["auto", "", "  AUTO  ", None])
-    def test_auto_reasoning_effort_maps_to_unset(self, reasoning_effort: str | None) -> None:
+    @pytest.mark.parametrize(
+        ("reasoning_effort", "expected"),
+        [("auto", "auto"), ("", None), ("  AUTO  ", "auto"), (None, None)],
+    )
+    def test_reasoning_effort_preserves_auto_and_unset(
+        self,
+        reasoning_effort: str | None,
+        expected: str | None,
+    ) -> None:
         cfg = FeatureDefaultConfig(
             candidates=[
                 {"candidate": "codex/gpt-5.6-terra", "reasoning_effort": reasoning_effort},
@@ -135,7 +143,7 @@ class TestFeatureDefaultConfig:
 
         candidate = cfg.candidates[0]
         assert isinstance(candidate, FeatureCandidateConfig)
-        assert candidate.reasoning_effort is None
+        assert candidate.reasoning_effort == expected
 
     def test_unknown_reasoning_effort_is_accepted_at_config_load(self) -> None:
         cfg = FeatureDefaultConfig(
@@ -156,13 +164,13 @@ class TestFeatureDefaultConfig:
 
         assert entries[0].reasoning_effort == "xhigh"
 
-    def test_candidate_runtime_entries_resolve_auto_profile_default(self) -> None:
+    def test_candidate_runtime_entries_preserve_auto_profile_default(self) -> None:
         entries = candidate_runtime_entries(
             [{"candidate": "codex/gpt-5.6-terra", "reasoning_effort": "auto"}],
             profile=FeatureProfile.HIGH,
         )
 
-        assert entries[0].reasoning_effort is None
+        assert entries[0].reasoning_effort == "auto"
 
     def test_deduplicates_normalized_candidates_preserving_order(self) -> None:
         cfg = FeatureDefaultConfig(

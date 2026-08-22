@@ -12,6 +12,8 @@ import pytest
 from psycopg_pool import PoolTimeout
 
 from gobby.llm.model_registry import (
+    ModelReasoningInfo,
+    _parse_models_payload,
     fetch_models_async,
     fetch_models_sync,
     lookup_context_window,
@@ -160,6 +162,49 @@ SAMPLE_OPENROUTER_RESPONSE = {
         },
     ]
 }
+
+
+def test_parses_distinct_reasoning_metadata_states() -> None:
+    models = {
+        model.id: model
+        for model in _parse_models_payload(
+            {
+                "data": [
+                    {"id": "vendor/absent", "context_length": 1},
+                    {
+                        "id": "vendor/null-efforts",
+                        "context_length": 2,
+                        "reasoning": {"supported_efforts": None},
+                    },
+                    {
+                        "id": "vendor/empty-efforts",
+                        "context_length": 3,
+                        "reasoning": {"supported_efforts": []},
+                    },
+                    {
+                        "id": "openai/gpt-5.6-luna",
+                        "context_length": 4,
+                        "reasoning": {
+                            "supported_efforts": ["MAX", "medium", "none"],
+                            "default_effort": "Medium",
+                            "default_enabled": True,
+                            "mandatory": False,
+                        },
+                    },
+                ]
+            }
+        )
+    }
+
+    assert models["vendor/absent"].reasoning is None
+    assert models["vendor/null-efforts"].reasoning == ModelReasoningInfo()
+    assert models["vendor/empty-efforts"].reasoning == ModelReasoningInfo(supported_efforts=())
+    assert models["openai/gpt-5.6-luna"].reasoning == ModelReasoningInfo(
+        supported_efforts=("max", "medium", "none"),
+        default_effort="medium",
+        default_enabled=True,
+        mandatory=False,
+    )
 
 
 # -- fetch_models_sync -------------------------------------------------------

@@ -432,7 +432,7 @@ class ACPClient:
         self._include_additional_directories(session_params, additional_directories)
         if model:
             session_params["model"] = model
-        if reasoning_effort:
+        if reasoning_effort and reasoning_effort != "auto":
             session_params["reasoningEffort"] = reasoning_effort
         result = await self._send_request("session/new", session_params)
         info = self._session_state.update_session_info(
@@ -468,7 +468,7 @@ class ACPClient:
         self._include_additional_directories(session_params, additional_directories)
         if model:
             session_params["model"] = model
-        if reasoning_effort:
+        if reasoning_effort and reasoning_effort != "auto":
             session_params["reasoningEffort"] = reasoning_effort
         result = await self._send_request("session/load", session_params)
         info = self._session_state.update_session_info(
@@ -525,7 +525,7 @@ class ACPClient:
         self._include_additional_directories(session_params, additional_directories)
         if model:
             session_params["model"] = model
-        if reasoning_effort:
+        if reasoning_effort and reasoning_effort != "auto":
             session_params["reasoningEffort"] = reasoning_effort
         result = await self._send_request("session/resume", session_params)
         info = self._session_state.update_session_info(
@@ -740,7 +740,7 @@ class ACPClient:
             }
             if model:
                 request["params"]["model"] = model
-            if reasoning_effort:
+            if reasoning_effort and reasoning_effort != "auto":
                 request["params"]["reasoningEffort"] = reasoning_effort
 
             self._active_prompt_session_id = target_session_id

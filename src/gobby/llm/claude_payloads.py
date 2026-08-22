@@ -8,7 +8,7 @@ from gobby.agents.reasoning import normalize_reasoning_effort
 def claude_reasoning_options(reasoning_effort: str | None) -> dict[str, Any]:
     """Return SDK kwargs for a normalized reasoning effort."""
     normalized = normalize_reasoning_effort(reasoning_effort)
-    if normalized is None:
+    if normalized is None or normalized == "auto":
         return {}
     return {"effort": normalized}
 

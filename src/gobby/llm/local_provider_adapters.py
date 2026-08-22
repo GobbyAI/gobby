@@ -280,7 +280,7 @@ class OpenAICompatibleLocalProviderAdapter:
             ],
             "max_tokens": max_tokens or 8000,
         }
-        if reasoning_effort is not None:
+        if reasoning_effort not in {None, "auto"}:
             request["reasoning_effort"] = reasoning_effort
         response = await self._client.chat.completions.create(**request)
         content = response.choices[0].message.content
@@ -320,7 +320,7 @@ class OpenAICompatibleLocalProviderAdapter:
             "max_tokens": max_tokens if max_tokens is not None else 8000,
             "response_format": {"type": "json_object"},
         }
-        if reasoning_effort is not None:
+        if reasoning_effort not in {None, "auto"}:
             request["reasoning_effort"] = reasoning_effort
         from openai import BadRequestError
 

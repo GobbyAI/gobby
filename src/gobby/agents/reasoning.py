@@ -34,6 +34,9 @@ class _UnavailableModelMetadataStore:
     def get_context_window(self, model: str) -> None:
         return None
 
+    def get_model_metadata(self, model: str) -> None:
+        return None
+
 
 _fallback_resolver = CapabilityResolver(
     _UnavailableCapabilityService(),
@@ -46,7 +49,7 @@ def normalize_reasoning_effort(value: str | None) -> str | None:
     if value is None:
         return None
     normalized = value.strip().lower()
-    if not normalized or normalized == AUTO_REASONING_EFFORT:
+    if not normalized:
         return None
     return normalized
 

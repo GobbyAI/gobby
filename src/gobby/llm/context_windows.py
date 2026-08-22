@@ -467,6 +467,9 @@ class _RegistryMetadataStore:
     def get_context_window(self, model: str) -> int | None:
         return _registry_context_window(None, model, self._db)
 
+    def get_model_metadata(self, model: str) -> None:
+        return None
+
 
 def _get_capability_resolver(db: HubDatabase | None = None) -> CapabilityResolver:
     from gobby.app_context import get_app_context

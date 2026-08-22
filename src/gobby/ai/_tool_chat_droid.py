@@ -449,7 +449,7 @@ class DroidSpawnToolChatAdapter:
                 }
                 if model is not None:
                     init_params["modelId"] = model
-                if request.reasoning_effort is not None:
+                if request.reasoning_effort not in {None, "auto"}:
                     init_params["reasoningEffort"] = request.reasoning_effort
                 await within_deadline(client.request("droid.initialize_session", init_params))
 
@@ -521,7 +521,9 @@ class DroidSpawnToolChatAdapter:
                 for name in runtime.tool_names()
                 if any(item.get("tool_name") == name for item in runtime.invocation_log)
             },
-            applied_reasoning_effort=request.reasoning_effort,
+            applied_reasoning_effort=(
+                request.reasoning_effort if request.reasoning_effort != "auto" else None
+            ),
             stop_reason=stop_reason,
             trace=tuple(runtime.invocation_log),
             calls_used=runtime.calls_used,

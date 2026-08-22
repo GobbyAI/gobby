@@ -33,6 +33,7 @@ from ._session_binding import (
     _first_configured_chat_binding,
     _normalize_runtime_chat_mode,
     _normalize_web_chat_provider,
+    _resolve_web_chat_reasoning,
 )
 from ._session_runtime import (
     _get_runtime_external_id,
@@ -175,7 +176,18 @@ class ChatSessionMixin:
             existing = self._chat_sessions.get(conversation_id)
             if existing is not None:
                 if reasoning_effort is not None:
-                    existing.reasoning_effort = reasoning_effort
+                    existing_provider = (
+                        _normalize_web_chat_provider(getattr(existing, "provider", None))
+                        or "claude"
+                    )
+                    existing_model = getattr(existing, "model", None)
+                    if not isinstance(existing_model, str):
+                        existing_model = None
+                    existing.reasoning_effort = _resolve_web_chat_reasoning(
+                        existing_provider,
+                        existing_model,
+                        reasoning_effort,
+                    )
                 return existing
             return await self._create_chat_session_inner(
                 conversation_id,
@@ -385,6 +397,11 @@ class ChatSessionMixin:
         else:
             current_web_chat_policy_hash = web_chat_sandbox_policy_hash(daemon_cfg)
         provider_name = effective_provider or "claude"
+        effective_reasoning_effort = _resolve_web_chat_reasoning(
+            provider_name,
+            effective_model,
+            effective_reasoning_effort,
+        )
         session: ChatSessionProtocol
         if runtime_manager is not None:
             session = runtime_manager.create_session(

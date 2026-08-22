@@ -49,6 +49,16 @@ _DATABASE_LOOKUP_ERRORS = (psycopg.Error, PoolTimeout)
 
 
 @dataclass(frozen=True)
+class ModelReasoningInfo:
+    """Reasoning metadata published by OpenRouter for one model."""
+
+    supported_efforts: tuple[str, ...] | None = None
+    default_effort: str | None = None
+    default_enabled: bool | None = None
+    mandatory: bool | None = None
+
+
+@dataclass(frozen=True)
 class ModelInfo:
     """Parsed model data from OpenRouter."""
 
@@ -56,6 +66,45 @@ class ModelInfo:
     name: str
     context_length: int
     max_completion_tokens: int | None
+    reasoning: ModelReasoningInfo | None = None
+
+
+def _parse_reasoning_info(entry: dict[object, object]) -> ModelReasoningInfo | None:
+    """Preserve absent reasoning, nullable efforts, and an empty effort list."""
+    if "reasoning" not in entry:
+        return None
+    raw_reasoning = entry.get("reasoning")
+    if not isinstance(raw_reasoning, dict):
+        logger.warning("OpenRouter model reasoning field is not an object, skipping it")
+        return None
+
+    raw_efforts = raw_reasoning.get("supported_efforts")
+    supported_efforts: tuple[str, ...] | None = None
+    if isinstance(raw_efforts, list):
+        supported_efforts = tuple(
+            dict.fromkeys(
+                effort.strip().lower()
+                for effort in raw_efforts
+                if isinstance(effort, str) and effort.strip()
+            )
+        )
+    elif raw_efforts is not None:
+        logger.warning("OpenRouter supported_efforts field is not a list or null, ignoring it")
+
+    raw_default = raw_reasoning.get("default_effort")
+    default_effort = (
+        raw_default.strip().lower()
+        if isinstance(raw_default, str) and raw_default.strip()
+        else None
+    )
+    raw_default_enabled = raw_reasoning.get("default_enabled")
+    raw_mandatory = raw_reasoning.get("mandatory")
+    return ModelReasoningInfo(
+        supported_efforts=supported_efforts,
+        default_effort=default_effort,
+        default_enabled=(raw_default_enabled if isinstance(raw_default_enabled, bool) else None),
+        mandatory=raw_mandatory if isinstance(raw_mandatory, bool) else None,
+    )
 
 
 def _parse_models_payload(data: object) -> list[ModelInfo]:
@@ -108,6 +157,7 @@ def _parse_models_payload(data: object) -> list[ModelInfo]:
             name=str(entry.get("name", model_id)),
             context_length=context_length,
             max_completion_tokens=max_completion,
+            reasoning=_parse_reasoning_info(entry),
         )
 
     logger.debug("Fetched %s models from OpenRouter", len(models))

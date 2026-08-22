@@ -10,8 +10,6 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, cast
 
-from gobby.agents.provider_capabilities import provider_reasoning_flag
-from gobby.agents.reasoning import normalize_reasoning_effort
 from gobby.ai._agy_models import normalize_agy_model_selection, resolve_agy_effort
 from gobby.ai._image_routing import (
     LocalModalityResolver,
@@ -19,6 +17,7 @@ from gobby.ai._image_routing import (
     image_candidate_eligible,
     image_transport_eligible,
 )
+from gobby.ai._reasoning import ReasoningEffortRejectedError, apply_binding_reasoning
 from gobby.ai._text_generation_contracts import (
     TextGenerateAdapter,
     TextGenerateAdapterFactory,
@@ -50,7 +49,6 @@ from gobby.config.feature_base import (
     candidate_runtime_entries,
 )
 from gobby.llm.base import LLMProviderCancellation
-from gobby.providers.capabilities.resolve import ReasoningStatus
 
 if TYPE_CHECKING:
     from gobby.llm.base import LLMTextResult
@@ -98,10 +96,6 @@ class _CircuitOpenError(RuntimeError):
         super().__init__(f"circuit open for '{breaker_key}'; retry in {retry_after_seconds:.1f}s")
 
 
-class _ReasoningEffortRejectedError(ValueError):
-    """Raised when a candidate's reasoning effort must fail before adapter execution."""
-
-
 def _all_candidates_rejected_reasoning(
     attempted_candidates: list[str],
     candidate_errors: list[tuple[str, str]],
@@ -109,7 +103,7 @@ def _all_candidates_rejected_reasoning(
     return (
         bool(attempted_candidates)
         and len(candidate_errors) == len(attempted_candidates)
-        and all(error.startswith("_ReasoningEffortRejectedError:") for _, error in candidate_errors)
+        and all(error.startswith("ReasoningEffortRejectedError:") for _, error in candidate_errors)
     )
 
 
@@ -153,49 +147,27 @@ def _gate_reasoning_effort(
         try:
             resolved = resolve_agy_effort(request.model, request.reasoning_effort)
         except ValueError as exc:
-            raise _ReasoningEffortRejectedError(str(exc)) from exc
+            raise ReasoningEffortRejectedError(str(exc)) from exc
         if request.reasoning_effort == resolved:
             return request
         return replace(request, reasoning_effort=resolved)
 
-    normalized = normalize_reasoning_effort(request.reasoning_effort)
-    if normalized is None:
-        if request.reasoning_effort is None:
-            return request
-        return replace(request, reasoning_effort=None)
-
-    execution_provider = binding.metadata.get("execution_provider")
-    reasoning_provider = (
-        execution_provider
-        if isinstance(execution_provider, str) and execution_provider
-        else binding.provider
-    )
-    transport_supports_effort = provider_reasoning_flag(reasoning_provider) is not None
-    if not transport_supports_effort:
-        return replace(request, reasoning_effort=None)
-
-    from gobby.app_context import get_app_context
-
-    ctx = get_app_context()
-    resolver = getattr(ctx, "provider_capability_resolver", None) if ctx else None
-    if resolver is not None:
-        model = request.model or next(iter(binding.models), "")
-        resolution = resolver.resolve_reasoning(
-            reasoning_provider,
-            model,
-            normalized,
-            transport_supports_effort=True,
+    model = request.model or next(iter(binding.models), "")
+    try:
+        effective_effort = apply_binding_reasoning(
+            binding=binding,
+            model=model,
+            requested_effort=request.reasoning_effort,
         )
-        if resolution.status is ReasoningStatus.REJECTED:
-            raise _ReasoningEffortRejectedError(
-                f"Unsupported reasoning_effort {normalized!r} for provider "
-                f"{binding.provider!r}: {resolution.reason}"
-            )
-        normalized = resolution.effective_effort or normalized
+    except ReasoningEffortRejectedError as exc:
+        raise ReasoningEffortRejectedError(
+            f"Unsupported reasoning_effort {request.reasoning_effort!r} for provider "
+            f"{binding.provider!r}: {exc}"
+        ) from exc
 
-    if normalized == request.reasoning_effort:
+    if effective_effort == request.reasoning_effort:
         return request
-    return replace(request, reasoning_effort=normalized)
+    return replace(request, reasoning_effort=effective_effort)
 
 
 def _request_has_images(request: TextGenerationRequest) -> bool:
@@ -414,7 +386,7 @@ class TextGenerationService:
 
         if (
             last_error is not None
-            and isinstance(last_error, _ReasoningEffortRejectedError)
+            and isinstance(last_error, ReasoningEffortRejectedError)
             and _all_candidates_rejected_reasoning(attempted_candidates, candidate_errors)
         ):
             raise last_error
@@ -462,7 +434,7 @@ class TextGenerationService:
 
         if (
             last_error is not None
-            and isinstance(last_error, _ReasoningEffortRejectedError)
+            and isinstance(last_error, ReasoningEffortRejectedError)
             and _all_candidates_rejected_reasoning(attempted_candidates, candidate_errors)
         ):
             raise last_error
@@ -489,7 +461,7 @@ class TextGenerationService:
         candidate_unavailable_errors: list[CapabilityUnavailableError],
     ) -> tuple[LLMTextResult | None, Exception | None]:
         last_error: Exception | None = None
-        last_reasoning_error: _ReasoningEffortRejectedError | None = None
+        last_reasoning_error: ReasoningEffortRejectedError | None = None
         reasoning_rejections = 0
         for index, candidate in enumerate(candidates):
             candidate = _normalize_agy_request(candidate)
@@ -561,7 +533,7 @@ class TextGenerationService:
                     terminal_failure=not has_remaining_candidates,
                 )
                 continue
-            except _ReasoningEffortRejectedError as exc:
+            except ReasoningEffortRejectedError as exc:
                 last_error = exc
                 last_reasoning_error = exc
                 reasoning_rejections += 1
@@ -606,7 +578,7 @@ class TextGenerationService:
         candidate_unavailable_errors: list[CapabilityUnavailableError],
     ) -> tuple[dict[str, Any] | None, Exception | None]:
         last_error: Exception | None = None
-        last_reasoning_error: _ReasoningEffortRejectedError | None = None
+        last_reasoning_error: ReasoningEffortRejectedError | None = None
         reasoning_rejections = 0
         for index, candidate in enumerate(candidates):
             candidate = _normalize_agy_request(candidate)
@@ -671,7 +643,7 @@ class TextGenerationService:
                 return result, None
             except LLMProviderCancellation:
                 raise
-            except _ReasoningEffortRejectedError as exc:
+            except ReasoningEffortRejectedError as exc:
                 last_error = exc
                 last_reasoning_error = exc
                 reasoning_rejections += 1
@@ -855,12 +827,18 @@ class TextGenerationService:
         provider = binding.provider if binding else request.provider
         model = request.model or (next(iter(binding.models), None) if binding else None)
         if success:
-            log_event = logger.info
+            # TODO(gobby-#20698): Keep INFO as a temporary vLLM end-to-end testing cutoff
+            # until feature calls move to their dedicated log surface.
+            log_event = (
+                logger.info
+                if binding is not None and binding.metadata.get("protocol") == "vllm"
+                else logger.debug
+            )
             message = "feature_llm_call"
         elif isinstance(error, _CircuitOpenError):
             log_event = logger.debug
             message = "feature_llm_call"
-        elif isinstance(error, _ReasoningEffortRejectedError):
+        elif isinstance(error, ReasoningEffortRejectedError):
             log_event = logger.warning
             message = f"feature_llm_call: {error}"
         elif terminal_failure:

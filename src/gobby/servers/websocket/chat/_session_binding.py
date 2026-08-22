@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from gobby.agents.reasoning import resolve_spawn_reasoning
 from gobby.config.feature_base import parse_feature_candidate
 
 
@@ -42,3 +43,20 @@ def _first_configured_chat_binding(
             reasoning_effort = None
         return normalized_provider, candidate_model, reasoning_effort
     return None
+
+
+def _resolve_web_chat_reasoning(
+    provider: str,
+    model: str | None,
+    requested_effort: str | None,
+) -> str | None:
+    """Resolve a web-chat effort before any backend sees the request."""
+    resolution = resolve_spawn_reasoning(
+        provider=provider,
+        model=model,
+        requested_effort=requested_effort,
+        reasoning_required=False,
+    )
+    if resolution.status in {"unsupported_provider", "unsupported_model"}:
+        raise ValueError(resolution.message or "Unsupported web-chat reasoning effort")
+    return resolution.effective_effort

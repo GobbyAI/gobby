@@ -25,7 +25,7 @@ class GrokACPClient(ACPClient):
         cmd = [path, "agent", "--no-leader", "--always-approve"]
         if model:
             cmd.extend(["--model", model])
-        if reasoning_effort:
+        if reasoning_effort and reasoning_effort != "auto":
             cmd.extend(["--reasoning-effort", reasoning_effort])
         if self._extra_args:
             cmd.extend(self._extra_args)

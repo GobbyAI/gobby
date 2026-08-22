@@ -360,7 +360,7 @@ class CodexSpawnToolChatAdapter:
                 thread.id,
                 request.prompt,
                 context_prefix=request.system_prompt,
-                effort=request.reasoning_effort,
+                effort=request.reasoning_effort if request.reasoning_effort != "auto" else None,
                 **request_parameters,
             ):
                 event_type = event.get("type")
@@ -396,7 +396,9 @@ class CodexSpawnToolChatAdapter:
                 for name in runtime.tool_names()
                 if any(item.get("tool_name") == name for item in runtime.invocation_log)
             },
-            applied_reasoning_effort=request.reasoning_effort,
+            applied_reasoning_effort=(
+                request.reasoning_effort if request.reasoning_effort != "auto" else None
+            ),
             stop_reason=stop_reason,
             trace=tuple(runtime.invocation_log),
             calls_used=runtime.calls_used,

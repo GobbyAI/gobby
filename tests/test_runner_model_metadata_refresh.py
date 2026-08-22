@@ -9,10 +9,12 @@ from unittest.mock import AsyncMock, patch
 
 import psycopg
 import pytest
+from psycopg.types.json import Jsonb
 
-from gobby.llm.model_registry import ModelInfo
+from gobby.llm.model_registry import ModelInfo, ModelReasoningInfo
 from gobby.runner_lifecycle_shutdown import _cancel_periodic_tasks
 from gobby.runner_model_metadata_refresh import (
+    _metadata_rows,
     refresh_model_metadata_once,
     replace_model_metadata_async,
 )
@@ -29,6 +31,31 @@ def _model() -> ModelInfo:
         context_length=258_400,
         max_completion_tokens=128_000,
     )
+
+
+def test_metadata_rows_include_reasoning_fields() -> None:
+    rows = _metadata_rows(
+        [
+            ModelInfo(
+                id="openai/gpt-5.6-luna",
+                name="GPT-5.6 Luna",
+                context_length=1_050_000,
+                max_completion_tokens=128_000,
+                reasoning=ModelReasoningInfo(
+                    supported_efforts=("max", "medium", "none"),
+                    default_effort="medium",
+                    default_enabled=True,
+                    mandatory=False,
+                ),
+            )
+        ]
+    )
+
+    row = rows[0]
+    assert row[:4] == ("gpt-5.6-luna", 1_050_000, 128_000, True)
+    assert isinstance(row[4], Jsonb)
+    assert row[4].obj == ["max", "medium", "none"]
+    assert row[5:] == ("medium", True, False, "registry")
 
 
 class _CoverageAuditorSpy:

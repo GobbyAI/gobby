@@ -83,6 +83,25 @@ class _CapabilityStore(Protocol):
 class _ModelMetadataStore(Protocol):
     def get_context_window(self, model: str) -> int | None: ...
 
+    def get_model_metadata(self, model: str) -> _ReasoningMetadata | None: ...
+
+
+class _ReasoningMetadata(Protocol):
+    @property
+    def reasoning_present(self) -> bool | None: ...
+
+    @property
+    def reasoning_supported_efforts(self) -> tuple[str, ...] | None: ...
+
+    @property
+    def reasoning_default_effort(self) -> str | None: ...
+
+    @property
+    def reasoning_default_enabled(self) -> bool | None: ...
+
+    @property
+    def reasoning_mandatory(self) -> bool | None: ...
+
 
 class CapabilityResolver:
     """Resolve context, reasoning, and route facts from durable capability data."""
@@ -152,24 +171,82 @@ class CapabilityResolver:
         *,
         transport_supports_effort: bool,
     ) -> ReasoningResolution:
-        """Validate a requested effort without rejecting unknown model capabilities."""
+        """Resolve unset, automatic, and explicitly pinned reasoning efforts."""
         if effort is None:
             return ReasoningResolution(None, None, ReasoningStatus.VERIFIED, None)
-        if not transport_supports_effort:
-            return self._reject_reasoning(effort, "transport does not support reasoning effort")
+
+        requested = effort.strip().lower()
+        if not requested:
+            return ReasoningResolution(None, None, ReasoningStatus.VERIFIED, None)
 
         capability = self._find_model(provider, model)
-        if capability is None or capability.reasoning is ReasoningSupport.UNKNOWN:
-            return ReasoningResolution(effort, effort, ReasoningStatus.UNVERIFIED, None)
-        if capability.reasoning is ReasoningSupport.UNSUPPORTED:
-            return self._reject_reasoning(effort, "model does not support reasoning effort")
+        if capability is not None and capability.reasoning is ReasoningSupport.UNSUPPORTED:
+            if requested == "auto":
+                return ReasoningResolution(requested, None, ReasoningStatus.VERIFIED, None)
+            return self._reject_reasoning(requested, "model does not support reasoning effort")
+        if not transport_supports_effort:
+            return self._reject_reasoning(requested, "transport does not support reasoning effort")
 
-        supported_efforts = capability.supported_efforts
-        if supported_efforts is None:
-            return ReasoningResolution(effort, effort, ReasoningStatus.UNVERIFIED, None)
-        if effort not in supported_efforts:
-            return self._reject_reasoning(effort, f"unsupported reasoning effort: {effort}")
-        return ReasoningResolution(effort, effort, ReasoningStatus.VERIFIED, None)
+        if requested == "auto":
+            if (
+                capability is not None
+                and capability.reasoning is ReasoningSupport.KNOWN
+                and capability.default_effort is not None
+            ):
+                default_effort = capability.default_effort.strip().lower()
+                return ReasoningResolution(
+                    requested,
+                    None if default_effort == "none" else default_effort,
+                    ReasoningStatus.VERIFIED,
+                    None,
+                )
+            return self._resolve_openrouter_auto(provider, model)
+
+        if capability is not None and capability.reasoning is ReasoningSupport.KNOWN:
+            supported_efforts = capability.supported_efforts
+            if supported_efforts is not None:
+                if requested not in supported_efforts:
+                    return self._reject_reasoning(
+                        requested, f"unsupported reasoning effort: {requested}"
+                    )
+                return ReasoningResolution(requested, requested, ReasoningStatus.VERIFIED, None)
+        return self._resolve_openrouter_pin(provider, model, requested)
+
+    def _resolve_openrouter_auto(self, provider: str, model: str) -> ReasoningResolution:
+        metadata = self._find_reasoning_metadata(provider, model)
+        if metadata is None or metadata.reasoning_present is None:
+            return ReasoningResolution("auto", None, ReasoningStatus.UNVERIFIED, None)
+        if metadata.reasoning_present is False:
+            return ReasoningResolution("auto", None, ReasoningStatus.VERIFIED, None)
+
+        default_effort = metadata.reasoning_default_effort
+        if default_effort is not None:
+            default_effort = default_effort.strip().lower()
+        if metadata.reasoning_mandatory is True:
+            if default_effort and default_effort != "none":
+                return ReasoningResolution("auto", default_effort, ReasoningStatus.VERIFIED, None)
+            return ReasoningResolution("auto", None, ReasoningStatus.UNVERIFIED, None)
+        if metadata.reasoning_default_enabled is False or default_effort == "none":
+            return ReasoningResolution("auto", None, ReasoningStatus.VERIFIED, None)
+        if default_effort:
+            return ReasoningResolution("auto", default_effort, ReasoningStatus.VERIFIED, None)
+        return ReasoningResolution("auto", None, ReasoningStatus.UNVERIFIED, None)
+
+    def _resolve_openrouter_pin(
+        self, provider: str, model: str, requested: str
+    ) -> ReasoningResolution:
+        metadata = self._find_reasoning_metadata(provider, model)
+        if metadata is None or metadata.reasoning_present is None:
+            return ReasoningResolution(requested, requested, ReasoningStatus.UNVERIFIED, None)
+        if metadata.reasoning_present is False:
+            return self._reject_reasoning(requested, "model does not support reasoning effort")
+        if requested == "none" and metadata.reasoning_mandatory is True:
+            return self._reject_reasoning(requested, "model requires reasoning")
+
+        supported_efforts = metadata.reasoning_supported_efforts
+        if supported_efforts is not None and requested not in supported_efforts:
+            return self._reject_reasoning(requested, f"unsupported reasoning effort: {requested}")
+        return ReasoningResolution(requested, requested, ReasoningStatus.VERIFIED, None)
 
     def resolve_route(
         self,
@@ -235,6 +312,23 @@ class CapabilityResolver:
             ),
             None,
         )
+
+    def _find_reasoning_metadata(self, provider: str, model: str) -> _ReasoningMetadata | None:
+        metadata = self._model_metadata_store.get_model_metadata(model)
+        if metadata is not None:
+            return metadata
+        source_key = model_metadata_alias_source_key(provider, model)
+        alias = next(
+            (
+                candidate
+                for candidate in self._model_metadata_aliases
+                if (candidate.provider, candidate.provider_model_id) == source_key
+            ),
+            None,
+        )
+        if alias is None:
+            return None
+        return self._model_metadata_store.get_model_metadata(alias.openrouter_model_id)
 
     @staticmethod
     def _find_route(capability: ModelCapability | None, speed_mode: SpeedMode) -> ModelRoute | None:

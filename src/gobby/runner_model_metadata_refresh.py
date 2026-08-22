@@ -9,6 +9,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import psycopg
+from psycopg.types.json import Jsonb
 
 from gobby.llm.model_registry import ModelInfo, fetch_models_async, normalize_model_id
 from gobby.storage.hub.async_ops import BoundedDBTimeoutError, run_bounded_db
@@ -35,26 +36,36 @@ def _statement_timeout_ms(cutoff: float) -> int:
     return max(1, math.floor(_require_remaining(cutoff) * 1000.0))
 
 
-def _metadata_rows(models: list[ModelInfo]) -> list[tuple[str, int, int | None, str]]:
-    rows: dict[str, tuple[str, int, int | None, str]] = {}
+def _metadata_rows(models: list[ModelInfo]) -> list[tuple[object, ...]]:
+    by_model: dict[str, ModelInfo] = {}
     for model in models:
         model_key = normalize_model_id(model.id)
-        existing = rows.get(model_key)
-        if existing is not None and model.context_length <= existing[1]:
+        existing = by_model.get(model_key)
+        if existing is not None and model.context_length <= existing.context_length:
             continue
-        rows[model_key] = (
+        by_model[model_key] = model
+    return [
+        (
             model_key,
             model.context_length,
             model.max_completion_tokens,
+            model.reasoning is not None,
+            Jsonb(list(model.reasoning.supported_efforts))
+            if model.reasoning is not None and model.reasoning.supported_efforts is not None
+            else None,
+            model.reasoning.default_effort if model.reasoning is not None else None,
+            model.reasoning.default_enabled if model.reasoning is not None else None,
+            model.reasoning.mandatory if model.reasoning is not None else None,
             "registry",
         )
-    return list(rows.values())
+        for model_key, model in by_model.items()
+    ]
 
 
 async def _replace_rows(
     connection: psycopg.AsyncConnection[Any],
     cutoff: float,
-    rows: list[tuple[str, int, int | None, str]],
+    rows: list[tuple[object, ...]],
 ) -> int:
     _require_remaining(cutoff)
     await connection.execute("DELETE FROM model_metadata")
@@ -63,11 +74,13 @@ async def _replace_rows(
     await connection.execute(f"SET LOCAL statement_timeout = {statement_timeout_ms}")
 
     _require_remaining(cutoff)
-    placeholders = ", ".join(["(%s, %s, %s, %s)"] * len(rows))
+    placeholders = ", ".join(["(%s, %s, %s, %s, %s, %s, %s, %s, %s)"] * len(rows))
     parameters = tuple(value for row in rows for value in row)
     await connection.execute(
         "INSERT INTO model_metadata "
-        "(model, context_length, max_completion_tokens, source) VALUES "
+        "(model, context_length, max_completion_tokens, reasoning_present, "
+        "reasoning_supported_efforts, reasoning_default_effort, "
+        "reasoning_default_enabled, reasoning_mandatory, source) VALUES "
         f"{placeholders}",
         parameters,
     )

@@ -21,6 +21,7 @@ from gobby.providers.capabilities.resolve import (
     ReasoningStatus,
     SpeedStatus,
 )
+from gobby.storage.model_metadata import ModelMetadata
 
 
 class _CapabilityStore:
@@ -34,15 +35,23 @@ class _CapabilityStore:
 
 
 class _ModelMetadataStore:
-    def __init__(self, context_length: int | None | dict[str, int]) -> None:
+    def __init__(
+        self,
+        context_length: int | None | dict[str, int],
+        reasoning_metadata: dict[str, ModelMetadata] | None = None,
+    ) -> None:
         self.context_lengths = (
             context_length
             if isinstance(context_length, dict)
             else ({"model": context_length} if context_length is not None else {})
         )
+        self.reasoning_metadata = reasoning_metadata or {}
 
     def get_context_window(self, model: str) -> int | None:
         return self.context_lengths.get(model)
+
+    def get_model_metadata(self, model: str) -> ModelMetadata | None:
+        return self.reasoning_metadata.get(model)
 
 
 def _snapshot(
@@ -50,6 +59,7 @@ def _snapshot(
     context_length: int | None = 128_000,
     reasoning: ReasoningSupport = ReasoningSupport.KNOWN,
     supported_efforts: tuple[str, ...] | None = ("low", "medium", "high"),
+    default_effort: str | None = "medium",
     include_fast: bool = True,
 ) -> ProviderSnapshot:
     observed_at = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
@@ -100,7 +110,7 @@ def _snapshot(
         max_output_tokens=16_000,
         reasoning=reasoning,
         supported_efforts=supported_efforts,
-        default_effort="medium",
+        default_effort=default_effort,
         latency_class="normal",
         input_modalities=("text",),
         supports_tools=True,
@@ -233,6 +243,165 @@ def test_reasoning_tristate() -> None:
     assert outside_known_set.status is ReasoningStatus.REJECTED
     assert unknown.status is ReasoningStatus.UNVERIFIED
     assert unknown.effective_effort == "max"
+
+
+def test_unset_reasoning_returns_without_capability_or_metadata_lookup() -> None:
+    class _NoLookupCapabilityStore:
+        def get_provider_snapshot(self, provider: str) -> ProviderSnapshot | None:
+            raise AssertionError("unset reasoning must not inspect provider defaults")
+
+    class _NoLookupMetadataStore:
+        def get_context_window(self, model: str) -> int | None:
+            raise AssertionError("unused")
+
+        def get_model_metadata(self, model: str) -> ModelMetadata | None:
+            raise AssertionError("unset reasoning must not inspect OpenRouter metadata")
+
+    result = CapabilityResolver(
+        _NoLookupCapabilityStore(),
+        _NoLookupMetadataStore(),
+    ).resolve_reasoning("provider", "model", None, transport_supports_effort=True)
+
+    assert result.requested_effort is None
+    assert result.effective_effort is None
+    assert result.status is ReasoningStatus.VERIFIED
+
+
+def test_auto_prefers_native_default_and_accepts_native_alias() -> None:
+    metadata = ModelMetadata(
+        reasoning_present=True,
+        reasoning_supported_efforts=("low", "medium", "high"),
+        reasoning_default_effort="low",
+        reasoning_default_enabled=True,
+        reasoning_mandatory=False,
+    )
+    resolver = CapabilityResolver(
+        _CapabilityStore(_snapshot(default_effort="high")),
+        _ModelMetadataStore(None, {"model-latest": metadata}),
+    )
+
+    result = resolver.resolve_reasoning(
+        "provider", "model-latest", "auto", transport_supports_effort=True
+    )
+
+    assert result.effective_effort == "high"
+    assert result.status is ReasoningStatus.VERIFIED
+
+
+def test_auto_falls_back_to_openrouter_default_through_provider_alias() -> None:
+    metadata = ModelMetadata(
+        reasoning_present=True,
+        reasoning_supported_efforts=("low", "medium", "high"),
+        reasoning_default_effort="medium",
+        reasoning_default_enabled=True,
+        reasoning_mandatory=False,
+    )
+    resolver = CapabilityResolver(
+        _CapabilityStore(_snapshot(reasoning=ReasoningSupport.UNKNOWN, default_effort=None)),
+        _ModelMetadataStore(None, {"vendor/registry-model": metadata}),
+        [
+            ModelMetadataAlias(
+                provider="provider",
+                provider_model_id="model",
+                openrouter_model_id="vendor/registry-model",
+            )
+        ],
+    )
+
+    result = resolver.resolve_reasoning("provider", "model", "auto", transport_supports_effort=True)
+
+    assert result.effective_effort == "medium"
+    assert result.status is ReasoningStatus.VERIFIED
+
+
+def test_auto_missing_metadata_is_unverified_and_omits_override() -> None:
+    result = CapabilityResolver(
+        _CapabilityStore(None),
+        _ModelMetadataStore(None),
+    ).resolve_reasoning("provider", "model", "auto", transport_supports_effort=True)
+
+    assert result.requested_effort == "auto"
+    assert result.effective_effort is None
+    assert result.status is ReasoningStatus.UNVERIFIED
+
+
+def test_auto_disabled_defaults_are_verified_without_override() -> None:
+    for metadata in (
+        ModelMetadata(reasoning_present=False),
+        ModelMetadata(
+            reasoning_present=True,
+            reasoning_default_effort="none",
+            reasoning_default_enabled=True,
+        ),
+        ModelMetadata(
+            reasoning_present=True,
+            reasoning_default_effort="medium",
+            reasoning_default_enabled=False,
+        ),
+    ):
+        result = CapabilityResolver(
+            _CapabilityStore(None),
+            _ModelMetadataStore(None, {"model": metadata}),
+        ).resolve_reasoning("provider", "model", "auto", transport_supports_effort=True)
+
+        assert result.effective_effort is None
+        assert result.status is ReasoningStatus.VERIFIED
+
+
+def test_native_unsupported_reasoning_is_authoritative() -> None:
+    metadata = ModelMetadata(
+        reasoning_present=True,
+        reasoning_supported_efforts=("high",),
+        reasoning_default_effort="high",
+        reasoning_default_enabled=True,
+    )
+    resolver = CapabilityResolver(
+        _CapabilityStore(_snapshot(reasoning=ReasoningSupport.UNSUPPORTED)),
+        _ModelMetadataStore(None, {"model": metadata}),
+    )
+
+    automatic = resolver.resolve_reasoning(
+        "provider", "model", "auto", transport_supports_effort=True
+    )
+    pinned = resolver.resolve_reasoning("provider", "model", "high", transport_supports_effort=True)
+
+    assert automatic.status is ReasoningStatus.VERIFIED
+    assert automatic.effective_effort is None
+    assert pinned.status is ReasoningStatus.REJECTED
+
+
+def test_openrouter_pin_validation_handles_null_empty_mandatory_and_none() -> None:
+    def resolve(metadata: ModelMetadata, effort: str) -> tuple[ReasoningStatus, str | None]:
+        result = CapabilityResolver(
+            _CapabilityStore(None),
+            _ModelMetadataStore(None, {"model": metadata}),
+        ).resolve_reasoning("provider", "model", effort, transport_supports_effort=True)
+        return result.status, result.effective_effort
+
+    assert resolve(
+        ModelMetadata(reasoning_present=True, reasoning_supported_efforts=None),
+        "custom",
+    ) == (ReasoningStatus.VERIFIED, "custom")
+    assert resolve(
+        ModelMetadata(reasoning_present=True, reasoning_supported_efforts=()),
+        "high",
+    ) == (ReasoningStatus.REJECTED, None)
+    assert resolve(
+        ModelMetadata(
+            reasoning_present=True,
+            reasoning_supported_efforts=("high", "none"),
+            reasoning_mandatory=True,
+        ),
+        "none",
+    ) == (ReasoningStatus.REJECTED, None)
+    assert resolve(
+        ModelMetadata(
+            reasoning_present=True,
+            reasoning_supported_efforts=("high", "none"),
+            reasoning_mandatory=False,
+        ),
+        "none",
+    ) == (ReasoningStatus.VERIFIED, "none")
 
 
 def test_fast_unavailable_pre_dispatch() -> None:

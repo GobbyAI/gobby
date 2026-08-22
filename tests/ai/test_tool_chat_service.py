@@ -36,6 +36,14 @@ from gobby.ai._tool_chat_contracts import (
 from gobby.ai._tool_chat_service import ToolChatService
 from gobby.config.ai import AIConfig, GenerationConfig, ToolLoopConfig
 from gobby.config.app import DaemonConfig
+from gobby.config.feature_base import FeatureCandidateConfig
+from gobby.providers.capabilities.models import SpeedMode
+from gobby.providers.capabilities.resolve import (
+    ReasoningResolution,
+    ReasoningStatus,
+    SpeedResolution,
+    SpeedStatus,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -144,6 +152,45 @@ def _request(**overrides: Any) -> ToolChatRequest:
     )
 
 
+class _ReasoningResolver:
+    def __init__(self, *, fail_on_reasoning: bool = False) -> None:
+        self.fail_on_reasoning = fail_on_reasoning
+
+    def resolve_reasoning(
+        self,
+        provider: str,
+        model: str,
+        effort: str | None,
+        *,
+        transport_supports_effort: bool,
+    ) -> ReasoningResolution:
+        if self.fail_on_reasoning:
+            raise AssertionError("unset reasoning must skip resolution")
+        assert (provider, model, effort, transport_supports_effort) == (
+            "claude",
+            "haiku",
+            "auto",
+            True,
+        )
+        return ReasoningResolution("auto", "medium", ReasoningStatus.VERIFIED, None)
+
+    def resolve_route(
+        self,
+        provider: str,
+        model: str,
+        speed_mode: SpeedMode = SpeedMode.STANDARD,
+        surface: str = "spawn-cli",
+    ) -> SpeedResolution:
+        return SpeedResolution(
+            requested=speed_mode,
+            effective=SpeedMode.STANDARD,
+            status=SpeedStatus.STANDARD,
+            selector=model,
+            activations=(),
+            reason=None,
+        )
+
+
 def test_tool_chat_request_exposes_effective_limits_and_shared_stop_reasons() -> None:
     default_request = _request()
     custom_limits = ToolLoopLimits(max_turns=3, tool_timeout_seconds=0.25)
@@ -163,6 +210,38 @@ async def test_llm_provider_candidate_dispatches_to_llm_provider_adapter() -> No
     assert result.text == "narrative::llm_provider"
     assert [b.provider for b in llm.bindings] == ["claude"]
     assert openai.bindings == []
+
+
+@pytest.mark.asyncio
+async def test_tool_chat_resolves_auto_before_adapter() -> None:
+    llm = _RecordingAdapter("llm_provider")
+    service = ToolChatService(
+        _registry(),
+        adapters={AIAdapterStyle.LLM_PROVIDER: llm},
+        capability_resolver=_ReasoningResolver(),
+    )
+
+    await service.chat_result(
+        _request(
+            candidates=(FeatureCandidateConfig(candidate="claude/haiku", reasoning_effort="auto"),)
+        )
+    )
+
+    assert llm.requests[0].reasoning_effort == "medium"
+
+
+@pytest.mark.asyncio
+async def test_tool_chat_unset_reasoning_skips_resolution() -> None:
+    llm = _RecordingAdapter("llm_provider")
+    service = ToolChatService(
+        _registry(),
+        adapters={AIAdapterStyle.LLM_PROVIDER: llm},
+        capability_resolver=_ReasoningResolver(fail_on_reasoning=True),
+    )
+
+    await service.chat_result(_request(candidates=("claude/haiku",)))
+
+    assert llm.requests[0].reasoning_effort is None
 
 
 @pytest.mark.asyncio

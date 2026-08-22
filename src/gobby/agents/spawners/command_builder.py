@@ -86,7 +86,7 @@ def build_cli_command(
             command.extend(["--session-id", session_id])
         if model:
             command.extend(["--model", model])
-        if reasoning_effort and reasoning_flag == "claude-effort":
+        if reasoning_effort and reasoning_effort != "auto" and reasoning_flag == "claude-effort":
             command.extend(["--effort", reasoning_effort])
         if disallowed_tools:
             command.extend(["--disallowedTools", *disallowed_tools])
@@ -114,7 +114,11 @@ def build_cli_command(
             command.extend(["agent", "--no-leader", "--always-approve"])
             if model:
                 command.extend(["--model", model])
-            if reasoning_effort and reasoning_flag == "reasoning-effort":
+            if (
+                reasoning_effort
+                and reasoning_effort != "auto"
+                and reasoning_flag == "reasoning-effort"
+            ):
                 command.extend(["--reasoning-effort", reasoning_effort])
             command.append("stdio")
         else:
@@ -125,7 +129,11 @@ def build_cli_command(
                 command.extend(["--cwd", working_directory])
             if model:
                 command.extend(["--model", model])
-            if reasoning_effort and reasoning_flag == "reasoning-effort":
+            if (
+                reasoning_effort
+                and reasoning_effort != "auto"
+                and reasoning_flag == "reasoning-effort"
+            ):
                 command.extend(["--reasoning-effort", reasoning_effort])
             if resume_session_id:
                 command.extend(["--resume", resume_session_id])
@@ -144,7 +152,7 @@ def build_cli_command(
                 command.extend(["-m", model])
         elif model:
             command.extend(["--model", model])
-        if reasoning_effort and reasoning_flag == "codex-config":
+        if reasoning_effort and reasoning_effort != "auto" and reasoning_flag == "codex-config":
             command.extend(["-c", f'model_reasoning_effort="{reasoning_effort}"'])
         if auto_approve:
             command.extend(["--ask-for-approval", "never", "--disable", "guardian_approval"])
@@ -162,7 +170,7 @@ def build_cli_command(
             command.extend(["--cwd", working_directory])
         if model:
             command.extend(["--model", model])
-        if reasoning_effort and reasoning_flag == "reasoning-effort":
+        if reasoning_effort and reasoning_effort != "auto" and reasoning_flag == "reasoning-effort":
             command.extend(["--reasoning-effort", reasoning_effort])
         command.extend(["--auto", "high" if auto_approve else "low"])
 

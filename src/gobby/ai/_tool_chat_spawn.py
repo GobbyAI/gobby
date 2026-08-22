@@ -447,7 +447,9 @@ class GrokSpawnToolChatAdapter:
             tool_use_count=tool_use_count,
             turns=turns,
             tools=tools,
-            applied_reasoning_effort=request.reasoning_effort,
+            applied_reasoning_effort=(
+                request.reasoning_effort if request.reasoning_effort != "auto" else None
+            ),
             stop_reason=stop_reason,
             trace=(),
             calls_used=0,
@@ -574,7 +576,9 @@ class QwenSpawnToolChatAdapter:
             turns=turns,
             tools=tools,
             usage=usage,
-            applied_reasoning_effort=request.reasoning_effort,
+            applied_reasoning_effort=(
+                request.reasoning_effort if request.reasoning_effort != "auto" else None
+            ),
             stop_reason=stop_reason,
             trace=(),
             calls_used=0,

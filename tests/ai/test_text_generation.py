@@ -47,6 +47,7 @@ from gobby.ai.text_generation import (
 from gobby.config.app import DaemonConfig
 from gobby.config.feature_base import FeatureCandidateConfig, FeatureProfile
 from gobby.llm.base import LLMProviderCancellation, LLMTextResult
+from gobby.providers.capabilities.resolve import ReasoningResolution, ReasoningStatus
 
 pytestmark = pytest.mark.unit
 
@@ -264,7 +265,7 @@ async def test_text_generation_service_generate_result_preserves_usage() -> None
 
 
 @pytest.mark.asyncio
-async def test_successful_text_generation_logs_feature_llm_call_at_info(
+async def test_successful_non_vllm_text_generation_logs_feature_llm_call_at_debug(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     registry = AICapabilityRegistry(
@@ -281,7 +282,7 @@ async def test_successful_text_generation_logs_feature_llm_call_at_info(
         registry,
         {"endpoint:lm-studio": RecordingAdapter("endpoint:lm-studio")},
     )
-    caplog.set_level(logging.INFO, logger=TEXT_GENERATION_LOGGER)
+    caplog.set_level(logging.DEBUG, logger=TEXT_GENERATION_LOGGER)
 
     await service.generate_result(
         TextGenerationRequest(
@@ -292,11 +293,75 @@ async def test_successful_text_generation_logs_feature_llm_call_at_info(
     records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
     assert len(records) == 1
     record = records[0]
-    assert record.levelno == logging.INFO
+    assert record.levelno == logging.DEBUG
     assert record.__dict__["success"] is True
     assert record.__dict__["provider"] == "endpoint:lm-studio"
     assert record.__dict__["model"] == "local-model"
     assert record.__dict__["candidate"]
+
+
+@pytest.mark.parametrize(
+    "capability",
+    [AICapability.TEXT_GENERATE, AICapability.VISION_EXTRACT],
+)
+def test_successful_vllm_feature_call_logs_at_info_by_protocol(
+    capability: AICapability,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    service = TextGenerationService(AICapabilityRegistry([]), {})
+    binding = CapabilityBinding(
+        capability=capability,
+        provider="endpoint:arbitrary-name",
+        adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+        available=True,
+        metadata={"protocol": "vllm"},
+    )
+    caplog.set_level(logging.DEBUG, logger=TEXT_GENERATION_LOGGER)
+
+    service._log_generation_event(
+        request=TextGenerationRequest(prompt="test"),
+        binding=binding,
+        latency_ms=1.0,
+        success=True,
+    )
+
+    record = next(record for record in caplog.records if record.message == "feature_llm_call")
+    assert record.levelno == logging.INFO
+
+
+@pytest.mark.parametrize(
+    ("provider", "metadata"),
+    [
+        ("codex", {}),
+        ("claude", {}),
+        ("endpoint:openrouter", {"protocol": "openai"}),
+        ("endpoint:ordinary", {}),
+    ],
+)
+def test_successful_non_vllm_feature_calls_log_at_debug(
+    provider: str,
+    metadata: dict[str, str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    service = TextGenerationService(AICapabilityRegistry([]), {})
+    binding = CapabilityBinding(
+        capability=AICapability.TEXT_GENERATE,
+        provider=provider,
+        adapter_style=AIAdapterStyle.CLI,
+        available=True,
+        metadata=metadata,
+    )
+    caplog.set_level(logging.DEBUG, logger=TEXT_GENERATION_LOGGER)
+
+    service._log_generation_event(
+        request=TextGenerationRequest(prompt="test"),
+        binding=binding,
+        latency_ms=1.0,
+        success=True,
+    )
+
+    record = next(record for record in caplog.records if record.message == "feature_llm_call")
+    assert record.levelno == logging.DEBUG
 
 
 @pytest.mark.asyncio
@@ -339,7 +404,7 @@ async def test_recoverable_candidate_failure_logs_feature_llm_call_at_debug(
 
     assert result.provider == "endpoint:good"
     records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
-    assert [record.levelno for record in records] == [logging.DEBUG, logging.INFO]
+    assert [record.levelno for record in records] == [logging.DEBUG, logging.DEBUG]
     assert records[0].__dict__["success"] is False
     assert records[1].__dict__["success"] is True
 
@@ -1381,6 +1446,53 @@ async def test_text_generation_service_profile_only_expands_profile_defaults() -
 
 
 @pytest.mark.asyncio
+async def test_feature_low_auto_resolves_luna_to_medium(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Resolver:
+        def resolve_reasoning(
+            self,
+            provider: str,
+            model: str,
+            effort: str | None,
+            *,
+            transport_supports_effort: bool,
+        ) -> ReasoningResolution:
+            assert (provider, model, effort, transport_supports_effort) == (
+                "codex",
+                "gpt-5.6-luna",
+                "auto",
+                True,
+            )
+            return ReasoningResolution("auto", "medium", ReasoningStatus.VERIFIED, None)
+
+    monkeypatch.setattr(
+        "gobby.app_context.get_app_context",
+        lambda: SimpleNamespace(provider_capability_resolver=_Resolver()),
+    )
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+                models=("gpt-5.6-luna",),
+            )
+        ]
+    )
+    codex = RecordingAdapter("codex")
+    service = TextGenerationService(registry, {"codex": codex})
+
+    result = await service.generate_result(
+        TextGenerationRequest(prompt="summarize", profile=FeatureProfile.LOW.value)
+    )
+
+    assert result.applied_reasoning_effort == "medium"
+    assert codex.requests[0].reasoning_effort == "medium"
+
+
+@pytest.mark.asyncio
 async def test_text_generation_service_profile_only_uses_configured_profile_defaults() -> None:
     registry = AICapabilityRegistry(
         [
@@ -1835,7 +1947,36 @@ async def test_text_generation_service_rejects_invalid_agy_effort_pair(
 
 
 @pytest.mark.asyncio
-async def test_text_generation_service_clears_effort_when_transport_has_no_flag() -> None:
+async def test_text_generation_service_rejects_pin_when_transport_has_no_flag() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="qwen",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=("qwen-model",),
+            ),
+        ]
+    )
+    qwen = RecordingAdapter("qwen")
+    service = TextGenerationService(registry, {"qwen": qwen})
+
+    with pytest.raises(ValueError, match="transport does not support reasoning effort"):
+        await service.generate_result(
+            TextGenerationRequest(
+                prompt="summarize",
+                candidates=(
+                    FeatureCandidateConfig(candidate="qwen/qwen-model", reasoning_effort="high"),
+                ),
+            )
+        )
+
+    assert qwen.requests == []
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_omits_auto_when_transport_has_no_flag() -> None:
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(
@@ -1854,12 +1995,12 @@ async def test_text_generation_service_clears_effort_when_transport_has_no_flag(
         TextGenerationRequest(
             prompt="summarize",
             candidates=(
-                FeatureCandidateConfig(candidate="qwen/qwen-model", reasoning_effort="high"),
+                FeatureCandidateConfig(candidate="qwen/qwen-model", reasoning_effort="auto"),
             ),
         )
     )
 
-    assert result.provider == "qwen"
+    assert result.applied_reasoning_effort is None
     assert qwen.requests[0].reasoning_effort is None
 
 
@@ -3342,7 +3483,7 @@ async def test_text_generation_service_times_out_slow_candidate_and_falls_back(
 
     assert result.provider == "endpoint:good"
     records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
-    assert [record.levelno for record in records] == [logging.DEBUG, logging.INFO]
+    assert [record.levelno for record in records] == [logging.DEBUG, logging.DEBUG]
     assert records[0].__dict__["success"] is False
     assert "candidate timed out after 0.01s" in records[0].__dict__["error"]
 

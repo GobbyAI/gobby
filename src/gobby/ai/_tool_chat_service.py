@@ -18,6 +18,11 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import replace
 from typing import Protocol
 
+from gobby.ai._reasoning import (
+    ReasoningEffortRejectedError,
+    ReasoningResolver,
+    apply_binding_reasoning,
+)
 from gobby.ai._text_generation_helpers import _CandidateTimeoutError
 from gobby.ai._tool_chat_contracts import (
     LIMIT_STOP_REASONS,
@@ -61,7 +66,7 @@ _RUNTIME_ADAPTER_STYLES = frozenset(
 )
 
 
-class _SpeedResolver(Protocol):
+class _CapabilityResolver(ReasoningResolver, Protocol):
     def resolve_route(
         self,
         provider: str,
@@ -91,7 +96,7 @@ class ToolChatService:
         ) = None,
         default_limits: ToolLoopLimits | None = None,
         lease_factory: ToolChatLeaseFactory | None = None,
-        capability_resolver: _SpeedResolver | None = None,
+        capability_resolver: _CapabilityResolver | None = None,
     ) -> None:
         self._registry = registry
         self._adapters: dict[AIAdapterStyle, ToolChatAdapter] = dict(adapters or {})
@@ -146,6 +151,7 @@ class ToolChatService:
             attempted.append(label)
             try:
                 binding = self._select_binding(candidate)
+                candidate = self._apply_candidate_reasoning(candidate, binding)
                 adapter = self._adapter_for_style(binding.adapter_style)
                 candidate, resolution = self._apply_candidate_speed(candidate, binding)
                 result = await self._await_chat_candidate(
@@ -280,6 +286,28 @@ class ToolChatService:
                 ),
             )
         return binding
+
+    def _apply_candidate_reasoning(
+        self,
+        request: ToolChatRequest,
+        binding: CapabilityBinding,
+    ) -> ToolChatRequest:
+        model = request.model or next(iter(binding.models), "")
+        try:
+            effort = apply_binding_reasoning(
+                binding=binding,
+                model=model,
+                requested_effort=request.reasoning_effort,
+                resolver=self._capability_resolver,
+            )
+        except ReasoningEffortRejectedError as exc:
+            raise CapabilityUnavailableError(
+                AICapability.TOOL_CHAT,
+                provider=binding.provider,
+                model=model,
+                reason=str(exc),
+            ) from exc
+        return replace(request, reasoning_effort=effort)
 
     def _apply_candidate_speed(
         self,

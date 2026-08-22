@@ -142,7 +142,9 @@ class OpenAICompatibleToolChatAdapter:
             turns=turns,
             tools=tool_breakdown,
             usage=usage_total or None,
-            applied_reasoning_effort=request.reasoning_effort,
+            applied_reasoning_effort=(
+                request.reasoning_effort if request.reasoning_effort != "auto" else None
+            ),
             stop_reason=stop_reason,
             trace=tuple(runtime.invocation_log),
             calls_used=runtime.calls_used,
@@ -165,7 +167,7 @@ def _completion_kwargs(
         "tool_choice": "auto",
         "max_tokens": request.max_tokens or _DEFAULT_MAX_TOKENS,
     }
-    if request.reasoning_effort is not None:
+    if request.reasoning_effort not in {None, "auto"}:
         kwargs["reasoning_effort"] = request.reasoning_effort
     kwargs.update(request.request_parameters)
     return kwargs
@@ -312,7 +314,9 @@ class ClaudeToolChatAdapter:
                 project_path=request.project_path,
                 model=model,
                 max_turns=max_turns,
-                reasoning_effort=request.reasoning_effort,
+                reasoning_effort=(
+                    request.reasoning_effort if request.reasoning_effort != "auto" else None
+                ),
                 allowed_tools=tuple(allowed_tools),
                 disallowed_tools=_DISALLOWED_TOOLS,
                 mcp_servers={_REPO_MCP_SERVER_NAME: server},

@@ -49,7 +49,7 @@ def _normalize_reasoning_effort(value: object) -> str | None:
     if not isinstance(value, str):
         raise ValueError("reasoning_effort must be a string, 'auto', or null")
     normalized = value.strip().lower()
-    if not normalized or normalized == "auto":
+    if not normalized:
         return None
     return normalized
 
@@ -85,7 +85,7 @@ class FeatureCandidateConfig(BaseModel):
     @field_validator("reasoning_effort", mode="before")
     @classmethod
     def normalize_reasoning_effort(cls, value: object) -> str | None:
-        """Normalize auto/empty to unset and defer effort support checks to runtime."""
+        """Normalize effort spelling and defer support checks to runtime."""
         return _normalize_reasoning_effort(value)
 
 
@@ -110,7 +110,7 @@ DEFAULT_PROFILE_CANDIDATES: dict[FeatureProfile, tuple[FeatureCandidateConfig, .
 }
 
 _DEFAULT_PROFILE_REASONING: dict[FeatureProfile, str | None] = {
-    FeatureProfile.LOW: None,
+    FeatureProfile.LOW: "auto",
     FeatureProfile.MID: None,
     FeatureProfile.HIGH: None,
 }

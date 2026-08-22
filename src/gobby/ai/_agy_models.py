@@ -61,7 +61,7 @@ def resolve_agy_effort(model: str, effort: str | None) -> str:
     if normalized_model is None:
         raise ValueError("AGY model is required")
     normalized = normalize_reasoning_effort(normalized_effort)
-    if normalized is None:
+    if normalized is None or normalized == "auto":
         return agy_default_effort(normalized_model)
 
     supported = agy_supported_efforts(normalized_model)
@@ -108,7 +108,7 @@ def normalize_agy_model_selection(
         return stripped, reasoning_effort
 
     base_model, alias_effort = alias
-    if normalize_reasoning_effort(reasoning_effort) is None:
+    if normalize_reasoning_effort(reasoning_effort) in {None, "auto"}:
         return base_model, alias_effort
     return base_model, reasoning_effort
 

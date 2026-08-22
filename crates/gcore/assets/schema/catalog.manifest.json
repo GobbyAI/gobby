@@ -2649,6 +2649,26 @@
       "definition": "text|text|NO||NEVER"
     },
     {
+      "name": "model_metadata.reasoning_default_effort",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "model_metadata.reasoning_default_enabled",
+      "definition": "boolean|bool|YES||NEVER"
+    },
+    {
+      "name": "model_metadata.reasoning_mandatory",
+      "definition": "boolean|bool|YES||NEVER"
+    },
+    {
+      "name": "model_metadata.reasoning_present",
+      "definition": "boolean|bool|YES||NEVER"
+    },
+    {
+      "name": "model_metadata.reasoning_supported_efforts",
+      "definition": "jsonb|jsonb|YES||NEVER"
+    },
+    {
       "name": "model_metadata.source",
       "definition": "text|text|NO|'registry'::text|NEVER"
     },

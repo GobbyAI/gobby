@@ -70,7 +70,7 @@ _AGY_ERROR_STDOUT_PREFIX = "Error:"
 
 def _extend_reasoning_args(command: list[str], provider: str, reasoning_effort: str | None) -> None:
     reasoning_effort = normalize_reasoning_effort(reasoning_effort)
-    if not reasoning_effort:
+    if not reasoning_effort or reasoning_effort == "auto":
         return
     match provider_reasoning_flag(provider):
         case "codex-config":
