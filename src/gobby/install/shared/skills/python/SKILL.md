@@ -1,7 +1,7 @@
 ---
 name: python
 description: "Enforces default Python coding standards for agents writing or refactoring Python: project configuration, typing, error handling, testing, async, performance, and boundary validation. Use before editing Python unless the repo provides stricter local rules."
-version: "1.2.0"
+version: "1.2.1"
 category: development
 triggers: python, py, pyi, pyproject.toml, uv, ruff, mypy, pytest, tox, nox, typing, asyncio
 sources:
@@ -22,35 +22,31 @@ Apply repository packaging, interpreter, type-checker, framework, and generated-
 
 - Preserve Python constraints, build backend, dependency groups, lockfiles, package
   layout, type-checker mode, pytest config, and generated files.
-- Treat type-checker and Ruff findings as value-flow evidence and fix the underlying
-  contract before considering a suppression.
+- Diagnostic hook: treat type-checker and Ruff findings as value-flow evidence and
+  fix the underlying contract before considering a suppression.
 
 For package, tool, type-checker, and test setup:
 `get_skill_file(name="python", path="references/configuration.md")`
 
 ## Lint and Type Suppressions
 
-`# noqa` and `# type: ignore` disable defect detection. Suppressions are a last resort
-and are allowed only when every requirement below is satisfied:
+`# noqa` and `# type: ignore` disable defect detection. Suppressions are a last resort,
+allowed only when all of these hold:
 
-1. Investigate the diagnostic and attempt a root-cause fix using accurate types,
-   control flow, a narrow adapter, a `Protocol`, or a local stub.
-2. Confirm the remaining diagnostic comes from exactly one of these conditions:
-   - incorrect or incomplete third-party type information outside repository control;
-   - a confirmed linter or type-checker defect or unsupported language feature;
-   - runtime-required dynamic behavior or import side effect the analyzer cannot model
-     without changing program behavior.
-3. Limit the suppression to one expression or statement and name the exact diagnostic:
-   `# noqa: <rule-code>` or `# type: ignore[<error-code>]`.
-4. Add an adjacent comment that identifies the external limitation and explains why
-   runtime behavior is safe. Link the upstream issue when one exists.
-5. Add or retain a regression test for the runtime behavior and rerun focused lint,
-   type-check, and test commands.
+1. A root-cause fix was attempted first: accurate types, control flow, a narrow
+   adapter, a `Protocol`, or a local stub.
+2. The remaining diagnostic comes from exactly one of:
+   incorrect or incomplete third-party type information outside repository control;
+   a confirmed linter or type-checker defect or unsupported language feature;
+   runtime-required dynamic behavior or import side effect the analyzer cannot model.
+3. It is scoped to one expression or statement and names the exact diagnostic
+   (`# noqa: <rule-code>` or `# type: ignore[<error-code>]`), with an adjacent comment
+   naming the external limitation, why runtime behavior is safe, and any upstream issue.
+4. A regression test covers the runtime behavior; focused lint, type-check, and tests rerun.
 
-Bare suppressions are prohibited, including unqualified `# noqa` and
-`# type: ignore`. File-wide ignores, configuration exclusions, and relaxed checker
-settings are also prohibited as substitutes for fixing diagnostics. Repository policy
-may forbid suppressions even under the conditions above.
+Bare suppressions are prohibited, as are file-wide ignores, configuration exclusions,
+and relaxed checker settings used as substitutes for fixing diagnostics. Repository
+policy may forbid suppressions even under the conditions above.
 
 ## Type System
 
@@ -73,16 +69,16 @@ For exception hierarchies:
 ## Testing
 
 - Use repository fixtures, markers, async plugins, and boundary fakes.
-- Parameterize genuine case tables and control clocks, filesystems, queues,
-  databases, and HTTP adapters where behavior depends on them.
+- Parameterize genuine case tables; control clocks, filesystems, queues, databases,
+  and HTTP adapters where behavior depends on them.
 
 For pytest patterns:
 `get_skill_file(name="python", path="references/testing.md")`
 
 ## Concurrency
 
-- Use `asyncio.TaskGroup` for related tasks, explicit timeouts for owned I/O, and
-  cleanup that re-raises `CancelledError`.
+- Use `asyncio.TaskGroup`, explicit timeouts for owned I/O, and cleanup that
+  re-raises `CancelledError`.
 - Move CPU-bound or blocking clients behind an executor, process, or sync adapter.
 
 For asyncio and concurrency:
@@ -100,5 +96,5 @@ For Python profiling:
 
 - Prefer small typed return objects over `dict[str, object]`.
 - Replace mode-changing boolean parameters with separate functions or enums.
-- Use immutable defaults, explicit dependencies, and `pathlib.Path` at file boundaries.
-- Put structured logs at owned boundaries with enough context to diagnose the operation.
+- Use immutable defaults, explicit dependencies, `pathlib.Path` at file boundaries,
+  and structured logs at owned boundaries with enough context to diagnose the operation.

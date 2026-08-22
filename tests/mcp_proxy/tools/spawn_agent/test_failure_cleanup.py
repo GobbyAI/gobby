@@ -355,3 +355,102 @@ async def test_health_fail_persists_full_redacted_pane_for_get_agent_capture() -
     assert page["content"][-1] == redacted[-1]
     assert unique_head in page["content"]
     assert unique_tail in page["content"]
+
+
+class _RollbackCaptureStorage(_HealthCaptureStorage):
+    """Capture store that also records the policy's termination intent."""
+
+    def __init__(self, run: SimpleNamespace) -> None:
+        super().__init__(run)
+        self.intents: list[tuple[str, str | None]] = []
+
+    def record_termination_intent(
+        self,
+        _run_id: str,
+        *,
+        action: str,
+        reason: str | None = None,
+        result_prefix: str | None = None,
+    ) -> SimpleNamespace:
+        self.intents.append((action, reason))
+        return self.run
+
+
+def _rollback_run() -> SimpleNamespace:
+    return SimpleNamespace(
+        id="run-rollback-1",
+        status="pending",
+        result=None,
+        error=None,
+        capture_id=None,
+        capture_revision=0,
+        child_session_id=None,
+        pid=None,
+        tmux_session_name="gobby-rollback",
+        terminal_reason=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_spawn_rollback_captures_pane_before_killing_tmux() -> None:
+    run = _rollback_run()
+    storage = _RollbackCaptureStorage(run)
+    events: list[str] = []
+    tmux = MagicMock()
+    tmux.has_session = AsyncMock(return_value=True)
+
+    async def capture(_name: str) -> str:
+        events.append("capture")
+        return "spawn stderr: provider refused the lease"
+
+    async def kill(_name: str, *, missing_ok: bool = False) -> bool:
+        events.append("kill")
+        return True
+
+    tmux.capture_full_pane = capture
+    tmux.kill_session = kill
+
+    with patch("gobby.agents.tmux.get_tmux_session_manager", return_value=tmux):
+        await _failure_cleanup._terminate_spawn_process(
+            run_storage=storage,
+            run_id=run.id,
+            pid=None,
+            tmux_session_name=run.tmux_session_name,
+            tmux_socket_name=None,
+            tmux_socket_path=None,
+        )
+
+    assert events == ["capture", "kill"]
+    assert storage.intents == [("cancel", "spawn_rollback")]
+    assert run.capture_id is not None
+    assert "provider refused the lease" in (run.result or "")
+    assert run.status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_spawn_rollback_without_run_row_still_kills_tmux() -> None:
+    events: list[str] = []
+    tmux = MagicMock()
+
+    async def capture(_name: str) -> str:
+        events.append("capture")
+        return ""
+
+    async def kill(name: str, *, missing_ok: bool = False) -> bool:
+        events.append(f"kill:{name}:{missing_ok}")
+        return True
+
+    tmux.capture_full_pane = capture
+    tmux.kill_session = kill
+
+    with patch("gobby.agents.tmux.get_tmux_session_manager", return_value=tmux):
+        await _failure_cleanup._terminate_spawn_process(
+            run_storage=None,
+            run_id="run-missing",
+            pid=None,
+            tmux_session_name="gobby-orphan",
+            tmux_socket_name=None,
+            tmux_socket_path=None,
+        )
+
+    assert events == ["kill:gobby-orphan:True"]

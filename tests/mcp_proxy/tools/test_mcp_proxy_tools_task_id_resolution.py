@@ -24,6 +24,12 @@ def mock_task_manager() -> MagicMock:
     """Create a mock task manager."""
     manager = MagicMock(spec=LocalTaskManager)
     manager.db = MagicMock()
+    # Close-review and backoff lookups read as "no row" instead of MagicMock rows.
+    _conn = MagicMock()
+    _conn.execute.return_value.fetchone.return_value = None
+    _conn.execute.return_value.rowcount = 0
+    manager.db.transaction.return_value.__enter__.return_value = _conn
+    manager.db.transaction.return_value.__exit__.return_value = False
     return manager
 
 
@@ -262,7 +268,6 @@ class TestMCPCloseTaskWithHashFormat:
         mock_task_manager.get_task.return_value = sample_task_uuid
         mock_task_manager.close_task.return_value = sample_task_uuid
         mock_task_manager.list_tasks.return_value = []  # No children
-        mock_task_manager.db = MagicMock()
 
         registry = create_task_registry(mock_task_manager)
         close_task_func = registry.get_tool("close_task")

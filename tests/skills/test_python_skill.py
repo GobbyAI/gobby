@@ -24,7 +24,7 @@ def test_python_skill_parses_with_references() -> None:
     parsed = SkillLoader().load_skill(SKILL_DIR, validate=False)
 
     assert parsed.name == "python"
-    assert parsed.version == "1.2.0"
+    assert parsed.version == "1.2.1"
     assert parsed.get_category() == "development"
     assert parsed.triggers is not None
     assert {

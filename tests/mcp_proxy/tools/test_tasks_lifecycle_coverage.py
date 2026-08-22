@@ -62,6 +62,11 @@ def _disable_validation_backoff_storage() -> Iterator[None]:
             "gobby.mcp_proxy.tools.tasks._lifecycle_validation._record_validation_iteration",
             return_value=1,
         ),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration"
+            ".TaskCloseReviewStore.get_active_for_task",
+            return_value=None,
+        ),
     ):
         yield
 

@@ -21,6 +21,12 @@ TEST_REPO_PATH = str(Path(__file__).resolve().parents[3])
 def mock_task_manager() -> MagicMock:
     manager = MagicMock(spec=LocalTaskManager)
     manager.db = MagicMock()
+    # Close-review and backoff lookups read as "no row" instead of MagicMock rows.
+    _conn = MagicMock()
+    _conn.execute.return_value.fetchone.return_value = None
+    _conn.execute.return_value.rowcount = 0
+    manager.db.transaction.return_value.__enter__.return_value = _conn
+    manager.db.transaction.return_value.__exit__.return_value = False
     return manager
 
 

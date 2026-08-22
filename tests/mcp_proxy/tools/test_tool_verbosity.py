@@ -34,8 +34,14 @@ async def test_memory_verbosity_reduction() -> None:
     registry = create_memory_registry(lambda: mock_manager)
 
     # Test create_memory
-    result = await registry.call("create_memory", {"content": "test"})
-    assert result["success"] is True
+    result = await registry.call(
+        "create_memory",
+        {
+            "content": "test",
+            "rationale": "Future sessions need this fact to avoid re-deriving it.",
+        },
+    )
+    assert result["success"] is True, result
     assert result["memory"]["id"] == "mem-123"
     # Should NOT contain content in the improved version
     assert "content" not in result["memory"]
@@ -115,7 +121,7 @@ async def test_worktree_verbosity_reduction() -> None:
 
 @pytest.mark.asyncio
 async def test_session_message_truncation() -> None:
-    """Verify get_session_messages truncates large content."""
+    """Verify get_session_messages returns complete content (#20401 removed slicing)."""
     mock_session_manager = MagicMock()
     mock_reader = MagicMock(spec=TranscriptReader)
     mock_reader.get_rendered_window = AsyncMock(
@@ -139,17 +145,15 @@ async def test_session_message_truncation() -> None:
         transcript_reader=mock_reader, session_manager=mock_session_manager
     )
 
-    # Test default truncation
     result = await registry.call("get_session_messages", {"session_id": "sess-123"})
     assert result.get("success") is True, f"Result failed: {result}"
     msg = result["messages"][0]
 
-    # In improved version:
-    assert len(msg["content"]) < 1000
-    assert "..." in msg["content"]
+    assert len(msg["content"]) == 1000
+    assert result["truncated"] is False
 
-    # Test opt-out
+    # The legacy opt-in flag is accepted and still returns complete content.
     result_full = await registry.call(
-        "get_session_messages", {"session_id": "sess-123", "full_content": True}
+        "get_session_messages", {"session_id": "sess-123", "full_content": False}
     )
     assert len(result_full["messages"][0]["content"]) == 1000

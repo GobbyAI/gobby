@@ -265,13 +265,17 @@ class TestCreateMemory:
                 "gobby.storage.session_resolution.resolve_session_reference",
                 return_value=resolved_uuid,
             ) as mock_resolve,
+            patch(
+                "gobby.mcp_proxy.tools.memory.derive_memory_create_provenance",
+                return_value=(None, None),
+            ),
         ):
             result = await memory_registry.call(
                 "create_memory",
                 {"content": "Test", "session_id": "#42", "rationale": _VALID_RATIONALE},
             )
 
-        assert result["success"] is True
+        assert result["success"] is True, result
         mock_resolve.assert_called_once_with(
             mock_memory_manager.db, "#42", "11111111-1111-4111-8111-111111110001"
         )

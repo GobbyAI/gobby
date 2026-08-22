@@ -385,7 +385,7 @@ class TestCloseTask:
                 side_effect=archive_failed,
             ),
             patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_close.notify_parent_on_task_state_change",
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization.notify_parent_on_task_state_change",
                 side_effect=notify_parent,
             ) as mock_notify_parent,
         ):
@@ -528,6 +528,10 @@ class TestCloseTask:
                 return_value=False,
             ),
             patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization._has_committable_edits",
+                return_value=False,
+            ),
+            patch(
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close.evaluate_validation_commands",
                 return_value=CloseGateResult(
                     item=10,
@@ -604,6 +608,10 @@ class TestCloseTask:
             ),
             patch(
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close._has_committable_edits",
+                return_value=False,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization._has_committable_edits",
                 return_value=False,
             ),
             patch(

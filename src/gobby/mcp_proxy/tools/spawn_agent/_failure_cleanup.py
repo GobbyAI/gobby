@@ -89,6 +89,8 @@ async def cleanup_failed_spawn(
     if tmux_session_name is None:
         tmux_session_name = _string_attr(run, "tmux_session_name")
     await _terminate_spawn_process(
+        run_storage=run_storage if run is not None else None,
+        run_id=run_id,
         pid=pid,
         expected_starttime=_RUN_STARTTIMES.get(run_id),
         tmux_session_name=tmux_session_name,
@@ -235,6 +237,8 @@ def _delete_child_session(
 
 async def _terminate_spawn_process(
     *,
+    run_storage: Any | None = None,
+    run_id: str | None = None,
     pid: int | None,
     expected_starttime: str | None = None,
     tmux_session_name: str | None,
@@ -242,11 +246,16 @@ async def _terminate_spawn_process(
     tmux_socket_path: str | None,
 ) -> None:
     if tmux_session_name:
+        session_name = tmux_session_name
         try:
             from gobby.agents.tmux import get_tmux_session_manager
 
-            manager = get_tmux_session_manager()
-            await manager.kill_session(tmux_session_name, missing_ok=True)
+            await _capture_then_kill_spawn_session(
+                run_storage,
+                run_id,
+                get_tmux_session_manager(),
+                session_name,
+            )
         except Exception as exc:
             logging.getLogger(__name__).warning(
                 "Failed to kill tmux session %s (socket=%s path=%s): %s",
@@ -282,6 +291,49 @@ async def _terminate_spawn_process(
                     exc,
                     extra={"pid": pid},
                 )
+
+
+async def _capture_then_kill_spawn_session(
+    run_storage: Any | None,
+    run_id: str | None,
+    manager: Any,
+    session_name: str,
+) -> None:
+    """Capture the failed spawn's pane into its run row, then kill the session.
+
+    The caller terminalizes the run afterwards, so the policy's terminal step only
+    re-reads the row. Without a run row, or when the policy cannot complete, fall
+    back to a plain kill so the session never leaks.
+    """
+    if run_storage is not None and run_id is not None:
+        from gobby.agents.capture import capture_then_kill_async
+
+        async def keep_run(_action: Any, _reason: str | None) -> Any:
+            return run_storage.get(run_id)
+
+        try:
+            termination = await capture_then_kill_async(
+                storage=run_storage,
+                run_id=run_id,
+                session_name=session_name,
+                action="cancel",
+                reason="spawn_rollback",
+                session_alive=lambda: manager.has_session(session_name),
+                capture=lambda: manager.capture_full_pane(session_name),
+                kill=lambda: manager.kill_session(session_name, missing_ok=True),
+                terminalize=keep_run,
+            )
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "Capture policy failed for spawn rollback of %s (%s): %s",
+                run_id,
+                session_name,
+                exc,
+            )
+        else:
+            if termination.success:
+                return
+    await manager.kill_session(session_name, missing_ok=True)
 
 
 def _string_attr(obj: Any, name: str) -> str | None:
