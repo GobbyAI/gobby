@@ -5,9 +5,10 @@ hub-and-node Rust platform, with the decisions that shape it and citations to th
 tasks that carry each stage. `ROADMAP.md` tracks what/when; this document is
 the why/how. Decided 2026-08-13 during the herdr-terminal-client planning
 session (task #18802); update it when a stage decision changes, not for
-routine progress.
+routine progress. Remaining-path snapshots below record execution state
+against those decisions so it is not lost in task history.
 
-## Where we are (2026-08)
+## Where we are (2026-08-22)
 
 - **Runtime**: the 0.5.0 Python daemon is the supported local-first runtime —
   sessions, tasks, memory, workflows, rules, pipelines, agents, MCP proxy.
@@ -15,15 +16,26 @@ routine progress.
 - **Data**: PostgreSQL is the runtime hub; FalkorDB graph; Qdrant vectors.
   Schema authority already lives in Rust — `gcore` embeds baseline 375 and
   `gdaemon schema apply/verify` owns DDL (`crates/gcore/src/schema/assets.rs`).
-  M0 shared-datastore groundwork (advisory-lease active/standby daemons,
-  two-daemon convergence) has landed (`.gobby/plans/m0-shared-datastores-bridge.md`,
-  `.gobby/plans/two-daemon-hub.md`, `.gobby/plans/hub-pc-datastore-move.md`).
+  M0 shared-datastore **code** has landed (leases, remote DSNs, `machine_id`
+  scoping). The remaining M0 gate is the real two-machine smoke (#19600).
+  Plans: `.gobby/plans/m0-shared-datastores-bridge.md`,
+  `.gobby/plans/two-daemon-hub.md`, `.gobby/plans/hub-pc-datastore-move.md`.
+- **Identity / hub files**: account/machine ownership (#19650), hub-owned
+  files home (#20330 / #20238), and the reactive config store (#19645) are
+  on `0.5.0`. Path-independent project identity (#19651) is not.
 - **Rust bridgehead**: `crates/` ships `gcode`, `gwiki`, `ghook`, `gdaemon`
   over the shared `gcore` library — the strangler beachhead for the daemon
-  port.
-- **Terminals**: tmux-based, with documented defects for Gobby-managed
-  terminals (cross-socket identity collisions, smallest-client sizing,
+  port. gcode/gwiki daemon-native grants (#18902) closed; checkout grants
+  still land in #19651 P4.
+- **Product that landed on `0.5.0` and is off the architecture spine**:
+  class-hierarchy graph views (#17680, including P3), clear-self durable
+  handoff (#20539), vLLM runtime support (#20488) plus follow-up parity
+  (`wire_api=responses`, embeddings installer, status probes).
+- **Terminals**: `0.5.0` is still tmux-backed, with the documented Gobby-managed
+  defects (cross-socket identity collisions, smallest-client sizing,
   duplicated VT replies — `.gobby/plans/completed/activity-panel-live-terminal.md`).
+  The Stage 0 native stack exists only on worktree `wt-task-20255-m4`
+  (HEAD `518cec5c41`, not merged) and is being reworked.
 
 ## Where we're going — three user stories
 
@@ -162,9 +174,14 @@ wraps nor execs the TUI (plan 3.5 — startup checks live in the binary itself),
 and `gobby start`, `gobby stop`, and the other operator commands stay on the
 Python entry point until Stage 2. tmux remains first-class for
 externally discovered sessions.
-The earlier idea-only exploration was epic #18520
-(`.gobby/plans/completed/herdr-interface-backend-foundation.md`, superseded
-on licensing by the fork).
+A first implementation of #20255 landed on `wt-task-20255-m4` (`518cec5c41`,
+leaves #20263–#20285) and is **not** on `0.5.0`. QA found the client side
+incomplete and the native default-flip evidence fabricated. Rework is
+`.gobby/plans/herdr-terminal-client-qa-fixes.md`: isolation worktree from
+current `0.5.0`, absorb `wt-task-20255-m4` as leaf 1.1, land only when the
+accumulated guard set is green. The earlier idea-only exploration was epic
+#18520 (`.gobby/plans/completed/herdr-interface-backend-foundation.md`,
+superseded on licensing by the fork).
 
 **Stage 1 — the Rust daemon absorbs subsystems.** Behind the existing HTTP/WS
 surface, subsystem by subsystem, with Python remaining the behavioral
@@ -185,14 +202,14 @@ daemon on a single machine; the Python package retires, freeing the `gobby`
 name: `gclient` is renamed `gobby` and carries the operator verbs (`start`,
 `stop`, `status`, `tasks`, …) as subcommands over the public API — the binary
 is Zig-free, so carrying the CLI costs nothing. Story A is fully
-served by `gdaemon` plus `gterm` and `gobby`. Related in-flight foundations:
-`.gobby/plans/daemon-native-runtime-boundary.md`,
-`.gobby/plans/reactive-config-store.md`.
+served by `gdaemon` plus `gterm` and `gobby`. Related foundations:
+`.gobby/plans/daemon-native-runtime-boundary.md` (still open) and
+`.gobby/plans/completed/reactive-config-store.md` (landed).
 
 **Stage 3 — mode split and the hub.** `hub` and `node` modes, machine
 registration over WS, API keys minted at the network boundary (the boundary
 recorded in the account-identity work:
-`.gobby/plans/account-identity-machine-ownership.md`,
+`.gobby/plans/completed/account-identity-machine-ownership.md`,
 `.gobby/plans/machine-scoped-worktrees-clones.md`,
 `.gobby/plans/shared-remote-stack.md`). Stories B and C go live: self-hosted
 hubs first, then the gobby.ai-provided data stack + hub. The terminal plan's
@@ -202,6 +219,34 @@ and the hosted relay privacy stance (#20203).
 **Alongside, stage-independent:** the plugin system (#20201) once `gobby` and
 the public API surface exist; Gobby Pro fleet surfaces per `ROADMAP.md`
 0.6.0+/0.7.0+.
+
+## Remaining path (snapshot 2026-08-22)
+
+Not a stage-decision change. Checked `0.5.0` (`9e0730d46e`) and
+`wt-task-20255-m4` (`518cec5c41`). Implement the children, not umbrella
+#17488 (escalated planning container).
+
+1. **Stage 0 rework — `#20255` / `herdr-terminal-client-qa-fixes`.** Named
+   current stage. Without a merged native PTY host, stories A–C still die on
+   tmux. Do not merge `wt-task-20255-m4` as-is.
+2. **`#19651` project-checkout-identity**, separate worktree. Last #17488
+   identity brick (first leaf `#20303`, `project_checkouts` in baseline 375).
+   Unblocks two-machine testing and the wiki grant chain. Do not pair schema
+   leaves with herdr P2 — both rewrite `crates/gcore` baseline/catalog
+   identity files.
+3. **When a second physical machine is available: `#19600`, then `#19647`.**
+   M0 close, then residual hub/node authority research. Not coding you can
+   do on one box.
+4. **Repo-intel / wiki, not the spine.** #17680 is merged. Next is #19664
+   wiki-output (blocked on finishing #17678), then #18779 empty-vault
+   production cutover. Checkout P4 (gcode grants) should land before
+   grant-consuming wiki work.
+5. **Stages 1–3 stay later.** Rust daemon strangler (`:60890` sidecar),
+   Python retirement / `gclient`→`gobby`, then `hub`/`node` with #17436
+   (gated on #19651 + #19647), #17769 (gated on #19647), #17440 (gated on
+   #17436). Telegram attachments stay machine-local until Stage 3.
+
+vLLM and clear-self already landed on `0.5.0`; they do not unlock Stages 1–3.
 
 ## Decision record (2026-08-13, #18802 planning session)
 
@@ -246,8 +291,13 @@ the public API surface exist; Gobby Pro fleet surfaces per `ROADMAP.md`
 | #20202 | Remote `gobby` attach plan (deferred, D2) |
 | #20203 | Hosted terminal-relay privacy stance (deferred, D3) |
 | `.gobby/plans/herdr-terminal-client.md` | Stage 0 epic plan |
+| `.gobby/plans/herdr-terminal-client-qa-fixes.md` | Stage 0 rework of `wt-task-20255-m4` |
+| `.gobby/plans/project-checkout-identity.md` | #19651 path-independent project identity |
 | `.gobby/plans/two-daemon-hub.md`, `.gobby/plans/m0-shared-datastores-bridge.md`, `.gobby/plans/hub-pc-datastore-move.md` | Shared-datastore / lease groundwork |
-| `.gobby/plans/daemon-native-runtime-boundary.md`, `.gobby/plans/reactive-config-store.md` | Rust-daemon boundary foundations |
-| `.gobby/plans/account-identity-machine-ownership.md`, `.gobby/plans/machine-scoped-worktrees-clones.md`, `.gobby/plans/shared-remote-stack.md` | Stage 3 identity/machine/remote groundwork |
+| `.gobby/plans/daemon-native-runtime-boundary.md` | Still-open Stage 2 foundation |
+| `.gobby/plans/completed/reactive-config-store.md` | Landed Stage 2 foundation |
+| `.gobby/plans/completed/account-identity-machine-ownership.md` | Landed Stage 3 identity groundwork |
+| `.gobby/plans/machine-scoped-worktrees-clones.md` | Stage 3 machine-scoped worktrees |
+| `.gobby/plans/shared-remote-stack.md` | Stage 3 remote-stack strategy |
 | `docs/architecture/hub-owned-files-home.md`, #20238 | Hub-owned `USER.md`, wiki home, `_personal` life-admin, and `attachments/`; destination HTTP under `/api/hub/...` |
 | `ROADMAP.md` | Release-line what/when; the 0.6.0 sidecar on `:60890` is the transition vehicle; destination daemon is `gdaemon` |
