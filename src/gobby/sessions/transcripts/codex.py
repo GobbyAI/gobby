@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shlex
 from collections import deque
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
@@ -72,6 +73,55 @@ class CodexNestedExecOutcome:
     @property
     def identity(self) -> str:
         return f"{self.outer_call_id}:{self.result_index}"
+
+
+def _command_execution_outcomes(
+    data: dict[str, Any],
+    payload: dict[str, Any],
+    timestamp: datetime,
+) -> list[CodexNestedExecOutcome]:
+    """Extract authoritative unified-exec completion events."""
+    if payload.get("type") != "item_completed":
+        return []
+    item = payload.get("item")
+    if not isinstance(item, dict) or item.get("type") != "CommandExecution":
+        return []
+    command_parts = item.get("command")
+    exit_code = item.get("exit_code")
+    if (
+        not isinstance(command_parts, list)
+        or not command_parts
+        or not all(isinstance(part, str) for part in command_parts)
+        or not isinstance(exit_code, int)
+        or isinstance(exit_code, bool)
+    ):
+        return []
+    command = (
+        command_parts[-1]
+        if len(command_parts) >= 3 and command_parts[-2] in {"-c", "-lc"}
+        else shlex.join(command_parts)
+    )
+    output = item.get("aggregated_output")
+    if not isinstance(output, str):
+        stdout = item.get("stdout") if isinstance(item.get("stdout"), str) else ""
+        stderr = item.get("stderr") if isinstance(item.get("stderr"), str) else ""
+        output = f"{stdout}{stderr}"
+    event_id = item.get("id")
+    return [
+        CodexNestedExecOutcome(
+            outer_call_id=event_id if isinstance(event_id, str) else "command-execution",
+            result_index=0,
+            command=command,
+            result={
+                "exit_code": exit_code,
+                "success": exit_code == 0,
+                "output": output,
+                "outcome_provenance": "codex.event_msg.command_execution",
+            },
+            timestamp=timestamp,
+            raw_json=data,
+        )
+    ]
 
 
 def _is_instruction_dump(content: str) -> bool:
@@ -328,6 +378,8 @@ class CodexTranscriptParser(BaseTranscriptParser):
                 self._remember_nested_exec_call(payload)
             elif envelope == "output":
                 outcomes = self._resolve_nested_exec_output(data, payload, timestamp)
+        elif line_type == "event_msg":
+            outcomes = _command_execution_outcomes(data, payload, timestamp)
 
         return self._parse_decoded_line(data, payload, index, timestamp), outcomes
 

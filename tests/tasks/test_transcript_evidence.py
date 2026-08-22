@@ -306,6 +306,43 @@ async def test_codex_tracks_apply_patch_inside_functions_exec(tmp_path: Path) ->
     assert [(edit.path, edit.tool_name) for edit in evidence.edits] == [("src/changed.py", "exec")]
 
 
+async def test_codex_ingests_unified_exec_failure_event(tmp_path: Path) -> None:
+    transcript = tmp_path / "codex.jsonl"
+    command = "uv run pytest tests/tasks/test_example.py::test_behavior -q"
+    _write_jsonl(
+        transcript,
+        [
+            {
+                "type": "event_msg",
+                "timestamp": BASE_TIME.isoformat(),
+                "payload": {
+                    "type": "item_completed",
+                    "item": {
+                        "type": "CommandExecution",
+                        "id": "exec-failed",
+                        "command": ["/bin/zsh", "-lc", command],
+                        "status": "failed",
+                        "exit_code": 1,
+                        "aggregated_output": "FAILED test_behavior - AssertionError",
+                    },
+                },
+            },
+        ],
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("codex", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [(run.command, run.outcome, run.exit_code) for run in evidence.validation_runs] == [
+        (command, "failure", 1)
+    ]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("exit_code", "expected_outcome"),
