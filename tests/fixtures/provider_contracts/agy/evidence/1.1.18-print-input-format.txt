@@ -1,4 +1,4 @@
-$ python3 inputfmt.py eof   (inputfmt.py: see README 1.1.18)
+$ python3 probe/inputfmt.py eof
 --- report ---
 cmd: agy --input-format stream-json --output-format stream-json --sandbox=false --dangerously-skip-permissions --add-dir <WORKSPACE> --print-timeout 2m --model gpt-oss-120b-medium
 [   0.0] >> {"event": "user", "message": {"content": "reply with exactly: before-eof"}}
@@ -15,7 +15,7 @@ conversation ids: ['<CONVERSATION_ID>']
 {"event":"result","result":{"conversation_id":"<CONVERSATION_ID>","status":"SUCCESS","response":"before-eof\n","duration_seconds":3.528411,"num_turns":1,"usage":{"input_tokens":12103,"output_tokens":39,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":12142}}}
 --- stderr ---
 
-$ python3 inputfmt.py conv <CONVERSATION_ID>
+$ python3 probe/inputfmt.py conv <CONVERSATION_ID>
 --- report ---
 cmd: agy --input-format stream-json --output-format stream-json --sandbox=false --dangerously-skip-permissions --add-dir <WORKSPACE> --print-timeout 2m --model gpt-oss-120b-medium --conversation <CONVERSATION_ID>
 [   0.0] >> {"event": "user", "message": {"content": "reply with exactly: one"}}
@@ -40,7 +40,7 @@ conversation ids: ['<CONVERSATION_ID>']
 {"event":"result","result":{"conversation_id":"<CONVERSATION_ID>","status":"SUCCESS","response":"one\n","duration_seconds":945.000829,"num_turns":4,"usage":{"input_tokens":51024,"output_tokens":242,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":51266}}}
 --- stderr ---
 
-$ python3 inputfmt.py idle
+$ python3 probe/inputfmt.py idle
 --- report ---
 cmd: agy --input-format stream-json --output-format stream-json --sandbox=false --dangerously-skip-permissions --add-dir <WORKSPACE> --print-timeout 20s --model gpt-oss-120b-medium
 [   0.0] >> {"event": "user", "message": {"content": "reply with exactly: t1"}}
@@ -65,7 +65,7 @@ conversation ids: ['<CONVERSATION_ID>']
 {"event":"result","result":{"conversation_id":"<CONVERSATION_ID>","status":"SUCCESS","response":"t2\n","duration_seconds":38.644318,"num_turns":2,"usage":{"input_tokens":24928,"output_tokens":90,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":25018}}}
 --- stderr ---
 
-$ python3 inputfmt.py cancel
+$ python3 probe/inputfmt.py cancel
 --- report ---
 cmd: agy --input-format stream-json --output-format stream-json --sandbox=false --dangerously-skip-permissions --add-dir <WORKSPACE> --print-timeout 2m --model gpt-oss-120b-medium
 [   0.0] >> {"event": "user", "message": {"content": "run: sleep 30; echo slept"}}
@@ -85,7 +85,7 @@ conversation ids: ['<CONVERSATION_ID>']
 {"event":"result","result":{"conversation_id":"<CONVERSATION_ID>","status":"ERROR","response":"","error":"context canceled","duration_seconds":18.736567,"num_turns":1,"usage":{"input_tokens":12100,"output_tokens":362,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":12462}}}
 --- stderr ---
 
-$ python3 inputfmt.py shapes
+$ python3 probe/inputfmt.py shapes
 --- report ---
 cmd: agy --input-format stream-json --output-format stream-json --sandbox=false --dangerously-skip-permissions --add-dir <WORKSPACE> --print-timeout 2m --model gpt-oss-120b-medium -p
 [   0.0] >> reply with exactly: alpha
@@ -132,7 +132,7 @@ Available subcommands:
   plugins         Alias for plugin
   update          Update CLI
 
-$ python3 inputfmt.py shapes2
+$ python3 probe/inputfmt.py shapes2
 --- report ---
 cmd: agy --input-format stream-json --output-format stream-json --sandbox=false --dangerously-skip-permissions --add-dir <WORKSPACE> --print-timeout 2m --model gpt-oss-120b-medium
 [   0.0] >> reply with exactly: alpha
@@ -146,7 +146,7 @@ conversation ids: ['<CONVERSATION_ID>']
 {"event":"result","result":{"conversation_id":"<CONVERSATION_ID>","status":"ERROR","response":"","error":"failed to decode stream input: invalid character 'r' looking for beginning of value","duration_seconds":0,"num_turns":0,"usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":0}}}
 --- stderr ---
 
-$ python3 inputfmt.py shapes3
+$ python3 probe/inputfmt.py shapes3
 --- report ---
 cmd: agy --input-format stream-json --output-format stream-json --sandbox=false --dangerously-skip-permissions --add-dir <WORKSPACE> --print-timeout 2m --model gpt-oss-120b-medium
 [   0.0] >> {"prompt": "reply with exactly: beta"}
@@ -160,7 +160,7 @@ conversation ids: ['<CONVERSATION_ID>']
 {"event":"result","result":{"conversation_id":"<CONVERSATION_ID>","status":"ERROR","response":"","error":"stream input message is missing the \"event\" field","duration_seconds":0,"num_turns":0,"usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":0}}}
 --- stderr ---
 
-$ python3 inputfmt.py shapes4
+$ python3 probe/inputfmt.py shapes4
 --- report ---
 cmd: agy --input-format stream-json --output-format stream-json --sandbox=false --dangerously-skip-permissions --add-dir <WORKSPACE> --print-timeout 2m --model gpt-oss-120b-medium
 [   0.0] >> {"event": "bogus_event"}

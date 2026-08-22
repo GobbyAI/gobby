@@ -1,4 +1,4 @@
-$ bash net-interactive.sh 150   (sampler for the interactive `run: echo netprobe` turn; see README 1.1.9)
+$ bash probe/net-interactive.sh 150
 --- report ---
 agy pid 71810
 --- remote-hosts ---

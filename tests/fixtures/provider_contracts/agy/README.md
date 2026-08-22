@@ -35,6 +35,7 @@ matters.
 | `transcript-manifest.json` | 1.1.2, 1.1.10, 1.1.22 | transcript layout, literal `transcriptPath`, record census (print and interactive), zero/nonzero-exit shell records, truncation evidence |
 | `stream-json-samples.jsonl` | 1.1.1, 1.1.6, 1.1.8, 1.1.13, 1.1.18, 1.1.20 | scrubbed NDJSON records (init, resumed turn, text_delta, tool ACTIVE/DONE/ERROR, failure results, stream-input errors, synthetic malformed line) |
 | `command-captures.json` | 1.1.7, 1.1.13, 1.1.15, 1.1.19, 1.1.20, 1.1.21 | `/hooks` before/with/after the capture hook (all three runs), `/usage` `/quota` `/credits` `/model`, `models`/`agents` JSON, isolated-HOME `models`, `mcp list`, flag-syntax errors, auth probes |
+| `probe/` | 1.1.8, 1.1.9, 1.1.18, 1.1.22 | the run-authored helpers (`cancel.sh`, `net.sh`, `net-interactive.sh`, `inputfmt.py`, `layout.py`) behind the evidence files whose command is not a one-line `agy` invocation; each prints the sections its evidence file carries (`probe/README.md`) |
 
 Deleted: `agy_models_v1.0.10.txt`, `model-cache-summary.json` (superseded by
 `command-captures.json`).
@@ -91,6 +92,67 @@ Deleted: `agy_models_v1.0.10.txt`, `model-cache-summary.json` (superseded by
    `<REDACTED>`, `ps` lines cut at 160 columns→`<TRUNCATED_PATH>`, tool output >4 KiB
    truncated with `<TRUNCATED n bytes>`. `ghook` envelope ids (`n-<ms>-<uuid>`) are
    kept: they key the daemon markers and are not conversation ids.
+   Free-text prompts are kept verbatim only when they are run-authored probe prompts
+   listed under "Probe prompts" below; any other prompt is `<PROMPT_TEXT>`.
+
+## Probe prompts
+
+Every free-text prompt in these fixtures was authored by the probe run (plan §1.1
+scrubbing rules: prompts outside this list are `<PROMPT_TEXT>`). The first three are
+the fixed probe prompts; the rest are the targeted per-record prompts, kept verbatim
+because the observed replies (`before-eof`, `DONE-1`, `denied-probe`, …) are only
+evidence against the prompt that produced them. Bare slash commands (`/usage`,
+`/hooks`, …) are commands, not prompts. `Also append the word PINEAPPLE to your reply.`
+is the 1.1.24 `injectSteps.userMessage` text, which AGY echoes as a user line.
+`tests/adapters/test_agy_gate0_fixtures.py` extracts every prompt position (`-p`
+arguments, `send-keys -l` arguments, stream-json stdin lines, pane `>` echoes) and
+fails on any prompt outside this list.
+
+```
+list the files in this directory
+run: ls -la
+call the gobby list_mcp_servers tool and report the result
+call the gobby list_mcp_servers tool and report the total
+@img.png what color is this image?
+describe the image file img.png in this directory: what color is it and what size?
+create a file hello.txt containing the word hi
+create a file hello2.txt containing the word hi
+/plan create a file plan1.txt containing the word hi
+Also append the word PINEAPPLE to your reply.
+reply with exactly: ok
+reply with exactly: ok2
+reply with exactly: DONE-1
+reply with exactly: alpha
+reply with exactly: beta
+reply with exactly: gamma
+reply with exactly: one
+reply with exactly: t1
+reply with exactly: t2
+reply with exactly: before-eof
+run: echo denied-probe
+run: echo dupg-probe
+run: echo dupg-probe2
+run: echo exit1-probe
+run: echo exit2-probe
+run: echo netprobe
+run: echo noflags > hello3.txt
+run: echo original-command
+run: echo permov-probe
+run: echo permov-probe-b
+run: echo permtest
+run: echo step-one, then run: echo step-two, then run: echo step-three, one command per tool call
+run: echo step-one, then run: echo step-two, then run: echo step-three, then summarize
+run: pwd
+run: python3 -c "print('a'*70000)"
+run: sh -c 'echo boom >&2; exit 7'
+run: sleep 25; echo done
+run: sleep 30; echo slept
+run: sleep 40; echo finished-after-sleep
+run: sleep 40; echo done-after-sleep
+what command were you running before? one line
+what shell command did you run earlier in this conversation? answer in one line
+what did you reply last time? one word
+```
 
 ## Contract-outcome table (1.1.11)
 
@@ -242,7 +304,7 @@ $ agy -p '@img.png what color is this image?' --output-format stream-json --prin
 {"event":"step_update","step_update":{"conversation_id":"<CONVERSATION_ID>","step_index":3,"state":"ACTIVE","step_type":"tool","tool_name":"find_by_name","tool_info":{"name":"find_by_name","parameters":{"Pattern":"*img.png*","SearchDirectory":"<WORKSPACE>"}}}}
 {"event":"result","result":{"conversation_id":"<CONVERSATION_ID>","status":"SUCCESS","response":"The image [img.png](file://<WORKSPACE>/img.png) is **pure red** (RGB: `[255, 0, 0]`, Hex: `#FF0000`).\n","duration_seconds":12.483631,"num_turns":1,"usage":{"input_tokens":43272,"output_tokens":3251,"thinking_tokens":2145,"cache_read_tokens":44696,"total_tokens":46523}}}
 --- exit 0 ---
-$ python3 inputfmt.py shapes4      # stdin line: {"event": "user", "message": {"content": [{"type": "image", "source": "x"}]}}
+$ python3 probe/inputfmt.py shapes4      # stdin line: {"event": "user", "message": {"content": [{"type": "image", "source": "x"}]}}
 [  67.1] result {"conversation_id": "<CONVERSATION_ID>", "status": "ERROR", "error": "stream input content block type \"image\" is not supported (only \"text\")", "duration_seconds": 6.628119, "num_turns": 2, "usage": {"input_tokens": 25585, "output_tokens"
 [  67.4] exit code 1
 ```
@@ -375,12 +437,12 @@ override the headless auto-deny (1.1.24 `permissionOverrides`).
 
 ### 1.1.8 — cancellation
 
-Print (`evidence/1.1.8-print-sigint.txt`, `-sigterm.txt`; `cancel.sh <SIG>` starts the
+Print (`evidence/1.1.8-print-sigint.txt`, `-sigterm.txt`; `probe/cancel.sh <SIG>` starts the
 turn in the background, waits for the `ACTIVE` tool step, lists the process tree,
 signals, waits, and lists orphans after 2 s and 45 s):
 
 ```
-$ bash cancel.sh INT      # agy -p 'run: sleep 40; echo finished-after-sleep' --output-format stream-json --sandbox=false --dangerously-skip-permissions --add-dir <WORKSPACE> --print-timeout 3m --model gpt-oss-120b-medium & then kill -INT $PID once the tool step is ACTIVE
+$ bash probe/cancel.sh INT      # agy -p 'run: sleep 40; echo finished-after-sleep' --output-format stream-json --sandbox=false --dangerously-skip-permissions --add-dir <WORKSPACE> --print-timeout 3m --model gpt-oss-120b-medium & then kill -INT $PID once the tool step is ACTIVE
 children of agy:
 19675 python3.14
 20181 zsh
@@ -394,7 +456,7 @@ stdout lines:        6
 {"event":"result","result":{"conversation_id":"<CONVERSATION_ID>","status":"ERROR","response":"","error":"timeout waiting for response","duration_seconds":8.582711,"num_turns":1,"usage":{"input_tokens":12772,"output_tokens":334,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":13106}}}
 --- after 45s: sleep still present?
 24755 19658 S    sleep 1
-$ bash cancel.sh TERM
+$ bash probe/cancel.sh TERM
 --- sent SIGTERM; exit code 1 after 0s
 orphans after 2s:
 26213 26212 S    sleep 40
@@ -432,7 +494,7 @@ exit showed `7350  7349  00:21 sleep 40` — the shell child is orphaned on exit
 
 ### 1.1.9 — network and state footprint
 
-Print (`evidence/1.1.9-print-net.txt`; `net.sh` runs `agy -p 'run: echo netprobe'
+Print (`evidence/1.1.9-print-net.txt`; `probe/net.sh` runs `agy -p 'run: echo netprobe'
 --output-format stream-json --sandbox=false --dangerously-skip-permissions --add-dir
 <WORKSPACE> --print-timeout 3m --model gpt-oss-120b-medium` in the background, samples
 `lsof -nP -a -i -p` / `lsof -nP -p` over the agy process tree every 0.3 s, reverse-resolves
@@ -440,7 +502,7 @@ the remote IPs, lists `~/.gemini` files newer than a marker, and counts URL host
 the CLI log):
 
 ```
-$ bash net.sh
+$ bash probe/net.sh
 --- remote-hosts ---
 13.107.246.38 
 142.250.100.132 yumciex-in-f132.1e100.net. 
@@ -489,11 +551,11 @@ knowledge.lock`, `conversation_summaries.db`, and the login Keychain
 (`security list-keychains` → `~/Library/Keychains/login.keychain-db`).
 
 Interactive (`evidence/1.1.9-interactive-net.txt`,
-`pane-captures/1.1.9-interactive-netprobe.txt`; `net-interactive.sh 150` sampled the
+`pane-captures/1.1.9-interactive-netprobe.txt`; `probe/net-interactive.sh 150` sampled the
 `agy-gate0` session's process tree for 150 s around the prompt `run: echo netprobe`):
 
 ```
-$ bash net-interactive.sh 150
+$ bash probe/net-interactive.sh 150
 --- remote-hosts ---
 172.217.113.4 
 172.217.115.4 
@@ -819,7 +881,7 @@ print lines.
 
 ### 1.1.18 — `--input-format stream-json`
 
-`evidence/1.1.18-print-input-format.txt`; `inputfmt.py <case>` drives
+`evidence/1.1.18-print-input-format.txt`; `probe/inputfmt.py <case>` drives
 `agy --input-format stream-json --output-format stream-json --sandbox=false
 --dangerously-skip-permissions --add-dir <WORKSPACE> --print-timeout 2m --model
 gpt-oss-120b-medium` over a pipe (`--conversation <id>` for `conv`, `--print-timeout
@@ -827,35 +889,35 @@ gpt-oss-120b-medium` over a pipe (`--conversation <id>` for `conv`, `--print-tim
 stdout record with a timestamp:
 
 ```
-$ python3 inputfmt.py eof
+$ python3 probe/inputfmt.py eof
 [   0.0] >> {"event": "user", "message": {"content": "reply with exactly: before-eof"}}
 [   2.4] init {"model": "gpt-oss-120b-medium", "cwd": "<WORKSPACE>", "permission_mode": "always-proceed"}
 [   6.2] result {"conversation_id": "<CONVERSATION_ID>", "status": "SUCCESS", "duration_seconds": 3.528411, "num_turns": 1, "usage": {"input_tokens": 12103, "output_tokens": 39, "thinking_tokens": 0, "cache_read_tokens": 0, "total_tokens": 12142}}
 [   6.3] closing stdin (EOF)
 [   6.4] exit code 0
-$ python3 inputfmt.py conv <CONVERSATION_ID>
+$ python3 probe/inputfmt.py conv <CONVERSATION_ID>
 [   4.0] result {"conversation_id": "<CONVERSATION_ID>", "status": "SUCCESS", "duration_seconds": 901.527079, "num_turns": 3, "usage": {"input_tokens": 37926, "output_tokens": 180, "thinking_tokens": 0, "cache_read_tokens": 0, "total_tokens": 38106}}
 [   4.1] >> {"event": "user", "message": {"content": "what did you reply last time? one word"}}
 [  47.6] result {"conversation_id": "<CONVERSATION_ID>", "status": "SUCCESS", "duration_seconds": 945.000829, "num_turns": 4, "usage": {"input_tokens": 51024, "output_tokens": 242, "thinking_tokens": 0, "cache_read_tokens": 0, "total_tokens": 51266}}
 [  47.7] exit code 0
-$ python3 inputfmt.py idle            # --print-timeout 20s, 25 s idle between turns
+$ python3 probe/inputfmt.py idle            # --print-timeout 20s, 25 s idle between turns
 alive after idle: True
 [  41.8] result {"conversation_id": "<CONVERSATION_ID>", "status": "SUCCESS", "duration_seconds": 38.644318, "num_turns": 2, "usage": {"input_tokens": 24928, "output_tokens": 90, "thinking_tokens": 0, "cache_read_tokens": 0, "total_tokens": 25018}}
-$ python3 inputfmt.py cancel
+$ python3 probe/inputfmt.py cancel
 [  20.8] step_update {"conversation_id": "<CONVERSATION_ID>", "step_index": 3, "state": "ACTIVE", "step_type": "tool", "tool_name": "run_command", "tool_info": {"name": "run_command", "parameters": {"CommandLine": "sleep 30; echo slept"}}}
 [  21.1] sending SIGINT to agy pid 88685
 [  21.2] result {"conversation_id": "<CONVERSATION_ID>", "status": "ERROR", "error": "context canceled", "duration_seconds": 18.736567, "num_turns": 1, "usage": {"input_tokens": 12100, "output_tokens": 362, "thinking_tokens": 0, "cache_read_tokens": 0, "tot
 [  24.2] alive after SIGINT: False rc=1
-$ python3 inputfmt.py shapes          # launch with -p
+$ python3 probe/inputfmt.py shapes          # launch with -p
 process exited rc=2
 flag needs an argument: -p
-$ python3 inputfmt.py shapes2         # raw text line on stdin
+$ python3 probe/inputfmt.py shapes2         # raw text line on stdin
 [   2.8] result {"conversation_id": "<CONVERSATION_ID>", "status": "ERROR", "error": "failed to decode stream input: invalid character 'r' looking for beginning of value", "duration_seconds": 0, "num_turns": 0, "usage": {"input_tokens": 0, "output_tokens": 
 process exited rc=1
-$ python3 inputfmt.py shapes3         # {"prompt": ...} without "event"
+$ python3 probe/inputfmt.py shapes3         # {"prompt": ...} without "event"
 [   2.3] result {"conversation_id": "<CONVERSATION_ID>", "status": "ERROR", "error": "stream input message is missing the \"event\" field", "duration_seconds": 0, "num_turns": 0, "usage": {"input_tokens": 0, "output_tokens": 0, "thinking_tokens": 0, "cache_
 process exited rc=1
-$ python3 inputfmt.py shapes4         # bogus event, then text, then content blocks
+$ python3 probe/inputfmt.py shapes4         # bogus event, then text, then content blocks
 [   0.0] >> {"event": "bogus_event"}
 [  60.1] >> {"event": "user", "message": {"content": "reply with exactly: beta"}}
 [  65.9] result {"conversation_id": "<CONVERSATION_ID>", "status": "SUCCESS", "duration_seconds": 5.568657, "num_turns": 1, "usage": {"input_tokens": 12762, "output_tokens": 49, "thinking_tokens": 0, "cache_read_tokens": 0, "total_tokens": 12811}}
@@ -986,12 +1048,12 @@ $ python3 -c "import json; m=json.load(open('transcript-manifest.json')); [print
 ```
 
 Interactive conversation of the pass-3 session (`evidence/1.1.22-interactive-layout.txt`;
-`layout.py <id>` lists `brain/<id>` with sizes, `cmp`s each chunk against its parent,
+`probe/layout.py <id>` lists `brain/<id>` with sizes, `cmp`s each chunk against its parent,
 counts `source/type` pairs in `transcript_full.jsonl`, and prints records matching
 the given needles):
 
 ```
-$ python3 layout.py <CONVERSATION_ID> "exited with code 7" "exit status 1" "exit status 2" overwritten-by-hook "not in allowed set"
+$ python3 probe/layout.py <CONVERSATION_ID> "exited with code 7" "exit status 1" "exit status 2" overwritten-by-hook "not in allowed set"
    56588 .system_generated/logs/chunks/transcript/00000000.jsonl
    56360 .system_generated/logs/chunks/transcript_full/00000000.jsonl
    56588 .system_generated/logs/transcript.jsonl

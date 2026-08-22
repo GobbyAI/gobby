@@ -4,13 +4,18 @@ Asserts the committed fixture set answers every probe record with a literal comm
 observed output, covers both modes with live camelCase payloads, carries a daemon-side
 receipt per mode and tool class, cites a print artifact and a committed pane capture
 for every live-turn record (the live-record set is derived from the README outcome
-table's ``Modes`` column), keeps every pane capture's body real, and is scrubbed.
+table's ``Modes`` column), keeps every pane capture's body real, correlates every
+evidence file's command with its README record and every cited helper with a committed,
+parseable ``probe/`` script, keeps every free-text prompt inside the README's enumerated
+probe-prompt list, and is scrubbed.
 """
 
 from __future__ import annotations
 
+import ast
 import json
 import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +48,37 @@ PANE_CITE_RE = re.compile(r"(?:pane-captures/|`|\(|\s)(1\.1\.\d+-interactive[\w-
 PANE_FAMILY_RE = re.compile(r"pane-captures/(1\.1\.\d+)-interactive-\*\.txt")
 PANE_BRACE_RE = re.compile(r"pane-captures/(1\.1\.\d+-interactive)-\{([\w,-]+)\}\.txt")
 EVIDENCE_CITE_RE = re.compile(r"evidence/(1\.1\.\d+-[\w.-]+)\.txt")
+HELPER_CITE_RE = re.compile(r"(?:^|\s)(?:bash|python3)\s+(\S+\.(?:sh|py))\b")
+ANNOTATED_COMMAND_RE = re.compile(r"\s{2,}\(.*\)\s*$")
+COMMENT_RE = re.compile(r"\s{2,}#.*$")
+# README shorthands for the common print-mode flag sets (defined in "Record evidence"
+# and in record 1.1.24); evidence files spell them out.
+FLAG_SHORTHANDS = (
+    (
+        "$F'",
+        "--output-format stream-json --sandbox=false --add-dir <WORKSPACE> --print-timeout 3m"
+        " --dangerously-skip-permissions",
+    ),
+    (
+        "$F",
+        "--output-format stream-json --sandbox=false --dangerously-skip-permissions"
+        " --print-timeout 4m --add-dir <WORKSPACE>",
+    ),
+)
+GROUNDING_RE = re.compile(
+    r"(^|[\s;|(/])(agy|antigravity|tmux)\b|<WORKSPACE>|<PROBE_SCRATCH>|~/\.gemini/"
+)
+# Prompt positions: `-p` arguments, `send-keys -l` arguments, stream-json stdin lines
+# logged by probe/inputfmt.py, and the interactive pane's `> ` echo of the user line.
+SQ, DQ = r"'([^']*)'", r'"((?:[^"\\]|\\.)*)"'
+PROMPT_ARG_RE = re.compile(rf"(?:^|\s)-p\s+(?:{SQ}|{DQ})")
+SENDKEYS_ARG_RE = re.compile(rf"send-keys\s+-t\s+\S+\s+-l\s+(?:{SQ}|{DQ})")
+STDIN_LINE_RE = re.compile(r"^\[\s*[\d.]+\]\s>> (.*)$", re.MULTILINE)
+PANE_ECHO_RE = re.compile(r"^> (.+)$", re.MULTILINE)
+BARE_SLASH_COMMAND_RE = re.compile(r"^/[a-z-]+$")
+# Pane lines rendered after the `> ` glyph that are UI, not user prompts: the slash-command
+# menu, a numbered permission choice, the plan-mode status line, an approved-plan marker.
+PANE_UI_RE = re.compile(r"^(/\S*(\s{2,}.*)?|\d+\. \S.*|Plan mode: .*|\[Approved\] .*)$")
 SCRUB_CHECKS = {
     "absolute user path": re.compile(r"/Users/|/home/[a-z]"),
     "non-brain app-data path": re.compile(r"antigravity-cli/(?!brain/<CONVERSATION_ID>)"),
@@ -137,6 +173,61 @@ def _pane_body(path: Path) -> list[str]:
     return [line for line in lines[3:] if line.strip() and not line.startswith("# ")]
 
 
+def _command(line: str) -> str:
+    """A `$ ` line with its trailing `  # comment` dropped and README shorthands expanded."""
+    text = COMMENT_RE.sub("", line).rstrip()
+    for short, full in FLAG_SHORTHANDS:
+        text = text.replace(short, full)
+    return text
+
+
+def _quoted(match: re.Match[str]) -> str:
+    single, double = match.group(1), match.group(2)
+    return single if single is not None else double.replace('\\"', '"')
+
+
+def _stdin_prompt(raw: str) -> str:
+    """The prompt text inside a stream-json stdin line (raw text when it is not JSON)."""
+    try:
+        obj = json.loads(raw)
+    except ValueError:
+        return raw
+    if not isinstance(obj, dict):
+        return raw
+    if "prompt" in obj:
+        return str(obj["prompt"])
+    content = (obj.get("message") or {}).get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        texts = [b.get("text") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+        return "\n".join(str(t) for t in texts)
+    return ""
+
+
+def _probe_prompts() -> list[str]:
+    text = _readme()
+    start = text.index("## Probe prompts")
+    end = text.index("## ", start + 1)
+    return _fenced_lines(text[start:end])
+
+
+def _prompt_positions(path: Path) -> list[tuple[int, str]]:
+    """Every (line number, prompt text) position in a fixture file."""
+    text = path.read_text(encoding="utf-8")
+    found: list[tuple[int, str]] = []
+    for number, line in enumerate(text.splitlines(), start=1):
+        found.extend((number, _quoted(m)) for m in PROMPT_ARG_RE.finditer(line))
+        found.extend((number, _quoted(m)) for m in SENDKEYS_ARG_RE.finditer(line))
+        stdin = STDIN_LINE_RE.match(line)
+        if stdin:
+            found.append((number, _stdin_prompt(stdin.group(1))))
+        echo = PANE_ECHO_RE.match(line)
+        if echo and path.parent == PANES and not PANE_UI_RE.match(echo.group(1).rstrip()):
+            found.append((number, echo.group(1).rstrip()))
+    return [(number, prompt) for number, prompt in found if prompt]
+
+
 def test_fixture_set_is_complete() -> None:
     expected = {
         "README.md",
@@ -184,6 +275,68 @@ def test_record_has_literal_command_and_observed_output(record: str) -> None:
     cited_evidence = set(EVIDENCE_CITE_RE.findall(section))
     for name in cited_evidence:
         assert (EVIDENCE / f"{name}.txt").is_file(), f"{record} cites missing evidence/{name}.txt"
+    # every command is grounded in the probe: an agy/tmux invocation, a committed fixture or
+    # helper path, or a probe-environment path; a heredoc command is grounded by its body
+    fixture_names = {str(p.relative_to(AGY_ROOT)) for p in _fixture_files()}
+    fixture_names |= {p.name for p in _fixture_files()}
+    block = "\n".join(fenced)
+    for line in commands:
+        command = _command(line)
+        scope = block if command.endswith("<<'EOF'") else command
+        grounded = GROUNDING_RE.search(scope) or any(name in scope for name in fixture_names)
+        assert grounded, f"{record}: command not grounded in the probe: {line[:120]!r}"
+        assert not ANNOTATED_COMMAND_RE.search(line), f"{record}: annotated command {line[:120]!r}"
+
+
+@pytest.mark.parametrize("path", sorted(EVIDENCE.glob("*.txt")), ids=lambda p: p.stem)
+def test_evidence_file_commands_are_the_readme_record_commands(path: Path) -> None:
+    record = path.name.split("-", 1)[0]
+    readme_commands = {
+        _command(line)
+        for line in _fenced_lines(_record_sections()[record])
+        if line.startswith("$ ")
+    }
+    evidence_commands = {
+        _command(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.startswith("$ ")
+    }
+    assert evidence_commands & readme_commands, (
+        f"{path.name}: none of its commands appear in README record {record}: "
+        f"{sorted(evidence_commands)[:2]}"
+    )
+
+
+def test_cited_helpers_are_committed_and_parse() -> None:
+    """Every `bash`/`python3` helper a command cites is a committed probe/ script that parses."""
+    cited: dict[str, set[str]] = {}
+    sources = [README, *sorted(EVIDENCE.glob("*.txt"))]
+    for path in sources:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.startswith("$ "):
+                continue
+            assert not ANNOTATED_COMMAND_RE.search(line), f"{path.name}: annotated command {line!r}"
+            for helper in HELPER_CITE_RE.findall(_command(line)):
+                cited.setdefault(helper, set()).add(path.name)
+    assert cited, "no helper citations found"
+    for helper in cited:
+        assert helper.startswith("probe/"), (
+            f"{helper} cited outside probe/ by {sorted(cited[helper])}"
+        )
+        assert (AGY_ROOT / helper).is_file(), f"{helper} is not committed ({sorted(cited[helper])})"
+    expected = {
+        "probe/cancel.sh",
+        "probe/net.sh",
+        "probe/net-interactive.sh",
+        "probe/inputfmt.py",
+        "probe/layout.py",
+    }
+    assert expected <= set(cited), sorted(expected - set(cited))
+    for script in sorted((AGY_ROOT / "probe").iterdir()):
+        if script.suffix == ".py":
+            ast.parse(script.read_text(encoding="utf-8"), filename=str(script))
+        elif script.suffix == ".sh":
+            subprocess.run(["bash", "-n", str(script)], check=True, timeout=30)
 
 
 def _record_order(record: str) -> int:
@@ -395,10 +548,40 @@ def test_gate0_capture_hook_removed_after_probe() -> None:
         assert names == ["gobby"], names
 
 
+def test_probe_prompt_list_holds_the_fixed_prompts() -> None:
+    prompts = _probe_prompts()
+    assert len(prompts) == len(set(prompts)), "duplicate probe prompts"
+    fixed = {
+        "list the files in this directory",
+        "run: ls -la",
+        "call the gobby list_mcp_servers tool and report the result",
+    }
+    assert fixed <= set(prompts), sorted(fixed - set(prompts))
+    assert not any(BARE_SLASH_COMMAND_RE.match(p) for p in prompts), (
+        "slash commands are not prompts"
+    )
+
+
+@pytest.mark.parametrize("path", _fixture_files(), ids=lambda p: str(p.relative_to(AGY_ROOT)))
+def test_fixture_prompts_are_placeholders_or_listed_probe_prompts(path: Path) -> None:
+    """Plan §1.1: free-text prompts are `<PROMPT_TEXT>` unless listed under "Probe prompts"."""
+    if path.parent == AGY_ROOT / "probe":
+        return
+    allowed = set(_probe_prompts())
+    for number, prompt in _prompt_positions(path):
+        if prompt == "<PROMPT_TEXT>" or BARE_SLASH_COMMAND_RE.match(prompt) or prompt == "<prompt>":
+            continue
+        assert prompt in allowed, f"{path.name}:{number}: unlisted prompt {prompt!r}"
+
+
 @pytest.mark.parametrize("path", _fixture_files(), ids=lambda p: str(p.relative_to(AGY_ROOT)))
 def test_fixture_is_scrubbed(path: Path) -> None:
+    checks = dict(SCRUB_CHECKS)
+    if path.parent == AGY_ROOT / "probe":
+        # helpers address the live app-data tree at run time; only their captured output is scrubbed
+        del checks["non-brain app-data path"]
     for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        for name, pattern in SCRUB_CHECKS.items():
+        for name, pattern in checks.items():
             match = pattern.search(line)
             assert match is None, (
                 f"{path.name}:{number}: {name}: {line[max(0, match.start() - 40) : match.end() + 20]!r}"

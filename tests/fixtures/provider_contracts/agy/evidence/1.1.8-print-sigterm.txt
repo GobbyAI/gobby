@@ -1,4 +1,4 @@
-$ bash cancel.sh TERM
+$ bash probe/cancel.sh TERM
 --- report ---
 agy pid 24945
 --- before signal (t=19s)

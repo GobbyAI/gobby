@@ -1,4 +1,4 @@
-$ bash cancel.sh INT   (cancel.sh: see README 1.1.8)
+$ bash probe/cancel.sh INT
 --- report ---
 agy pid 19670
 --- before signal (t=9s)

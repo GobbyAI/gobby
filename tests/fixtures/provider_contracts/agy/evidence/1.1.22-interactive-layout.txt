@@ -1,5 +1,4 @@
-$ python3 layout.py <CONVERSATION_ID> "exit code 7" "exit status 1" "exit status 2" overwritten-by-hook "not in allowed set"   (layout.py: see README 1.1.22)
---- 1.1.22-interactive-layout.txt ---
+$ python3 probe/layout.py <CONVERSATION_ID> "exited with code 7" "exit status 1" "exit status 2" overwritten-by-hook "not in allowed set"
    56588 .system_generated/logs/chunks/transcript/00000000.jsonl
    56360 .system_generated/logs/chunks/transcript_full/00000000.jsonl
    56588 .system_generated/logs/transcript.jsonl

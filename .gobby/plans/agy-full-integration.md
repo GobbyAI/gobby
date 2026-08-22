@@ -440,8 +440,8 @@ and AGY has no spawn path or session row yet. Use tmux directly, mirroring
 3. Send a prompt: `tmux send-keys -t agy-gate0 -l '<fixed probe prompt>'` then
    `tmux send-keys -t agy-gate0 Enter`. Use three prompts: one that invokes a
    built-in tool (`list the files in this directory`), one that runs a shell command
-   (`run: ls -la`), one that calls the gobby MCP server (`call the gobby list_tools
-   tool`).
+   (`run: ls -la`), one that calls the gobby MCP server (`call the gobby
+   list_mcp_servers tool and report the result`).
 4. Capture the pane after each turn (`capture-pane -p -S -200`) and keep it as the
    interactive evidence for 1.1.14/1.1.23 menus and 1.1.3 cwd.
 5. Interrupt a long turn with `tmux send-keys -t agy-gate0 C-c` for 1.1.8's
@@ -466,7 +466,12 @@ the proof it is gone.
 → `<CONVERSATION_ID>` everywhere it appears (payload, paths, env); the throwaway
 workspace → `<WORKSPACE>`; `artifactDirectoryPath` keeps its shape with the id
 replaced; `modelName` is kept verbatim (product name, not account data); free-text
-prompts → `<PROMPT_TEXT>` unless they are one of the three fixed probe prompts; tool
+prompts → `<PROMPT_TEXT>` unless they are run-authored probe prompts enumerated verbatim
+in the fixture README's "Probe prompts" list (the three fixed probe prompts are members;
+bare slash commands such as `/usage` are commands, not prompts) — the fixture contract
+test extracts every prompt position (`-p` arguments, `send-keys -l` arguments,
+stream-json stdin lines, interactive pane `>` echoes) and fails on any prompt outside
+that list; tool
 output over 4 KiB is truncated to the first and last 1 KiB with a
 `<TRUNCATED n bytes>` marker (the >64 KiB sample 1.1.6 asked for cannot exist: AGY
 itself caps tool output at ~8 KiB with its own `<truncated N bytes>` marker, which
