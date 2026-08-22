@@ -170,7 +170,7 @@ def parse_symbol_targets(
         if section.kind is not Kind.deliverable:
             continue
         for line in iter_target_block_lines(plan_doc, section):
-            parsed, line_issues = _parse_target_line(line, section.section_id)
+            parsed, line_issues = parse_target_line(line, section.section_id)
             targets.extend(parsed)
             issues.extend(line_issues)
 
@@ -310,10 +310,11 @@ def validate_symbol_targets(
     )
 
 
-def _parse_target_line(
+def parse_target_line(
     line: str,
     section_id: str,
 ) -> tuple[list[SymbolTarget], list[SymbolValidationIssue]]:
+    """Parse one Targets-block line into targets plus any parse issues."""
     reason_match = _SCOPE_REASON_RE.search(line)
     if reason_match is not None:
         target_text = line[: reason_match.start()]

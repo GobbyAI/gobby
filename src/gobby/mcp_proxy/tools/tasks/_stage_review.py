@@ -25,7 +25,7 @@ from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.mcp_proxy.tools.tasks._task_scope import evaluate_task_scope
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import PlanReviewEvidence, ReviewEvidenceError
-from gobby.plans.review_findings import FINDING_SEVERITIES
+from gobby.plans.review_findings import FINDING_ITEM_SCHEMA
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.tasks._stage_views import stage_state_operation_view
 from gobby.tasks.state_semantics import get_claimed_session_id
@@ -667,60 +667,7 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
                 "round_number": {"type": ["integer", "null"]},
                 "findings": {
                     "type": ["array", "null"],
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "finding_id": {"type": "string"},
-                            "section_id": {"type": "string"},
-                            "check_key": {"type": "string"},
-                            "severity": {
-                                "type": "string",
-                                "enum": sorted(FINDING_SEVERITIES),
-                            },
-                            "category": {
-                                "type": "string",
-                                "enum": [
-                                    "missing-requirement",
-                                    "bad-sequencing",
-                                    "unhandled-edge",
-                                    "weak-testability",
-                                    "traceability",
-                                    "over-engineering",
-                                    "gobby-format",
-                                ],
-                            },
-                            "location": {"type": "string"},
-                            "description": {"type": "string"},
-                            "fix": {"type": "string"},
-                            "prevention": {"type": "string"},
-                            "principle": {"type": "string"},
-                            "root_cause": {"type": "string"},
-                            "introduced_in_round": {"type": "integer", "minimum": 1},
-                            "causal_finding_id": {"type": "string"},
-                            "participating_section_ids": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "uniqueItems": True,
-                            },
-                            "causal_section_ids": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "uniqueItems": True,
-                            },
-                        },
-                        "required": [
-                            "finding_id",
-                            "section_id",
-                            "check_key",
-                            "severity",
-                            "category",
-                            "location",
-                            "description",
-                            "fix",
-                            "prevention",
-                        ],
-                        "additionalProperties": False,
-                    },
+                    "items": FINDING_ITEM_SCHEMA,
                 },
                 "coverage_attestation": {"type": ["object", "null"]},
                 "evidence_id": {"type": ["string", "null"]},

@@ -261,6 +261,7 @@ async def test_stop_agent_run_happy_path_call_order() -> None:
         "run_id": "run-123",
         "status": "cancelled",
         "terminal_reason": "user_cancelled",
+        "agent_step_instances_deleted": None,
     }
     assert call_order == ["kill", "terminalize", "cleanup"]
     kill_agent_process.assert_awaited_once_with(

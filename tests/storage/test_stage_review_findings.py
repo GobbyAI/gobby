@@ -190,6 +190,51 @@ def test_server_side_evidence_resolution(stage_review_setup: StageReviewSetup) -
         )
 
 
+def test_rejection_persists_repairs_without_editing_plan(
+    stage_review_setup: StageReviewSetup,
+) -> None:
+    evidence_id, run_id = _prepare_bound(stage_review_setup)
+    plan_before = stage_review_setup.plan_path.read_bytes()
+    repairs = [
+        {"kind": "add_targets", "section_id": "1.1", "entries": ["`src/consumer.py`"]},
+        {
+            "kind": "add_acceptance",
+            "section_id": "1.1",
+            "items": [{"prose": "Consumer updated", "artifact": "file: `src/consumer.py`"}],
+        },
+    ]
+    findings = _findings()[:1]
+    findings[0]["category"] = "traceability"
+    findings[0]["repairs"] = repairs
+
+    updated = stage_review_setup.manager.reject_review(
+        stage_review_setup.task_id,
+        "planning",
+        findings=findings,
+        coverage_attestation=coverage_attestation(
+            evidence_id=evidence_id,
+            shadow_valid=False,
+        ),
+        evidence_id=evidence_id,
+        round_number=1,
+        dispatch_run_id=run_id,
+    )
+
+    description = updated.description or ""
+    assert "**Repairs:**" in description
+    assert "- add_targets 1.1: `src/consumer.py`" in description
+    assert "- add_acceptance 1.1: Consumer updated. file: `src/consumer.py`" in description
+    fence_findings = _fence(description)["findings"]
+    assert isinstance(fence_findings, list)
+    assert fence_findings[0]["repairs"] == repairs
+    evidence = stage_review_setup.evidence.get_evidence(evidence_id)
+    assert evidence.round_result is not None
+    stored_findings = evidence.round_result["findings"]
+    assert isinstance(stored_findings, list)
+    assert stored_findings[0]["repairs"] == repairs
+    assert stage_review_setup.plan_path.read_bytes() == plan_before
+
+
 def test_free_text_rejection_fallback(stage_review_setup: StageReviewSetup) -> None:
     updated = stage_review_setup.manager.reject_review(
         stage_review_setup.task_id,

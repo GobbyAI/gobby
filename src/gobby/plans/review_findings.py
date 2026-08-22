@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from typing import Any
 
 from gobby.plans.review_evidence_models import (
     PlanReviewEvidence,
@@ -10,6 +11,7 @@ from gobby.plans.review_evidence_models import (
     canonical_json_bytes,
     canonical_json_object,
 )
+from gobby.plans.review_repairs import REPAIR_SCHEMA, validate_finding_repairs
 
 FINDING_SEVERITIES = frozenset({"blocking", "nit"})
 FINDING_CATEGORIES = frozenset(
@@ -42,8 +44,34 @@ _ALLOWED_FIELDS = frozenset(
         *_OPTIONAL_STRING_FIELDS,
         *_SECTION_SET_FIELDS,
         "introduced_in_round",
+        "repairs",
     }
 )
+_STRING_SCHEMA = {"type": "string"}
+_SECTION_SET_SCHEMA = {"type": "array", "items": {"type": "string"}, "uniqueItems": True}
+FINDING_ITEM_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "finding_id": _STRING_SCHEMA,
+        "section_id": _STRING_SCHEMA,
+        "check_key": _STRING_SCHEMA,
+        "severity": {"type": "string", "enum": sorted(FINDING_SEVERITIES)},
+        "category": {"type": "string", "enum": sorted(FINDING_CATEGORIES)},
+        "location": _STRING_SCHEMA,
+        "description": _STRING_SCHEMA,
+        "fix": _STRING_SCHEMA,
+        "prevention": _STRING_SCHEMA,
+        "principle": _STRING_SCHEMA,
+        "root_cause": _STRING_SCHEMA,
+        "introduced_in_round": {"type": "integer", "minimum": 1},
+        "causal_finding_id": _STRING_SCHEMA,
+        "participating_section_ids": _SECTION_SET_SCHEMA,
+        "causal_section_ids": _SECTION_SET_SCHEMA,
+        "repairs": REPAIR_SCHEMA,
+    },
+    "required": list(_REQUIRED_STRING_FIELDS),
+    "additionalProperties": False,
+}
 
 
 def validate_plan_review_findings(
@@ -98,6 +126,11 @@ def render_rejection_section(
                 "",
             ]
         )
+        repairs = finding.get("repairs")
+        if isinstance(repairs, list) and repairs:
+            lines.append("**Repairs:**")
+            lines.extend(_render_repair(repair) for repair in repairs)
+            lines.append("")
     envelope = {
         "evidence_id": evidence.evidence_id,
         "findings": list(findings),
@@ -146,6 +179,14 @@ def _validate_finding(
                 section_ids=section_ids,
             )
 
+    if "repairs" in raw:
+        raw["repairs"] = validate_finding_repairs(
+            raw["repairs"],
+            prefix=prefix,
+            category=str(raw["category"]),
+            section_ids=section_ids,
+        )
+
     causal_fields = {"introduced_in_round", "causal_finding_id", "causal_section_ids"}
     supplied_causal_fields = causal_fields.intersection(raw)
     if supplied_causal_fields and supplied_causal_fields != causal_fields:
@@ -156,6 +197,28 @@ def _validate_finding(
         if not isinstance(introduced, int) or isinstance(introduced, bool) or introduced < 1:
             raise _invalid(f"{prefix}.introduced_in_round must be a positive integer")
     return raw
+
+
+def _render_repair(repair: object) -> str:
+    if not isinstance(repair, Mapping):
+        return f"- {repair}"
+    kind = repair.get("kind")
+    section_id = repair.get("section_id")
+    if kind == "add_acceptance":
+        items = repair.get("items")
+        rendered = (
+            "; ".join(
+                f"{item.get('prose')}. {item.get('artifact')}"
+                for item in items
+                if isinstance(item, Mapping)
+            )
+            if isinstance(items, list)
+            else ""
+        )
+    else:
+        payload = repair.get("entries" if kind == "add_targets" else "on")
+        rendered = ", ".join(str(value) for value in payload) if isinstance(payload, list) else ""
+    return f"- {kind} {section_id}: {rendered}"
 
 
 def _validate_section_set(
