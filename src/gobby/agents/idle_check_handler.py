@@ -54,9 +54,13 @@ class IdleCheckHandler:
         run_db: Callable[..., Awaitable[Any]] | None = None,
         attention_manager: AttentionStateManager | None = None,
         attention_metadata_store: AttentionMetadataStore | None = None,
+        is_parked: Callable[[str], bool] | None = None,
     ) -> None:
         self._agent_run_manager = agent_run_manager
         self.db = db
+        # session_id -> awaiting a subscribed completion (wait_for_agent parks the
+        # turn; the daemon wakes the session with the result).
+        self._is_parked = is_parked
         self._get_session_manager = get_session_manager
         self._tmux = tmux
         self._idle_detector = idle_detector
@@ -200,6 +204,10 @@ class IdleCheckHandler:
         session_stale = False
         session_recent = False
         session_id = run.child_session_id
+        if session_id and self._is_parked is not None and self._is_parked(session_id):
+            logger.debug("Agent %s is parked on a subscribed completion; not idle", run.id)
+            idle_detector.reset_idle(run.id)
+            return 0
         session_manager = self._get_session_manager()
         session: Session | None = None
 
@@ -248,6 +256,14 @@ class IdleCheckHandler:
             logger.info("Agent %s hit context window limit - failing", run.id)
             await self._recovery._fail_idle_agent(run, reason="context window exhausted")
             return 1
+
+        if idle_detector.has_turn_in_flight(pane_output):
+            # The provider is mid-turn (thinking phases write nothing to the
+            # transcript for minutes); reprompting would queue junk into a live
+            # turn. Stagnation deferral bounds a frozen spinner separately.
+            logger.debug("Agent %s shows a turn in flight; not idle", run.id)
+            idle_detector.reset_idle(run.id)
+            return 0
 
         if status == "active" and not capacity_candidate:
             if (

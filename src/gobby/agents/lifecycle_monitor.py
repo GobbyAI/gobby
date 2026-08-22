@@ -202,6 +202,9 @@ class AgentLifecycleMonitor:
             prompt_detector=self._prompt_detector,
             stall_classifier=self._stall_classifier,
             watchdog_readers=self._watchdog_readers,
+            is_parked=(
+                completion_registry.is_awaiting if completion_registry is not None else None
+            ),
         )
 
         self._checkpoint_manager = (
@@ -582,7 +585,7 @@ class AgentLifecycleMonitor:
             except Exception as e:
                 logger.warning("Autonomous stuck detection failed for %s: %s", session_id, e)
                 continue
-            if not result.is_stuck:
+            if not result.is_stuck or self._parked_on_completion(session_id, result):
                 self._stuck_interventions.pop(run.id, None)
                 self._draft_grace_observations.pop(run.id, None)
                 continue
@@ -590,7 +593,7 @@ class AgentLifecycleMonitor:
             fingerprint = self._stuck_intervention_fingerprint(result)
             if self._stuck_interventions.get(run.id) == fingerprint:
                 continue
-            if await self._defer_stagnation_for_unsubmitted_input(run, result):
+            if await self._defer_stagnation_for_live_pane(run, result):
                 continue
             self._stuck_interventions[run.id] = fingerprint
 
@@ -616,12 +619,26 @@ class AgentLifecycleMonitor:
             inc_counter("agent_lifecycle_autonomous_stuck_detected_total", handled)
         return handled
 
-    async def _defer_stagnation_for_unsubmitted_input(
+    def _parked_on_completion(self, session_id: str, result: StuckDetectionResult) -> bool:
+        """Quiet by design: the session awaits a subscribed completion (wait_for_agent)."""
+        return (
+            result.layer == "progress_stagnation"
+            and self._completion_registry is not None
+            and self._completion_registry.is_awaiting(session_id)
+        )
+
+    async def _defer_stagnation_for_live_pane(
         self,
         run: AgentRun,
         result: StuckDetectionResult,
     ) -> bool:
-        """Defer fatal progress stagnation while visible draft input keeps changing."""
+        """Defer fatal progress stagnation while the pane keeps changing.
+
+        Two live shapes qualify: draft input being typed at the prompt, and the
+        provider's in-flight turn spinner, whose elapsed-time counter advances
+        through thinking phases that emit no progress events. A frozen pane keeps
+        one fingerprint, so the grace window still expires on a hung CLI.
+        """
         if result.layer != "progress_stagnation" or result.suggested_action not in {
             "stop",
             "escalate",
@@ -647,9 +664,10 @@ class AgentLifecycleMonitor:
             self._draft_grace_observations.pop(run.id, None)
             return False
 
-        draft_fingerprint = self._idle_detector.for_provider(
-            run.provider
-        ).unsubmitted_input_fingerprint(pane_output)
+        detector = self._idle_detector.for_provider(run.provider)
+        draft_fingerprint = detector.turn_in_flight_fingerprint(
+            pane_output
+        ) or detector.unsubmitted_input_fingerprint(pane_output)
         if draft_fingerprint is None:
             self._draft_grace_observations.pop(run.id, None)
             return False
@@ -661,7 +679,7 @@ class AgentLifecycleMonitor:
             self._draft_grace_observations[run.id] = (draft_fingerprint, now)
             logger.info(
                 "Deferring autonomous progress stagnation for run %s by %s seconds: "
-                "unsubmitted input is visible",
+                "the pane shows live input or a turn in flight",
                 run.id,
                 grace_seconds,
             )

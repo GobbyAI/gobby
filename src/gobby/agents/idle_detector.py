@@ -95,6 +95,31 @@ class IdleDetector:
         """Return whether pane output shows text typed at a prompt but not submitted."""
         return self.unsubmitted_input_fingerprint(pane_output) is not None
 
+    def turn_in_flight_fingerprint(self, pane_output: str) -> str | None:
+        """Fingerprint the provider's live turn indicator, when one is rendered.
+
+        Claude Code and Codex keep an elapsed-time spinner above the prompt for the
+        whole turn (``✻ Grooving… (7m 12s · still thinking with xhigh effort)``,
+        ``• Working (4m 58s • esc to interrupt)``), including long thinking phases
+        that write nothing to the transcript. The fingerprint follows the counter,
+        so a live turn keeps changing it while a frozen CLI does not.
+        """
+        manifest = self._manifest()
+        if manifest is None:
+            return None
+        lines = [
+            " ".join(line.split())
+            for line in pane_output.splitlines()
+            if manifest.match_rule("turn_in_flight", line.strip()).match is not None
+        ]
+        if not lines:
+            return None
+        return hashlib.sha256("\n".join(lines).encode()).hexdigest()
+
+    def has_turn_in_flight(self, pane_output: str) -> bool:
+        """Return whether the pane shows a provider turn still running."""
+        return self.turn_in_flight_fingerprint(pane_output) is not None
+
     def detect(self, pane_output: str) -> str:
         """Classify pane output as 'idle', 'context_full', or 'active'.
 

@@ -65,6 +65,13 @@ region = "whole_recent"
 line_regex = ['(?i)(?:Stop hook error|Rule enforced by Gobby)']
 
 [[rules]]
+id = "turn_in_flight"
+state = "working"
+priority = 695
+region = "whole_recent"
+line_regex = ['(?i)(?:^\s*[^\s\w]{1,2}\s+\S+\s*\((?:\d+h\s*)?(?:\d+m\s*)?\d+s\s*[·•]|\besc to interrupt\b)']
+
+[[rules]]
 id = "active_work"
 state = "working"
 priority = 690

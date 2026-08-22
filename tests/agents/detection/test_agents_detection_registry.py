@@ -93,6 +93,7 @@ def test_bundled_manifests_cover_supported_providers_and_rule_contract() -> None
         "provider_error",
         "context_full",
         "stop_hook_blocked",
+        "turn_in_flight",
         "active_work",
         "queued_continuation",
         "queued_message",

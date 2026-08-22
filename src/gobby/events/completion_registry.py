@@ -105,6 +105,18 @@ class CompletionEventRegistry:
         """Check if a completion event is registered."""
         return completion_id in self._events
 
+    def is_awaiting(self, session_id: str) -> bool:
+        """Return whether ``session_id`` subscribes to a completion not yet notified.
+
+        Such a session is parked by design (``wait_for_agent`` ends the turn and
+        the daemon wakes it with the result), so watchdogs must not read its quiet
+        pane as idle or stagnant.
+        """
+        return any(
+            session_id in subscribers and completion_id not in self._results
+            for completion_id, subscribers in self._subscribers.items()
+        )
+
     async def notify(
         self,
         completion_id: str,
