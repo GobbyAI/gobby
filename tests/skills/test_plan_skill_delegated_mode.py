@@ -66,7 +66,7 @@ def test_compact_self_interrupt_warning_is_shared_by_runtime_surfaces() -> None:
 
 
 def test_plan_skill_version(body: str) -> None:
-    assert 'version: "3.8.0"' in body
+    assert 'version: "3.9.0"' in body
 
 
 def test_plan_investigates_before_recommending_depth(body: str) -> None:
@@ -354,7 +354,9 @@ def test_adversary_presentation_contract(body: str) -> None:
     assert "Present every finding with its full text and metadata" in presentation
     assert "Record declined items and deferrals explicitly" in presentation
     assert "canonical payload verbatim as `round_result` to both calls" in presentation
-    assert "fails with `missing_round_result`" in presentation
+    assert (
+        "fails with `missing_round_result` unless a durable intent already exists" in presentation
+    )
     assert (
         "In unattended mode, the coordinator judges every item and records each vote with its "
         "rationale" in presentation
@@ -364,25 +366,38 @@ def test_adversary_presentation_contract(body: str) -> None:
         "Increment `completed_plan_review_rounds` only when finalization succeeds" in presentation
     )
     for recovery_detail in (
-        "Recovery: repairs applied before the checkpoint",
-        "get_plan_review_snapshot(evidence_id)",
-        "SHA-256 equals `plan_hash`",
-        "gobby-results:get_tool_result",
-        "plan_review_evidence.snapshot",
-        "byte-identically",
+        "### Recovery",
+        "`missing_round_result` or `stale_plan_evidence` from `append_plan_changelog_round`",
+        "re-call it with the canonical `round_result`",
+        "`missing_v1_checkpoint` from `finalize_plan_review_evidence`",
+        "call `append_plan_changelog_round` with the canonical payload, then finalize",
         "Never hand-build the fence",
     ):
         assert recovery_detail in presentation
+    for stale_detail in (
+        "Recovery: repairs applied before the checkpoint",
+        "byte-identically",
+        "get_plan_review_snapshot(evidence_id)",
+    ):
+        assert stale_detail not in presentation
 
-    evidence_protocol = body[
-        body.index("## Interactive Review Evidence Protocol") : body.index(
-            "## Waiting on Spawned Runs"
-        )
-    ]
-    assert "rejection-round freshness gate lives in `append_plan_changelog_round`" in (
-        evidence_protocol
+    evidence_protocol = _normalize_prose(
+        body[
+            body.index("## Interactive Review Evidence Protocol") : body.index(
+                "## Waiting on Spawned Runs"
+            )
+        ]
     )
-    assert "approval gate lives in `apply_plan_review_manifest`" in evidence_protocol
+    assert "rejection-round freshness gate" not in evidence_protocol
+    assert "Rejection rounds have no freshness gate" in evidence_protocol
+    assert (
+        "`append_plan_changelog_round` verifies reviewed bytes only for approved payloads"
+        in evidence_protocol
+    )
+    assert (
+        "The approval freshness gate lives in `apply_plan_review_manifest` and exists only in "
+        "step 1" in evidence_protocol
+    )
 
 
 def test_enhancement_changelog_uses_kind_enhancement(body: str) -> None:

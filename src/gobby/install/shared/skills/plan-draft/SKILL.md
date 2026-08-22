@@ -1,7 +1,7 @@
 ---
 name: plan-draft
 description: Methodology for drafting a gobby plan document — phases, task format, TDD compatibility, categories, hierarchy, and dependency notation. Use when drafting or revising a plan artifact.
-version: "1.2.0"
+version: "1.2.1"
 category: methodology
 internal: true
 triggers: plan drafting, plan format, plan specification
@@ -625,14 +625,16 @@ can do the work without outside context?
 
 ### 8. Derived Carriers Included
 
-Apply every matching row:
+Apply every matching row. The `derived-carriers` lint enforces only the
+carriers marked *linted*; the rest are advisory and the adversary checks them
+by reading the plan.
 
 | Trigger | Required Targets |
 | --- | --- |
-| `MIGRATIONS` or `baseline.sql` changes | `crates/gcore/assets/schema/catalog.manifest.json`<br>`crates/gcore/src/grant/bundle.rs`<br>`crates/gcore/tests/schema_contract.rs`<br>`crates/gdaemon/tests/cli_contract.rs`<br>`src/gobby/storage/schema_expected_identity.json`<br>`tests/runtime_grants/golden/*.json` |
-| A field is added to or changed on a `src/gobby/config/*.py` model | `crates/gcore/assets/config/runtime_config_contract.json` and the matching `tests/config/` test |
-| A model field is removed | Every constructor and assertion site found by a literal sweep |
-| A wire or protocol field is added | Every golden fixture plus `crates/gcore/src/grant/tests.rs` and `tests/runtime_grants/test_golden_vectors.py` |
+| Any path under `crates/gcore/assets/schema/migrations/`, `crates/gcore/assets/schema/baseline.sql`, or `crates/gcore/src/schema/assets.rs` | *Linted:* `crates/gcore/assets/schema/catalog.manifest.json`<br>`crates/gcore/src/grant/bundle.rs`<br>`crates/gcore/tests/schema_contract.rs`<br>`crates/gdaemon/tests/cli_contract.rs`<br>`src/gobby/storage/schema_expected_identity.json`<br>*Advisory (not linted):* `tests/runtime_grants/golden/*.json` |
+| Any `.py` under `src/gobby/config/` | *Linted:* `crates/gcore/assets/config/runtime_config_contract.json`<br>*Advisory (not linted):* the matching `tests/config/` test |
+| A model field is removed | *Advisory (not linted):* every constructor and assertion site found by a literal sweep |
+| A wire or protocol field is added | *Advisory (not linted):* every golden fixture plus `crates/gcore/src/grant/tests.rs` and `tests/runtime_grants/test_golden_vectors.py` |
 
 ### 9. Shared Targets Are Ordered
 
@@ -642,9 +644,11 @@ enforceable; the compiled manifest edge is.
 
 ### 10. Production Size Checked
 
-For every targeted hand-maintained production file within 150 lines of the
-1,000-line ceiling, record its current line count. The deliverable that grows
-the file names the split that keeps it below the ceiling.
+For every targeted hand-maintained production file currently at 850 lines or
+more, record its current line count. Any deliverable that targets the file adds
+a new same-extension bare-path Target and says `split` or `move` in the body
+paragraph that names both files; that is what the `production-size-growth` lint
+checks, and it keeps the file below the 1,000-line ceiling.
 
 ### Verification Output
 
@@ -659,7 +663,7 @@ Plan Verification:
 ✓ Task sections are self-contained
 ✓ Symbol Targets resolve against a fresh gcode index
 ✓ Consumer sweep recorded
-✓ Derived carriers included
+✓ Derived carriers included for every triggered contract
 ✓ Shared targets are ordered
 ✓ Production size checked
 
@@ -679,7 +683,7 @@ Plan Verification:
 ✓ Task sections are self-contained
 ✓ Symbol Targets resolve against a fresh gcode index
 ✓ Consumer sweep recorded
-✓ Derived carriers included
+✓ Derived carriers included for every triggered contract
 ✓ Shared targets are ordered
 ✓ Production size checked
 

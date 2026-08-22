@@ -1,7 +1,7 @@
 ---
 name: plan
 description: Adaptive /gobby plan workflow. Investigates first, recommends lightweight or full planning depth, requires decision elicitation, and preserves explicit human gates for artifact enhancement, adversarial review, and optional build handoff.
-version: "3.8.0"
+version: "3.9.0"
 category: core
 triggers: plan, specification, requirements
 metadata:
@@ -161,15 +161,17 @@ Start only after explicit adversarial-review approval.
    metadata, and collect one accept/decline vote per finding before editing.
    Record declined items and deferrals explicitly. In unattended mode, the
    coordinator judges every item and records each vote with its rationale.
-4. For a `needs_review` result, persist the rejection checkpoint on the unchanged
-   reviewed artifact before applying accepted repairs. Call
+4. For a `needs_review` result, persist the rejection checkpoint before applying
+   accepted repairs, so the checkpoint records the reviewed artifact and the
+   next round snapshots the repaired one. Call
    `append_plan_changelog_round(evidence_id, prose, round_result)`, then
    `finalize_plan_review_evidence(evidence_id, round_result)`. Pass the
    adversary's canonical payload verbatim as `round_result` to both calls; a
-   rejection round without it fails with `missing_round_result`. Only after both
-   calls succeed, apply accepted repairs and base-validate the artifact.
-   Increment `completed_plan_review_rounds` only when finalization succeeds;
-   display attempts, expired evidence, and incomplete rounds never count.
+   rejection round without it fails with `missing_round_result` unless a durable
+   intent already exists. Only after both calls succeed, apply accepted repairs
+   and base-validate the artifact. Increment `completed_plan_review_rounds`
+   only when finalization succeeds; display attempts, expired evidence, and
+   incomplete rounds never count.
 5. Present the checkpoint menu after every finalized round and any accepted
    repairs. Choosing
    `continue interactively` after `needs_review` revises and launches the next
@@ -190,21 +192,20 @@ Start only after explicit adversarial-review approval.
 
    Then present the checkpoint menu as the final-approval checkpoint.
 
-### Recovery: repairs applied before the checkpoint
+### Recovery
 
-If accepted repairs changed the artifact before the rejection checkpoint, save
-the revised file aside. Restore the reviewed bytes from
-`get_plan_review_snapshot(evidence_id)`: write its `snapshot` field back to the
-artifact and confirm the snapshot's SHA-256 equals `plan_hash`. Large tool
-results may be offloaded; page them with `gobby-results:get_tool_result`, or read
-the bytes from the `plan_review_evidence.snapshot` column through read-only
-database access.
+Both checkpoint calls are idempotent, so the remedy for every step-4 failure is
+to re-run the step with the canonical payload:
 
-On the restored artifact, call `append_plan_changelog_round` with the canonical
-`round_result`, then `finalize_plan_review_evidence` with that same payload.
-Splice the daemon-rendered `## V1 Plan Changelog` round entry — prose plus fence
-— byte-identically into the saved revised file, write that combined revision
-back to the artifact, and run base validation. Never hand-build the fence.
+- `missing_round_result` or `stale_plan_evidence` from `append_plan_changelog_round`:
+  the call ran without the adversary's payload (or with a different one), so
+  re-call it with the canonical `round_result`. A `needs_review` payload never
+  verifies reviewed bytes; accepted repairs applied early do not block it.
+- `missing_v1_checkpoint` from `finalize_plan_review_evidence`: the round fence
+  is not in `## V1 Plan Changelog` yet, so call `append_plan_changelog_round`
+  with the canonical payload, then finalize again.
+
+Never hand-build the fence; the daemon renders it on append.
 
 ## Universal Checkpoint and Handoff Contract
 
@@ -281,13 +282,13 @@ gated on the exact V1 fence and atomically stamps
 the recorder error, or `none` when no class is provable. Approval completes
 only after the status leaves `pending`.
 
-The rejection-round freshness gate lives in `append_plan_changelog_round`; the
-approval gate lives in `apply_plan_review_manifest`. The approval freshness gate
-exists only in step 1. Plan drift after a completed step 1
-cannot block steps 2–4 because they read the immutable evidence row, durable
-intent, and persisted manifest entries. An identical step-1 retry returns its
-recorded result without another write. Finalize, mint, and mint checkpointing
-are also idempotent.
+Rejection rounds have no freshness gate; `append_plan_changelog_round` verifies
+reviewed bytes only for approved payloads. The approval freshness gate lives in
+`apply_plan_review_manifest` and exists only in step 1. Plan drift after a
+completed step 1 cannot block steps 2–4 because they read the immutable
+evidence row, durable intent, and persisted manifest entries. An identical
+step-1 retry returns its recorded result without another write. Finalize, mint,
+and mint checkpointing are also idempotent.
 
 A crash before step 1 records its intent leaves an incomplete approval: no
 proof, no mint, and no plan change. This incomplete-round rule also applies to
