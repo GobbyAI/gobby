@@ -41,7 +41,7 @@ _SHELL_TOOLS = {
     "shell",
     "terminal",
 }
-_EDIT_TOOLS = {"edit", "multiedit", "notebookedit", "write", "apply_patch"}
+_EDIT_TOOLS = {"edit", "multiedit", "notebookedit", "write", "apply_patch", "exec"}
 _COMMAND_KEYS = ("cmd", "command", "script")
 _PATH_KEYS = ("file_path", "path", "notebook_path")
 _EXIT_CODE_KEYS = ("exit_code", "exitCode")
@@ -498,9 +498,13 @@ def _extract_edit_paths(
         value = arguments.get(key)
         if isinstance(value, str) and value:
             values.add(_normalize_known_path(value, repo_path))
-    if tool_name == "apply_patch":
+    if tool_name in {"apply_patch", "exec"}:
         raw = arguments.get("raw") or arguments.get("patch") or arguments.get("input")
         if isinstance(raw, str):
+            if tool_name == "exec":
+                if "tools.apply_patch" not in raw:
+                    return values
+                raw = raw.replace(r"\r", "\r").replace(r"\n", "\n")
             for line in raw.splitlines():
                 for prefix in ("*** Add File: ", "*** Delete File: ", "*** Update File: "):
                     if line.startswith(prefix):

@@ -273,6 +273,39 @@ async def test_codex_consumes_nested_exec_outcome_and_apply_patch_edit(tmp_path:
     ]
 
 
+async def test_codex_tracks_apply_patch_inside_functions_exec(tmp_path: Path) -> None:
+    transcript = tmp_path / "codex.jsonl"
+    patch = "*** Begin Patch\n*** Update File: src/changed.py\n@@\n-old\n+new\n*** End Patch\n"
+    source = (
+        f"const patch = {json.dumps(patch)};\n"
+        "const result = await tools.apply_patch(patch); text(result);"
+    )
+    _write_jsonl(
+        transcript,
+        [
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "wrapped-patch",
+                    "name": "exec",
+                    "input": source,
+                },
+                BASE_TIME,
+            ),
+        ],
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("codex", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        {"src/changed.py"},
+        str(tmp_path),
+    )
+
+    assert [(edit.path, edit.tool_name) for edit in evidence.edits] == [("src/changed.py", "exec")]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("exit_code", "expected_outcome"),
