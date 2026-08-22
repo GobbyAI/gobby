@@ -176,9 +176,6 @@ def test_record_evidence_sections_cover_all_24_records() -> None:
 def test_record_has_literal_command_and_observed_output(record: str) -> None:
     section = _record_sections()[record]
     fenced = _fenced_lines(section)
-    if record == "1.1.11":  # the outcome table itself
-        assert "table above" in section
-        return
     commands = [line for line in fenced if line.startswith("$ ")]
     assert commands, f"{record}: no literal `$ command` line"
     outputs = [line for line in fenced if line.strip() and not line.startswith("$ ")]

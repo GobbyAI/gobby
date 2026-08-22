@@ -559,8 +559,46 @@ Same free-text `MODEL/GENERIC` shape in both modes.
 
 ### 1.1.11 — outcome table
 
-The table above; revisions applied to plan §2.2, §2.3, §2.5, §4.1, §4.2, §5.1, §5.2,
-§5.3, §6.1, §6.2, §6.3, §6.4, §7.1 (plan §1.2 Run 2).
+The deliverable is the contract-outcome table above. Census of that table
+(record, modes, verdict), run against this file:
+
+```
+$ python3 - <<'EOF'
+import re, pathlib
+rows = [l for l in pathlib.Path("tests/fixtures/provider_contracts/agy/README.md").read_text().splitlines() if re.match(r"^\| 1\.1\.\d+ ", l)]
+print(len(rows))
+for l in rows:
+    print(" | ".join(c.strip() for c in l.split("|")[1:4]))
+EOF
+24
+1.1.1 resume | both | **re-confirmed unchanged** (+1 delta)
+1.1.2 transcriptPath | both | **re-confirmed, layout disproven**
+1.1.3 cwd remedy | both | **confirmed, remedy named**
+1.1.4 image input | both | **negative**
+1.1.5 payloads | both | **confirmed (hook→daemon receipts in both modes)**
+1.1.6 stream-json | both | **re-confirmed unchanged** (+2 deltas)
+1.1.7 sandbox flags | both | **re-confirmed unchanged**
+1.1.8 cancellation | both | **confirmed**
+1.1.9 network/roots | both | **confirmed**
+1.1.10 RUN_COMMAND | both | **disproven**
+1.1.11 outcome table | command | **confirmed**
+1.1.12 controlled-tool bridge | both | **confirmed (supported)**
+1.1.13 `--print-timeout` | both | **re-confirmed unchanged** (+2 deltas)
+1.1.14 terminal plan menu | both | **confirmed**
+1.1.15 auth footprint | both | **confirmed**
+1.1.16 compaction | both | **negative**
+1.1.17 interactive dispatch | both | **confirmed**
+1.1.18 `--input-format stream-json` | print | **confirmed**
+1.1.19 usage/quota | command | **confirmed; `/credits` negative**
+1.1.20 models | command | **disproven (placement), shape confirmed**
+1.1.21 `/hooks` | command | **confirmed**
+1.1.22 transcript layout | both | **confirmed**
+1.1.23 `--mode` | both | **confirmed**
+1.1.24 response fields | both | **confirmed with negatives**
+```
+
+Revisions applied to plan §2.2, §2.3, §2.5, §4.1, §4.2, §5.1, §5.2, §5.3, §6.1,
+§6.2, §6.3, §6.4, §7.1 (plan §1.2 Run 2).
 
 ### 1.1.12 — controlled-tool bridge
 

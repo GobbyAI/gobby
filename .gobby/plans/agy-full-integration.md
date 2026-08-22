@@ -281,8 +281,8 @@ The probe runs twice per question where a live turn is involved: once in print m
 (`agy -p … --output-format stream-json`) and once in interactive/tmux terminal mode
 (§"Terminal-mode probe mechanics" below). Records 1.1.1, 1.1.2, 1.1.6, 1.1.7, 1.1.13
 and the zero-exit half of 1.1.10 were answered on 1.1.10 (§1.2) and are **re-confirmed**
-on 1.1.16, not re-derived — re-run the recorded command, diff against the recorded
-output, and note "unchanged on 1.1.16" or the delta. Every other record is open.
+on 1.1.18 (the probed floor), not re-derived — re-run the recorded command, diff against
+the recorded output, and note "unchanged on 1.1.18" or the delta. Every other record is open.
 
 Fixture artifacts (produced by the prerequisite task; every existing 1.0.x file is
 replaced, not appended to):
@@ -478,7 +478,7 @@ identifiers are replaced. No record may reference a path under
 
 **Recorded outcomes** (probe-record IDs; satisfied by the closed prerequisite task):
 
-- 1.1.1 - **[re-confirmed unchanged on 1.1.18; delta: `duration_seconds` is cumulative per conversation]** Resume behavior on 1.1.16 is recorded with the exact command and observed output. file: `tests/fixtures/provider_contracts/agy/README.md`.
+- 1.1.1 - **[re-confirmed unchanged on 1.1.18; delta: `duration_seconds` is cumulative per conversation]** Resume behavior on 1.1.18 is recorded with the exact command and observed output. file: `tests/fixtures/provider_contracts/agy/README.md`.
 - 1.1.2 - **[re-confirmed on 1.1.18; layout disproven: the literal value names `transcript_full.jsonl`]** The literal `transcriptPath` value from a live hook invocation is recorded, resolving the workspace-local vs `brain/` ambiguity. Both modes. file: `tests/fixtures/provider_contracts/agy/transcript-manifest.json`.
 - 1.1.3 - **[confirmed on 1.1.18; remedy: `--add-dir <cwd>` on every launch]** cwd behavior for a tool call without explicit `Cwd` is characterized, with the chosen remedy named. file: `tests/fixtures/provider_contracts/agy/README.md`.
 - 1.1.4 - **[negative on 1.1.18: no input attachment; vision only via the model's own `view_file`]** Image-input support is determined by live test, deciding the `VISION_EXTRACT` binding. file: `tests/fixtures/provider_contracts/agy/README.md`.
