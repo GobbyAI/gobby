@@ -13,7 +13,7 @@ from gobby.mcp_proxy.tools._task_query_pagination import collect_task_query_page
 from gobby.mcp_proxy.tools.tasks._escalation_coordinator import coordinate_task_escalation
 from gobby.storage.tasks import Task, TaskAlreadyEscalatedError, TaskStaleStateError
 from gobby.storage.tasks._validation_backoff import TaskValidationBackoffStore
-from gobby.tasks.close_verdict import CloseVerdictParseError
+from gobby.tasks.close_verdict import CloseVerdict, CloseVerdictParseError
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
 from gobby.tasks.validation import ValidationPromptTooLarge
 from gobby.tasks.validation_history import ValidationHistoryManager
@@ -183,57 +183,16 @@ def record_validation_infrastructure_failure(
     )
 
 
-async def evaluate_criteria_review(
+def account_criteria_verdict(
     *,
     task: Task,
-    task_validator: TaskValidator,
+    verdict: CloseVerdict,
     ctx: RegistryContext,
     resolved_id: str,
-    changes_summary: str,
-    diff_text: str | None,
-    checklist_facts: Mapping[str, object],
     validation_config: TaskValidationConfig | None,
-    reason: str = "completed",
+    reset_reason: str,
 ) -> ValidationResult:
-    """Run and account for exactly one bounded LLM criteria review."""
-    backoff = active_validation_backoff(task, ctx)
-    if backoff is not None:
-        return backoff
-    try:
-        verdict = await task_validator.validate_task(
-            task_id=task.id,
-            title=task.title,
-            changes_summary=changes_summary,
-            validation_criteria=task.validation_criteria or "",
-            diff_text=diff_text,
-            checklist_facts=checklist_facts,
-            closure_reason=reason,
-        )
-    except ValidationPromptTooLarge as exc:
-        return ValidationResult(
-            can_close=False,
-            error_type="validation_prompt_too_large",
-            message=str(exc),
-        )
-    except CloseVerdictParseError as exc:
-        return record_validation_infrastructure_failure(
-            task,
-            ctx,
-            resolved_id=resolved_id,
-            message=f"Validation provider returned an unusable response: {exc}",
-            failure_category=FailureCategory.PROVIDER,
-        )
-    except Exception as exc:
-        if not is_feature_generation_infrastructure_error(exc):
-            raise
-        return record_validation_infrastructure_failure(
-            task,
-            ctx,
-            resolved_id=resolved_id,
-            message=f"Validation generation unavailable: {exc}",
-            failure_category=classify_exception(exc),
-        )
-
+    """Apply shared validation history, feedback, failure, and escalation behavior."""
     store = TaskValidationBackoffStore(ctx.task_manager.db)
     if store.get(task.id) is not None:
         store.clear(task.id)
@@ -251,7 +210,7 @@ async def evaluate_criteria_review(
             extra={"verdict": verdict_dict},
             validation_status="valid",
             validation_feedback=verdict.feedback,
-            reset_reason="llm_valid",
+            reset_reason=reset_reason,
         )
 
     threshold = validation_config.close_validation_escalation_threshold if validation_config else 5
@@ -304,6 +263,77 @@ async def evaluate_criteria_review(
     )
 
 
+async def evaluate_criteria_review(
+    *,
+    task: Task,
+    task_validator: TaskValidator,
+    ctx: RegistryContext,
+    resolved_id: str,
+    changes_summary: str,
+    diff_text: str | None,
+    checklist_facts: Mapping[str, object],
+    validation_config: TaskValidationConfig | None,
+    reason: str = "completed",
+    description: str = "",
+    test_bodies: str = "Named acceptance tests: none.",
+) -> ValidationResult:
+    """Run and account for exactly one bounded LLM criteria review."""
+    backoff = active_validation_backoff(task, ctx)
+    if backoff is not None:
+        return backoff
+    try:
+        verdict = await task_validator.validate_task(
+            task_id=task.id,
+            title=task.title,
+            changes_summary=changes_summary,
+            validation_criteria=task.validation_criteria or "",
+            diff_text=diff_text,
+            checklist_facts=checklist_facts,
+            closure_reason=reason,
+            description=description,
+            test_bodies=test_bodies,
+        )
+    except ValidationPromptTooLarge as exc:
+        return ValidationResult(
+            can_close=False,
+            error_type="validation_prompt_too_large",
+            message=str(exc),
+            extra={
+                "prompt_chars": exc.prompt_chars,
+                "prompt_limit": exc.prompt_limit,
+                "review_fingerprint": exc.review_fingerprint,
+                "evidence_fingerprint": exc.evidence_fingerprint,
+            },
+        )
+    except CloseVerdictParseError as exc:
+        return record_validation_infrastructure_failure(
+            task,
+            ctx,
+            resolved_id=resolved_id,
+            message=f"Validation provider returned an unusable response: {exc}",
+            failure_category=FailureCategory.PROVIDER,
+        )
+    except Exception as exc:
+        if not is_feature_generation_infrastructure_error(exc):
+            raise
+        return record_validation_infrastructure_failure(
+            task,
+            ctx,
+            resolved_id=resolved_id,
+            message=f"Validation generation unavailable: {exc}",
+            failure_category=classify_exception(exc),
+        )
+
+    return account_criteria_verdict(
+        task=task,
+        verdict=verdict,
+        ctx=ctx,
+        resolved_id=resolved_id,
+        validation_config=validation_config,
+        reset_reason="llm_valid",
+    )
+
+
 def determine_close_outcome(
     task: Task,
     skip_validation: bool,
@@ -341,6 +371,7 @@ def _record_validation_iteration(
 
 __all__ = [
     "ValidationResult",
+    "account_criteria_verdict",
     "active_validation_backoff",
     "determine_close_outcome",
     "evaluate_criteria_review",

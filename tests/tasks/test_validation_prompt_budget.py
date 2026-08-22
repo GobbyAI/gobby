@@ -77,7 +77,7 @@ async def test_prompt_between_legacy_and_default_limits_reaches_llm_intact(
     )
 
     prompt = llm_service.call_json_feature.await_args.args[1]
-    assert 10_000 < len(prompt) < 32_000
+    assert 10_000 < len(prompt) < 256_000
     assert all(criterion in prompt for criterion in criteria)
     assert all(f"- {path} (" in prompt for path in paths)
     assert tdd_summary in prompt
@@ -145,7 +145,7 @@ async def test_prompt_at_exact_limit_reaches_llm(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("configured_limit", "prompt_chars"),
-    [(None, 32_001), (8_000, 8_001)],
+    [(None, 256_001), (8_000, 8_001)],
 )
 async def test_oversized_prompt_fails_before_llm_with_actionable_diagnostics(
     monkeypatch: pytest.MonkeyPatch,
@@ -184,5 +184,41 @@ async def test_oversized_prompt_fails_before_llm_with_actionable_diagnostics(
     assert str(prompt_chars) in message
     assert str(expected_limit) in message
     assert "gobby-tasks.validation.close_review_prompt_max_chars" in message
-    assert "preserve every validation criterion" in message
+    assert "task-close-validator" in message
+    assert exc_info.value.review_fingerprint
+    assert exc_info.value.evidence_fingerprint
     llm_service.call_json_feature.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_oversized_review_fingerprint_tracks_every_close_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    validator, _llm_service = _validator(TaskValidationConfig(close_review_prompt_max_chars=1))
+    monkeypatch.setattr(validator._loader, "render", _render_context)
+
+    async def fingerprint(**changes: Any) -> str:
+        values: dict[str, Any] = {
+            "task_id": "task-1",
+            "title": "Task",
+            "description": "Description",
+            "changes_summary": "Summary",
+            "validation_criteria": "Criterion.",
+            "diff_text": "diff --git a/a.py b/a.py\n+a",
+            "checklist_facts": {"epic_guards": {"paths": ["tests/a.py"]}},
+            "test_bodies": "def test_a(): assert a()",
+        }
+        values.update(changes)
+        with pytest.raises(ValidationPromptTooLarge) as raised:
+            await validator.validate_task(**values)
+        return raised.value.review_fingerprint
+
+    fingerprints = {
+        await fingerprint(),
+        await fingerprint(description="Edited description"),
+        await fingerprint(validation_criteria="Edited criterion."),
+        await fingerprint(diff_text="diff --git a/b.py b/b.py\n+b"),
+        await fingerprint(checklist_facts={"epic_guards": {"paths": ["tests/b.py"]}}),
+    }
+
+    assert len(fingerprints) == 5

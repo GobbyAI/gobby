@@ -166,6 +166,51 @@ async def test_empty_task_edit_entry_allows_no_edit_research_close() -> None:
 
 
 @pytest.mark.asyncio
+async def test_no_work_disposition_skips_delivery_gates_but_runs_review() -> None:
+    task = replace(_task(), category="research")
+    ctx = _ctx(task, validator=object())
+    ctx.session_var_manager = cast(
+        SessionVariableManager,
+        SimpleNamespace(get_variables=lambda _session_id: {"task_edited_files": {task.id: []}}),
+    )
+    review = AsyncMock(
+        return_value=ValidationResult(
+            can_close=True,
+            validation_status="valid",
+            validation_feedback="Duplicate disposition is specific.",
+            reset_reason="llm_valid",
+        )
+    )
+
+    with (
+        patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
+        patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
+        patch.object(lifecycle, "_claimed_session_window_start", return_value=None),
+        patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
+        patch.object(lifecycle, "collect_commit_diff_text", return_value=""),
+        patch.object(lifecycle, "evaluate_criteria_review", review),
+    ):
+        evaluation = await _evaluate_close(
+            ctx,
+            task_id=task.id,
+            reason="duplicate",
+            changes_summary="Duplicate of #100, which owns this exact behavior.",
+            commit_sha=None,
+            project_path=None,
+            response_detail="diagnostic",
+        )
+
+    assert evaluation.ready is True
+    delivery = {gate.name: gate.status for gate in evaluation.gates[10:13]}
+    assert delivery == {
+        "acceptance_artifacts": "skipped",
+        "tdd_evidence": "skipped",
+        "epic_guards": "skipped",
+    }
+    review.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_ready_leaf_runs_criteria_review_exactly_once() -> None:
     task = _task()
     ctx = _ctx(task, validator=object())
@@ -242,7 +287,7 @@ async def test_ready_leaf_runs_criteria_review_exactly_once() -> None:
         )
 
     assert evaluation.ready is True
-    assert [gate.item for gate in evaluation.gates] == list(range(1, 12))
+    assert [gate.item for gate in evaluation.gates] == list(range(1, 15))
     review.assert_awaited_once()
 
 
@@ -681,6 +726,7 @@ async def test_justified_escalated_close_skips_review_and_persists_override() ->
         reason="completed",
         closed_in_session_id=task.claimed_by_session_id,
         closed_commit_sha=None,
+        closed_ancestors=[],
         validation_override_reason="Reviewed and accepted the current implementation.",
         expected_updated_at=task.updated_at,
         reset_validation_fail_count=True,
@@ -829,6 +875,7 @@ async def test_justified_escalated_structural_parent_closes_and_persists_overrid
         reason="completed",
         closed_in_session_id=task.claimed_by_session_id,
         closed_commit_sha=None,
+        closed_ancestors=[],
         validation_override_reason="Reviewed: obsolete escalation, closing deliberately.",
         expected_updated_at=task.updated_at,
         reset_validation_fail_count=True,
@@ -910,7 +957,7 @@ async def test_epic_skips_leaf_gates_without_llm() -> None:
 
     assert evaluation.ready is True
     assert evaluation.commit_shas == ["abc123"]
-    assert [gate.item for gate in evaluation.gates] == list(range(1, 12))
+    assert [gate.item for gate in evaluation.gates] == list(range(1, 15))
     assert all(gate.status == "skipped" for gate in evaluation.gates[4:])
     review.assert_not_awaited()
 

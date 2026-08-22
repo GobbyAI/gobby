@@ -13,6 +13,7 @@
       "frontend_build": "cd web && npm run build",
       "frontend_lint": "cd web && npm run lint",
       "frontend_tests": "cd web && npm test",
+      "guard_tests": "GOBBY_TEST_PROTECT=1 uv run pytest {test_files} -v",
       "ts_check": "cd web && npm run type-check"
     }
   },

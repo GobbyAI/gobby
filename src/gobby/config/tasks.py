@@ -184,7 +184,7 @@ class TaskValidationConfig(FeatureDefaultConfig):
         description="Invalid or pending close verdicts before atomic task escalation.",
     )
     close_review_prompt_max_chars: int = Field(
-        default=32_000,
+        default=256_000,
         description="Maximum rendered character count for the task-close criteria-review prompt.",
     )
     # Escalation settings

@@ -35,10 +35,12 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import (
     link_close_commit_shas,
     resolve_close_commit_shas,
 )
+from gobby.mcp_proxy.tools.tasks._lifecycle_review_gate import (
+    evaluate_close_criteria as evaluate_criteria_review,
+)
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
     active_validation_backoff,
     determine_close_outcome,
-    evaluate_criteria_review,
     record_validation_infrastructure_failure,
     validate_commit_requirements,
     validate_parent_task,
@@ -47,13 +49,20 @@ from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_sta
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.mcp_proxy.tools.tasks._task_scope import evaluate_task_scope
 from gobby.storage.tasks import Task, TaskNotFoundError, TaskStaleStateError
+from gobby.tasks.acceptance_artifacts import (
+    evaluate_acceptance_artifacts,
+    render_acceptance_test_bodies,
+)
 from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.commits import collect_commit_diff_text
+from gobby.tasks.epic_guards import evaluate_epic_guards
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
+from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
 from gobby.tasks.transcript_evidence import (
     TranscriptEvidence,
     TranscriptEvidenceUnavailable,
 )
+from gobby.tasks.validation import NO_WORK_CLOSE_REASONS
 
 logger = logging.getLogger(__name__)
 
@@ -62,10 +71,10 @@ def _apply_escalated_close_gate(
     evaluation: CloseEvaluation,
     override_justification: str | None,
 ) -> None:
-    """Gate 11 for an escalated task: require justification, then skip review."""
+    """Gate 14 for an escalated task: require justification, then skip review."""
     if not (override_justification or "").strip():
         evaluation.fail(
-            11,
+            14,
             "criteria_review",
             "task_escalated",
             "Escalated tasks require override_justification for deliberate closure.",
@@ -78,7 +87,7 @@ def _apply_escalated_close_gate(
         return
     evaluation.validation_reset_reason = "escalated_deliberate_close"
     evaluation.pass_gate(
-        11,
+        14,
         "criteria_review",
         "Skipped for a justified deliberate close of an escalated task.",
         skipped=True,
@@ -146,6 +155,7 @@ async def _evaluate_close(
     commit_sha: str | None,
     project_path: str | None,
     response_detail: Literal["concise", "diagnostic"],
+    review_run_id: str | None = None,
     override_justification: str | None = None,
     scope_justification: str | None = None,
 ) -> CloseEvaluation:
@@ -242,6 +252,9 @@ async def _evaluate_close(
             (8, "task_scope"),
             (9, "uncommitted_task_edits"),
             (10, "validation_commands"),
+            (11, "acceptance_artifacts"),
+            (12, "tdd_evidence"),
+            (13, "epic_guards"),
         ):
             evaluation.pass_gate(
                 item,
@@ -253,7 +266,7 @@ async def _evaluate_close(
             _apply_escalated_close_gate(evaluation, override_justification)
             return evaluation
         evaluation.pass_gate(
-            11,
+            14,
             "criteria_review",
             "Skipped for an epic or structural parent.",
             skipped=True,
@@ -402,6 +415,7 @@ async def _evaluate_close(
         )
     evaluation.pass_gate(9, "uncommitted_task_edits", "No task-attributed files are dirty.")
 
+    transcript = TranscriptEvidence()
     command_gate = replace(
         evaluate_validation_commands(
             task_category=task.category,
@@ -464,24 +478,6 @@ async def _evaluate_close(
         evaluation.action = command_gate.message
         return evaluation
 
-    if task.is_escalated:
-        _apply_escalated_close_gate(evaluation, override_justification)
-        return evaluation
-
-    if ctx.task_validator is None:
-        infra = record_validation_infrastructure_failure(
-            task,
-            ctx,
-            resolved_id=resolved_id,
-            message="The bounded task-close criteria reviewer is not configured.",
-        )
-        return evaluation.fail(
-            11,
-            "criteria_review",
-            "validation_provider_unavailable",
-            infra.message or "The bounded task-close criteria reviewer is not configured.",
-            extra=infra.extra,
-        )
     try:
         diff_text = await asyncio.to_thread(
             collect_commit_diff_text,
@@ -497,26 +493,144 @@ async def _evaluate_close(
             error_type="validation_diff_unavailable",
         )
         return evaluation.fail(
-            11,
+            14,
             "criteria_review",
             infra.error_type or "validation_diff_unavailable",
             infra.message or str(exc),
             extra=infra.extra,
         )
+
+    acceptance_details: dict[str, object]
+    tdd_details: dict[str, object]
+    guard_details: dict[str, object]
+    test_bodies = "Named acceptance tests: none."
+    if reason in NO_WORK_CLOSE_REASONS:
+        acceptance_details = {"findings": [], "test_references": [], "evidence_files": []}
+        tdd_details = {"findings": [], "red_runs": [], "green_runs": []}
+        guard_details = {"paths": [], "source_task_ids": []}
+        for item, name in (
+            (11, "acceptance_artifacts"),
+            (12, "tdd_evidence"),
+            (13, "epic_guards"),
+        ):
+            evaluation.pass_gate(
+                item,
+                name,
+                "Skipped for a canonical no-work disposition.",
+                skipped=True,
+            )
+    else:
+        artifacts = await asyncio.to_thread(
+            evaluate_acceptance_artifacts,
+            criteria=task.validation_criteria or "",
+            repo_path=repo_path,
+            commit_shas=commit_shas,
+        )
+        acceptance_details = artifacts.details()
+        if not artifacts.passed:
+            return evaluation.fail(
+                11,
+                "acceptance_artifacts",
+                "acceptance_artifacts_invalid",
+                artifacts.findings[0],
+                details=acceptance_details,
+                extra={"acceptance_artifacts": acceptance_details},
+            )
+        evaluation.pass_gate(
+            11,
+            "acceptance_artifacts",
+            "Named acceptance artifacts passed deterministic checks.",
+            details=acceptance_details,
+            skipped=not artifacts.tests and not artifacts.evidence_files,
+        )
+        test_bodies = render_acceptance_test_bodies(artifacts.tests)
+
+        tdd = evaluate_tdd_evidence(artifacts.tests, transcript)
+        tdd_details = tdd.details()
+        if not tdd.passed:
+            return evaluation.fail(
+                12,
+                "tdd_evidence",
+                "tdd_evidence_missing",
+                tdd.findings[0],
+                details=tdd_details,
+                extra={"tdd_evidence": tdd_details},
+            )
+        evaluation.pass_gate(
+            12,
+            "tdd_evidence",
+            "Every named acceptance test has assertion-backed red and later green evidence.",
+            details=tdd_details,
+            skipped=tdd.skipped,
+        )
+
+        guards = await evaluate_epic_guards(
+            task_manager=ctx.task_manager,
+            task=task,
+            repo_path=repo_path,
+        )
+        guard_details = guards.details()
+        if not guards.passed:
+            return evaluation.fail(
+                13,
+                "epic_guards",
+                guards.error_type or "epic_guard_failed",
+                guards.message,
+                details=guard_details,
+                extra={"epic_guards": guard_details},
+            )
+        evaluation.pass_gate(
+            13,
+            "epic_guards",
+            guards.message,
+            details=guard_details,
+            skipped=guards.skipped,
+        )
+
+    if task.is_escalated:
+        _apply_escalated_close_gate(evaluation, override_justification)
+        return evaluation
+
+    task_validator = ctx.task_validator
+    if task_validator is None:
+        infra = record_validation_infrastructure_failure(
+            task,
+            ctx,
+            resolved_id=resolved_id,
+            message="The task-close criteria reviewer is not configured.",
+        )
+        return evaluation.fail(
+            14,
+            "criteria_review",
+            "validation_provider_unavailable",
+            infra.message or "The task-close criteria reviewer is not configured.",
+            extra=infra.extra,
+        )
     llm_result = await evaluate_criteria_review(
         task=evaluation_task,
-        task_validator=ctx.task_validator,
+        task_validator=task_validator,
         ctx=ctx,
         resolved_id=resolved_id,
+        parent_session_id=resolved_session_id,
         changes_summary=changes_summary or "",
+        commit_shas=commit_shas,
         diff_text=diff_text,
         checklist_facts={
             "commit_count": len(commit_shas),
+            "commit_shas": commit_shas,
             "had_attributed_edits": evaluation.had_attributed_edits,
+            "attributed_paths": sorted(evaluation.edited_paths),
+            "claim_started_at": evaluation.claim_started_at,
             "validation_commands": command_gate.details,
+            "acceptance_artifacts": acceptance_details,
+            "tdd_evidence": tdd_details,
+            "epic_guards": guard_details,
         },
         validation_config=ctx.validation_config,
         reason=reason,
+        description=task.description or "",
+        test_bodies=test_bodies,
+        review_run_id=review_run_id,
     )
     evaluation.validation_status = llm_result.validation_status
     evaluation.validation_feedback = llm_result.validation_feedback
@@ -530,13 +644,13 @@ async def _evaluate_close(
             else llm_result.message or "Criteria review did not pass."
         )
         return evaluation.fail(
-            11,
+            14,
             "criteria_review",
             llm_result.error_type or "validation_failed",
             message,
             extra=llm_result.extra,
         )
-    evaluation.pass_gate(11, "criteria_review", "Bounded criteria review passed.")
+    evaluation.pass_gate(14, "criteria_review", "Task-close criteria review passed.")
     evaluation.extra.update(llm_result.extra)
     return evaluation
 
@@ -747,6 +861,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         override_justification: str | None = None,
         scope_justification: str | None = None,
         commit_sha: str | None = None,
+        review_run_id: str | None = None,
         project_path: str | None = None,
         preview: bool = False,
         response_detail: Literal["concise", "diagnostic"] = "concise",
@@ -759,6 +874,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             commit_sha=commit_sha,
             project_path=project_path,
             response_detail=response_detail,
+            review_run_id=review_run_id,
             override_justification=override_justification,
             scope_justification=scope_justification,
         )
@@ -814,6 +930,10 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                     ),
                 },
                 "commit_sha": {"type": "string"},
+                "review_run_id": {
+                    "type": "string",
+                    "description": "Completed task-close-validator run for an oversized current review fingerprint.",
+                },
                 "project_path": {"type": "string"},
                 "preview": {
                     "type": "boolean",

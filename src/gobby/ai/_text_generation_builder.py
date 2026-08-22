@@ -142,6 +142,7 @@ def _responses_text_generate_adapter_factory(
             timeout_seconds=config.ai.generation.timeout_seconds,
             env=codex_endpoint_env(endpoint),
             config_overrides=codex_endpoint_config_overrides(endpoint_name, endpoint),
+            ignore_user_config=endpoint.protocol == "vllm",
         )
 
     return create_adapter

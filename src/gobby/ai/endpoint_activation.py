@@ -133,6 +133,7 @@ async def _probe_text(endpoint_name: str, endpoint: GenerationEndpointConfig) ->
         timeout_seconds=120.0,
         env=codex_endpoint_env(endpoint),
         config_overrides=codex_endpoint_config_overrides(endpoint_name, endpoint),
+        ignore_user_config=endpoint.protocol == "vllm",
     )
     text = await adapter.generate(
         TextGenerationRequest(
@@ -151,6 +152,7 @@ async def _probe_json(endpoint_name: str, endpoint: GenerationEndpointConfig) ->
         timeout_seconds=120.0,
         env=codex_endpoint_env(endpoint),
         config_overrides=codex_endpoint_config_overrides(endpoint_name, endpoint),
+        ignore_user_config=endpoint.protocol == "vllm",
     )
     text = await adapter.generate(
         TextGenerationRequest(

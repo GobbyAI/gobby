@@ -18,12 +18,25 @@ from gobby.tasks.transcript_evidence import (
     TranscriptEvidence,
     TranscriptEvidenceUnavailable,
     TranscriptValidationRun,
+    _extract_output,
     derive_transcript_evidence,
     merge_transcript_evidence,
 )
 
 BASE_TIME = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000003"
+
+
+def test_validation_output_is_bounded_with_failure_edges_preserved() -> None:
+    output, truncated = _extract_output(
+        {"output": "AssertionError: first\n" + ("x" * 20_000) + "\nImportError: last"}
+    )
+
+    assert truncated is True
+    assert output is not None
+    assert output.startswith("AssertionError: first")
+    assert output.endswith("ImportError: last")
+    assert len(output) <= 16_000
 
 
 @pytest.fixture(autouse=True)

@@ -528,11 +528,13 @@ class CodexCLITextGenerateAdapter:
         timeout_seconds: float = 600.0,
         env: Mapping[str, str] | None = None,
         config_overrides: tuple[str, ...] | None = None,
+        ignore_user_config: bool = False,
     ) -> None:
         self._command_path = command_path
         self._timeout_seconds = timeout_seconds
         self._env = dict(env or {})
         self._config_overrides = tuple(config_overrides or ())
+        self._ignore_user_config = ignore_user_config
 
     def _resolve_command_path(self) -> str:
         path = self._command_path or shutil.which("codex")
@@ -561,14 +563,14 @@ class CodexCLITextGenerateAdapter:
             command.extend(["-c", override])
         if request.model and self._config_overrides:
             command.extend(["-c", codex_model_config_override(request.model)])
+        command.extend(["exec", "--ephemeral"])
+        if self._ignore_user_config:
+            command.append("--ignore-user-config")
         command.extend(
             [
-                "exec",
-                "--ephemeral",
                 # One-shot generation runs in a neutral temp dir, which is not a Git
                 # repository. Codex aborts outside a Git repo unless this flag is set.
                 "--skip-git-repo-check",
-                "--ignore-user-config",
                 "--ignore-rules",
                 "--sandbox",
                 "read-only",

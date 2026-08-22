@@ -283,7 +283,7 @@ class TestTaskValidationConfigDefaults:
         assert config.prompt_path is None
         assert config.max_iterations == 10
         assert config.close_validation_escalation_threshold == 5
-        assert config.close_review_prompt_max_chars == 32_000
+        assert config.close_review_prompt_max_chars == 256_000
         assert config.escalation_enabled is True
         assert config.escalation_notify == "none"
         assert config.auto_generate_on_create is True

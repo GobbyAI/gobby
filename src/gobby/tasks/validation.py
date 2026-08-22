@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from collections.abc import Mapping
@@ -27,6 +28,21 @@ NO_WORK_CLOSE_REASONS: frozenset[str] = frozenset(
 class ValidationPromptTooLarge(ValueError):
     """The full criteria and complete manifest cannot fit in the prompt contract."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        prompt_chars: int | None = None,
+        prompt_limit: int | None = None,
+        review_fingerprint: str = "",
+        evidence_fingerprint: str = "",
+    ) -> None:
+        super().__init__(message)
+        self.prompt_chars = prompt_chars
+        self.prompt_limit = prompt_limit
+        self.review_fingerprint = review_fingerprint
+        self.evidence_fingerprint = evidence_fingerprint
+
 
 class TaskValidator:
     """Run one bounded criteria-vs-work coherence review."""
@@ -51,6 +67,8 @@ class TaskValidator:
         diff_text: str | None,
         checklist_facts: Mapping[str, object],
         closure_reason: str = "completed",
+        description: str = "",
+        test_bodies: str = "Named acceptance tests: none.",
     ) -> CloseVerdict:
         """Review all criteria once against a bounded work summary and linked diff."""
         if not self.config.enabled:
@@ -75,21 +93,40 @@ class TaskValidator:
             self.config.prompt_path or "validation/validate",
             {
                 "title": title,
+                "description": description,
                 "closure_reason": closure_reason.strip() or "completed",
                 "criteria_text": criteria_text,
                 "changes_summary": changes_summary.strip(),
                 "diff_evidence": diff_evidence.text,
+                "test_bodies": test_bodies,
                 "checklist_facts": facts_text,
             },
         )
         prompt_chars = len(prompt)
         prompt_limit = self.config.close_review_prompt_max_chars
+        evidence_fingerprint = hashlib.sha256(
+            json.dumps(
+                {
+                    "diff": diff_evidence.sha256,
+                    "tests": test_bodies,
+                    "facts": checklist_facts,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode()
+        ).hexdigest()
+        review_fingerprint = hashlib.sha256(prompt.encode()).hexdigest()
         if prompt_chars > prompt_limit:
             raise ValidationPromptTooLarge(
                 f"Task-close criteria-review prompt is {prompt_chars} characters, exceeding the "
                 f"configured limit of {prompt_limit} characters at "
-                "gobby-tasks.validation.close_review_prompt_max_chars. Split the task into "
-                "smaller tasks and preserve every validation criterion."
+                "gobby-tasks.validation.close_review_prompt_max_chars. Run the fixed "
+                "task-close-validator agent and retry with review_run_id.",
+                prompt_chars=prompt_chars,
+                prompt_limit=prompt_limit,
+                review_fingerprint=review_fingerprint,
+                evidence_fingerprint=evidence_fingerprint,
             )
 
         logger.debug(

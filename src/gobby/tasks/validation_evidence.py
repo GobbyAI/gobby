@@ -1,15 +1,13 @@
-"""Bounded diff shaping for the task-close criteria review."""
+"""Complete diff evidence for task-close criteria review."""
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 
 _DIFF_HEADER_RE = re.compile(r"^diff --git a/(.*?) b/(.*?)$", re.MULTILINE)
-_BINARY_FILES_RE: re.Pattern[str] = re.compile(
-    r"^Binary files (?P<left>\S+) and (?P<right>\S+) differ$",
-    re.MULTILINE,
-)
+_BINARY_PATCH_RE = re.compile(r"(?ms)^GIT binary patch\n.*?(?=^diff --git |\Z)")
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,30 +18,39 @@ class ChangedFileEvidence:
     additions: int
     deletions: int
     diff: str
+    binary: bool = False
 
 
 class ValidationEvidenceTooLarge(ValueError):
-    """Raised when a complete file manifest cannot fit the bounded prompt."""
+    """Raised when explicitly bounded evidence cannot fit its caller's limit."""
 
 
 @dataclass(frozen=True, slots=True)
 class CloseDiffEvidence:
-    """Bounded criteria-review input with a complete file manifest."""
+    """Complete textual diff plus deterministic per-file statistics."""
 
     text: str
     manifest_count: int
     manifest_chars: int
     excerpt_chars: int
+    sha256: str
 
 
 def build_close_diff_evidence(
     diff: str | None,
     *,
     criteria: str,
-    max_chars: int = 5_500,
-    max_excerpt_chars: int = 4_000,
+    max_chars: int | None = None,
+    max_excerpt_chars: int | None = None,
 ) -> CloseDiffEvidence:
-    """Shape the linked diff for the bounded task-close criteria review."""
+    """Return complete textual evidence, omitting only encoded binary payloads.
+
+    max_chars remains available for callers that deliberately impose a hard
+    bound. Normal close review leaves it unset and applies the configured limit
+    to the fully rendered prompt instead. max_excerpt_chars is retained as a
+    compatibility keyword and has no effect because textual diffs are complete.
+    """
+    del criteria, max_excerpt_chars
     by_path: dict[str, ChangedFileEvidence] = {}
     for item in _parse_diff_files(diff or ""):
         previous = by_path.get(item.path)
@@ -55,123 +62,41 @@ def build_close_diff_evidence(
             additions=previous.additions + item.additions,
             deletions=previous.deletions + item.deletions,
             diff=f"{previous.diff}\n{item.diff}",
+            binary=previous.binary or item.binary,
         )
-    files = list(by_path.values())
+
+    files = sorted(by_path.values(), key=lambda item: item.path)
     if not files:
-        text = "Changed files: none.\nDiff excerpts: none."
-        return CloseDiffEvidence(text, 0, len(text), 0)
+        text = "Changed files: none.\nComplete textual diff: none."
+        return CloseDiffEvidence(text, 0, len(text), 0, hashlib.sha256(text.encode()).hexdigest())
 
     additions = sum(item.additions for item in files)
     deletions = sum(item.deletions for item in files)
-    separator = "\n\nDiff excerpts:\n"
-    manifest = _build_file_manifest(
-        files,
-        additions=additions,
-        deletions=deletions,
-        max_chars=max_chars - len(separator),
-    )
-    if len(manifest) + len(separator) > max_chars:
+    manifest = _format_file_manifest(files, additions, deletions)
+    diff_text = "\n\n".join(item.diff for item in files).rstrip()
+    text = f"{manifest}\n\nComplete textual diff:\n{diff_text or 'none'}"
+    if max_chars is not None and len(text) > max_chars:
         raise ValidationEvidenceTooLarge(
-            "The complete changed-file manifest exceeds the bounded criteria-review prompt. "
-            "Split the task into a smaller commit set before closing."
+            "The complete task-close diff evidence exceeds the caller's explicit bound."
         )
-
-    criteria_folded = criteria.casefold()
-    ordered = sorted(
-        files,
-        key=lambda item: (
-            0
-            if item.path.casefold() in criteria_folded
-            or item.path.rsplit("/", 1)[-1].casefold() in criteria_folded
-            else 1,
-            item.path,
-        ),
-    )
-    excerpt_budget = min(max_excerpt_chars, max_chars - len(manifest) - len(separator))
-    excerpt_parts: list[str] = []
-    excerpt_chars = 0
-    for item in ordered:
-        prefix = f"\n### {item.path}\n"
-        remaining = excerpt_budget - excerpt_chars
-        if remaining <= len(prefix):
-            break
-        part = prefix + item.diff[: remaining - len(prefix)]
-        excerpt_parts.append(part)
-        excerpt_chars += len(part)
-
-    excerpts = "".join(excerpt_parts).rstrip()
-    text = f"{manifest}{separator}{excerpts or 'none'}"
     return CloseDiffEvidence(
         text=text,
         manifest_count=len(files),
         manifest_chars=len(manifest),
-        excerpt_chars=len(excerpts),
+        excerpt_chars=len(diff_text),
+        sha256=hashlib.sha256(text.encode()).hexdigest(),
     )
-
-
-def _build_file_manifest(
-    files: list[ChangedFileEvidence],
-    *,
-    additions: int,
-    deletions: int,
-    max_chars: int,
-) -> str:
-    """Render every exact path, aliasing repeated directory prefixes when needed."""
-    displays = [item.path for item in files]
-    aliases: list[tuple[str, str]] = []
-
-    manifest = _format_file_manifest(files, displays, aliases, additions, deletions)
-    if len(manifest) <= max_chars:
-        return manifest
-
-    prefix_members: dict[str, list[int]] = {}
-    for index, item in enumerate(files):
-        components = item.path.split("/")[:-1]
-        for depth in range(1, len(components) + 1):
-            prefix = "/".join(components[:depth]) + "/"
-            prefix_members.setdefault(prefix, []).append(index)
-
-    assigned: set[int] = set()
-    candidates = sorted(
-        prefix_members.items(),
-        key=lambda candidate: len(candidate[0]) * len(candidate[1]),
-        reverse=True,
-    )
-    for prefix, members in candidates:
-        eligible = [index for index in members if index not in assigned]
-        if len(eligible) < 2:
-            continue
-        alias = f"@{len(aliases) + 1}/"
-        alias_line = f"- {alias} = {prefix}"
-        saved_chars = (len(prefix) - len(alias)) * len(eligible) - len(alias_line) - 1
-        if saved_chars <= 0:
-            continue
-        aliases.append((alias, prefix))
-        for index in eligible:
-            displays[index] = alias + files[index].path.removeprefix(prefix)
-            assigned.add(index)
-        manifest = _format_file_manifest(files, displays, aliases, additions, deletions)
-        if len(manifest) <= max_chars:
-            return manifest
-
-    return manifest
 
 
 def _format_file_manifest(
     files: list[ChangedFileEvidence],
-    displays: list[str],
-    aliases: list[tuple[str, str]],
     additions: int,
     deletions: int,
 ) -> str:
-    lines = [f"Changed files ({len(files)} total, +{additions}/-{deletions}):"]
-    if aliases:
-        lines.append("Path aliases (exact prefixes):")
-        lines.extend(f"- {alias} = {prefix}" for alias, prefix in aliases)
-    lines.extend(
-        f"- {display} (+{item.additions}/-{item.deletions})"
-        for item, display in zip(files, displays, strict=True)
-    )
+    lines = [f"Changed files ({len(files)} total, +{additions}/-{deletions} LOC):"]
+    for item in files:
+        kind = ", binary payload omitted" if item.binary else ""
+        lines.append(f"- {item.path} (+{item.additions}/-{item.deletions} LOC{kind})")
     return "\n".join(lines)
 
 
@@ -181,28 +106,22 @@ def _parse_diff_files(diff: str) -> list[ChangedFileEvidence]:
     for index, match in enumerate(matches):
         start = match.start()
         end = matches[index + 1].start() if index < len(matches) - 1 else len(diff)
-        file_diff = diff[start:end].rstrip()
+        raw_file_diff = diff[start:end].rstrip()
         path = _normalize_diff_path(match.group(2) or match.group(1))
+        binary = "GIT binary patch" in raw_file_diff or "Binary files " in raw_file_diff
+        file_diff = _strip_binary_payload(raw_file_diff) if binary else raw_file_diff
         additions, deletions = _count_file_stats(file_diff)
-        files.append(ChangedFileEvidence(path, additions, deletions, file_diff))
-
-    known_paths = {item.path for item in files}
-    for match in _BINARY_FILES_RE.finditer(diff):
-        path = _normalize_binary_diff_path(match.group("left"), match.group("right"))
-        if path in known_paths:
-            continue
-        files.append(ChangedFileEvidence(path, 0, 0, match.group(0)))
-        known_paths.add(path)
+        files.append(ChangedFileEvidence(path, additions, deletions, file_diff, binary))
     return files
+
+
+def _strip_binary_payload(file_diff: str) -> str:
+    replacement = "GIT binary patch\n[binary payload omitted; file statistics retained]"
+    return _BINARY_PATCH_RE.sub(replacement, file_diff).rstrip()
 
 
 def _normalize_diff_path(path: str) -> str:
     return path.strip().strip('"')
-
-
-def _normalize_binary_diff_path(left: str, right: str) -> str:
-    candidate = right if right != "/dev/null" else left
-    return _normalize_diff_path(candidate.removeprefix("b/").removeprefix("a/"))
 
 
 def _count_file_stats(file_diff: str) -> tuple[int, int]:

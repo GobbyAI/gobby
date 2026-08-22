@@ -1,0 +1,122 @@
+name: task-close-validator
+description: |
+  Taskless read-only validator for close reviews whose complete evidence exceeds
+  the one-shot prompt limit.
+version: "1.0"
+enabled: true
+priority: 20
+surfaces: [spawn, persona]
+provider: codex
+model: gpt-5.6-sol
+reasoning_effort: xhigh
+isolation: none
+blocked_mcp_tools:
+  - "gobby-tasks:create_task"
+  - "gobby-tasks:claim_task"
+  - "gobby-tasks:update_task"
+  - "gobby-tasks:delete_task"
+  - "gobby-tasks:close_task"
+  - "gobby-tasks:reopen_task"
+  - "gobby-tasks:escalate_task"
+  - "gobby-tasks:link_commit"
+  - "gobby-tasks:unlink_commit"
+  - "gobby-tasks-ops:submit_for_review"
+  - "gobby-tasks-ops:approve_review"
+  - "gobby-tasks-ops:reject_review"
+  - "gobby-tasks-ops:complete_stage"
+  - "gobby-tasks-ops:fail_stage"
+  - "gobby-agents:spawn_agent"
+  - "gobby-agents:kill_agent"
+
+prompts:
+  persona: |
+    Audit a task close against its complete repository evidence. Stay read-only,
+    run focused validations when useful, and return only the required JSON.
+  agent: |
+    You are a taskless, read-only task-close validator. The launch prompt provides
+    task_id, commit_shas, changes_summary, close_fingerprint, and
+    deterministic_evidence_fingerprint.
+
+    Read the full task and criteria with get_task. Inspect complete linked diffs,
+    per-file LOC shape, every named acceptance-test body, referenced evidence
+    artifacts, and cumulative guard facts. You may read repository files and run
+    focused validations. Never edit files, create commits, or mutate task,
+    workflow, review, agent, or service state.
+
+    Compare requested and delivered magnitude and shape. Reject stub-shaped
+    delivery against broad or quantitative requirements. Reject delegated,
+    constant, tautological, placeholder, or subject-free acceptance tests. Treat
+    collection, import, usage, and configuration errors as missing TDD red
+    evidence. Use repository-local provenance only: cited commit existence and
+    time, repository-owned Actions URL shape, and producer workflow presence in
+    the cited commit. Do not make network reachability checks.
+
+    Return one raw JSON object as the agent-run result:
+    {
+      "schema_version": 1,
+      "agent": "task-close-validator",
+      "task_id": "<exact launch task_id>",
+      "commit_shas": ["<exact ordered launch commits>"],
+      "changes_summary": "<exact launch summary>",
+      "close_fingerprint": "<exact launch fingerprint>",
+      "deterministic_evidence_fingerprint": "<exact launch evidence fingerprint>",
+      "verdict": {
+        "status": "valid|invalid",
+        "criteria": [
+          {"index": 1, "satisfied": true, "gap": null}
+        ],
+        "feedback": "short overall assessment"
+      }
+    }
+    Include every criterion index exactly once. Copy every launch identity field
+    byte-for-byte. Call send_message(target="parent", content=<exact JSON>),
+    then call zero-argument end_agent_run. The durable parent message is the
+    agent-run result checked by close_task.
+
+workflows:
+  rule_selectors:
+    include:
+      - "tag:default"
+      - "tag:worker-safety"
+    exclude:
+      - "tag:task-skill-gates"
+step_workflow:
+  variables:
+    review_complete: false
+  exit_condition: "vars.review_complete"
+  steps:
+    - name: review
+      mcp_error_policy: stay
+      description: "Perform the taskless read-only close review"
+      status_message: |
+        Inspect the task and repository, run focused validations as needed,
+        then return the exact structured JSON through end_agent_run.
+      allowed_tools: "all"
+      blocked_mcp_tools:
+        - "gobby-tasks:create_task"
+        - "gobby-tasks:claim_task"
+        - "gobby-tasks:update_task"
+        - "gobby-tasks:delete_task"
+        - "gobby-tasks:close_task"
+        - "gobby-tasks:reopen_task"
+        - "gobby-tasks:escalate_task"
+        - "gobby-tasks:link_commit"
+        - "gobby-tasks:unlink_commit"
+        - "gobby-tasks-ops:submit_for_review"
+        - "gobby-tasks-ops:approve_review"
+        - "gobby-tasks-ops:reject_review"
+        - "gobby-tasks-ops:complete_stage"
+        - "gobby-tasks-ops:fail_stage"
+        - "gobby-agents:spawn_agent"
+        - "gobby-agents:kill_agent"
+      allowed_mcp_tools:
+        - "gobby-tasks:get_task"
+        - "gobby-tasks:list_tasks"
+        - "gobby-agents:send_message"
+        - "gobby-agents:end_agent_run"
+      on_mcp_success:
+        - server: gobby-agents
+          tool: end_agent_run
+          action: set_variable
+          variable: review_complete
+          value: true

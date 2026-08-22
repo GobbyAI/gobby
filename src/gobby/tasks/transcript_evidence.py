@@ -47,6 +47,7 @@ _PATH_KEYS = ("file_path", "path", "notebook_path")
 _EXIT_CODE_KEYS = ("exit_code", "exitCode")
 _SUCCESS_STATUSES = {"completed", "ok", "passed", "success", "succeeded"}
 _FAILURE_STATUSES = {"error", "failed", "failure"}
+_OUTPUT_CHAR_LIMIT = 16_000
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,8 @@ class TranscriptValidationRun:
     order: int
     exit_code: int | None = None
     unknown_reason: str | None = None
+    output: str | None = None
+    output_truncated: bool = False
 
 
 @dataclass(frozen=True)
@@ -358,6 +361,7 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
     if match is None:
         return
     status, exit_code, unknown_reason = _extract_outcome(outcome.result)
+    output, output_truncated = _extract_output(outcome.result)
     if direct_pending:
         if status == "unknown":
             # Keep the call pending so ParsedMessage can recover structured
@@ -386,6 +390,8 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
             order=order,
             exit_code=exit_code,
             unknown_reason=unknown_reason,
+            output=output,
+            output_truncated=output_truncated,
         )
     )
 
@@ -406,6 +412,7 @@ def _record_validation_run(
     if match is None:
         return
     outcome, exit_code, unknown_reason = _extract_outcome(result)
+    output, output_truncated = _extract_output(result)
     if outcome == "unknown":
         state.degraded.append(
             f"{source_label} lacks a definitive exit outcome for {match.label}; "
@@ -425,7 +432,33 @@ def _record_validation_run(
             order=order,
             exit_code=exit_code,
             unknown_reason=unknown_reason,
+            output=output,
+            output_truncated=output_truncated,
         )
+    )
+
+
+def _extract_output(result: Any) -> tuple[str | None, bool]:
+    """Extract bounded command output needed to classify validation failures."""
+    parts: list[str] = []
+    seen: set[str] = set()
+    for value in _walk_values(result):
+        if not isinstance(value, str):
+            continue
+        text = value.strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        parts.append(text)
+    if not parts:
+        return None, False
+    output = "\n".join(parts)
+    if len(output) <= _OUTPUT_CHAR_LIMIT:
+        return output, False
+    half = (_OUTPUT_CHAR_LIMIT - len("\n...[output truncated]...\n")) // 2
+    return (
+        f"{output[:half]}\n...[output truncated]...\n{output[-half:]}",
+        True,
     )
 
 
