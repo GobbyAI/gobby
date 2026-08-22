@@ -580,37 +580,13 @@ def _validate_consumer_coverage(
     issues: list[SymbolValidationIssue] = []
     for target in exact_targets:
         try:
-            selected_project_id, indexed_file = _visible_indexed_file(
-                storage,
-                scope,
-                target.file_path,
-            )
-            if indexed_file is None:
-                continue
-            symbols = storage.get_symbols_for_file(selected_project_id, target.file_path)
-        except psycopg.Error:
+            consumers = _symbol_consumers(storage, scope, target, usage_cache)
+        except (AttributeError, psycopg.Error):
             return [_consumer_coverage_skipped("code index usages are unavailable")]
-        matches = [
-            symbol
-            for symbol in symbols
-            if str(symbol.qualified_name) == target.symbol and getattr(symbol, "id", None)
-        ]
-        if len(matches) != 1:
-            continue
-        symbol_id = str(matches[0].id)
-        usage_key = (selected_project_id, symbol_id)
-        if usage_key not in usage_cache:
-            try:
-                usage_cache[usage_key] = storage.get_symbol_usages(
-                    selected_project_id,
-                    symbol_id,
-                )
-            except (AttributeError, psycopg.Error):
-                return [_consumer_coverage_skipped("code index usages are unavailable")]
         missing = sorted(
             {
                 consumer
-                for consumer in usage_cache[usage_key]
+                for consumer in consumers
                 if consumer not in targeted_files
                 and _is_owned_consumer(scope.filesystem_root, consumer)
             }
@@ -632,6 +608,36 @@ def _validate_consumer_coverage(
             )
         )
     return issues
+
+
+def _symbol_consumers(
+    storage: SymbolIndexStorage,
+    scope: SymbolValidationScope,
+    target: SymbolTarget,
+    usage_cache: dict[tuple[str, str], list[str]],
+) -> set[str]:
+    """Union a symbol's consumers across every index visible to the scope.
+
+    A worktree overlay index only records consumers edited in the worktree;
+    the parent index still holds the rest, so both are queried.
+    """
+    consumers: set[str] = set()
+    for project_id in scope.project_ids:
+        if storage.get_file(project_id, target.file_path) is None:
+            continue
+        symbols = storage.get_symbols_for_file(project_id, target.file_path)
+        matches = [
+            symbol
+            for symbol in symbols
+            if str(symbol.qualified_name) == target.symbol and getattr(symbol, "id", None)
+        ]
+        if len(matches) != 1:
+            continue
+        usage_key = (project_id, str(matches[0].id))
+        if usage_key not in usage_cache:
+            usage_cache[usage_key] = storage.get_symbol_usages(*usage_key)
+        consumers.update(usage_cache[usage_key])
+    return consumers
 
 
 def _consumer_coverage_skip_reason(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from pathlib import PurePath, PurePosixPath, PureWindowsPath
 from typing import Any
@@ -150,10 +151,17 @@ class CodeIndexRelationStorageMixin:
         return [{"file_path": row["source_file"]} for row in rows]
 
     def get_symbol_usages(self, project_id: str, symbol_id: str) -> list[str]:
-        """Return active call and import consumer files for one symbol."""
+        """Return active call and import consumer files for one symbol.
+
+        Call consumers come from ``code_calls``. Import consumers must import
+        one of the symbol's module aliases *and* mention the symbol's bare name
+        as a whole word in their indexed content, which also catches string
+        sites such as ``patch("module.symbol")``. Importing the module alone is
+        not a usage.
+        """
         machine_id = require_machine_id()
         symbol = self.db.fetchone(
-            """SELECT s.file_path
+            """SELECT s.file_path, s.name
                FROM code_symbols s
                JOIN code_indexed_file_states fs
                  ON fs.project_id = s.project_id
@@ -165,6 +173,7 @@ class CodeIndexRelationStorageMixin:
         if symbol is None:
             return []
         module_candidates = _module_candidates_for_file(str(symbol["file_path"]))
+        name_pattern = _whole_word_pattern(str(symbol["name"]))
         rows = self.db.fetchall(
             """SELECT consumer_path
                FROM (
@@ -185,6 +194,14 @@ class CodeIndexRelationStorageMixin:
                     AND i.content_hash = fs.content_hash
                    WHERE fs.machine_id = %s AND fs.project_id = %s
                      AND i.target_module = ANY(%s)
+                     AND EXISTS (
+                         SELECT 1
+                         FROM code_content_chunks c
+                         WHERE c.project_id = i.project_id
+                           AND c.file_path = i.source_file
+                           AND c.content_hash = i.content_hash
+                           AND c.content ~ %s
+                     )
                ) AS usages
                ORDER BY consumer_path""",
             (
@@ -194,6 +211,7 @@ class CodeIndexRelationStorageMixin:
                 machine_id,
                 project_id,
                 list(module_candidates),
+                name_pattern,
             ),
         )
         return [str(row["consumer_path"]) for row in rows]
@@ -241,6 +259,11 @@ class CodeIndexRelationStorageMixin:
                 (project_id, file_path),
             )
             return cursor.rowcount
+
+
+def _whole_word_pattern(name: str) -> str:
+    """PostgreSQL ARE pattern matching ``name`` as a whole word."""
+    return rf"\m{re.escape(name)}\M"
 
 
 def _module_candidates_for_file(file_path: str) -> tuple[str, ...]:

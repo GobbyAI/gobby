@@ -444,6 +444,38 @@ def test_find_files_importing_modules(code_storage: CodeIndexStorage) -> None:
     assert results == [{"file_path": "src/api.py"}]
 
 
+def _upsert_importer_with_content(
+    storage: CodeIndexStorage,
+    file_path: str,
+    content: str | None,
+    *,
+    target_module: str = "app",
+) -> None:
+    _upsert_test_file(storage, file_path)
+    storage.upsert_imports(
+        PROJECT_ID,
+        file_path,
+        [ImportRelation(source_file=file_path, target_module=target_module)],
+    )
+    if content is None:
+        return
+    storage.upsert_content_chunks(
+        [
+            ContentChunk(
+                id=ContentChunk.make_id(PROJECT_ID, file_path, FILE_CONTENT_HASH, 0),
+                project_id=PROJECT_ID,
+                file_path=file_path,
+                content_hash=FILE_CONTENT_HASH,
+                chunk_index=0,
+                line_start=1,
+                line_end=10,
+                content=content,
+                language="python",
+            )
+        ]
+    )
+
+
 def test_get_symbol_usages_combines_active_calls_and_imports(
     code_storage: CodeIndexStorage,
     sample_symbols: list[Symbol],
@@ -451,7 +483,6 @@ def test_get_symbol_usages_combines_active_calls_and_imports(
     target = sample_symbols[0]
     code_storage.upsert_symbols(sample_symbols)
     _upsert_test_file(code_storage, "src/caller.py")
-    _upsert_test_file(code_storage, "tests/test_importer.py")
     code_storage.upsert_calls(
         PROJECT_ID,
         "src/caller.py",
@@ -465,15 +496,44 @@ def test_get_symbol_usages_combines_active_calls_and_imports(
             )
         ],
     )
-    code_storage.upsert_imports(
-        PROJECT_ID,
+    _upsert_importer_with_content(
+        code_storage,
         "tests/test_importer.py",
-        [ImportRelation(source_file="tests/test_importer.py", target_module="app")],
+        "from app import greet\n\nassert greet('x')\n",
     )
 
     assert code_storage.get_symbol_usages(PROJECT_ID, target.id) == [
         "src/caller.py",
         "tests/test_importer.py",
+    ]
+
+
+def test_get_symbol_usages_requires_importers_to_mention_the_symbol(
+    code_storage: CodeIndexStorage,
+    sample_symbols: list[Symbol],
+) -> None:
+    """Importing the module is not enough; the importer must name the symbol."""
+    target = sample_symbols[0]
+    code_storage.upsert_symbols(sample_symbols)
+    _upsert_importer_with_content(
+        code_storage,
+        "tests/test_other_symbol.py",
+        "from app import Calculator\n\nCalculator().add(1, 2)\n",
+    )
+    _upsert_importer_with_content(
+        code_storage,
+        "tests/test_substring.py",
+        "import app\n\ngreeting = app.greetings()\n",
+    )
+    _upsert_importer_with_content(
+        code_storage,
+        "tests/test_patch_site.py",
+        "import app\n\nwith patch('app.greet'):\n    pass\n",
+    )
+    _upsert_importer_with_content(code_storage, "tests/test_no_chunks.py", None)
+
+    assert code_storage.get_symbol_usages(PROJECT_ID, target.id) == [
+        "tests/test_patch_site.py",
     ]
 
 

@@ -89,6 +89,7 @@ def validate_plan_file(
             "symbol_validation": skipped_symbols,
         }
     semantic_lint = lint_plan_document(plan_doc, project_root=project_root)
+    warnings.extend(semantic_lint.warnings)
     if not semantic_lint.valid:
         return {
             "valid": False,

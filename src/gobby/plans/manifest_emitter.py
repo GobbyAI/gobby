@@ -101,7 +101,7 @@ def derive_manifest_entries(
     dependencies_by_section = _synthesized_dependencies(document, deliverables)
     section_by_id = {section.section_id: section for section in document.sections}
     deliverable_ids = {section.section_id for section in deliverables}
-    deliverables_by_phase = _deliverables_by_phase(document, deliverables)
+    by_phase = deliverables_by_phase(document, deliverables)
     entries: list[dict[str, object]] = []
     for section in deliverables:
         raw_decision = routing_decisions.get(section.section_id, {})
@@ -141,7 +141,7 @@ def derive_manifest_entries(
                     section_id=section.section_id,
                     section_by_id=section_by_id,
                     deliverable_ids=deliverable_ids,
-                    deliverables_by_phase=deliverables_by_phase,
+                    deliverables_by_phase=by_phase,
                     require_list=True,
                 )
             )
@@ -420,19 +420,57 @@ def _synthesized_dependencies(
 ) -> dict[str, tuple[str, ...]]:
     section_by_id = {section.section_id: section for section in document.sections}
     deliverable_ids = {section.section_id for section in deliverables}
-    deliverables_by_phase = _deliverables_by_phase(document, deliverables)
+    by_phase = deliverables_by_phase(document, deliverables)
     dependencies_by_section: dict[str, tuple[str, ...]] = {}
 
     for section in deliverables:
         dependencies_by_section[section.section_id] = _resolve_dependency_refs(
-            list(extract_section_dependencies(section.title)),
+            list(section_dependency_refs(section, section_by_id)),
             section_id=section.section_id,
             section_by_id=section_by_id,
             deliverable_ids=deliverable_ids,
-            deliverables_by_phase=deliverables_by_phase,
+            deliverables_by_phase=by_phase,
             require_list=False,
         )
     return dependencies_by_section
+
+
+def section_dependency_refs(
+    section: PlanSection,
+    section_by_id: Mapping[str, PlanSection],
+) -> tuple[str, ...]:
+    """Return a section's ``(depends: ...)`` refs plus those inherited from its headings.
+
+    A ``(depends: ...)`` annotation on a phase heading (or any heading between
+    the phase and the deliverable) applies to every deliverable under it.
+    """
+    refs: list[str] = list(extract_section_dependencies(section.title))
+    current = section
+    while current.parent_id is not None:
+        parent = section_by_id.get(current.parent_id)
+        if parent is None:
+            break
+        for ref in extract_section_dependencies(parent.title):
+            if ref not in refs:
+                refs.append(ref)
+        if _PHASE_REF_RE.match(parent.section_id):
+            break
+        current = parent
+    return tuple(refs)
+
+
+def resolve_dependency_ref(
+    ref: str,
+    *,
+    deliverable_ids: set[str],
+    deliverables_by_phase: Mapping[str, list[str]],
+) -> tuple[str, ...]:
+    """Resolve one dependency ref to deliverable ids; empty when it resolves to nothing."""
+    if ref in deliverable_ids:
+        return (ref,)
+    if _PHASE_REF_RE.match(ref):
+        return tuple(deliverables_by_phase.get(ref, ()))
+    return ()
 
 
 def _resolve_dependency_refs(
@@ -453,21 +491,17 @@ def _resolve_dependency_refs(
     for raw_ref in raw_refs:
         if not isinstance(raw_ref, str) or not raw_ref:
             raise ManifestSynthesisError(f"empty dependency reference in section {section_id!r}")
-        candidates: tuple[str, ...]
-        if raw_ref in deliverable_ids:
-            candidates = (raw_ref,)
-        elif _PHASE_REF_RE.match(raw_ref):
-            candidates = tuple(deliverables_by_phase.get(raw_ref, ()))
-            if not candidates:
-                if raw_ref in section_by_id:
-                    raise ManifestSynthesisError(
-                        f"phase dependency {raw_ref!r} in section {section_id!r} "
-                        "has no deliverable sections"
-                    )
+        candidates = resolve_dependency_ref(
+            raw_ref,
+            deliverable_ids=deliverable_ids,
+            deliverables_by_phase=deliverables_by_phase,
+        )
+        if not candidates:
+            if _PHASE_REF_RE.match(raw_ref) and raw_ref in section_by_id:
                 raise ManifestSynthesisError(
-                    f"unknown dependency reference {raw_ref!r} in section {section_id!r}"
+                    f"phase dependency {raw_ref!r} in section {section_id!r} "
+                    "has no deliverable sections"
                 )
-        else:
             raise ManifestSynthesisError(
                 f"unknown dependency reference {raw_ref!r} in section {section_id!r}"
             )
@@ -479,10 +513,11 @@ def _resolve_dependency_refs(
     return tuple(resolved)
 
 
-def _deliverables_by_phase(
+def deliverables_by_phase(
     document: PlanDocument,
     deliverables: list[PlanSection],
 ) -> dict[str, list[str]]:
+    """Group deliverable section ids by their enclosing ``P<N>`` phase."""
     section_by_id = {section.section_id: section for section in document.sections}
     by_phase: dict[str, list[str]] = {}
     for deliverable in deliverables:

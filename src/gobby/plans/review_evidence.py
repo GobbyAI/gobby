@@ -527,9 +527,14 @@ class PlanReviewEvidenceService:
             payload = locked.round_result
             if round_result is not None:
                 payload = self._round_result_for_evidence(locked.evidence_id, round_result)
+            if payload is None:
+                raise ReviewEvidenceError(
+                    "missing_round_result",
+                    "round_result is required until a durable approval intent exists",
+                )
             # Vote → repair → fence: accepted needs_review repairs change
-            # reviewed sections. approved and missing verdicts stay identity-checked.
-            if payload is None or payload.get("verdict") != "needs_review":
+            # reviewed sections, so only approved verdicts stay identity-checked.
+            if payload.get("verdict") != "needs_review":
                 self._verify_reviewed_bytes(locked, resolved.read_bytes())
             return self.checkpoints.append_plan_changelog_round(
                 evidence_id,

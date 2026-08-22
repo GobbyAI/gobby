@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import textwrap
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
 import psycopg
 import pytest
 
+from gobby.code_index.models import CODE_INDEX_UUID_NAMESPACE
 from gobby.plans.parser import PlanDocument, parse_plan
 from gobby.plans.symbol_targets import SymbolValidationResult, validate_symbol_targets
 from gobby.tasks.expansion._validate import validate_plan_file
@@ -268,3 +270,58 @@ def test_plan_validation_surfaces_consumer_coverage_by_mode(
 
     assert result["valid"] is expected_valid
     assert any("consumer-coverage" in message for message in result[result_key])
+
+
+def test_plan_validation_surfaces_semantic_lint_warnings_without_project_root(
+    tmp_path: Path,
+) -> None:
+    plan_doc = _plan(tmp_path)
+
+    result = validate_plan_file(None, plan_doc.source_path)
+
+    assert result["valid"] is True
+    assert "production-size-growth skipped: no project root" in result["warnings"]
+
+
+def test_consumer_coverage_unions_overlay_and_parent_usages(tmp_path: Path) -> None:
+    overlay_project_id = str(uuid.uuid5(CODE_INDEX_UUID_NAMESPACE, str(tmp_path.resolve())))
+    usages_by_project = {
+        overlay_project_id: ["tests/test_overlay_consumer.py"],
+        PROJECT_ID: ["tests/test_parent_consumer.py"],
+    }
+
+    class _OverlayIndex(_Index):
+        def get_project_stats(self, project_id: str) -> _ProjectStats | None:
+            assert project_id in usages_by_project
+            return _ProjectStats(root_path=str(self.indexed_root))
+
+        def get_file(self, project_id: str, file_path: str) -> _IndexedFile | None:
+            assert project_id in usages_by_project
+            return super().get_file(PROJECT_ID, file_path)
+
+        def get_symbols_for_file(self, project_id: str, file_path: str) -> list[_Symbol]:
+            assert project_id in usages_by_project
+            return super().get_symbols_for_file(PROJECT_ID, file_path)
+
+        def get_symbol_usages(self, project_id: str, symbol_id: str) -> list[str]:
+            assert symbol_id == "provider-run"
+            return usages_by_project[project_id]
+
+    _write_source(tmp_path, "tests/test_overlay_consumer.py")
+    _write_source(tmp_path, "tests/test_parent_consumer.py")
+    result = validate_symbol_targets(
+        _plan(tmp_path),
+        project_context={
+            **_project_context(tmp_path),
+            "parent_project_id": PROJECT_ID,
+            "parent_project_path": str(tmp_path / "parent-checkout"),
+        },
+        code_index=_OverlayIndex(tmp_path),
+        required=True,
+        consumer_coverage_blocking=True,
+    )
+
+    issues = [issue for issue in result.issues if issue.code == "consumer-coverage"]
+    assert len(issues) == 1
+    assert "tests/test_overlay_consumer.py" in issues[0].message
+    assert "tests/test_parent_consumer.py" in issues[0].message

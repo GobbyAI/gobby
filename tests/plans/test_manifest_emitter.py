@@ -640,6 +640,49 @@ def test_synthesized_phase_dep_expands_to_phase_deliverables(tmp_path: Path) -> 
     assert list(by_section["2.1"].depends_on) == ["1.1", "1.2"]
 
 
+def test_synthesized_phase_heading_dep_applies_to_every_phase_deliverable(
+    tmp_path: Path,
+) -> None:
+    plan = _write(
+        tmp_path / "phase-heading-depends.md",
+        """
+        > **Plan ID:** demo-plan
+
+        ## P1 Phase 1
+        `kind: framing`
+
+        ### 1.1 A [category: code]
+        `kind: deliverable`
+
+        **Acceptance:**
+        - 1.1.1 — file: `a.py`
+
+        ## P2 Phase 2 (depends: P1)
+        `kind: framing`
+
+        ### 2.1 B [category: code]
+        `kind: deliverable`
+
+        **Acceptance:**
+        - 2.1.1 — file: `b.py`
+
+        ### 2.2 C [category: code] (depends: 2.1)
+        `kind: deliverable`
+
+        **Acceptance:**
+        - 2.2.1 — file: `c.py`
+        """,
+    )
+
+    outcome = emit_stub_manifest(plan)
+
+    assert outcome == "fresh"
+    document = parse_plan(plan, parse_mode="expansion")
+    by_section = {entry.source_section: entry for entry in document.manifest_entries}
+    assert list(by_section["2.1"].depends_on) == ["1.1"]
+    assert list(by_section["2.2"].depends_on) == ["2.1", "1.1"]
+
+
 @pytest.mark.parametrize("dependency", ["P9", "P3a"])
 def test_synthesized_unknown_phase_dep_falls_back(
     tmp_path: Path,

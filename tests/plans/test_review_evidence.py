@@ -20,83 +20,17 @@ from gobby.plans.review_evidence_io import (
 )
 from gobby.plans.review_evidence_models import ReviewEvidenceError
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.hub.protocol import HubDatabase, Transaction
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.hub.protocol import Transaction
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.machine_id import require_machine_id
+from tests.plans.review_evidence_helpers import (
+    ROUND_PROSE,
+    bind_interactive_review,
+    needs_review_result,
+    repair_reviewed_section,
+)
 from tests.review_coverage_helpers import coverage_attestation
-
-
-@pytest.fixture
-def review_setup(
-    temp_db: HubDatabase,
-    tmp_path: Path,
-) -> tuple[PlanReviewEvidenceService, str, str, Path]:
-    project = LocalProjectManager(temp_db).create(
-        name="review-evidence",
-        repo_path=str(tmp_path),
-    )
-    session = SessionManager(temp_db).register(
-        external_id="review-evidence-parent",
-        machine_id=require_machine_id(),
-        source="codex",
-        project_id=project.id,
-    )
-    plan_dir = tmp_path / ".gobby" / "plans"
-    plan_dir.mkdir(parents=True)
-    plan_path = plan_dir / "review-evidence.md"
-    plan_path.write_text(
-        "\n".join(
-            [
-                "# Review Evidence",
-                "**Plan ID:** review-evidence",
-                "",
-                "## P1 Phase",
-                "`kind: framing`",
-                "",
-                "### 1.1 Work",
-                "`kind: deliverable`",
-                "",
-                "Target: `src/example.py`",
-                "",
-                "**Acceptance:**",
-                "- 1.1.1 — Behavior exists. test: `tests/test_example.py`",
-                "",
-                "## Task Mapping",
-                "`kind: framing`",
-                "",
-                "Pending.",
-                "",
-                "## V1 Plan Changelog",
-                "`kind: verification`",
-                "",
-                "No rounds yet.",
-                "",
-                "## M1 Task Manifest",
-                "`kind: manifest`",
-                "",
-                "```yaml",
-                "- title: Implement example",
-                "  source_section: '1.1'",
-                "  covers:",
-                "    - 1.1.1",
-                "  category: code",
-                "  implementation_domain: backend",
-                "  priority: 2",
-                "  task_type: feature",
-                "  tdd: false",
-                "  labels:",
-                "    - covers:review-evidence:1.1:1.1.1",
-                "  description: Implement the example.",
-                "  validation_criteria: Example behavior is tested.",
-                "```",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    return PlanReviewEvidenceService(temp_db), project.id, session.id, plan_path
 
 
 def test_prepare_round_snapshot(
@@ -971,9 +905,6 @@ def _round_checkpoint(evidence_id: str = "evidence-1", round_number: int = 2) ->
     )
 
 
-_ROUND_PROSE = "**Round 2** `kind: verification`\n\n- verdict: needs_review"
-
-
 def test_append_round_entry_allows_multibyte_text_before_v1(tmp_path: Path) -> None:
     plan_path = _round_entry_plan(tmp_path)
     plan_path.write_text(
@@ -986,25 +917,25 @@ def test_append_round_entry_allows_multibyte_text_before_v1(tmp_path: Path) -> N
     )
     checkpoint = _round_checkpoint()
 
-    assert append_round_entry(plan_path, _ROUND_PROSE, checkpoint) is True
+    assert append_round_entry(plan_path, ROUND_PROSE, checkpoint) is True
     text = plan_path.read_text(encoding="utf-8")
     assert "日本語 — café 🎯" in text
-    assert text.index(_ROUND_PROSE) < text.index(checkpoint.decode("utf-8"))
+    assert text.index(ROUND_PROSE) < text.index(checkpoint.decode("utf-8"))
 
 
 def test_append_round_entry_inserts_before_next_section(tmp_path: Path) -> None:
     plan_path = _round_entry_plan(tmp_path)
     checkpoint = _round_checkpoint()
 
-    assert append_round_entry(plan_path, _ROUND_PROSE, checkpoint) is True
+    assert append_round_entry(plan_path, ROUND_PROSE, checkpoint) is True
 
     text = plan_path.read_text(encoding="utf-8")
-    prose_index = text.index(_ROUND_PROSE)
+    prose_index = text.index(ROUND_PROSE)
     fence_index = text.index(checkpoint.decode("utf-8"))
     assert text.index("No rounds yet.") < prose_index < fence_index < text.index("## Task Mapping")
 
     replayed = plan_path.read_bytes()
-    assert append_round_entry(plan_path, _ROUND_PROSE, checkpoint) is False
+    assert append_round_entry(plan_path, ROUND_PROSE, checkpoint) is False
     assert plan_path.read_bytes() == replayed
 
 
@@ -1041,13 +972,13 @@ def test_append_round_entry_fails_atomically(tmp_path: Path) -> None:
 
 def test_append_round_entry_rejects_conflicting_checkpoint(tmp_path: Path) -> None:
     plan_path = _round_entry_plan(tmp_path)
-    assert append_round_entry(plan_path, _ROUND_PROSE, _round_checkpoint()) is True
+    assert append_round_entry(plan_path, ROUND_PROSE, _round_checkpoint()) is True
     snapshot = plan_path.read_bytes()
 
     with pytest.raises(ReviewEvidenceError, match="conflicting V1 checkpoint"):
         append_round_entry(
             plan_path,
-            _ROUND_PROSE,
+            ROUND_PROSE,
             _round_checkpoint(round_number=3),
         )
     assert plan_path.read_bytes() == snapshot
@@ -1058,7 +989,7 @@ def test_append_round_entry_rejects_checkpoint_fence_in_prose(tmp_path: Path) ->
     checkpoint = _round_checkpoint()
     original = plan_path.read_bytes()
     smuggled = _round_checkpoint(evidence_id="evidence-smuggled", round_number=9)
-    prose = f"{_ROUND_PROSE}\n\n{smuggled.decode('utf-8')}"
+    prose = f"{ROUND_PROSE}\n\n{smuggled.decode('utf-8')}"
 
     with pytest.raises(ReviewEvidenceError, match="checkpoint list"):
         append_round_entry(plan_path, prose, checkpoint)
@@ -1092,7 +1023,7 @@ def test_append_plan_changelog_round_needs_review_end_to_end(
 
     result = service.append_plan_changelog_round(
         prepared.evidence_id,
-        _ROUND_PROSE,
+        ROUND_PROSE,
         round_result,
     )
 
@@ -1100,7 +1031,7 @@ def test_append_plan_changelog_round_needs_review_end_to_end(
     rendered = service.render_plan_changelog_round(prepared.evidence_id, round_result)
     assert result["checkpoint"] == rendered.decode("utf-8")
     text = plan_path.read_text(encoding="utf-8")
-    prose_index = text.index(_ROUND_PROSE)
+    prose_index = text.index(ROUND_PROSE)
     fence_index = text.index(rendered.decode("utf-8"))
     assert text.index("## V1 Plan Changelog") < prose_index < fence_index
     assert fence_index < text.index("## M1 Task Manifest")
@@ -1110,7 +1041,7 @@ def test_append_plan_changelog_round_needs_review_end_to_end(
 
     replay = service.append_plan_changelog_round(
         prepared.evidence_id,
-        _ROUND_PROSE,
+        ROUND_PROSE,
         round_result,
     )
     assert replay["applied"] is False
@@ -1121,12 +1052,12 @@ def test_append_plan_changelog_round_writes_normalized_payload(
     review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
 ) -> None:
     service, project_id, session_id, plan_path = review_setup
-    evidence_id = _bind_interactive_review(service, project_id, session_id, plan_path)
-    round_result = _needs_review_result(evidence_id)
+    evidence_id = bind_interactive_review(service, project_id, session_id, plan_path)
+    round_result = needs_review_result(evidence_id)
 
     result = service.append_plan_changelog_round(
         evidence_id,
-        _ROUND_PROSE,
+        ROUND_PROSE,
         round_result,
     )
 
@@ -1138,63 +1069,24 @@ def test_append_plan_changelog_round_writes_normalized_payload(
     assert result["checkpoint"] == rendered.decode("utf-8")
 
 
-def _bind_interactive_review(
-    service: PlanReviewEvidenceService,
-    project_id: str,
-    session_id: str,
-    plan_path: Path,
-) -> str:
-    prepared = service.prepare_plan_review_round(
-        project_id=project_id,
-        plan_path=plan_path,
-        round_number=2,
-        session_id=session_id,
-    )
-    run = LocalAgentRunManager(service.db).create(
-        parent_session_id=session_id,
-        provider="codex",
-        prompt="review",
-    )
-    service.bind_evidence_run(prepared.evidence_id, run.id)
-    return prepared.evidence_id
-
-
-def _needs_review_result(evidence_id: str) -> dict[str, object]:
-    return {
-        "verdict": "needs_review",
-        "findings": [],
-        "coverage_attestation": coverage_attestation(
-            evidence_id=evidence_id,
-            shadow_valid=False,
-        ),
-    }
-
-
-def _repair_reviewed_section(plan_path: Path) -> None:
-    current = plan_path.read_bytes()
-    repaired = current.replace(b"Behavior exists.", b"Repaired behavior exists.", 1)
-    assert repaired != current
-    plan_path.write_bytes(repaired)
-
-
 def test_append_plan_changelog_round_after_needs_review_repairs(
     review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
 ) -> None:
     service, project_id, session_id, plan_path = review_setup
-    evidence_id = _bind_interactive_review(service, project_id, session_id, plan_path)
-    _repair_reviewed_section(plan_path)
+    evidence_id = bind_interactive_review(service, project_id, session_id, plan_path)
+    repair_reviewed_section(plan_path)
     with pytest.raises(ReviewEvidenceError) as stale:
         service.verify_plan_unchanged(evidence_id, plan_path)
     assert stale.value.code == "stale_plan_evidence"
 
-    round_result = _needs_review_result(evidence_id)
-    result = service.append_plan_changelog_round(evidence_id, _ROUND_PROSE, round_result)
+    round_result = needs_review_result(evidence_id)
+    result = service.append_plan_changelog_round(evidence_id, ROUND_PROSE, round_result)
 
     assert result["applied"] is True
     rendered = service.render_plan_changelog_round(evidence_id, round_result)
     text = plan_path.read_text(encoding="utf-8")
     assert "Repaired behavior exists." in text
-    assert text.index(_ROUND_PROSE) < text.index(rendered.decode("utf-8"))
+    assert text.index(ROUND_PROSE) < text.index(rendered.decode("utf-8"))
     service.finalize_plan_review_evidence(evidence_id, round_result)
     assert service.get_evidence(evidence_id).finalized_at is not None
 
@@ -1213,8 +1105,8 @@ def test_append_plan_changelog_round_rejects_unbound_evidence(
     with pytest.raises(ReviewEvidenceError) as unbound:
         service.append_plan_changelog_round(
             prepared.evidence_id,
-            _ROUND_PROSE,
-            _needs_review_result(prepared.evidence_id),
+            ROUND_PROSE,
+            needs_review_result(prepared.evidence_id),
         )
     assert unbound.value.code == "binding_pending"
 
@@ -1242,8 +1134,8 @@ def test_append_plan_changelog_round_rejects_expired_evidence(
     with pytest.raises(ReviewEvidenceError) as expired:
         service.append_plan_changelog_round(
             prepared.evidence_id,
-            _ROUND_PROSE,
-            _needs_review_result(prepared.evidence_id),
+            ROUND_PROSE,
+            needs_review_result(prepared.evidence_id),
         )
     assert expired.value.code == "evidence_replay"
 
@@ -1252,15 +1144,15 @@ def test_append_plan_changelog_round_rejects_wrong_plan_path(
     review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
 ) -> None:
     service, project_id, session_id, plan_path = review_setup
-    evidence_id = _bind_interactive_review(service, project_id, session_id, plan_path)
+    evidence_id = bind_interactive_review(service, project_id, session_id, plan_path)
     other = plan_path.with_name("other-plan.md")
     other.write_bytes(plan_path.read_bytes())
 
     with pytest.raises(ReviewEvidenceError) as wrong:
         service.append_plan_changelog_round(
             evidence_id,
-            _ROUND_PROSE,
-            _needs_review_result(evidence_id),
+            ROUND_PROSE,
+            needs_review_result(evidence_id),
             plan_path=other,
         )
     assert wrong.value.code == "wrong_plan"
@@ -1270,8 +1162,8 @@ def test_append_plan_changelog_round_approved_still_requires_identity(
     review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
 ) -> None:
     service, project_id, session_id, plan_path = review_setup
-    evidence_id = _bind_interactive_review(service, project_id, session_id, plan_path)
-    _repair_reviewed_section(plan_path)
+    evidence_id = bind_interactive_review(service, project_id, session_id, plan_path)
+    repair_reviewed_section(plan_path)
     derived = service.derive_plan_review_manifest(evidence_id, routing_decisions={})
     manifest_entries = derived["manifest_entries"]
     assert isinstance(manifest_entries, list)
@@ -1287,5 +1179,5 @@ def test_append_plan_changelog_round_approved_still_requires_identity(
     }
 
     with pytest.raises(ReviewEvidenceError) as stale:
-        service.append_plan_changelog_round(evidence_id, _ROUND_PROSE, approved)
+        service.append_plan_changelog_round(evidence_id, ROUND_PROSE, approved)
     assert stale.value.code == "stale_plan_evidence"
