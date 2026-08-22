@@ -121,7 +121,7 @@ def update_skill(
         if result.get("updated"):
             click.echo(f"Updated skill: {name}")
         else:
-            click.echo(f"Skipped: {result.get('skip_reason', 'already up to date')}")
+            click.echo(f"Skipped: {result.get('skip_reason') or 'already up to date'}")
         return
 
     click.echo(f"Error: {result.get('error', 'Unknown error')}", err=True)
@@ -147,7 +147,7 @@ def _update_all_skills(client: DaemonClient, call_tool: SkillToolCaller) -> None
                 updated += 1
             else:
                 click.echo(
-                    f"Skipped: {skill['name']} ({update_result.get('skip_reason', 'up to date')})"
+                    f"Skipped: {skill['name']} ({update_result.get('skip_reason') or 'up to date'})"
                 )
                 skipped += 1
         else:

@@ -966,7 +966,20 @@ class TestHelperFunctions:
         client = MagicMock()
         client.call_mcp_tool.return_value = {"success": True, "result": {"key": "val"}}
         result = call_skills_tool(client, "test_tool", {"arg": 1})
-        assert result == {"key": "val"}
+        # The daemon strips the inner success marker from successful internal
+        # tool results; the CLI handlers key on it, so it is restored here.
+        assert result == {"success": True, "key": "val"}
+
+    def test_call_skills_tool_keeps_inner_failure_marker(self) -> None:
+        from gobby.cli.skills import call_skills_tool
+
+        client = MagicMock()
+        client.call_mcp_tool.return_value = {
+            "success": True,
+            "result": {"success": False, "error": "tool-level failure"},
+        }
+        result = call_skills_tool(client, "test_tool", {})
+        assert result == {"success": False, "error": "tool-level failure"}
 
     def test_call_skills_tool_success_non_dict_result(
         self, capsys: pytest.CaptureFixture[str]

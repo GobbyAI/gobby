@@ -74,6 +74,9 @@ def call_skills_tool(
     """Call a gobby-skills MCP tool via the daemon.
 
     Returns the inner result from the MCP response, or None on communication error.
+    The daemon strips the ``success`` marker from successful internal tool
+    results, so dict results get it restored here for the CLI handlers that
+    key on it; an inner ``success: False`` payload is kept as-is.
     """
     try:
         response = client.call_mcp_tool(
@@ -83,7 +86,10 @@ def call_skills_tool(
             timeout=timeout,
         )
         if response.get("success") and "result" in response:
-            return response["result"]
+            result = response["result"]
+            if isinstance(result, dict):
+                return {"success": True, **result}
+            return result
 
         error = response.get("error") or response.get("message") or "MCP call failed"
         click.echo(f"Error: {error}", err=True)
