@@ -372,8 +372,11 @@ class ConfigDocumentsService:
         return False
 
     def _dump(self, snapshot: ConfigSnapshot) -> str:
+        # Export only the stored overrides: materialized defaults exported as
+        # user config become permanent pins when re-imported under different
+        # defaults (#20692).
         values: dict[str, object] = {}
-        for key, value in snapshot.desired_values.items():
+        for key, value in snapshot.desired_overrides.items():
             try:
                 spec = self.registry.resolve(key)
             except UnknownConfigKeyError:

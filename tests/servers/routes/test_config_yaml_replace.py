@@ -52,12 +52,18 @@ def _snapshot(
     desired_secrets: Mapping[str, str] | None = None,
     pending_restart_keys: frozenset[str] = frozenset(),
     failed_live_keys: Mapping[str, ApplyFailure] | None = None,
+    desired_overrides: Mapping[str, object] | None = None,
 ) -> ConfigSnapshot:
     bindings = {
         key: RuntimeSecretBinding(f"$secret:{key}", plaintext, f"fingerprint-{key}")
         for key, plaintext in (desired_secrets or {}).items()
     }
     values = dict(desired_values or {})
+    # The sparse desired_values maps in these tests model stored rows, which
+    # the real runtime also exposes as overrides; export reads them from
+    # desired_overrides (#20692). Pass desired_overrides to model a snapshot
+    # whose materialized values exceed the stored rows.
+    overrides = dict(desired_overrides) if desired_overrides is not None else values
     return ConfigSnapshot(
         revision=revision,
         desired=desired or DaemonConfig(),
@@ -67,6 +73,8 @@ def _snapshot(
         failed_live_keys=failed_live_keys or {},
         desired_values=values,
         active_values=values,
+        desired_overrides=overrides,
+        active_overrides=overrides,
         desired_bindings=bindings,
         active_bindings=bindings,
     )
@@ -427,6 +435,22 @@ def test_masking_warns_for_unresolvable_export_key(caplog: pytest.LogCaptureFixt
 
     assert masked == {"unknown_export_key": "value"}
     assert "Cannot resolve exported configuration key unknown_export_key" in caplog.text
+
+
+def test_export_omits_materialized_defaults() -> None:
+    """Export emits only stored overrides, never materialized defaults (#20692)."""
+    stored = {"memory_backup.backup_path": ".gobby/test-memories.jsonl"}
+    materialized = {**stored, "session_summary.profile": "feature_low"}
+    service, _runtime, _mutations = _service(
+        _snapshot(3, desired_values=materialized, desired_overrides=stored),
+        reconciled=_snapshot(4),
+    )
+
+    response = _client(service).post("/api/config/export")
+    document = cast(dict[str, Any], yaml.safe_load(response.json()["content"]))
+
+    assert response.status_code == 200
+    assert document == {"memory_backup": {"backup_path": ".gobby/test-memories.jsonl"}}
 
 
 def test_export_masks_reference_key_even_when_stored_value_is_plaintext() -> None:
