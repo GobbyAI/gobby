@@ -4,17 +4,19 @@ These tests run the SDK ``Client`` unmocked against in-memory peers: a modern
 ``MCPServer`` that answers ``server/discover`` and a wire-level legacy server
 that only speaks the ``initialize`` handshake. Both must end up as a usable
 manager-facing ``ClientSession`` with list/call working and snake_case SDK
-fields populated.
+fields populated. The stdio tests spawn a real subprocess and tear it down
+from a different task than the one that connected, as the manager does.
 """
 
 from __future__ import annotations
 
+import asyncio
+import os
 import sys
 from typing import Any
 
 import pytest
 from mcp.client import Client, ClientSession
-from mcp.client._memory import InMemoryTransport
 from mcp.types import CallToolResult, ListToolsResult
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, MODERN_PROTOCOL_VERSIONS
 
@@ -46,7 +48,7 @@ async def _assert_session_usable(session: ClientSession) -> None:
 
 @pytest.mark.asyncio
 async def test_modern_server_negotiates_via_discover() -> None:
-    async with Client(InMemoryTransport(modern_server())) as client:
+    async with Client(modern_server()) as client:
         assert client.protocol_version in MODERN_PROTOCOL_VERSIONS
         assert client.session.discover_result is not None
         assert client.session.initialize_result is None
@@ -143,3 +145,65 @@ async def test_stdio_connection_round_trips_a_real_subprocess(tmp_path: Any) -> 
     state_after_disconnect: ConnectionState = connection.state
     assert state_after_disconnect == ConnectionState.DISCONNECTED
     assert connection._stdio_errlog_handle is None
+
+
+_PID_STDIO_SERVER = """
+import os
+
+from mcp.server.mcpserver import MCPServer
+
+server = MCPServer("stdio-pid", version="1.2.3")
+
+
+@server.tool()
+def pid() -> int:
+    return os.getpid()
+
+
+server.run("stdio")
+"""
+
+
+def _process_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    try:
+        # A reaped zombie also counts as gone; waitpid clears it if it is ours.
+        finished, _status = os.waitpid(pid, os.WNOHANG)
+    except ChildProcessError:
+        return True
+    return finished == 0
+
+
+@pytest.mark.asyncio
+async def test_stdio_subprocess_exits_when_disconnected_from_another_task(tmp_path: Any) -> None:
+    """connect_all() connects in a per-server task; disconnect_all() exits elsewhere."""
+    connection = StdioTransportConnection(
+        MCPServerConfig(
+            name="stdio-pid",
+            project_id="p",
+            transport="stdio",
+            command=sys.executable,
+            args=["-c", _PID_STDIO_SERVER],
+        ),
+        stdio_errlog_path=str(tmp_path / "stdio-pid.log"),
+    )
+
+    session = await asyncio.create_task(connection.connect())
+    owner_task = connection._owner_task
+    assert owner_task is not None
+    result = await session.call_tool("pid", {})
+    assert result.structured_content is not None
+    child_pid = int(result.structured_content["result"])
+    assert _process_alive(child_pid)
+
+    await asyncio.create_task(connection.disconnect())
+
+    assert owner_task.done() and not owner_task.cancelled()
+    assert connection.state == ConnectionState.DISCONNECTED
+    assert connection.session is None
+    assert connection._client_context is None
+    assert connection._stdio_errlog_handle is None
+    assert not _process_alive(child_pid), f"stdio server {child_pid} outlived disconnect()"

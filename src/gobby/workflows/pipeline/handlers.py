@@ -5,6 +5,8 @@ import logging
 import shlex
 from typing import TYPE_CHECKING, Any
 
+from mcp.types import CallToolResult, TextContent
+
 from gobby.config.feature_base import FeatureDefaultConfig
 
 if TYPE_CHECKING:
@@ -79,19 +81,21 @@ async def execute_mcp_step(
     finally:
         reset_seeded_contexts(tokens)
 
-    # Convert MCP SDK CallToolResult to a serializable dict
-    if hasattr(result, "content") and hasattr(result, "isError"):
-        texts = []
-        for item in result.content:
-            if hasattr(item, "text"):
-                texts.append(item.text)
-        output = "\n".join(texts) if texts else ""
-        if getattr(result, "isError", False):
+    # Downstream (external) servers answer with the SDK CallToolResult; it
+    # fails closed on is_error before anything flows to later steps.
+    if isinstance(result, CallToolResult):
+        output = "\n".join(
+            item.text for item in result.content if isinstance(item, TextContent)
+        )
+        if result.is_error:
             raise RuntimeError(
                 f"MCP step {rendered_step.id} failed: "
                 f"{mcp_config.server}:{mcp_config.tool} returned error: {output}"
             )
-        return {"result": output}
+        converted: dict[str, Any] = {"result": output}
+        if result.structured_content is not None:
+            converted["structured_content"] = result.structured_content
+        return converted
 
     # Check for MCP-level failure (dict responses from internal tools)
     # Supports both old pattern (success=False) and new pattern (error key only)

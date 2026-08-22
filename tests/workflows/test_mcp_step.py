@@ -4,9 +4,11 @@ Tests MCPStepConfig model, PipelineStep with mcp field,
 execute_mcp_step handler, and template rendering with type coercion.
 """
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from mcp.types import CallToolResult, TextContent
 from pydantic import ValidationError
 
 from gobby.workflows.definitions import MCPStepConfig, PipelineStep
@@ -413,6 +415,42 @@ class TestExecuteMCPStep:
         context: dict = {"inputs": {}, "steps": {}}
         with pytest.raises(RuntimeError, match="failed"):
             await execute_mcp_step(step, context, lambda: mock_proxy)
+
+    @pytest.mark.asyncio
+    async def test_mcp_step_fails_closed_on_sdk_error_result(self) -> None:
+        """A downstream CallToolResult with is_error=True never becomes a step value."""
+        mock_proxy = AsyncMock()
+        mock_proxy.call_tool = AsyncMock(
+            return_value=CallToolResult(
+                content=[TextContent(type="text", text="boom")], is_error=True
+            )
+        )
+        step = PipelineStep(id="external", mcp=MCPStepConfig(server="ext", tool="explode"))
+
+        context: dict[str, Any] = {"inputs": {}, "steps": {}}
+        with pytest.raises(RuntimeError, match="ext:explode returned error: boom"):
+            await execute_mcp_step(step, context, lambda: mock_proxy)
+
+    @pytest.mark.asyncio
+    async def test_mcp_step_converts_sdk_success_result(self) -> None:
+        """A successful CallToolResult yields its text and structured content."""
+        mock_proxy = AsyncMock()
+        mock_proxy.call_tool = AsyncMock(
+            return_value=CallToolResult(
+                content=[
+                    TextContent(type="text", text="line one"),
+                    TextContent(type="text", text="line two"),
+                ],
+                structured_content={"count": 2},
+                is_error=False,
+            )
+        )
+        step = PipelineStep(id="external", mcp=MCPStepConfig(server="ext", tool="lines"))
+
+        context: dict[str, Any] = {"inputs": {}, "steps": {}}
+        result = await execute_mcp_step(step, context, lambda: mock_proxy)
+
+        assert result == {"result": "line one\nline two", "structured_content": {"count": 2}}
 
 
 class TestMCPStepInPipelineExecute:

@@ -56,6 +56,7 @@ class FakeClient:
         session: Any | None = None,
         lifecycle: list[str] | None = None,
         handshake_error: BaseException | None = None,
+        handshake_gate: asyncio.Event | None = None,
         exit_error: BaseException | None = None,
         exit_delay: float = 0.0,
     ) -> None:
@@ -63,6 +64,7 @@ class FakeClient:
         self._session = session if session is not None else AsyncMock()
         self.lifecycle = lifecycle if lifecycle is not None else []
         self.handshake_error = handshake_error
+        self.handshake_gate = handshake_gate
         self.exit_error = exit_error
         self.exit_delay = exit_delay
         self.entered = False
@@ -72,10 +74,17 @@ class FakeClient:
     async def __aenter__(self) -> FakeClient:
         self.streams = await self.transport.__aenter__()
         self.lifecycle.append("transport-enter")
-        if self.handshake_error is not None:
-            await self.transport.__aexit__(type(self.handshake_error), self.handshake_error, None)
+        try:
+            if self.handshake_gate is not None:
+                await self.handshake_gate.wait()
+            if self.handshake_error is not None:
+                raise self.handshake_error
+        except BaseException as exc:
+            # Like the real Client: a failed or cancelled handshake unwinds
+            # the transport before the error leaves __aenter__.
+            await self.transport.__aexit__(type(exc), exc, None)
             self.lifecycle.append("transport-exit")
-            raise self.handshake_error
+            raise
         self.entered = True
         self.lifecycle.append("handshake")
         return self

@@ -1,35 +1,40 @@
 """WebSocket transport connection."""
 
-import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any
+from contextlib import AsyncExitStack, asynccontextmanager
+from typing import TYPE_CHECKING
 
 import anyio
-from mcp.client import Client
-from mcp.client._transport import TransportStreams
+from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
+from mcp.client import Transport
 from mcp.shared.message import SessionMessage
 from mcp.types import jsonrpc_message_adapter
 from pydantic import ValidationError
 from websockets.asyncio.client import connect as ws_connect
 from websockets.typing import Subprotocol
 
-from gobby.mcp_proxy.models import ConnectionState, MCPError
-from gobby.mcp_proxy.transports.base import BaseTransportConnection
+from gobby.mcp_proxy.transports.base import OwnerTaskTransportConnection
 
 if TYPE_CHECKING:
     from gobby.config.mcp import MCPServerConfig
 
 logger = logging.getLogger("gobby.mcp.client")
 
+# The stream pair every SDK transport yields; spelled out here because the SDK
+# only publishes the ``Transport`` protocol, not its stream alias.
+WebSocketStreams = tuple[
+    MemoryObjectReceiveStream[SessionMessage | Exception],
+    MemoryObjectSendStream[SessionMessage],
+]
+
 
 @asynccontextmanager
 async def websocket_client(
     url: str,
     headers: dict[str, str] | None,
-) -> AsyncIterator[TransportStreams]:
+) -> AsyncIterator[WebSocketStreams]:
     """Open MCP WebSocket streams while forwarding configured HTTP headers."""
     read_stream_writer, read_stream = anyio.create_memory_object_stream[SessionMessage | Exception](
         0
@@ -68,8 +73,11 @@ async def websocket_client(
             task_group.cancel_scope.cancel()
 
 
-class WebSocketTransportConnection(BaseTransportConnection):
+class WebSocketTransportConnection(OwnerTaskTransportConnection):
     """WebSocket transport connection using MCP SDK."""
+
+    _TRANSPORT_LABEL = "WebSocket"
+    _OWNER_TASK_PREFIX = "ws"
 
     def __init__(
         self,
@@ -78,96 +86,8 @@ class WebSocketTransportConnection(BaseTransportConnection):
         """Initialize WebSocket transport connection."""
         super().__init__(config)
 
-    async def _cleanup_connect_attempt(self, *, client_entered: bool) -> None:
-        """Release a partially established connection after failure or cancellation.
-
-        ``Client.__aenter__`` unwinds the transport itself when the handshake
-        fails, so only a fully entered client needs an explicit exit here.
-        """
-        client_ctx = self._client_context
-        self._session = None
-        self._client_context = None
-        self._state = ConnectionState.DISCONNECTED
-        cancelled_error: asyncio.CancelledError | None = None
-
-        if client_entered and client_ctx is not None:
-            try:
-                await asyncio.wait_for(client_ctx.__aexit__(None, None, None), timeout=2.0)
-            except TimeoutError:
-                logger.warning("Client cleanup timed out for %s", self.config.name)
-            except asyncio.CancelledError as exc:
-                logger.warning("Client cleanup cancelled for %s", self.config.name)
-                cancelled_error = exc
-            except Exception as cleanup_error:
-                logger.warning(
-                    "Error during client cleanup for %s: %s",
-                    self.config.name,
-                    cleanup_error,
-                )
-
-        if cancelled_error is not None:
-            raise cancelled_error
-
-    async def connect(self) -> Any:
-        """Connect via WebSocket transport."""
-        if self._state == ConnectionState.CONNECTED:
-            return self._session
-
-        self._state = ConnectionState.CONNECTING
-        client_entered = False
-
-        try:
-            # URL is required for WebSocket transport
-            if self.config.url is None:
-                raise RuntimeError("URL is required for WebSocket transport")
-
-            # Client owns the socket transport and the session, and negotiates
-            # the protocol era (server/discover, then initialize).
-            self._client_context = Client(websocket_client(self.config.url, self.config.headers))
-            client = await self._client_context.__aenter__()
-            client_entered = True
-            self._session = client.session
-
-            self._state = ConnectionState.CONNECTED
-            self._consecutive_failures = 0
-            logger.debug("Connected to WebSocket MCP server: %s", self.config.name)
-
-            return self._session
-
-        except asyncio.CancelledError:
-            await self._cleanup_connect_attempt(client_entered=client_entered)
-            raise
-        except Exception as e:
-            # Handle exceptions with empty str() (EndOfStream, ClosedResourceError)
-            error_msg = str(e) if str(e) else f"{type(e).__name__}: Connection closed or timed out"
-            logger.error(
-                "Failed to connect to WebSocket server '%s': %s", self.config.name, error_msg
-            )
-
-            await self._cleanup_connect_attempt(client_entered=client_entered)
-            self._state = ConnectionState.FAILED
-
-            # Re-raise wrapped in MCPError (don't double-wrap)
-            if isinstance(e, MCPError):
-                raise
-            raise MCPError(f"WebSocket connection failed: {error_msg}") from e
-
-    async def disconnect(self) -> None:
-        """Disconnect from WebSocket server."""
-        if self._client_context is not None:
-            try:
-                await asyncio.wait_for(
-                    self._client_context.__aexit__(None, None, None), timeout=2.0
-                )
-            except TimeoutError:
-                logger.warning("Client close timed out for %s", self.config.name)
-            except RuntimeError as e:
-                # Expected when exiting cancel scope from different task
-                if "cancel scope" not in str(e):
-                    logger.warning("Error closing client for %s: %s", self.config.name, e)
-            except Exception as e:
-                logger.warning("Error closing client for %s: %s", self.config.name, e)
-            self._client_context = None
-            self._session = None
-
-        self._state = ConnectionState.DISCONNECTED
+    async def _open_transport(self, stack: AsyncExitStack) -> Transport:
+        """Build the socket transport; the owner task enters and exits it."""
+        if self.config.url is None:
+            raise RuntimeError("URL is required for WebSocket transport")
+        return websocket_client(self.config.url, self.config.headers)

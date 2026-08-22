@@ -1,8 +1,10 @@
 """Tests for WebSocket transport connection.
 
-Exercises the real WebSocketTransportConnection code paths. The MCP SDK's
-``Client`` is replaced by ``FakeClient`` for lifecycle tests; the raw
-``websocket_client`` frame codec is exercised against a fake socket.
+Exercises the real WebSocketTransportConnection code paths, including the
+owner task that enters and exits the SDK ``Client``. ``Client`` is replaced by
+``FakeClient`` for lifecycle tests; the raw ``websocket_client`` frame codec is
+exercised against a fake socket. A real cross-task lifecycle over the wire
+lives in ``test_negotiation.py``.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from mcp.types import JSONRPCRequest, JSONRPCResponse
 
 from gobby.mcp_proxy.models import ConnectionState, MCPError, MCPServerConfig
 from gobby.mcp_proxy.transports.websocket import WebSocketTransportConnection, websocket_client
+from tests._timing import wait_for_async_condition
 from tests.mcp_proxy.transports._support import FakeClient, recording_transport
 
 pytestmark = pytest.mark.unit
@@ -65,7 +68,7 @@ class _ClientHarness:
                 "gobby.mcp_proxy.transports.websocket.websocket_client",
                 side_effect=self.fake_websocket_client,
             ),
-            patch("gobby.mcp_proxy.transports.websocket.Client", side_effect=self.fake_client),
+            patch("gobby.mcp_proxy.transports.base.Client", side_effect=self.fake_client),
         )
 
 
@@ -89,6 +92,7 @@ class TestWebSocketInit:
         assert conn.state == ConnectionState.DISCONNECTED
         assert conn.session is None
         assert conn._client_context is None
+        assert conn._owner_task is None
         assert not conn.is_connected
 
     def test_config_stored(
@@ -118,12 +122,14 @@ class TestWebSocketConnectSuccess:
         with ws_patch, client_patch:
             session = await conn.connect()
 
-        assert conn.state == ConnectionState.CONNECTED
-        assert conn.is_connected
-        assert session is harness.clients[0].session
-        client_context: object = conn._client_context
-        assert client_context is harness.clients[0]
-        assert harness.lifecycle == ["streams-open", "transport-enter", "handshake"]
+            assert conn.state == ConnectionState.CONNECTED
+            assert conn.is_connected
+            assert session is harness.clients[0].session
+            client_context: object = conn._client_context
+            assert client_context is harness.clients[0]
+            assert conn._owner_task is not None and not conn._owner_task.done()
+            assert harness.lifecycle == ["streams-open", "transport-enter", "handshake"]
+            await conn.disconnect()
 
     async def test_connect_passes_url_and_headers(self) -> None:
         conn = WebSocketTransportConnection(
@@ -133,6 +139,7 @@ class TestWebSocketConnectSuccess:
         ws_patch, client_patch = harness.patches()
         with ws_patch, client_patch:
             await conn.connect()
+            await conn.disconnect()
 
         assert harness.transport_calls == [("ws://example.test/mcp", {"Authorization": "Bearer t"})]
 
@@ -143,10 +150,10 @@ class TestWebSocketConnectSuccess:
         ws_patch, client_patch = harness.patches()
         with ws_patch, client_patch:
             await conn.connect()
-
-        # The Client owns the transport context; the connection never enters it directly.
-        assert harness.clients[0].streams is not None
-        assert conn._consecutive_failures == 0
+            # The Client owns the transport context; the connection never enters it directly.
+            assert harness.clients[0].streams is not None
+            assert conn._consecutive_failures == 0
+            await conn.disconnect()
 
 
 # ===========================================================================
@@ -163,20 +170,21 @@ class TestWebSocketConnectMissingURL:
 
         assert conn.state == ConnectionState.FAILED
         assert conn._client_context is None
+        assert conn._owner_task is None
 
 
 class TestWebSocketConnectTransportFailure:
     async def test_transport_enter_failure(self, conn: WebSocketTransportConnection) -> None:
         harness = _ClientHarness()
-        harness.transport_enter_error = ConnectionRefusedError("refused")
+        harness.transport_enter_error = OSError("refused")
         ws_patch, client_patch = harness.patches()
         with ws_patch, client_patch, pytest.raises(MCPError, match="refused"):
             await conn.connect()
 
         assert conn.state == ConnectionState.FAILED
         assert conn._client_context is None
-        assert conn.session is None
-        assert harness.clients[0].exited is False  # never entered, nothing to exit
+        assert conn._owner_task is None
+        assert harness.clients[0].exited is False
         assert harness.lifecycle == []
 
 
@@ -191,7 +199,6 @@ class TestWebSocketConnectHandshakeFailure:
 
         assert conn.state == ConnectionState.FAILED
         assert conn._client_context is None
-        # Client.__aenter__ already unwound the transport; no double exit.
         assert harness.lifecycle == [
             "streams-open",
             "transport-enter",
@@ -202,17 +209,35 @@ class TestWebSocketConnectHandshakeFailure:
 
 
 class TestWebSocketConnectCancellation:
-    async def test_handshake_cancellation_propagates_and_resets(
+    async def test_caller_cancellation_unwinds_owner_task(
         self, conn: WebSocketTransportConnection
     ) -> None:
-        harness = _ClientHarness(handshake_error=asyncio.CancelledError())
+        """Cancelling the connecting task must not leave the socket task group alive."""
+        harness = _ClientHarness(handshake_gate=asyncio.Event())
         ws_patch, client_patch = harness.patches()
-        with ws_patch, client_patch, pytest.raises(asyncio.CancelledError):
-            await conn.connect()
+        with ws_patch, client_patch:
+            connecting = asyncio.create_task(conn.connect())
+            await wait_for_async_condition(
+                lambda: "transport-enter" in harness.lifecycle,
+                description="handshake to start",
+            )
+            owner_task = conn._owner_task
+            assert owner_task is not None
 
+            connecting.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await connecting
+
+        assert owner_task.done()
+        assert conn._owner_task is None
         assert conn.state == ConnectionState.DISCONNECTED
         assert conn._client_context is None
-        assert conn.session is None
+        assert harness.lifecycle == [
+            "streams-open",
+            "transport-enter",
+            "streams-closed",
+            "transport-exit",
+        ]
 
 
 class TestWebSocketConnectMCPErrorPassthrough:
@@ -238,57 +263,6 @@ class TestWebSocketConnectEmptyErrorMessage:
 
 
 # ===========================================================================
-# _cleanup_connect_attempt
-# ===========================================================================
-
-
-class TestWebSocketCleanupConnectAttempt:
-    async def test_exit_error_suppressed(self, conn: WebSocketTransportConnection) -> None:
-        client = FakeClient(recording_transport([]), exit_error=RuntimeError("exit boom"))
-        conn._client_context = client  # type: ignore[assignment]
-        conn._session = AsyncMock()
-
-        await conn._cleanup_connect_attempt(client_entered=True)
-
-        assert client.exited
-        assert conn._client_context is None
-        assert conn.session is None
-        assert conn.state == ConnectionState.DISCONNECTED
-
-    async def test_exit_timeout_suppressed(self, conn: WebSocketTransportConnection) -> None:
-        client = FakeClient(recording_transport([]), exit_delay=5.0)
-        conn._client_context = client  # type: ignore[assignment]
-
-        with patch(
-            "gobby.mcp_proxy.transports.websocket.asyncio.wait_for", side_effect=TimeoutError
-        ):
-            await conn._cleanup_connect_attempt(client_entered=True)
-
-        assert conn._client_context is None
-
-    async def test_not_entered_skips_exit(self, conn: WebSocketTransportConnection) -> None:
-        client = FakeClient(recording_transport([]))
-        conn._client_context = client  # type: ignore[assignment]
-
-        await conn._cleanup_connect_attempt(client_entered=False)
-
-        assert client.exited is False
-        assert conn._client_context is None
-
-    async def test_cancelled_exit_is_re_raised_after_reset(
-        self, conn: WebSocketTransportConnection
-    ) -> None:
-        client = FakeClient(recording_transport([]), exit_error=asyncio.CancelledError())
-        conn._client_context = client  # type: ignore[assignment]
-
-        with pytest.raises(asyncio.CancelledError):
-            await conn._cleanup_connect_attempt(client_entered=True)
-
-        assert conn._client_context is None
-        assert conn.state == ConnectionState.DISCONNECTED
-
-
-# ===========================================================================
 # Disconnect
 # ===========================================================================
 
@@ -299,74 +273,75 @@ class TestWebSocketDisconnect:
 
         assert conn.state == ConnectionState.DISCONNECTED
         assert conn._client_context is None
+        assert conn._owner_task is None
 
-    async def test_disconnect_exits_client(self, conn: WebSocketTransportConnection) -> None:
-        lifecycle: list[str] = []
-        client = FakeClient(recording_transport(lifecycle), lifecycle=lifecycle)
-        await client.__aenter__()
-        conn._client_context = client  # type: ignore[assignment]
-        conn._session = client.session
-        conn._state = ConnectionState.CONNECTED
+    async def test_disconnect_from_another_task_exits_client_in_owner_task(
+        self, conn: WebSocketTransportConnection
+    ) -> None:
+        """connect_all() connects in one task and disconnect_all() in another."""
+        harness = _ClientHarness()
+        ws_patch, client_patch = harness.patches()
+        with ws_patch, client_patch:
+            await asyncio.create_task(conn.connect())
+            owner_task = conn._owner_task
+            assert owner_task is not None
+            client = harness.clients[0]
 
-        await conn.disconnect()
+            await asyncio.create_task(conn.disconnect())
 
         assert client.exited
-        assert lifecycle[-2:] == ["streams-closed", "transport-exit"]
+        assert owner_task.done() and not owner_task.cancelled()
+        assert harness.lifecycle == [
+            "streams-open",
+            "transport-enter",
+            "handshake",
+            "streams-closed",
+            "transport-exit",
+        ]
         assert conn._client_context is None
+        assert conn._owner_task is None
         assert conn.session is None
         assert conn.state == ConnectionState.DISCONNECTED
 
-    async def test_timeout_handled(self, conn: WebSocketTransportConnection) -> None:
-        conn._client_context = FakeClient(recording_transport([]), exit_delay=5.0)  # type: ignore[assignment]
-
-        with patch(
-            "gobby.mcp_proxy.transports.websocket.asyncio.wait_for", side_effect=TimeoutError
-        ):
+    async def test_exit_error_is_logged_and_state_reset(
+        self, conn: WebSocketTransportConnection, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        harness = _ClientHarness(exit_error=RuntimeError("exit boom"))
+        ws_patch, client_patch = harness.patches()
+        with ws_patch, client_patch, caplog.at_level("WARNING", logger="gobby.mcp.client"):
+            await conn.connect()
             await conn.disconnect()
 
+        assert [r for r in caplog.records if "Error closing WebSocket client" in r.message]
+        assert not [r for r in caplog.records if "Failed to connect" in r.message]
         assert conn._client_context is None
+        assert conn._owner_task is None
         assert conn.state == ConnectionState.DISCONNECTED
 
-    async def test_cancel_scope_runtime_error_suppressed(
+    async def test_stalled_exit_is_cancelled(
         self, conn: WebSocketTransportConnection, caplog: pytest.LogCaptureFixture
     ) -> None:
-        conn._client_context = FakeClient(  # type: ignore[assignment]
-            recording_transport([]),
-            exit_error=RuntimeError("Attempted to exit cancel scope in a different task"),
-        )
-
-        with caplog.at_level("WARNING", logger="gobby.mcp.client"):
+        harness = _ClientHarness(exit_delay=60.0)
+        ws_patch, client_patch = harness.patches()
+        with (
+            ws_patch,
+            client_patch,
+            patch.object(WebSocketTransportConnection, "_OWNER_TASK_SHUTDOWN_TIMEOUT", 0.01),
+            caplog.at_level("DEBUG", logger="gobby.mcp.client"),
+        ):
+            await conn.connect()
+            owner_task = conn._owner_task
+            assert owner_task is not None
             await conn.disconnect()
 
-        assert not [r for r in caplog.records if "Error closing client" in r.message]
-        assert conn._client_context is None
-
-    async def test_other_runtime_error_logged(
-        self, conn: WebSocketTransportConnection, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        conn._client_context = FakeClient(  # type: ignore[assignment]
-            recording_transport([]), exit_error=RuntimeError("something else")
-        )
-
-        with caplog.at_level("WARNING", logger="gobby.mcp.client"):
-            await conn.disconnect()
-
-        assert [r for r in caplog.records if "Error closing client" in r.message]
-        assert conn._client_context is None
-
-    async def test_generic_exception_handled(self, conn: WebSocketTransportConnection) -> None:
-        conn._client_context = FakeClient(  # type: ignore[assignment]
-            recording_transport([]), exit_error=ValueError("bad")
-        )
-
-        await conn.disconnect()
-
+        assert owner_task.cancelled()
+        assert [r for r in caplog.records if "Owner task cancelled" in r.message]
         assert conn._client_context is None
         assert conn.state == ConnectionState.DISCONNECTED
 
 
 # ===========================================================================
-# Full lifecycle & base properties
+# Full lifecycle
 # ===========================================================================
 
 
@@ -388,6 +363,25 @@ class TestWebSocketFullLifecycle:
             "streams-closed",
             "transport-exit",
         ]
+
+    async def test_reconnect_after_disconnect(self, conn: WebSocketTransportConnection) -> None:
+        harness = _ClientHarness()
+        ws_patch, client_patch = harness.patches()
+        with ws_patch, client_patch:
+            await conn.connect()
+            await conn.disconnect()
+            await conn.connect()
+
+            assert conn.is_connected
+            assert len(harness.clients) == 2
+            client_context: object = conn._client_context
+            assert client_context is harness.clients[1]
+            await conn.disconnect()
+
+
+# ===========================================================================
+# Full lifecycle & base properties
+# ===========================================================================
 
 
 class TestWebSocketBaseProperties:

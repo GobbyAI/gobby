@@ -71,7 +71,7 @@ class _ClientHarness:
                 "gobby.mcp_proxy.transports.http.streamable_http_client",
                 side_effect=self.fake_streamable_http,
             ),
-            patch("gobby.mcp_proxy.transports.http.Client", side_effect=self.fake_client),
+            patch("gobby.mcp_proxy.transports.base.Client", side_effect=self.fake_client),
         )
 
     @property

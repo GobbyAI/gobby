@@ -1,13 +1,11 @@
 """Tests for stdio transport environment variable expansion."""
 
-import logging
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
-from gobby.mcp_proxy.models import MCPServerConfig
-from gobby.mcp_proxy.transports.stdio import StdioTransportConnection, _expand_args
+from gobby.mcp_proxy.transports.stdio import _expand_args
 from gobby.utils.env import ENV_VAR_PATTERN, expand_env_mapping, expand_env_variables
 
 pytestmark = pytest.mark.unit
@@ -283,57 +281,3 @@ class TestIntegrationScenarios:
             result = _expand_args(args)
 
             assert result == ["value", "default", "${UNSET_NO_DEFAULT}"]
-
-
-class TestStdioCleanup:
-    @pytest.mark.asyncio
-    async def test_disconnect_closes_original_errlog_handle_only(self) -> None:
-        config = MCPServerConfig(
-            project_id="project-1",
-            name="stdio-test",
-            transport="stdio",
-            command="node",
-        )
-        connection = StdioTransportConnection(config)
-        original_handle = MagicMock()
-        replacement_handle = MagicMock()
-
-        class ReplacingClientContext:
-            async def __aexit__(self, *_args: object) -> None:
-                connection._stdio_errlog_handle = replacement_handle
-
-        connection._stdio_errlog_handle = original_handle
-        connection._client_context = ReplacingClientContext()  # type: ignore[assignment]
-
-        await connection.disconnect()
-
-        original_handle.close.assert_called_once_with()
-        replacement_handle.close.assert_not_called()
-        assert connection._stdio_errlog_handle is replacement_handle
-
-    @pytest.mark.asyncio
-    async def test_cleanup_connect_attempt_logs_structured_cleanup_context(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        config = MCPServerConfig(
-            project_id="project-1",
-            name="stdio-test",
-            transport="stdio",
-            command="node",
-        )
-        connection = StdioTransportConnection(config)
-
-        class FailingClientContext:
-            async def __aexit__(self, *_args: object) -> None:
-                raise RuntimeError("boom")
-
-        connection._client_context = FailingClientContext()  # type: ignore[assignment]
-
-        with caplog.at_level(logging.WARNING, logger="gobby.mcp_proxy.transports.stdio"):
-            await connection._cleanup_connect_attempt(client_entered=True)
-
-        record = next(
-            record for record in caplog.records if "Error during client cleanup" in record.message
-        )
-        assert record.server == "stdio-test"
-        assert record.cleanup_stage == "client"

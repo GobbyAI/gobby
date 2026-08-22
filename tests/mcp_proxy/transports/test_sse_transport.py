@@ -48,7 +48,7 @@ async def test_persisted_sse_config_connects_after_reload(tmp_path) -> None:
 
     with (
         patch("gobby.mcp_proxy.transports.sse.sse_client", side_effect=fake_sse_client),
-        patch("gobby.mcp_proxy.transports.http.Client", side_effect=fake_client),
+        patch("gobby.mcp_proxy.transports.base.Client", side_effect=fake_client),
     ):
         result = await connection.connect()
         assert result is clients[0].session

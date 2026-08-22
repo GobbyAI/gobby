@@ -1,8 +1,10 @@
 """Tests for stdio transport connection.
 
-Exercises the real StdioTransportConnection code paths. The MCP SDK's
-``stdio_client`` (subprocess I/O) and ``Client`` are replaced by fakes; the
-env-var expansion helpers are tested against real os.environ.
+Exercises the real StdioTransportConnection code paths, including the owner
+task that enters and exits the SDK ``Client``. ``stdio_client`` (subprocess
+I/O) and ``Client`` are replaced by fakes; the env-var expansion helpers are
+tested against real os.environ. Real subprocess teardown lives in
+``test_negotiation.py``.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from gobby.mcp_proxy.bundled import CHROME_DEVTOOLS_NPM_PACKAGE, resolve_runtime
 from gobby.mcp_proxy.models import ConnectionState, MCPError, MCPServerConfig
 from gobby.mcp_proxy.transports.stdio import StdioTransportConnection, _expand_args
 from gobby.utils.env import expand_env_mapping, expand_env_variables
+from tests._timing import wait_for_async_condition
 from tests.mcp_proxy.transports._support import FakeClient, recording_transport
 
 pytestmark = pytest.mark.unit
@@ -69,7 +72,7 @@ class _ClientHarness:
                 "gobby.mcp_proxy.transports.stdio.stdio_client",
                 side_effect=self.fake_stdio_client,
             ),
-            patch("gobby.mcp_proxy.transports.stdio.Client", side_effect=self.fake_client),
+            patch("gobby.mcp_proxy.transports.base.Client", side_effect=self.fake_client),
         )
 
     @property
@@ -259,6 +262,7 @@ class TestStdioInit:
         assert conn.state == ConnectionState.DISCONNECTED
         assert conn.session is None
         assert conn._client_context is None
+        assert conn._owner_task is None
         assert conn._stdio_errlog_handle is None
         assert not conn.is_connected
 
@@ -287,12 +291,14 @@ class TestStdioConnectSuccess:
         with stdio_patch, client_patch:
             session = await conn.connect()
 
-        assert conn.state == ConnectionState.CONNECTED
-        assert session is harness.clients[0].session
-        client_context: object = conn._client_context
-        assert client_context is harness.clients[0]
-        assert conn._consecutive_failures == 0
-        assert harness.lifecycle == ["streams-open", "transport-enter", "handshake"]
+            assert conn.state == ConnectionState.CONNECTED
+            assert session is harness.clients[0].session
+            client_context: object = conn._client_context
+            assert client_context is harness.clients[0]
+            assert conn._consecutive_failures == 0
+            assert conn._owner_task is not None and not conn._owner_task.done()
+            assert harness.lifecycle == ["streams-open", "transport-enter", "handshake"]
+            await conn.disconnect()
 
     async def test_connect_creates_stdio_server_parameters(self) -> None:
         conn = StdioTransportConnection(
@@ -308,6 +314,7 @@ class TestStdioConnectSuccess:
             os.environ.pop("PORT_ARG", None)
             os.environ.pop("MISSING_TOKEN", None)
             await conn.connect()
+            await conn.disconnect()
 
         assert harness.params.command == "python"
         assert harness.params.args == ["-m", "server", "8080"]
@@ -319,6 +326,7 @@ class TestStdioConnectSuccess:
         stdio_patch, client_patch = harness.patches()
         with stdio_patch, client_patch:
             await conn.connect()
+            await conn.disconnect()
 
         assert harness.params.args == []
 
@@ -329,9 +337,11 @@ class TestStdioConnectSuccess:
         stdio_patch, client_patch = harness.patches()
         with stdio_patch, client_patch:
             await conn.connect()
+            await conn.disconnect()
 
         assert harness.errlog is sys.stderr
         assert conn._stdio_errlog_handle is None
+        assert not sys.stderr.closed
 
     async def test_connect_uses_configured_errlog_path(self, tmp_path: Path) -> None:
         errlog_path = tmp_path / "logs" / "mcp-client.log"
@@ -344,6 +354,7 @@ class TestStdioConnectSuccess:
             assert handle is not None
             assert harness.errlog is handle
             assert Path(handle.name) == errlog_path
+            assert not handle.closed
             await conn.disconnect()
 
         assert handle.closed
@@ -381,11 +392,12 @@ class TestStdioConnectSuccess:
         stdio_patch, client_patch = harness.patches()
         with stdio_patch, client_patch:
             await conn.connect()
+            assert conn.is_connected is True
+            await conn.disconnect()
 
         assert harness.params.command == command
         assert harness.params.args == []
         assert harness.params.env == expected_env
-        assert conn.is_connected is True
 
 
 # ===========================================================================
@@ -402,6 +414,7 @@ class TestStdioConnectMissingCommand:
 
         assert conn.state == ConnectionState.FAILED
         assert conn._client_context is None
+        assert conn._owner_task is None
 
 
 class TestStdioConnectTransportFailure:
@@ -417,6 +430,7 @@ class TestStdioConnectTransportFailure:
 
         assert conn.state == ConnectionState.FAILED
         assert conn._client_context is None
+        assert conn._owner_task is None
         assert conn._stdio_errlog_handle is None
         assert harness.errlog.closed
         assert harness.clients[0].exited is False
@@ -444,21 +458,61 @@ class TestStdioConnectHandshakeFailure:
 
 
 class TestStdioConnectCancellation:
-    async def test_handshake_cancellation_cleans_errlog_and_propagates(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_caller_cancellation_unwinds_owner_task_and_errlog(self, tmp_path: Path) -> None:
+        """Cancelling the connecting task must not leave the owner task running."""
         conn = StdioTransportConnection(
             _make_config(), stdio_errlog_path=str(tmp_path / "mcp-client.log")
         )
-        harness = _ClientHarness(handshake_error=asyncio.CancelledError())
+        harness = _ClientHarness(handshake_gate=asyncio.Event())
         stdio_patch, client_patch = harness.patches()
-        with stdio_patch, client_patch, pytest.raises(asyncio.CancelledError):
-            await conn.connect()
+        with stdio_patch, client_patch:
+            connecting = asyncio.create_task(conn.connect())
+            await wait_for_async_condition(
+                lambda: "transport-enter" in harness.lifecycle,
+                description="handshake to start",
+            )
+            owner_task = conn._owner_task
+            assert owner_task is not None
 
+            connecting.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await connecting
+
+        assert owner_task.done()
+        assert conn._owner_task is None
         assert conn.state == ConnectionState.DISCONNECTED
         assert conn._client_context is None
         assert conn._stdio_errlog_handle is None
         assert harness.errlog.closed
+        assert harness.lifecycle == [
+            "streams-open",
+            "transport-enter",
+            "streams-closed",
+            "transport-exit",
+        ]
+
+    async def test_owner_task_cancelled_mid_handshake_fails_connect(
+        self, conn: StdioTransportConnection
+    ) -> None:
+        """An owner task that dies without a session releases connect() with an error."""
+        harness = _ClientHarness(handshake_gate=asyncio.Event())
+        stdio_patch, client_patch = harness.patches()
+        with stdio_patch, client_patch:
+            connecting = asyncio.create_task(conn.connect())
+            await wait_for_async_condition(
+                lambda: "transport-enter" in harness.lifecycle,
+                description="handshake to start",
+            )
+            owner_task = conn._owner_task
+            assert owner_task is not None
+            owner_task.cancel()
+
+            with pytest.raises(MCPError, match="ended before a session was established"):
+                await connecting
+
+        assert conn.state == ConnectionState.FAILED
+        assert conn._owner_task is None
+        assert conn.session is None
 
 
 class TestStdioConnectMCPErrorPassthrough:
@@ -484,53 +538,6 @@ class TestStdioConnectEmptyErrorMessage:
 
 
 # ===========================================================================
-# _cleanup_connect_attempt
-# ===========================================================================
-
-
-class TestStdioCleanupConnectAttempt:
-    async def test_exit_error_suppressed(self, conn: StdioTransportConnection) -> None:
-        client = FakeClient(recording_transport([]), exit_error=RuntimeError("exit boom"))
-        conn._client_context = client  # type: ignore[assignment]
-
-        await conn._cleanup_connect_attempt(client_entered=True)
-
-        assert client.exited
-        assert conn._client_context is None
-        assert conn.state == ConnectionState.DISCONNECTED
-
-    async def test_exit_timeout_suppressed(self, conn: StdioTransportConnection) -> None:
-        conn._client_context = FakeClient(recording_transport([]), exit_delay=5.0)  # type: ignore[assignment]
-
-        with patch("gobby.mcp_proxy.transports.stdio.asyncio.wait_for", side_effect=TimeoutError):
-            await conn._cleanup_connect_attempt(client_entered=True)
-
-        assert conn._client_context is None
-
-    async def test_not_entered_skips_exit(self, conn: StdioTransportConnection) -> None:
-        client = FakeClient(recording_transport([]))
-        conn._client_context = client  # type: ignore[assignment]
-
-        await conn._cleanup_connect_attempt(client_entered=False)
-
-        assert client.exited is False
-        assert conn._client_context is None
-
-    async def test_cancelled_exit_is_re_raised_after_reset(
-        self, conn: StdioTransportConnection
-    ) -> None:
-        conn._client_context = FakeClient(  # type: ignore[assignment]
-            recording_transport([]), exit_error=asyncio.CancelledError()
-        )
-
-        with pytest.raises(asyncio.CancelledError):
-            await conn._cleanup_connect_attempt(client_entered=True)
-
-        assert conn._client_context is None
-        assert conn.state == ConnectionState.DISCONNECTED
-
-
-# ===========================================================================
 # Disconnect
 # ===========================================================================
 
@@ -541,79 +548,74 @@ class TestStdioDisconnect:
 
         assert conn.state == ConnectionState.DISCONNECTED
         assert conn._client_context is None
+        assert conn._owner_task is None
 
-    async def test_disconnect_exits_client(self, conn: StdioTransportConnection) -> None:
-        lifecycle: list[str] = []
-        client = FakeClient(recording_transport(lifecycle), lifecycle=lifecycle)
-        await client.__aenter__()
-        conn._client_context = client  # type: ignore[assignment]
-        conn._session = client.session
-        conn._state = ConnectionState.CONNECTED
+    async def test_disconnect_from_another_task_exits_client_in_owner_task(
+        self, conn: StdioTransportConnection
+    ) -> None:
+        """connect_all() connects in one task and disconnect_all() in another."""
+        harness = _ClientHarness()
+        stdio_patch, client_patch = harness.patches()
+        with stdio_patch, client_patch:
+            await asyncio.create_task(conn.connect())
+            owner_task = conn._owner_task
+            assert owner_task is not None
+            client = harness.clients[0]
 
-        await conn.disconnect()
+            await asyncio.create_task(conn.disconnect())
 
         assert client.exited
-        assert lifecycle[-2:] == ["streams-closed", "transport-exit"]
+        assert owner_task.done() and not owner_task.cancelled()
+        assert harness.lifecycle == [
+            "streams-open",
+            "transport-enter",
+            "handshake",
+            "streams-closed",
+            "transport-exit",
+        ]
         assert conn._client_context is None
+        assert conn._owner_task is None
         assert conn.session is None
         assert conn.state == ConnectionState.DISCONNECTED
 
-    async def test_timeout_handled(self, conn: StdioTransportConnection) -> None:
-        conn._client_context = FakeClient(recording_transport([]), exit_delay=5.0)  # type: ignore[assignment]
-
-        with patch("gobby.mcp_proxy.transports.stdio.asyncio.wait_for", side_effect=TimeoutError):
-            await conn.disconnect()
-
-        assert conn._client_context is None
-        assert conn.state == ConnectionState.DISCONNECTED
-
-    async def test_cancel_scope_runtime_error_suppressed(
+    async def test_exit_error_is_logged_and_state_reset(
         self, conn: StdioTransportConnection, caplog: pytest.LogCaptureFixture
     ) -> None:
-        conn._client_context = FakeClient(  # type: ignore[assignment]
-            recording_transport([]),
-            exit_error=RuntimeError("Attempted to exit cancel scope in a different task"),
-        )
-
-        with caplog.at_level("WARNING", logger="gobby.mcp.client"):
+        harness = _ClientHarness(exit_error=RuntimeError("exit boom"))
+        stdio_patch, client_patch = harness.patches()
+        with (
+            stdio_patch,
+            client_patch,
+            caplog.at_level("WARNING", logger="gobby.mcp.client"),
+        ):
+            await conn.connect()
             await conn.disconnect()
 
-        assert not [r for r in caplog.records if "Error closing client" in r.message]
+        assert [r for r in caplog.records if "Error closing Stdio client" in r.message]
+        assert not [r for r in caplog.records if "Failed to connect" in r.message]
+        assert conn._connection_error is None
         assert conn._client_context is None
-
-    async def test_other_runtime_error_logged(
-        self, conn: StdioTransportConnection, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        conn._client_context = FakeClient(  # type: ignore[assignment]
-            recording_transport([]), exit_error=RuntimeError("something else")
-        )
-
-        with caplog.at_level("WARNING", logger="gobby.mcp.client"):
-            await conn.disconnect()
-
-        assert [r for r in caplog.records if "Error closing client" in r.message]
-        assert conn._client_context is None
-
-    async def test_generic_exception_handled(self, conn: StdioTransportConnection) -> None:
-        conn._client_context = FakeClient(  # type: ignore[assignment]
-            recording_transport([]), exit_error=ValueError("bad")
-        )
-
-        await conn.disconnect()
-
-        assert conn._client_context is None
+        assert conn._owner_task is None
         assert conn.state == ConnectionState.DISCONNECTED
 
-    async def test_cancelled_close_re_raises_after_cleanup(
-        self, conn: StdioTransportConnection
+    async def test_stalled_exit_is_cancelled(
+        self, conn: StdioTransportConnection, caplog: pytest.LogCaptureFixture
     ) -> None:
-        conn._client_context = FakeClient(  # type: ignore[assignment]
-            recording_transport([]), exit_error=asyncio.CancelledError()
-        )
-
-        with pytest.raises(asyncio.CancelledError):
+        harness = _ClientHarness(exit_delay=60.0)
+        stdio_patch, client_patch = harness.patches()
+        with (
+            stdio_patch,
+            client_patch,
+            patch.object(StdioTransportConnection, "_OWNER_TASK_SHUTDOWN_TIMEOUT", 0.01),
+            caplog.at_level("DEBUG", logger="gobby.mcp.client"),
+        ):
+            await conn.connect()
+            owner_task = conn._owner_task
+            assert owner_task is not None
             await conn.disconnect()
 
+        assert owner_task.cancelled()
+        assert [r for r in caplog.records if "Owner task cancelled" in r.message]
         assert conn._client_context is None
         assert conn.state == ConnectionState.DISCONNECTED
 
@@ -650,7 +652,34 @@ class TestStdioFullLifecycle:
             await conn.disconnect()
             await conn.connect()
 
-        assert conn.is_connected
-        assert len(harness.clients) == 2
-        client_context: object = conn._client_context
-        assert client_context is harness.clients[1]
+            assert conn.is_connected
+            assert len(harness.clients) == 2
+            client_context: object = conn._client_context
+            assert client_context is harness.clients[1]
+            await conn.disconnect()
+
+    async def test_reconnect_while_connected_replaces_client_and_errlog(
+        self, tmp_path: Path
+    ) -> None:
+        """Connecting over a live connection unwinds the old one and its errlog only."""
+        conn = StdioTransportConnection(
+            _make_config(), stdio_errlog_path=str(tmp_path / "mcp-client.log")
+        )
+        harness = _ClientHarness()
+        stdio_patch, client_patch = harness.patches()
+        with stdio_patch, client_patch:
+            await conn.connect()
+            first_handle = conn._stdio_errlog_handle
+            assert first_handle is not None
+            conn._state = ConnectionState.CONNECTING  # force a reconnect path
+
+            await conn.connect()
+            second_handle = conn._stdio_errlog_handle
+            assert second_handle is not None and second_handle is not first_handle
+            assert first_handle.closed
+            assert not second_handle.closed
+            assert harness.clients[0].exited
+            await conn.disconnect()
+
+        assert second_handle.closed
+        assert conn._stdio_errlog_handle is None
