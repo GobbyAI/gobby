@@ -296,7 +296,7 @@ vLLM and clear-self already landed on `0.5.0`; they do not unlock Stages 1–3.
 | `.gobby/plans/two-daemon-hub.md`, `.gobby/plans/m0-shared-datastores-bridge.md`, `.gobby/plans/hub-pc-datastore-move.md` | Shared-datastore / lease groundwork |
 | `.gobby/plans/daemon-native-runtime-boundary.md` | Still-open Stage 2 foundation |
 | `.gobby/plans/completed/reactive-config-store.md` | Landed Stage 2 foundation |
-| `.gobby/plans/completed/account-identity-machine-ownership.md` | Landed Stage 3 identity groundwork |
+| `.gobby/plans/completed/account-identity-machine-ownership.md` | Landed identity |
 | `.gobby/plans/machine-scoped-worktrees-clones.md` | Stage 3 machine-scoped worktrees |
 | `.gobby/plans/shared-remote-stack.md` | Stage 3 remote-stack strategy |
 | `docs/architecture/hub-owned-files-home.md`, #20238 | Hub-owned `USER.md`, wiki home, `_personal` life-admin, and `attachments/`; destination HTTP under `/api/hub/...` |
