@@ -1,0 +1,53 @@
+# AGY 1.1.18 interactive pane capture — record 1.1.14
+# source: tmux capture-pane -p -S -200 -t agy-gate0 (04-shortcuts.txt); `?` shortcut overlay
+# scrubbed: $HOME→~, user→<USER>, email→<REDACTED>, workspace→<WORKSPACE>, ids→<CONVERSATION_ID>
+
+● gobby/list_mcp_servers(MCP server discovery) (ctrl+o to expand)
+
+  Gobby MCP servers
+
+  • Total servers: 27
+  • Connected (ready) servers: 22
+  • Servers pending/issue: 5 (brave-search, chrome‑devtools, context7, linear, playwright)
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Antigravity CLI   general    commands    shortcuts   (←/→ or tab to cycle)
+Keyboard Shortcuts
+  /keybindings to customize
+
+> /                               Open slash commands
+  \ + enter                       Insert newline fallback
+  alt+enter, ctrl+j, shift+enter  Insert newline
+  alt+j                           Manage subagent
+  alt+v, ctrl+v                   Paste image/video
+  ctrl+_, ctrl+shift+-            Undo
+  ctrl+c, esc                     Go back / dismiss
+  ctrl+d                          Exit
+  ctrl+end                        Go to bottom
+  ctrl+g                          Open prompt in $EDITOR
+  ctrl+home                       Go to top
+  ctrl+k                          Approve subagent fast
+  ctrl+l                          Clear CLI screen
+  ctrl+o                          Toggle trajectory view
+  ctrl+r                          Review artifact
+  ctrl+shift+z                    Redo
+  ctrl+y                          Yank (paste from kill ring)
+  ctrl+z                          Suspend CLI
+  down                            Move down
+  enter                           Send message or confirm
+  f2                              Rename
+  f4                              Delete
+  left                            Move left / Prev tab
+  pgdown, shift+down              Page down
+  pgup, shift+up                  Page up
+  right                           Move right / Next tab
+  shift+tab                       Cycle mode
+  shift/alt+click                 Select and copy text
+  tab                             Tab
+  up                              Move up
+
+Keyboard: ↑/↓ Navigate  ←/→ Switch View  esc Close
+
+                                                                                                                                                                                   GPT-OSS 120B (Medium)

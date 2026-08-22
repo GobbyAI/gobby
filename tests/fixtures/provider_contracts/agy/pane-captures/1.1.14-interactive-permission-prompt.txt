@@ -1,0 +1,32 @@
+# AGY 1.1.18 interactive pane capture — record 1.1.14
+# source: tmux capture-pane -p -S -200 -t agy-gate0 (12-permission-prompt.txt); native permission prompt (no skip flag)
+# scrubbed: $HOME→~, user→<USER>, email→<REDACTED>, workspace→<WORKSPACE>, ids→<CONVERSATION_ID>
+
+      ▄▀▀▄        Antigravity CLI 1.1.18
+     ▀▀▀▀▀▀       <REDACTED> (Antigravity Starter Quota)
+    ▀▀▀▀▀▀▀▀      GPT-OSS 120B (Medium)
+   ▄▀▀    ▀▀▄     <WORKSPACE>
+  ▄▀▀      ▀▀▄
+
+────────────────────────────────────────────────────────────
+> run: echo permtest
+
+▸ Thought for 24s
+  The user wants to run a command: echo permtest. We must execute run_command tool...
+
+● Bash(echo permtest) (ctrl+o to expand)
+
+Command
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+Requesting permission for:
+   echo permtest
+
+Do you want to proceed?
+> 1. Yes
+  2. Yes, and always allow in this conversation for commands that start with 'echo'
+  3. Yes, and always allow for commands that start with 'echo' (Persist to settings.json)
+  4. No
+
+  ↑/↓ Navigate · tab Amend · ctrl+g edit/expand command
+esc to cancel                                                                                                                                                                      GPT-OSS 120B (Medium)

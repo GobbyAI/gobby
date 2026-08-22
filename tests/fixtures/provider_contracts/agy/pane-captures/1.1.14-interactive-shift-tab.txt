@@ -1,0 +1,9 @@
+# AGY 1.1.18 interactive pane capture — record 1.1.14
+# source: tmux capture-pane -p -S -200 -t agy-gate0 (06-shift-tab.txt); shift+tab mode cycling
+# scrubbed: $HOME→~, user→<USER>, email→<REDACTED>, workspace→<WORKSPACE>, ids→<CONVERSATION_ID>
+  ↑/↓ Navigate · enter Select · tab Complete
+esc to cancel                                                                                                                                                       accept-edits · GPT-OSS 120B (Medium)
+  ↑/↓ Navigate · enter Select · tab Complete
+esc to cancel                                                                                                                                                               plan · GPT-OSS 120B (Medium)
+  ↑/↓ Navigate · enter Select · tab Complete
+esc to cancel                                                                                                                                                                      GPT-OSS 120B (Medium)

@@ -1,0 +1,51 @@
+# AGY 1.1.18 interactive pane capture — record 1.1.5
+# source: tmux capture-pane -p -S -200 -t agy-gate0 (02-shell.txt); turn 1: run: ls -la
+# scrubbed: $HOME→~, user→<USER>, email→<REDACTED>, workspace→<WORKSPACE>, ids→<CONVERSATION_ID>
+
+      ▄▀▀▄        Antigravity CLI 1.1.18
+     ▀▀▀▀▀▀       <REDACTED> (Antigravity Starter Quota)
+    ▀▀▀▀▀▀▀▀      GPT-OSS 120B (Medium)
+   ▄▀▀    ▀▀▄     <WORKSPACE>
+  ▄▀▀      ▀▀▄
+
+────────────────────────────────────────────────────────────
+> list the files in this directory
+
+▸ Thought for 8s
+  User asks: "list the files in this directory". We need to know which directory? ...
+
+● ListDir(<WORKSPACE>) (ctrl+o to expand)
+
+▸ Thought for 8s
+  We have listed directory. Need to respond to user with list. Provide clickable l...
+  Here are the contents of the requested workspace directory:
+
+   Type                                                                                            │ Name
+  ─────────────────────────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────
+   File                                                                                            │ img.png
+   File                                                                                            │ note.txt
+   Directory                                                                                       │ sub
+
+  Let me know if you’d like to explore any of these files further or need anything else.
+
+────────────────────────────────────────────────────────────
+> run: ls -la
+
+▸ Thought for 2s
+  User wants to run `ls -la` in that workspace directory. Need to use run_command ...
+
+● Bash(ls -la) (ctrl+o to expand)
+
+  Here’s the detailed listing for the workspace directory:
+
+    total 16
+    drwxr-xr-x@  5 <USER>  staff  160 Aug 22 05:38 .
+    drwx------@ 18 <USER>  staff  576 Aug 22 05:46 ..
+    -rw-r--r--@  1 <USER>  staff  168 Aug 22 05:38 img.png
+    -rw-r--r--@  1 <USER>  staff   12 Aug 22 05:38 note.txt
+    drwxr-xr-x@  2 <USER>  staff   64 Aug 22 05:38 sub
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+? for shortcuts                                                                                                                                                                    GPT-OSS 120B (Medium)

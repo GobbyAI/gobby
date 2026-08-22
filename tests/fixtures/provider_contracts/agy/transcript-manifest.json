@@ -10,7 +10,7 @@
   ],
   "workspace": "<WORKSPACE>",
   "transcript_path_literal": "~/.gemini/antigravity-cli/brain/<CONVERSATION_ID>/.system_generated/logs/transcript_full.jsonl",
-  "transcript_path_note": "Identical in print and interactive mode. Always the brain/ form; no workspace-local <workspace>/.gemini/antigravity-cli/transcript.jsonl is ever created (re-confirmed; the embedded-doc form stays disproven).",
+  "transcript_path_note": "Identical in print and interactive mode. Always the brain/ form; no workspace-local transcript (the form AGY's embedded docs name) is ever created (re-confirmed; the embedded-doc form stays disproven).",
   "layout": {
     "~/.gemini/antigravity-cli/brain/<CONVERSATION_ID>/.system_generated/logs/transcript_full.jsonl": "append-only, complete: full tool-result content (tool output itself capped by AGY at ~8 KiB with a '<truncated N bytes>' marker), native-typed tool_calls[].args. The file transcriptPath names. THE PARSER INPUT.",
     "~/.gemini/antigravity-cli/brain/<CONVERSATION_ID>/.system_generated/logs/transcript.jsonl": "token-efficient twin: content capped at ~4 KiB with 'truncated_fields': ['content'], tool_calls[].args values JSON-string-encoded. Same step_index set.",

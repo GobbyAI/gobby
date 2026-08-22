@@ -1,0 +1,34 @@
+# AGY 1.1.18 interactive pane capture — record 1.1.5
+# source: tmux capture-pane -p -S -200 -t agy-gate0 (01-builtin.txt); turn 0: list the files in this directory
+# scrubbed: $HOME→~, user→<USER>, email→<REDACTED>, workspace→<WORKSPACE>, ids→<CONVERSATION_ID>
+
+      ▄▀▀▄        Antigravity CLI 1.1.18
+     ▀▀▀▀▀▀       <REDACTED> (Antigravity Starter Quota)
+    ▀▀▀▀▀▀▀▀      GPT-OSS 120B (Medium)
+   ▄▀▀    ▀▀▄     <WORKSPACE>
+  ▄▀▀      ▀▀▄
+
+────────────────────────────────────────────────────────────
+> list the files in this directory
+
+▸ Thought for 8s
+  User asks: "list the files in this directory". We need to know which directory? ...
+
+● ListDir(<WORKSPACE>) (ctrl+o to expand)
+
+▸ Thought for 8s
+  We have listed directory. Need to respond to user with list. Provide clickable l...
+  Here are the contents of the requested workspace directory:
+
+   Type                                                                                            │ Name
+  ─────────────────────────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────
+   File                                                                                            │ img.png
+   File                                                                                            │ note.txt
+   Directory                                                                                       │ sub
+
+  Let me know if you’d like to explore any of these files further or need anything else.
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+? for shortcuts                                                                                                                                                                    GPT-OSS 120B (Medium)

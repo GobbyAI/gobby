@@ -46,8 +46,9 @@ transport has no in-flight cancel — SIGINT kills the process (§5.2).
 
 **Outstanding before approval.**
 1. ~~Print-mode live probe~~ done: MCP, built-in, and shell tools dispatched
-   all five hooks and the installed `gobby` hook reached the daemon
-   (`~/.gobby/logs/hooks.log` 03:21:47 `BEFORE_TOOL` validation warning). The
+   all five hooks and the real `ghook` delivered every event to the daemon
+   (`tests/fixtures/provider_contracts/agy/daemon-receipts.jsonl`: HTTP 200,
+   processed marker, and `hooks.log` line per mode × tool class × event). The
    `source=agy` hooks.log line and the AGY session row cannot exist before
    §4.1 lands (today's adapter reads `session_id`/`cwd`/`tool_name`, none of
    which AGY sends); they are §4.1's acceptance evidence, see the Dispatch
@@ -454,8 +455,9 @@ stdin verbatim to `<scratchpad>/hook-captures/<mode>-<event>-<seq>.json`, append
 `cwd`, `ANTIGRAVITY_CONVERSATION_ID`, and `PWD`, and answers the per-event legal skip
 JSON (`{"decision":"allow"}` for `PreToolUse`, `{}` otherwise). Gobby's own `gobby`
 hook stays installed so the same turn proves the real route: a daemon-side
-`hooks.log` entry for the turn is part of 1.1.5's evidence (observed: the 03:21:47
-`BEFORE_TOOL` validation warning). The `source=agy` line and the AGY session row are
+receipt for the turn is part of 1.1.5's evidence (recorded per mode × tool class ×
+event in `daemon-receipts.jsonl`: the daemon's HTTP response, its processed-envelope
+marker, and its `hooks.log` line). The `source=agy` line and the AGY session row are
 §4.1's acceptance evidence — the pre-§4.1 adapter cannot produce them. Remove
 `gate0-capture` when done; `agy -p "/hooks" --output-format json` before and after is
 the proof it is gone.
@@ -542,7 +544,7 @@ table is its projection.
 | 1.1.2 transcriptPath | **re-confirmed; layout disproven** | Literal value `~/.gemini/antigravity-cli/brain/<id>/.system_generated/logs/transcript_full.jsonl` in both modes, on the first `PreInvocation`. No workspace-local file. |
 | 1.1.3 cwd | **confirmed, remedy named** | Unregistered cwd → `workspacePaths []`, `default-cli-project`, no `Cwd` on `run_command`. Remedy: `--add-dir <cwd>` on every launch. |
 | 1.1.4 image input | **negative** | No image flag; `@path` is plain text; stream-input image blocks rejected. Only the model's own `view_file` on a PNG delivers an image. |
-| 1.1.5 payloads | **confirmed; session row deferred** | All five events captured in camelCase in both modes for `list_dir`, `run_command`, `call_mcp_tool`; hook cwd `~/.gemini/config`, env `ANTIGRAVITY_CONVERSATION_ID`. The installed `gobby` hook reached the daemon (`hooks.log` 03:21:47 `BEFORE_TOOL` validation warning). `source=agy` line / session row: impossible before §4.1 (adapter reads `session_id`/`cwd`/`tool_name`). |
+| 1.1.5 payloads | **confirmed; session row deferred** | All five events captured in camelCase in both modes for `list_dir`, `run_command`, `call_mcp_tool`; hook cwd `~/.gemini/config`, env `ANTIGRAVITY_CONVERSATION_ID`. Daemon receipts (HTTP 200 + processed marker + `hooks.log` line) for every event of a built-in, shell, and MCP turn in both modes (`daemon-receipts.jsonl`, 49 deliveries). `source=agy` line / session row: impossible before §4.1 (adapter reads `session_id`/`cwd`/`tool_name`). |
 | 1.1.6 stream-json | **re-confirmed unchanged** (+deltas) | Nested shape unchanged; 57 tools; `step_type` adds `system_message`, `error_message`; `result.status` adds `CANCELED`; tool output capped at ~8 KiB by AGY so no >64 KiB sample exists. |
 | 1.1.7 sandbox flags | **re-confirmed unchanged** | `--sandbox=false` accepted both modes; skip flag → `always-proceed`; without it headless tools auto-deny (`CANCELED`, exit 0) and hook `allow` does not override. |
 | 1.1.8 cancellation | **confirmed** | Print: SIGINT/SIGTERM exit 1 with `result ERROR "timeout waiting for response"`, step left `ACTIVE`, shell child orphaned, MCP child dies, resume works. Terminal: `C-c`/`esc` interrupt without `Stop`; 2nd `C-c` arms exit, 3rd exits without `Stop`. |
@@ -614,9 +616,10 @@ the planning approval that applies its implementation manifest:
    re-confirmed, negative, or disproven (§1.2 Run 2).
 2. **Satisfied to the extent the current code allows.** The live route is proven
    to the daemon, not only the capture hook: turns for an MCP tool, a built-in
-   tool, and a shell command reached the daemon through the installed `gobby`
-   hook (`~/.gobby/logs/hooks.log` 03:21:47 `BEFORE_TOOL` validation warning —
-   the pre-§4.1 adapter rejects the camelCase payload). The `source=agy` line and
+   tool, and a shell command reached the daemon through the real hook binary
+   `ghook` in both modes (`daemon-receipts.jsonl`: HTTP 200, processed marker
+   and `hooks.log` line per delivery — the pre-§4.1 adapter rejects the camelCase
+   payload at validation). The `source=agy` line and
    the AGY session row are produced by §4.1's synthetic `SESSION_START` and are
    that section's acceptance evidence (4.1.22); they cannot exist earlier.
 3. **Satisfied.** The fixture set in §1.1 is committed under

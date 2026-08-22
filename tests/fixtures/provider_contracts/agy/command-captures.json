@@ -1,995 +1,1265 @@
 {
-  "provider": "agy",
-  "capture_type": "command_captures",
-  "cli_version": "1.1.18",
-  "captured_at": "2026-08-22T08:20:00Z",
-  "records": [
-    "1.1.7",
-    "1.1.13",
-    "1.1.15",
-    "1.1.19",
-    "1.1.20",
-    "1.1.21"
-  ],
-  "help_flags": [
-    "--add-dir",
-    "--agent",
-    "-c/--continue",
-    "--conversation",
-    "--dangerously-skip-permissions",
-    "--disable-slash-commands",
-    "--effort",
-    "-i/--prompt-interactive",
-    "--input-format",
-    "--json-schema",
-    "--log-file",
-    "--mode",
-    "--model",
-    "--new-project",
-    "--output-format",
-    "-p/--print/--prompt",
-    "--print-timeout",
-    "--project",
-    "--sandbox"
-  ],
-  "help_subcommands": [
-    "agent",
-    "agents",
-    "changelog",
-    "help",
-    "install",
-    "mcp",
-    "models",
-    "plugin",
-    "plugins",
-    "update"
-  ],
-  "models_help": "",
-  "commands": [
-    {
-      "record": "version",
-      "command": "agy --version",
-      "exit_code": 0,
-      "stdout": "1.1.16\n",
-      "stderr_tail": "",
-      "note": "1.1.16 at probe start; the auto-updater replaced the binary at 03:18 local (first live turn ran on 1.1.18)"
+ "provider": "agy",
+ "capture_type": "command_captures",
+ "cli_version": "1.1.18",
+ "captured_at": "2026-08-22T08:20:00Z",
+ "records": [
+  "1.1.7",
+  "1.1.13",
+  "1.1.15",
+  "1.1.19",
+  "1.1.20",
+  "1.1.21"
+ ],
+ "help_flags": [
+  "--add-dir",
+  "--agent",
+  "-c/--continue",
+  "--conversation",
+  "--dangerously-skip-permissions",
+  "--disable-slash-commands",
+  "--effort",
+  "-i/--prompt-interactive",
+  "--input-format",
+  "--json-schema",
+  "--log-file",
+  "--mode",
+  "--model",
+  "--new-project",
+  "--output-format",
+  "-p/--print/--prompt",
+  "--print-timeout",
+  "--project",
+  "--sandbox"
+ ],
+ "help_subcommands": [
+  "agent",
+  "agents",
+  "changelog",
+  "help",
+  "install",
+  "mcp",
+  "models",
+  "plugin",
+  "plugins",
+  "update"
+ ],
+ "models_help": "",
+ "commands": [
+  {
+   "record": "version",
+   "command": "agy --version",
+   "exit_code": 0,
+   "stdout": "1.1.16\n",
+   "stderr_tail": "",
+   "note": "1.1.16 at probe start; the auto-updater replaced the binary at 03:18 local (first live turn ran on 1.1.18)"
+  },
+  {
+   "record": "version",
+   "command": "agy --version; ls -la $(command -v agy)",
+   "exit_code": 0,
+   "stdout": "1.1.18\n-rwxr-xr-x@ 1 <USER>  staff  177913904 Aug 22 03:18:34 2026 ~/.local/bin/agy\n",
+   "stderr_tail": ""
+  },
+  {
+   "record": "1.1.21 before gate0-capture install (binary 1.1.16)",
+   "command": "agy -p \"/hooks\" --output-format json",
+   "exit_code": 0,
+   "stdout": {
+    "conversation_id": "",
+    "status": "SUCCESS",
+    "response": "gobby\tenabled\tPreInvocation\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreInvocation\ngobby\tenabled\tPostInvocation\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostInvocation\ngobby\tenabled\tPreToolUse\t*\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreToolUse\ngobby\tenabled\tPostToolUse\t*\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostToolUse\ngobby\tenabled\tStop\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=Stop\n",
+    "duration_seconds": 0,
+    "num_turns": 0,
+    "usage": {
+     "input_tokens": 0,
+     "output_tokens": 0,
+     "thinking_tokens": 0,
+     "cache_read_tokens": 0,
+     "total_tokens": 0
     },
-    {
-      "record": "version",
-      "command": "agy --version; ls -la $(command -v agy)",
-      "exit_code": 0,
-      "stdout": "1.1.18\n-rwxr-xr-x@ 1 <USER>  staff  177913904 Aug 22 03:18:34 2026 ~/.local/bin/agy\n",
-      "stderr_tail": ""
-    },
-    {
-      "record": "1.1.21 before gate0-capture install (binary 1.1.16)",
-      "command": "agy -p \"/hooks\" --output-format json",
-      "exit_code": 0,
-      "stdout": {
-        "conversation_id": "",
-        "status": "SUCCESS",
-        "response": "gobby\tenabled\tPreInvocation\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreInvocation\ngobby\tenabled\tPostInvocation\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostInvocation\ngobby\tenabled\tPreToolUse\t*\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreToolUse\ngobby\tenabled\tPostToolUse\t*\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostToolUse\ngobby\tenabled\tStop\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=Stop\n",
-        "duration_seconds": 0,
-        "num_turns": 0,
-        "usage": {
-          "input_tokens": 0,
-          "output_tokens": 0,
-          "thinking_tokens": 0,
-          "cache_read_tokens": 0,
-          "total_tokens": 0
-        },
-        "command": {
-          "name": "hooks",
-          "data": {
-            "hooks": [
-              {
-                "name": "gobby",
-                "enabled": true,
-                "source": "~/.gemini/config/hooks.json",
-                "actions": [
-                  {
-                    "event": "PreInvocation",
-                    "type": "command",
-                    "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreInvocation",
-                    "timeout_seconds": 45
-                  },
-                  {
-                    "event": "PostInvocation",
-                    "type": "command",
-                    "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostInvocation",
-                    "timeout_seconds": 45
-                  },
-                  {
-                    "event": "PreToolUse",
-                    "matcher": "*",
-                    "type": "command",
-                    "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreToolUse",
-                    "timeout_seconds": 45
-                  },
-                  {
-                    "event": "PostToolUse",
-                    "matcher": "*",
-                    "type": "command",
-                    "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostToolUse",
-                    "timeout_seconds": 45
-                  },
-                  {
-                    "event": "Stop",
-                    "type": "command",
-                    "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=Stop",
-                    "timeout_seconds": 45
-                  }
-                ]
-              }
-            ]
-          }
-        }
-      },
-      "stderr_tail": ""
-    },
-    {
-      "record": "1.1.21 with gate0-capture installed beside gobby (binary 1.1.16)",
-      "command": "agy -p \"/hooks\" --output-format json",
-      "exit_code": 0,
-      "stdout": {
-        "conversation_id": "",
-        "status": "SUCCESS",
-        "response": "gate0-capture\tenabled\tPreInvocation\t-\tcommand\t<PROBE_SCRATCH>/gate0-capture.sh PreInvocation\ngate0-capture\tenabled\tPostInvocation\t-\tcommand\t<PROBE_SCRATCH>/gate0-capture.sh PostInvocation\ngate0-capture\tenabled\tPreToolUse\t*\tcommand\t<PROBE_SCRATCH>/gate0-capture.sh PreToolUse\ngate0-capture\tenabled\tPostToolUse\t*\tcommand\t<PROBE_SCRATCH>/gate0-capture.sh PostToolUse\ngate0-capture\tenabled\tStop\t-\tcommand\t<PROBE_SCRATCH>/gate0-capture.sh Stop\ngobby\tenabled\tPreInvocation\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreInvocation\ngobby\tenabled\tPostInvocation\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostInvocation\ngobby\tenabled\tPreToolUse\t*\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreToolUse\ngobby\tenabled\tPostToolUse\t*\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostToolUse\ngobby\tenabled\tStop\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=Stop\n",
-        "duration_seconds": 0,
-        "num_turns": 0,
-        "usage": {
-          "input_tokens": 0,
-          "output_tokens": 0,
-          "thinking_tokens": 0,
-          "cache_read_tokens": 0,
-          "total_tokens": 0
-        },
-        "command": {
-          "name": "hooks",
-          "data": {
-            "hooks": [
-              {
-                "name": "gate0-capture",
-                "enabled": true,
-                "source": "~/.gemini/config/hooks.json",
-                "actions": [
-                  {
-                    "event": "PreInvocation",
-                    "type": "command",
-                    "command": "<PROBE_SCRATCH>/gate0-capture.sh PreInvocation",
-                    "timeout_seconds": 45
-                  },
-                  {
-                    "event": "PostInvocation",
-                    "type": "command",
-                    "command": "<PROBE_SCRATCH>/gate0-capture.sh PostInvocation",
-                    "timeout_seconds": 45
-                  },
-                  {
-                    "event": "PreToolUse",
-                    "matcher": "*",
-                    "type": "command",
-                    "command": "<PROBE_SCRATCH>/gate0-capture.sh PreToolUse",
-                    "timeout_seconds": 45
-                  },
-                  {
-                    "event": "PostToolUse",
-                    "matcher": "*",
-                    "type": "command",
-                    "command": "<PROBE_SCRATCH>/gate0-capture.sh PostToolUse",
-                    "timeout_seconds": 45
-                  },
-                  {
-                    "event": "Stop",
-                    "type": "command",
-                    "command": "<PROBE_SCRATCH>/gate0-capture.sh Stop",
-                    "timeout_seconds": 45
-                  }
-                ]
-              },
-              {
-                "name": "gobby",
-                "enabled": true,
-                "source": "~/.gemini/config/hooks.json",
-                "actions": [
-                  {
-                    "event": "PreInvocation",
-                    "type": "command",
-                    "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreInvocation",
-                    "timeout_seconds": 45
-                  },
-                  {
-                    "event": "PostInvocation",
-                    "type": "command",
-                    "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostInvocation",
-                    "timeout_seconds": 45
-                  },
-                  {
-                    "event": "PreToolUse",
-                    "matcher": "*",
-                    "type": "command",
-                    "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreToolUse",
-                    "timeout_seconds": 45
-                  },
-                  {
-                    "event": "PostToolUse",
-                    "matcher": "*",
-                    "type": "command",
-                    "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostToolUse",
-                    "timeout_seconds": 45
-                  },
-                  {
-                    "event": "Stop",
-                    "type": "command",
-                    "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=Stop",
-                    "timeout_seconds": 45
-                  }
-                ]
-              }
-            ]
-          }
-        }
-      },
-      "stderr_tail": ""
-    },
-    {
-      "record": "1.1.21 disabled hook ({\"enabled\": false}) and malformed hook ({\"Stop\": [{\"type\": \"command\"}], \"NotAnEvent\": []})",
-      "command": "agy -p \"/hooks\" --output-format json",
-      "exit_code": 0,
-      "stdout": {
-        "conversation_id": "",
-        "status": "SUCCESS",
-        "response": "gate0-capture\tenabled\tPreInvocation\t-\tcommand\t<PROBE_SCRATCH>/gate0-capture.sh PreInvocation\ngate0-capture\tenabled\tPostInvocation\t-\tcommand\t<PROBE_SCRATCH>/gate0-capture.sh PostInvocation\ngate0-capture\tenabled\tPreToolUse\t*\tcommand\t<PROBE_SCRATCH>/gate0-capture.sh PreToolUse\ngate0-capture\tenabled\tPostToolUse\t*\tcommand\t<PROBE_SCRATCH>/gate0-capture.sh PostToolUse\ngate0-capture\tenabled\tStop\t-\tcommand\t<PROBE_SCRATCH>/gate0-capture.sh Stop\ngate0-disabled\tdisabled\tStop\t-\tcommand\t<PROBE_SCRATCH>/gate0-capture.sh Stop\ngate0-malformed\tenabled\tStop\t-\tcommand\t\ngobby\tenabled\tPreInvocation\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreInvocation\ngobby\tenabled\tPostInvocation\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostInvocation\ngobby\tenabled\tPreToolUse\t*\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreToolUse\ngobby\tenabled\tPostToolUse\t*\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostToolUse\ngobby\tenabled\tStop\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=Stop\n",
-        "duration_seconds": 0,
-        "num_turns": 0,
-        "usage": {
-          "input_tokens": 0,
-          "output_tokens": 0,
-          "thinking_tokens": 0,
-          "cache_read_tokens": 0,
-          "total_tokens": 0
-        },
-        "command": {
-          "name": "hooks",
-          "data": {
-            "hooks": [
-              {
-                "name": "gate0-capture",
-                "enabled": true,
-                "source": "~/.gemini/config/hooks.json",
-                "actions": [
-                  {
-                    "event": "PreInvocation",
-                    "type": "command",
-                    "command": "<PROBE_SCRATCH>/gate0-capture.sh PreInvocation",
-                    "timeout_seconds": 45
-                  },
-                  {
-                    "event": "PostInvocation",
-                    "type": "command",
-                    "command": "<PROBE_SCRATCH>/gate0-capture.sh PostInvocation",
-                    "timeout_seconds": 45
-                  },
-                  {
-                    "event": "PreToolUse",
-                    "matcher": "*",
-                    "type": "command",
-                    "command": "<PROBE_SCRATCH>/gate0-capture.sh PreToolUse",
-                    "timeout_seconds": 45
-                  },
-                  {
-                    "event": "PostToolUse",
-                    "matcher": "*",
-                    "type": "command",
-                    "command": "<PROBE_SCRATCH>/gate0-capture.sh PostToolUse",
-                    "timeout_seconds": 45
-                  },
-                  {
-                    "event": "Stop",
-                    "type": "command",
-                    "command": "<PROBE_SCRATCH>/gate0-capture.sh Stop",
-                    "timeout_seconds": 45
-                  }
-                ]
-              },
-              {
-                "name": "gate0-disabled",
-                "enabled": false,
-                "source": "~/.gemini/config/hooks.json",
-                "actions": [
-                  {
-                    "event": "Stop",
-                    "type": "command",
-                    "command": "<PROBE_SCRATCH>/gate0-capture.sh Stop",
-                    "timeout_seconds": 45
-                  }
-                ]
-              },
-              {
-                "name": "gate0-malformed",
-                "enabled": true,
-                "source": "~/.gemini/config/hooks.json",
-                "actions": [
-                  {
-                    "event": "Stop",
-                    "type": "command"
-                  }
-                ]
-              },
-              {
-                "name": "gobby",
-                "enabled": true,
-                "source": "~/.gemini/config/hooks.json",
-                "actions": [
-                  {
-                    "event": "PreInvocation",
-                    "type": "command",
-                    "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreInvocation",
-                    "timeout_seconds": 45
-                  },
-                  {
-                    "event": "PostInvocation",
-                    "type": "command",
-                    "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostInvocation",
-                    "timeout_seconds": 45
-                  },
-                  {
-                    "event": "PreToolUse",
-                    "matcher": "*",
-                    "type": "command",
-                    "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreToolUse",
-                    "timeout_seconds": 45
-                  },
-                  {
-                    "event": "PostToolUse",
-                    "matcher": "*",
-                    "type": "command",
-                    "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostToolUse",
-                    "timeout_seconds": 45
-                  },
-                  {
-                    "event": "Stop",
-                    "type": "command",
-                    "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=Stop",
-                    "timeout_seconds": 45
-                  }
-                ]
-              }
-            ]
-          }
-        }
-      },
-      "stderr_tail": "",
-      "note": "disabled appears enabled:false with its actions; the malformed hook appears enabled:true with an action lacking command and no warning; the unknown event key is dropped silently"
-    },
-    {
-      "record": "1.1.21 after gate0-capture removal (proof)",
-      "command": "agy -p \"/hooks\" --output-format json",
-      "exit_code": 0,
-      "stdout": {
-        "conversation_id": "",
-        "status": "SUCCESS",
-        "response": "gobby\tenabled\tPreInvocation\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreInvocation\ngobby\tenabled\tPostInvocation\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostInvocation\ngobby\tenabled\tPreToolUse\t*\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreToolUse\ngobby\tenabled\tPostToolUse\t*\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostToolUse\ngobby\tenabled\tStop\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=Stop\n",
-        "duration_seconds": 0,
-        "num_turns": 0,
-        "usage": {
-          "input_tokens": 0,
-          "output_tokens": 0,
-          "thinking_tokens": 0,
-          "cache_read_tokens": 0,
-          "total_tokens": 0
-        },
-        "command": {
-          "name": "hooks",
-          "data": {
-            "hooks": [
-              {
-                "name": "gobby",
-                "enabled": true,
-                "source": "~/.gemini/config/hooks.json",
-                "actions": [
-                  {
-                    "event": "PreInvocation",
-                    "type": "command",
-                    "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreInvocation",
-                    "timeout_seconds": 45
-                  },
-                  {
-                    "event": "PostInvocation",
-                    "type": "command",
-                    "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostInvocation",
-                    "timeout_seconds": 45
-                  },
-                  {
-                    "event": "PreToolUse",
-                    "matcher": "*",
-                    "type": "command",
-                    "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreToolUse",
-                    "timeout_seconds": 45
-                  },
-                  {
-                    "event": "PostToolUse",
-                    "matcher": "*",
-                    "type": "command",
-                    "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostToolUse",
-                    "timeout_seconds": 45
-                  },
-                  {
-                    "event": "Stop",
-                    "type": "command",
-                    "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=Stop",
-                    "timeout_seconds": 45
-                  }
-                ]
-              }
-            ]
-          }
-        }
-      },
-      "stderr_tail": ""
-    },
-    {
-      "record": "1.1.21 unauthenticated (token refresh blocked): triggers interactive OAuth, times out after 60 s",
-      "command": "agy -p \"/hooks\" --output-format json",
-      "exit_code": 1,
-      "stdout": {
-        "conversation_id": "",
-        "status": "ERROR",
-        "response": "",
-        "error": "authentication failed or timed out",
-        "duration_seconds": 0,
-        "num_turns": 0,
-        "usage": {
-          "input_tokens": 0,
-          "output_tokens": 0,
-          "thinking_tokens": 0,
-          "cache_read_tokens": 0,
-          "total_tokens": 0
-        }
-      },
-      "stderr_tail": "ERROR: logging before google.Init: I0822 03:17:09.364676       1 manager.go:739] CLI store manager shutting down\nERROR: logging before google.Init: I0822 03:17:09.365139     414 server.go:2680] Language server shutting down\nERROR: logging before google.Init: I0822 03:17:09.365173     414 server.go:2685] Waiting for migrations to complete to prevent partial migration state...",
-      "note": "captured under the sandbox proxy; num_turns 0"
-    },
-    {
-      "record": "1.1.19 /usage (70% remaining)",
-      "command": "agy -p \"/usage\" --output-format json",
-      "exit_code": 0,
-      "stdout": {
-        "conversation_id": "",
-        "status": "SUCCESS",
-        "response": "Gemini Models\tWeekly Limit Remaining\t70%\t2026-08-27T08:53:33Z\nClaude and GPT models\tWeekly Limit Remaining\t100%\t2026-08-29T08:24:58Z\n",
-        "duration_seconds": 0,
-        "num_turns": 0,
-        "usage": {
-          "input_tokens": 0,
-          "output_tokens": 0,
-          "thinking_tokens": 0,
-          "cache_read_tokens": 0,
-          "total_tokens": 0
-        },
-        "command": {
-          "name": "usage",
-          "data": {
-            "description": "Within each group, models share a weekly limit. Quota is consumed proportionally to the cost of the tokens. Thus, limits will last longer with shorter tasks or using more cost-effective models. Your weekly limit is tied directly to your individual tier.",
-            "groups": [
-              {
-                "name": "Gemini Models",
-                "description": "Models within this group: Gemini Flash, Gemini Pro",
-                "buckets": [
-                  {
-                    "id": "gemini-weekly",
-                    "name": "Weekly Limit Remaining",
-                    "description": "You have used some of your weekly limit, it will fully refresh in 5 days.",
-                    "window": "weekly",
-                    "remaining_fraction": 0.7005872130393982,
-                    "reset_time": "2026-08-27T08:53:33Z"
-                  }
-                ]
-              },
-              {
-                "name": "Claude and GPT models",
-                "description": "Models within this group: Claude Opus, Claude Sonnet, GPT-OSS",
-                "buckets": [
-                  {
-                    "id": "3p-weekly",
-                    "name": "Weekly Limit Remaining",
-                    "window": "weekly",
-                    "remaining_fraction": 1,
-                    "reset_time": "2026-08-29T08:24:58Z"
-                  }
-                ]
-              }
-            ]
-          }
-        }
-      },
-      "stderr_tail": ""
-    },
-    {
-      "record": "1.1.19 /usage after exhaustion (remaining_fraction 0)",
-      "command": "agy -p \"/usage\" --output-format json",
-      "exit_code": 0,
-      "stdout": {
-        "conversation_id": "",
-        "status": "SUCCESS",
-        "response": "Gemini Models\tWeekly Limit Remaining\t0%\t2026-08-27T08:53:33Z\nClaude and GPT models\tWeekly Limit Remaining\t100%\t2026-08-29T08:43:34Z\n",
-        "duration_seconds": 0,
-        "num_turns": 0,
-        "usage": {
-          "input_tokens": 0,
-          "output_tokens": 0,
-          "thinking_tokens": 0,
-          "cache_read_tokens": 0,
-          "total_tokens": 0
-        },
-        "command": {
-          "name": "usage",
-          "data": {
-            "description": "Within each group, models share a weekly limit. Quota is consumed proportionally to the cost of the tokens. Thus, limits will last longer with shorter tasks or using more cost-effective models. Your weekly limit is tied directly to your individual tier.",
-            "groups": [
-              {
-                "name": "Gemini Models",
-                "description": "Models within this group: Gemini Flash, Gemini Pro",
-                "buckets": [
-                  {
-                    "id": "gemini-weekly",
-                    "name": "Weekly Limit Remaining",
-                    "description": "You have hit your weekly limit, it refreshes in 5 days. If on a supported paid plan, you can use AI credits in the interim or upgrade to a higher tier.",
-                    "window": "weekly",
-                    "remaining_fraction": 0,
-                    "reset_time": "2026-08-27T08:53:33Z"
-                  }
-                ]
-              },
-              {
-                "name": "Claude and GPT models",
-                "description": "Models within this group: Claude Opus, Claude Sonnet, GPT-OSS",
-                "buckets": [
-                  {
-                    "id": "3p-weekly",
-                    "name": "Weekly Limit Remaining",
-                    "window": "weekly",
-                    "remaining_fraction": 1,
-                    "reset_time": "2026-08-29T08:43:34Z"
-                  }
-                ]
-              }
-            ]
-          }
-        }
-      },
-      "stderr_tail": ""
-    },
-    {
-      "record": "1.1.19 /quota is an alias of /usage (command.name == usage)",
-      "command": "agy -p \"/quota\" --output-format json",
-      "exit_code": 0,
-      "stdout": {
-        "conversation_id": "",
-        "status": "SUCCESS",
-        "response": "Gemini Models\tWeekly Limit Remaining\t70%\t2026-08-27T08:53:33Z\nClaude and GPT models\tWeekly Limit Remaining\t100%\t2026-08-29T08:25:01Z\n",
-        "duration_seconds": 0,
-        "num_turns": 0,
-        "usage": {
-          "input_tokens": 0,
-          "output_tokens": 0,
-          "thinking_tokens": 0,
-          "cache_read_tokens": 0,
-          "total_tokens": 0
-        },
-        "command": {
-          "name": "usage",
-          "data": {
-            "description": "Within each group, models share a weekly limit. Quota is consumed proportionally to the cost of the tokens. Thus, limits will last longer with shorter tasks or using more cost-effective models. Your weekly limit is tied directly to your individual tier.",
-            "groups": [
-              {
-                "name": "Gemini Models",
-                "description": "Models within this group: Gemini Flash, Gemini Pro",
-                "buckets": [
-                  {
-                    "id": "gemini-weekly",
-                    "name": "Weekly Limit Remaining",
-                    "description": "You have used some of your weekly limit, it will fully refresh in 5 days.",
-                    "window": "weekly",
-                    "remaining_fraction": 0.7005872130393982,
-                    "reset_time": "2026-08-27T08:53:33Z"
-                  }
-                ]
-              },
-              {
-                "name": "Claude and GPT models",
-                "description": "Models within this group: Claude Opus, Claude Sonnet, GPT-OSS",
-                "buckets": [
-                  {
-                    "id": "3p-weekly",
-                    "name": "Weekly Limit Remaining",
-                    "window": "weekly",
-                    "remaining_fraction": 1,
-                    "reset_time": "2026-08-29T08:25:01Z"
-                  }
-                ]
-              }
-            ]
-          }
-        }
-      },
-      "stderr_tail": ""
-    },
-    {
-      "record": "1.1.19 /credits: exit 1 'no credits info found' on this account",
-      "command": "agy -p \"/credits\" --output-format json",
-      "exit_code": 1,
-      "stdout": {
-        "conversation_id": "",
-        "status": "ERROR",
-        "response": "",
-        "error": "/credits failed: retrieving credits: no credits info found",
-        "duration_seconds": 0,
-        "num_turns": 0,
-        "usage": {
-          "input_tokens": 0,
-          "output_tokens": 0,
-          "thinking_tokens": 0,
-          "cache_read_tokens": 0,
-          "total_tokens": 0
-        }
-      },
-      "stderr_tail": ""
-    },
-    {
-      "record": "1.1.19 quota-exhausted turn",
-      "command": "agy -p 'reply with exactly: ok' --output-format json --print-timeout 1m",
-      "exit_code": 1,
-      "stdout": {
-        "conversation_id": "<CONVERSATION_ID>",
-        "status": "ERROR",
-        "response": "",
-        "error": "Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 120h9m43s.",
-        "duration_seconds": 0,
-        "num_turns": 1,
-        "usage": {
-          "input_tokens": 0,
-          "output_tokens": 0,
-          "thinking_tokens": 0,
-          "cache_read_tokens": 0,
-          "total_tokens": 0
-        }
-      },
-      "stderr_tail": ""
-    },
-    {
-      "record": "1.1.20 /model carries the default marker (is_default) and effort",
-      "command": "agy -p \"/model\" --output-format json",
-      "exit_code": 0,
-      "stdout": {
-        "conversation_id": "",
-        "status": "SUCCESS",
-        "response": "gemini-3.5-flash-high\tGemini 3.5 Flash (High)\n",
-        "duration_seconds": 0,
-        "num_turns": 0,
-        "usage": {
-          "input_tokens": 0,
-          "output_tokens": 0,
-          "thinking_tokens": 0,
-          "cache_read_tokens": 0,
-          "total_tokens": 0
-        },
-        "command": {
-          "name": "model",
-          "data": {
-            "id": "gemini-3.5-flash-high",
-            "label": "Gemini 3.5 Flash (High)",
-            "effort": "high",
-            "is_default": false
-          }
-        }
-      },
-      "stderr_tail": ""
-    },
-    {
-      "record": "1.1.20 models text (TSV id\\tlabel)",
-      "command": "agy models",
-      "exit_code": 0,
-      "stdout": "gemini-3.7-flash-high\tGemini 3.7 Flash (High)\ngemini-3.7-flash-medium\tGemini 3.7 Flash (Medium)\ngemini-3.7-flash-low\tGemini 3.7 Flash (Low)\ngemini-3.6-flash-high\tGemini 3.6 Flash (High)\ngemini-3.6-flash-medium\tGemini 3.6 Flash (Medium)\ngemini-3.6-flash-low\tGemini 3.6 Flash (Low)\ngemini-3.5-flash-high\tGemini 3.5 Flash (High)\ngemini-3.5-flash-medium\tGemini 3.5 Flash (Medium)\ngemini-3.5-flash-low\tGemini 3.5 Flash (Low)\ngemini-3.1-pro-high\tGemini 3.1 Pro (High)\ngemini-3.1-pro-low\tGemini 3.1 Pro (Low)\nclaude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)\nclaude-opus-4-6-thinking\tClaude Opus 4.6 (Thinking)\ngpt-oss-120b-medium\tGPT-OSS 120B (Medium)\n",
-      "stderr_tail": "Fetching available models..."
-    },
-    {
-      "record": "1.1.20 flag after subcommand is rejected (exit 1)",
-      "command": "agy models --output-format json",
-      "exit_code": 1,
-      "stdout": "",
-      "stderr_tail": "  -h      Show help\n  --help  Show help\nError: flags provided but not defined: -output-format"
-    },
-    {
-      "record": "1.1.20 models JSON (global flag before subcommand)",
-      "command": "agy --output-format json models",
-      "exit_code": 0,
-      "stdout": {
-        "conversation_id": "",
-        "status": "SUCCESS",
-        "response": "gemini-3.7-flash-high\tGemini 3.7 Flash (High)\ngemini-3.7-flash-medium\tGemini 3.7 Flash (Medium)\ngemini-3.7-flash-low\tGemini 3.7 Flash (Low)\ngemini-3.6-flash-high\tGemini 3.6 Flash (High)\ngemini-3.6-flash-medium\tGemini 3.6 Flash (Medium)\ngemini-3.6-flash-low\tGemini 3.6 Flash (Low)\ngemini-3.5-flash-high\tGemini 3.5 Flash (High)\ngemini-3.5-flash-medium\tGemini 3.5 Flash (Medium)\ngemini-3.5-flash-low\tGemini 3.5 Flash (Low)\ngemini-3.1-pro-high\tGemini 3.1 Pro (High)\ngemini-3.1-pro-low\tGemini 3.1 Pro (Low)\nclaude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)\nclaude-opus-4-6-thinking\tClaude Opus 4.6 (Thinking)\ngpt-oss-120b-medium\tGPT-OSS 120B (Medium)\n",
-        "duration_seconds": 0,
-        "num_turns": 0,
-        "usage": {
-          "input_tokens": 0,
-          "output_tokens": 0,
-          "thinking_tokens": 0,
-          "cache_read_tokens": 0,
-          "total_tokens": 0
-        },
-        "command": {
-          "name": "models",
-          "data": {
-            "models": [
-              {
-                "id": "gemini-3.7-flash-high",
-                "label": "Gemini 3.7 Flash (High)"
-              },
-              {
-                "id": "gemini-3.7-flash-medium",
-                "label": "Gemini 3.7 Flash (Medium)"
-              },
-              {
-                "id": "gemini-3.7-flash-low",
-                "label": "Gemini 3.7 Flash (Low)"
-              },
-              {
-                "id": "gemini-3.6-flash-high",
-                "label": "Gemini 3.6 Flash (High)"
-              },
-              {
-                "id": "gemini-3.6-flash-medium",
-                "label": "Gemini 3.6 Flash (Medium)"
-              },
-              {
-                "id": "gemini-3.6-flash-low",
-                "label": "Gemini 3.6 Flash (Low)"
-              },
-              {
-                "id": "gemini-3.5-flash-high",
-                "label": "Gemini 3.5 Flash (High)"
-              },
-              {
-                "id": "gemini-3.5-flash-medium",
-                "label": "Gemini 3.5 Flash (Medium)"
-              },
-              {
-                "id": "gemini-3.5-flash-low",
-                "label": "Gemini 3.5 Flash (Low)"
-              },
-              {
-                "id": "gemini-3.1-pro-high",
-                "label": "Gemini 3.1 Pro (High)"
-              },
-              {
-                "id": "gemini-3.1-pro-low",
-                "label": "Gemini 3.1 Pro (Low)"
-              },
-              {
-                "id": "claude-sonnet-4-6",
-                "label": "Claude Sonnet 4.6 (Thinking)"
-              },
-              {
-                "id": "claude-opus-4-6-thinking",
-                "label": "Claude Opus 4.6 (Thinking)"
-              },
-              {
-                "id": "gpt-oss-120b-medium",
-                "label": "GPT-OSS 120B (Medium)"
-              }
-            ]
-          }
-        }
-      },
-      "stderr_tail": "Fetching available models..."
-    },
-    {
-      "record": "1.1.20 models stream-json",
-      "command": "agy --output-format stream-json models",
-      "exit_code": 0,
-      "stdout": "{\"event\":\"command_result\",\"command\":{\"name\":\"models\",\"data\":{\"models\":[{\"id\":\"gemini-3.7-flash-high\",\"label\":\"Gemini 3.7 Flash (High)\"},{\"id\":\"gemini-3.7-flash-medium\",\"label\":\"Gemini 3.7 Flash (Medium)\"},{\"id\":\"gemini-3.7-flash-low\",\"label\":\"Gemini 3.7 Flash (Low)\"},{\"id\":\"gemini-3.6-flash-high\",\"label\":\"Gemini 3.6 Flash (High)\"},{\"id\":\"gemini-3.6-flash-medium\",\"label\":\"Gemini 3.6 Flash (Medium)\"},{\"id\":\"gemini-3.6-flash-low\",\"label\":\"Gemini 3.6 Flash (Low)\"},{\"id\":\"gemini-3.5-flash-high\",\"label\":\"Gemini 3.5 Flash (High)\"},{\"id\":\"gemini-3.5-flash-medium\",\"label\":\"Gemini 3.5 Flash (Medium)\"},{\"id\":\"gemini-3.5-flash-low\",\"label\":\"Gemini 3.5 Flash (Low)\"},{\"id\":\"gemini-3.1-pro-high\",\"label\":\"Gemini 3.1 Pro (High)\"},{\"id\":\"gemini-3.1-pro-low\",\"label\":\"Gemini 3.1 Pro (Low)\"},{\"id\":\"claude-sonnet-4-6\",\"label\":\"Claude Sonnet 4.6 (Thinking)\"},{\"id\":\"claude-opus-4-6-thinking\",\"label\":\"Claude Opus 4.6 (Thinking)\"},{\"id\":\"gpt-oss-120b-medium\",\"label\":\"GPT-OSS 120B (Medium)\"}]}}}\n{\"event\":\"result\",\"result\":{\"conversation_id\":\"\",\"status\":\"SUCCESS\",\"response\":\"gemini-3.7-flash-high\\tGemini 3.7 Flash (High)\\ngemini-3.7-flash-medium\\tGemini 3.7 Flash (Medium)\\ngemini-3.7-flash-low\\tGemini 3.7 Flash (Low)\\ngemini-3.6-flash-high\\tGemini 3.6 Flash (High)\\ngemini-3.6-flash-medium\\tGemini 3.6 Flash (Medium)\\ngemini-3.6-flash-low\\tGemini 3.6 Flash (Low)\\ngemini-3.5-flash-high\\tGemini 3.5 Flash (High)\\ngemini-3.5-flash-medium\\tGemini 3.5 Flash (Medium)\\ngemini-3.5-flash-low\\tGemini 3.5 Flash (Low)\\ngemini-3.1-pro-high\\tGemini 3.1 Pro (High)\\ngemini-3.1-pro-low\\tGemini 3.1 Pro (Low)\\nclaude-sonnet-4-6\\tClaude Sonnet 4.6 (Thinking)\\nclaude-opus-4-6-thinking\\tClaude Opus 4.6 (Thinking)\\ngpt-oss-120b-medium\\tGPT-OSS 120B (Medium)\\n\",\"duration_seconds\":0,\"num_turns\":0,\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"thinking_tokens\":0,\"cache_read_tokens\":0,\"total_tokens\":0},\"command\":{\"name\":\"models\",\"data\":{\"models\":[{\"id\":\"gemini-3.7-flash-high\",\"label\":\"Gemini 3.7 Flash (High)\"},{\"id\":\"gemini-3.7-flash-medium\",\"label\":\"Gemini 3.7 Flash (Medium)\"},{\"id\":\"gemini-3.7-flash-low\",\"label\":\"Gemini 3.7 Flash (Low)\"},{\"id\":\"gemini-3.6-flash-high\",\"label\":\"Gemini 3.6 Flash (High)\"},{\"id\":\"gemini-3.6-flash-medium\",\"label\":\"Gemini 3.6 Flash (Medium)\"},{\"id\":\"gemini-3.6-flash-low\",\"label\":\"Gemini 3.6 Flash (Low)\"},{\"id\":\"gemini-3.5-flash-high\",\"label\":\"Gemini 3.5 Flash (High)\"},{\"id\":\"gemini-3.5-flash-medium\",\"label\":\"Gemini 3.5 Flash (Medium)\"},{\"id\":\"gemini-3.5-flash-low\",\"label\":\"Gemini 3.5 Flash (Low)\"},{\"id\":\"gemini-3.1-pro-high\",\"label\":\"Gemini 3.1 Pro (High)\"},{\"id\":\"gemini-3.1-pro-low\",\"label\":\"Gemini 3.1 Pro (Low)\"},{\"id\":\"claude-sonnet-4-6\",\"label\":\"Claude Sonnet 4.6 (Thinking)\"},{\"id\":\"claude-opus-4-6-thinking\",\"label\":\"Claude Opus 4.6 (Thinking)\"},{\"id\":\"gpt-oss-120b-medium\",\"label\":\"GPT-OSS 120B (Medium)\"}]}}}}\n",
-      "stderr_tail": "Fetching available models..."
-    },
-    {
-      "record": "1.1.20 agents JSON",
-      "command": "agy --output-format json agents",
-      "exit_code": 0,
-      "stdout": {
-        "conversation_id": "",
-        "status": "SUCCESS",
-        "response": "",
-        "duration_seconds": 0,
-        "num_turns": 0,
-        "usage": {
-          "input_tokens": 0,
-          "output_tokens": 0,
-          "thinking_tokens": 0,
-          "cache_read_tokens": 0,
-          "total_tokens": 0
-        },
-        "command": {
-          "name": "agents",
-          "data": {
-            "agents": []
-          }
-        }
-      },
-      "stderr_tail": ""
-    },
-    {
-      "record": "1.1.12 mcp list",
-      "command": "agy mcp list",
-      "exit_code": 0,
-      "stdout": "NAME   TYPE   STATUS   COMMAND/URL\ngobby  stdio  enabled  ~/Projects/gobby/.venv/bin/gobby mcp-server\n",
-      "stderr_tail": ""
-    },
-    {
-      "record": "1.1.13 invalid duration: exit 2",
-      "command": "agy --print-timeout banana -p hi",
-      "exit_code": 2,
-      "stdout": "",
-      "stderr_tail": "  plugin          Manage plugins (install, uninstall, list, enable, disable)\n  plugins         Alias for plugin\n  update          Update CLI"
-    },
-    {
-      "record": "1.1.13 zero timeout: immediate ERROR result on stdout, exit 1 (no disable sentinel)",
-      "command": "agy --print-timeout 0 -p hi --output-format json",
-      "exit_code": 1,
-      "stdout": {
-        "conversation_id": "<CONVERSATION_ID>",
-        "status": "ERROR",
-        "response": "",
-        "error": "timeout waiting for response",
-        "duration_seconds": 0,
-        "num_turns": 0,
-        "usage": {
-          "input_tokens": 0,
-          "output_tokens": 0,
-          "thinking_tokens": 0,
-          "cache_read_tokens": 0,
-          "total_tokens": 0
-        }
-      },
-      "stderr_tail": ""
-    },
-    {
-      "record": "1.1.13 expiry in text mode: stderr 'Error: timeout waiting for response', exit 1",
-      "command": "agy -p 'run: sleep 25; echo done' --print-timeout 8s",
-      "exit_code": 1,
-      "stdout": "",
-      "stderr_tail": "Error: timeout waiting for response"
-    },
-    {
-      "record": "1.1.13",
-      "command": "agy --print-timeout 2562047h -p 'reply with exactly: ok' --output-format json --sandbox=false --add-dir <WORKSPACE> --model gpt-oss-120b-medium",
-      "exit_code": 0,
-      "stdout": "{\"conversation_id\": \"<CONVERSATION_ID>\", \"status\": \"SUCCESS\", \"response\": \"ok\\n\", \"duration_seconds\": 11.359718, \"num_turns\": 1, \"usage\": {\"input_tokens\": 12764, \"output_tokens\": 62, \"thinking_tokens\": 0, \"cache_read_tokens\": 0, \"total_tokens\": 12826}}\n",
-      "stderr_tail": "",
-      "note": "effectively-unbounded Go duration accepted on 1.1.18 (re-confirmed from the 1.1.10 record); turn completes normally"
-    },
-    {
-      "record": "1.1.7 --sandbox is boolean; exit 2",
-      "command": "agy --sandbox=bogus -p hi",
-      "exit_code": 2,
-      "stdout": "",
-      "stderr_tail": "  plugin          Manage plugins (install, uninstall, list, enable, disable)\n  plugins         Alias for plugin\n  update          Update CLI"
-    },
-    {
-      "record": "1.1.23 unknown --mode: warning, runs in default mode, exit 0",
-      "command": "agy --mode bogus -p hi",
-      "exit_code": 0,
-      "stdout": "Hello! How can I help you with your coding tasks today?\n",
-      "stderr_tail": "warning: unrecognized --mode value \"bogus\" (valid: accept-edits, plan)"
-    },
-    {
-      "record": "1.1.20 effort vocabulary low|medium|high; exit 1",
-      "command": "agy --effort bogus -p hi",
-      "exit_code": 1,
-      "stdout": "",
-      "stderr_tail": "Error: invalid model selection (--model \"\" --effort \"bogus\"): invalid --effort \"bogus\" (valid: low, medium, high)"
-    },
-    {
-      "record": "1.1.15 scrubbed environment authenticates via Keychain",
-      "command": "env -i HOME=$HOME PATH=... agy -p '/usage' --output-format json",
-      "exit_code": 0,
-      "stdout": {
-        "conversation_id": "",
-        "status": "SUCCESS",
-        "response": "Gemini Models\tWeekly Limit Remaining\t0%\t2026-08-27T08:53:33Z\nClaude and GPT models\tWeekly Limit Remaining\t99%\t2026-08-29T08:43:38Z\n",
-        "duration_seconds": 0,
-        "num_turns": 0,
-        "usage": {
-          "input_tokens": 0,
-          "output_tokens": 0,
-          "thinking_tokens": 0,
-          "cache_read_tokens": 0,
-          "total_tokens": 0
-        },
-        "command": {
-          "name": "usage",
-          "data": {
-            "description": "Within each group, models share a weekly limit. Quota is consumed proportionally to the cost of the tokens. Thus, limits will last longer with shorter tasks or using more cost-effective models. Your weekly limit is tied directly to your individual tier.",
-            "groups": [
-              {
-                "name": "Gemini Models",
-                "description": "Models within this group: Gemini Flash, Gemini Pro",
-                "buckets": [
-                  {
-                    "id": "gemini-weekly",
-                    "name": "Weekly Limit Remaining",
-                    "description": "You have hit your weekly limit, it refreshes in 5 days. If on a supported paid plan, you can use AI credits in the interim or upgrade to a higher tier.",
-                    "window": "weekly",
-                    "remaining_fraction": 0,
-                    "reset_time": "2026-08-27T08:53:33Z"
-                  }
-                ]
-              },
-              {
-                "name": "Claude and GPT models",
-                "description": "Models within this group: Claude Opus, Claude Sonnet, GPT-OSS",
-                "buckets": [
-                  {
-                    "id": "3p-weekly",
-                    "name": "Weekly Limit Remaining",
-                    "description": "You have used some of your weekly limit, it will fully refresh in 6 days, 23 hours.",
-                    "window": "weekly",
-                    "remaining_fraction": 0.994983971118927,
-                    "reset_time": "2026-08-29T08:43:38Z"
-                  }
-                ]
-              }
-            ]
-          }
-        }
-      },
-      "stderr_tail": ""
-    },
-    {
-      "record": "1.1.15 ambient credential vars ignored (ChainedAuth: authenticated via keyring)",
-      "command": "env GOOGLE_API_KEY=bogus GEMINI_API_KEY=bogus GOOGLE_APPLICATION_CREDENTIALS=/nonexistent agy -p 'reply with exactly: ok' --output-format json --model gpt-oss-120b-medium",
-      "exit_code": 0,
-      "stdout": {
-        "conversation_id": "<CONVERSATION_ID>",
-        "status": "SUCCESS",
-        "response": "ok\n",
-        "duration_seconds": 17.139128,
-        "num_turns": 1,
-        "usage": {
-          "input_tokens": 12762,
-          "output_tokens": 27,
-          "thinking_tokens": 0,
-          "cache_read_tokens": 0,
-          "total_tokens": 12789
-        }
-      },
-      "stderr_tail": ""
-    },
-    {
-      "record": "1.1.15 foreign HOME: silent auth fails, OAuth prompt, exit 1",
-      "command": "env HOME=<FAKE_HOME> agy -p '/usage' --output-format json",
-      "exit_code": 1,
-      "stdout": {
-        "conversation_id": "",
-        "status": "ERROR",
-        "response": "",
-        "error": "authentication failed or timed out",
-        "duration_seconds": 0,
-        "num_turns": 0,
-        "usage": {
-          "input_tokens": 0,
-          "output_tokens": 0,
-          "thinking_tokens": 0,
-          "cache_read_tokens": 0,
-          "total_tokens": 0
-        }
-      },
-      "stderr_tail": "Waiting for authentication (timeout 60s)...\nOr, paste the authorization=<REDACTED> here and press Enter:\nError: authentication timed out."
-    },
-    {
-      "record": "version floor: changelog lists 1.1.17 and 1.1.18",
-      "command": "agy changelog",
-      "exit_code": 0,
-      "stdout": "1.1.18:\n\u00b7 Added support for passing a project name to `--project`, which previously accepted only a project ID and failed on anything else.\n\u00b7 Added `item.rename` and `item.delete` keybindings for the conversation picker's rename and delete actions, so `f2` and `f4` can be rebound in `keybindings.json` on keyboards without function keys.\n\u00b7 Improved `@` file path completion with a typo-tolerant fallback, so a query with a transposed or mistyped character still finds the file; typo matches never outrank exact ones.\n\u00b7 Improved audio attachments by recognizing the standard formats Gemini models accept, including `wav`, `mp3`, `m4a`, `aac`, `flac` and `opus`, which were previously refused as unsupported.\n\u00b7 Improved keystroke responsiveness on Windows by discarding the key-release events the console reports and nothing in the CLI reads, which were roughly doubling the rendering work per keystroke.\n\u00b7 Improved the artifact viewer footer by moving the outline shortcut next to the scroll and page hints, so the three way<TRUNCATED 75808 bytes>o the top of the selection list, making it the default choice during onboarding and in `/settings`.\n\u00b7 Improved `/usage` and `/quota` commands. Forces a real-time reload of model configuration and remaining quotas, allowing you to see updated real-time consumption statistics immediately.\n\u00b7 Improved step rendering layout. Calculates available terminal width dynamically and uses middle-truncation (`/foo/.../bar`) for file path tools to prevent layout shifting on narrow screens.\n\u00b7 Improved session deletion keybinding in `/resume`. Changed the shortcut from `ctrl+d` to `ctrl+delete` to resolve conflicts with the global exit keybinding (`ctrl+d` `ctrl+d`) and preserve Emacs-style forward-delete in search input fields.\n\u00b7 Restored automatic table wrapping, preventing long cells inside markdown tables from being truncated.\n\u00b7 Resolved an issue where deleted files (represented by `+++ /dev/null`) had their deletion lines incorrectly merged into the previous file's diff.\n\n1.0.0:\n\u00b7 Initial release of the Antigravity CLI.\n",
-      "stderr_tail": ""
+    "command": {
+     "name": "hooks",
+     "data": {
+      "hooks": [
+       {
+        "name": "gobby",
+        "enabled": true,
+        "source": "~/.gemini/config/hooks.json",
+        "actions": [
+         {
+          "event": "PreInvocation",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreInvocation",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PostInvocation",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostInvocation",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PreToolUse",
+          "matcher": "*",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreToolUse",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PostToolUse",
+          "matcher": "*",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostToolUse",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "Stop",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=Stop",
+          "timeout_seconds": 45
+         }
+        ]
+       }
+      ]
+     }
     }
-  ]
+   },
+   "stderr_tail": ""
+  },
+  {
+   "record": "1.1.21 with gate0-capture installed beside gobby (binary 1.1.16)",
+   "command": "agy -p \"/hooks\" --output-format json",
+   "exit_code": 0,
+   "stdout": {
+    "conversation_id": "",
+    "status": "SUCCESS",
+    "response": "gate0-capture\tenabled\tPreInvocation\t-\tcommand\t<PROBE_SCRATCH>/gate0-capture.sh PreInvocation\ngate0-capture\tenabled\tPostInvocation\t-\tcommand\t<PROBE_SCRATCH>/gate0-capture.sh PostInvocation\ngate0-capture\tenabled\tPreToolUse\t*\tcommand\t<PROBE_SCRATCH>/gate0-capture.sh PreToolUse\ngate0-capture\tenabled\tPostToolUse\t*\tcommand\t<PROBE_SCRATCH>/gate0-capture.sh PostToolUse\ngate0-capture\tenabled\tStop\t-\tcommand\t<PROBE_SCRATCH>/gate0-capture.sh Stop\ngobby\tenabled\tPreInvocation\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreInvocation\ngobby\tenabled\tPostInvocation\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostInvocation\ngobby\tenabled\tPreToolUse\t*\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreToolUse\ngobby\tenabled\tPostToolUse\t*\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostToolUse\ngobby\tenabled\tStop\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=Stop\n",
+    "duration_seconds": 0,
+    "num_turns": 0,
+    "usage": {
+     "input_tokens": 0,
+     "output_tokens": 0,
+     "thinking_tokens": 0,
+     "cache_read_tokens": 0,
+     "total_tokens": 0
+    },
+    "command": {
+     "name": "hooks",
+     "data": {
+      "hooks": [
+       {
+        "name": "gate0-capture",
+        "enabled": true,
+        "source": "~/.gemini/config/hooks.json",
+        "actions": [
+         {
+          "event": "PreInvocation",
+          "type": "command",
+          "command": "<PROBE_SCRATCH>/gate0-capture.sh PreInvocation",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PostInvocation",
+          "type": "command",
+          "command": "<PROBE_SCRATCH>/gate0-capture.sh PostInvocation",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PreToolUse",
+          "matcher": "*",
+          "type": "command",
+          "command": "<PROBE_SCRATCH>/gate0-capture.sh PreToolUse",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PostToolUse",
+          "matcher": "*",
+          "type": "command",
+          "command": "<PROBE_SCRATCH>/gate0-capture.sh PostToolUse",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "Stop",
+          "type": "command",
+          "command": "<PROBE_SCRATCH>/gate0-capture.sh Stop",
+          "timeout_seconds": 45
+         }
+        ]
+       },
+       {
+        "name": "gobby",
+        "enabled": true,
+        "source": "~/.gemini/config/hooks.json",
+        "actions": [
+         {
+          "event": "PreInvocation",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreInvocation",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PostInvocation",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostInvocation",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PreToolUse",
+          "matcher": "*",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreToolUse",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PostToolUse",
+          "matcher": "*",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostToolUse",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "Stop",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=Stop",
+          "timeout_seconds": 45
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   "stderr_tail": ""
+  },
+  {
+   "record": "1.1.21 disabled hook ({\"enabled\": false}) and malformed hook ({\"Stop\": [{\"type\": \"command\"}], \"NotAnEvent\": []})",
+   "command": "agy -p \"/hooks\" --output-format json",
+   "exit_code": 0,
+   "stdout": {
+    "conversation_id": "",
+    "status": "SUCCESS",
+    "response": "gate0-capture\tenabled\tPreInvocation\t-\tcommand\t<PROBE_SCRATCH>/gate0-capture.sh PreInvocation\ngate0-capture\tenabled\tPostInvocation\t-\tcommand\t<PROBE_SCRATCH>/gate0-capture.sh PostInvocation\ngate0-capture\tenabled\tPreToolUse\t*\tcommand\t<PROBE_SCRATCH>/gate0-capture.sh PreToolUse\ngate0-capture\tenabled\tPostToolUse\t*\tcommand\t<PROBE_SCRATCH>/gate0-capture.sh PostToolUse\ngate0-capture\tenabled\tStop\t-\tcommand\t<PROBE_SCRATCH>/gate0-capture.sh Stop\ngate0-disabled\tdisabled\tStop\t-\tcommand\t<PROBE_SCRATCH>/gate0-capture.sh Stop\ngate0-malformed\tenabled\tStop\t-\tcommand\t\ngobby\tenabled\tPreInvocation\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreInvocation\ngobby\tenabled\tPostInvocation\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostInvocation\ngobby\tenabled\tPreToolUse\t*\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreToolUse\ngobby\tenabled\tPostToolUse\t*\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostToolUse\ngobby\tenabled\tStop\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=Stop\n",
+    "duration_seconds": 0,
+    "num_turns": 0,
+    "usage": {
+     "input_tokens": 0,
+     "output_tokens": 0,
+     "thinking_tokens": 0,
+     "cache_read_tokens": 0,
+     "total_tokens": 0
+    },
+    "command": {
+     "name": "hooks",
+     "data": {
+      "hooks": [
+       {
+        "name": "gate0-capture",
+        "enabled": true,
+        "source": "~/.gemini/config/hooks.json",
+        "actions": [
+         {
+          "event": "PreInvocation",
+          "type": "command",
+          "command": "<PROBE_SCRATCH>/gate0-capture.sh PreInvocation",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PostInvocation",
+          "type": "command",
+          "command": "<PROBE_SCRATCH>/gate0-capture.sh PostInvocation",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PreToolUse",
+          "matcher": "*",
+          "type": "command",
+          "command": "<PROBE_SCRATCH>/gate0-capture.sh PreToolUse",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PostToolUse",
+          "matcher": "*",
+          "type": "command",
+          "command": "<PROBE_SCRATCH>/gate0-capture.sh PostToolUse",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "Stop",
+          "type": "command",
+          "command": "<PROBE_SCRATCH>/gate0-capture.sh Stop",
+          "timeout_seconds": 45
+         }
+        ]
+       },
+       {
+        "name": "gate0-disabled",
+        "enabled": false,
+        "source": "~/.gemini/config/hooks.json",
+        "actions": [
+         {
+          "event": "Stop",
+          "type": "command",
+          "command": "<PROBE_SCRATCH>/gate0-capture.sh Stop",
+          "timeout_seconds": 45
+         }
+        ]
+       },
+       {
+        "name": "gate0-malformed",
+        "enabled": true,
+        "source": "~/.gemini/config/hooks.json",
+        "actions": [
+         {
+          "event": "Stop",
+          "type": "command"
+         }
+        ]
+       },
+       {
+        "name": "gobby",
+        "enabled": true,
+        "source": "~/.gemini/config/hooks.json",
+        "actions": [
+         {
+          "event": "PreInvocation",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreInvocation",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PostInvocation",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostInvocation",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PreToolUse",
+          "matcher": "*",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreToolUse",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PostToolUse",
+          "matcher": "*",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostToolUse",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "Stop",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=Stop",
+          "timeout_seconds": 45
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   "stderr_tail": "",
+   "note": "disabled appears enabled:false with its actions; the malformed hook appears enabled:true with an action lacking command and no warning; the unknown event key is dropped silently"
+  },
+  {
+   "record": "1.1.21 after gate0-capture removal (proof)",
+   "command": "agy -p \"/hooks\" --output-format json",
+   "exit_code": 0,
+   "stdout": {
+    "conversation_id": "",
+    "status": "SUCCESS",
+    "response": "gobby\tenabled\tPreInvocation\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreInvocation\ngobby\tenabled\tPostInvocation\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostInvocation\ngobby\tenabled\tPreToolUse\t*\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreToolUse\ngobby\tenabled\tPostToolUse\t*\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostToolUse\ngobby\tenabled\tStop\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=Stop\n",
+    "duration_seconds": 0,
+    "num_turns": 0,
+    "usage": {
+     "input_tokens": 0,
+     "output_tokens": 0,
+     "thinking_tokens": 0,
+     "cache_read_tokens": 0,
+     "total_tokens": 0
+    },
+    "command": {
+     "name": "hooks",
+     "data": {
+      "hooks": [
+       {
+        "name": "gobby",
+        "enabled": true,
+        "source": "~/.gemini/config/hooks.json",
+        "actions": [
+         {
+          "event": "PreInvocation",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreInvocation",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PostInvocation",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostInvocation",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PreToolUse",
+          "matcher": "*",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreToolUse",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PostToolUse",
+          "matcher": "*",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostToolUse",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "Stop",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=Stop",
+          "timeout_seconds": 45
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   "stderr_tail": ""
+  },
+  {
+   "record": "1.1.21 unauthenticated (token refresh blocked): triggers interactive OAuth, times out after 60 s",
+   "command": "agy -p \"/hooks\" --output-format json",
+   "exit_code": 1,
+   "stdout": {
+    "conversation_id": "",
+    "status": "ERROR",
+    "response": "",
+    "error": "authentication failed or timed out",
+    "duration_seconds": 0,
+    "num_turns": 0,
+    "usage": {
+     "input_tokens": 0,
+     "output_tokens": 0,
+     "thinking_tokens": 0,
+     "cache_read_tokens": 0,
+     "total_tokens": 0
+    }
+   },
+   "stderr_tail": "ERROR: logging before google.Init: I0822 03:17:09.364676       1 manager.go:739] CLI store manager shutting down\nERROR: logging before google.Init: I0822 03:17:09.365139     414 server.go:2680] Language server shutting down\nERROR: logging before google.Init: I0822 03:17:09.365173     414 server.go:2685] Waiting for migrations to complete to prevent partial migration state...",
+   "note": "captured under the sandbox proxy; num_turns 0"
+  },
+  {
+   "record": "1.1.19 /usage (70% remaining)",
+   "command": "agy -p \"/usage\" --output-format json",
+   "exit_code": 0,
+   "stdout": {
+    "conversation_id": "",
+    "status": "SUCCESS",
+    "response": "Gemini Models\tWeekly Limit Remaining\t70%\t2026-08-27T08:53:33Z\nClaude and GPT models\tWeekly Limit Remaining\t100%\t2026-08-29T08:24:58Z\n",
+    "duration_seconds": 0,
+    "num_turns": 0,
+    "usage": {
+     "input_tokens": 0,
+     "output_tokens": 0,
+     "thinking_tokens": 0,
+     "cache_read_tokens": 0,
+     "total_tokens": 0
+    },
+    "command": {
+     "name": "usage",
+     "data": {
+      "description": "Within each group, models share a weekly limit. Quota is consumed proportionally to the cost of the tokens. Thus, limits will last longer with shorter tasks or using more cost-effective models. Your weekly limit is tied directly to your individual tier.",
+      "groups": [
+       {
+        "name": "Gemini Models",
+        "description": "Models within this group: Gemini Flash, Gemini Pro",
+        "buckets": [
+         {
+          "id": "gemini-weekly",
+          "name": "Weekly Limit Remaining",
+          "description": "You have used some of your weekly limit, it will fully refresh in 5 days.",
+          "window": "weekly",
+          "remaining_fraction": 0.7005872130393982,
+          "reset_time": "2026-08-27T08:53:33Z"
+         }
+        ]
+       },
+       {
+        "name": "Claude and GPT models",
+        "description": "Models within this group: Claude Opus, Claude Sonnet, GPT-OSS",
+        "buckets": [
+         {
+          "id": "3p-weekly",
+          "name": "Weekly Limit Remaining",
+          "window": "weekly",
+          "remaining_fraction": 1,
+          "reset_time": "2026-08-29T08:24:58Z"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   "stderr_tail": ""
+  },
+  {
+   "record": "1.1.19 /usage after exhaustion (remaining_fraction 0)",
+   "command": "agy -p \"/usage\" --output-format json",
+   "exit_code": 0,
+   "stdout": {
+    "conversation_id": "",
+    "status": "SUCCESS",
+    "response": "Gemini Models\tWeekly Limit Remaining\t0%\t2026-08-27T08:53:33Z\nClaude and GPT models\tWeekly Limit Remaining\t100%\t2026-08-29T08:43:34Z\n",
+    "duration_seconds": 0,
+    "num_turns": 0,
+    "usage": {
+     "input_tokens": 0,
+     "output_tokens": 0,
+     "thinking_tokens": 0,
+     "cache_read_tokens": 0,
+     "total_tokens": 0
+    },
+    "command": {
+     "name": "usage",
+     "data": {
+      "description": "Within each group, models share a weekly limit. Quota is consumed proportionally to the cost of the tokens. Thus, limits will last longer with shorter tasks or using more cost-effective models. Your weekly limit is tied directly to your individual tier.",
+      "groups": [
+       {
+        "name": "Gemini Models",
+        "description": "Models within this group: Gemini Flash, Gemini Pro",
+        "buckets": [
+         {
+          "id": "gemini-weekly",
+          "name": "Weekly Limit Remaining",
+          "description": "You have hit your weekly limit, it refreshes in 5 days. If on a supported paid plan, you can use AI credits in the interim or upgrade to a higher tier.",
+          "window": "weekly",
+          "remaining_fraction": 0,
+          "reset_time": "2026-08-27T08:53:33Z"
+         }
+        ]
+       },
+       {
+        "name": "Claude and GPT models",
+        "description": "Models within this group: Claude Opus, Claude Sonnet, GPT-OSS",
+        "buckets": [
+         {
+          "id": "3p-weekly",
+          "name": "Weekly Limit Remaining",
+          "window": "weekly",
+          "remaining_fraction": 1,
+          "reset_time": "2026-08-29T08:43:34Z"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   "stderr_tail": ""
+  },
+  {
+   "record": "1.1.19 /quota is an alias of /usage (command.name == usage)",
+   "command": "agy -p \"/quota\" --output-format json",
+   "exit_code": 0,
+   "stdout": {
+    "conversation_id": "",
+    "status": "SUCCESS",
+    "response": "Gemini Models\tWeekly Limit Remaining\t70%\t2026-08-27T08:53:33Z\nClaude and GPT models\tWeekly Limit Remaining\t100%\t2026-08-29T08:25:01Z\n",
+    "duration_seconds": 0,
+    "num_turns": 0,
+    "usage": {
+     "input_tokens": 0,
+     "output_tokens": 0,
+     "thinking_tokens": 0,
+     "cache_read_tokens": 0,
+     "total_tokens": 0
+    },
+    "command": {
+     "name": "usage",
+     "data": {
+      "description": "Within each group, models share a weekly limit. Quota is consumed proportionally to the cost of the tokens. Thus, limits will last longer with shorter tasks or using more cost-effective models. Your weekly limit is tied directly to your individual tier.",
+      "groups": [
+       {
+        "name": "Gemini Models",
+        "description": "Models within this group: Gemini Flash, Gemini Pro",
+        "buckets": [
+         {
+          "id": "gemini-weekly",
+          "name": "Weekly Limit Remaining",
+          "description": "You have used some of your weekly limit, it will fully refresh in 5 days.",
+          "window": "weekly",
+          "remaining_fraction": 0.7005872130393982,
+          "reset_time": "2026-08-27T08:53:33Z"
+         }
+        ]
+       },
+       {
+        "name": "Claude and GPT models",
+        "description": "Models within this group: Claude Opus, Claude Sonnet, GPT-OSS",
+        "buckets": [
+         {
+          "id": "3p-weekly",
+          "name": "Weekly Limit Remaining",
+          "window": "weekly",
+          "remaining_fraction": 1,
+          "reset_time": "2026-08-29T08:25:01Z"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   "stderr_tail": ""
+  },
+  {
+   "record": "1.1.19 /credits: exit 1 'no credits info found' on this account",
+   "command": "agy -p \"/credits\" --output-format json",
+   "exit_code": 1,
+   "stdout": {
+    "conversation_id": "",
+    "status": "ERROR",
+    "response": "",
+    "error": "/credits failed: retrieving credits: no credits info found",
+    "duration_seconds": 0,
+    "num_turns": 0,
+    "usage": {
+     "input_tokens": 0,
+     "output_tokens": 0,
+     "thinking_tokens": 0,
+     "cache_read_tokens": 0,
+     "total_tokens": 0
+    }
+   },
+   "stderr_tail": ""
+  },
+  {
+   "record": "1.1.19 quota-exhausted turn",
+   "command": "agy -p 'reply with exactly: ok' --output-format json --print-timeout 1m",
+   "exit_code": 1,
+   "stdout": {
+    "conversation_id": "<CONVERSATION_ID>",
+    "status": "ERROR",
+    "response": "",
+    "error": "Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 120h9m43s.",
+    "duration_seconds": 0,
+    "num_turns": 1,
+    "usage": {
+     "input_tokens": 0,
+     "output_tokens": 0,
+     "thinking_tokens": 0,
+     "cache_read_tokens": 0,
+     "total_tokens": 0
+    }
+   },
+   "stderr_tail": ""
+  },
+  {
+   "record": "1.1.20 /model carries the default marker (is_default) and effort",
+   "command": "agy -p \"/model\" --output-format json",
+   "exit_code": 0,
+   "stdout": {
+    "conversation_id": "",
+    "status": "SUCCESS",
+    "response": "gemini-3.5-flash-high\tGemini 3.5 Flash (High)\n",
+    "duration_seconds": 0,
+    "num_turns": 0,
+    "usage": {
+     "input_tokens": 0,
+     "output_tokens": 0,
+     "thinking_tokens": 0,
+     "cache_read_tokens": 0,
+     "total_tokens": 0
+    },
+    "command": {
+     "name": "model",
+     "data": {
+      "id": "gemini-3.5-flash-high",
+      "label": "Gemini 3.5 Flash (High)",
+      "effort": "high",
+      "is_default": false
+     }
+    }
+   },
+   "stderr_tail": ""
+  },
+  {
+   "record": "1.1.20 models text (TSV id\\tlabel)",
+   "command": "agy models",
+   "exit_code": 0,
+   "stdout": "gemini-3.7-flash-high\tGemini 3.7 Flash (High)\ngemini-3.7-flash-medium\tGemini 3.7 Flash (Medium)\ngemini-3.7-flash-low\tGemini 3.7 Flash (Low)\ngemini-3.6-flash-high\tGemini 3.6 Flash (High)\ngemini-3.6-flash-medium\tGemini 3.6 Flash (Medium)\ngemini-3.6-flash-low\tGemini 3.6 Flash (Low)\ngemini-3.5-flash-high\tGemini 3.5 Flash (High)\ngemini-3.5-flash-medium\tGemini 3.5 Flash (Medium)\ngemini-3.5-flash-low\tGemini 3.5 Flash (Low)\ngemini-3.1-pro-high\tGemini 3.1 Pro (High)\ngemini-3.1-pro-low\tGemini 3.1 Pro (Low)\nclaude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)\nclaude-opus-4-6-thinking\tClaude Opus 4.6 (Thinking)\ngpt-oss-120b-medium\tGPT-OSS 120B (Medium)\n",
+   "stderr_tail": "Fetching available models..."
+  },
+  {
+   "record": "1.1.20 flag after subcommand is rejected (exit 1)",
+   "command": "agy models --output-format json",
+   "exit_code": 1,
+   "stdout": "",
+   "stderr_tail": "  -h      Show help\n  --help  Show help\nError: flags provided but not defined: -output-format"
+  },
+  {
+   "record": "1.1.20 models JSON (global flag before subcommand)",
+   "command": "agy --output-format json models",
+   "exit_code": 0,
+   "stdout": {
+    "conversation_id": "",
+    "status": "SUCCESS",
+    "response": "gemini-3.7-flash-high\tGemini 3.7 Flash (High)\ngemini-3.7-flash-medium\tGemini 3.7 Flash (Medium)\ngemini-3.7-flash-low\tGemini 3.7 Flash (Low)\ngemini-3.6-flash-high\tGemini 3.6 Flash (High)\ngemini-3.6-flash-medium\tGemini 3.6 Flash (Medium)\ngemini-3.6-flash-low\tGemini 3.6 Flash (Low)\ngemini-3.5-flash-high\tGemini 3.5 Flash (High)\ngemini-3.5-flash-medium\tGemini 3.5 Flash (Medium)\ngemini-3.5-flash-low\tGemini 3.5 Flash (Low)\ngemini-3.1-pro-high\tGemini 3.1 Pro (High)\ngemini-3.1-pro-low\tGemini 3.1 Pro (Low)\nclaude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)\nclaude-opus-4-6-thinking\tClaude Opus 4.6 (Thinking)\ngpt-oss-120b-medium\tGPT-OSS 120B (Medium)\n",
+    "duration_seconds": 0,
+    "num_turns": 0,
+    "usage": {
+     "input_tokens": 0,
+     "output_tokens": 0,
+     "thinking_tokens": 0,
+     "cache_read_tokens": 0,
+     "total_tokens": 0
+    },
+    "command": {
+     "name": "models",
+     "data": {
+      "models": [
+       {
+        "id": "gemini-3.7-flash-high",
+        "label": "Gemini 3.7 Flash (High)"
+       },
+       {
+        "id": "gemini-3.7-flash-medium",
+        "label": "Gemini 3.7 Flash (Medium)"
+       },
+       {
+        "id": "gemini-3.7-flash-low",
+        "label": "Gemini 3.7 Flash (Low)"
+       },
+       {
+        "id": "gemini-3.6-flash-high",
+        "label": "Gemini 3.6 Flash (High)"
+       },
+       {
+        "id": "gemini-3.6-flash-medium",
+        "label": "Gemini 3.6 Flash (Medium)"
+       },
+       {
+        "id": "gemini-3.6-flash-low",
+        "label": "Gemini 3.6 Flash (Low)"
+       },
+       {
+        "id": "gemini-3.5-flash-high",
+        "label": "Gemini 3.5 Flash (High)"
+       },
+       {
+        "id": "gemini-3.5-flash-medium",
+        "label": "Gemini 3.5 Flash (Medium)"
+       },
+       {
+        "id": "gemini-3.5-flash-low",
+        "label": "Gemini 3.5 Flash (Low)"
+       },
+       {
+        "id": "gemini-3.1-pro-high",
+        "label": "Gemini 3.1 Pro (High)"
+       },
+       {
+        "id": "gemini-3.1-pro-low",
+        "label": "Gemini 3.1 Pro (Low)"
+       },
+       {
+        "id": "claude-sonnet-4-6",
+        "label": "Claude Sonnet 4.6 (Thinking)"
+       },
+       {
+        "id": "claude-opus-4-6-thinking",
+        "label": "Claude Opus 4.6 (Thinking)"
+       },
+       {
+        "id": "gpt-oss-120b-medium",
+        "label": "GPT-OSS 120B (Medium)"
+       }
+      ]
+     }
+    }
+   },
+   "stderr_tail": "Fetching available models..."
+  },
+  {
+   "record": "1.1.20 models stream-json",
+   "command": "agy --output-format stream-json models",
+   "exit_code": 0,
+   "stdout": "{\"event\":\"command_result\",\"command\":{\"name\":\"models\",\"data\":{\"models\":[{\"id\":\"gemini-3.7-flash-high\",\"label\":\"Gemini 3.7 Flash (High)\"},{\"id\":\"gemini-3.7-flash-medium\",\"label\":\"Gemini 3.7 Flash (Medium)\"},{\"id\":\"gemini-3.7-flash-low\",\"label\":\"Gemini 3.7 Flash (Low)\"},{\"id\":\"gemini-3.6-flash-high\",\"label\":\"Gemini 3.6 Flash (High)\"},{\"id\":\"gemini-3.6-flash-medium\",\"label\":\"Gemini 3.6 Flash (Medium)\"},{\"id\":\"gemini-3.6-flash-low\",\"label\":\"Gemini 3.6 Flash (Low)\"},{\"id\":\"gemini-3.5-flash-high\",\"label\":\"Gemini 3.5 Flash (High)\"},{\"id\":\"gemini-3.5-flash-medium\",\"label\":\"Gemini 3.5 Flash (Medium)\"},{\"id\":\"gemini-3.5-flash-low\",\"label\":\"Gemini 3.5 Flash (Low)\"},{\"id\":\"gemini-3.1-pro-high\",\"label\":\"Gemini 3.1 Pro (High)\"},{\"id\":\"gemini-3.1-pro-low\",\"label\":\"Gemini 3.1 Pro (Low)\"},{\"id\":\"claude-sonnet-4-6\",\"label\":\"Claude Sonnet 4.6 (Thinking)\"},{\"id\":\"claude-opus-4-6-thinking\",\"label\":\"Claude Opus 4.6 (Thinking)\"},{\"id\":\"gpt-oss-120b-medium\",\"label\":\"GPT-OSS 120B (Medium)\"}]}}}\n{\"event\":\"result\",\"result\":{\"conversation_id\":\"\",\"status\":\"SUCCESS\",\"response\":\"gemini-3.7-flash-high\\tGemini 3.7 Flash (High)\\ngemini-3.7-flash-medium\\tGemini 3.7 Flash (Medium)\\ngemini-3.7-flash-low\\tGemini 3.7 Flash (Low)\\ngemini-3.6-flash-high\\tGemini 3.6 Flash (High)\\ngemini-3.6-flash-medium\\tGemini 3.6 Flash (Medium)\\ngemini-3.6-flash-low\\tGemini 3.6 Flash (Low)\\ngemini-3.5-flash-high\\tGemini 3.5 Flash (High)\\ngemini-3.5-flash-medium\\tGemini 3.5 Flash (Medium)\\ngemini-3.5-flash-low\\tGemini 3.5 Flash (Low)\\ngemini-3.1-pro-high\\tGemini 3.1 Pro (High)\\ngemini-3.1-pro-low\\tGemini 3.1 Pro (Low)\\nclaude-sonnet-4-6\\tClaude Sonnet 4.6 (Thinking)\\nclaude-opus-4-6-thinking\\tClaude Opus 4.6 (Thinking)\\ngpt-oss-120b-medium\\tGPT-OSS 120B (Medium)\\n\",\"duration_seconds\":0,\"num_turns\":0,\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"thinking_tokens\":0,\"cache_read_tokens\":0,\"total_tokens\":0},\"command\":{\"name\":\"models\",\"data\":{\"models\":[{\"id\":\"gemini-3.7-flash-high\",\"label\":\"Gemini 3.7 Flash (High)\"},{\"id\":\"gemini-3.7-flash-medium\",\"label\":\"Gemini 3.7 Flash (Medium)\"},{\"id\":\"gemini-3.7-flash-low\",\"label\":\"Gemini 3.7 Flash (Low)\"},{\"id\":\"gemini-3.6-flash-high\",\"label\":\"Gemini 3.6 Flash (High)\"},{\"id\":\"gemini-3.6-flash-medium\",\"label\":\"Gemini 3.6 Flash (Medium)\"},{\"id\":\"gemini-3.6-flash-low\",\"label\":\"Gemini 3.6 Flash (Low)\"},{\"id\":\"gemini-3.5-flash-high\",\"label\":\"Gemini 3.5 Flash (High)\"},{\"id\":\"gemini-3.5-flash-medium\",\"label\":\"Gemini 3.5 Flash (Medium)\"},{\"id\":\"gemini-3.5-flash-low\",\"label\":\"Gemini 3.5 Flash (Low)\"},{\"id\":\"gemini-3.1-pro-high\",\"label\":\"Gemini 3.1 Pro (High)\"},{\"id\":\"gemini-3.1-pro-low\",\"label\":\"Gemini 3.1 Pro (Low)\"},{\"id\":\"claude-sonnet-4-6\",\"label\":\"Claude Sonnet 4.6 (Thinking)\"},{\"id\":\"claude-opus-4-6-thinking\",\"label\":\"Claude Opus 4.6 (Thinking)\"},{\"id\":\"gpt-oss-120b-medium\",\"label\":\"GPT-OSS 120B (Medium)\"}]}}}}\n",
+   "stderr_tail": "Fetching available models..."
+  },
+  {
+   "record": "1.1.20 agents JSON",
+   "command": "agy --output-format json agents",
+   "exit_code": 0,
+   "stdout": {
+    "conversation_id": "",
+    "status": "SUCCESS",
+    "response": "",
+    "duration_seconds": 0,
+    "num_turns": 0,
+    "usage": {
+     "input_tokens": 0,
+     "output_tokens": 0,
+     "thinking_tokens": 0,
+     "cache_read_tokens": 0,
+     "total_tokens": 0
+    },
+    "command": {
+     "name": "agents",
+     "data": {
+      "agents": []
+     }
+    }
+   },
+   "stderr_tail": ""
+  },
+  {
+   "record": "1.1.12 mcp list",
+   "command": "agy mcp list",
+   "exit_code": 0,
+   "stdout": "NAME   TYPE   STATUS   COMMAND/URL\ngobby  stdio  enabled  ~/Projects/gobby/.venv/bin/gobby mcp-server\n",
+   "stderr_tail": ""
+  },
+  {
+   "record": "1.1.13 invalid duration: exit 2",
+   "command": "agy --print-timeout banana -p hi",
+   "exit_code": 2,
+   "stdout": "",
+   "stderr_tail": "  plugin          Manage plugins (install, uninstall, list, enable, disable)\n  plugins         Alias for plugin\n  update          Update CLI"
+  },
+  {
+   "record": "1.1.13 zero timeout: immediate ERROR result on stdout, exit 1 (no disable sentinel)",
+   "command": "agy --print-timeout 0 -p hi --output-format json",
+   "exit_code": 1,
+   "stdout": {
+    "conversation_id": "<CONVERSATION_ID>",
+    "status": "ERROR",
+    "response": "",
+    "error": "timeout waiting for response",
+    "duration_seconds": 0,
+    "num_turns": 0,
+    "usage": {
+     "input_tokens": 0,
+     "output_tokens": 0,
+     "thinking_tokens": 0,
+     "cache_read_tokens": 0,
+     "total_tokens": 0
+    }
+   },
+   "stderr_tail": ""
+  },
+  {
+   "record": "1.1.13 expiry in text mode: stderr 'Error: timeout waiting for response', exit 1",
+   "command": "agy -p 'run: sleep 25; echo done' --print-timeout 8s",
+   "exit_code": 1,
+   "stdout": "",
+   "stderr_tail": "Error: timeout waiting for response"
+  },
+  {
+   "record": "1.1.13",
+   "command": "agy --print-timeout 2562047h -p 'reply with exactly: ok' --output-format json --sandbox=false --add-dir <WORKSPACE> --model gpt-oss-120b-medium",
+   "exit_code": 0,
+   "stdout": "{\"conversation_id\": \"<CONVERSATION_ID>\", \"status\": \"SUCCESS\", \"response\": \"ok\\n\", \"duration_seconds\": 11.359718, \"num_turns\": 1, \"usage\": {\"input_tokens\": 12764, \"output_tokens\": 62, \"thinking_tokens\": 0, \"cache_read_tokens\": 0, \"total_tokens\": 12826}}\n",
+   "stderr_tail": "",
+   "note": "effectively-unbounded Go duration accepted on 1.1.18 (re-confirmed from the 1.1.10 record); turn completes normally"
+  },
+  {
+   "record": "1.1.7 --sandbox is boolean; exit 2",
+   "command": "agy --sandbox=bogus -p hi",
+   "exit_code": 2,
+   "stdout": "",
+   "stderr_tail": "  plugin          Manage plugins (install, uninstall, list, enable, disable)\n  plugins         Alias for plugin\n  update          Update CLI"
+  },
+  {
+   "record": "1.1.23 unknown --mode: warning, runs in default mode, exit 0",
+   "command": "agy --mode bogus -p hi",
+   "exit_code": 0,
+   "stdout": "Hello! How can I help you with your coding tasks today?\n",
+   "stderr_tail": "warning: unrecognized --mode value \"bogus\" (valid: accept-edits, plan)"
+  },
+  {
+   "record": "1.1.20 effort vocabulary low|medium|high; exit 1",
+   "command": "agy --effort bogus -p hi",
+   "exit_code": 1,
+   "stdout": "",
+   "stderr_tail": "Error: invalid model selection (--model \"\" --effort \"bogus\"): invalid --effort \"bogus\" (valid: low, medium, high)"
+  },
+  {
+   "record": "1.1.15 scrubbed environment authenticates via Keychain",
+   "command": "env -i HOME=$HOME PATH=... agy -p '/usage' --output-format json",
+   "exit_code": 0,
+   "stdout": {
+    "conversation_id": "",
+    "status": "SUCCESS",
+    "response": "Gemini Models\tWeekly Limit Remaining\t0%\t2026-08-27T08:53:33Z\nClaude and GPT models\tWeekly Limit Remaining\t99%\t2026-08-29T08:43:38Z\n",
+    "duration_seconds": 0,
+    "num_turns": 0,
+    "usage": {
+     "input_tokens": 0,
+     "output_tokens": 0,
+     "thinking_tokens": 0,
+     "cache_read_tokens": 0,
+     "total_tokens": 0
+    },
+    "command": {
+     "name": "usage",
+     "data": {
+      "description": "Within each group, models share a weekly limit. Quota is consumed proportionally to the cost of the tokens. Thus, limits will last longer with shorter tasks or using more cost-effective models. Your weekly limit is tied directly to your individual tier.",
+      "groups": [
+       {
+        "name": "Gemini Models",
+        "description": "Models within this group: Gemini Flash, Gemini Pro",
+        "buckets": [
+         {
+          "id": "gemini-weekly",
+          "name": "Weekly Limit Remaining",
+          "description": "You have hit your weekly limit, it refreshes in 5 days. If on a supported paid plan, you can use AI credits in the interim or upgrade to a higher tier.",
+          "window": "weekly",
+          "remaining_fraction": 0,
+          "reset_time": "2026-08-27T08:53:33Z"
+         }
+        ]
+       },
+       {
+        "name": "Claude and GPT models",
+        "description": "Models within this group: Claude Opus, Claude Sonnet, GPT-OSS",
+        "buckets": [
+         {
+          "id": "3p-weekly",
+          "name": "Weekly Limit Remaining",
+          "description": "You have used some of your weekly limit, it will fully refresh in 6 days, 23 hours.",
+          "window": "weekly",
+          "remaining_fraction": 0.994983971118927,
+          "reset_time": "2026-08-29T08:43:38Z"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   "stderr_tail": ""
+  },
+  {
+   "record": "1.1.15 ambient credential vars ignored (ChainedAuth: authenticated via keyring)",
+   "command": "env GOOGLE_API_KEY=bogus GEMINI_API_KEY=bogus GOOGLE_APPLICATION_CREDENTIALS=/nonexistent agy -p 'reply with exactly: ok' --output-format json --model gpt-oss-120b-medium",
+   "exit_code": 0,
+   "stdout": {
+    "conversation_id": "<CONVERSATION_ID>",
+    "status": "SUCCESS",
+    "response": "ok\n",
+    "duration_seconds": 17.139128,
+    "num_turns": 1,
+    "usage": {
+     "input_tokens": 12762,
+     "output_tokens": 27,
+     "thinking_tokens": 0,
+     "cache_read_tokens": 0,
+     "total_tokens": 12789
+    }
+   },
+   "stderr_tail": ""
+  },
+  {
+   "record": "1.1.15 foreign HOME: silent auth fails, OAuth prompt, exit 1",
+   "command": "env HOME=<FAKE_HOME> agy -p '/usage' --output-format json",
+   "exit_code": 1,
+   "stdout": {
+    "conversation_id": "",
+    "status": "ERROR",
+    "response": "",
+    "error": "authentication failed or timed out",
+    "duration_seconds": 0,
+    "num_turns": 0,
+    "usage": {
+     "input_tokens": 0,
+     "output_tokens": 0,
+     "thinking_tokens": 0,
+     "cache_read_tokens": 0,
+     "total_tokens": 0
+    }
+   },
+   "stderr_tail": "Waiting for authentication (timeout 60s)...\nOr, paste the authorization=<REDACTED> here and press Enter:\nError: authentication timed out."
+  },
+  {
+   "record": "version floor: changelog lists 1.1.17 and 1.1.18",
+   "command": "agy changelog",
+   "exit_code": 0,
+   "stdout": "1.1.18:\n\u00b7 Added support for passing a project name to `--project`, which previously accepted only a project ID and failed on anything else.\n\u00b7 Added `item.rename` and `item.delete` keybindings for the conversation picker's rename and delete actions, so `f2` and `f4` can be rebound in `keybindings.json` on keyboards without function keys.\n\u00b7 Improved `@` file path completion with a typo-tolerant fallback, so a query with a transposed or mistyped character still finds the file; typo matches never outrank exact ones.\n\u00b7 Improved audio attachments by recognizing the standard formats Gemini models accept, including `wav`, `mp3`, `m4a`, `aac`, `flac` and `opus`, which were previously refused as unsupported.\n\u00b7 Improved keystroke responsiveness on Windows by discarding the key-release events the console reports and nothing in the CLI reads, which were roughly doubling the rendering work per keystroke.\n\u00b7 Improved the artifact viewer footer by moving the outline shortcut next to the scroll and page hints, so the three way<TRUNCATED 75808 bytes>o the top of the selection list, making it the default choice during onboarding and in `/settings`.\n\u00b7 Improved `/usage` and `/quota` commands. Forces a real-time reload of model configuration and remaining quotas, allowing you to see updated real-time consumption statistics immediately.\n\u00b7 Improved step rendering layout. Calculates available terminal width dynamically and uses middle-truncation (`/foo/.../bar`) for file path tools to prevent layout shifting on narrow screens.\n\u00b7 Improved session deletion keybinding in `/resume`. Changed the shortcut from `ctrl+d` to `ctrl+delete` to resolve conflicts with the global exit keybinding (`ctrl+d` `ctrl+d`) and preserve Emacs-style forward-delete in search input fields.\n\u00b7 Restored automatic table wrapping, preventing long cells inside markdown tables from being truncated.\n\u00b7 Resolved an issue where deleted files (represented by `+++ /dev/null`) had their deletion lines incorrectly merged into the previous file's diff.\n\n1.0.0:\n\u00b7 Initial release of the Antigravity CLI.\n",
+   "stderr_tail": ""
+  },
+  {
+   "record": "1.1.20 unauthenticated `agy --output-format json models` under an isolated HOME (HOME=$(mktemp -d); real Keychain and ~/.gemini untouched)",
+   "command": "H=$(mktemp -d); HOME=\"$H\" agy --output-format json models < /dev/null; echo \"rc=$?\"; ls -R \"$H\"",
+   "exit_code": 0,
+   "stdout": "HOME=<ISOLATED_HOME>\nrc=1\nLibrary\n\n<ISOLATED_HOME>/Library:\nCaches\n\n<ISOLATED_HOME>/Library/Caches:\nms-playwright-go\n\n<ISOLATED_HOME>/Library/Caches/ms-playwright-go:\n1.57.0\n\n<ISOLATED_HOME>/Library/Caches/ms-playwright-go/1.57.0:\n",
+   "stderr_tail": "Fetching available models...\nError: Please sign in to view available models. Launch the CLI without arguments to sign in.",
+   "receipt_run": true,
+   "captured_at": "2026-08-22T10:40:00Z",
+   "note": "exit 1, empty stdout, stderr 'Error: Please sign in to view available models. Launch the CLI without arguments to sign in.'; no OAuth prompt, no wait; the isolated HOME gains only Library/Caches/ms-playwright-go/1.57.0 and .gemini",
+   "agy_exit_codes": [
+    1
+   ]
+  },
+  {
+   "record": "1.1.20 unauthenticated `agy --output-format stream-json models` and `agy models` under an isolated HOME",
+   "command": "H=$(mktemp -d); HOME=\"$H\" agy --output-format stream-json models < /dev/null; echo \"rc=$?\"; HOME=\"$H\" agy models < /dev/null; echo \"rc=$?\"; ls -a \"$H\"; rm -rf \"$H\"",
+   "exit_code": 0,
+   "stdout": "rc=1\nrc=1\n.\n..\n.gemini\nLibrary\n",
+   "stderr_tail": "Error: Please sign in to view available models. Launch the CLI without arguments to sign in.\nFetching available models...\nError: Please sign in to view available models. Launch the CLI without arguments to sign in.",
+   "receipt_run": true,
+   "captured_at": "2026-08-22T10:40:00Z",
+   "note": "both exit 1 with the same stderr message; stdout carries only the rc echoes",
+   "agy_exit_codes": [
+    1,
+    1
+   ]
+  },
+  {
+   "record": "1.1.21 receipt run: /hooks before gate0-capture install (gobby only)",
+   "command": "agy -p \"/hooks\" --output-format json",
+   "exit_code": 0,
+   "stdout": {
+    "conversation_id": "",
+    "status": "SUCCESS",
+    "response": "gobby\tenabled\tPreInvocation\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreInvocation\ngobby\tenabled\tPostInvocation\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostInvocation\ngobby\tenabled\tPreToolUse\t*\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreToolUse\ngobby\tenabled\tPostToolUse\t*\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostToolUse\ngobby\tenabled\tStop\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=Stop\n",
+    "duration_seconds": 0,
+    "num_turns": 0,
+    "usage": {
+     "input_tokens": 0,
+     "output_tokens": 0,
+     "thinking_tokens": 0,
+     "cache_read_tokens": 0,
+     "total_tokens": 0
+    },
+    "command": {
+     "name": "hooks",
+     "data": {
+      "hooks": [
+       {
+        "name": "gobby",
+        "enabled": true,
+        "source": "~/.gemini/config/hooks.json",
+        "actions": [
+         {
+          "event": "PreInvocation",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreInvocation",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PostInvocation",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostInvocation",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PreToolUse",
+          "matcher": "*",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreToolUse",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PostToolUse",
+          "matcher": "*",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostToolUse",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "Stop",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=Stop",
+          "timeout_seconds": 45
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   "stderr_tail": "",
+   "receipt_run": true,
+   "captured_at": "2026-08-22T10:40:00Z"
+  },
+  {
+   "record": "1.1.21 receipt run: /hooks with gate0-capture beside gobby",
+   "command": "agy -p \"/hooks\" --output-format json",
+   "exit_code": 0,
+   "stdout": {
+    "conversation_id": "",
+    "status": "SUCCESS",
+    "response": "gate0-capture\tenabled\tPreInvocation\t-\tcommand\t<PROBE_SCRATCH>/gate0-capture.sh PreInvocation\ngate0-capture\tenabled\tPostInvocation\t-\tcommand\t<PROBE_SCRATCH>/gate0-capture.sh PostInvocation\ngate0-capture\tenabled\tPreToolUse\t*\tcommand\t<PROBE_SCRATCH>/gate0-capture.sh PreToolUse\ngate0-capture\tenabled\tPostToolUse\t*\tcommand\t<PROBE_SCRATCH>/gate0-capture.sh PostToolUse\ngate0-capture\tenabled\tStop\t-\tcommand\t<PROBE_SCRATCH>/gate0-capture.sh Stop\ngobby\tenabled\tPreInvocation\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreInvocation\ngobby\tenabled\tPostInvocation\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostInvocation\ngobby\tenabled\tPreToolUse\t*\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreToolUse\ngobby\tenabled\tPostToolUse\t*\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostToolUse\ngobby\tenabled\tStop\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=Stop\n",
+    "duration_seconds": 0,
+    "num_turns": 0,
+    "usage": {
+     "input_tokens": 0,
+     "output_tokens": 0,
+     "thinking_tokens": 0,
+     "cache_read_tokens": 0,
+     "total_tokens": 0
+    },
+    "command": {
+     "name": "hooks",
+     "data": {
+      "hooks": [
+       {
+        "name": "gate0-capture",
+        "enabled": true,
+        "source": "~/.gemini/config/hooks.json",
+        "actions": [
+         {
+          "event": "PreInvocation",
+          "type": "command",
+          "command": "<PROBE_SCRATCH>/gate0-capture.sh PreInvocation",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PostInvocation",
+          "type": "command",
+          "command": "<PROBE_SCRATCH>/gate0-capture.sh PostInvocation",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PreToolUse",
+          "matcher": "*",
+          "type": "command",
+          "command": "<PROBE_SCRATCH>/gate0-capture.sh PreToolUse",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PostToolUse",
+          "matcher": "*",
+          "type": "command",
+          "command": "<PROBE_SCRATCH>/gate0-capture.sh PostToolUse",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "Stop",
+          "type": "command",
+          "command": "<PROBE_SCRATCH>/gate0-capture.sh Stop",
+          "timeout_seconds": 45
+         }
+        ]
+       },
+       {
+        "name": "gobby",
+        "enabled": true,
+        "source": "~/.gemini/config/hooks.json",
+        "actions": [
+         {
+          "event": "PreInvocation",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreInvocation",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PostInvocation",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostInvocation",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PreToolUse",
+          "matcher": "*",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreToolUse",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PostToolUse",
+          "matcher": "*",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostToolUse",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "Stop",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=Stop",
+          "timeout_seconds": 45
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   "stderr_tail": "",
+   "receipt_run": true,
+   "captured_at": "2026-08-22T10:40:00Z"
+  },
+  {
+   "record": "1.1.21 receipt run: /hooks after gate0-capture removal (proof; hooks.json byte-equivalent to the pre-probe copy)",
+   "command": "agy -p \"/hooks\" --output-format json",
+   "exit_code": 0,
+   "stdout": {
+    "conversation_id": "",
+    "status": "SUCCESS",
+    "response": "gobby\tenabled\tPreInvocation\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreInvocation\ngobby\tenabled\tPostInvocation\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostInvocation\ngobby\tenabled\tPreToolUse\t*\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreToolUse\ngobby\tenabled\tPostToolUse\t*\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostToolUse\ngobby\tenabled\tStop\t-\tcommand\t~/.gobby/bin/ghook --gobby-owned --cli=agy --type=Stop\n",
+    "duration_seconds": 0,
+    "num_turns": 0,
+    "usage": {
+     "input_tokens": 0,
+     "output_tokens": 0,
+     "thinking_tokens": 0,
+     "cache_read_tokens": 0,
+     "total_tokens": 0
+    },
+    "command": {
+     "name": "hooks",
+     "data": {
+      "hooks": [
+       {
+        "name": "gobby",
+        "enabled": true,
+        "source": "~/.gemini/config/hooks.json",
+        "actions": [
+         {
+          "event": "PreInvocation",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreInvocation",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PostInvocation",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostInvocation",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PreToolUse",
+          "matcher": "*",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PreToolUse",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "PostToolUse",
+          "matcher": "*",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=PostToolUse",
+          "timeout_seconds": 45
+         },
+         {
+          "event": "Stop",
+          "type": "command",
+          "command": "~/.gobby/bin/ghook --gobby-owned --cli=agy --type=Stop",
+          "timeout_seconds": 45
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   "stderr_tail": "",
+   "receipt_run": true,
+   "captured_at": "2026-08-22T10:40:00Z"
+  }
+ ]
 }

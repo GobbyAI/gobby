@@ -1,0 +1,6 @@
+# AGY 1.1.18 interactive pane capture — record 1.1.7
+# source: tmux capture-pane -p -S -200 -t agy-gate0 (11-noflags-startup.txt); startup without the two flags
+# scrubbed: $HOME→~, user→<USER>, email→<REDACTED>, workspace→<WORKSPACE>, ids→<CONVERSATION_ID>
+>
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+? for shortcuts                                                                                                                                                                    GPT-OSS 120B (Medium)

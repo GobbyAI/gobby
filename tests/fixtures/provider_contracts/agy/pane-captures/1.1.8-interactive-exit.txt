@@ -1,0 +1,3 @@
+# AGY 1.1.18 interactive pane capture — record 1.1.8
+# source: tmux capture-pane -p -S -200 -t agy-gate0 (14-exit.txt); second C-c arms exit ('press ctrl+c again to exit'); third exits
+# scrubbed: $HOME→~, user→<USER>, email→<REDACTED>, workspace→<WORKSPACE>, ids→<CONVERSATION_ID>
