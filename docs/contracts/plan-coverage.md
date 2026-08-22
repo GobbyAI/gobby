@@ -402,6 +402,20 @@ gobby-plans tool, which renders the canonical round fence daemon-side and
 atomically inserts the round entry (prose + fence) at the end of the changelog;
 coordinators never hand-edit round fences.
 
+Repair-class findings (`traceability`, `bad-sequencing`, `weak-testability`,
+and `gobby-format`, per the category matrix in `plan-review`) may carry typed
+`repairs` — `add_targets`, `add_dependency`, or `add_acceptance` payloads whose
+every `section_id` comes from the evidence manifest. Those repairs are payload,
+never writes: the adversary only returns them, and the coordinator's
+`apply_plan_review_repairs` gobby-plans tool is the sole writer. It runs only
+after the interactive vote and only on a finalized `needs_review` checkpoint,
+so the checkpoint records the reviewed artifact and the next round's snapshot
+records the repaired one. The tool is idempotent and all-or-nothing — repairs
+already present are skipped, a repair that would leave the plan unparseable or
+change an unrepaired section's hash fails with `invalid_repair` and leaves the
+file untouched — and it returns the unified diff with the plan hashes before
+and after. Design-class findings stay prose; the planner owns those edits.
+
 ### Enhancement And Over-Engineering Vocabulary
 
 A constructive `plan-enhancer` pass runs before the adversary gate (default on

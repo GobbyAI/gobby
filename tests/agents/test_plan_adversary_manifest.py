@@ -109,9 +109,22 @@ class TestTerminalCleanupOwnership:
     ) -> None:
         review = find_step((agent.step_workflow.steps if agent.step_workflow else []), "review")
         assert review is not None
-        assert find_step((agent.step_workflow.steps if agent.step_workflow else []), "backfill_lessons") is None
-        assert find_step((agent.step_workflow.steps if agent.step_workflow else []), "relay_backfill_failure") is None
-        assert find_step((agent.step_workflow.steps if agent.step_workflow else []), "deliver_result") is None
+        assert (
+            find_step(
+                (agent.step_workflow.steps if agent.step_workflow else []), "backfill_lessons"
+            )
+            is None
+        )
+        assert (
+            find_step(
+                (agent.step_workflow.steps if agent.step_workflow else []), "relay_backfill_failure"
+            )
+            is None
+        )
+        assert (
+            find_step((agent.step_workflow.steps if agent.step_workflow else []), "deliver_result")
+            is None
+        )
         assert any(
             transition.to == "terminate" and transition.when == "vars.review_complete"
             for transition in review.transitions
@@ -150,3 +163,18 @@ class TestCoordinatorOwnedWrites:
             "gobby-plans:finalize_plan_review_evidence",
             "gobby-plans:checkpoint_plan_review_lesson_mint",
         } <= set(review.blocked_mcp_tools or [])
+
+
+class TestAdvisoryRepairs:
+    """Task-bound review never applies typed repairs; the planner owns edits."""
+
+    def test_repairs_are_advisory_to_the_planner(self, agent: AgentDefinitionBody) -> None:
+        prose = " ".join((agent.prompts.agent or "").split())
+        assert "Typed `repairs` on a finding are advisory to the planner" in prose
+        assert "`apply_plan_review_repairs` is never called" in prose
+
+    def test_apply_plan_review_repairs_is_blocked(self, agent: AgentDefinitionBody) -> None:
+        review = find_step((agent.step_workflow.steps if agent.step_workflow else []), "review")
+        assert review is not None
+        assert "gobby-plans:apply_plan_review_repairs" in set(review.blocked_mcp_tools or [])
+        assert "gobby-plans:apply_plan_review_repairs" in set(agent.blocked_mcp_tools or [])

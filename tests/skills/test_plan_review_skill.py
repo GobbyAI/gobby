@@ -130,3 +130,21 @@ def test_interactive_phase_approvals_and_item_voting_remain_separate() -> None:
     assert "Start only after explicit adversarial-review approval" in body
     assert "one accept/decline vote per suggestion" in body
     assert "one accept/decline vote per finding" in body
+
+
+def test_repair_class_section() -> None:
+    parsed = parse_skill_file(SKILL_PATH)
+    assert parsed.version == "1.4.0"
+    text = _normalized(SKILL_PATH)
+
+    assert "### Repair class vs design class" in text
+    assert "| `traceability` | `add_targets`, `add_acceptance` |" in text
+    assert "| `bad-sequencing` | `add_dependency` |" in text
+    assert "| `weak-testability` | `add_acceptance` |" in text
+    assert "| `gobby-format` | `add_targets`, `add_dependency`, `add_acceptance` |" in text
+    assert "`missing-requirement`, `unhandled-edge`, `over-engineering` | none" in text
+    assert "a repair satisfies the reviewer's own check" in text
+    assert "fresh reviewer re-runs that check" in text
+    assert "Design-class repairs never ride on `repairs`" in text
+    assert "`apply_plan_review_repairs` is coordinator-only" in text
+    assert "kind: add_targets" in text and "kind: add_acceptance" in text

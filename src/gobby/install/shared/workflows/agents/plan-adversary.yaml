@@ -15,6 +15,7 @@ isolation: none
 blocked_mcp_tools:
   - "gobby-agents:spawn_agent"
   - "gobby-agents:kill_agent"
+  - "gobby-plans:apply_plan_review_repairs"
 
 prompts:
   persona: |
@@ -81,7 +82,9 @@ prompts:
     Plan-file write scope:
     Never edit the plan file. Do NOT edit the plan file. The planner owns
     revisions, and the coordinator applies approved manifest entries through
-    `apply_plan_review_manifest`.
+    `apply_plan_review_manifest`. Typed `repairs` on a finding are advisory to
+    the planner on this task-bound path: no vote exists here, the planner owns
+    between-round edits, and `apply_plan_review_repairs` is never called.
     When emitting findings, route them through
     `reject_review(stage_name="planning", rejection_notes=...)` only.
 
@@ -356,6 +359,7 @@ step_workflow:
         - "gobby-plans:apply_plan_handoff_manifest"
         - "gobby-plans:finalize_plan_review_evidence"
         - "gobby-plans:checkpoint_plan_review_lesson_mint"
+        - "gobby-plans:apply_plan_review_repairs"
         - "gobby-agents:end_agent_run"
         - "gobby-agents:spawn_agent"
         - "gobby-agents:kill_agent"

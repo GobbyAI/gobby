@@ -66,7 +66,7 @@ def test_compact_self_interrupt_warning_is_shared_by_runtime_surfaces() -> None:
 
 
 def test_plan_skill_version(body: str) -> None:
-    assert 'version: "3.9.0"' in body
+    assert 'version: "4.0.0"' in body
 
 
 def test_plan_investigates_before_recommending_depth(body: str) -> None:
@@ -347,10 +347,14 @@ def test_adversary_presentation_contract(body: str) -> None:
     vote = presentation.index("collect one accept/decline vote per finding before editing")
     checkpoint = presentation.index("append_plan_changelog_round(evidence_id, prose, round_result)")
     finalize = presentation.index("finalize_plan_review_evidence(evidence_id, round_result)")
-    apply_repairs = presentation.index("apply accepted repairs")
+    apply_repairs = presentation.index(
+        "apply_plan_review_repairs(evidence_id, accepted_finding_ids)"
+    )
+    prose_fixes = presentation.index("hand-apply the accepted prose-only fixes")
     validate = presentation.index("base-validate the artifact")
 
-    assert result < vote < checkpoint < finalize < apply_repairs < validate
+    assert result < vote < checkpoint < finalize < apply_repairs < prose_fixes < validate
+    assert "is idempotent and all-or-nothing" in presentation
     assert "Present every finding with its full text and metadata" in presentation
     assert "Record declined items and deferrals explicitly" in presentation
     assert "canonical payload verbatim as `round_result` to both calls" in presentation
@@ -371,6 +375,9 @@ def test_adversary_presentation_contract(body: str) -> None:
         "re-call it with the canonical `round_result`",
         "`missing_v1_checkpoint` from `finalize_plan_review_evidence`",
         "call `append_plan_changelog_round` with the canonical payload, then finalize",
+        "`invalid_repair` from `apply_plan_review_repairs`: the plan is untouched",
+        "hand-apply that finding's `fix`",
+        "re-running `apply_plan_review_repairs` is always safe",
         "Never hand-build the fence",
     ):
         assert recovery_detail in presentation

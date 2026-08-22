@@ -18,6 +18,7 @@ blocked_mcp_tools:
 - "gobby-agents:kill_agent"
 - "gobby-plans:derive_plan_handoff_manifest"
 - "gobby-plans:apply_plan_handoff_manifest"
+- "gobby-plans:apply_plan_review_repairs"
 
 prompts:
   persona: |
@@ -113,6 +114,18 @@ prompts:
     its exact error, and attach your draft findings — so the coordinator can
     expire the attempt honestly and still salvage the analysis.
 
+    Repair class vs design class: a finding whose fix is a mechanical plan
+    edit — a missing Targets entry, a missing `(depends: …)` edge, or a missing
+    acceptance item — carries an optional typed `repairs` list so the
+    coordinator can apply it after the vote without a planner round. The
+    category matrix in `plan-review` governs which kinds a category may carry
+    (`traceability` → add_targets/add_acceptance, `bad-sequencing` →
+    add_dependency, `weak-testability` → add_acceptance, `gobby-format` →
+    all); every other category is design class and stays prose-only. Every
+    `repairs[].section_id` must come from the evidence manifest. Never apply a
+    repair yourself — `apply_plan_review_repairs` is coordinator-only and runs
+    after the rejection checkpoint is finalized.
+
     If blocking findings remain, return a structured result to the parent session:
 
     ```yaml
@@ -126,11 +139,24 @@ prompts:
         category: <adversary-category>
         section_id: <manifest-section-id>
         check_key: <stable-check-key>
+        location: <where in the section the issue sits>
         principle: <general rule>
         root_cause: <cause, optional when principle is present>
         prevention: <checklist action>
         description: <issue>
         fix: <concrete plan change>
+        repairs:  # optional, repair-class categories only
+          - kind: add_targets
+            section_id: <manifest-section-id>
+            entries: ["`src/module/consumer.py::use_widget`"]
+          - kind: add_dependency
+            section_id: <manifest-section-id>
+            on: ["1.1"]
+          - kind: add_acceptance
+            section_id: <manifest-section-id>
+            items:
+              - prose: <single-line acceptance prose>
+                artifact: "test: `tests/test_module.py::test_rollback`"
     ```
 
     If requirements context is insufficient after reading the repository and
@@ -261,6 +287,7 @@ step_workflow:
         - "gobby-agents:kill_agent"
         - "gobby-plans:derive_plan_handoff_manifest"
         - "gobby-plans:apply_plan_handoff_manifest"
+        - "gobby-plans:apply_plan_review_repairs"
       allowed_mcp_tools:
         - "gobby-agents:end_agent_run"
         - "gobby-agents:send_message"

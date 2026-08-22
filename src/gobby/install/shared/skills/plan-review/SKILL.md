@@ -1,7 +1,7 @@
 ---
 name: plan-review
 description: Review a gobby plan document for missing requirements, bad sequencing, unhandled edge cases, weak testability, and traceability gaps. Use when asked to review or critique a plan.
-version: "1.3.1"
+version: "1.4.0"
 category: methodology
 internal: true
 triggers: plan review, plan critique, adversarial review, plan audit
@@ -448,7 +448,9 @@ the exact routing decisions, derived `manifest_entries`, and canonical
 The adversary never writes the plan file. `apply_plan_review_manifest`
 re-derives entries from the evidence snapshot and routing decisions, rejects
 any differing payload, revalidates freshness, and performs the only manifest
-write. Rejection returns typed findings plus shadow-manifest diagnostics. The
+write. Rejection returns typed findings plus shadow-manifest diagnostics; typed
+`repairs` on those findings are payload, written only by the coordinator's
+`apply_plan_review_repairs` after the vote and the finalized checkpoint. The
 coordinator owns `## V1 Plan Changelog`, writing round entries only through
 `append_plan_changelog_round`, and the planner owns revisions.
 
@@ -526,6 +528,72 @@ Section sets carry ids only. Hashes remain server-resolved. Reject an attestatio
 when any id is absent from the prepared evidence manifest or when a
 class-required set is empty. A finding may carry both classes only when both
 evidence bundles are complete.
+
+### Repair class vs design class
+
+A finding is **repair class** when its fix is a mechanical plan edit the
+coordinator can apply after the vote: a missing Targets entry, a missing
+`(depends: …)` edge, or a missing acceptance item. Everything else is
+**design class** and stays prose: the planner decides how to redesign,
+resequence, or scope it in the next round.
+
+Repair-class findings carry an optional `repairs` list. The category matrix
+governs which kinds a category may carry; a category absent from the table
+forbids `repairs` entirely, and the validator rejects any violation with
+`invalid_round_result`:
+
+| Category | Allowed repair kinds |
+| --- | --- |
+| `traceability` | `add_targets`, `add_acceptance` |
+| `bad-sequencing` | `add_dependency` |
+| `weak-testability` | `add_acceptance` |
+| `gobby-format` | `add_targets`, `add_dependency`, `add_acceptance` |
+| `missing-requirement`, `unhandled-edge`, `over-engineering` | none — design class |
+
+Payload schema (every `section_id` must exist in the evidence manifest; it may
+differ from the finding's own `section_id`):
+
+- `{kind: add_targets, section_id, entries: [<Targets line>]}` — each entry
+  parses as exactly one target with zero issues (`path::qualified_name`,
+  `path::* — scope-reason: …`, or a bare path for a new file); entries are
+  unique by reference.
+- `{kind: add_dependency, section_id, on: [<section-id>]}` — unique refs from
+  the manifest, none equal to `section_id`.
+- `{kind: add_acceptance, section_id, items: [{prose, artifact}]}` — both
+  single-line and non-empty; `artifact` starts with `file:`, `symbol:`,
+  `test:`, or `behavior:`.
+
+Closed loop: a repair satisfies the reviewer's own check, so the next round's
+fresh reviewer re-runs that check against the repaired artifact rather than
+trusting the repair. Design-class repairs never ride on `repairs`; write them
+in `fix` for the planner. The adversary never applies repairs —
+`apply_plan_review_repairs` is coordinator-only and runs after the rejection
+checkpoint is finalized, so the checkpoint records the reviewed artifact and
+the next snapshot records the repaired one.
+
+Example repair-class finding:
+
+```yaml
+finding_id: F3
+section_id: "1.2"
+check_key: targets-complete
+severity: blocking
+category: traceability
+root_cause: Only directly edited files were inventoried.
+prevention: Run gcode usages for every exact symbol Target.
+location: Phase 1 / § 1.2 Targets
+description: The consumer of `build_widget` is missing from Targets.
+fix: Add the consumer file and an acceptance item covering its update.
+repairs:
+  - kind: add_targets
+    section_id: "1.2"
+    entries: ["`src/module/consumer.py::use_widget`"]
+  - kind: add_acceptance
+    section_id: "1.2"
+    items:
+      - prose: Consumer updated for the new signature
+        artifact: "test: `tests/test_consumer.py::test_use_widget`"
+```
 
 ### Example
 

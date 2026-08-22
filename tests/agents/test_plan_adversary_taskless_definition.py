@@ -126,3 +126,23 @@ def test_taskless_adversary_returns_exact_result_for_coordinator_persistence() -
     status_message = review_step["status_message"]
     assert "Send that exact JSON with send_message" in status_message
     assert "then call end_agent_run" in status_message
+
+
+def test_rejection_template_carries_location_and_repairs() -> None:
+    agent = _agent()
+    instructions = agent["prompts"]["agent"]
+    review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
+
+    assert "gobby-plans:apply_plan_review_repairs" in set(agent["blocked_mcp_tools"])
+    assert "gobby-plans:apply_plan_review_repairs" in set(review_step["blocked_mcp_tools"])
+
+    template_start = instructions.index("verdict: needs_review")
+    template_end = instructions.index("```", template_start)
+    template = instructions[template_start:template_end]
+    assert "location:" in template
+    assert "repairs:" in template
+    for kind in ("add_targets", "add_dependency", "add_acceptance"):
+        assert f"kind: {kind}" in template
+    prose = " ".join(instructions.split())
+    assert "Repair class vs design class" in prose
+    assert "Never apply a repair yourself" in prose

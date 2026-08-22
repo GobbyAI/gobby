@@ -1,7 +1,7 @@
 ---
 name: plan
 description: Adaptive /gobby plan workflow. Investigates first, recommends lightweight or full planning depth, requires decision elicitation, and preserves explicit human gates for artifact enhancement, adversarial review, and optional build handoff.
-version: "3.9.0"
+version: "4.0.0"
 category: core
 triggers: plan, specification, requirements
 metadata:
@@ -168,8 +168,13 @@ Start only after explicit adversarial-review approval.
    `finalize_plan_review_evidence(evidence_id, round_result)`. Pass the
    adversary's canonical payload verbatim as `round_result` to both calls; a
    rejection round without it fails with `missing_round_result` unless a durable
-   intent already exists. Only after both calls succeed, apply accepted repairs
-   and base-validate the artifact. Increment `completed_plan_review_rounds`
+   intent already exists. Only after both calls succeed, apply accepted repairs:
+   call `apply_plan_review_repairs(evidence_id, accepted_finding_ids)` with
+   every accepted finding id — it applies the typed `repairs` those findings
+   carry, is idempotent and all-or-nothing, and returns the unified diff plus
+   `plan_hash_before`/`plan_hash_after`; then hand-apply the accepted
+   prose-only fixes (findings the result lists as `prose_only`) and
+   base-validate the artifact. Increment `completed_plan_review_rounds`
    only when finalization succeeds; display attempts, expired evidence, and
    incomplete rounds never count.
 5. Present the checkpoint menu after every finalized round and any accepted
@@ -204,6 +209,10 @@ to re-run the step with the canonical payload:
 - `missing_v1_checkpoint` from `finalize_plan_review_evidence`: the round fence
   is not in `## V1 Plan Changelog` yet, so call `append_plan_changelog_round`
   with the canonical payload, then finalize again.
+- `invalid_repair` from `apply_plan_review_repairs`: the plan is untouched, so
+  hand-apply that finding's `fix`, then re-run the call without that finding
+  id; re-running `apply_plan_review_repairs` is always safe because applied
+  repairs come back as `already_present`.
 
 Never hand-build the fence; the daemon renders it on append.
 
@@ -258,9 +267,11 @@ interaction remains within the current turn until the user responds.
 
 Use the adversary's canonical result as the sole round payload. Every conclusive
 result carries trusted three-lane `coverage_attestation`. Rejection results
-carry typed findings and shadow-manifest status; approval results carry
-`findings`, routing decisions, and exact server-derived manifest entries. The
-adversary never edits the plan.
+carry typed findings and shadow-manifest status; repair-class findings also
+carry typed `repairs` that only `apply_plan_review_repairs` writes, after the
+vote and the finalized checkpoint. Approval results carry `findings`, routing
+decisions, and exact server-derived manifest entries. The adversary never
+edits the plan.
 
 Approval commit order is fixed, idempotent, and resumable:
 
