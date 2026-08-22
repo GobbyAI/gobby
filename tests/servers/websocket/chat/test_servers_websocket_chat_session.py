@@ -8,7 +8,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.hooks.events import HookEventType
+from gobby.providers.capabilities.resolve import (
+    CapabilityResolver,
+    ReasoningResolution,
+    ReasoningStatus,
+)
 from gobby.servers.websocket.chat._session import ChatSessionMixin
+from gobby.servers.websocket.chat._session_binding import _resolve_web_chat_reasoning
 from gobby.servers.websocket.chat._session_runtime import _resolve_git_branch
 from gobby.servers.websocket.chat._streaming import ChatStreamingMixin
 from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
@@ -40,6 +46,48 @@ class DummyMixin(ChatStreamingMixin, ChatSessionMixin):
 @pytest.fixture
 def mixin() -> DummyMixin:
     return DummyMixin()
+
+
+class TestResolveWebChatReasoning:
+    def test_none_skips_resolution(self) -> None:
+        with patch(
+            "gobby.agents.reasoning._get_capability_resolver",
+            side_effect=AssertionError("unset reasoning must not resolve defaults"),
+        ):
+            assert _resolve_web_chat_reasoning("codex", "gpt-5.6-luna", None) is None
+
+    def test_auto_returns_concrete_effort(self) -> None:
+        resolver = MagicMock(spec=CapabilityResolver)
+        resolver.resolve_reasoning.return_value = ReasoningResolution(
+            "auto",
+            "medium",
+            ReasoningStatus.VERIFIED,
+            None,
+        )
+        with patch("gobby.agents.reasoning._get_capability_resolver", return_value=resolver):
+            result = _resolve_web_chat_reasoning("codex", "gpt-5.6-luna", "auto")
+
+        assert result == "medium"
+        resolver.resolve_reasoning.assert_called_once_with(
+            "codex",
+            "gpt-5.6-luna",
+            "auto",
+            transport_supports_effort=True,
+        )
+
+    def test_rejected_pin_fails_before_backend(self) -> None:
+        resolver = MagicMock(spec=CapabilityResolver)
+        resolver.resolve_reasoning.return_value = ReasoningResolution(
+            "extreme",
+            None,
+            ReasoningStatus.REJECTED,
+            "unsupported reasoning effort: extreme",
+        )
+        with (
+            patch("gobby.agents.reasoning._get_capability_resolver", return_value=resolver),
+            pytest.raises(ValueError, match="unsupported reasoning effort"),
+        ):
+            _resolve_web_chat_reasoning("codex", "gpt-5.6-luna", "extreme")
 
 
 class TestResolveGitBranch:
@@ -233,6 +281,40 @@ class TestCreateChatSessionInner:
 
             assert session == mock_session
             mock_session.start.assert_awaited_once_with(model="opus")
+
+    @pytest.mark.asyncio
+    async def test_resolves_reasoning_before_runtime_backend(self, mixin: DummyMixin) -> None:
+        mock_session = AsyncMock()
+        mock_session.provider = "codex"
+        mock_session.chat_mode = "code"
+        mock_session.db_session_id = None
+        mock_session.resume_session_id = None
+        mock_session.project_path = None
+        mock_session.project_id = None
+        mock_session.system_prompt_override = None
+        mock_session.model = "gpt-5.6-luna"
+        mixin.web_chat_runtime_manager = MagicMock()
+        mixin.web_chat_runtime_manager.create_session.return_value = mock_session
+        mixin._fire_lifecycle = AsyncMock()
+
+        with patch(
+            "gobby.servers.websocket.chat._session._resolve_web_chat_reasoning",
+            return_value="medium",
+        ) as resolve:
+            await mixin._create_chat_session_inner(
+                "conv-auto",
+                model="gpt-5.6-luna",
+                provider="codex",
+                reasoning_effort="auto",
+            )
+
+        resolve.assert_called_once_with("codex", "gpt-5.6-luna", "auto")
+        mixin.web_chat_runtime_manager.create_session.assert_called_once_with(
+            provider="codex",
+            conversation_id="conv-auto",
+            model="gpt-5.6-luna",
+            reasoning_effort="medium",
+        )
 
     @pytest.mark.asyncio
     async def test_create_chat_session_registers_in_shared_registry(
