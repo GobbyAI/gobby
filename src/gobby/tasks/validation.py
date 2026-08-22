@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 from collections.abc import Mapping
+from dataclasses import dataclass
 
 from gobby.config.tasks import TaskValidationConfig
 from gobby.llm import LLMService
@@ -44,6 +45,20 @@ class ValidationPromptTooLarge(ValueError):
         self.evidence_fingerprint = evidence_fingerprint
 
 
+@dataclass(frozen=True, slots=True)
+class PreparedCloseReview:
+    """Rendered close-review evidence with stable submission fingerprints."""
+
+    prompt: str
+    criteria: tuple[str, ...]
+    prompt_chars: int
+    prompt_limit: int
+    review_fingerprint: str
+    evidence_fingerprint: str
+    manifest_count: int
+    excerpt_chars: int
+
+
 class TaskValidator:
     """Run one bounded criteria-vs-work coherence review."""
 
@@ -71,6 +86,58 @@ class TaskValidator:
         test_bodies: str = "Named acceptance tests: none.",
     ) -> CloseVerdict:
         """Review all criteria once against a bounded work summary and linked diff."""
+        prepared = self.prepare_task_review(
+            title=title,
+            changes_summary=changes_summary,
+            validation_criteria=validation_criteria,
+            diff_text=diff_text,
+            checklist_facts=checklist_facts,
+            closure_reason=closure_reason,
+            description=description,
+            test_bodies=test_bodies,
+        )
+        if prepared.prompt_chars > prepared.prompt_limit:
+            raise ValidationPromptTooLarge(
+                f"Task-close criteria-review prompt is {prepared.prompt_chars} characters, "
+                f"exceeding the configured limit of {prepared.prompt_limit} characters at "
+                "gobby-tasks.validation.close_review_prompt_max_chars. The background "
+                "task-close-validator is required.",
+                prompt_chars=prepared.prompt_chars,
+                prompt_limit=prepared.prompt_limit,
+                review_fingerprint=prepared.review_fingerprint,
+                evidence_fingerprint=prepared.evidence_fingerprint,
+            )
+
+        logger.debug(
+            "Running bounded close criteria review for task %s "
+            "(prompt_chars=%d manifest_files=%d excerpt_chars=%d)",
+            task_id,
+            prepared.prompt_chars,
+            prepared.manifest_count,
+            prepared.excerpt_chars,
+        )
+        payload = await self.llm_service.call_json_feature(
+            self.config,
+            prepared.prompt,
+            system_prompt=self.config.system_prompt,
+            json_schema=TASK_CLOSE_VALIDATION_SCHEMA,
+            caller="tasks.close_checklist",
+        )
+        return parse_close_verdict(payload, list(prepared.criteria))
+
+    def prepare_task_review(
+        self,
+        *,
+        title: str,
+        changes_summary: str,
+        validation_criteria: str,
+        diff_text: str | None,
+        checklist_facts: Mapping[str, object],
+        closure_reason: str = "completed",
+        description: str = "",
+        test_bodies: str = "Named acceptance tests: none.",
+    ) -> PreparedCloseReview:
+        """Render and fingerprint a review without calling the generation provider."""
         if not self.config.enabled:
             raise RuntimeError("Task-close criteria review is disabled.")
 
@@ -102,8 +169,6 @@ class TaskValidator:
                 "checklist_facts": facts_text,
             },
         )
-        prompt_chars = len(prompt)
-        prompt_limit = self.config.close_review_prompt_max_chars
         evidence_fingerprint = hashlib.sha256(
             json.dumps(
                 {
@@ -117,34 +182,16 @@ class TaskValidator:
             ).encode()
         ).hexdigest()
         review_fingerprint = hashlib.sha256(prompt.encode()).hexdigest()
-        if prompt_chars > prompt_limit:
-            raise ValidationPromptTooLarge(
-                f"Task-close criteria-review prompt is {prompt_chars} characters, exceeding the "
-                f"configured limit of {prompt_limit} characters at "
-                "gobby-tasks.validation.close_review_prompt_max_chars. Run the fixed "
-                "task-close-validator agent and retry with review_run_id.",
-                prompt_chars=prompt_chars,
-                prompt_limit=prompt_limit,
-                review_fingerprint=review_fingerprint,
-                evidence_fingerprint=evidence_fingerprint,
-            )
-
-        logger.debug(
-            "Running bounded close criteria review for task %s "
-            "(prompt_chars=%d manifest_files=%d excerpt_chars=%d)",
-            task_id,
-            len(prompt),
-            diff_evidence.manifest_count,
-            diff_evidence.excerpt_chars,
+        return PreparedCloseReview(
+            prompt=prompt,
+            criteria=tuple(criteria),
+            prompt_chars=len(prompt),
+            prompt_limit=self.config.close_review_prompt_max_chars,
+            review_fingerprint=review_fingerprint,
+            evidence_fingerprint=evidence_fingerprint,
+            manifest_count=diff_evidence.manifest_count,
+            excerpt_chars=diff_evidence.excerpt_chars,
         )
-        payload = await self.llm_service.call_json_feature(
-            self.config,
-            prompt,
-            system_prompt=self.config.system_prompt,
-            json_schema=TASK_CLOSE_VALIDATION_SCHEMA,
-            caller="tasks.close_checklist",
-        )
-        return parse_close_verdict(payload, criteria)
 
 
 __all__ = [

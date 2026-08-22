@@ -188,6 +188,15 @@ async def deliver_and_cleanup_terminal_run(
     run_db: Callable[..., Awaitable[Any]],
 ) -> dict[str, bool] | None:
     """Deliver a terminal result, remove acknowledged rows, then evict registry state."""
+    from gobby.tasks.close_review_delivery import terminal_review_delivery
+
+    try:
+        review_delivery = await run_db(terminal_review_delivery, db, run_id)
+    except Exception:
+        logger.warning("Failed to resolve task-close review delivery for %s", run_id, exc_info=True)
+        review_delivery = None
+    if isinstance(review_delivery, tuple) and len(review_delivery) == 2:
+        result, message = review_delivery
     if completion_registry is None:
         return None
 
@@ -227,6 +236,22 @@ async def deliver_and_cleanup_terminal_run(
             run_id,
             exc_info=True,
         )
+    if delivered_session_ids and result is not None:
+        try:
+            from gobby.tasks.close_review_delivery import mark_terminal_review_delivered
+
+            await run_db(
+                mark_terminal_review_delivered,
+                db,
+                result,
+                delivered_session_ids,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to mark task-close review delivery for agent %s",
+                run_id,
+                exc_info=True,
+            )
     if notification_succeeded:
         completion_registry.cleanup(run_id)
     return delivery

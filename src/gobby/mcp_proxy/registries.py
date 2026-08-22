@@ -159,6 +159,8 @@ def setup_internal_registries(
                 config_resolver=config_resolver,
                 project_id=project_id,
                 review_learning_service=review_learning_service,
+                completion_registry=completion_registry,
+                agent_registry_resolver=lambda: manager.get_registry("gobby-agents"),
             )
             manager.add_registry(tasks_registry)
             logger.debug("Tasks registry initialized")

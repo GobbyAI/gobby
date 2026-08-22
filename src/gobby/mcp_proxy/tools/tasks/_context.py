@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.llm.service import LLMService
     from gobby.mcp_proxy.manager import MCPClientManager
+    from gobby.mcp_proxy.tools.internal import InternalToolRegistry
     from gobby.review_learning.service import ReviewLearningService
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.tasks.validation import TaskValidator
@@ -49,6 +50,7 @@ class RegistryContext:
     llm_service_resolver: "Callable[[], LLMService | None] | None" = None
     completion_registry: "CompletionEventRegistry | None" = None
     mcp_manager_resolver: "Callable[[], MCPClientManager | None] | None" = None
+    agent_registry_resolver: "Callable[[], InternalToolRegistry | None] | None" = None
     review_learning_service: "ReviewLearningService | None" = None
 
     # Derived managers (initialized in __post_init__)
@@ -102,6 +104,12 @@ class RegistryContext:
     def mcp_manager(self) -> "MCPClientManager | None":
         """Resolve the current-epoch external MCP manager per access."""
         resolver = self.mcp_manager_resolver
+        return resolver() if resolver is not None else None
+
+    @property
+    def agent_registry(self) -> "InternalToolRegistry | None":
+        """Resolve the internal agent registry lazily after registry setup completes."""
+        resolver = self.agent_registry_resolver
         return resolver() if resolver is not None else None
 
     def get_project_repo_path(self, project_id: str | None) -> str | None:

@@ -246,3 +246,40 @@ async def test_deliver_existing_terminal_run_rereads_and_synthesizes_payload() -
         "run_id": "run-terminal",
         "error": "cancelled by user",
     }
+
+
+async def test_terminal_delivery_projects_persisted_task_close_payload() -> None:
+    registry = AcknowledgingCompletionRegistry({"parent": True})
+    payload = {
+        "event": "task_close_review_completed",
+        "review_id": "review",
+        "run_id": "run-1",
+        "task_id": "task",
+        "task_ref": "#42",
+        "status": "closed",
+        "closed": True,
+        "validation_status": "valid",
+        "message": "Task closed.",
+        "blocking_reasons": [],
+        "required_actions": [],
+    }
+    marked: list[list[str]] = []
+
+    async def run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        if func.__name__ == "terminal_review_delivery":
+            return payload, "Task closed."
+        if func.__name__ == "mark_terminal_review_delivered":
+            marked.append(list(args[-1]))
+        return None
+
+    await terminal_delivery.deliver_and_cleanup_terminal_run(
+        db=cast("HubDatabase", RecordingDb()),
+        completion_registry=cast(Any, registry),
+        run_id="run-1",
+        result={"status": "success"},
+        message="generic",
+        run_db=run_db,
+    )
+
+    assert registry.notifications == [("run-1", payload, "Task closed.")]
+    assert marked == [["parent"]]

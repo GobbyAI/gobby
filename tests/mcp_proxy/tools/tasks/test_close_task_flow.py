@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import gobby.mcp_proxy.tools.tasks._lifecycle_close as lifecycle
+import gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization as close_finalization
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
     CloseAttributionSnapshot,
@@ -144,7 +145,7 @@ async def test_empty_task_edit_entry_allows_no_edit_research_close() -> None:
     with (
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
-        patch.object(lifecycle, "_claimed_session_window_start", return_value=None),
+        patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
         patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
         patch.object(lifecycle, "collect_commit_diff_text", return_value=""),
         patch.object(lifecycle, "evaluate_criteria_review", review),
@@ -185,7 +186,7 @@ async def test_no_work_disposition_skips_delivery_gates_but_runs_review() -> Non
     with (
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
-        patch.object(lifecycle, "_claimed_session_window_start", return_value=None),
+        patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
         patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
         patch.object(lifecycle, "collect_commit_diff_text", return_value=""),
         patch.object(lifecycle, "evaluate_criteria_review", review),
@@ -246,8 +247,8 @@ async def test_ready_leaf_runs_criteria_review_exactly_once() -> None:
     with (
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
-        patch.object(lifecycle, "_claimed_session_window_start", return_value=None),
-        patch.object(lifecycle, "_committable_task_paths", return_value={"src/a.py"}),
+        patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
+        patch.object(close_finalization, "_committable_task_paths", return_value={"src/a.py"}),
         patch.object(lifecycle, "_has_committable_edits", return_value=False),
         patch.object(
             lifecycle,
@@ -307,8 +308,12 @@ async def test_scope_mismatch_stops_before_dirty_and_validation_gates() -> None:
     with (
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
-        patch.object(lifecycle, "_claimed_session_window_start", return_value=None),
-        patch.object(lifecycle, "_committable_task_paths", return_value={"src/gobby/service.py"}),
+        patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
+        patch.object(
+            close_finalization,
+            "_committable_task_paths",
+            return_value={"src/gobby/service.py"},
+        ),
         patch.object(lifecycle, "resolve_close_commit_shas", return_value=(["abc123"], None)),
         patch.object(
             lifecycle,
@@ -361,6 +366,7 @@ async def test_blocked_preview_returns_diagnostics_without_commit() -> None:
     with (
         patch.object(lifecycle, "_evaluate_close", evaluate),
         patch.object(lifecycle, "_commit_close", commit),
+        patch.object(lifecycle, "active_review_response", return_value=None),
     ):
         result = await registry.call(
             "close_task",
@@ -388,12 +394,15 @@ async def test_ready_preview_commits_same_evaluation() -> None:
     commit = AsyncMock(
         return_value={"success": True, "closed": True, "preview": False, "can_close": True}
     )
+    launch = AsyncMock()
     registry = InternalToolRegistry("gobby-tasks")
     register_close_task(registry, ctx)
 
     with (
         patch.object(lifecycle, "_evaluate_close", evaluate),
         patch.object(lifecycle, "_commit_close", commit),
+        patch.object(lifecycle, "active_review_response", return_value=None),
+        patch.object(lifecycle, "launch_close_review", launch),
     ):
         result = await registry.call(
             "close_task",
@@ -406,11 +415,25 @@ async def test_ready_preview_commits_same_evaluation() -> None:
 
     assert result["closed"] is True
     assert result["preview"] is True
+    launch.assert_not_awaited()
     evaluate.assert_awaited_once()
     commit.assert_awaited_once()
     awaited = commit.await_args
     assert awaited is not None
     assert awaited.args[1] is evaluation
+
+
+def test_close_task_schema_has_automated_review_surface() -> None:
+    registry = InternalToolRegistry("gobby-tasks")
+    register_close_task(registry, _ctx(_task()))
+
+    close_schema = registry.get_schema("close_task")
+    submit_schema = registry.get_schema("submit_close_review")
+
+    assert close_schema is not None
+    assert "review_run_id" not in close_schema["inputSchema"]["properties"]
+    assert submit_schema is not None
+    assert submit_schema["inputSchema"]["required"] == ["review_id", "verdict"]
 
 
 @pytest.mark.asyncio
@@ -425,7 +448,7 @@ async def test_commit_set_change_returns_stale_without_close() -> None:
     evaluation.pass_gate(11, "criteria_review", "Passed.")
 
     with patch.object(
-        lifecycle,
+        close_finalization,
         "resolve_close_commit_shas",
         return_value=(["after"], None),
     ):
@@ -538,7 +561,11 @@ async def test_new_attributed_paths_during_review_return_stale() -> None:
             "gobby.workflows.task_claim_state.task_edited_file_set",
             return_value={"src/new.py"},
         ),
-        patch.object(lifecycle, "_committable_task_paths", return_value={"src/new.py"}),
+        patch.object(
+            close_finalization,
+            "_committable_task_paths",
+            return_value={"src/new.py"},
+        ),
     ):
         result = await _commit_close(
             ctx,
@@ -568,7 +595,7 @@ async def test_same_owner_reclaim_window_change_returns_stale() -> None:
     evaluation = _ready_evaluation(task, attribution=attribution)
 
     with patch.object(
-        lifecycle,
+        close_finalization,
         "_claimed_session_window_start",
         return_value="2026-07-27T12:05:00Z",
     ):
@@ -599,17 +626,17 @@ async def test_benign_bookkeeping_change_does_not_stale_close() -> None:
 
     with (
         patch.object(
-            lifecycle,
+            close_finalization,
             "resolve_close_commit_shas",
             return_value=([], None),
         ) as resolve_commits,
         patch.object(
-            lifecycle,
+            close_finalization,
             "link_close_commit_shas",
             return_value=(fresh, None),
         ) as link_commits,
         patch.object(
-            lifecycle,
+            close_finalization,
             "notify_parent_on_task_state_change",
         ) as notify_parent,
     ):
@@ -645,10 +672,10 @@ async def test_scope_justification_is_rechecked_and_persisted_on_close() -> None
     evaluation.scope_justification = justification
 
     with (
-        patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
-        patch.object(lifecycle, "evaluate_task_scope", return_value=scope),
-        patch.object(lifecycle, "link_close_commit_shas", return_value=(task, None)),
-        patch.object(lifecycle, "notify_parent_on_task_state_change"),
+        patch.object(close_finalization, "resolve_close_commit_shas", return_value=([], None)),
+        patch.object(close_finalization, "evaluate_task_scope", return_value=scope),
+        patch.object(close_finalization, "link_close_commit_shas", return_value=(task, None)),
+        patch.object(close_finalization, "notify_parent_on_task_state_change"),
     ):
         result = await _commit_close(
             ctx,
@@ -684,7 +711,7 @@ async def test_justified_escalated_close_skips_review_and_persists_override() ->
     with (
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
-        patch.object(lifecycle, "_claimed_session_window_start", return_value=None),
+        patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
         patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
         patch.object(lifecycle, "evaluate_criteria_review", review),
     ):
@@ -705,11 +732,11 @@ async def test_justified_escalated_close_skips_review_and_persists_override() ->
     review.assert_not_awaited()
 
     with (
-        patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
-        patch.object(lifecycle, "link_close_commit_shas", return_value=(task, None)),
-        patch.object(lifecycle, "_claimed_session_window_start", return_value=None),
-        patch.object(lifecycle, "notify_parent_on_task_state_change"),
-        patch.object(lifecycle, "_cleanup_closed_claim"),
+        patch.object(close_finalization, "resolve_close_commit_shas", return_value=([], None)),
+        patch.object(close_finalization, "link_close_commit_shas", return_value=(task, None)),
+        patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
+        patch.object(close_finalization, "notify_parent_on_task_state_change"),
+        patch.object(close_finalization, "_cleanup_closed_claim"),
     ):
         result = await _commit_close(
             ctx,
@@ -753,7 +780,7 @@ async def test_escalated_close_without_justification_converges_on_actionable_blo
     with (
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
-        patch.object(lifecycle, "_claimed_session_window_start", return_value=None),
+        patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
         patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
         patch.object(lifecycle, "evaluate_criteria_review", review),
     ):
@@ -854,10 +881,10 @@ async def test_justified_escalated_structural_parent_closes_and_persists_overrid
     review.assert_not_awaited()
 
     with (
-        patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
-        patch.object(lifecycle, "link_close_commit_shas", return_value=(task, None)),
-        patch.object(lifecycle, "notify_parent_on_task_state_change"),
-        patch.object(lifecycle, "_cleanup_closed_claim"),
+        patch.object(close_finalization, "resolve_close_commit_shas", return_value=([], None)),
+        patch.object(close_finalization, "link_close_commit_shas", return_value=(task, None)),
+        patch.object(close_finalization, "notify_parent_on_task_state_change"),
+        patch.object(close_finalization, "_cleanup_closed_claim"),
         patch("gobby.hooks.event_handlers._plan.on_epic_terminal"),
     ):
         result = await _commit_close(
@@ -894,8 +921,8 @@ async def test_dirty_attributed_edit_stops_before_transcript_and_llm() -> None:
     with (
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
-        patch.object(lifecycle, "_claimed_session_window_start", return_value=None),
-        patch.object(lifecycle, "_committable_task_paths", return_value={"src/a.py"}),
+        patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
+        patch.object(close_finalization, "_committable_task_paths", return_value={"src/a.py"}),
         patch.object(lifecycle, "_has_committable_edits", return_value=True),
         patch.object(
             lifecycle,
@@ -982,10 +1009,10 @@ async def test_commit_epic_persists_allowed_valid_status() -> None:
     )
 
     with (
-        patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
-        patch.object(lifecycle, "link_close_commit_shas", return_value=(task, None)),
-        patch.object(lifecycle, "notify_parent_on_task_state_change"),
-        patch.object(lifecycle, "_cleanup_closed_claim"),
+        patch.object(close_finalization, "resolve_close_commit_shas", return_value=([], None)),
+        patch.object(close_finalization, "link_close_commit_shas", return_value=(task, None)),
+        patch.object(close_finalization, "notify_parent_on_task_state_change"),
+        patch.object(close_finalization, "_cleanup_closed_claim"),
         patch("gobby.hooks.event_handlers._plan.on_epic_terminal"),
     ):
         result = await _commit_close(
@@ -1026,7 +1053,7 @@ def test_closed_task_cleanup_removes_only_its_edit_entry() -> None:
     evaluation.resolved_session_id = "session"
     evaluation.edit_session_id = "session"
 
-    lifecycle._cleanup_closed_claim(ctx, evaluation, ["abc123"])
+    close_finalization._cleanup_closed_claim(ctx, evaluation, ["abc123"])
 
     updates = session_var_manager.merge_variables.call_args.args[1]
     assert updates["task_edited_files"] == {"task-2": ["src/remaining.py"]}

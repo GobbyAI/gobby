@@ -1,4 +1,4 @@
-"""Agentic task-close review routing tests."""
+"""Oversized task-close review gate routing tests."""
 
 from __future__ import annotations
 
@@ -9,77 +9,100 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from gobby.mcp_proxy.tools.tasks import _lifecycle_review_gate as review_gate
+import gobby.mcp_proxy.tools.tasks._lifecycle_review_gate as review_gate
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
-from gobby.mcp_proxy.tools.tasks._lifecycle_review_gate import evaluate_close_criteria
+from gobby.mcp_proxy.tools.tasks._lifecycle_review_gate import (
+    SubmittedCloseReview,
+    evaluate_close_criteria,
+)
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
 from gobby.storage.tasks import Task
-from gobby.tasks.agentic_close_review import AgenticReviewCheck
-from gobby.tasks.validation import TaskValidator
+from gobby.tasks.validation import PreparedCloseReview, TaskValidator
+
+pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
-async def test_oversized_review_returns_fingerprinted_launch_request(
+async def test_oversized_review_requires_internal_background_review(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        review_gate,
-        "evaluate_criteria_review",
-        AsyncMock(return_value=_oversized()),
+        review_gate, "evaluate_criteria_review", AsyncMock(return_value=_oversized())
     )
 
-    result = await _evaluate(review_run_id=None)
+    result = await _evaluate()
 
     assert result.error_type == "agentic_review_required"
     assert result.extra["review_fingerprint"] == "close"
-    spawn = cast(dict[str, object], result.extra["spawn_request"])
-    assert spawn["agent"] == "task-close-validator"
-    assert spawn["task_id"] is None
+    assert result.extra["deterministic_evidence_fingerprint"] == "evidence"
+    assert "spawn_request" not in result.extra
+    assert "review_run_id" not in result.extra
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", ["valid", "invalid"])
-async def test_matching_agent_verdict_uses_shared_accounting(
+async def test_matching_submitted_verdict_uses_shared_accounting(
     monkeypatch: pytest.MonkeyPatch,
     status: str,
 ) -> None:
-    monkeypatch.setattr(
-        review_gate,
-        "evaluate_criteria_review",
-        AsyncMock(return_value=_oversized()),
-    )
-    monkeypatch.setattr(
-        review_gate,
-        "validate_agentic_review_run",
-        MagicMock(
-            return_value=AgenticReviewCheck(
-                state="ready",
-                error_type=None,
-                message="ready",
-                verdict={
-                    "status": status,
-                    "criteria": [
-                        {
-                            "index": 1,
-                            "satisfied": status == "valid",
-                            "gap": None if status == "valid" else "missing",
-                        }
-                    ],
-                    "feedback": status,
-                },
-            )
-        ),
-    )
     accounted = ValidationResult(can_close=status == "valid")
     account = MagicMock(return_value=accounted)
     monkeypatch.setattr(review_gate, "account_criteria_verdict", account)
 
-    result = await _evaluate(review_run_id="run")
+    result = await _evaluate(
+        submitted=SubmittedCloseReview(
+            verdict={
+                "status": status,
+                "criteria": [{"index": 1, "satisfied": status == "valid", "gap": None}],
+                "feedback": status,
+            },
+            review_fingerprint="close",
+            evidence_fingerprint="evidence",
+        )
+    )
 
     assert result is accounted
     account.assert_called_once()
     assert account.call_args.kwargs["verdict"].status == status
-    assert result.extra["review_run_id"] == "run"
+    assert result.extra["deterministic_evidence_fingerprint"] == "evidence"
+
+
+@pytest.mark.asyncio
+async def test_stale_submitted_fingerprint_skips_accounting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    account = MagicMock()
+    monkeypatch.setattr(review_gate, "account_criteria_verdict", account)
+
+    result = await _evaluate(
+        submitted=SubmittedCloseReview(
+            verdict={"status": "valid", "criteria": [], "feedback": "ok"},
+            review_fingerprint="stale",
+            evidence_fingerprint="evidence",
+        )
+    )
+
+    assert result.error_type == "agentic_review_stale"
+    account.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_malformed_submitted_verdict_can_be_corrected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    account = MagicMock()
+    monkeypatch.setattr(review_gate, "account_criteria_verdict", account)
+
+    result = await _evaluate(
+        submitted=SubmittedCloseReview(
+            verdict={"status": "unknown", "criteria": [], "feedback": "invalid status"},
+            review_fingerprint="close",
+            evidence_fingerprint="evidence",
+        )
+    )
+
+    assert result.error_type == "agentic_review_malformed"
+    account.assert_not_called()
 
 
 def _oversized() -> ValidationResult:
@@ -96,7 +119,23 @@ def _oversized() -> ValidationResult:
     )
 
 
-async def _evaluate(*, review_run_id: str | None) -> ValidationResult:
+def _prepared() -> PreparedCloseReview:
+    return PreparedCloseReview(
+        prompt="prompt",
+        criteria=("Criterion.",),
+        prompt_chars=256_001,
+        prompt_limit=256_000,
+        review_fingerprint="close",
+        evidence_fingerprint="evidence",
+        manifest_count=1,
+        excerpt_chars=10,
+    )
+
+
+async def _evaluate(
+    *,
+    submitted: SubmittedCloseReview | None = None,
+) -> ValidationResult:
     task = Task(
         id="task",
         project_id="project",
@@ -107,23 +146,22 @@ async def _evaluate(*, review_run_id: str | None) -> ValidationResult:
         updated_at=datetime(2026, 8, 21, tzinfo=UTC),
         validation_criteria="Criterion.",
     )
-    ctx = cast(
-        RegistryContext,
-        SimpleNamespace(task_manager=SimpleNamespace(db=object())),
+    validator = cast(
+        TaskValidator,
+        SimpleNamespace(prepare_task_review=MagicMock(return_value=_prepared())),
     )
+    ctx = cast(RegistryContext, SimpleNamespace())
     return await evaluate_close_criteria(
         task=task,
-        task_validator=cast(TaskValidator, object()),
+        task_validator=validator,
         ctx=ctx,
         resolved_id=task.id,
-        parent_session_id="parent",
         changes_summary="summary",
-        commit_shas=["abc"],
         diff_text="diff",
         checklist_facts={},
         validation_config=None,
         reason="completed",
-        description="description",
+        description="",
         test_bodies="tests",
-        review_run_id=review_run_id,
+        submitted_review=submitted,
     )

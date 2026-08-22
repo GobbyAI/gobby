@@ -27,6 +27,7 @@ from gobby.tasks.validation import TaskValidator
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
+    from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.review_learning.service import ReviewLearningService
 
 
@@ -37,6 +38,8 @@ def create_task_registry(
     config_resolver: "Callable[[], DaemonConfig | None] | None" = None,
     project_id: str | None = None,
     review_learning_service: "ReviewLearningService | None" = None,
+    completion_registry: "CompletionEventRegistry | None" = None,
+    agent_registry_resolver: "Callable[[], InternalToolRegistry | None] | None" = None,
 ) -> InternalToolRegistry:
     """
     Create a task tool registry with all task-related tools.
@@ -58,6 +61,8 @@ def create_task_registry(
         startup_config=startup_config,
         config_resolver=config_resolver,
         review_learning_service=review_learning_service,
+        completion_registry=completion_registry,
+        agent_registry_resolver=agent_registry_resolver,
     )
 
     # Create the main registry

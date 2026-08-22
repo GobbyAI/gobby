@@ -115,6 +115,11 @@ async def _cleanup_terminal_agent_completion_subscribers(runner: GobbyRunner) ->
         acknowledged: list[str] = []
         payload = {"status": run.status, "run_id": run.id}
         message = f"Agent {run.id} reached terminal status {run.status}"
+        from gobby.tasks.close_review_delivery import terminal_review_delivery
+
+        review_delivery = await _run_db(runner, terminal_review_delivery, db, run.id)
+        if review_delivery is not None:
+            payload, message = review_delivery
         for session_id in subscribers:
             try:
                 outcome = await wake(session_id, message, payload)
@@ -135,13 +140,118 @@ async def _cleanup_terminal_agent_completion_subscribers(runner: GobbyRunner) ->
                 run.id,
                 session_ids=acknowledged,
             )
+            from gobby.tasks.close_review_delivery import mark_terminal_review_delivered
+
+            await _run_db(
+                runner,
+                mark_terminal_review_delivered,
+                db,
+                payload,
+                acknowledged,
+            )
             delivered_count += len(acknowledged)
     return delivered_count
+
+
+async def _reconcile_task_close_reviews_on_startup(runner: GobbyRunner) -> int:
+    """Reconcile durable close-review intents without launching replacement agents."""
+    db = getattr(runner, "database", None)
+    wake_dispatcher = getattr(runner, "wake_dispatcher", None)
+    wake = getattr(wake_dispatcher, "wake", None)
+    if db is None:
+        return 0
+
+    from gobby.storage.task_close_reviews import TaskCloseReviewStore
+    from gobby.tasks.agentic_close_review import build_terminal_review_payload
+    from gobby.tasks.close_review_delivery import terminal_review_delivery
+
+    store = TaskCloseReviewStore(db)
+    run_manager = LocalAgentRunManager(db)
+    subscribers = CompletionSubscriberManager(db)
+    reviews = await _run_db(runner, store.list_reconcilable)
+    reconciled = 0
+    for review in reviews:
+        current = review
+        run = (
+            await _run_db(runner, run_manager.get, review.agent_run_id)
+            if review.agent_run_id
+            else None
+        )
+        if review.status == "launching":
+            message = "Daemon restarted before the task-close validator launch was bound."
+            payload = build_terminal_review_payload(review, status="error", message=message)
+            current = (
+                await _run_db(
+                    runner,
+                    store.finish,
+                    review.id,
+                    status="error",
+                    result_payload=payload,
+                    error=message,
+                )
+                or review
+            )
+            reconciled += 1
+        elif review.active and run is None:
+            message = "Persisted task-close validator run is missing after daemon restart."
+            payload = build_terminal_review_payload(review, status="error", message=message)
+            current = (
+                await _run_db(
+                    runner,
+                    store.finish,
+                    review.id,
+                    status="error",
+                    result_payload=payload,
+                    error=message,
+                )
+                or review
+            )
+            reconciled += 1
+        elif review.active and run is not None and run.status in TERMINAL_AGENT_RUN_STATUSES:
+            await _run_db(runner, terminal_review_delivery, db, run.id)
+            current = await _run_db(runner, store.get, review.id) or review
+            reconciled += 1
+
+        if current.agent_run_id and run is not None:
+            await _run_db(
+                runner,
+                subscribers.add_completion_subscribers,
+                current.agent_run_id,
+                [current.caller_session_id],
+            )
+            continue
+        if (
+            current.terminal
+            and current.delivered_at is None
+            and current.result_payload is not None
+            and callable(wake)
+        ):
+            try:
+                outcome = await wake(
+                    current.caller_session_id,
+                    str(current.result_payload.get("message") or "Task-close review completed."),
+                    current.result_payload,
+                )
+            except Exception:
+                logger.warning(
+                    "Task-close review startup delivery failed for session %s",
+                    current.caller_session_id,
+                    exc_info=True,
+                )
+                continue
+            if wake_result_is_delivered(outcome):
+                await _run_db(runner, store.mark_delivered, current.id)
+                reconciled += 1
+    return reconciled
 
 
 async def _recover_agent_completion_subscribers_on_startup(runner: GobbyRunner) -> int:
     """Rehydrate active subscribers, then replay retained terminal notifications."""
     recovered = 0
+    try:
+        recovered += await _reconcile_task_close_reviews_on_startup(runner)
+    except Exception:
+        logger.warning("Failed to reconcile task-close reviews", exc_info=True)
     try:
         recovered += await _rehydrate_active_agent_completion_subscribers(runner)
     except Exception:

@@ -4573,6 +4573,70 @@
       "definition": "text|text|YES||NEVER"
     },
     {
+      "name": "task_close_reviews.agent_run_id",
+      "definition": "uuid|uuid|YES||NEVER"
+    },
+    {
+      "name": "task_close_reviews.caller_session_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "task_close_reviews.close_arguments",
+      "definition": "jsonb|jsonb|NO||NEVER"
+    },
+    {
+      "name": "task_close_reviews.completed_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "task_close_reviews.created_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "task_close_reviews.delivered_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "task_close_reviews.error",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "task_close_reviews.evidence_fingerprint",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "task_close_reviews.id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "task_close_reviews.launched_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "task_close_reviews.result_payload",
+      "definition": "jsonb|jsonb|YES||NEVER"
+    },
+    {
+      "name": "task_close_reviews.review_fingerprint",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "task_close_reviews.status",
+      "definition": "text|text|NO|'launching'::text|NEVER"
+    },
+    {
+      "name": "task_close_reviews.task_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "task_close_reviews.task_ref",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "task_close_reviews.updated_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
       "name": "task_comments.author",
       "definition": "text|text|NO||NEVER"
     },
@@ -7095,6 +7159,22 @@
       "definition": "FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE"
     },
     {
+      "name": "task_close_reviews.task_close_reviews_close_arguments_check",
+      "definition": "CHECK (jsonb_typeof(close_arguments) = 'object'::text)"
+    },
+    {
+      "name": "task_close_reviews.task_close_reviews_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "task_close_reviews.task_close_reviews_result_payload_check",
+      "definition": "CHECK (result_payload IS NULL OR jsonb_typeof(result_payload) = 'object'::text)"
+    },
+    {
+      "name": "task_close_reviews.task_close_reviews_status_check",
+      "definition": "CHECK (status = ANY (ARRAY['launching'::text, 'running'::text, 'finalizing'::text, 'closed'::text, 'invalid'::text, 'stale'::text, 'error'::text]))"
+    },
+    {
       "name": "task_comments.task_comments_parent_comment_id_fkey",
       "definition": "FOREIGN KEY (parent_comment_id) REFERENCES task_comments(id) ON DELETE CASCADE DEFERRABLE"
     },
@@ -8619,6 +8699,10 @@
       "definition": "CREATE INDEX idx_taf_task_id ON $schema.task_affected_files USING btree (task_id)"
     },
     {
+      "name": "idx_task_close_reviews_recovery",
+      "definition": "CREATE INDEX idx_task_close_reviews_recovery ON $schema.task_close_reviews USING btree (status, delivered_at, updated_at)"
+    },
+    {
       "name": "idx_task_comments_created",
       "definition": "CREATE INDEX idx_task_comments_created ON $schema.task_comments USING btree (task_id, created_at)"
     },
@@ -9091,6 +9175,10 @@
       "definition": "CREATE UNIQUE INDEX task_artifacts_pkey ON $schema.task_artifacts USING btree (task_id)"
     },
     {
+      "name": "task_close_reviews_pkey",
+      "definition": "CREATE UNIQUE INDEX task_close_reviews_pkey ON $schema.task_close_reviews USING btree (id)"
+    },
+    {
       "name": "task_comments_pkey",
       "definition": "CREATE UNIQUE INDEX task_comments_pkey ON $schema.task_comments USING btree (id)"
     },
@@ -9233,6 +9321,14 @@
     {
       "name": "uq_session_var_defs_live_name",
       "definition": "CREATE UNIQUE INDEX uq_session_var_defs_live_name ON $schema.session_variable_defaults USING btree (name, project_id) NULLS NOT DISTINCT WHERE (deleted_at IS NULL)"
+    },
+    {
+      "name": "uq_task_close_reviews_active_task",
+      "definition": "CREATE UNIQUE INDEX uq_task_close_reviews_active_task ON $schema.task_close_reviews USING btree (task_id) WHERE (status = ANY (ARRAY['launching'::text, 'running'::text, 'finalizing'::text]))"
+    },
+    {
+      "name": "uq_task_close_reviews_agent_run",
+      "definition": "CREATE UNIQUE INDEX uq_task_close_reviews_agent_run ON $schema.task_close_reviews USING btree (agent_run_id) WHERE (agent_run_id IS NOT NULL)"
     },
     {
       "name": "users_email_lower_key",

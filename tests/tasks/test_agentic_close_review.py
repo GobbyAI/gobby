@@ -1,181 +1,119 @@
-"""Oversized close-review agent-run contract tests."""
+"""Automated oversized close-review contract tests."""
 
 from __future__ import annotations
 
-import json
+from datetime import UTC, datetime
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any, cast
+from typing import cast
 
 import pytest
 import yaml
 
-from gobby.storage.hub.protocol import HubDatabase
-from gobby.tasks import agentic_close_review as review_module
+from gobby.storage.task_close_reviews import (
+    TaskCloseReview,
+    TaskCloseReviewStatus,
+    TerminalTaskCloseReviewStatus,
+)
 from gobby.tasks.agentic_close_review import (
     TASK_CLOSE_VALIDATOR_AGENT,
-    build_agentic_review_request,
-    validate_agentic_review_run,
+    build_agentic_review_prompt,
+    build_terminal_review_payload,
 )
 
-FINGERPRINT = "close-fingerprint"
-EVIDENCE = "evidence-fingerprint"
-REPO_ROOT = Path(__file__).resolve().parents[2]
+pytestmark = pytest.mark.unit
 
 
-def test_agentic_review_request_is_taskless_and_fingerprinted() -> None:
-    request = build_agentic_review_request(
+def test_agentic_review_prompt_is_taskless_and_submission_driven() -> None:
+    prompt = build_agentic_review_prompt(
+        review_id="review",
         task_id="task",
         commit_shas=["abc"],
         changes_summary="summary",
-        close_fingerprint=FINGERPRINT,
-        evidence_fingerprint=EVIDENCE,
+        review_fingerprint="close",
+        evidence_fingerprint="evidence",
     )
 
-    spawn = cast(dict[str, object], request["spawn_request"])
-    assert spawn["agent"] == TASK_CLOSE_VALIDATOR_AGENT
-    assert spawn["task_id"] is None
-    assert FINGERPRINT in str(spawn["prompt"])
-    assert EVIDENCE in str(spawn["prompt"])
+    assert "review_id=review" in prompt
+    assert "task_id=task" in prompt
+    assert "submit_close_review" in prompt
+    assert "end_agent_run" in prompt
+    assert "review_run_id" not in prompt
+    assert "retry close_task" not in prompt
 
 
-def test_task_close_validator_definition_is_read_only_and_taskless() -> None:
-    path = REPO_ROOT / "src/gobby/install/shared/workflows/agents/task-close-validator.yaml"
-    definition = yaml.safe_load(path.read_text(encoding="utf-8"))
-
-    assert definition["name"] == TASK_CLOSE_VALIDATOR_AGENT
-    blocked = set(definition["blocked_mcp_tools"])
-    assert "gobby-tasks:close_task" in blocked
-    assert "gobby-tasks:update_task" in blocked
-    assert "gobby-agents:spawn_agent" in blocked
-    assert "taskless, read-only" in definition["prompts"]["agent"]
-    assert "send_message" in definition["prompts"]["agent"]
-    assert "zero-argument end_agent_run" in definition["prompts"]["agent"]
-
-
-def test_completed_matching_agentic_review_is_accepted(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    run = _run(result=json.dumps(_payload()))
-    _install_run(monkeypatch, run)
-
-    result = _validate()
-
-    assert result.state == "ready"
-    assert result.verdict == _payload()["verdict"]
-
-
-@pytest.mark.parametrize(
-    ("change", "error_type"),
-    [
-        ({"status": "pending"}, "agentic_review_pending"),
-        ({"status": "error"}, "agentic_review_failed"),
-        ({"agent_name": "other"}, "agentic_review_wrong_agent"),
-        ({"result": "not-json"}, "agentic_review_malformed"),
-        ({"prompt": "different"}, "agentic_review_stale"),
-        ({"parent_session_id": "other"}, "agentic_review_wrong_parent"),
-    ],
-)
-def test_agentic_review_fail_closed_states(
-    monkeypatch: pytest.MonkeyPatch,
-    change: dict[str, object],
-    error_type: str,
-) -> None:
-    values: dict[str, object] = {
-        "status": "success",
-        "agent_name": TASK_CLOSE_VALIDATOR_AGENT,
-        "task_id": None,
-        "parent_session_id": "parent",
-        "prompt": FINGERPRINT,
-        "result": json.dumps(_payload()),
-    }
-    values.update(change)
-    _install_run(monkeypatch, SimpleNamespace(**values))
-
-    result = _validate()
-
-    assert result.state != "ready"
-    assert result.error_type == error_type
+def test_task_close_validator_definition_submits_then_terminates() -> None:
+    path = (
+        Path(__file__).parents[2]
+        / "src/gobby/install/shared/workflows/agents/task-close-validator.yaml"
+    )
+    body = yaml.safe_load(path.read_text())
+    assert body["name"] == TASK_CLOSE_VALIDATOR_AGENT
+    assert body["isolation"] == "none"
+    blocked = set(body["blocked_mcp_tools"])
+    assert {
+        "gobby-tasks:close_task",
+        "gobby-tasks:update_task",
+        "gobby-agents:spawn_agent",
+        "gobby-agents:stop_agent",
+        "gobby-agents:kill_agent",
+    } <= blocked
+    step = body["step_workflow"]["steps"][0]
+    assert "gobby-tasks:submit_close_review" in step["allowed_mcp_tools"]
+    assert "gobby-agents:end_agent_run" in step["allowed_mcp_tools"]
+    assert "gobby-agents:send_message" not in step["allowed_mcp_tools"]
+    assert "submit_close_review" in body["prompts"]["agent"]
 
 
 @pytest.mark.parametrize(
-    "field",
+    ("status", "closed", "validation_status"),
     [
-        "task_id",
-        "commit_shas",
-        "changes_summary",
-        "close_fingerprint",
-        "deterministic_evidence_fingerprint",
+        ("closed", True, "valid"),
+        ("invalid", False, "invalid"),
+        ("stale", False, "error"),
+        ("error", False, "error"),
     ],
 )
-def test_agentic_review_rejects_stale_payload_field(
-    monkeypatch: pytest.MonkeyPatch,
-    field: str,
+def test_terminal_payload_has_stable_public_contract(
+    status: str,
+    closed: bool,
+    validation_status: str,
 ) -> None:
-    payload = _payload()
-    payload[field] = "stale"
-    _install_run(monkeypatch, _run(result=json.dumps(payload)))
+    review = _review(status="running")
 
-    result = _validate()
+    payload = build_terminal_review_payload(
+        review,
+        status=cast(TerminalTaskCloseReviewStatus, status),
+    )
 
-    assert result.error_type == "agentic_review_stale"
-
-
-def test_agentic_review_requires_structured_verdict(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    payload = _payload()
-    payload["verdict"] = "valid"
-    _install_run(monkeypatch, _run(result=json.dumps(payload)))
-
-    result = _validate()
-
-    assert result.error_type == "agentic_review_malformed"
+    assert payload["event"] == "task_close_review_completed"
+    assert payload["review_id"] == review.id
+    assert payload["run_id"] == review.agent_run_id
+    assert payload["task_id"] == review.task_id
+    assert payload["task_ref"] == review.task_ref
+    assert payload["status"] == status
+    assert payload["closed"] is closed
+    assert payload["validation_status"] == validation_status
+    assert isinstance(payload["blocking_reasons"], list)
+    assert isinstance(payload["required_actions"], list)
 
 
-def _payload() -> dict[str, Any]:
-    return {
-        "schema_version": 1,
-        "agent": TASK_CLOSE_VALIDATOR_AGENT,
-        "task_id": "task",
-        "commit_shas": ["abc"],
-        "changes_summary": "summary",
-        "close_fingerprint": FINGERPRINT,
-        "deterministic_evidence_fingerprint": EVIDENCE,
-        "verdict": {
-            "status": "valid",
-            "criteria": [{"index": 1, "satisfied": True, "gap": None}],
-            "feedback": "valid",
-        },
-    }
-
-
-def _run(**changes: object) -> SimpleNamespace:
-    values: dict[str, object] = {
-        "status": "success",
-        "agent_name": TASK_CLOSE_VALIDATOR_AGENT,
-        "task_id": None,
-        "parent_session_id": "parent",
-        "prompt": FINGERPRINT,
-        "result": json.dumps(_payload()),
-    }
-    values.update(changes)
-    return SimpleNamespace(**values)
-
-
-def _install_run(monkeypatch: pytest.MonkeyPatch, run: SimpleNamespace) -> None:
-    manager = SimpleNamespace(get=lambda _run_id: run)
-    monkeypatch.setattr(review_module, "LocalAgentRunManager", lambda _db: manager)
-
-
-def _validate() -> review_module.AgenticReviewCheck:
-    return validate_agentic_review_run(
-        db=cast(HubDatabase, object()),
-        review_run_id="run",
-        parent_session_id="parent",
+def _review(*, status: str) -> TaskCloseReview:
+    now = datetime(2026, 8, 22, tzinfo=UTC)
+    return TaskCloseReview(
+        id="review",
         task_id="task",
-        commit_shas=["abc"],
-        changes_summary="summary",
-        close_fingerprint=FINGERPRINT,
-        evidence_fingerprint=EVIDENCE,
+        task_ref="#42",
+        caller_session_id="parent",
+        agent_run_id="run",
+        close_arguments={"preview": True},
+        review_fingerprint="close",
+        evidence_fingerprint="evidence",
+        status=cast(TaskCloseReviewStatus, status),
+        result_payload=None,
+        error=None,
+        launched_at=now,
+        completed_at=None,
+        delivered_at=None,
+        created_at=now,
+        updated_at=now,
     )

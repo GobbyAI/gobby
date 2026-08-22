@@ -94,3 +94,35 @@ def test_catalog_pins_domain_tables_reconciliation_and_live_name_indexes() -> No
         assert live_name, f"missing live-name unique index for {table}"
         assert all("CREATE UNIQUE INDEX" in definition for definition in live_name)
         assert all("WHERE (deleted_at IS NULL)" in definition for definition in live_name)
+
+
+def test_catalog_pins_task_close_review_state_and_active_lock() -> None:
+    column_names = _column_names()
+    constraints = _catalog_entries("constraints")
+    indexes = _catalog_entries("indexes")
+
+    assert {
+        "task_close_reviews.task_id",
+        "task_close_reviews.caller_session_id",
+        "task_close_reviews.agent_run_id",
+        "task_close_reviews.close_arguments",
+        "task_close_reviews.review_fingerprint",
+        "task_close_reviews.evidence_fingerprint",
+        "task_close_reviews.status",
+        "task_close_reviews.result_payload",
+        "task_close_reviews.delivered_at",
+    } <= column_names
+    status = next(
+        entry
+        for entry in constraints
+        if entry["name"] == "task_close_reviews.task_close_reviews_status_check"
+    )
+    assert all(
+        value in status["definition"]
+        for value in ("launching", "running", "finalizing", "closed", "invalid", "stale", "error")
+    )
+    active = next(
+        entry for entry in indexes if entry["name"] == "uq_task_close_reviews_active_task"
+    )
+    assert "CREATE UNIQUE INDEX" in active["definition"]
+    assert all(value in active["definition"] for value in ("launching", "running", "finalizing"))
