@@ -53,7 +53,11 @@ def _mock_persona_resolution() -> Any:
     with pytest.MonkeyPatch.context() as mp:
 
         def _resolve_agent(*_args: Any, **_kwargs: Any) -> AgentDefinitionBody:
-            return AgentDefinitionBody(name="persona-agent", surfaces=["persona"])
+            return AgentDefinitionBody(
+                prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
+                name="persona-agent",
+                surfaces=["persona"],
+            )
 
         mp.setattr("gobby.workflows.agent_resolver.resolve_agent", _resolve_agent)
         yield
@@ -220,7 +224,10 @@ class TestSetAgentPersonaValidation:
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
                 "gobby.workflows.agent_resolver.resolve_agent",
-                lambda *_a, **_k: AgentDefinitionBody(name="spawn-only"),
+                lambda *_a, **_k: AgentDefinitionBody(
+                    prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
+                    name="spawn-only",
+                ),
             )
             await server._handle_set_agent(
                 ws,
@@ -228,7 +235,7 @@ class TestSetAgentPersonaValidation:
             )
 
         server._send_error.assert_awaited_once()
-        assert "not persona-capable" in server._send_error.call_args.args[1]
+        assert "does not support the 'persona' surface" in server._send_error.call_args.args[1]
 
     async def test_invalid_agent_shape_errors(self) -> None:
         server = ConcreteSessionControl()
@@ -267,7 +274,11 @@ class TestSetAgentPersonaValidation:
                     "project_id": project_id,
                 }
             )
-            return AgentDefinitionBody(name="persona-agent", surfaces=["persona"])
+            return AgentDefinitionBody(
+                prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
+                name="persona-agent",
+                surfaces=["persona"],
+            )
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr("gobby.workflows.agent_resolver.resolve_agent", _resolve_agent)

@@ -30,7 +30,6 @@ from gobby.workflows.state_manager import SessionVariableManager
 
 from ._clear_commit import rebind_live_clear_successor
 from ._session_binding import (
-    _build_agent_identity_preamble,
     _first_configured_chat_binding,
     _normalize_runtime_chat_mode,
     _normalize_web_chat_provider,
@@ -340,6 +339,7 @@ class ChatSessionMixin:
         agent_name = pending_agent or "default"
         agent_body = None
         persona_selected = False
+        persona_surface_error: str | None = None
         if session_manager:
             try:
                 from gobby.workflows.agent_resolver import resolve_agent
@@ -355,6 +355,11 @@ class ChatSessionMixin:
                 if pending_agent and pending_agent != "default" and agent_body is not None:
                     try:
                         persona_selected = bool(agent_body.supports_surface("persona"))
+                        if not persona_selected:
+                            persona_surface_error = (
+                                f"Agent definition '{agent_name}' does not support "
+                                "the 'persona' surface"
+                            )
                     except Exception:
                         logger.warning(
                             "Agent '%s' failed persona surface validation during session bootstrap",
@@ -365,6 +370,8 @@ class ChatSessionMixin:
                 logger.warning(
                     "Failed to resolve agent '%s' for session bootstrap: %s", agent_name, e
                 )
+        if persona_surface_error:
+            raise ValueError(persona_surface_error)
 
         # Provider precedence: queued UI override > existing DB session source
         # > explicit message provider > default.
@@ -728,23 +735,9 @@ class ChatSessionMixin:
                         agent_body,
                         session_manager.db,
                         cli_source=cli_source,
-                        identity_only=True,
                     )
                     if persona_context:
                         session.system_prompt_override = persona_context
-                elif agent_name != "default":
-                    # The default agent's persona is injected once per context
-                    # epoch at first prompt from its agent-definition row;
-                    # only non-default agents override the system prompt here.
-                    context_parts: list[str] = []
-                    if effective_provider in {"grok", "qwen"}:
-                        preamble = _build_agent_identity_preamble(agent_body)
-                    else:
-                        preamble = agent_body.build_prompt_preamble()
-                    if preamble:
-                        context_parts.append(preamble)
-                    if context_parts:
-                        session.system_prompt_override = "\n\n".join(context_parts)
             except Exception as e:
                 logger.warning("Failed to build agent system prompt for '%s': %s", agent_name, e)
 

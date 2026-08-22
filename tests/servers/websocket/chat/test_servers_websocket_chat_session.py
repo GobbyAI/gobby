@@ -453,13 +453,7 @@ class TestCreateChatSessionInner:
         ):
             agent_body = MagicMock()
             agent_body.provider = "qwen"
-            agent_body.role = "You are Gobby"
-            agent_body.goal = "Fix the daemon"
-            agent_body.personality = "Blunt and technical"
-            agent_body.instructions = "Use tools"
-            agent_body.build_prompt_preamble.return_value = (
-                "## Role\nYou are Gobby\n\n## Instructions\nUse tools"
-            )
+            agent_body.prompt_for.return_value = "DEFAULT PERSONA PROMPT"
             mock_resolve_agent.return_value = agent_body
 
             mock_session = AsyncMock()
@@ -495,7 +489,7 @@ class TestCreateChatSessionInner:
                 reasoning_effort=None,
             )
             assert mock_session.system_prompt_override is None
-            agent_body.build_prompt_preamble.assert_not_called()
+            agent_body.prompt_for.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_pending_persona_uses_next_session_provider_and_project_context(

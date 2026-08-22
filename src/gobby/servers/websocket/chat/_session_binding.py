@@ -42,19 +42,3 @@ def _first_configured_chat_binding(
             reasoning_effort = None
         return normalized_provider, candidate_model, reasoning_effort
     return None
-
-
-def _build_agent_identity_preamble(agent_body: Any) -> str | None:
-    """Build the non-duplicated identity preamble for web-chat sessions.
-
-    Qwen/Grok web chat sends instructions through the first BEFORE_AGENT
-    lifecycle hook, so bootstrap only carries stable identity fields there.
-    """
-    parts: list[str] = []
-    if getattr(agent_body, "role", None):
-        parts.append(f"## Role\n{agent_body.role}")
-    if getattr(agent_body, "goal", None):
-        parts.append(f"## Goal\n{agent_body.goal}")
-    if getattr(agent_body, "personality", None):
-        parts.append(f"## Personality\n{agent_body.personality}")
-    return "\n\n".join(parts) if parts else None
