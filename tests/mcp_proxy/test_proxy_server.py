@@ -258,7 +258,7 @@ async def test_recommend_tools(daemon_tools, mock_mcp_manager):
 
 @pytest.mark.asyncio
 async def test_call_tool_returns_mcp_error_on_validation_failure(daemon_tools):
-    """Test that call_tool returns CallToolResult(isError=True) when validation fails."""
+    """Test that call_tool returns CallToolResult(is_error=True) when validation fails."""
     from mcp.types import CallToolResult, TextContent
 
     # Mock tool_proxy.call_tool to return an error dict
@@ -279,10 +279,10 @@ async def test_call_tool_returns_mcp_error_on_validation_failure(daemon_tools):
     ) as classifier:
         result = await daemon_tools.call_tool("gobby-tasks", "create_task", {"wrong": "arg"})
 
-    # Should return CallToolResult with isError=True
+    # Should return CallToolResult with is_error=True
     classifier.assert_called_once_with(error_result)
     assert isinstance(result, CallToolResult)
-    assert result.isError is True
+    assert result.is_error is True
     assert len(result.content) == 1
     assert isinstance(result.content[0], TextContent)
     # Error message should include the error, hint, and schema
@@ -293,7 +293,7 @@ async def test_call_tool_returns_mcp_error_on_validation_failure(daemon_tools):
 
 @pytest.mark.asyncio
 async def test_call_tool_returns_mcp_error_without_schema(daemon_tools):
-    """Test that call_tool returns CallToolResult(isError=True) even without schema info."""
+    """Test that call_tool returns CallToolResult(is_error=True) even without schema info."""
     from mcp.types import CallToolResult
 
     # Mock tool_proxy.call_tool to return an error dict without schema
@@ -306,9 +306,9 @@ async def test_call_tool_returns_mcp_error_without_schema(daemon_tools):
 
     result = await daemon_tools.call_tool("unknown", "some_tool", {})
 
-    # Should return CallToolResult with isError=True
+    # Should return CallToolResult with is_error=True
     assert isinstance(result, CallToolResult)
-    assert result.isError is True
+    assert result.is_error is True
     assert "Server 'unknown' not found" in result.content[0].text
 
 
@@ -393,7 +393,7 @@ async def test_call_tool_with_invalid_project_id(daemon_tools):
         )
 
     assert isinstance(result, CallToolResult)
-    assert result.isError is True
+    assert result.is_error is True
     assert "nonexistent" in result.content[0].text
     assert "not found" in result.content[0].text
 
@@ -410,7 +410,7 @@ async def test_call_tool_project_id_without_db(daemon_tools):
     )
 
     assert isinstance(result, CallToolResult)
-    assert result.isError is True
+    assert result.is_error is True
     assert "no database" in result.content[0].text.lower()
 
 

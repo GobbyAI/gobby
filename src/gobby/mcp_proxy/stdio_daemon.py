@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 from urllib.parse import urlsplit
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from gobby.config.bootstrap import BootstrapConfig, load_bootstrap
 from gobby.mcp_proxy.daemon_control import (
@@ -41,7 +41,7 @@ class StartDaemonProcess(Protocol):
 
 
 class CreateStdioMcpServer(Protocol):
-    def __call__(self) -> FastMCP: ...
+    def __call__(self) -> MCPServer: ...
 
 
 @dataclass(frozen=True, slots=True)

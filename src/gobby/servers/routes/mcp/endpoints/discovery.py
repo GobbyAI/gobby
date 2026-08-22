@@ -86,16 +86,11 @@ def _discovered_tools_from_list_tools_result(
 ) -> list[dict[str, Any]]:
     tools_list: list[dict[str, Any]] = []
     for tool in tools_result.tools:
-        raw_description = _object_attr(tool, "description")
-        raw_schema = _object_attr(tool, "inputSchema")
-        if hasattr(raw_schema, "model_dump"):
-            raw_schema = raw_schema.model_dump()
-        input_schema = dict(raw_schema) if isinstance(raw_schema, Mapping) else {}
         tools_list.append(
             {
                 "name": tool.name,
-                "description": str(raw_description) if raw_description else "",
-                "inputSchema": input_schema,
+                "description": tool.description or "",
+                "inputSchema": dict(tool.input_schema),
             }
         )
     return tools_list

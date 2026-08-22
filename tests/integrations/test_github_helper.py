@@ -15,7 +15,7 @@ from gobby.integrations.github_helper import (
 
 def _mcp_result(text: str | None, *, is_error: bool) -> CallToolResult:
     content = [] if text is None else [TextContent(type="text", text=text)]
-    return CallToolResult(content=content, isError=is_error)
+    return CallToolResult(content=content, is_error=is_error)
 
 
 def _helper(result: object) -> GitHubMCPHelper:

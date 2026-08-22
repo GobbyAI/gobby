@@ -57,7 +57,7 @@ def _mcp_error(
     message: str = "GitHub request failed",
 ) -> SimpleNamespace:
     return SimpleNamespace(
-        isError=True,
+        is_error=True,
         content=[
             SimpleNamespace(
                 text=json.dumps(

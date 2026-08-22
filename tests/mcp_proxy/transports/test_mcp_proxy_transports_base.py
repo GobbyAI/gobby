@@ -102,7 +102,7 @@ class TestBaseTransportConnectionInit:
 
         assert transport.config == http_config
         assert transport._session is None
-        assert transport._transport_context is None
+        assert transport._client_context is None
         assert transport._state == ConnectionState.DISCONNECTED
         assert transport._last_health_check is None
         assert transport._consecutive_failures == 0
@@ -495,9 +495,9 @@ class TestEdgeCases:
         """Test last_health_check starts as None."""
         assert base_transport._last_health_check is None
 
-    def test_transport_context_starts_none(self, base_transport: BaseTransportConnection) -> None:
+    def test_client_context_starts_none(self, base_transport: BaseTransportConnection) -> None:
         """Test transport_context starts as None."""
-        assert base_transport._transport_context is None
+        assert base_transport._client_context is None
 
     @pytest.mark.asyncio
     async def test_health_check_handles_asyncio_timeout_error(

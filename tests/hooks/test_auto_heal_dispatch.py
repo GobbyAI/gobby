@@ -243,7 +243,7 @@ class TestBlockOnSuccess:
         proxy.call_tool = AsyncMock(
             return_value=CallToolResult(
                 content=[TextContent(type="text", text="ok")],
-                isError=False,
+                is_error=False,
             )
         )
         stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy, loop=None)

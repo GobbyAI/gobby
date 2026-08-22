@@ -1,8 +1,8 @@
 """Tests for stdio transport connection.
 
-Exercises the real StdioTransportConnection code paths. Only the MCP SDK's
-stdio_client and ClientSession are mocked (external I/O). The env-var
-expansion helpers are tested against real os.environ.
+Exercises the real StdioTransportConnection code paths. The MCP SDK's
+``stdio_client`` (subprocess I/O) and ``Client`` are replaced by fakes; the
+env-var expansion helpers are tested against real os.environ.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from gobby.mcp_proxy.bundled import CHROME_DEVTOOLS_NPM_PACKAGE, resolve_runtime
 from gobby.mcp_proxy.models import ConnectionState, MCPError, MCPServerConfig
 from gobby.mcp_proxy.transports.stdio import StdioTransportConnection, _expand_args
 from gobby.utils.env import expand_env_mapping, expand_env_variables
+from tests.mcp_proxy.transports._support import FakeClient, recording_transport
 
 pytestmark = pytest.mark.unit
 
@@ -43,12 +44,41 @@ def _make_config(**overrides: Any) -> MCPServerConfig:
     return MCPServerConfig(**defaults)
 
 
-def _mock_session() -> AsyncMock:
-    """Create a mock ClientSession with initialize()."""
-    session = AsyncMock()
-    session.initialize = AsyncMock()
-    session.list_tools = AsyncMock(return_value=[])
-    return session
+class _ClientHarness:
+    """Patch ``stdio_client`` and ``Client`` together, recording the lifecycle."""
+
+    def __init__(self, **client_kwargs: Any) -> None:
+        self.lifecycle: list[str] = []
+        self.transport_calls: list[tuple[Any, Any]] = []
+        self.clients: list[FakeClient] = []
+        self.client_kwargs = client_kwargs
+        self.transport_enter_error: BaseException | None = None
+
+    def fake_stdio_client(self, params: Any, errlog: Any = sys.stderr) -> Any:
+        self.transport_calls.append((params, errlog))
+        return recording_transport(self.lifecycle, enter_error=self.transport_enter_error)
+
+    def fake_client(self, transport: Any) -> FakeClient:
+        client = FakeClient(transport, lifecycle=self.lifecycle, **self.client_kwargs)
+        self.clients.append(client)
+        return client
+
+    def patches(self) -> Any:
+        return (
+            patch(
+                "gobby.mcp_proxy.transports.stdio.stdio_client",
+                side_effect=self.fake_stdio_client,
+            ),
+            patch("gobby.mcp_proxy.transports.stdio.Client", side_effect=self.fake_client),
+        )
+
+    @property
+    def params(self) -> Any:
+        return self.transport_calls[0][0]
+
+    @property
+    def errlog(self) -> Any:
+        return self.transport_calls[0][1]
 
 
 # ---------------------------------------------------------------------------
@@ -220,196 +250,105 @@ class TestResolveRuntimeStdioArgs:
 
 
 # ===========================================================================
-# StdioTransportConnection — init
+# Construction & initial state
 # ===========================================================================
 
 
 class TestStdioInit:
     def test_initial_state(self, conn: StdioTransportConnection) -> None:
         assert conn.state == ConnectionState.DISCONNECTED
-        assert conn.is_connected is False
         assert conn.session is None
-        assert conn._session_context is None
-        assert conn._transport_context is None
+        assert conn._client_context is None
+        assert conn._stdio_errlog_handle is None
+        assert not conn.is_connected
 
-    def test_config_stored(self, conn: StdioTransportConnection) -> None:
-        assert conn.config.name == "test-stdio"
-        assert conn.config.command == "node"
-        assert conn.config.args == ["server.js", "--port", "3000"]
-
-
-# ===========================================================================
-# connect() — already connected
-# ===========================================================================
+    def test_config_stored(self, conn: StdioTransportConnection, config: MCPServerConfig) -> None:
+        assert conn.config is config
 
 
 class TestStdioConnectAlreadyConnected:
-    @pytest.mark.asyncio
     async def test_returns_existing_session(self, conn: StdioTransportConnection) -> None:
-        fake_session = MagicMock()
+        session = AsyncMock()
         conn._state = ConnectionState.CONNECTED
-        conn._session = fake_session
+        conn._session = session
 
-        result = await conn.connect()
-        assert result is fake_session
-        assert conn.state == ConnectionState.CONNECTED
+        assert await conn.connect() is session
 
 
 # ===========================================================================
-# connect() — successful
+# Connect success
 # ===========================================================================
 
 
 class TestStdioConnectSuccess:
-    @pytest.mark.asyncio
-    @patch("gobby.mcp_proxy.transports.stdio.ClientSession")
-    @patch("gobby.mcp_proxy.transports.stdio.stdio_client")
-    async def test_full_connect(
-        self,
-        mock_stdio_client: MagicMock,
-        mock_client_session_cls: MagicMock,
-        conn: StdioTransportConnection,
-    ) -> None:
-        mock_read = MagicMock()
-        mock_write = MagicMock()
+    async def test_full_connect(self, conn: StdioTransportConnection) -> None:
+        harness = _ClientHarness()
+        stdio_patch, client_patch = harness.patches()
+        with stdio_patch, client_patch:
+            session = await conn.connect()
 
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aenter__ = AsyncMock(return_value=(mock_read, mock_write))
-        mock_stdio_client.return_value = mock_transport_ctx
-
-        mock_session = _mock_session()
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_client_session_cls.return_value = mock_session_ctx
-
-        result = await conn.connect()
-
-        assert result is mock_session
         assert conn.state == ConnectionState.CONNECTED
-        assert conn.is_connected is True
+        assert session is harness.clients[0].session
+        client_context: object = conn._client_context
+        assert client_context is harness.clients[0]
         assert conn._consecutive_failures == 0
-        assert conn._session is mock_session
-        assert conn._session_context is mock_session_ctx
-        assert conn._transport_context is mock_transport_ctx
+        assert harness.lifecycle == ["streams-open", "transport-enter", "handshake"]
 
-    @pytest.mark.asyncio
-    @patch("gobby.mcp_proxy.transports.stdio.ClientSession")
-    @patch("gobby.mcp_proxy.transports.stdio.stdio_client")
-    async def test_connect_uses_configured_errlog_path(
-        self,
-        mock_stdio_client: MagicMock,
-        mock_client_session_cls: MagicMock,
-        config: MCPServerConfig,
-        tmp_path: Path,
-    ) -> None:
-        errlog_path = tmp_path / "mcp-client.log"
-        connection = StdioTransportConnection(config, stdio_errlog_path=str(errlog_path))
+    async def test_connect_creates_stdio_server_parameters(self) -> None:
+        conn = StdioTransportConnection(
+            _make_config(
+                command="python",
+                args=["-m", "server", "${PORT_ARG:-8080}"],
+                env={"TOKEN": "${MISSING_TOKEN:-fallback}", "PLAIN": "x"},
+            )
+        )
+        harness = _ClientHarness()
+        stdio_patch, client_patch = harness.patches()
+        with stdio_patch, client_patch, patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PORT_ARG", None)
+            os.environ.pop("MISSING_TOKEN", None)
+            await conn.connect()
 
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
-        mock_stdio_client.return_value = mock_transport_ctx
+        assert harness.params.command == "python"
+        assert harness.params.args == ["-m", "server", "8080"]
+        assert harness.params.env == {"TOKEN": "fallback", "PLAIN": "x"}
 
-        mock_session = _mock_session()
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_client_session_cls.return_value = mock_session_ctx
+    async def test_connect_with_none_args_uses_empty_list(self) -> None:
+        conn = StdioTransportConnection(_make_config(args=None))
+        harness = _ClientHarness()
+        stdio_patch, client_patch = harness.patches()
+        with stdio_patch, client_patch:
+            await conn.connect()
 
-        await connection.connect()
+        assert harness.params.args == []
 
-        errlog = mock_stdio_client.call_args.kwargs["errlog"]
-        assert errlog.name == str(errlog_path)
-        assert errlog.closed is False
-
-        await connection.disconnect()
-
-        assert errlog.closed is True
-        assert connection._stdio_errlog_handle is None
-
-    @pytest.mark.asyncio
-    @patch("gobby.mcp_proxy.transports.stdio.ClientSession")
-    @patch("gobby.mcp_proxy.transports.stdio.stdio_client")
     async def test_connect_uses_sys_stderr_without_errlog_path(
-        self,
-        mock_stdio_client: MagicMock,
-        mock_client_session_cls: MagicMock,
-        conn: StdioTransportConnection,
+        self, conn: StdioTransportConnection
     ) -> None:
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
-        mock_stdio_client.return_value = mock_transport_ctx
+        harness = _ClientHarness()
+        stdio_patch, client_patch = harness.patches()
+        with stdio_patch, client_patch:
+            await conn.connect()
 
-        mock_session = _mock_session()
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_client_session_cls.return_value = mock_session_ctx
-
-        result = await conn.connect()
-
-        assert result is mock_session
-        assert mock_stdio_client.call_args.kwargs["errlog"] is sys.stderr
-        assert conn.state == ConnectionState.CONNECTED
+        assert harness.errlog is sys.stderr
         assert conn._stdio_errlog_handle is None
-        mock_client_session_cls.assert_called_once()
 
-    @pytest.mark.asyncio
-    @patch("gobby.mcp_proxy.transports.stdio.ClientSession")
-    @patch("gobby.mcp_proxy.transports.stdio.stdio_client")
-    async def test_connect_creates_stdio_server_parameters(
-        self,
-        mock_stdio_client: MagicMock,
-        mock_client_session_cls: MagicMock,
-    ) -> None:
-        """Verify StdioServerParameters is created with expanded args and env."""
-        with patch.dict(os.environ, {"MY_PORT": "5555"}):
-            cfg = _make_config(args=["--port", "${MY_PORT}"], env={"KEY": "${MY_PORT}"})
-            c = StdioTransportConnection(cfg)
+    async def test_connect_uses_configured_errlog_path(self, tmp_path: Path) -> None:
+        errlog_path = tmp_path / "logs" / "mcp-client.log"
+        conn = StdioTransportConnection(_make_config(), stdio_errlog_path=str(errlog_path))
+        harness = _ClientHarness()
+        stdio_patch, client_patch = harness.patches()
+        with stdio_patch, client_patch:
+            await conn.connect()
+            handle = conn._stdio_errlog_handle
+            assert handle is not None
+            assert harness.errlog is handle
+            assert Path(handle.name) == errlog_path
+            await conn.disconnect()
 
-            mock_transport_ctx = AsyncMock()
-            mock_transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
-            mock_stdio_client.return_value = mock_transport_ctx
+        assert handle.closed
+        assert conn._stdio_errlog_handle is None
 
-            mock_session = _mock_session()
-            mock_session_ctx = AsyncMock()
-            mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_client_session_cls.return_value = mock_session_ctx
-
-            await c.connect()
-
-            # Verify StdioServerParameters was passed to stdio_client
-            call_args = mock_stdio_client.call_args
-            params = call_args[0][0]
-            assert params.command == "node"
-            assert params.args == ["--port", "5555"]
-            assert params.env == {"KEY": "5555"}
-
-    @pytest.mark.asyncio
-    @patch("gobby.mcp_proxy.transports.stdio.ClientSession")
-    @patch("gobby.mcp_proxy.transports.stdio.stdio_client")
-    async def test_connect_with_none_args_uses_empty_list(
-        self,
-        mock_stdio_client: MagicMock,
-        mock_client_session_cls: MagicMock,
-    ) -> None:
-        """When args is None, expanded_args defaults to []."""
-        cfg = _make_config(args=None)
-        c = StdioTransportConnection(cfg)
-
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
-        mock_stdio_client.return_value = mock_transport_ctx
-
-        mock_session = _mock_session()
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_client_session_cls.return_value = mock_session_ctx
-
-        await c.connect()
-
-        params = mock_stdio_client.call_args[0][0]
-        assert params.args == []
-        assert params.env is None
-
-    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("name", "command", "env", "expected_env"),
         [
@@ -430,599 +369,288 @@ class TestStdioConnectSuccess:
         ],
         ids=["bundled-npx", "explicit-override", "custom-npx", "bundled-non-npx"],
     )
-    @patch("gobby.mcp_proxy.transports.stdio.ClientSession")
-    @patch("gobby.mcp_proxy.transports.stdio.stdio_client")
     async def test_connect_configures_prefer_offline_only_for_bundled_npx(
         self,
-        mock_stdio_client: MagicMock,
-        mock_client_session_cls: MagicMock,
         name: str,
         command: str,
         env: dict[str, str] | None,
         expected_env: dict[str, str] | None,
     ) -> None:
-        cfg = _make_config(name=name, command=command, args=[], env=env)
-        connection = StdioTransportConnection(cfg)
+        conn = StdioTransportConnection(_make_config(name=name, command=command, args=[], env=env))
+        harness = _ClientHarness()
+        stdio_patch, client_patch = harness.patches()
+        with stdio_patch, client_patch:
+            await conn.connect()
 
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
-        mock_stdio_client.return_value = mock_transport_ctx
-
-        mock_session = _mock_session()
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_client_session_cls.return_value = mock_session_ctx
-
-        await connection.connect()
-
-        params = mock_stdio_client.call_args[0][0]
-        assert params.command == command
-        assert params.args == []
-        assert params.env == expected_env
-        assert connection.is_connected is True
-        mock_session.initialize.assert_awaited_once()
+        assert harness.params.command == command
+        assert harness.params.args == []
+        assert harness.params.env == expected_env
+        assert conn.is_connected is True
 
 
 # ===========================================================================
-# connect() — missing command
+# Connect failures
 # ===========================================================================
 
 
 class TestStdioConnectMissingCommand:
-    @pytest.mark.asyncio
     async def test_missing_command_raises_mcp_error(self) -> None:
-        cfg = _make_config()
-        cfg.command = None
-        c = StdioTransportConnection(cfg)
+        conn = StdioTransportConnection(_make_config(command=None))
 
-        with pytest.raises(MCPError, match="Stdio connection failed"):
-            await c.connect()
+        with pytest.raises(MCPError, match="Command is required"):
+            await conn.connect()
 
-        assert c.state == ConnectionState.FAILED
-        assert c._session is None
-        assert c._session_context is None
-        assert c._transport_context is None
-
-
-# ===========================================================================
-# connect() — transport entry failure (before session)
-# ===========================================================================
+        assert conn.state == ConnectionState.FAILED
+        assert conn._client_context is None
 
 
 class TestStdioConnectTransportFailure:
-    @pytest.mark.asyncio
-    @patch("gobby.mcp_proxy.transports.stdio.stdio_client")
-    async def test_transport_aenter_failure(
-        self,
-        mock_stdio_client: MagicMock,
-        conn: StdioTransportConnection,
-    ) -> None:
-        """If transport __aenter__ fails, no cleanup of session/transport needed."""
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aenter__ = AsyncMock(side_effect=OSError("spawn failed"))
-        mock_stdio_client.return_value = mock_transport_ctx
-
-        with pytest.raises(MCPError, match="Stdio connection failed.*spawn failed"):
-            await conn.connect()
-
-        assert conn.state == ConnectionState.FAILED
-        assert conn._session is None
-        assert conn._transport_context is None
-
-    @pytest.mark.asyncio
-    @patch("gobby.mcp_proxy.transports.stdio.stdio_client")
-    async def test_transport_aenter_failure_closes_errlog(
-        self,
-        mock_stdio_client: MagicMock,
-        config: MCPServerConfig,
-        tmp_path: Path,
-    ) -> None:
-        connection = StdioTransportConnection(
-            config,
-            stdio_errlog_path=str(tmp_path / "mcp-client.log"),
+    async def test_spawn_failure_closes_errlog_and_fails(self, tmp_path: Path) -> None:
+        conn = StdioTransportConnection(
+            _make_config(), stdio_errlog_path=str(tmp_path / "mcp-client.log")
         )
-
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aenter__ = AsyncMock(side_effect=RuntimeError("boom"))
-        mock_stdio_client.return_value = mock_transport_ctx
-
-        with pytest.raises(MCPError, match="Stdio connection failed: boom"):
-            await connection.connect()
-
-        errlog = mock_stdio_client.call_args.kwargs["errlog"]
-        assert errlog.closed is True
-        assert connection._stdio_errlog_handle is None
-
-
-# ===========================================================================
-# connect() — session entry failure (transport entered, session fails)
-# ===========================================================================
-
-
-class TestStdioConnectSessionFailure:
-    @pytest.mark.asyncio
-    @patch("gobby.mcp_proxy.transports.stdio.ClientSession")
-    @patch("gobby.mcp_proxy.transports.stdio.stdio_client")
-    async def test_session_aenter_failure_cleans_transport(
-        self,
-        mock_stdio_client: MagicMock,
-        mock_client_session_cls: MagicMock,
-        conn: StdioTransportConnection,
-    ) -> None:
-        """If session __aenter__ fails, transport context is cleaned up."""
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
-        mock_transport_ctx.__aexit__ = AsyncMock(return_value=False)
-        mock_stdio_client.return_value = mock_transport_ctx
-
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aenter__ = AsyncMock(side_effect=RuntimeError("session init boom"))
-        mock_client_session_cls.return_value = mock_session_ctx
-
-        with pytest.raises(MCPError, match="Stdio connection failed.*session init boom"):
+        harness = _ClientHarness()
+        harness.transport_enter_error = OSError("spawn failed")
+        stdio_patch, client_patch = harness.patches()
+        with stdio_patch, client_patch, pytest.raises(MCPError, match="spawn failed"):
             await conn.connect()
 
         assert conn.state == ConnectionState.FAILED
-        # Transport __aexit__ was called for cleanup
-        mock_transport_ctx.__aexit__.assert_awaited_once()
+        assert conn._client_context is None
+        assert conn._stdio_errlog_handle is None
+        assert harness.errlog.closed
+        assert harness.clients[0].exited is False
+        assert harness.lifecycle == []
 
 
-# ===========================================================================
-# connect() — initialize() failure (both entered, init fails)
-# ===========================================================================
-
-
-class TestStdioConnectInitializeFailure:
-    @pytest.mark.asyncio
-    @patch("gobby.mcp_proxy.transports.stdio.ClientSession")
-    @patch("gobby.mcp_proxy.transports.stdio.stdio_client")
-    async def test_initialize_failure_cleans_both(
-        self,
-        mock_stdio_client: MagicMock,
-        mock_client_session_cls: MagicMock,
-        conn: StdioTransportConnection,
+class TestStdioConnectHandshakeFailure:
+    async def test_handshake_failure_unwinds_transport_via_client(
+        self, conn: StdioTransportConnection
     ) -> None:
-        """If session.initialize() fails, both session and transport are cleaned."""
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
-        mock_transport_ctx.__aexit__ = AsyncMock(return_value=False)
-        mock_stdio_client.return_value = mock_transport_ctx
-
-        mock_session = _mock_session()
-        mock_session.initialize = AsyncMock(side_effect=ConnectionError("init failed"))
-
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
-        mock_client_session_cls.return_value = mock_session_ctx
-
-        with pytest.raises(MCPError, match="Stdio connection failed.*init failed"):
+        harness = _ClientHarness(handshake_error=RuntimeError("handshake boom"))
+        stdio_patch, client_patch = harness.patches()
+        with stdio_patch, client_patch, pytest.raises(MCPError, match="handshake boom"):
             await conn.connect()
 
         assert conn.state == ConnectionState.FAILED
-        mock_session_ctx.__aexit__.assert_awaited_once()
-        mock_transport_ctx.__aexit__.assert_awaited_once()
-
-
-# ===========================================================================
-# connect() — cleanup errors during failure are suppressed
-# ===========================================================================
-
-
-class TestStdioConnectCleanupErrors:
-    @pytest.mark.asyncio
-    @patch("gobby.mcp_proxy.transports.stdio.ClientSession")
-    @patch("gobby.mcp_proxy.transports.stdio.stdio_client")
-    async def test_session_cleanup_error_suppressed(
-        self,
-        mock_stdio_client: MagicMock,
-        mock_client_session_cls: MagicMock,
-        conn: StdioTransportConnection,
-    ) -> None:
-        """If session cleanup raises during error handling, it's logged and suppressed."""
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
-        mock_transport_ctx.__aexit__ = AsyncMock(return_value=False)
-        mock_stdio_client.return_value = mock_transport_ctx
-
-        mock_session = _mock_session()
-        mock_session.initialize = AsyncMock(side_effect=ValueError("init fail"))
-
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session_ctx.__aexit__ = AsyncMock(side_effect=RuntimeError("cleanup boom"))
-        mock_client_session_cls.return_value = mock_session_ctx
-
-        with pytest.raises(MCPError, match="init fail"):
-            await conn.connect()
-
-        assert conn.state == ConnectionState.FAILED
-
-    @pytest.mark.asyncio
-    @patch("gobby.mcp_proxy.transports.stdio.ClientSession")
-    @patch("gobby.mcp_proxy.transports.stdio.stdio_client")
-    async def test_transport_cleanup_error_suppressed(
-        self,
-        mock_stdio_client: MagicMock,
-        mock_client_session_cls: MagicMock,
-        conn: StdioTransportConnection,
-    ) -> None:
-        """If transport cleanup raises during error handling, it's logged and suppressed."""
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
-        mock_transport_ctx.__aexit__ = AsyncMock(side_effect=OSError("transport cleanup fail"))
-        mock_stdio_client.return_value = mock_transport_ctx
-
-        mock_session = _mock_session()
-        mock_session.initialize = AsyncMock(side_effect=ValueError("init fail"))
-
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
-        mock_client_session_cls.return_value = mock_session_ctx
-
-        with pytest.raises(MCPError, match="init fail"):
-            await conn.connect()
-
-        assert conn.state == ConnectionState.FAILED
-
-
-# ===========================================================================
-# connect() - cancellation cleanup
-# ===========================================================================
+        assert conn._client_context is None
+        assert harness.lifecycle == [
+            "streams-open",
+            "transport-enter",
+            "streams-closed",
+            "transport-exit",
+        ]
+        assert harness.clients[0].exited is False
 
 
 class TestStdioConnectCancellation:
-    @pytest.mark.asyncio
-    @patch("gobby.mcp_proxy.transports.stdio.ClientSession")
-    @patch("gobby.mcp_proxy.transports.stdio.stdio_client")
-    async def test_session_entry_cancellation_cleans_transport(
-        self,
-        mock_stdio_client: MagicMock,
-        mock_client_session_cls: MagicMock,
-        conn: StdioTransportConnection,
+    async def test_handshake_cancellation_cleans_errlog_and_propagates(
+        self, tmp_path: Path
     ) -> None:
-        events: list[str] = []
-
-        async def transport_exit(*_args: Any) -> None:
-            events.append("transport")
-
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
-        mock_transport_ctx.__aexit__ = AsyncMock(side_effect=transport_exit)
-        mock_stdio_client.return_value = mock_transport_ctx
-
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aenter__ = AsyncMock(side_effect=asyncio.CancelledError())
-        mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
-        mock_client_session_cls.return_value = mock_session_ctx
-
-        with pytest.raises(asyncio.CancelledError):
+        conn = StdioTransportConnection(
+            _make_config(), stdio_errlog_path=str(tmp_path / "mcp-client.log")
+        )
+        harness = _ClientHarness(handshake_error=asyncio.CancelledError())
+        stdio_patch, client_patch = harness.patches()
+        with stdio_patch, client_patch, pytest.raises(asyncio.CancelledError):
             await conn.connect()
 
-        assert events == ["transport"]
-        mock_session_ctx.__aexit__.assert_not_awaited()
         assert conn.state == ConnectionState.DISCONNECTED
-        assert conn._session is None
-        assert conn._session_context is None
-        assert conn._transport_context is None
-
-    @pytest.mark.asyncio
-    @patch("gobby.mcp_proxy.transports.stdio.ClientSession")
-    @patch("gobby.mcp_proxy.transports.stdio.stdio_client")
-    async def test_initialize_cancellation_cleans_session_then_transport(
-        self,
-        mock_stdio_client: MagicMock,
-        mock_client_session_cls: MagicMock,
-        config: MCPServerConfig,
-        tmp_path: Path,
-    ) -> None:
-        events: list[str] = []
-        connection = StdioTransportConnection(
-            config,
-            stdio_errlog_path=str(tmp_path / "mcp-client.log"),
-        )
-
-        async def session_exit(*_args: Any) -> None:
-            events.append("session")
-
-        async def transport_exit(*_args: Any) -> None:
-            events.append("transport")
-
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
-        mock_transport_ctx.__aexit__ = AsyncMock(side_effect=transport_exit)
-        mock_stdio_client.return_value = mock_transport_ctx
-
-        mock_session = _mock_session()
-        mock_session.initialize = AsyncMock(side_effect=asyncio.CancelledError())
-
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session_ctx.__aexit__ = AsyncMock(side_effect=session_exit)
-        mock_client_session_cls.return_value = mock_session_ctx
-
-        with pytest.raises(asyncio.CancelledError):
-            await connection.connect()
-
-        assert events == ["session", "transport"]
-        errlog = mock_stdio_client.call_args.kwargs["errlog"]
-        assert errlog.closed is True
-        assert connection.state == ConnectionState.DISCONNECTED
-        assert connection._session is None
-        assert connection._session_context is None
-        assert connection._transport_context is None
-        assert connection._stdio_errlog_handle is None
-
-
-# ===========================================================================
-# connect() — MCPError not double-wrapped
-# ===========================================================================
+        assert conn._client_context is None
+        assert conn._stdio_errlog_handle is None
+        assert harness.errlog.closed
 
 
 class TestStdioConnectMCPErrorPassthrough:
-    @pytest.mark.asyncio
-    @patch("gobby.mcp_proxy.transports.stdio.stdio_client")
-    async def test_mcp_error_re_raised_directly(
-        self,
-        mock_stdio_client: MagicMock,
-        conn: StdioTransportConnection,
-    ) -> None:
-        """An MCPError from transport is re-raised without wrapping."""
-        original = MCPError("original mcp error")
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aenter__ = AsyncMock(side_effect=original)
-        mock_stdio_client.return_value = mock_transport_ctx
-
-        with pytest.raises(MCPError, match="original mcp error") as exc_info:
+    async def test_mcp_error_not_double_wrapped(self, conn: StdioTransportConnection) -> None:
+        harness = _ClientHarness(handshake_error=MCPError("already wrapped"))
+        stdio_patch, client_patch = harness.patches()
+        with stdio_patch, client_patch, pytest.raises(MCPError) as excinfo:
             await conn.connect()
 
-        assert exc_info.value is original
-
-
-# ===========================================================================
-# connect() — empty error message
-# ===========================================================================
+        assert str(excinfo.value) == "already wrapped"
 
 
 class TestStdioConnectEmptyErrorMessage:
-    @pytest.mark.asyncio
-    @patch("gobby.mcp_proxy.transports.stdio.stdio_client")
-    async def test_empty_str_exception_uses_type_name(
-        self,
-        mock_stdio_client: MagicMock,
-        conn: StdioTransportConnection,
-    ) -> None:
-        """Exceptions with empty str() get a type-name-based message."""
-
+    async def test_empty_error_uses_type_name(self, conn: StdioTransportConnection) -> None:
         class SilentError(Exception):
             def __str__(self) -> str:
                 return ""
 
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aenter__ = AsyncMock(side_effect=SilentError())
-        mock_stdio_client.return_value = mock_transport_ctx
-
-        with pytest.raises(MCPError, match="SilentError.*Connection closed or timed out"):
+        harness = _ClientHarness(handshake_error=SilentError())
+        stdio_patch, client_patch = harness.patches()
+        with stdio_patch, client_patch, pytest.raises(MCPError, match="SilentError"):
             await conn.connect()
 
 
 # ===========================================================================
-# disconnect() — no contexts
+# _cleanup_connect_attempt
 # ===========================================================================
 
 
-class TestStdioDisconnectNoContexts:
-    @pytest.mark.asyncio
+class TestStdioCleanupConnectAttempt:
+    async def test_exit_error_suppressed(self, conn: StdioTransportConnection) -> None:
+        client = FakeClient(recording_transport([]), exit_error=RuntimeError("exit boom"))
+        conn._client_context = client  # type: ignore[assignment]
+
+        await conn._cleanup_connect_attempt(client_entered=True)
+
+        assert client.exited
+        assert conn._client_context is None
+        assert conn.state == ConnectionState.DISCONNECTED
+
+    async def test_exit_timeout_suppressed(self, conn: StdioTransportConnection) -> None:
+        conn._client_context = FakeClient(recording_transport([]), exit_delay=5.0)  # type: ignore[assignment]
+
+        with patch("gobby.mcp_proxy.transports.stdio.asyncio.wait_for", side_effect=TimeoutError):
+            await conn._cleanup_connect_attempt(client_entered=True)
+
+        assert conn._client_context is None
+
+    async def test_not_entered_skips_exit(self, conn: StdioTransportConnection) -> None:
+        client = FakeClient(recording_transport([]))
+        conn._client_context = client  # type: ignore[assignment]
+
+        await conn._cleanup_connect_attempt(client_entered=False)
+
+        assert client.exited is False
+        assert conn._client_context is None
+
+    async def test_cancelled_exit_is_re_raised_after_reset(
+        self, conn: StdioTransportConnection
+    ) -> None:
+        conn._client_context = FakeClient(  # type: ignore[assignment]
+            recording_transport([]), exit_error=asyncio.CancelledError()
+        )
+
+        with pytest.raises(asyncio.CancelledError):
+            await conn._cleanup_connect_attempt(client_entered=True)
+
+        assert conn._client_context is None
+        assert conn.state == ConnectionState.DISCONNECTED
+
+
+# ===========================================================================
+# Disconnect
+# ===========================================================================
+
+
+class TestStdioDisconnect:
     async def test_disconnect_clean_state(self, conn: StdioTransportConnection) -> None:
         await conn.disconnect()
+
         assert conn.state == ConnectionState.DISCONNECTED
-        assert conn._session_context is None
-        assert conn._transport_context is None
-        assert conn._session is None
+        assert conn._client_context is None
 
-
-# ===========================================================================
-# disconnect() — happy path with both contexts
-# ===========================================================================
-
-
-class TestStdioDisconnectBothContexts:
-    @pytest.mark.asyncio
-    async def test_cleans_both_contexts(self, conn: StdioTransportConnection) -> None:
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
-        conn._session_context = mock_session_ctx
-        conn._session = MagicMock()
-
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aexit__ = AsyncMock(return_value=False)
-        conn._transport_context = mock_transport_ctx
+    async def test_disconnect_exits_client(self, conn: StdioTransportConnection) -> None:
+        lifecycle: list[str] = []
+        client = FakeClient(recording_transport(lifecycle), lifecycle=lifecycle)
+        await client.__aenter__()
+        conn._client_context = client  # type: ignore[assignment]
+        conn._session = client.session
+        conn._state = ConnectionState.CONNECTED
 
         await conn.disconnect()
 
-        assert conn._session_context is None
-        assert conn._session is None
-        assert conn._transport_context is None
+        assert client.exited
+        assert lifecycle[-2:] == ["streams-closed", "transport-exit"]
+        assert conn._client_context is None
+        assert conn.session is None
         assert conn.state == ConnectionState.DISCONNECTED
 
-        mock_session_ctx.__aexit__.assert_awaited_once()
-        mock_transport_ctx.__aexit__.assert_awaited_once()
+    async def test_timeout_handled(self, conn: StdioTransportConnection) -> None:
+        conn._client_context = FakeClient(recording_transport([]), exit_delay=5.0)  # type: ignore[assignment]
 
+        with patch("gobby.mcp_proxy.transports.stdio.asyncio.wait_for", side_effect=TimeoutError):
+            await conn.disconnect()
 
-# ===========================================================================
-# disconnect() — session timeout
-# ===========================================================================
-
-
-class TestStdioDisconnectSessionTimeout:
-    @pytest.mark.asyncio
-    async def test_session_timeout_handled(self, conn: StdioTransportConnection) -> None:
-        """TimeoutError during session close is caught gracefully."""
-
-        async def slow_exit(*args: Any) -> None:
-            raise TimeoutError()
-
-        mock_session_ctx = MagicMock()
-        mock_session_ctx.__aexit__ = slow_exit
-        conn._session_context = mock_session_ctx
-        conn._session = MagicMock()
-
-        await conn.disconnect()
-        assert conn._session_context is None
+        assert conn._client_context is None
         assert conn.state == ConnectionState.DISCONNECTED
 
-
-# ===========================================================================
-# disconnect() — session RuntimeError (cancel scope)
-# ===========================================================================
-
-
-class TestStdioDisconnectSessionRuntimeError:
-    @pytest.mark.asyncio
-    async def test_cancel_scope_error_suppressed(self, conn: StdioTransportConnection) -> None:
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aexit__ = AsyncMock(side_effect=RuntimeError("cannot exit cancel scope"))
-        conn._session_context = mock_session_ctx
-        conn._session = MagicMock()
-
-        await conn.disconnect()
-        assert conn._session_context is None
-        assert conn.state == ConnectionState.DISCONNECTED
-
-    @pytest.mark.asyncio
-    async def test_other_runtime_error_handled(self, conn: StdioTransportConnection) -> None:
-        """Non-cancel-scope RuntimeError is still caught."""
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aexit__ = AsyncMock(side_effect=RuntimeError("something else entirely"))
-        conn._session_context = mock_session_ctx
-        conn._session = MagicMock()
-
-        await conn.disconnect()
-        assert conn._session_context is None
-        assert conn.state == ConnectionState.DISCONNECTED
-
-
-# ===========================================================================
-# disconnect() — session generic Exception
-# ===========================================================================
-
-
-class TestStdioDisconnectSessionGenericError:
-    @pytest.mark.asyncio
-    async def test_generic_exception_handled(self, conn: StdioTransportConnection) -> None:
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aexit__ = AsyncMock(side_effect=ValueError("weird"))
-        conn._session_context = mock_session_ctx
-        conn._session = MagicMock()
-
-        await conn.disconnect()
-        assert conn._session_context is None
-        assert conn.state == ConnectionState.DISCONNECTED
-
-
-# ===========================================================================
-# disconnect() — transport timeout
-# ===========================================================================
-
-
-class TestStdioDisconnectTransportTimeout:
-    @pytest.mark.asyncio
-    async def test_transport_timeout_handled(self, conn: StdioTransportConnection) -> None:
-        async def slow_exit(*args: Any) -> None:
-            raise TimeoutError()
-
-        mock_transport_ctx = MagicMock()
-        mock_transport_ctx.__aexit__ = slow_exit
-        conn._transport_context = mock_transport_ctx
-
-        await conn.disconnect()
-        assert conn._transport_context is None
-        assert conn.state == ConnectionState.DISCONNECTED
-
-
-# ===========================================================================
-# disconnect() — transport RuntimeError (cancel scope)
-# ===========================================================================
-
-
-class TestStdioDisconnectTransportRuntimeError:
-    @pytest.mark.asyncio
-    async def test_cancel_scope_error_suppressed(self, conn: StdioTransportConnection) -> None:
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aexit__ = AsyncMock(side_effect=RuntimeError("cancel scope blah"))
-        conn._transport_context = mock_transport_ctx
-
-        await conn.disconnect()
-        assert conn._transport_context is None
-        assert conn.state == ConnectionState.DISCONNECTED
-
-    @pytest.mark.asyncio
-    async def test_other_runtime_error_logged(self, conn: StdioTransportConnection) -> None:
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aexit__ = AsyncMock(
-            side_effect=RuntimeError("unexpected transport error")
+    async def test_cancel_scope_runtime_error_suppressed(
+        self, conn: StdioTransportConnection, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        conn._client_context = FakeClient(  # type: ignore[assignment]
+            recording_transport([]),
+            exit_error=RuntimeError("Attempted to exit cancel scope in a different task"),
         )
-        conn._transport_context = mock_transport_ctx
 
-        await conn.disconnect()
-        assert conn._transport_context is None
-        assert conn.state == ConnectionState.DISCONNECTED
+        with caplog.at_level("WARNING", logger="gobby.mcp.client"):
+            await conn.disconnect()
 
+        assert not [r for r in caplog.records if "Error closing client" in r.message]
+        assert conn._client_context is None
 
-# ===========================================================================
-# disconnect() — transport generic Exception
-# ===========================================================================
+    async def test_other_runtime_error_logged(
+        self, conn: StdioTransportConnection, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        conn._client_context = FakeClient(  # type: ignore[assignment]
+            recording_transport([]), exit_error=RuntimeError("something else")
+        )
 
+        with caplog.at_level("WARNING", logger="gobby.mcp.client"):
+            await conn.disconnect()
 
-class TestStdioDisconnectTransportGenericError:
-    @pytest.mark.asyncio
+        assert [r for r in caplog.records if "Error closing client" in r.message]
+        assert conn._client_context is None
+
     async def test_generic_exception_handled(self, conn: StdioTransportConnection) -> None:
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aexit__ = AsyncMock(side_effect=OSError("broken pipe"))
-        conn._transport_context = mock_transport_ctx
+        conn._client_context = FakeClient(  # type: ignore[assignment]
+            recording_transport([]), exit_error=ValueError("bad")
+        )
 
         await conn.disconnect()
-        assert conn._transport_context is None
+
+        assert conn._client_context is None
+        assert conn.state == ConnectionState.DISCONNECTED
+
+    async def test_cancelled_close_re_raises_after_cleanup(
+        self, conn: StdioTransportConnection
+    ) -> None:
+        conn._client_context = FakeClient(  # type: ignore[assignment]
+            recording_transport([]), exit_error=asyncio.CancelledError()
+        )
+
+        with pytest.raises(asyncio.CancelledError):
+            await conn.disconnect()
+
+        assert conn._client_context is None
         assert conn.state == ConnectionState.DISCONNECTED
 
 
 # ===========================================================================
-# Full connect -> disconnect cycle
+# Full lifecycle
 # ===========================================================================
 
 
 class TestStdioFullLifecycle:
-    @pytest.mark.asyncio
-    @patch("gobby.mcp_proxy.transports.stdio.ClientSession")
-    @patch("gobby.mcp_proxy.transports.stdio.stdio_client")
-    async def test_connect_then_disconnect(
-        self,
-        mock_stdio_client: MagicMock,
-        mock_client_session_cls: MagicMock,
-        conn: StdioTransportConnection,
-    ) -> None:
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
-        mock_transport_ctx.__aexit__ = AsyncMock(return_value=False)
-        mock_stdio_client.return_value = mock_transport_ctx
+    async def test_connect_then_disconnect(self, conn: StdioTransportConnection) -> None:
+        harness = _ClientHarness()
+        stdio_patch, client_patch = harness.patches()
+        with stdio_patch, client_patch:
+            await conn.connect()
+            assert conn.is_connected
+            await conn.disconnect()
 
-        mock_session = _mock_session()
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
-        mock_client_session_cls.return_value = mock_session_ctx
-
-        # Connect
-        result = await conn.connect()
-        assert result is mock_session
-        assert conn.state == ConnectionState.CONNECTED
-        assert conn.is_connected is True
-
-        # Disconnect
-        await conn.disconnect()
         assert conn.state == ConnectionState.DISCONNECTED
-        assert conn.is_connected is False
-        assert conn._session is None
-        assert conn._session_context is None
-        assert conn._transport_context is None
+        assert conn.session is None
+        assert harness.lifecycle == [
+            "streams-open",
+            "transport-enter",
+            "handshake",
+            "streams-closed",
+            "transport-exit",
+        ]
+
+    async def test_reconnect_after_disconnect(self, conn: StdioTransportConnection) -> None:
+        harness = _ClientHarness()
+        stdio_patch, client_patch = harness.patches()
+        with stdio_patch, client_patch:
+            await conn.connect()
+            await conn.disconnect()
+            await conn.connect()
+
+        assert conn.is_connected
+        assert len(harness.clients) == 2
+        client_context: object = conn._client_context
+        assert client_context is harness.clients[1]

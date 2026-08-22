@@ -157,8 +157,8 @@ async def _discover_and_cache_tools(
         tool_schemas = [
             {
                 "name": tool.name,
-                "description": getattr(tool, "description", "") or "",
-                "inputSchema": getattr(tool, "inputSchema", {}) or {},
+                "description": tool.description or "",
+                "inputSchema": tool.input_schema or {},
             }
             for tool in tools_result.tools
         ]

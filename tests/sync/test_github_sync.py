@@ -152,7 +152,7 @@ class TestGitHubSyncServiceAvailability:
         session.call_tool = AsyncMock(
             return_value=CallToolResult(
                 content=[TextContent(type="text", text="[]")],
-                isError=False,
+                is_error=False,
             )
         )
         manager._connections["github"] = SimpleNamespace(is_connected=True, session=session)
@@ -216,13 +216,13 @@ class TestGitHubSyncServiceImport:
         """import_github_issues creates gobby tasks from GitHub issues."""
         mock_mcp_manager.call_tool.return_value = CallToolResult(
             content=[],
-            structuredContent={
+            structured_content={
                 "issues": [
                     {"number": 1, "title": "Issue 1", "body": "Description 1"},
                     {"number": 2, "title": "Issue 2", "body": "Description 2"},
                 ]
             },
-            isError=False,
+            is_error=False,
         )
 
         await sync_service.import_github_issues(repo="owner/repo")
@@ -470,7 +470,7 @@ class TestGitHubSyncServiceSync:
         sync_service.task_manager.get_task.return_value = mock_task
         mock_mcp_manager.call_tool.return_value = CallToolResult(
             content=[TextContent(type="text", text='{"success":true}')],
-            isError=False,
+            is_error=False,
         )
 
         await sync_service.sync_task_to_github(task_id="test-task-id")
@@ -555,8 +555,8 @@ class TestGitHubSyncServicePR:
         mock_task_manager.get_task.return_value = mock_task
         mock_mcp_manager.call_tool.return_value = CallToolResult(
             content=[],
-            structuredContent={"number": 456},
-            isError=False,
+            structured_content={"number": 456},
+            is_error=False,
         )
 
         await sync_service.create_pr_for_task(

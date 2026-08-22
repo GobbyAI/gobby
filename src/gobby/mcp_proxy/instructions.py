@@ -1,7 +1,7 @@
 """Gobby MCP server instructions.
 
 Provides XML-structured instructions that teach agents how to use Gobby correctly.
-These instructions are injected into the MCP server via FastMCP's `instructions` parameter.
+These instructions are injected into the MCP server via MCPServer's `instructions` parameter.
 """
 
 import logging

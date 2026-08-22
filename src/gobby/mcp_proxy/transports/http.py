@@ -5,14 +5,28 @@ import logging
 from contextlib import AsyncExitStack
 from typing import Any
 
-from mcp import ClientSession
+import httpx2
+from mcp.client import Client, Transport
 from mcp.client.streamable_http import streamable_http_client
-from mcp.shared._httpx_utils import create_mcp_http_client
 
 from gobby.mcp_proxy.models import ConnectionState, MCPError, MCPServerConfig
 from gobby.mcp_proxy.transports.base import BaseTransportConnection
 
 logger = logging.getLogger("gobby.mcp.client")
+
+# MCP's recommended HTTP timeout profile: 30s for connect/write/pool, 300s read
+# so long-lived SSE response streams are not cut mid-request.
+MCP_HTTP_TIMEOUT_SECONDS = 30.0
+MCP_HTTP_READ_TIMEOUT_SECONDS = 300.0
+
+
+def build_mcp_http_client(headers: dict[str, str] | None) -> httpx2.AsyncClient:
+    """Build the httpx2 client handed to the Streamable HTTP transport."""
+    return httpx2.AsyncClient(
+        headers=headers,
+        follow_redirects=True,
+        timeout=httpx2.Timeout(MCP_HTTP_TIMEOUT_SECONDS, read=MCP_HTTP_READ_TIMEOUT_SECONDS),
+    )
 
 
 class HTTPTransportConnection(BaseTransportConnection):
@@ -32,7 +46,7 @@ class HTTPTransportConnection(BaseTransportConnection):
         self._disconnect_event: asyncio.Event | None = None
         self._session_ready: asyncio.Event | None = None
         self._connection_error: Exception | None = None
-        self._session_context: ClientSession | None = None
+        self._client_context: Client | None = None
 
     async def connect(self) -> Any:
         """Connect via HTTP transport using a dedicated owner task."""
@@ -74,19 +88,12 @@ class HTTPTransportConnection(BaseTransportConnection):
 
         return self._session
 
-    async def _open_streams(self, stack: AsyncExitStack) -> tuple[Any, Any]:
-        """Enter the streamable HTTP client and return its read/write streams."""
+    async def _open_transport(self, stack: AsyncExitStack) -> Transport:
+        """Build the Streamable HTTP transport over a client owned by ``stack``."""
         if self.config.url is None:
             raise ValueError(f"URL is required for HTTP server '{self.config.name}'")
-        http_client = create_mcp_http_client(headers=self.config.headers)
-        managed_client = await stack.enter_async_context(http_client)
-        read_stream, write_stream, _ = await stack.enter_async_context(
-            streamable_http_client(
-                self.config.url,
-                http_client=managed_client,
-            )
-        )
-        return read_stream, write_stream
+        managed_client = await stack.enter_async_context(build_mcp_http_client(self.config.headers))
+        return streamable_http_client(self.config.url, http_client=managed_client)
 
     async def _run_connection(self) -> None:
         """Background task that owns the transport and session lifecycle."""
@@ -98,11 +105,12 @@ class HTTPTransportConnection(BaseTransportConnection):
                 raise ValueError(f"URL is required for {self._TRANSPORT_LABEL} transport")
 
             async with AsyncExitStack() as stack:
-                read_stream, write_stream = await self._open_streams(stack)
-                self._session_context = ClientSession(read_stream, write_stream)
-                async with self._session_context as session:
-                    self._session = session
-                    await self._session.initialize()
+                transport = await self._open_transport(stack)
+                # Client negotiates the protocol era (server/discover with an
+                # initialize fallback) before publishing the session.
+                self._client_context = Client(transport)
+                async with self._client_context as client:
+                    self._session = client.session
 
                     self._state = ConnectionState.CONNECTED
                     self._consecutive_failures = 0
@@ -140,7 +148,7 @@ class HTTPTransportConnection(BaseTransportConnection):
 
         finally:
             self._session = None
-            self._session_context = None
+            self._client_context = None
             self._state = ConnectionState.DISCONNECTED
 
     async def _cleanup_owner_task(self) -> None:

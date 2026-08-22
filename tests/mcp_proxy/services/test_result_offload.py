@@ -246,7 +246,7 @@ async def test_mandatory_exemptions_cannot_be_removed_by_config(
         {"result": {"content": [{"type": "text", "text": "boom"}], "isError": True}},
         CallToolResult(
             content=[TextContent(type="text", text="boom")],
-            isError=True,
+            is_error=True,
         ),
     ],
 )
@@ -776,7 +776,7 @@ async def test_structured_call_tool_result_serializes_mapping_payload() -> None:
     payload = {"docs": ["x" * 4_000]}
     result = CallToolResult(
         content=[TextContent(type="text", text="short")],
-        structuredContent=payload,
+        structured_content=payload,
     )
 
     actual = await harness.offloader.maybe_offload(

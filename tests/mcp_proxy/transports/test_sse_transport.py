@@ -1,9 +1,7 @@
 """Tests for the SDK-backed SSE transport connection."""
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -11,6 +9,7 @@ from gobby.config.mcp import MCPConfigManager
 from gobby.mcp_proxy.models import ConnectionState, MCPServerConfig
 from gobby.mcp_proxy.transports.factory import create_transport_connection
 from gobby.mcp_proxy.transports.sse import SSETransportConnection
+from tests.mcp_proxy.transports._support import FakeClient, recording_transport
 
 pytestmark = pytest.mark.unit
 
@@ -36,48 +35,40 @@ async def test_persisted_sse_config_connects_after_reload(tmp_path) -> None:
 
     lifecycle: list[str] = []
     captured: dict[str, Any] = {}
-    read_stream = MagicMock()
-    write_stream = MagicMock()
+    clients: list[FakeClient] = []
 
-    @asynccontextmanager
-    async def fake_sse_client(
-        url: str,
-        headers: dict[str, str] | None = None,
-        timeout: float = 5,
-    ) -> AsyncIterator[tuple[MagicMock, MagicMock]]:
+    def fake_sse_client(url: str, headers: dict[str, str] | None = None, timeout: float = 5) -> Any:
         captured.update(url=url, headers=headers, timeout=timeout)
-        lifecycle.append("transport-enter")
-        try:
-            yield read_stream, write_stream
-        finally:
-            lifecycle.append("transport-exit")
+        return recording_transport(lifecycle)
 
-    session = AsyncMock()
-    session.initialize = AsyncMock()
-    session_context = AsyncMock()
-    session_context.__aenter__.return_value = session
-    session_context.__aexit__.return_value = False
+    def fake_client(transport: Any) -> FakeClient:
+        client = FakeClient(transport, lifecycle=lifecycle)
+        clients.append(client)
+        return client
 
     with (
         patch("gobby.mcp_proxy.transports.sse.sse_client", side_effect=fake_sse_client),
-        patch(
-            "gobby.mcp_proxy.transports.http.ClientSession",
-            return_value=session_context,
-        ) as client_session,
+        patch("gobby.mcp_proxy.transports.http.Client", side_effect=fake_client),
     ):
         result = await connection.connect()
-        assert result is session
+        assert result is clients[0].session
         assert connection.state == ConnectionState.CONNECTED
-        client_session.assert_called_once_with(read_stream, write_stream)
-        session.initialize.assert_awaited_once()
+        assert lifecycle == ["streams-open", "transport-enter", "handshake"]
 
         await connection.disconnect()
 
     assert connection.state == ConnectionState.DISCONNECTED
-    assert lifecycle == ["transport-enter", "transport-exit"]
+    assert lifecycle == [
+        "streams-open",
+        "transport-enter",
+        "handshake",
+        "streams-closed",
+        "transport-exit",
+    ]
+    # connect_timeout is not persisted, so the reloaded config carries the
+    # default 30s; the SSE client's 300s read timeout is the SDK default.
     assert captured == {
         "url": "https://example.test/sse",
         "headers": {"X-Tenant": "example"},
         "timeout": 30.0,
     }
-    session_context.__aexit__.assert_awaited_once_with(None, None, None)

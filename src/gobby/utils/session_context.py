@@ -1,7 +1,7 @@
 """Session context utilities for MCP tool calls.
 
 Provides a per-async-task ContextVar that holds the calling session's identity.
-Set by dispatch paths (HTTP routes, FastMCP, rule engine, pipeline executor)
+Set by dispatch paths (HTTP routes, MCPServer, rule engine, pipeline executor)
 before tool execution begins. Tools read via get_current_session_id() instead
 of accepting session_id as a parameter.
 

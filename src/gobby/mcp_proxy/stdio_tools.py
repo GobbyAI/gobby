@@ -1,4 +1,4 @@
-"""FastMCP tool registration for the stdio proxy."""
+"""MCPServer tool registration for the stdio proxy."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 
 from gobby.mcp_proxy._call_tool_wrapper import (
     CallToolWrapperInputError,
@@ -40,7 +40,7 @@ class CallWithWaitHeartbeat(Protocol):
         self,
         tool_call: Awaitable[dict[str, Any]],
         *,
-        ctx: Context[Any, Any, Any] | None,
+        ctx: Context[Any, Any] | None,
         tool_name: str,
         timeout: float | None,
     ) -> Awaitable[dict[str, Any]]: ...
@@ -64,7 +64,7 @@ def default_tool_registration_dependencies() -> ToolRegistrationDependencies:
 
 
 def register_proxy_tools(
-    mcp: FastMCP,
+    mcp: MCPServer,
     proxy: DaemonProxy,
     *,
     deps_factory: Callable[[], ToolRegistrationDependencies] | None = None,
@@ -129,7 +129,7 @@ def register_proxy_tools(
         project_id: str | None = None,
         intent: str | None = None,
         preflight_enabled: bool = True,
-        ctx: Context[Any, Any, Any] | None = None,
+        ctx: Context[Any, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Execute a tool on a connected MCP server — the primary way to reach

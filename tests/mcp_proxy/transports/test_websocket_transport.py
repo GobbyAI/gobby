@@ -1,19 +1,24 @@
 """Tests for WebSocket transport connection.
 
-Exercises the real WebSocketTransportConnection code paths. Only the MCP SDK's
-websocket_client and ClientSession are mocked (external I/O).
+Exercises the real WebSocketTransportConnection code paths. The MCP SDK's
+``Client`` is replaced by ``FakeClient`` for lifecycle tests; the raw
+``websocket_client`` frame codec is exercised against a fake socket.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from mcp.shared.message import SessionMessage
+from mcp.types import JSONRPCRequest, JSONRPCResponse
 
 from gobby.mcp_proxy.models import ConnectionState, MCPError, MCPServerConfig
 from gobby.mcp_proxy.transports.websocket import WebSocketTransportConnection, websocket_client
+from tests.mcp_proxy.transports._support import FakeClient, recording_transport
 
 pytestmark = pytest.mark.unit
 
@@ -35,17 +40,33 @@ def _make_config(**overrides: Any) -> MCPServerConfig:
     return MCPServerConfig(**defaults)
 
 
-def _mock_session() -> AsyncMock:
-    """Create a mock ClientSession with initialize()."""
-    session = AsyncMock()
-    session.initialize = AsyncMock()
-    session.list_tools = AsyncMock(return_value=[])
-    return session
+class _ClientHarness:
+    """Patch ``websocket_client`` and ``Client`` together, recording the lifecycle."""
 
+    def __init__(self, **client_kwargs: Any) -> None:
+        self.lifecycle: list[str] = []
+        self.transport_calls: list[tuple[str, dict[str, str] | None]] = []
+        self.clients: list[FakeClient] = []
+        self.client_kwargs = client_kwargs
+        self.transport_enter_error: BaseException | None = None
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
+    def fake_websocket_client(self, url: str, headers: dict[str, str] | None) -> Any:
+        self.transport_calls.append((url, headers))
+        return recording_transport(self.lifecycle, enter_error=self.transport_enter_error)
+
+    def fake_client(self, transport: Any) -> FakeClient:
+        client = FakeClient(transport, lifecycle=self.lifecycle, **self.client_kwargs)
+        self.clients.append(client)
+        return client
+
+    def patches(self) -> Any:
+        return (
+            patch(
+                "gobby.mcp_proxy.transports.websocket.websocket_client",
+                side_effect=self.fake_websocket_client,
+            ),
+            patch("gobby.mcp_proxy.transports.websocket.Client", side_effect=self.fake_client),
+        )
 
 
 @pytest.fixture
@@ -66,639 +87,412 @@ def conn(config: MCPServerConfig) -> WebSocketTransportConnection:
 class TestWebSocketInit:
     def test_initial_state(self, conn: WebSocketTransportConnection) -> None:
         assert conn.state == ConnectionState.DISCONNECTED
-        assert conn.is_connected is False
         assert conn.session is None
-        assert conn._session_context is None
-        assert conn._transport_context is None
+        assert conn._client_context is None
+        assert not conn.is_connected
 
-    def test_config_stored(self, conn: WebSocketTransportConnection) -> None:
-        assert conn.config.name == "test-ws"
-        assert conn.config.url == "ws://localhost:9090/ws"
-
-
-# ===========================================================================
-# connect() — already connected
-# ===========================================================================
+    def test_config_stored(
+        self, conn: WebSocketTransportConnection, config: MCPServerConfig
+    ) -> None:
+        assert conn.config is config
 
 
 class TestWebSocketConnectAlreadyConnected:
     async def test_returns_existing_session(self, conn: WebSocketTransportConnection) -> None:
-        fake_session = MagicMock()
+        session = AsyncMock()
         conn._state = ConnectionState.CONNECTED
-        conn._session = fake_session
+        conn._session = session
 
-        result = await conn.connect()
-        assert result is fake_session
-        assert conn.state == ConnectionState.CONNECTED
+        assert await conn.connect() is session
 
 
 # ===========================================================================
-# connect() — successful
+# Connect success
 # ===========================================================================
 
 
 class TestWebSocketConnectSuccess:
-    @patch("gobby.mcp_proxy.transports.websocket.ClientSession")
-    @patch("gobby.mcp_proxy.transports.websocket.websocket_client")
-    async def test_full_connect(
-        self,
-        mock_ws_client: MagicMock,
-        mock_client_session_cls: MagicMock,
-        conn: WebSocketTransportConnection,
-    ) -> None:
-        mock_read = MagicMock()
-        mock_write = MagicMock()
+    async def test_full_connect(self, conn: WebSocketTransportConnection) -> None:
+        harness = _ClientHarness()
+        ws_patch, client_patch = harness.patches()
+        with ws_patch, client_patch:
+            session = await conn.connect()
 
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aenter__ = AsyncMock(return_value=(mock_read, mock_write))
-        mock_ws_client.return_value = mock_transport_ctx
-
-        mock_session = _mock_session()
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_client_session_cls.return_value = mock_session_ctx
-
-        result = await conn.connect()
-
-        assert result is mock_session
         assert conn.state == ConnectionState.CONNECTED
-        assert conn.is_connected is True
+        assert conn.is_connected
+        assert session is harness.clients[0].session
+        client_context: object = conn._client_context
+        assert client_context is harness.clients[0]
+        assert harness.lifecycle == ["streams-open", "transport-enter", "handshake"]
+
+    async def test_connect_passes_url_and_headers(self) -> None:
+        conn = WebSocketTransportConnection(
+            _make_config(url="ws://example.test/mcp", headers={"Authorization": "Bearer t"})
+        )
+        harness = _ClientHarness()
+        ws_patch, client_patch = harness.patches()
+        with ws_patch, client_patch:
+            await conn.connect()
+
+        assert harness.transport_calls == [("ws://example.test/mcp", {"Authorization": "Bearer t"})]
+
+    async def test_client_wraps_the_websocket_transport(
+        self, conn: WebSocketTransportConnection
+    ) -> None:
+        harness = _ClientHarness()
+        ws_patch, client_patch = harness.patches()
+        with ws_patch, client_patch:
+            await conn.connect()
+
+        # The Client owns the transport context; the connection never enters it directly.
+        assert harness.clients[0].streams is not None
         assert conn._consecutive_failures == 0
-        assert conn._session is mock_session
-        assert conn._session_context is mock_session_ctx
-        assert conn._transport_context is mock_transport_ctx
-
-    @patch("gobby.mcp_proxy.transports.websocket.ClientSession")
-    @patch("gobby.mcp_proxy.transports.websocket.websocket_client")
-    async def test_connect_passes_url(
-        self,
-        mock_ws_client: MagicMock,
-        mock_client_session_cls: MagicMock,
-        conn: WebSocketTransportConnection,
-    ) -> None:
-        """Verify URL and empty headers from config are passed to websocket_client."""
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
-        mock_ws_client.return_value = mock_transport_ctx
-
-        mock_session = _mock_session()
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_client_session_cls.return_value = mock_session_ctx
-
-        await conn.connect()
-
-        mock_ws_client.assert_called_once_with("ws://localhost:9090/ws", None)
-        assert mock_ws_client.call_count == 1
-        assert mock_ws_client.call_args is not None
-
-    @patch("gobby.mcp_proxy.transports.websocket.ClientSession")
-    @patch("gobby.mcp_proxy.transports.websocket.websocket_client")
-    async def test_connect_passes_config_headers(
-        self,
-        mock_ws_client: MagicMock,
-        mock_client_session_cls: MagicMock,
-    ) -> None:
-        headers = {"Authorization": "Bearer secret", "X-Tenant": "acme"}
-        conn = WebSocketTransportConnection(_make_config(headers=headers))
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
-        mock_ws_client.return_value = mock_transport_ctx
-        mock_session = _mock_session()
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_client_session_cls.return_value = mock_session_ctx
-
-        result = await conn.connect()
-
-        mock_ws_client.assert_called_once_with("ws://localhost:9090/ws", headers)
-        assert result is mock_session
-        assert conn.state == ConnectionState.CONNECTED
-
-
-class TestWebSocketClientHeaders:
-    @patch("gobby.mcp_proxy.transports.websocket.ws_connect")
-    async def test_forwards_additional_headers(self, mock_ws_connect: MagicMock) -> None:
-        websocket = AsyncMock()
-        websocket.__aiter__.return_value = iter(())
-        websocket_context = AsyncMock()
-        websocket_context.__aenter__.return_value = websocket
-        mock_ws_connect.return_value = websocket_context
-        headers = {"Authorization": "Bearer secret"}
-
-        async with websocket_client("ws://localhost:9090/ws", headers):
-            assert mock_ws_connect.call_args.kwargs["additional_headers"] == headers
 
 
 # ===========================================================================
-# connect() — missing URL
+# Connect failures
 # ===========================================================================
 
 
 class TestWebSocketConnectMissingURL:
     async def test_missing_url_raises_mcp_error(self) -> None:
-        cfg = _make_config()
-        cfg.url = None
-        c = WebSocketTransportConnection(cfg)
+        conn = WebSocketTransportConnection(_make_config(url=None))
 
-        with pytest.raises(MCPError, match="WebSocket connection failed"):
-            await c.connect()
+        with pytest.raises(MCPError, match="URL is required"):
+            await conn.connect()
 
-        assert c.state == ConnectionState.FAILED
-        assert c._session is None
-        assert c._session_context is None
-        assert c._transport_context is None
-
-
-# ===========================================================================
-# connect() — transport entry failure
-# ===========================================================================
+        assert conn.state == ConnectionState.FAILED
+        assert conn._client_context is None
 
 
 class TestWebSocketConnectTransportFailure:
-    @patch("gobby.mcp_proxy.transports.websocket.websocket_client")
-    async def test_transport_aenter_failure(
-        self,
-        mock_ws_client: MagicMock,
-        conn: WebSocketTransportConnection,
-    ) -> None:
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aenter__ = AsyncMock(side_effect=ConnectionError("ws refused"))
-        mock_ws_client.return_value = mock_transport_ctx
-
-        with pytest.raises(MCPError, match="WebSocket connection failed.*ws refused"):
+    async def test_transport_enter_failure(self, conn: WebSocketTransportConnection) -> None:
+        harness = _ClientHarness()
+        harness.transport_enter_error = ConnectionRefusedError("refused")
+        ws_patch, client_patch = harness.patches()
+        with ws_patch, client_patch, pytest.raises(MCPError, match="refused"):
             await conn.connect()
 
         assert conn.state == ConnectionState.FAILED
-        assert conn._session is None
-        assert conn._transport_context is None
+        assert conn._client_context is None
+        assert conn.session is None
+        assert harness.clients[0].exited is False  # never entered, nothing to exit
+        assert harness.lifecycle == []
 
 
-# ===========================================================================
-# connect() — session entry failure
-# ===========================================================================
-
-
-class TestWebSocketConnectSessionFailure:
-    @patch("gobby.mcp_proxy.transports.websocket.ClientSession")
-    @patch("gobby.mcp_proxy.transports.websocket.websocket_client")
-    async def test_session_aenter_failure_cleans_transport(
-        self,
-        mock_ws_client: MagicMock,
-        mock_client_session_cls: MagicMock,
-        conn: WebSocketTransportConnection,
+class TestWebSocketConnectHandshakeFailure:
+    async def test_handshake_failure_unwinds_transport_via_client(
+        self, conn: WebSocketTransportConnection
     ) -> None:
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
-        mock_transport_ctx.__aexit__ = AsyncMock(return_value=False)
-        mock_ws_client.return_value = mock_transport_ctx
-
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aenter__ = AsyncMock(side_effect=RuntimeError("session init failed"))
-        mock_client_session_cls.return_value = mock_session_ctx
-
-        with pytest.raises(MCPError, match="WebSocket connection failed.*session init failed"):
+        harness = _ClientHarness(handshake_error=RuntimeError("handshake boom"))
+        ws_patch, client_patch = harness.patches()
+        with ws_patch, client_patch, pytest.raises(MCPError, match="handshake boom"):
             await conn.connect()
 
         assert conn.state == ConnectionState.FAILED
-        mock_transport_ctx.__aexit__.assert_awaited_once()
-
-
-# ===========================================================================
-# connect() — initialize() failure
-# ===========================================================================
-
-
-class TestWebSocketConnectInitializeFailure:
-    @patch("gobby.mcp_proxy.transports.websocket.ClientSession")
-    @patch("gobby.mcp_proxy.transports.websocket.websocket_client")
-    async def test_initialize_failure_cleans_both(
-        self,
-        mock_ws_client: MagicMock,
-        mock_client_session_cls: MagicMock,
-        conn: WebSocketTransportConnection,
-    ) -> None:
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
-        mock_transport_ctx.__aexit__ = AsyncMock(return_value=False)
-        mock_ws_client.return_value = mock_transport_ctx
-
-        mock_session = _mock_session()
-        mock_session.initialize = AsyncMock(side_effect=ConnectionError("handshake failed"))
-
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
-        mock_client_session_cls.return_value = mock_session_ctx
-
-        with pytest.raises(MCPError, match="WebSocket connection failed.*handshake failed"):
-            await conn.connect()
-
-        assert conn.state == ConnectionState.FAILED
-        mock_session_ctx.__aexit__.assert_awaited_once()
-        mock_transport_ctx.__aexit__.assert_awaited_once()
-
-
-# ===========================================================================
-# connect() — cleanup errors during failure are suppressed
-# ===========================================================================
+        assert conn._client_context is None
+        # Client.__aenter__ already unwound the transport; no double exit.
+        assert harness.lifecycle == [
+            "streams-open",
+            "transport-enter",
+            "streams-closed",
+            "transport-exit",
+        ]
+        assert harness.clients[0].exited is False
 
 
 class TestWebSocketConnectCancellation:
-    """Cancellation during startup releases all entered resources."""
-
-    @patch("gobby.mcp_proxy.transports.websocket.ClientSession")
-    @patch("gobby.mcp_proxy.transports.websocket.websocket_client")
-    async def test_initialize_cancellation_cleans_both_and_propagates(
-        self,
-        mock_ws_client: MagicMock,
-        mock_client_session_cls: MagicMock,
-        conn: WebSocketTransportConnection,
+    async def test_handshake_cancellation_propagates_and_resets(
+        self, conn: WebSocketTransportConnection
     ) -> None:
-        initialize_started = asyncio.Event()
+        harness = _ClientHarness(handshake_error=asyncio.CancelledError())
+        ws_patch, client_patch = harness.patches()
+        with ws_patch, client_patch, pytest.raises(asyncio.CancelledError):
+            await conn.connect()
 
-        async def wait_for_cancellation() -> None:
-            initialize_started.set()
-            await asyncio.Future()
-
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
-        mock_transport_ctx.__aexit__ = AsyncMock(return_value=False)
-        mock_ws_client.return_value = mock_transport_ctx
-
-        mock_session = _mock_session()
-        mock_session.initialize = AsyncMock(side_effect=wait_for_cancellation)
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
-        mock_client_session_cls.return_value = mock_session_ctx
-
-        connect_task = asyncio.create_task(conn.connect())
-        await initialize_started.wait()
-        connect_task.cancel()
-
-        with pytest.raises(asyncio.CancelledError):
-            await connect_task
-
-        mock_session_ctx.__aexit__.assert_awaited_once()
-        mock_transport_ctx.__aexit__.assert_awaited_once()
         assert conn.state == ConnectionState.DISCONNECTED
-        assert conn.is_connected is False
-        assert conn._session is None
-        assert conn._session_context is None
-        assert conn._transport_context is None
-
-
-class TestWebSocketConnectCleanupErrors:
-    @patch("gobby.mcp_proxy.transports.websocket.ClientSession")
-    @patch("gobby.mcp_proxy.transports.websocket.websocket_client")
-    async def test_session_cleanup_error_suppressed(
-        self,
-        mock_ws_client: MagicMock,
-        mock_client_session_cls: MagicMock,
-        conn: WebSocketTransportConnection,
-    ) -> None:
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
-        mock_transport_ctx.__aexit__ = AsyncMock(return_value=False)
-        mock_ws_client.return_value = mock_transport_ctx
-
-        mock_session = _mock_session()
-        mock_session.initialize = AsyncMock(side_effect=ValueError("init fail"))
-
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session_ctx.__aexit__ = AsyncMock(side_effect=RuntimeError("cleanup boom"))
-        mock_client_session_cls.return_value = mock_session_ctx
-
-        with pytest.raises(MCPError, match="init fail"):
-            await conn.connect()
-
-        assert conn.state == ConnectionState.FAILED
-
-    @patch("gobby.mcp_proxy.transports.websocket.ClientSession")
-    @patch("gobby.mcp_proxy.transports.websocket.websocket_client")
-    async def test_transport_cleanup_error_suppressed(
-        self,
-        mock_ws_client: MagicMock,
-        mock_client_session_cls: MagicMock,
-        conn: WebSocketTransportConnection,
-    ) -> None:
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
-        mock_transport_ctx.__aexit__ = AsyncMock(side_effect=OSError("transport cleanup fail"))
-        mock_ws_client.return_value = mock_transport_ctx
-
-        mock_session = _mock_session()
-        mock_session.initialize = AsyncMock(side_effect=ValueError("init fail"))
-
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
-        mock_client_session_cls.return_value = mock_session_ctx
-
-        with pytest.raises(MCPError, match="init fail"):
-            await conn.connect()
-
-        assert conn.state == ConnectionState.FAILED
-
-
-# ===========================================================================
-# connect() — MCPError not double-wrapped
-# ===========================================================================
+        assert conn._client_context is None
+        assert conn.session is None
 
 
 class TestWebSocketConnectMCPErrorPassthrough:
-    @patch("gobby.mcp_proxy.transports.websocket.websocket_client")
-    async def test_mcp_error_re_raised_directly(
-        self,
-        mock_ws_client: MagicMock,
-        conn: WebSocketTransportConnection,
-    ) -> None:
-        original = MCPError("original ws error")
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aenter__ = AsyncMock(side_effect=original)
-        mock_ws_client.return_value = mock_transport_ctx
-
-        with pytest.raises(MCPError, match="original ws error") as exc_info:
+    async def test_mcp_error_not_double_wrapped(self, conn: WebSocketTransportConnection) -> None:
+        harness = _ClientHarness(handshake_error=MCPError("already wrapped"))
+        ws_patch, client_patch = harness.patches()
+        with ws_patch, client_patch, pytest.raises(MCPError) as excinfo:
             await conn.connect()
 
-        assert exc_info.value is original
-
-
-# ===========================================================================
-# connect() — empty error message
-# ===========================================================================
+        assert str(excinfo.value) == "already wrapped"
 
 
 class TestWebSocketConnectEmptyErrorMessage:
-    @patch("gobby.mcp_proxy.transports.websocket.websocket_client")
-    async def test_empty_str_exception_uses_type_name(
-        self,
-        mock_ws_client: MagicMock,
-        conn: WebSocketTransportConnection,
-    ) -> None:
+    async def test_empty_error_uses_type_name(self, conn: WebSocketTransportConnection) -> None:
         class SilentError(Exception):
             def __str__(self) -> str:
                 return ""
 
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aenter__ = AsyncMock(side_effect=SilentError())
-        mock_ws_client.return_value = mock_transport_ctx
-
-        with pytest.raises(MCPError, match="SilentError.*Connection closed or timed out"):
+        harness = _ClientHarness(handshake_error=SilentError())
+        ws_patch, client_patch = harness.patches()
+        with ws_patch, client_patch, pytest.raises(MCPError, match="SilentError"):
             await conn.connect()
 
 
 # ===========================================================================
-# disconnect() — no contexts
+# _cleanup_connect_attempt
 # ===========================================================================
 
 
-class TestWebSocketDisconnectNoContexts:
+class TestWebSocketCleanupConnectAttempt:
+    async def test_exit_error_suppressed(self, conn: WebSocketTransportConnection) -> None:
+        client = FakeClient(recording_transport([]), exit_error=RuntimeError("exit boom"))
+        conn._client_context = client  # type: ignore[assignment]
+        conn._session = AsyncMock()
+
+        await conn._cleanup_connect_attempt(client_entered=True)
+
+        assert client.exited
+        assert conn._client_context is None
+        assert conn.session is None
+        assert conn.state == ConnectionState.DISCONNECTED
+
+    async def test_exit_timeout_suppressed(self, conn: WebSocketTransportConnection) -> None:
+        client = FakeClient(recording_transport([]), exit_delay=5.0)
+        conn._client_context = client  # type: ignore[assignment]
+
+        with patch(
+            "gobby.mcp_proxy.transports.websocket.asyncio.wait_for", side_effect=TimeoutError
+        ):
+            await conn._cleanup_connect_attempt(client_entered=True)
+
+        assert conn._client_context is None
+
+    async def test_not_entered_skips_exit(self, conn: WebSocketTransportConnection) -> None:
+        client = FakeClient(recording_transport([]))
+        conn._client_context = client  # type: ignore[assignment]
+
+        await conn._cleanup_connect_attempt(client_entered=False)
+
+        assert client.exited is False
+        assert conn._client_context is None
+
+    async def test_cancelled_exit_is_re_raised_after_reset(
+        self, conn: WebSocketTransportConnection
+    ) -> None:
+        client = FakeClient(recording_transport([]), exit_error=asyncio.CancelledError())
+        conn._client_context = client  # type: ignore[assignment]
+
+        with pytest.raises(asyncio.CancelledError):
+            await conn._cleanup_connect_attempt(client_entered=True)
+
+        assert conn._client_context is None
+        assert conn.state == ConnectionState.DISCONNECTED
+
+
+# ===========================================================================
+# Disconnect
+# ===========================================================================
+
+
+class TestWebSocketDisconnect:
     async def test_disconnect_clean_state(self, conn: WebSocketTransportConnection) -> None:
         await conn.disconnect()
+
         assert conn.state == ConnectionState.DISCONNECTED
-        assert conn._session_context is None
-        assert conn._transport_context is None
-        assert conn._session is None
+        assert conn._client_context is None
 
-
-# ===========================================================================
-# disconnect() — happy path with both contexts
-# ===========================================================================
-
-
-class TestWebSocketDisconnectBothContexts:
-    async def test_cleans_both_contexts(self, conn: WebSocketTransportConnection) -> None:
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
-        conn._session_context = mock_session_ctx
-        conn._session = MagicMock()
-
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aexit__ = AsyncMock(return_value=False)
-        conn._transport_context = mock_transport_ctx
+    async def test_disconnect_exits_client(self, conn: WebSocketTransportConnection) -> None:
+        lifecycle: list[str] = []
+        client = FakeClient(recording_transport(lifecycle), lifecycle=lifecycle)
+        await client.__aenter__()
+        conn._client_context = client  # type: ignore[assignment]
+        conn._session = client.session
+        conn._state = ConnectionState.CONNECTED
 
         await conn.disconnect()
 
-        assert conn._session_context is None
-        assert conn._session is None
-        assert conn._transport_context is None
+        assert client.exited
+        assert lifecycle[-2:] == ["streams-closed", "transport-exit"]
+        assert conn._client_context is None
+        assert conn.session is None
         assert conn.state == ConnectionState.DISCONNECTED
 
-        mock_session_ctx.__aexit__.assert_awaited_once()
-        mock_transport_ctx.__aexit__.assert_awaited_once()
+    async def test_timeout_handled(self, conn: WebSocketTransportConnection) -> None:
+        conn._client_context = FakeClient(recording_transport([]), exit_delay=5.0)  # type: ignore[assignment]
 
+        with patch(
+            "gobby.mcp_proxy.transports.websocket.asyncio.wait_for", side_effect=TimeoutError
+        ):
+            await conn.disconnect()
 
-# ===========================================================================
-# disconnect() — session timeout
-# ===========================================================================
-
-
-class TestWebSocketDisconnectSessionTimeout:
-    async def test_session_timeout_handled(self, conn: WebSocketTransportConnection) -> None:
-        async def slow_exit(*args: Any) -> None:
-            raise TimeoutError()
-
-        mock_session_ctx = MagicMock()
-        mock_session_ctx.__aexit__ = slow_exit
-        conn._session_context = mock_session_ctx
-        conn._session = MagicMock()
-
-        await conn.disconnect()
-        assert conn._session_context is None
-        assert conn._session is None
+        assert conn._client_context is None
         assert conn.state == ConnectionState.DISCONNECTED
 
-
-# ===========================================================================
-# disconnect() — session RuntimeError (cancel scope)
-# ===========================================================================
-
-
-class TestWebSocketDisconnectSessionRuntimeError:
-    async def test_cancel_scope_error_suppressed(self, conn: WebSocketTransportConnection) -> None:
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aexit__ = AsyncMock(side_effect=RuntimeError("cannot exit cancel scope"))
-        conn._session_context = mock_session_ctx
-        conn._session = MagicMock()
-
-        await conn.disconnect()
-        assert conn._session_context is None
-        assert conn.state == ConnectionState.DISCONNECTED
-
-    async def test_other_runtime_error_handled(self, conn: WebSocketTransportConnection) -> None:
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aexit__ = AsyncMock(side_effect=RuntimeError("something else entirely"))
-        conn._session_context = mock_session_ctx
-        conn._session = MagicMock()
-
-        await conn.disconnect()
-        assert conn._session_context is None
-        assert conn.state == ConnectionState.DISCONNECTED
-
-
-# ===========================================================================
-# disconnect() — session generic Exception
-# ===========================================================================
-
-
-class TestWebSocketDisconnectSessionGenericError:
-    async def test_generic_exception_handled(self, conn: WebSocketTransportConnection) -> None:
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aexit__ = AsyncMock(side_effect=ValueError("weird"))
-        conn._session_context = mock_session_ctx
-        conn._session = MagicMock()
-
-        await conn.disconnect()
-        assert conn._session_context is None
-        assert conn.state == ConnectionState.DISCONNECTED
-
-
-# ===========================================================================
-# disconnect() — transport timeout
-# ===========================================================================
-
-
-class TestWebSocketDisconnectTransportTimeout:
-    async def test_transport_timeout_handled(self, conn: WebSocketTransportConnection) -> None:
-        async def slow_exit(*args: Any) -> None:
-            raise TimeoutError()
-
-        mock_transport_ctx = MagicMock()
-        mock_transport_ctx.__aexit__ = slow_exit
-        conn._transport_context = mock_transport_ctx
-
-        await conn.disconnect()
-        assert conn._transport_context is None
-        assert conn.state == ConnectionState.DISCONNECTED
-
-
-# ===========================================================================
-# disconnect() — transport RuntimeError (cancel scope)
-# ===========================================================================
-
-
-class TestWebSocketDisconnectTransportRuntimeError:
-    async def test_cancel_scope_error_suppressed(self, conn: WebSocketTransportConnection) -> None:
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aexit__ = AsyncMock(side_effect=RuntimeError("cancel scope blah"))
-        conn._transport_context = mock_transport_ctx
-
-        await conn.disconnect()
-        assert conn._transport_context is None
-        assert conn.state == ConnectionState.DISCONNECTED
-
-    async def test_other_runtime_error_logged(self, conn: WebSocketTransportConnection) -> None:
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aexit__ = AsyncMock(
-            side_effect=RuntimeError("unexpected transport error")
+    async def test_cancel_scope_runtime_error_suppressed(
+        self, conn: WebSocketTransportConnection, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        conn._client_context = FakeClient(  # type: ignore[assignment]
+            recording_transport([]),
+            exit_error=RuntimeError("Attempted to exit cancel scope in a different task"),
         )
-        conn._transport_context = mock_transport_ctx
 
-        await conn.disconnect()
-        assert conn._transport_context is None
-        assert conn.state == ConnectionState.DISCONNECTED
+        with caplog.at_level("WARNING", logger="gobby.mcp.client"):
+            await conn.disconnect()
 
+        assert not [r for r in caplog.records if "Error closing client" in r.message]
+        assert conn._client_context is None
 
-# ===========================================================================
-# disconnect() — transport generic Exception
-# ===========================================================================
+    async def test_other_runtime_error_logged(
+        self, conn: WebSocketTransportConnection, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        conn._client_context = FakeClient(  # type: ignore[assignment]
+            recording_transport([]), exit_error=RuntimeError("something else")
+        )
 
+        with caplog.at_level("WARNING", logger="gobby.mcp.client"):
+            await conn.disconnect()
 
-class TestWebSocketDisconnectTransportGenericError:
+        assert [r for r in caplog.records if "Error closing client" in r.message]
+        assert conn._client_context is None
+
     async def test_generic_exception_handled(self, conn: WebSocketTransportConnection) -> None:
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aexit__ = AsyncMock(side_effect=OSError("broken pipe"))
-        conn._transport_context = mock_transport_ctx
+        conn._client_context = FakeClient(  # type: ignore[assignment]
+            recording_transport([]), exit_error=ValueError("bad")
+        )
 
         await conn.disconnect()
-        assert conn._transport_context is None
+
+        assert conn._client_context is None
         assert conn.state == ConnectionState.DISCONNECTED
 
 
 # ===========================================================================
-# Full connect -> disconnect cycle
+# Full lifecycle & base properties
 # ===========================================================================
 
 
 class TestWebSocketFullLifecycle:
-    @patch("gobby.mcp_proxy.transports.websocket.ClientSession")
-    @patch("gobby.mcp_proxy.transports.websocket.websocket_client")
-    async def test_connect_then_disconnect(
-        self,
-        mock_ws_client: MagicMock,
-        mock_client_session_cls: MagicMock,
-        conn: WebSocketTransportConnection,
-    ) -> None:
-        mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
-        mock_transport_ctx.__aexit__ = AsyncMock(return_value=False)
-        mock_ws_client.return_value = mock_transport_ctx
+    async def test_connect_then_disconnect(self, conn: WebSocketTransportConnection) -> None:
+        harness = _ClientHarness()
+        ws_patch, client_patch = harness.patches()
+        with ws_patch, client_patch:
+            await conn.connect()
+            assert conn.is_connected
+            await conn.disconnect()
 
-        mock_session = _mock_session()
-        mock_session_ctx = AsyncMock()
-        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
-        mock_client_session_cls.return_value = mock_session_ctx
-
-        # Connect
-        result = await conn.connect()
-        assert result is mock_session
-        assert conn.state == ConnectionState.CONNECTED
-        assert conn.is_connected is True
-
-        # Disconnect
-        await conn.disconnect()
         assert conn.state == ConnectionState.DISCONNECTED
-        assert conn.is_connected is False
-        assert conn._session is None
-        assert conn._session_context is None
-        assert conn._transport_context is None
-
-
-# ===========================================================================
-# Base class properties exercised through WebSocketTransportConnection
-# ===========================================================================
+        assert conn.session is None
+        assert harness.lifecycle == [
+            "streams-open",
+            "transport-enter",
+            "handshake",
+            "streams-closed",
+            "transport-exit",
+        ]
 
 
 class TestWebSocketBaseProperties:
-    def test_is_connected_requires_both_state_and_session(
+    def test_is_connected_requires_state_and_session(
         self, conn: WebSocketTransportConnection
     ) -> None:
+        assert not conn.is_connected
         conn._state = ConnectionState.CONNECTED
-        conn._session = None
-        assert conn.is_connected is False
-
-        conn._state = ConnectionState.DISCONNECTED
-        conn._session = MagicMock()
-        assert conn.is_connected is False
-
-        conn._state = ConnectionState.CONNECTED
-        assert conn.is_connected is True
+        assert not conn.is_connected
+        conn._session = AsyncMock()
+        assert conn.is_connected
 
     async def test_health_check_not_connected(self, conn: WebSocketTransportConnection) -> None:
-        result = await conn.health_check()
-        assert result is False
+        assert await conn.health_check() is False
 
     async def test_health_check_connected_success(self, conn: WebSocketTransportConnection) -> None:
-        mock_session = AsyncMock()
-        mock_session.list_tools = AsyncMock(return_value=[])
+        session = AsyncMock()
+        session.list_tools = AsyncMock(return_value=MagicMock(tools=[]))
         conn._state = ConnectionState.CONNECTED
-        conn._session = mock_session
+        conn._session = session
 
-        result = await conn.health_check()
-        assert result is True
-        assert conn._consecutive_failures == 0
-        assert conn._last_health_check is not None
+        assert await conn.health_check() is True
+        assert conn.last_health_error is None
 
     async def test_health_check_connected_failure(self, conn: WebSocketTransportConnection) -> None:
-        mock_session = AsyncMock()
-        mock_session.list_tools = AsyncMock(side_effect=Exception("boom"))
+        session = AsyncMock()
+        session.list_tools = AsyncMock(side_effect=RuntimeError("down"))
         conn._state = ConnectionState.CONNECTED
-        conn._session = mock_session
+        conn._session = session
 
-        result = await conn.health_check()
-        assert result is False
-        assert conn._consecutive_failures == 1
+        assert await conn.health_check() is False
+        assert conn.last_health_error == "RuntimeError: down"
+
+
+# ===========================================================================
+# websocket_client frame codec
+# ===========================================================================
+
+
+class _FakeSocket:
+    """Async iterator of inbound frames that records outbound sends."""
+
+    def __init__(self, inbound: list[str]) -> None:
+        self._inbound = inbound
+        self.sent: list[str] = []
+        self.closed = asyncio.Event()
+        self.sent_any = asyncio.Event()
+
+    def __aiter__(self) -> _FakeSocket:
+        return self
+
+    async def __anext__(self) -> str:
+        if self._inbound:
+            return self._inbound.pop(0)
+        await self.closed.wait()
+        raise StopAsyncIteration
+
+    async def send(self, payload: str) -> None:
+        self.sent.append(payload)
+        self.sent_any.set()
+
+
+def _patched_ws_connect(socket: _FakeSocket) -> Any:
+    context = AsyncMock()
+    context.__aenter__.return_value = socket
+    context.__aexit__.return_value = False
+    return patch("gobby.mcp_proxy.transports.websocket.ws_connect", return_value=context)
+
+
+class TestWebSocketClientCodec:
+    async def test_forwards_additional_headers_and_subprotocol(self) -> None:
+        socket = _FakeSocket([])
+        headers = {"Authorization": "Bearer secret"}
+        with _patched_ws_connect(socket) as mock_ws_connect:
+            async with websocket_client("ws://localhost:9090/ws", headers):
+                socket.closed.set()
+            assert mock_ws_connect.call_args.kwargs["additional_headers"] == headers
+            assert mock_ws_connect.call_args.kwargs["subprotocols"] == ["mcp"]
+
+    async def test_inbound_frames_validate_to_jsonrpc_messages(self) -> None:
+        socket = _FakeSocket(
+            [json.dumps({"jsonrpc": "2.0", "id": 7, "result": {"tools": []}}), "{not json"]
+        )
+        with _patched_ws_connect(socket):
+            async with websocket_client("ws://localhost:9090/ws", None) as (read, _write):
+                first = await read.receive()
+                second = await read.receive()
+                socket.closed.set()
+
+        assert isinstance(first, SessionMessage)
+        assert isinstance(first.message, JSONRPCResponse)
+        assert first.message.id == 7
+        # Malformed frames surface as exceptions on the read stream, not crashes.
+        assert isinstance(second, Exception)
+
+    async def test_outbound_messages_serialize_camel_case_without_nulls(self) -> None:
+        socket = _FakeSocket([])
+        with _patched_ws_connect(socket):
+            async with websocket_client("ws://localhost:9090/ws", None) as (_read, write):
+                await write.send(
+                    SessionMessage(
+                        JSONRPCRequest(jsonrpc="2.0", id=1, method="tools/list", params=None)
+                    )
+                )
+                await asyncio.wait_for(socket.sent_any.wait(), timeout=5)
+                socket.closed.set()
+
+        assert socket.sent == ['{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}']

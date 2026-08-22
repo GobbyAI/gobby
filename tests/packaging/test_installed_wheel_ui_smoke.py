@@ -12,6 +12,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -38,16 +39,28 @@ def _resolve_wheel_path() -> Path:
     return wheel.resolve()
 
 
-def _require_database_url() -> str:
-    database_url = os.environ.get("DATABASE_URL")
-    if not database_url:
-        pytest.fail(
-            "DATABASE_URL must point at an isolated PostgreSQL database for the "
-            "installed-wheel UI smoke test"
-        )
-    if not database_url.startswith(("postgresql://", "postgres://")):
-        pytest.fail("DATABASE_URL must use PostgreSQL for the installed-wheel UI smoke test")
-    return database_url
+def _postgres_url_for_schema(database_url: str, schema: str) -> str:
+    separator = "&" if "?" in database_url else "?"
+    return f"{database_url}{separator}options=-csearch_path%3D{schema}"
+
+
+def _seed_runtime_state(postgres_db: Any) -> None:
+    """Seed the PostgreSQL-owned runtime config: production UI on, test-only services off."""
+    from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
+
+    mutations = ConfigMutations(postgres_db)
+    mutations.patch_internal(
+        expected_revision=mutations.repository.current_revision(),
+        patch=ConfigPatch(
+            values={
+                "test_mode": True,
+                "ui.enabled": True,
+                "ui.mode": "production",
+                "code_index.enabled": False,
+            }
+        ),
+        source="wheel-ui-smoke",
+    )
 
 
 def _venv_python(venv: Path) -> Path:
@@ -109,6 +122,7 @@ def _write_config(
                 # A local bootstrap owns its datastores and must name their files root.
                 f'files_home: "{files_home}"',
                 f"daemon_port: {http_port}",
+                "test_mode: true",
                 'bind_host: "127.0.0.1"',
                 f"websocket_port: {ws_port}",
                 "ui_port: 60889",
@@ -161,11 +175,21 @@ def _wait_for_index(http_port: int, process: subprocess.Popen[object], log_path:
     pytest.fail(f"timed out waiting for {url}: {last_error}\n{log_path.read_text()}")
 
 
-def test_installed_wheel_serves_packaged_index_html(tmp_path: Path) -> None:
-    """Install a built wheel in an isolated venv and assert it serves packaged index.html."""
+def test_installed_wheel_serves_packaged_index_html(
+    tmp_path: Path,
+    postgres_database_url: str,
+    postgres_schema: str,
+    postgres_db: Any,
+) -> None:
+    """Install a built wheel in an isolated venv and assert it serves packaged index.html.
+
+    The daemon only verifies the schema it is handed, so the migrated, user-seeded
+    worker schema from the shared Postgres fixtures stands in for a ``gobby install``.
+    """
     _require_smoke_enabled()
     wheel = _resolve_wheel_path()
-    database_url = _require_database_url()
+    _seed_runtime_state(postgres_db)
+    database_url = _postgres_url_for_schema(postgres_database_url, postgres_schema)
 
     venv = tmp_path / "venv"
     subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True, timeout=120)

@@ -232,7 +232,7 @@ def test_proxy_identity_uses_nested_route_and_wrapper_echo_is_skipped() -> None:
 
 def test_content_only_call_tool_error_produces_nonempty_snippet() -> None:
     result = CallToolResult(
-        isError=True,
+        is_error=True,
         content=[TextContent(type="text", text="content-only failure")],
     )
 
@@ -258,7 +258,7 @@ def test_error_snippet_covers_supported_failure_shapes(
 
 def test_raw_result_classifier_covers_proxy_result_shapes() -> None:
     content_error = CallToolResult(
-        isError=True,
+        is_error=True,
         content=[TextContent(type="text", text="failed")],
     )
 

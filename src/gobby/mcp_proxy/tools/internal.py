@@ -3,7 +3,7 @@ Internal tool registry for Gobby built-in tools.
 
 Provides a registry system for internal tools that can be accessed via the
 downstream proxy pattern (call_tool, list_tools, get_tool_schema) without
-being registered directly on the FastMCP server.
+being registered directly on the MCPServer.
 
 This enables progressive discovery for internal tools and reduces the
 number of tools exposed on the main MCP server.

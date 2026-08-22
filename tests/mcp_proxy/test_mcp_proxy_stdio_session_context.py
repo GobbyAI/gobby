@@ -200,11 +200,9 @@ async def test_variable_tools_send_requested_session_as_target_and_header() -> N
 
     set_call, get_call = client.request.call_args_list
     assert set_call.kwargs["headers"]["X-Gobby-Session-Id"] == "new-session"
-    assert set_call.kwargs["json"] == {
-        "name": "flag",
-        "value": True,
-        "session_id": "new-session",
-    }
+    assert set_call.args[1].endswith("/api/sessions/new-session/variables/set")
+    assert set_call.kwargs["json"] == {"name": "flag", "value": True, "scope": "session"}
     assert get_call.kwargs["headers"]["X-Gobby-Session-Id"] == "new-session"
-    assert get_call.kwargs["json"] == {"name": "flag", "session_id": "new-session"}
+    assert get_call.args[1].endswith("/api/sessions/new-session/variables/get")
+    assert get_call.kwargs["json"] == {"name": "flag", "scope": "session"}
     assert not hasattr(proxy, "_session_id")

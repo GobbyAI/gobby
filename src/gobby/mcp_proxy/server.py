@@ -9,7 +9,7 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager
 from typing import Annotated, Any, Literal
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.types import CallToolResult, TextContent
 from pydantic import Field
 
@@ -35,6 +35,7 @@ from gobby.utils.session_context import (
     reset_seeded_contexts,
     resolve_and_seed_contexts,
 )
+from gobby.utils.version import get_version
 
 logger = logging.getLogger("gobby.mcp.server")
 
@@ -233,7 +234,7 @@ class GobbyDaemonTools:
         Pass `arguments` as a dict; `session_id` is the caller's session ref
         (#N or UUID) and `project_id` targets another project. Full call-context
         semantics live in the server instructions. Errors return a
-        CallToolResult with isError=True so MCP clients see real failures.
+        CallToolResult with is_error=True so MCP clients see real failures.
         """
         try:
             canonical = canonicalize_call_tool_wrapper(
@@ -247,7 +248,7 @@ class GobbyDaemonTools:
         except CallToolWrapperInputError as exc:
             return CallToolResult(
                 content=[TextContent(type="text", text=f"Error: {exc}")],
-                isError=True,
+                is_error=True,
             )
 
         server_name = canonical.server_name
@@ -265,7 +266,7 @@ class GobbyDaemonTools:
                         text="Error: 'server_name' and 'tool_name' are required.",
                     )
                 ],
-                isError=True,
+                is_error=True,
             )
 
         # Infrastructure precondition: explicit project_id requires a DB.
@@ -279,7 +280,7 @@ class GobbyDaemonTools:
                         text="Error: project_id provided but no database available to resolve it.",
                     )
                 ],
-                isError=True,
+                is_error=True,
             )
 
         db = self._session_manager.db if self._session_manager else None
@@ -306,7 +307,7 @@ class GobbyDaemonTools:
                         "Use a valid project UUID or name.",
                     )
                 ],
-                isError=True,
+                is_error=True,
             )
         if session_id and tokens.resolved_session_id is None:
             reset_seeded_contexts(tokens)
@@ -318,7 +319,7 @@ class GobbyDaemonTools:
                         "Use a valid session UUID or local #N reference.",
                     )
                 ],
-                isError=True,
+                is_error=True,
             )
         # Propagate only the resolved platform UUID. Falling back to the raw
         # ref would re-poison workflow checks and tool filters.
@@ -375,7 +376,7 @@ class GobbyDaemonTools:
 
             return CallToolResult(
                 content=[TextContent(type="text", text="\n".join(parts))],
-                isError=True,
+                is_error=True,
             )
 
         if isinstance(result, dict):
@@ -592,9 +593,9 @@ class GobbyDaemonTools:
     # (see src/gobby/mcp_proxy/tools/plugins/)
 
 
-def create_mcp_server(tools_handler: GobbyDaemonTools) -> FastMCP:
-    """Create the FastMCP server instance for the HTTP daemon."""
-    mcp = FastMCP("gobby", instructions=build_gobby_instructions())
+def create_mcp_server(tools_handler: GobbyDaemonTools) -> MCPServer:
+    """Create the MCPServer instance for the HTTP daemon."""
+    mcp = MCPServer("gobby", instructions=build_gobby_instructions(), version=get_version())
 
     # System tools
     mcp.add_tool(tools_handler.status)

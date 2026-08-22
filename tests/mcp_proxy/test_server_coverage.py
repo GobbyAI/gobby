@@ -175,7 +175,7 @@ class TestCallToolSessionResolution:
             rec.levelno >= logging.WARNING and "could not resolve session ref" in rec.message
             for rec in caplog.records
         )
-        assert result.isError is True
+        assert result.is_error is True
         assert "session_id" in result.content[0].text
         assert "not found" in result.content[0].text
         handler.tool_proxy.call_tool.assert_not_awaited()

@@ -4,7 +4,7 @@ import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
-from mcp import ClientSession
+from mcp.client import Client, ClientSession
 
 from gobby.mcp_proxy.models import ConnectionState, MCPServerConfig
 
@@ -40,7 +40,7 @@ class BaseTransportConnection:
         """
         self.config = config
         self._session: Any | None = None  # ClientSession
-        self._transport_context: Any | None = None  # Transport-specific context manager
+        self._client_context: Client | None = None  # Owns transport + session lifecycle
         self._state = ConnectionState.DISCONNECTED
         self._last_health_check: datetime | None = None
         self._last_health_error: str | None = None

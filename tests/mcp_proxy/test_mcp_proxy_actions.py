@@ -322,7 +322,7 @@ class TestAddMcpServer:
                         SimpleNamespace(
                             name="search",
                             description="Search stored documents",
-                            inputSchema={"type": "object"},
+                            input_schema={"type": "object"},
                         )
                     ]
                 )

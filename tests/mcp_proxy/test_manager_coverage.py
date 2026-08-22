@@ -549,7 +549,7 @@ class TestMCPClientManagerAddServer:
         mock_tool = MagicMock()
         mock_tool.name = "test-tool"
         mock_tool.description = "Test description"
-        mock_tool.inputSchema = {"type": "object"}
+        mock_tool.input_schema = {"type": "object"}
         mock_session.list_tools.return_value = MagicMock(tools=[mock_tool])
 
         with patch.object(manager, "_connect_server", return_value=mock_session):
@@ -621,7 +621,7 @@ class TestMCPClientManagerAddServer:
         mock_tool = MagicMock()
         mock_tool.name = "enabled-tool"
         mock_tool.description = "Enabled description"
-        mock_tool.inputSchema = {"type": "object"}
+        mock_tool.input_schema = {"type": "object"}
         mock_session.list_tools.return_value = MagicMock(tools=[mock_tool])
         connect_server = AsyncMock(return_value=mock_session)
 
@@ -1538,7 +1538,7 @@ class TestMCPClientManagerListTools:
         mock_tool = MagicMock()
         mock_tool.name = "test-tool"
         mock_tool.description = "Test tool description"
-        mock_tool.inputSchema = {"type": "object"}
+        mock_tool.input_schema = {"type": "object"}
         mock_session.list_tools.return_value = MagicMock(tools=[mock_tool])
 
         manager.health["test-server"] = MCPConnectionHealth(
@@ -1554,32 +1554,6 @@ class TestMCPClientManagerListTools:
         assert result["test-server"][0]["name"] == "test-tool"
 
     @pytest.mark.asyncio
-    async def test_list_tools_handles_missing_tools_attr(self) -> None:
-        """Test list_tools handles result without tools attribute."""
-        config = MCPServerConfig(
-            name="test-server",
-            project_id="test-project",
-            transport="http",
-            url="http://localhost:8001",
-        )
-
-        manager = MCPClientManager(server_configs=[config])
-        manager._connections["test-server"] = MagicMock()
-
-        mock_session = AsyncMock()
-        # Return object without tools attribute
-        mock_session.list_tools.return_value = {}
-
-        manager.health["test-server"] = MCPConnectionHealth(
-            name="test-server",
-            state=ConnectionState.CONNECTED,
-        )
-
-        with patch.object(manager, "get_client_session", return_value=mock_session):
-            result = await manager.list_tools("test-server")
-
-        assert result["test-server"] == []
-
     @pytest.mark.asyncio
     async def test_list_tools_single_server_propagates_connection_error(self) -> None:
         """A dead single server must not be reported as an empty inventory."""
@@ -2721,7 +2695,7 @@ class TestMCPClientManagerListToolsAllServers:
         mock_tool = MagicMock()
         mock_tool.name = "shared-tool"
         mock_tool.description = "A tool"
-        mock_tool.inputSchema = {}
+        mock_tool.input_schema = {}
         mock_session.list_tools.return_value = MagicMock(tools=[mock_tool])
 
         manager.health["server1"] = MCPConnectionHealth(

@@ -129,13 +129,11 @@ async def retry_list_tools_after_failure(
 async def list_tools_from_session(session: ClientSession) -> list[dict[str, Any]]:
     """Convert MCP SDK list_tools result to response dictionaries."""
     tools = await session.list_tools()
-    if not hasattr(tools, "tools"):
-        return []
     return [
         {
             "name": tool.name,
-            "description": getattr(tool, "description", "") or "",
-            "inputSchema": _validated_input_schema(getattr(tool, "inputSchema", {})),
+            "description": tool.description or "",
+            "inputSchema": _validated_input_schema(tool.input_schema),
         }
         for tool in tools.tools
     ]

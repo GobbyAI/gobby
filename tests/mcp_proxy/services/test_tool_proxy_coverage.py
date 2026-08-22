@@ -92,7 +92,7 @@ async def test_wrapper_originated_internal_list_is_offloaded_and_retrievable(
     full_result = await proxy.call_tool(
         "gobby-results",
         "get_tool_result",
-        {"result_id": envelope["result_id"], "limit": 10_000},
+        {"result_id": envelope["result_id"]},
         wrapper_originated=True,
     )
 

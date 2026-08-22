@@ -598,7 +598,7 @@ class HTTPServer:
         return await self.services.run_db(func, *args, **kwargs)
 
     async def _terminate_streamable_http_sessions(self) -> None:
-        """Best-effort termination of active FastMCP Streamable HTTP sessions."""
+        """Best-effort termination of active MCP Streamable HTTP sessions."""
         if self._mcp_server is None:
             return
 

@@ -257,17 +257,11 @@ async def refresh_mcp_tools(
                         session = await server.mcp_manager.ensure_connected(server_name)
                         tools_result = await session.list_tools()
                         for mcp_tool in tools_result.tools:
-                            schema = None
-                            if hasattr(mcp_tool, "inputSchema"):
-                                if hasattr(mcp_tool.inputSchema, "model_dump"):
-                                    schema = mcp_tool.inputSchema.model_dump()
-                                elif isinstance(mcp_tool.inputSchema, dict):
-                                    schema = mcp_tool.inputSchema
                             tools.append(
                                 {
-                                    "name": getattr(mcp_tool, "name", ""),
-                                    "description": getattr(mcp_tool, "description", ""),
-                                    "inputSchema": schema,
+                                    "name": mcp_tool.name,
+                                    "description": mcp_tool.description,
+                                    "inputSchema": mcp_tool.input_schema,
                                 }
                             )
                         await asyncio.to_thread(

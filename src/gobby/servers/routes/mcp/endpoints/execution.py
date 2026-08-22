@@ -298,21 +298,9 @@ async def list_mcp_tools(
             for tool in tools_result.tools:
                 tool_dict: dict[str, Any] = {
                     "name": tool.name,
-                    "description": tool.description if hasattr(tool, "description") else None,
+                    "description": tool.description,
+                    "inputSchema": tool.input_schema,
                 }
-
-                # Handle inputSchema
-                if hasattr(tool, "inputSchema"):
-                    schema = tool.inputSchema
-                    if hasattr(schema, "model_dump"):
-                        tool_dict["inputSchema"] = schema.model_dump()
-                    elif isinstance(schema, dict):
-                        tool_dict["inputSchema"] = schema
-                    else:
-                        tool_dict["inputSchema"] = None
-                else:
-                    tool_dict["inputSchema"] = None
-
                 tools.append(tool_dict)
 
             response_time_ms = (time.perf_counter() - start_time) * 1000

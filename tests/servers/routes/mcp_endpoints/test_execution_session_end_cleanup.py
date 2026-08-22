@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
@@ -21,9 +21,9 @@ from gobby.hooks.inbox import drain_hook_inbox_once
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.servers.routes.mcp.endpoints.request_context import _set_context_for_request
 from gobby.servers.routes.mcp.hooks import create_hooks_router
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.utils.session_context import reset_seeded_contexts
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
@@ -310,7 +310,7 @@ async def test_inbox_replays_codex_session_end_once_with_real_cleanup(
     os.utime(envelope_path, (0, 0))
 
     with (
-        patch("gobby.hooks.inbox.read_local_api_token", return_value=None),
+        patch("gobby.hooks.inbox.read_local_api_token", return_value="test-local-token"),
         patch("gobby.agents.tmux.get_tmux_pane_monitor", return_value=None),
     ):
         first_replay = await drain_hook_inbox_once(app, inbox_dir=inbox_dir)

@@ -497,13 +497,13 @@ class TestLinearSyncServiceImport:
         """import_linear_issues creates gobby tasks from Linear issues."""
         mock_mcp_manager.call_tool.return_value = CallToolResult(
             content=[],
-            structuredContent={
+            structured_content={
                 "issues": [
                     {"id": "issue-1", "title": "Issue 1", "description": "Description 1"},
                     {"id": "issue-2", "title": "Issue 2", "description": "Description 2"},
                 ]
             },
-            isError=False,
+            is_error=False,
         )
 
         await sync_service.import_linear_issues()
@@ -1549,7 +1549,7 @@ class TestLinearSyncServiceCreate:
                     text='{"id":"lin-123","title":"#42: Feature: Add new thing"}',
                 )
             ],
-            isError=False,
+            is_error=False,
         )
 
         result = await sync_service.create_issue_for_task(task_id="test-task-id")

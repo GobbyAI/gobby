@@ -22,8 +22,23 @@ def _runtime_requirement(name: str) -> Requirement:
 
 def test_warning_sensitive_runtime_dependencies_are_exactly_pinned() -> None:
     """Fresh wheel installs must preserve the validated warning-free versions."""
-    assert str(_runtime_requirement("pydantic-settings").specifier) == "==2.14.2"
     assert str(_runtime_requirement("qdrant-client").specifier) == "==1.19.0"
+
+
+def test_mcp_sdk_tracks_the_2x_major() -> None:
+    """The proxy is written against mcp 2.x; the ceiling guards the next breaking major."""
+    mcp_spec = _runtime_requirement("mcp").specifier
+    assert mcp_spec.contains("2.0.0")
+    assert not mcp_spec.contains("1.28.1")
+    assert not mcp_spec.contains("3.0.0")
+    # claude-agent-sdk <0.2 drives mcp 1.x-only lowlevel Server APIs.
+    sdk_spec = _runtime_requirement("claude-agent-sdk").specifier
+    assert not sdk_spec.contains("0.1.81")
+    assert sdk_spec.contains("0.2.144")
+    project = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    dependency_names = {Requirement(value).name for value in project["dependencies"]}
+    assert "httpx2" in dependency_names
+    assert "pydantic-settings" not in dependency_names
 
 
 def test_qdrant_service_tracks_latest_image() -> None:

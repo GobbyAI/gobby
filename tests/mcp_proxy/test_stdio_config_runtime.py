@@ -111,7 +111,8 @@ async def test_stdio_proxy_caches_tool_timeouts_for_proxy_lifetime() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stdio_proxy_caches_timeout_read_failure() -> None:
+async def test_stdio_proxy_retries_timeout_read_after_failure() -> None:
+    """A failed timeout read is not cached: the hub may come up later (#20073)."""
     logger = MagicMock()
     runtime = MagicMock()
     runtime.require_config.side_effect = RuntimeError("hub is down")
@@ -132,8 +133,8 @@ async def test_stdio_proxy_caches_timeout_read_failure() -> None:
 
     assert first == {"success": True}
     assert second == {"success": True}
-    proxy_runtime_factory.assert_called_once_with()
-    runtime.close.assert_called_once_with()
+    assert proxy_runtime_factory.call_count == 2
+    assert runtime.close.call_count == 2
     assert request.await_count == 2
     assert all(item.kwargs["timeout"] == 30.0 for item in request.await_args_list)
 
@@ -150,7 +151,7 @@ def test_stdio_server_takes_dial_port_from_bootstrap() -> None:
         load_bootstrap=lambda: BootstrapConfig(daemon_port=61031),
         setup_internal_registries=setup_registries,
         build_gobby_instructions=lambda: "instructions",
-        fast_mcp_factory=MagicMock(return_value=mcp_server),
+        mcp_server_factory=MagicMock(return_value=mcp_server),
         proxy_factory=proxy_factory,
         register_proxy_tools=MagicMock(),
     )
@@ -179,7 +180,7 @@ def test_stdio_server_starts_when_hub_is_down() -> None:
         load_bootstrap=lambda: BootstrapConfig(daemon_port=61031),
         setup_internal_registries=setup_registries,
         build_gobby_instructions=lambda: "instructions",
-        fast_mcp_factory=MagicMock(return_value=mcp_server),
+        mcp_server_factory=MagicMock(return_value=mcp_server),
         proxy_factory=proxy_factory,
         register_proxy_tools=MagicMock(),
     )

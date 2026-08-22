@@ -545,6 +545,10 @@ class TestExecuteSdkQuery:
             )
 
         with (
+            patch(
+                "gobby.llm.claude_runtime.read_active_shutdown_intent",
+                return_value=None,
+            ),
             caplog.at_level(logging.DEBUG, logger="gobby.llm.claude"),
             pytest.raises(ClaudeSDKProviderFailure),
         ):
@@ -581,6 +585,10 @@ class TestExecuteSdkQuery:
             )
 
         with (
+            patch(
+                "gobby.llm.claude_runtime.read_active_shutdown_intent",
+                return_value=None,
+            ),
             caplog.at_level(logging.DEBUG, logger="gobby.llm.claude"),
             pytest.raises(ClaudeSDKProviderFailure),
         ):

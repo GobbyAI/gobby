@@ -208,7 +208,7 @@ async def test_bad_end_agent_run_wrapper_call_returns_schema_help() -> None:
         arguments={"arguments": {"status": "success"}},
     )
 
-    assert result.isError is True
+    assert result.is_error is True
     text = result.content[0].text
     assert "Unexpected argument 'arguments'" in text
     assert "Call end_agent_run with the target parameters directly." in text

@@ -298,12 +298,12 @@ class TestStdioCleanup:
         original_handle = MagicMock()
         replacement_handle = MagicMock()
 
-        class ReplacingSessionContext:
+        class ReplacingClientContext:
             async def __aexit__(self, *_args: object) -> None:
                 connection._stdio_errlog_handle = replacement_handle
 
         connection._stdio_errlog_handle = original_handle
-        connection._session_context = ReplacingSessionContext()  # type: ignore[assignment]
+        connection._client_context = ReplacingClientContext()  # type: ignore[assignment]
 
         await connection.disconnect()
 
@@ -323,20 +323,17 @@ class TestStdioCleanup:
         )
         connection = StdioTransportConnection(config)
 
-        class FailingSessionContext:
+        class FailingClientContext:
             async def __aexit__(self, *_args: object) -> None:
                 raise RuntimeError("boom")
 
-        connection._session_context = FailingSessionContext()  # type: ignore[assignment]
+        connection._client_context = FailingClientContext()  # type: ignore[assignment]
 
         with caplog.at_level(logging.WARNING, logger="gobby.mcp_proxy.transports.stdio"):
-            await connection._cleanup_connect_attempt(
-                session_entered=True,
-                transport_entered=False,
-            )
+            await connection._cleanup_connect_attempt(client_entered=True)
 
         record = next(
-            record for record in caplog.records if "Error during session cleanup" in record.message
+            record for record in caplog.records if "Error during client cleanup" in record.message
         )
         assert record.server == "stdio-test"
-        assert record.cleanup_stage == "session"
+        assert record.cleanup_stage == "client"

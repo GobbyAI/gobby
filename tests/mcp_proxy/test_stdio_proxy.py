@@ -7,11 +7,16 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
-from mcp.server.fastmcp import FastMCP
+from mcp.client import Client
+from mcp.server.mcpserver import MCPServer
 
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.mcp_proxy.stdio_proxy import DaemonProxy
-from gobby.mcp_proxy.stdio_server import StdioServerDependencies, create_stdio_mcp_server
+from gobby.mcp_proxy.stdio_server import (
+    StdioServerDependencies,
+    _StdioMCPServer,
+    create_stdio_mcp_server,
+)
 from gobby.mcp_proxy.stdio_tools import register_proxy_tools
 from tests.mcp_proxy.result_offload_test_support import TEST_MAX_ENVELOPE_CHARS
 from tests.mcp_proxy.tool_capture import async_tool_capture_mock
@@ -210,7 +215,7 @@ async def test_requests_reuse_client_and_close_it_once() -> None:
     client.aclose.assert_awaited_once_with()
 
 
-def _create_server_with_proxy(proxy: DaemonProxy) -> FastMCP:
+def _create_server_with_proxy(proxy: DaemonProxy, *, register_proxy_tools: Any = None) -> MCPServer:
     runtime = MagicMock()
     runtime.require_config.return_value = MagicMock(daemon_port=60887)
     dependencies = StdioServerDependencies(
@@ -218,11 +223,46 @@ def _create_server_with_proxy(proxy: DaemonProxy) -> FastMCP:
         load_bootstrap=lambda: BootstrapConfig(daemon_port=60887),
         setup_internal_registries=MagicMock(),
         build_gobby_instructions=lambda: "instructions",
-        fast_mcp_factory=FastMCP,
+        mcp_server_factory=_StdioMCPServer,
         proxy_factory=MagicMock(return_value=proxy),
-        register_proxy_tools=MagicMock(),
+        register_proxy_tools=register_proxy_tools or MagicMock(),
     )
     return create_stdio_mcp_server(deps=dependencies)
+
+
+@pytest.mark.asyncio
+async def test_stdio_server_advertises_schemas_without_nulls_over_the_wire() -> None:
+    """list_tools() on the stdio server strips ``null`` schema fields end to end."""
+    proxy = MagicMock(spec=DaemonProxy)
+    proxy.aclose = AsyncMock()
+
+    def register(mcp: MCPServer, _proxy: DaemonProxy) -> None:
+        @mcp.tool()
+        async def nullable(name: str, limit: int | None = None) -> dict[str, Any]:
+            return {"name": name, "limit": limit}
+
+    server = _create_server_with_proxy(proxy, register_proxy_tools=register)
+    assert isinstance(server, _StdioMCPServer)
+
+    async with Client(server) as client:
+        tools = await client.list_tools()
+
+    [tool] = tools.tools
+    assert tool.name == "nullable"
+    limit_schema = tool.input_schema["properties"]["limit"]
+    # ``limit: int | None = None`` renders ``"default": null``; the stdio server
+    # drops that null value while keeping the ``{"type": "null"}`` union member.
+    assert "default" not in limit_schema
+    assert {"type": "null"} in limit_schema["anyOf"]
+
+    def _has_none(value: Any) -> bool:
+        if isinstance(value, dict):
+            return any(v is None or _has_none(v) for v in value.values())
+        if isinstance(value, list):
+            return any(item is None or _has_none(item) for item in value)
+        return False
+
+    assert not _has_none(tool.input_schema)
 
 
 @pytest.mark.asyncio

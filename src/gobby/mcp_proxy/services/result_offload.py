@@ -344,8 +344,8 @@ def _has_non_text_content(result: object) -> bool:
 def _serialize_success_result(result: object) -> _SerializedResult:
     payload: object = result
     if isinstance(result, CallToolResult):
-        if result.structuredContent is not None:
-            payload = result.structuredContent
+        if result.structured_content is not None:
+            payload = result.structured_content
         else:
             payload = "\n".join(
                 item.text for item in result.content if isinstance(item, TextContent)

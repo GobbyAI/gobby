@@ -591,8 +591,8 @@ async def test_daemon_wrapper_local_failures_do_not_track_and_delegated_failure_
             session_id=session_id,
         )
 
-    assert isinstance(missing_route, CallToolResult) and missing_route.isError
-    assert isinstance(malformed, CallToolResult) and malformed.isError
-    assert isinstance(missing_project, CallToolResult) and missing_project.isError
-    assert isinstance(delegated, CallToolResult) and delegated.isError
+    assert isinstance(missing_route, CallToolResult) and missing_route.is_error
+    assert isinstance(malformed, CallToolResult) and malformed.is_error
+    assert isinstance(missing_project, CallToolResult) and missing_project.is_error
+    assert isinstance(delegated, CallToolResult) and delegated.is_error
     assert tracking.call_count == 1

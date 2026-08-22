@@ -100,7 +100,7 @@ async def test_single_server_list_tools_reconnects_after_closed_session() -> Non
     fresh_tool = SimpleNamespace(
         name="fresh_tool",
         description="Fresh tool",
-        inputSchema={"type": "object"},
+        input_schema={"type": "object"},
     )
     fresh_connection = FakeConnection(FakeSession([fresh_tool]))
 

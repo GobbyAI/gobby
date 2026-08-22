@@ -217,7 +217,7 @@ class TestMCPDiscoveryRoutes:
         mock_tool = MagicMock()
         mock_tool.name = "live_tool"
         mock_tool.description = "Live tool description"
-        mock_tool.inputSchema = {"type": "object"}
+        mock_tool.input_schema = {"type": "object"}
         mock_session = AsyncMock()
         mock_session.list_tools.return_value = MagicMock(tools=[mock_tool])
         mock_server.mcp_manager.ensure_connected = AsyncMock(return_value=mock_session)

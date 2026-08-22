@@ -16,7 +16,7 @@ class MCPToolResultError(RuntimeError):
 
 def parse_mcp_tool_result(result: Any) -> Any:
     """Return the domain payload from an MCP ``CallToolResult`` envelope."""
-    if getattr(result, "isError", False):
+    if getattr(result, "is_error", False):
         details = [
             item.text
             for item in getattr(result, "content", [])
@@ -24,7 +24,7 @@ def parse_mcp_tool_result(result: Any) -> Any:
         ]
         raise MCPToolResultError("\n".join(details) or "unknown error")
 
-    structured_content = getattr(result, "structuredContent", None)
+    structured_content = getattr(result, "structured_content", None)
     if structured_content is not None:
         return structured_content
 

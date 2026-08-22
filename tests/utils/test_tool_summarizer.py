@@ -21,12 +21,12 @@ class TestSummarizeTools:
         tool1 = MagicMock()
         tool1.name = "tool1"
         tool1.description = "Short description"
-        tool1.inputSchema = {"type": "object"}
+        tool1.input_schema = {"type": "object"}
 
         tool2 = MagicMock()
         tool2.name = "tool2"
         tool2.description = "Another short one"
-        tool2.inputSchema = {"type": "string"}
+        tool2.input_schema = {"type": "string"}
 
         result = await summarize_tools([tool1, tool2])
 
@@ -42,7 +42,7 @@ class TestSummarizeTools:
         tool = MagicMock()
         tool.name = "no_desc"
         tool.description = ""
-        tool.inputSchema = {}
+        tool.input_schema = {}
 
         result = await summarize_tools([tool])
 
@@ -55,7 +55,7 @@ class TestSummarizeTools:
         tool = MagicMock()
         tool.name = "null_desc"
         tool.description = None
-        tool.inputSchema = {}
+        tool.input_schema = {}
 
         result = await summarize_tools([tool])
 
@@ -63,11 +63,12 @@ class TestSummarizeTools:
         assert result[0]["description"] == ""
 
     @pytest.mark.asyncio
-    async def test_missing_input_schema(self):
-        """Test handling of tool without inputSchema attribute."""
-        tool = MagicMock(spec=["name", "description"])
+    async def test_empty_input_schema(self):
+        """Test that an empty input_schema passes through unchanged."""
+        tool = MagicMock()
         tool.name = "no_schema"
         tool.description = "Has desc"
+        tool.input_schema = {}
 
         result = await summarize_tools([tool])
 
@@ -76,7 +77,7 @@ class TestSummarizeTools:
 
     @pytest.mark.asyncio
     async def test_preserves_input_schema(self):
-        """Test that inputSchema is preserved in output."""
+        """Test that input_schema is preserved in output."""
         schema = {
             "type": "object",
             "properties": {"name": {"type": "string"}},
@@ -86,7 +87,7 @@ class TestSummarizeTools:
         tool = MagicMock()
         tool.name = "with_schema"
         tool.description = "desc"
-        tool.inputSchema = schema
+        tool.input_schema = schema
 
         result = await summarize_tools([tool])
 
@@ -100,7 +101,7 @@ class TestSummarizeTools:
         tool = MagicMock()
         tool.name = "long_tool"
         tool.description = long_desc
-        tool.inputSchema = {"type": "object"}
+        tool.input_schema = {"type": "object"}
 
         # Mock the summarization function to return a fallback
         with patch(
@@ -131,7 +132,7 @@ class TestMaxDescriptionLength:
         tool = MagicMock()
         tool.name = "exact"
         tool.description = exact_desc
-        tool.inputSchema = {}
+        tool.input_schema = {}
 
         with patch(
             "gobby.utils.tool_summarizer._summarize_description_with_llm",
@@ -151,7 +152,7 @@ class TestMaxDescriptionLength:
         tool = MagicMock()
         tool.name = "over"
         tool.description = over_desc
-        tool.inputSchema = {}
+        tool.input_schema = {}
 
         with patch(
             "gobby.utils.tool_summarizer._summarize_description_with_llm",

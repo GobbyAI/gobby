@@ -31,12 +31,17 @@ dependencies = [
     "websockets>=15.0",
     "pyyaml>=6.0.3",
     "jinja2>=3.1.0",
-    "claude-agent-sdk>=0.1.81",
-    # Imported directly (mcp.server.fastmcp, mcp.types, ...), so it is a first-party
-    # dependency rather than a transitive one via claude-agent-sdk. mcp <1.28.1 has
-    # multiple 2026 advisories; mcp 2.0 removed mcp.server.fastmcp (now the separate
-    # fastmcp package).
-    "mcp>=1.28.1,<2",
+    # claude-agent-sdk <0.2 drives the mcp 1.x lowlevel Server decorators that
+    # mcp 2.0 removed; 0.2.144 bridges both majors (claude_agent_sdk._internal._mcp_compat).
+    "claude-agent-sdk>=0.2.144",
+    # Imported directly (mcp.server.mcpserver, mcp.client, mcp.types, ...), so it is a
+    # first-party dependency rather than a transitive one via claude-agent-sdk. The
+    # proxy targets the mcp 2.x API surface; <3 protects fresh installs from the next
+    # breaking major.
+    "mcp>=2.0.0,<3",
+    # mcp 2.x transports speak httpx2; Gobby's HTTP transport builds the
+    # httpx2.AsyncClient it hands to streamable_http_client.
+    "httpx2>=2.5.0,<3",
     "wcwidth>=0.2.14",
     "tomlkit>=0.13.3",
     "msgspec>=0.20.0",
@@ -46,8 +51,6 @@ dependencies = [
     "jsonschema>=4.23.0",
     "faster-whisper>=1.0.0",
     "qdrant-client==1.19.0",
-    # pydantic-settings 2.15.0 warns on mcp's unresolved lifespan annotation.
-    "pydantic-settings==2.14.2",
     # python-multipart <0.0.31 has CVE-2026-24486, CVE-2026-40347,
     # CVE-2026-42561 and later DoS advisories fixed in 0.0.30/0.0.31.
     "python-multipart>=0.0.31",
@@ -316,7 +319,6 @@ dev = [
     "aioimaplib>=1.0",
     "pytest-timeout>=2.4.0",
     "types-aiofiles>=25.1.0.20260409",
-    "httpx2>=2.4.0",
 ]
 
 [tool.coverage.run]

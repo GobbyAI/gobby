@@ -1,4 +1,4 @@
-"""FastMCP server construction for the stdio proxy."""
+"""MCPServer construction for the stdio proxy."""
 
 from __future__ import annotations
 
@@ -8,7 +8,8 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
+from mcp.types import Tool
 
 from gobby.cli.runtime import CliRuntime
 from gobby.config.bootstrap import BootstrapConfig
@@ -18,6 +19,7 @@ from gobby.mcp_proxy.registries import setup_internal_registries as _setup_inter
 from gobby.mcp_proxy.stdio_proxy import DaemonProxy
 from gobby.mcp_proxy.stdio_results import _strip_none
 from gobby.mcp_proxy.stdio_tools import register_proxy_tools as _register_proxy_tools
+from gobby.utils.version import get_version
 
 logger = logging.getLogger(__name__)
 
@@ -37,17 +39,33 @@ class ProxyFactory(Protocol):
 
 
 class RegisterProxyTools(Protocol):
-    def __call__(self, mcp: FastMCP, proxy: DaemonProxy) -> None: ...
+    def __call__(self, mcp: MCPServer, proxy: DaemonProxy) -> None: ...
 
 
-class FastMcpFactory(Protocol):
+class McpServerFactory(Protocol):
     def __call__(
         self,
         name: str,
         *,
         instructions: str,
-        lifespan: Callable[[FastMCP], AbstractAsyncContextManager[None]],
-    ) -> FastMCP: ...
+        version: str,
+        lifespan: Callable[[MCPServer[None]], AbstractAsyncContextManager[None]],
+    ) -> MCPServer: ...
+
+
+class _StdioMCPServer(MCPServer[None]):
+    """MCPServer whose advertised tool schemas carry no ``null`` fields.
+
+    The SDK's ``exclude_none`` only covers Pydantic model fields; raw
+    ``inputSchema`` dicts pass through unchanged, and ``null`` entries break
+    strict Jinja prompt templates (e.g. Nemotron Super in LMStudio).
+    """
+
+    async def list_tools(self) -> list[Tool]:
+        tools = await super().list_tools()
+        for tool in tools:
+            tool.input_schema = _strip_none(tool.input_schema)
+        return tools
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +74,7 @@ class StdioServerDependencies:
     load_bootstrap: Callable[[], BootstrapConfig]
     setup_internal_registries: SetupInternalRegistries
     build_gobby_instructions: Callable[[], str]
-    fast_mcp_factory: FastMcpFactory
+    mcp_server_factory: McpServerFactory
     proxy_factory: ProxyFactory
     register_proxy_tools: RegisterProxyTools
 
@@ -67,25 +85,16 @@ def default_stdio_server_dependencies() -> StdioServerDependencies:
         load_bootstrap=lambda: _load_bootstrap(resolve_database_url=False),
         setup_internal_registries=_setup_internal_registries,
         build_gobby_instructions=_build_gobby_instructions,
-        fast_mcp_factory=FastMCP,
+        mcp_server_factory=_StdioMCPServer,
         proxy_factory=DaemonProxy,
         register_proxy_tools=_register_proxy_tools,
     )
 
 
-def _iter_fastmcp_tools(mcp: FastMCP) -> list[Any]:
-    tool_manager = getattr(mcp, "_tool_manager", None)
-    tools = getattr(tool_manager, "_tools", None)
-    if not isinstance(tools, dict):
-        logger.warning("FastMCP private tool registry is unavailable; parameters not normalized")
-        return []
-    return list(tools.values())
-
-
 def create_stdio_mcp_server(
     *,
     deps: StdioServerDependencies | None = None,
-) -> FastMCP:
+) -> MCPServer:
     """Create stdio MCP server."""
     effective_deps = deps or default_stdio_server_dependencies()
     # The dial port is a pre-database bootstrap fact; the DB-backed config
@@ -114,22 +123,18 @@ def create_stdio_mcp_server(
     proxy = effective_deps.proxy_factory(bootstrap.daemon_port)
 
     @asynccontextmanager
-    async def proxy_lifespan(_server: FastMCP) -> AsyncIterator[None]:
+    async def proxy_lifespan(_server: MCPServer[None]) -> AsyncIterator[None]:
         try:
             yield
         finally:
             await proxy.aclose()
 
-    mcp = effective_deps.fast_mcp_factory(
+    mcp = effective_deps.mcp_server_factory(
         "gobby",
         instructions=effective_deps.build_gobby_instructions(),
+        version=get_version(),
         lifespan=proxy_lifespan,
     )
 
     effective_deps.register_proxy_tools(mcp, proxy)
-
-    for tool in _iter_fastmcp_tools(mcp):
-        if tool.parameters:
-            tool.parameters = _strip_none(tool.parameters)
-
     return mcp

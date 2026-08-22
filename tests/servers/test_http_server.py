@@ -60,7 +60,7 @@ class TestAdminEndpoints:
 
 
 class TestStreamableHttpShutdown:
-    """Tests for best-effort FastMCP streamable HTTP transport shutdown."""
+    """Tests for best-effort MCPServer streamable HTTP transport shutdown."""
 
     @pytest.mark.asyncio
     async def test_terminate_streamable_http_sessions_times_out_with_warning(

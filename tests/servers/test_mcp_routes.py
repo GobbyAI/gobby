@@ -217,7 +217,7 @@ class FakeTool:
     ) -> None:
         self.name = name
         self.description = description
-        self.inputSchema = input_schema or {"type": "object", "properties": {}}
+        self.input_schema = input_schema or {"type": "object", "properties": {}}
 
 
 class FakeToolsResult:
@@ -569,7 +569,7 @@ class TestListMCPTools:
         assert "Failed to list tools" in data["error"]
 
     def test_list_tools_with_input_schema_dict(self, session_storage: SessionManager) -> None:
-        """Test listing tools with inputSchema as dict."""
+        """Test listing tools with input_schema as dict."""
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -582,7 +582,7 @@ class TestListMCPTools:
         tool = MagicMock()
         tool.name = "schema-tool"
         tool.description = "Tool with schema"
-        tool.inputSchema = {"type": "object", "properties": {"arg1": {"type": "string"}}}
+        tool.input_schema = {"type": "object", "properties": {"arg1": {"type": "string"}}}
 
         session = MagicMock()
         tools_result = MagicMock()
@@ -599,8 +599,10 @@ class TestListMCPTools:
         data = response.json()
         assert data["tools"][0]["inputSchema"]["type"] == "object"
 
-    def test_list_tools_with_input_schema_model_dump(self, session_storage: SessionManager) -> None:
-        """Test listing tools with inputSchema having model_dump method."""
+    def test_list_tools_with_sdk_tool_model(self, session_storage: SessionManager) -> None:
+        """Test listing tools from real SDK Tool models keeps the camelCase wire key."""
+        from mcp.types import ListToolsResult, Tool
+
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -610,18 +612,16 @@ class TestListMCPTools:
         config = FakeServerConfig(name="model-server")
         mcp_manager._configs["model-server"] = config
 
-        # Create a schema with model_dump method
-        mock_schema = MagicMock()
-        mock_schema.model_dump.return_value = {"type": "object", "required": ["id"]}
-
-        tool = MagicMock()
-        tool.name = "model-tool"
-        tool.description = "Tool with model schema"
-        tool.inputSchema = mock_schema
-
+        tools_result = ListToolsResult(
+            tools=[
+                Tool(
+                    name="model-tool",
+                    description="Tool with model schema",
+                    input_schema={"type": "object", "required": ["id"]},
+                )
+            ]
+        )
         session = MagicMock()
-        tools_result = MagicMock()
-        tools_result.tools = [tool]
         session.list_tools = AsyncMock(return_value=tools_result)
         mcp_manager.ensure_connected = AsyncMock(return_value=session)
         server.mcp_manager = mcp_manager
@@ -631,7 +631,8 @@ class TestListMCPTools:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["tools"][0]["inputSchema"]["type"] == "object"
+        assert data["tools"][0]["inputSchema"] == {"type": "object", "required": ["id"]}
+        assert "input_schema" not in data["tools"][0]
 
 
 # ============================================================================

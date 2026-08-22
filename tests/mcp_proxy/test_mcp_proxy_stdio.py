@@ -608,16 +608,17 @@ class TestCheckDaemonHttpHealth:
 class TestCreateStdioMcpServer:
     """Tests for create_stdio_mcp_server function."""
 
-    def test_creates_mcp_server(self) -> None:
-        """Test creates FastMCP server instance."""
+    @pytest.mark.asyncio
+    async def test_creates_mcp_server(self) -> None:
+        """Test creates an MCPServer exposing the proxy tools."""
         # Use simple patching here since we don't need capture
         with patch("gobby.mcp_proxy.stdio.CliRuntime") as mock_runtime:
             mock_runtime.return_value = _runtime_with_config(MagicMock(daemon_port=60887))
             with patch("gobby.mcp_proxy.stdio.setup_internal_registries"):
                 mcp = create_stdio_mcp_server()
-                # Just check it's returned
                 assert mcp is not None
-                assert "list_mcp_servers" in mcp._tool_manager._tools
+                tool_names = {tool.name for tool in await mcp.list_tools()}
+                assert "list_mcp_servers" in tool_names
 
 
 class TestEnsureDaemonRunning:
@@ -1729,7 +1730,7 @@ class TestDaemonProxyMethods:
 
 
 class TestMCPToolsWrapper:
-    """Tests for the FastMCP tools registered by register_proxy_tools."""
+    """Tests for the MCPServer tools registered by register_proxy_tools."""
 
     @staticmethod
     def _register_tools() -> tuple[

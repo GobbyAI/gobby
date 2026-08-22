@@ -10,7 +10,6 @@ from typing import Any, Protocol
 
 from anyio import BrokenResourceError, ClosedResourceError, EndOfStream
 from opentelemetry.trace import Status, StatusCode
-from pydantic import AnyUrl
 
 from gobby.mcp_proxy.connection_cleanup import describe_exception, discard_connection
 from gobby.telemetry.tracing import create_span
@@ -141,7 +140,7 @@ async def read_resource(manager: _InvocationManager, server_name: str, uri: str)
     """Read a resource from a downstream MCP server."""
     try:
         session = await manager.get_client_session(server_name)
-        result = await session.read_resource(AnyUrl(uri))
+        result = await session.read_resource(uri)
         if server_name in manager.health:
             manager.health[server_name].record_success()
         return result

@@ -5,7 +5,7 @@ This package provides:
 - MCPClientManager: Multi-server connection management
 - MCPServerConfig: Server configuration dataclass
 - MCP actions: add/remove/list servers
-- create_mcp_server: FastMCP server factory
+- create_mcp_server: MCPServer factory
 """
 
 from .manager import (

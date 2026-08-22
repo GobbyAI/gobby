@@ -64,7 +64,7 @@ __all__ = [
 
 
 def _register_mcp_http_route(app: FastAPI, mcp_app: Starlette) -> None:
-    """Register the FastMCP sub-application at its canonical external path."""
+    """Register the MCP sub-application at its canonical external path."""
     app.router.routes.append(Route("/mcp", endpoint=mcp_app, name="mcp", include_in_schema=False))
 
 
@@ -80,7 +80,9 @@ def create_app(server: "HTTPServer") -> FastAPI:
     """
     mcp_app = None
     if server._mcp_server:
-        mcp_app = server._mcp_server.streamable_http_app()
+        # The SDK enables DNS-rebinding protection only for loopback hosts, so
+        # the MCP app must see the same bind host uvicorn serves on.
+        mcp_app = server._mcp_server.streamable_http_app(host=server.bootstrap_config.bind_host)
         logger.debug("MCP HTTP app created")
 
     app = FastAPI(

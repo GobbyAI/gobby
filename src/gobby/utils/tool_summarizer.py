@@ -107,7 +107,7 @@ async def summarize_tools(tools: list[Any]) -> list[dict[str, Any]]:
     Create lightweight tool summaries with intelligent description shortening.
 
     Args:
-        tools: List of MCP Tool objects with name, description, and inputSchema
+        tools: List of MCP Tool objects with name, description, and input_schema
 
     Returns:
         List of dicts with name, summarized description, and args:
@@ -129,7 +129,7 @@ async def summarize_tools(tools: list[Any]) -> list[dict[str, Any]]:
             {
                 "name": tool.name,
                 "description": description,
-                "args": tool.inputSchema if hasattr(tool, "inputSchema") else {},
+                "args": tool.input_schema,
             }
         )
 

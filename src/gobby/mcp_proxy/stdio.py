@@ -12,7 +12,7 @@ import logging
 import time
 
 import httpx
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from gobby.cli.runtime import CliRuntime
 from gobby.config.bootstrap import load_bootstrap
@@ -62,6 +62,7 @@ from gobby.mcp_proxy.stdio_results import (
 )
 from gobby.mcp_proxy.stdio_server import (
     StdioServerDependencies,
+    _StdioMCPServer,
 )
 from gobby.mcp_proxy.stdio_server import (
     create_stdio_mcp_server as _create_stdio_mcp_server,
@@ -136,7 +137,7 @@ def _tool_registration_dependencies() -> ToolRegistrationDependencies:
     )
 
 
-def register_proxy_tools(mcp: FastMCP, proxy: _DaemonProxy) -> None:
+def register_proxy_tools(mcp: MCPServer, proxy: _DaemonProxy) -> None:
     """Register proxy tools on the MCP server."""
     _register_proxy_tools(mcp, proxy, deps_factory=_tool_registration_dependencies)
 
@@ -147,13 +148,13 @@ def _server_dependencies() -> StdioServerDependencies:
         load_bootstrap=lambda: load_bootstrap(resolve_database_url=False),
         setup_internal_registries=setup_internal_registries,
         build_gobby_instructions=build_gobby_instructions,
-        fast_mcp_factory=FastMCP,
+        mcp_server_factory=_StdioMCPServer,
         proxy_factory=DaemonProxy,
         register_proxy_tools=register_proxy_tools,
     )
 
 
-def create_stdio_mcp_server() -> FastMCP:
+def create_stdio_mcp_server() -> MCPServer:
     """Create stdio MCP server."""
     return _create_stdio_mcp_server(deps=_server_dependencies())
 

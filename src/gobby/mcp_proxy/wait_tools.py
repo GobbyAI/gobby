@@ -6,7 +6,7 @@ from collections.abc import Awaitable
 from dataclasses import dataclass
 from typing import Any
 
-from mcp.server.fastmcp import Context
+from mcp.server.mcpserver import Context
 
 WAIT_TOOL_HEARTBEAT_INTERVAL_SECONDS = 15.0
 WAIT_TOOL_HTTP_TIMEOUT_BUFFER_SECONDS = 30.0
@@ -197,7 +197,7 @@ async def _await_with_guard(
 async def call_with_wait_heartbeat(
     tool_call: Awaitable[dict[str, Any]],
     *,
-    ctx: Context[Any, Any, Any] | None,
+    ctx: Context[Any, Any] | None,
     tool_name: str,
     timeout: float | None,
 ) -> dict[str, Any]:

@@ -461,7 +461,7 @@ class TestMCPRegistryRoutes:
         mock_tool = MagicMock()
         mock_tool.name = "list_repos"
         mock_tool.description = "List GitHub repos"
-        mock_tool.inputSchema = {"type": "object", "properties": {"org": {"type": "string"}}}
+        mock_tool.input_schema = {"type": "object", "properties": {"org": {"type": "string"}}}
         mock_session = AsyncMock()
         mock_tools_result = MagicMock()
         mock_tools_result.tools = [mock_tool]
@@ -772,7 +772,7 @@ class TestMCPRegistryRoutes:
             "type": "object",
             "properties": {"x": {"type": "string"}},
         }
-        mock_tool.inputSchema = mock_input_schema
+        mock_tool.input_schema = mock_input_schema
 
         mock_session = AsyncMock()
         mock_tools_result = MagicMock()
@@ -820,7 +820,7 @@ class TestMCPRegistryRoutes:
         mock_tool.name = "tool_with_dict_schema"
         mock_tool.description = "Has dict schema"
         # inputSchema is a plain dict (no model_dump)
-        mock_tool.inputSchema = {"type": "object", "properties": {}}
+        mock_tool.input_schema = {"type": "object", "properties": {}}
 
         mock_session = AsyncMock()
         mock_tools_result = MagicMock()

@@ -842,20 +842,41 @@ class TestGobbyDaemonToolsSemanticSearch:
 class TestCreateMcpServer:
     """Tests for create_mcp_server factory function."""
 
-    def test_create_mcp_server_returns_fastmcp(self, tools_handler: GobbyDaemonTools) -> None:
-        """Test that create_mcp_server returns a FastMCP instance."""
+    def test_create_mcp_server_returns_mcpserver(self, tools_handler: GobbyDaemonTools) -> None:
+        """Test that create_mcp_server returns an MCPServer advertising Gobby's version."""
+        from mcp.server.mcpserver import MCPServer
+
+        from gobby.utils.version import get_version
+
         mcp = create_mcp_server(tools_handler)
 
-        assert mcp is not None
+        assert isinstance(mcp, MCPServer)
         assert mcp.name == "gobby"
+        assert mcp.version == get_version()
 
-    def test_create_mcp_server_registers_all_tools(self, tools_handler: GobbyDaemonTools) -> None:
+    @pytest.mark.asyncio
+    async def test_create_mcp_server_registers_all_tools(
+        self, tools_handler: GobbyDaemonTools
+    ) -> None:
         """Test that all expected tools are registered."""
         mcp = create_mcp_server(tools_handler)
 
-        # Check that tools were added (FastMCP stores them internally)
-        # This verifies the function runs without error
-        assert mcp is not None
+        tool_names = {tool.name for tool in await mcp.list_tools()}
+        assert tool_names == {
+            "status",
+            "list_mcp_servers",
+            "call_tool",
+            "list_tools",
+            "get_tool_schema",
+            "read_mcp_resource",
+            "add_mcp_server",
+            "remove_mcp_server",
+            "import_mcp_server",
+            "recommend_tools",
+            "search_tools",
+            "set_variable",
+            "get_variable",
+        }
 
 
 class TestGobbyDaemonToolsReadResource:
