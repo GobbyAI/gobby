@@ -192,8 +192,8 @@ def create_review_learning_registry(service: ReviewLearningService) -> InternalT
     @registry.tool(
         name="record_review_lesson",
         description=(
-            "Record a confirmed or no-fix-policy review lesson and promote repeated "
-            "patterns. Finding requires non-empty title or message and non-empty "
+            "Record a confirmed or no-fix-policy review lesson for later recall. "
+            "Finding requires non-empty title or message and non-empty "
             "principle or prevention."
         ),
     )

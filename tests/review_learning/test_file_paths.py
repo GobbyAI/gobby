@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from gobby.review_learning.class_recall import RetirementTaskManager
 from gobby.review_learning.file_paths import (
     extract_file_paths_from_mapping,
     extract_lesson_file_paths,
@@ -14,7 +15,6 @@ from gobby.review_learning.file_paths import (
     paths_match,
 )
 from gobby.review_learning.lessons import CODE_DOMAIN_EXCLUDED_TAGS
-from gobby.review_learning.promotion import PromotionTaskManager
 from gobby.review_learning.service import ReviewLearningMemoryManager, ReviewLearningService
 from tests.review_learning.conftest import FakeMemory, FakeMemoryManager, FakeTaskManager
 
@@ -210,7 +210,7 @@ async def test_file_lesson_recall_fetches_once_and_prioritizes_matching_tags() -
     memory_manager = FakeMemoryManager()
     service = ReviewLearningService(
         cast(ReviewLearningMemoryManager, memory_manager),
-        cast(PromotionTaskManager, FakeTaskManager()),
+        cast(RetirementTaskManager, FakeTaskManager()),
     )
     list_memories = AsyncMock(return_value=[legacy, tagged, tagged])
 

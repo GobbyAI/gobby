@@ -6,7 +6,7 @@ from typing import Any, cast
 
 import pytest
 
-from gobby.review_learning.promotion import PromotionTaskManager
+from gobby.review_learning.class_recall import RetirementTaskManager
 from gobby.review_learning.service import ReviewLearningMemoryManager, ReviewLearningService
 from tests.review_learning.conftest import (
     PROJECT_SCOPE_ID,
@@ -24,7 +24,7 @@ def _service(
 ) -> ReviewLearningService:
     return ReviewLearningService(
         cast(ReviewLearningMemoryManager, memory_manager),
-        cast(PromotionTaskManager, task_manager),
+        cast(RetirementTaskManager, task_manager),
     )
 
 
@@ -85,39 +85,27 @@ async def _record_pair(
 
 
 @pytest.mark.asyncio
-async def test_per_class_promotion() -> None:
+async def test_per_class_recording_is_memory_only() -> None:
     memory_manager = FakeMemoryManager()
     task_manager = FakeTaskManager()
     service = _service(memory_manager, task_manager)
     class_cases = [
-        ("plan-review", "plan_review", "plan-adversary-reviewer", "reviewer-miss", "checklist"),
-        (
-            "plan-review",
-            "plan_review",
-            "plan-adversary-fixer",
-            "fixer-induced-defect",
-            "checklist",
-        ),
-        ("epic-qa", "qa_rejection", "epic-qa-reviewer", "qa-miss", "checklist"),
-        (
-            "epic-qa",
-            "qa_rejection",
-            "epic-validation-reviewer",
-            "validation-miss",
-            "validation",
-        ),
+        ("plan-review", "plan_review", "plan-adversary-reviewer", "reviewer-miss"),
+        ("plan-review", "plan_review", "plan-adversary-fixer", "fixer-induced-defect"),
+        ("epic-qa", "qa_rejection", "epic-qa-reviewer", "qa-miss"),
+        ("epic-qa", "qa_rejection", "epic-validation-reviewer", "validation-miss"),
     ]
-    promotion_results: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+    recording_results: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
 
-    for namespace, source_kind, source, lesson_type, target in class_cases:
+    for namespace, source_kind, source, lesson_type in class_cases:
         finding = _class_finding(
             namespace=namespace,
             lesson_type=lesson_type,
             check_key=f"{lesson_type}-contract",
-            guardrail_target=target,
+            guardrail_target="checklist",
         )
         finding_snapshot = deepcopy(finding)
-        promotion_results[lesson_type] = await _record_pair(
+        recording_results[lesson_type] = await _record_pair(
             service,
             source_kind=source_kind,
             source=source,
@@ -155,7 +143,7 @@ async def test_per_class_promotion() -> None:
         finding=second_candidate,
         evidence={"failed_iteration": "task-b", "passing_close": "receipt-b"},
     )
-    promotion_results["recurring-validation-failure"] = (
+    recording_results["recurring-validation-failure"] = (
         first_validation,
         second_validation,
     )
@@ -164,26 +152,20 @@ async def test_per_class_promotion() -> None:
     assert first_validation["finding_fingerprint"] == second_validation["finding_fingerprint"]
     assert first_validation["occurrence_key"] != second_validation["occurrence_key"]
 
-    expected_targets = {
-        "reviewer-miss": "checklist",
-        "fixer-induced-defect": "checklist",
-        "qa-miss": "checklist",
-        "validation-miss": "validation",
-        "recurring-validation-failure": "validation",
+    assert set(recording_results) == {
+        "reviewer-miss",
+        "fixer-induced-defect",
+        "qa-miss",
+        "validation-miss",
+        "recurring-validation-failure",
     }
-    assert set(promotion_results) == set(expected_targets)
-    for lesson_type, (first, second) in promotion_results.items():
-        assert first["occurrence_count"] == 1, lesson_type
-        assert first["guardrail_target"] is None, lesson_type
-        assert second["occurrence_count"] == 2, lesson_type
-        assert second["guardrail_target"] == expected_targets[lesson_type], lesson_type
-        assert second["task_ref"], lesson_type
+    for lesson_type, (first, second) in recording_results.items():
+        assert first["lesson_id"] != second["lesson_id"], lesson_type
+        assert "task_ref" not in first, lesson_type
+        assert "task_ref" not in second, lesson_type
 
-    assert len(task_manager.created) == len(expected_targets)
-    assert {label for task in task_manager.tasks for label in task.labels} >= {
-        "target:checklist",
-        "target:validation",
-    }
+    assert task_manager.created == []
+    assert task_manager.updated == []
 
 
 @pytest.mark.asyncio
@@ -326,7 +308,7 @@ async def test_check_key_convergence() -> None:
 
     assert second["pattern_id"] == third["pattern_id"] == canonical_pattern
     assert second["finding_fingerprint"] == third["finding_fingerprint"]
-    assert second["occurrence_count"] == 2
-    assert third["occurrence_count"] == 3
-    assert second["task_ref"] == third["task_ref"]
-    assert len(task_manager.tasks) == 1
+    assert second["lesson_id"] != third["lesson_id"]
+    assert "task_ref" not in second
+    assert "task_ref" not in third
+    assert task_manager.tasks == []

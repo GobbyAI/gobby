@@ -4,6 +4,7 @@ from typing import cast
 
 import pytest
 
+from gobby.review_learning.class_recall import RetirementTaskManager
 from gobby.review_learning.file_paths import path_tag
 from gobby.review_learning.fingerprint import build_occurrence_key
 from gobby.review_learning.lessons import (
@@ -18,7 +19,6 @@ from gobby.review_learning.lessons import (
     validate_guardrail_target,
     validate_source_kind,
 )
-from gobby.review_learning.promotion import PromotionTaskManager
 from gobby.review_learning.service import ReviewLearningMemoryManager, ReviewLearningService
 from tests.review_learning.conftest import FakeMemoryManager, FakeTaskManager
 
@@ -31,7 +31,7 @@ def _service(
 ) -> ReviewLearningService:
     return ReviewLearningService(
         cast(ReviewLearningMemoryManager, memory_manager),
-        cast(PromotionTaskManager, task_manager),
+        cast(RetirementTaskManager, task_manager),
     )
 
 
@@ -206,8 +206,8 @@ async def test_dual_class_identity_separation(
     assert first["pattern_id"] != second["pattern_id"]
     assert first["finding_fingerprint"] != second["finding_fingerprint"]
     assert first["occurrence_key"] != second["occurrence_key"]
-    assert first["occurrence_count"] == second["occurrence_count"] == 1
-    assert repeated_first["occurrence_count"] == 2
+    assert first["lesson_id"] != second["lesson_id"]
+    assert repeated_first["lesson_id"] not in {first["lesson_id"], second["lesson_id"]}
     assert len(fake_memory_manager.memories) == 3
 
 

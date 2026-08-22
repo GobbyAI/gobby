@@ -7,7 +7,7 @@ import threading
 import time
 from collections.abc import Generator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -213,7 +213,7 @@ def _list_lesson_memories(mcp_client: MCPTestClient, pattern_id: str) -> list[di
     )
     result = _tool_result(response)
     _assert_not_failed(result)
-    return result["memories"]
+    return cast(list[dict[str, Any]], result["memories"])
 
 
 class TestReviewLearningMCP:
@@ -240,7 +240,7 @@ class TestReviewLearningMCP:
             assert schema.get("name") == tool_name
             assert schema.get("inputSchema", {}).get("type") == "object"
 
-    def test_review_learning_records_promotes_and_recalls(
+    def test_review_learning_records_without_tasks_and_recalls(
         self,
         daemon_instance: DaemonInstance,
         mcp_client: MCPTestClient,
@@ -254,8 +254,8 @@ class TestReviewLearningMCP:
 
         assert first["pattern_id"] == PATTERN_ID
         assert first["finding_fingerprint"] == FINDING_FINGERPRINT
-        assert first["occurrence_count"] == 1
-        assert first["guardrail_target"] is None
+        assert "task_id" not in first
+        assert "guardrail_target" not in first
 
         memories = _list_lesson_memories(mcp_client, PATTERN_ID)
         assert len(memories) == 1
@@ -269,26 +269,20 @@ class TestReviewLearningMCP:
             source_review="review-learning-e2e-review-2",
         )
 
-        assert second["occurrence_count"] == 2
-        assert second["guardrail_target"] == "test"
-        assert second["task_id"]
+        assert "task_id" not in second
+        assert "guardrail_target" not in second
 
         memories = _list_lesson_memories(mcp_client, PATTERN_ID)
         assert len(memories) == 2
 
-        task_response = mcp_client.call_tool(
+        tasks_response = mcp_client.call_tool(
             server_name="gobby-tasks",
-            tool_name="get_task",
-            arguments={"task_id": second["task_id"], "brief": False},
+            tool_name="list_tasks",
+            arguments={"label": PATTERN_TAG},
         )
-        task = _tool_result(task_response)
-        _assert_not_failed(task)
-
-        labels = set(task["labels"])
-        assert task["category"] == "test"
-        assert {"guardrail", "review-learning", PATTERN_TAG, "target:test"}.issubset(labels)
-        assert PATTERN_ID in task["title"]
-        assert "guardrail_target: test" in task["description"]
+        tasks = _tool_result(tasks_response)
+        _assert_not_failed(tasks)
+        assert tasks["tasks"] == []
 
         recall_response = mcp_client.call_tool(
             server_name=REVIEW_LEARNING_SERVER,

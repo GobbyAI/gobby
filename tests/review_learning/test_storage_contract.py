@@ -30,7 +30,7 @@ def _finding() -> dict[str, str]:
 
 
 @pytest.mark.asyncio
-async def test_storage_backed_dedupe_and_count_ignore_large_unrelated_window(
+async def test_storage_backed_dedupe_ignores_large_unrelated_window_without_tasks(
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -109,9 +109,9 @@ async def test_storage_backed_dedupe_and_count_ignore_large_unrelated_window(
             include_global=False,
         )
         assert duplicate["skipped_reason"] == "duplicate_occurrence"
-        assert second["occurrence_count"] == 2
-        assert second["task_ref"] == "#1"
+        assert second["lesson_id"] != first["lesson_id"]
+        assert "task_ref" not in second
         assert len(target_memories) == 2
-        assert len(task_manager.list_tasks(project_id=project.id, closed=False, limit=10)) == 1
+        assert task_manager.list_tasks(project_id=project.id, closed=False, limit=10) == []
     finally:
         await memory_manager.close()

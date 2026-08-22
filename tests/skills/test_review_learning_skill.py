@@ -12,7 +12,7 @@ import pytest
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_io import atomic_write_bytes, ensure_checkpoint
 from gobby.plans.review_evidence_models import ReviewEvidenceError
-from gobby.review_learning.promotion import PromotionTaskManager
+from gobby.review_learning.class_recall import RetirementTaskManager
 from gobby.review_learning.service import ReviewLearningMemoryManager, ReviewLearningService
 from gobby.skills.loader import SkillLoader
 from gobby.skills.parser import parse_skill_file
@@ -228,20 +228,16 @@ def test_review_learning_skill_documents_tool_contract() -> None:
     assert "`stale` and `invalid` remain no-op decisions" in body
 
 
-def test_review_learning_skill_documents_record_skip_and_ladder_rules() -> None:
+def test_review_learning_skill_documents_memory_only_delivery() -> None:
     body = _body()
 
     assert "A raw failure with no verified fix must not" in body
     assert "`stale` or `invalid`: skip recording" in body
-    assert "`confirmed`, second occurrence: `test`" in body
-    assert "`confirmed`, third or later occurrence: `validation`" in body
-    assert "`confirmed`, high risk with actionable signal **and** a CI-corroborated" in body
-    assert "Weak one-off findings stay" in body
-    assert "`skipped_reason: insufficient_guardrail_signal`" in body
-    assert "`rule`, `workflow`, and `pipeline` targets require" in body
-    assert "`no-fix-policy`, second or later occurrence" in body
-    assert "`checklist` or `tool-config`" in body
-    assert "The task is not the guardrail" in body
+    assert "Review learning never creates" in body
+    assert "updates Gobby tasks automatically" in body
+    assert "It is metadata only and causes no task or repository mutation" in body
+    assert "concrete artifact, owner, implementation approach" in body
+    assert "Recurrence count alone is evidence of importance" in body
 
 
 def test_plan_skill_documents_parallel_review_contract() -> None:
@@ -299,7 +295,7 @@ async def test_plan_loop_recording_contract(monkeypatch: pytest.MonkeyPatch) -> 
     memories = FakeMemoryManager()
     service = ReviewLearningService(
         cast(ReviewLearningMemoryManager, memories),
-        cast(PromotionTaskManager, FakeTaskManager()),
+        cast(RetirementTaskManager, FakeTaskManager()),
     )
     events: list[str] = []
 

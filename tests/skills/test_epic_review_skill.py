@@ -7,7 +7,7 @@ from typing import Literal, NotRequired, TypedDict, cast
 
 import pytest
 
-from gobby.review_learning.promotion import PromotionTaskManager
+from gobby.review_learning.class_recall import RetirementTaskManager
 from gobby.review_learning.service import ReviewLearningMemoryManager, ReviewLearningService
 from tests.review_learning.conftest import FakeMemoryManager, FakeTaskManager
 
@@ -65,7 +65,7 @@ async def test_two_class_epic_recording(monkeypatch: pytest.MonkeyPatch) -> None
     memories = FakeMemoryManager()
     service = ReviewLearningService(
         cast(ReviewLearningMemoryManager, memories),
-        cast(PromotionTaskManager, FakeTaskManager()),
+        cast(RetirementTaskManager, FakeTaskManager()),
     )
     entries: list[EpicFindingEntry] = [
         {
@@ -130,7 +130,7 @@ async def test_two_class_epic_recording(monkeypatch: pytest.MonkeyPatch) -> None
         "epic-qa:qa-miss:stale-section",
         "epic-qa:validation-miss:stale-section",
     }
-    assert [result["occurrence_count"] for result in recorded] == [1, 1]
+    assert all("task_ref" not in result for result in recorded)
     assert len(memories.memories) == 2
     assert all("lesson-domain:code" in (memory.tags or []) for memory in memories.memories)
     assert len(skipped) == 1

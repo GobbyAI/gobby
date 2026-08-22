@@ -8,8 +8,8 @@ import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.review_learning import create_review_learning_registry
+from gobby.review_learning.class_recall import RetirementTaskManager
 from gobby.review_learning.lessons import normalize_lesson, pattern_key_for
-from gobby.review_learning.promotion import PromotionTaskManager
 from gobby.review_learning.service import ReviewLearningMemoryManager, ReviewLearningService
 from gobby.storage.hub.protocol import ReviewLearningPatternMutation
 from tests.review_learning.conftest import (
@@ -75,7 +75,7 @@ def _registry(
 ) -> InternalToolRegistry:
     service = ReviewLearningService(
         memory_manager=cast(ReviewLearningMemoryManager, memory_manager),
-        task_manager=cast(PromotionTaskManager, task_manager),
+        task_manager=cast(RetirementTaskManager, task_manager),
     )
     return create_review_learning_registry(service)
 

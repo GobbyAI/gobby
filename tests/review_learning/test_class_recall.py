@@ -5,8 +5,8 @@ from typing import cast
 
 import pytest
 
+from gobby.review_learning.class_recall import RetirementTaskManager
 from gobby.review_learning.lessons import normalize_lesson
-from gobby.review_learning.promotion import PromotionTaskManager
 from gobby.review_learning.service import ReviewLearningMemoryManager, ReviewLearningService
 from tests.review_learning.conftest import (
     PROJECT_SCOPE_ID,
@@ -72,7 +72,7 @@ def _lesson_memory(
 def _service(memory_manager: FakeMemoryManager) -> ReviewLearningService:
     return ReviewLearningService(
         memory_manager=cast(ReviewLearningMemoryManager, memory_manager),
-        task_manager=cast(PromotionTaskManager, FakeTaskManager()),
+        task_manager=cast(RetirementTaskManager, FakeTaskManager()),
     )
 
 

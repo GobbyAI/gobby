@@ -10,7 +10,11 @@ import re
 from collections.abc import Callable
 from typing import Any, Protocol
 
-from gobby.review_learning.class_recall import ReviewLessonClassRecall, ReviewLessonRetirement
+from gobby.review_learning.class_recall import (
+    RetirementTaskManager,
+    ReviewLessonClassRecall,
+    ReviewLessonRetirement,
+)
 from gobby.review_learning.file_paths import (
     extract_file_paths_from_mapping,
     normalize_lesson_file_path,
@@ -34,11 +38,6 @@ from gobby.review_learning.lessons import (
     validate_decision,
     validate_source_kind,
 )
-from gobby.review_learning.promotion import (
-    PromotionMemoryManager,
-    PromotionTaskManager,
-    promote_lesson,
-)
 from gobby.storage.hub.protocol import HubDatabase, ReviewLearningPatternMutation
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.utils.project_context import get_project_context
@@ -57,7 +56,7 @@ _LESSON_FIELD_RE = re.compile(r"^-\s+(?P<key>[a-zA-Z_]+):\s*(?P<value>.*)$")
 _LEGACY_SCAN_LIMIT = 200
 
 
-class ReviewLearningMemoryManager(PromotionMemoryManager, Protocol):
+class ReviewLearningMemoryManager(Protocol):
     db: HubDatabase
 
     async def create_memory(
@@ -113,7 +112,7 @@ class ReviewLearningService:
     def __init__(
         self,
         memory_manager: ReviewLearningMemoryManager | None,
-        task_manager: PromotionTaskManager,
+        task_manager: RetirementTaskManager,
         memory_manager_resolver: Callable[[], ReviewLearningMemoryManager | None] | None = None,
     ) -> None:
         self._seed_memory_manager = memory_manager
@@ -280,7 +279,7 @@ class ReviewLearningService:
         language: str | None = None,
         risk: str = "medium",
     ) -> dict[str, Any]:
-        """Record a review lesson memory and promote repeated patterns."""
+        """Record a review lesson memory for later recall."""
         validated_source_kind = validate_source_kind(source_kind)
         lesson_domain = derive_lesson_domain(validated_source_kind)
         validated_decision = validate_decision(decision)
@@ -340,14 +339,6 @@ class ReviewLearningService:
             )
             if existing:
                 memory = existing[0]
-                promotion = await promote_lesson(
-                    lesson=normalized,
-                    evidence_memory_id=memory.id,
-                    memory_manager=self.memory_manager,
-                    task_manager=self.task_manager,
-                    project_id=project_id,
-                    source_session_id=source_session_id,
-                )
                 return {
                     "lesson_id": getattr(memory, "id", None),
                     "pattern_id": normalized.identity.pattern_id,
@@ -355,7 +346,6 @@ class ReviewLearningService:
                     "occurrence_key": occurrence_key,
                     "decision": validated_decision,
                     "promotable": normalized.identity.promotable,
-                    **promotion,
                     "skipped_reason": "duplicate_occurrence",
                 }
 
@@ -397,14 +387,6 @@ class ReviewLearningService:
                 source_task_id=source_task_id,
                 created_by_agent="review-learning",
             )
-            promotion = await promote_lesson(
-                lesson=normalized,
-                evidence_memory_id=memory.id,
-                memory_manager=self.memory_manager,
-                task_manager=self.task_manager,
-                project_id=project_id,
-                source_session_id=source_session_id,
-            )
             return {
                 "lesson_id": memory.id,
                 "pattern_id": normalized.identity.pattern_id,
@@ -412,7 +394,6 @@ class ReviewLearningService:
                 "occurrence_key": occurrence_key,
                 "decision": validated_decision,
                 "promotable": normalized.identity.promotable,
-                **promotion,
             }
 
     async def _search_recall_matches(

@@ -8,8 +8,8 @@ from typing import Any, cast
 import pytest
 
 from gobby.mcp_proxy.tools.review_learning import create_review_learning_registry
+from gobby.review_learning.class_recall import RetirementTaskManager
 from gobby.review_learning.file_paths import path_tag
-from gobby.review_learning.promotion import PromotionTaskManager
 from gobby.review_learning.service import (
     _LEGACY_SCAN_LIMIT,
     MAX_RECALL_FINDINGS,
@@ -78,7 +78,7 @@ async def test_candidate_lessons_use_one_bounded_scan_and_rank_tagged_first() ->
     manager = _CandidateMemoryManager([untagged, tagged])
     service = ReviewLearningService(
         cast(ReviewLearningMemoryManager, manager),
-        cast(PromotionTaskManager, object()),
+        cast(RetirementTaskManager, object()),
     )
 
     candidates = await service._candidate_lesson_memories(
@@ -113,7 +113,7 @@ async def test_candidate_lessons_deduplicate_by_memory_id() -> None:
     manager = _CandidateMemoryManager([first, duplicate])
     service = ReviewLearningService(
         cast(ReviewLearningMemoryManager, manager),
-        cast(PromotionTaskManager, object()),
+        cast(RetirementTaskManager, object()),
     )
 
     candidates = await service._candidate_lesson_memories(
@@ -136,7 +136,7 @@ async def test_candidate_lessons_skip_empty_path_tags() -> None:
     manager = _CandidateMemoryManager([tagged])
     service = ReviewLearningService(
         cast(ReviewLearningMemoryManager, manager),
-        cast(PromotionTaskManager, object()),
+        cast(RetirementTaskManager, object()),
     )
 
     candidates = await service._candidate_lesson_memories(
@@ -154,7 +154,7 @@ async def test_recall_context_caps_fan_out_and_flat_response() -> None:
     manager, typed_manager = _memory_manager()
     service = ReviewLearningService(
         typed_manager,
-        cast(PromotionTaskManager, object()),
+        cast(RetirementTaskManager, object()),
     )
     findings: list[dict[str, Any] | str] = [
         {"message": f"finding-{index} {'x' * 300}"} for index in range(MAX_RECALL_FINDINGS + 5)
@@ -173,7 +173,7 @@ def test_recall_context_schema_declares_findings_max_items() -> None:
     registry = create_review_learning_registry(
         ReviewLearningService(
             typed_manager,
-            cast(PromotionTaskManager, object()),
+            cast(RetirementTaskManager, object()),
         )
     )
 

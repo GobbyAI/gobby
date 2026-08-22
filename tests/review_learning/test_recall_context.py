@@ -6,8 +6,8 @@ from typing import Any, cast
 
 import pytest
 
+from gobby.review_learning.class_recall import RetirementTaskManager
 from gobby.review_learning.lessons import CODE_DOMAIN_EXCLUDED_TAGS
-from gobby.review_learning.promotion import PromotionTaskManager
 from gobby.review_learning.service import (
     ReviewLearningMemoryManager,
     ReviewLearningService,
@@ -25,7 +25,7 @@ def _service(
 ) -> ReviewLearningService:
     return ReviewLearningService(
         cast(ReviewLearningMemoryManager, memory_manager),
-        cast(PromotionTaskManager, task_manager),
+        cast(RetirementTaskManager, task_manager),
     )
 
 

@@ -59,11 +59,11 @@ an enum.
 
 Use `pattern_id` when you can generalize the issue. Without it, the service
 derives from `lesson_type` plus `principle`; without either, the lesson is
-stored as `non-promotable` and will not create guardrail tasks.
+stored as `non-promotable` and remains available only through ordinary memory
+recall.
 
-Broad lessons are still useful as memories. Weak one-off findings stay
-memory-only unless they include enough implementation signal to build a
-guardrail task.
+Broad lessons are still useful as memories. Review learning never creates or
+updates Gobby tasks automatically.
 
 ## Plan Review Domain
 
@@ -92,7 +92,7 @@ Canonical starter keys by adversary category are:
 - `gobby-format` → `plan-contract`
 
 Every plan-domain finding uses `guardrail_target=checklist` and the synthetic
-promotion anchor `rule_id=plan-review:<adversary-category>`. Omit a plan-file
+diagnostic anchor `rule_id=plan-review:<adversary-category>`. Omit a plan-file
 `path`; section identity and durable evidence provide the location.
 
 Evidence bundles are class-specific:
@@ -142,35 +142,21 @@ static-analysis, and test fixes, include the verified fix reference.
 Pass `session_id` when available. The service stores the lesson in that
 session's project and preserves `source_session_id`.
 
-## Promotion Ladder
+## Lesson Delivery
 
-The service records a lesson memory first. It creates or updates a guardrail
-implementation task only when thresholds cross and the lesson has actionable
-guardrail signal: non-empty `prevention`, at least one of `principle` or
-`root_cause`, and an implementation anchor such as `path`, `symbol`, `rule_id`,
-`rule_url`, `query_hints`, `suggestion`, `evidence.files`, or
-`evidence.changed_files`.
+Every `confirmed` or `no-fix-policy` occurrence is stored as project memory.
+Workflow rules recall relevant lessons into future reviewer, planner, fixer,
+and QA sessions, where each lesson's `prevention` text acts as contextual
+checklist guidance. `stale` and `invalid` remain no-op decisions.
 
-- `confirmed`, first occurrence: memory only.
-- `confirmed`, second occurrence: `test` target by default.
-- `confirmed`, third or later occurrence: `validation` target by default.
-- `confirmed`, high risk with actionable signal **and** a CI-corroborated
-  source kind (`ci_check`, `static_analysis`, `test_failure`): `test` target by
-  default at first occurrence. Reviewer-sourced lessons (`review_comment`,
-  `agent_review`, `qa_rejection`) promote only at two or more occurrences —
-  reviewer-asserted risk alone does not mint a task.
-- `no-fix-policy`, first occurrence: memory only.
-- `no-fix-policy`, second or later occurrence: only `checklist` or `tool-config`.
-- `stale` or `invalid`: no-op.
+`guardrail_target` may record the review producer's suggested durable surface:
+`helper`, `test`, `checklist`, `rule`, `workflow`, `pipeline`, `validation`, or
+`tool-config`. It is metadata only and causes no task or repository mutation.
 
-`guardrail_target` may be `helper`, `test`, `checklist`, `rule`, `workflow`,
-`pipeline`, `validation`, or `tool-config`. The task is not the guardrail; it is
-the evidence-backed work item to build or update the guardrail.
-`rule`, `workflow`, and `pipeline` targets require an explicit
-`guardrail_target`; high risk alone does not imply one. When a lesson crosses a
-threshold but lacks guardrail signal, the response keeps `guardrail_target: null`
-and includes `skipped_reason: insufficient_guardrail_signal` with
-`missing_guardrail_fields`.
+Create a normal Gobby task separately only after inspection identifies a
+concrete artifact, owner, implementation approach, and independently verifiable
+acceptance criteria. Recurrence count alone is evidence of importance, not a
+decision-complete work item.
 
 ## Sibling Sweep
 

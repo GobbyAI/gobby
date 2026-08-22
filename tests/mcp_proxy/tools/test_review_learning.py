@@ -16,8 +16,8 @@ from gobby.mcp_proxy.tools.tasks import _factory as task_factory
 from gobby.mcp_proxy.tools.tasks import _ops_factory as task_ops_factory
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.memory.manager import MemoryManager
+from gobby.review_learning.class_recall import RetirementTaskManager
 from gobby.review_learning.file_paths import path_tag
-from gobby.review_learning.promotion import PromotionTaskManager
 from gobby.review_learning.service import (
     ReviewLearningMemoryManager,
     ReviewLearningService,
@@ -68,7 +68,7 @@ def create_review_learning_registry(
 ) -> InternalToolRegistry:
     service = ReviewLearningService(
         memory_manager=cast(ReviewLearningMemoryManager, memory_manager),
-        task_manager=cast(PromotionTaskManager, task_manager),
+        task_manager=cast(RetirementTaskManager, task_manager),
     )
     return _create_review_learning_registry(service)
 
