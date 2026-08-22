@@ -184,6 +184,45 @@ def test_tdd_evidence_requires_assertion_red_before_source_edit() -> None:
     assert result.green_runs
 
 
+def test_tdd_evidence_ignores_other_test_edits_before_red() -> None:
+    started = datetime(2026, 8, 21, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference="tests/test_feature.py::test_feature",
+        path="tests/test_feature.py",
+        symbol="test_feature",
+        body="def test_feature(): assert feature() == 1",
+    )
+    evidence = TranscriptEvidence(
+        edits=(
+            _edit("tests/test_feature.py", started, 1),
+            _edit("tests/test_support.py", started, 2),
+            _edit("src/feature.py", started + timedelta(minutes=2), 4),
+        ),
+        validation_runs=(
+            _run(
+                test,
+                started + timedelta(minutes=1),
+                "failure",
+                "FAILED tests/test_feature.py::test_feature\nE assert 0 == 1",
+                3,
+            ),
+            _run(
+                test,
+                started + timedelta(minutes=3),
+                "success",
+                "tests/test_feature.py::test_feature PASSED",
+                5,
+            ),
+        ),
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    assert result.passed is True
+    assert result.red_runs
+    assert result.green_runs
+
+
 def test_collection_import_error_is_missing_red_evidence() -> None:
     started = datetime(2026, 8, 21, tzinfo=UTC)
     test = AcceptanceTest(

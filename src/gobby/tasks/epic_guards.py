@@ -204,7 +204,7 @@ def collect_epic_guard_paths(
                 errors.append(f"Cannot inspect guard commit {sha}: {exc}")
                 continue
             for path in added:
-                if not _is_test_convention_path(path):
+                if not is_test_convention_path(path):
                     continue
                 error = _path_error(path, repo_path)
                 if error:
@@ -277,7 +277,7 @@ def _added_files(sha: str, repo_path: str) -> tuple[str, ...]:
     return tuple(path.strip() for path in result.stdout.splitlines() if path.strip())
 
 
-def _is_test_convention_path(path: str) -> bool:
+def is_test_convention_path(path: str) -> bool:
     pure = PurePosixPath(path)
     name = pure.name.casefold()
     return (
@@ -360,4 +360,9 @@ def _result(
     )
 
 
-__all__ = ["EpicGuardResult", "collect_epic_guard_paths", "evaluate_epic_guards"]
+__all__ = [
+    "EpicGuardResult",
+    "collect_epic_guard_paths",
+    "evaluate_epic_guards",
+    "is_test_convention_path",
+]

@@ -11,6 +11,7 @@ from gobby.tasks.acceptance_artifacts import (
     validation_run_covers_test,
     validation_run_names_test,
 )
+from gobby.tasks.epic_guards import is_test_convention_path
 from gobby.tasks.transcript_evidence import (
     TranscriptEdit,
     TranscriptEvidence,
@@ -44,7 +45,6 @@ def evaluate_tdd_evidence(
     if not tests:
         return TddEvidenceResult(True, True, ())
 
-    test_paths = {test.path for test in tests}
     findings: list[str] = []
     red_commands: list[str] = []
     green_commands: list[str] = []
@@ -61,7 +61,7 @@ def evaluate_tdd_evidence(
             (
                 edit
                 for edit in evidence.edits
-                if edit.path not in test_paths and edit.timestamp >= test_edit.timestamp
+                if not is_test_convention_path(edit.path) and edit.timestamp >= test_edit.timestamp
             ),
             key=lambda edit: (edit.timestamp, edit.order),
             default=None,
