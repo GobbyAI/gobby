@@ -847,8 +847,9 @@ class TestCreateChatSessionInner:
 
     @pytest.mark.asyncio
     async def test_fire_session_end(self, mixin: DummyMixin) -> None:
-        mixin._fire_lifecycle = AsyncMock()
-        await mixin._fire_session_end("conv-end")
-        mixin._fire_lifecycle.assert_awaited_once_with("conv-end", HookEventType.SESSION_END, {})
-        assert mixin._fire_lifecycle.await_count == 1
-        assert mixin._fire_lifecycle.await_args is not None
+        with patch.object(mixin, "_fire_lifecycle", new_callable=AsyncMock) as fire_lifecycle:
+            await mixin._fire_session_end("conv-end")
+
+        fire_lifecycle.assert_awaited_once_with("conv-end", HookEventType.SESSION_END, {})
+        assert fire_lifecycle.await_count == 1
+        assert fire_lifecycle.await_args is not None
