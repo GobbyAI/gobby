@@ -16,10 +16,7 @@ function agentDefinition(): AgentDefInfo {
       name: "reviewer",
       description: "Reviews changes",
       surfaces: ["spawn"],
-      role: "reviewer",
-      goal: null,
-      personality: null,
-      instructions: null,
+      prompts: { agent: "Review the assigned implementation." },
       provider: "claude",
       model: "opus",
       reasoning_effort: null,
@@ -64,6 +61,10 @@ describe("AgentsTabActions", () => {
   it("preserves wildcard, exclusions, and custom workflow keys across edit-save", () => {
     const body = buildAgentDefinitionBody(agentToDraft(agentDefinition()));
 
+    expect(body.prompts).toEqual({
+      persona: null,
+      agent: "Review the assigned implementation.",
+    });
     expect(body.workflows).toEqual({
       rules: ["review-rules"],
       skill_selectors: {

@@ -195,9 +195,10 @@ async def _deferred_tmux_health_check(
                 return
             error = "Agent process exited immediately after spawn"
             if pane_output:
-                safe_output = _bounded_redacted_pane_output(pane_output)
+                redacted_output = _redacted_pane_output(pane_output)
+                safe_output = _intentional_pane_tail(redacted_output)
                 capture_id = _persist_health_pane_capture(
-                    runner.run_storage, run, run_id, safe_output
+                    runner.run_storage, run, run_id, redacted_output
                 )
                 error = f"{error}\nPane output:\n{safe_output}"
                 if capture_id:

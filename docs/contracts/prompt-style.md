@@ -1,7 +1,7 @@
 # Prompt Style Contract
 
 The style contract for every LLM-facing instruction surface in Gobby: agent
-definition YAMLs (`role`/`goal`/`instructions`/`status_message`), prompt
+definition YAMLs (`prompts.persona`/`prompts.agent`/`status_message`), prompt
 templates under `src/gobby/install/shared/prompts/` and `src/gobby/tasks/prompts/`,
 config-embedded prompt strings, and skill bodies. Apply it when authoring or
 reviewing any of these.
@@ -29,12 +29,13 @@ those findings into review rules.
    destructive-risk rules.** Bold is a scarce resource; spend it where a miss
    destroys work (data loss, foreign uncommitted files, full-suite runs).
    Everything else is prose. No ALL-CAPS emphasis words.
-4. **No persona blocks in worker or task prompts.** Experience personas ("you
-   are a senior X with 10 years…") contribute flattery, not capability. Open
-   with the task. Factual role context ("you are spawned by an orchestrator
-   pipeline; your final message is parsed as JSON") is not persona — keep it.
-   The Gobby product voice is deliberate identity and lives only in the
-   `default` and `comms-agent` definitions and the chat assembly path.
+4. **Keep prompt surfaces independent.** `prompts.persona` carries concise
+   interactive domain guidance and working style. `prompts.agent` carries
+   automated-run instructions, assigned-task lifecycle, stage transitions,
+   messaging, and `end_agent_run`. Experience flattery ("you are a senior X
+   with 10 years…") contributes no capability on either surface. The Gobby
+   product voice is deliberate identity and lives only in the `default` and
+   `comms-agent` definitions and the chat assembly path.
 5. **No verification or anti-laziness exhortations.** Drop "be thorough", "be
    critical", "do not approve without a re-check pass", "make sure you
    really…". State the check itself once; the model runs it. Adversarial *role
@@ -144,7 +145,9 @@ When reviewing an instruction surface against this contract:
 - Zero `CRITICAL RULES:`-style caps headers; at most 3 bolded rules, each
   destructive-risk.
 - Every surviving prohibition carries its reason; prefer the positive form.
-- No experience personas outside `default`/`comms-agent`/chat assembly.
+- Persona blocks contain interactive guidance only; agent lifecycle terms stay
+  in agent blocks.
+- No experience flattery outside `default`/`comms-agent`/chat assembly.
 - No thoroughness/verification exhortations.
 - Exact commands, tool names, markers, and output contracts byte-identical to
   what the consuming code expects.

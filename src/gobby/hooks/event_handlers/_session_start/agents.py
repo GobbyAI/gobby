@@ -315,8 +315,6 @@ def activate_default_agent(
     return AgentActivationResult(
         agent_name=agent_body.name,
         description=agent_body.description,
-        role=agent_body.role,
-        goal=agent_body.goal,
         rules_count=len(active_rules),
         skills_count=skills_count,
         variables_count=variables_count,

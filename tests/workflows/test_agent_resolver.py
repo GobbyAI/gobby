@@ -46,7 +46,12 @@ def _create_agent(
     project_id: str | None = None,
     source: str = "custom",
 ) -> Any:
-    payload = {"name": name, "provider": "claude", **(body or {})}
+    payload = {
+        "name": name,
+        "provider": "claude",
+        "prompts": {"agent": "Run the assigned task."},
+        **(body or {}),
+    }
     manager = _manager(db)
     if step_workflow is not None:
         return manager.upsert_with_steps(
@@ -83,13 +88,13 @@ class TestResolveAgentDefault:
         _create_agent(
             definition_db,
             "default",
-            body={"role": "custom default role", "provider": "claude"},
+            body={"prompts": {"agent": "custom default prompt"}, "provider": "claude"},
         )
 
         result = resolve_agent("default", definition_db)
         assert result is not None
         assert result.name == "default"
-        assert result.role == "custom default role"
+        assert result.prompt_for("agent") == "custom default prompt"
         assert result.provider == "claude"
 
     def test_nonexistent_agent_returns_none(self, definition_db: PostgresHubDatabase) -> None:
@@ -104,12 +109,12 @@ class TestResolveAgentLookup:
         _create_agent(
             definition_db,
             "developer",
-            body={"role": "Backend developer", "provider": "claude"},
+            body={"prompts": {"agent": "Backend developer"}, "provider": "claude"},
         )
         result = resolve_agent("developer", definition_db)
         assert result is not None
         assert result.name == "developer"
-        assert result.role == "Backend developer"
+        assert result.prompt_for("agent") == "Backend developer"
         assert result.provider == "claude"
         assert result.step_workflow is None
 
@@ -157,11 +162,15 @@ class TestResolveAgentLookup:
 
     def test_project_agent_shadows_global_agent(self, definition_db: PostgresHubDatabase) -> None:
         project_id = str(uuid4())
-        _create_agent(definition_db, "shared-name", body={"role": "global"})
         _create_agent(
             definition_db,
             "shared-name",
-            body={"role": "project"},
+            body={"prompts": {"agent": "global"}},
+        )
+        _create_agent(
+            definition_db,
+            "shared-name",
+            body={"prompts": {"agent": "project"}},
             project_id=project_id,
         )
 
@@ -169,9 +178,9 @@ class TestResolveAgentLookup:
         global_hit = resolve_agent("shared-name", definition_db)
 
         assert project_hit is not None
-        assert project_hit.role == "project"
+        assert project_hit.prompt_for("agent") == "project"
         assert global_hit is not None
-        assert global_hit.role == "global"
+        assert global_hit.prompt_for("agent") == "global"
 
     def test_invalid_agent_definition_logs_warning_with_traceback(
         self,
@@ -234,11 +243,15 @@ class TestStepfulAndSteplessConsumers:
     async def test_stepful_and_stepless_resolution_dry_run_and_skills(
         self, definition_db: PostgresHubDatabase, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        _create_agent(definition_db, "stepless", body={"role": "plain"})
+        _create_agent(
+            definition_db,
+            "stepless",
+            body={"prompts": {"agent": "plain"}},
+        )
         _create_agent(
             definition_db,
             "stepful",
-            body={"role": "guided"},
+            body={"prompts": {"agent": "guided"}},
             step_workflow=_STEP_WORKFLOW,
         )
 

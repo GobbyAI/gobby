@@ -73,6 +73,7 @@ def mock_runner() -> MagicMock:
 @pytest.fixture
 def agent_body() -> AgentDefinitionBody:
     return AgentDefinitionBody(
+        prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name="default",
         provider="claude",
     )
@@ -91,6 +92,6 @@ def build_agent_body() -> Callable[..., AgentDefinitionBody]:
             "provider": "claude",
         }
         defaults.update(overrides)
-        return AgentDefinitionBody(**defaults)
+        return AgentDefinitionBody(prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."}, **defaults)
 
     return _build_agent_body

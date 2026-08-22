@@ -11,12 +11,12 @@ from gobby.build.observability import explain_dispatch
 from gobby.dispatch.actions import SpawnAgentAction
 from gobby.dispatch.skill_composition import inspect_skill_composition
 from gobby.dispatch.spawn import DispatchSpawnFailed, _with_skill_allowed_tools, spawn_agent
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.skills import LocalSkillManager
 from gobby.storage.tasks import LocalTaskManager
-from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.workflows.definitions import (
     AgentDefinitionBody,
     AgentStepWorkflowBody,
@@ -46,6 +46,7 @@ def _skill(
 
 def _agent(name: str = "composition-agent") -> AgentDefinitionBody:
     return AgentDefinitionBody(
+        prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name=name,
         step_workflow=AgentStepWorkflowBody(
             variables={"required_skills": ["required-skill"]},
@@ -109,6 +110,7 @@ def test_skill_composition_clean_pass_through_reports_allowed_tools_union(
 
 def test_composed_skill_tools_extend_restricted_steps_without_mutating_definition() -> None:
     agent = AgentDefinitionBody(
+        prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name="restricted-agent",
         step_workflow=AgentStepWorkflowBody(
             steps=[
@@ -203,9 +205,11 @@ async def test_spawn_and_explain_share_unknown_skill_failure(
     )
     task = task_manager.update_task(task.id, allow_automation=True, isolation="none")
     agent_body = _agent()
-    AgentDefinitionManager(temp_db).create(
-        name=agent_body.name,
-        definition_json=agent_body.model_dump_json(),
+    dumped = agent_body.model_dump(mode="json")
+    AgentDefinitionManager(temp_db).upsert_with_steps(
+        agent_body.name,
+        dumped,
+        dumped.get("step_workflow"),
         project_id=project.id,
     )
     _skill(temp_db, "required-skill")

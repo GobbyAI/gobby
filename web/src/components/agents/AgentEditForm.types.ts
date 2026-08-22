@@ -5,10 +5,8 @@ export interface AgentFormData {
   name: string;
   description: string;
   surfaces: string[];
-  role: string;
-  goal: string;
-  personality: string;
-  instructions: string;
+  persona_prompt: string;
+  agent_prompt: string;
   provider: string;
   model: string;
   reasoning_effort: string;
@@ -26,10 +24,10 @@ export interface AgentItemForPanel {
     name: string;
     description: string | null;
     surfaces?: string[] | null;
-    role: string | null;
-    goal: string | null;
-    personality: string | null;
-    instructions: string | null;
+    prompts?: {
+      persona?: string | null;
+      agent?: string | null;
+    } | null;
     provider: string;
     model: string | null;
     reasoning_effort?: string | null;

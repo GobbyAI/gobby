@@ -297,7 +297,7 @@ def test_project_scoped_defaults_isolation(db: HubDatabase) -> None:
     )
 
     _seed_project_scoped_defaults(db)
-    agent = AgentDefinitionBody(name="default")
+    agent = AgentDefinitionBody(prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."}, name="default")
     sv_mgr = SessionVariableManager(db)
 
     assert load_variable_defaults(db, None) == _expected_for(None)

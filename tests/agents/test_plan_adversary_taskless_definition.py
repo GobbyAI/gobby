@@ -59,13 +59,13 @@ def test_taskless_adversary_loads_plan_review_and_reports_structured_result() ->
     assert "Computer Use tools" in status
     assert "structured" in steps["review"]["description"].lower()
     assert "verdict" in steps["review"]["status_message"].lower()
-    assert "After the workflow has advanced to `review`" in agent["instructions"]
-    assert "## V1 Plan Changelog" in agent["instructions"]
-    assert "## M1 Task Manifest" in agent["instructions"]
-    assert "implementation_domain" in agent["instructions"]
-    assert "PLAN IDENTITY PRECONDITION" in agent["instructions"]
-    assert "**Plan ID:** <id>" in agent["instructions"]
-    assert "covers:unknown:" in agent["instructions"]
+    assert "After the workflow has advanced to `review`" in agent["prompts"]["agent"]
+    assert "## V1 Plan Changelog" in agent["prompts"]["agent"]
+    assert "## M1 Task Manifest" in agent["prompts"]["agent"]
+    assert "implementation_domain" in agent["prompts"]["agent"]
+    assert "PLAN IDENTITY PRECONDITION" in agent["prompts"]["agent"]
+    assert "**Plan ID:** <id>" in agent["prompts"]["agent"]
+    assert "covers:unknown:" in agent["prompts"]["agent"]
     assert "gobby-agents:end_agent_run" in steps["review"]["allowed_mcp_tools"]
 
 
@@ -90,7 +90,7 @@ def test_taskless_adversary_loads_proportionality() -> None:
     )
     assert "proportionality_loaded" in transition_whens
 
-    instructions = agent["instructions"]
+    instructions = agent["prompts"]["agent"]
     assert "proportionality" in instructions
     assert "over-engineering" in instructions
     assert "simpler form" in instructions

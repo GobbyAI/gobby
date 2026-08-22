@@ -15,7 +15,7 @@ PLANNER = Path("src/gobby/install/shared/workflows/agents/planner.yaml")
 def _planner_prompt() -> str:
     data = yaml.safe_load(PLANNER.read_text(encoding="utf-8"))
     agent = AgentDefinitionBody.model_validate(data)
-    return agent.build_prompt_preamble() or ""
+    return agent.prompt_for("agent") or ""
 
 
 def test_planner_prompt_contains_grammar() -> None:

@@ -26,7 +26,7 @@ def test_no_write_permissions() -> None:
     terminate_step = next(
         step for step in agent["step_workflow"]["steps"] if step["name"] == "terminate"
     )
-    instructions = agent["instructions"]
+    instructions = agent["prompts"]["agent"]
 
     assert review_step.get("allowed_tools") != "all"
     allowed_tools = set(review_step.get("allowed_tools", []))
@@ -43,7 +43,7 @@ def test_no_write_permissions() -> None:
 
 def test_emits_review_verdict() -> None:
     agent = _agent()
-    instructions = agent["instructions"]
+    instructions = agent["prompts"]["agent"]
     review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
     status_message = review_step["status_message"]
     success_tools = {item["tool"] for item in review_step.get("on_mcp_success", [])}
@@ -111,7 +111,7 @@ def test_get_task_when_keeps_review_path_when_stage_missing(state: object) -> No
 
 def test_escalation_is_limited_to_broken_workflow() -> None:
     agent = _agent()
-    instructions = agent["instructions"]
+    instructions = agent["prompts"]["agent"]
     review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
     status_message = review_step["status_message"]
 
@@ -127,7 +127,7 @@ def test_loads_required_skills_before_review() -> None:
     steps = {step["name"]: step for step in agent["step_workflow"]["steps"]}
     claim_step = steps["claim"]
     load_step = steps["load_skills"]
-    instructions = agent["instructions"]
+    instructions = agent["prompts"]["agent"]
 
     assert "tech-writer" not in instructions
     assert agent["step_workflow"]["variables"]["required_skills"] == [
@@ -162,7 +162,7 @@ def test_loads_required_skills_before_review() -> None:
 
 def test_auto_claimed_reviewers_do_not_reclaim() -> None:
     agent = _agent()
-    instructions = agent["instructions"]
+    instructions = agent["prompts"]["agent"]
     review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
 
     assert "Spawn-time auto-claim normally completes this" in instructions
@@ -176,7 +176,7 @@ def test_auto_claimed_reviewers_do_not_reclaim() -> None:
 
 def test_reviewer_avoids_workflow_status_and_full_test_suites() -> None:
     agent = _agent()
-    instructions = agent["instructions"]
+    instructions = agent["prompts"]["agent"]
     review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
     status_message = review_step["status_message"]
 
@@ -208,7 +208,7 @@ def test_reviewer_avoids_workflow_status_and_full_test_suites() -> None:
 
 def test_leaf_review_is_ordered_by_spec_then_quality() -> None:
     agent = _agent()
-    instructions = agent["instructions"]
+    instructions = agent["prompts"]["agent"]
     review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
     status_message = review_step["status_message"]
 
@@ -221,7 +221,7 @@ def test_leaf_review_is_ordered_by_spec_then_quality() -> None:
 
 def test_tdd_audit_evidence_is_language_aware() -> None:
     agent = _agent()
-    instructions = agent["instructions"]
+    instructions = agent["prompts"]["agent"]
     review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
     status_message = review_step["status_message"]
 
@@ -241,7 +241,7 @@ def test_proportionality_is_code_quality_tier_and_does_not_gate_spec() -> None:
     leaf is a quality note, not a spec_compliance rejection.
     """
     agent = _agent()
-    instructions = agent["instructions"]
+    instructions = agent["prompts"]["agent"]
     review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
     status_message = review_step["status_message"]
 

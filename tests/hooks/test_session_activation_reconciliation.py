@@ -146,7 +146,7 @@ def _create_worker_agent(db: HubDatabase) -> None:
         "worker",
         {
             "name": "worker",
-            "role": "Worker",
+            "prompts": {"agent": "Work the assigned task."},
             "blocked_tools": ["Bash"],
             "blocked_mcp_tools": ["gobby-tasks.close_task"],
             "workflows": {"rule_selectors": {"include": ["tag:worker"], "exclude": []}},
@@ -413,6 +413,7 @@ def test_reconciliation_refreshes_stale_active_rule_names(
         definition_json=json.dumps(
             {
                 "name": "default",
+                "prompts": {"agent": "Run the assigned task."},
                 "workflows": {"rule_selectors": {"include": ["tag:default"], "exclude": []}},
             }
         ),
@@ -472,6 +473,7 @@ def test_reconciliation_caches_active_rule_names_for_same_agent_and_project(
         definition_json=json.dumps(
             {
                 "name": "default",
+                "prompts": {"agent": "Run the assigned task."},
                 "workflows": {"rule_selectors": {"include": ["tag:default"], "exclude": []}},
             }
         ),
@@ -538,6 +540,7 @@ def test_reconciliation_invalidates_active_rule_cache_after_definition_mutation(
         definition_json=json.dumps(
             {
                 "name": "default",
+                "prompts": {"agent": "Run the assigned task."},
                 "workflows": {"rule_selectors": {"include": ["tag:default"], "exclude": []}},
             }
         ),
@@ -602,6 +605,7 @@ def test_active_rule_names_cache_evicts_oldest_entries(
         definition_json=json.dumps(
             {
                 "name": "new-agent",
+                "prompts": {"agent": "Run the assigned task."},
                 "workflows": {"rule_selectors": {"include": [], "exclude": []}},
             }
         ),
@@ -630,6 +634,7 @@ def test_active_rule_names_cache_purges_expired_entries(
         definition_json=json.dumps(
             {
                 "name": "new-agent",
+                "prompts": {"agent": "Run the assigned task."},
                 "workflows": {"rule_selectors": {"include": [], "exclude": []}},
             }
         ),

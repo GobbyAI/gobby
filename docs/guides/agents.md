@@ -18,18 +18,22 @@ Agent definitions have explicit `surfaces`:
 `apply_persona` is intentionally narrow. It sets prompt-facing persona state,
 skill selection, and reinjection flags; it does not change provider, model,
 isolation, active rules, tool restrictions, or inline step workflow state.
+The `prompts.persona` block is the complete interactive preamble.
 
 Spawned runs use the full runtime path. They can inherit or override execution
 settings, register inline step workflows, receive task/session variables, and
-publish completion state back to waiting parents.
+publish completion state back to waiting parents. Every spawn mode uses the
+complete `prompts.agent` preamble.
 
 ## Definition Storage
 
 Agent definitions are stored in `agent_definitions`. An optional one-to-one
 `agent_step_workflows` child holds the nested `step_workflow` payload
 (`steps`, `variables`, `exit_condition`). Runtime sessions snapshot that
-child onto `agent_step_instances` at spawn or persona activation. Definitions
-are managed through `gobby-workflows`.
+child onto `agent_step_instances` at spawn. Turn-start reconciliation may
+restore a missing snapshot only for a spawned or agent-run-backed session with
+an assigned or active task. Persona activation never creates a step instance.
+Definitions are managed through `gobby-workflows`.
 
 Bundled definitions live in:
 
@@ -63,7 +67,8 @@ The current `AgentDefinitionBody` schema accepts these primary fields:
 | `description` | Human-readable summary |
 | `sources` | Optional CLI-source filter |
 | `surfaces` | `spawn`, `persona`, or both |
-| `role` / `goal` / `personality` / `instructions` | Prompt blocks used for persona or run context |
+| `prompts.persona` | Complete interactive guidance for the `persona` surface |
+| `prompts.agent` | Complete automated-run guidance for the `spawn` surface |
 | `provider` | Provider override or `inherit` |
 | `model` | Optional model override |
 | `reasoning_effort` | Optional normalized reasoning effort string |
@@ -79,9 +84,10 @@ The current `AgentDefinitionBody` schema accepts these primary fields:
 | `step_workflow` | Optional nested object with `steps`, `variables`, and `exit_condition` |
 | `enabled` | Whether the definition is active |
 
-Older YAML may contain a `mode` field. The schema ignores extra fields for
-compatibility, but new definitions should use `surfaces` plus the runtime tool
-choice instead.
+Every declared surface requires its prompt block. Legacy `role`, `goal`,
+`personality`, and `instructions` fields are rejected with a migration hint.
+Older YAML may contain a `mode` field; new definitions should use `surfaces`
+plus the runtime tool choice instead.
 
 ## Strict Execution Fields
 
@@ -129,12 +135,14 @@ provider: inherit
 isolation: inherit
 timeout: 1200
 
-role: >
-  You write and verify Gobby documentation against the local source tree.
-
-instructions: |
-  Claim the assigned docs task, audit the guide against code-owned sources,
-  make a scoped docs change, run focused verification, commit, and hand off.
+prompts:
+  persona: |
+    Help write and review Gobby documentation against the local source tree.
+    Focus on accuracy, structure, terminology, and reader clarity.
+  agent: |
+    Claim the assigned docs task, audit the guide against code-owned sources,
+    make a scoped docs change, run focused verification, commit, hand off the
+    configured review stage, and end the agent run.
 
 workflows:
   rule_selectors:
@@ -291,6 +299,8 @@ provides the concrete worktree or clone context.
 - Put reusable safety policy in rules; keep agent definitions focused on role,
   selectors, runtime settings, and step flow.
 - Use `surfaces` to make persona-capable definitions explicit.
+- Keep interactive domain guidance in `prompts.persona`; keep assigned-task and
+  run-lifecycle instructions in `prompts.agent`.
 - Seed only variables the agent owns, such as `assigned_task_id` or
   stage-specific gates.
 - Use inline steps for lifecycle phases: claim, load required skills,

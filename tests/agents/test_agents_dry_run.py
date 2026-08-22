@@ -32,6 +32,7 @@ def _create_agent(
 ) -> None:
     """Create an agent definition in the typed table."""
     body = AgentDefinitionBody(
+        prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name=name,
         provider=provider,
         isolation=isolation,

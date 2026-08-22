@@ -328,7 +328,7 @@ def test_execute_allow_list_matches_merge_expert_contract() -> None:
 
 def test_merge_orchestrator_uses_wake_driven_agent_waits() -> None:
     agent = _agent()
-    instructions = agent["instructions"]
+    instructions = agent["prompts"]["agent"]
     execute = _step(agent, "execute")
     skill = SKILL_PATH.read_text(encoding="utf-8")
 
@@ -356,7 +356,7 @@ def test_merge_orchestrator_uses_wake_driven_agent_waits() -> None:
 
 def test_merge_orchestrator_allows_already_implemented_close_path() -> None:
     agent = _agent()
-    instructions = agent["instructions"]
+    instructions = agent["prompts"]["agent"]
     survey = _step(agent, "survey")
     plan = _step(agent, "plan")
     report = _step(agent, "report")
@@ -391,7 +391,7 @@ def test_merge_orchestrator_plan_can_refresh_read_only_survey_state() -> None:
 
 def test_merge_orchestrator_loads_build_coordinator_skill_before_agent_queries() -> None:
     agent = _agent()
-    instructions = agent["instructions"]
+    instructions = agent["prompts"]["agent"]
     load_skill = _step(agent, "load_skill")
 
     assert 'get_skill(name="merge-expert")' in instructions
@@ -1129,7 +1129,7 @@ def test_merge_expert_continues_active_resolution_before_abort() -> None:
 
 
 def test_merge_orchestrator_filters_running_workers_by_agent_identity() -> None:
-    instructions = _agent()["instructions"]
+    instructions = _agent()["prompts"]["agent"]
 
     assert "agent_name is exactly `merge-worker`" in instructions
     assert "Never wait on this orchestrator's" in instructions
@@ -1137,7 +1137,7 @@ def test_merge_orchestrator_filters_running_workers_by_agent_identity() -> None:
 
 
 def test_merge_orchestrator_worker_prompts_stay_inside_merge_tool_surface() -> None:
-    instructions = " ".join(_agent()["instructions"].split())
+    instructions = " ".join(_agent()["prompts"]["agent"].split())
     skill = " ".join(SKILL_PATH.read_text(encoding="utf-8").split())
 
     assert "For ordinary clean worktree delivery" in instructions
@@ -1159,7 +1159,7 @@ def test_merge_orchestrator_worker_prompts_stay_inside_merge_tool_surface() -> N
 
 
 def test_merge_orchestrator_preserves_guarded_verify_commands() -> None:
-    instructions = " ".join(_agent()["instructions"].split())
+    instructions = " ".join(_agent()["prompts"]["agent"].split())
     skill = " ".join(SKILL_PATH.read_text(encoding="utf-8").split())
 
     assert "Preserve any required environment guards" in instructions
@@ -1170,7 +1170,7 @@ def test_merge_orchestrator_preserves_guarded_verify_commands() -> None:
 
 
 def test_merge_orchestrator_does_not_green_gate_tdd_red_phase_pytest() -> None:
-    instructions = " ".join(_agent()["instructions"].split())
+    instructions = " ".join(_agent()["prompts"]["agent"].split())
     skill = " ".join(SKILL_PATH.read_text(encoding="utf-8").split())
 
     for text in (instructions, skill):

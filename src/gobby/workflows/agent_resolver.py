@@ -68,5 +68,11 @@ def resolve_agent(
     if found is not None:
         return found[0]
     if name == "default":
-        return _resolve_inherit(AgentDefinitionBody(name="default"), cli_source)
+        return _resolve_inherit(
+            AgentDefinitionBody(
+                name="default",
+                prompts={"agent": "Work from the supplied task prompt."},
+            ),
+            cli_source,
+        )
     return None

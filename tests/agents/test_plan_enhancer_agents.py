@@ -108,17 +108,17 @@ class TestSharedEnhancerContract:
         self, fixture: str, request: pytest.FixtureRequest
     ) -> None:
         agent: AgentDefinitionBody = request.getfixturevalue(fixture)
-        assert agent.instructions is not None
-        assert "plan-enhance" in agent.instructions
-        assert "proportionality" in agent.instructions
+        assert agent.prompts.agent is not None
+        assert "plan-enhance" in agent.prompts.agent
+        assert "proportionality" in agent.prompts.agent
 
     @pytest.mark.parametrize("fixture", ["taskless", "stage_native"])
     def test_never_edits_plan_or_writes_manifest_in_instructions(
         self, fixture: str, request: pytest.FixtureRequest
     ) -> None:
         agent: AgentDefinitionBody = request.getfixturevalue(fixture)
-        assert agent.instructions is not None
-        lowered = agent.instructions.lower()
+        assert agent.prompts.agent is not None
+        lowered = agent.prompts.agent.lower()
         assert "manifest" in lowered  # explicitly forbidden
         assert "edit" in lowered and "write" in lowered
 
@@ -232,11 +232,11 @@ class TestStageNativeEnhancer:
     def test_instructions_record_plan_enhancement_not_gate(
         self, stage_native: AgentDefinitionBody
     ) -> None:
-        assert stage_native.instructions is not None
-        assert "record_plan_enhancement" in stage_native.instructions
-        lowered = stage_native.instructions.lower()
-        assert "approve_review" in stage_native.instructions
-        assert "reject_review" in stage_native.instructions
+        assert stage_native.prompts.agent is not None
+        assert "record_plan_enhancement" in stage_native.prompts.agent
+        lowered = stage_native.prompts.agent.lower()
+        assert "approve_review" in stage_native.prompts.agent
+        assert "reject_review" in stage_native.prompts.agent
         # Framed as prohibitions ("never gate").
         assert "never" in lowered
 

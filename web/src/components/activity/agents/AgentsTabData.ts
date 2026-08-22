@@ -17,10 +17,10 @@ export interface AgentDefInfo {
     name: string;
     description: string | null;
     surfaces?: string[] | null;
-    role: string | null;
-    goal: string | null;
-    personality: string | null;
-    instructions: string | null;
+    prompts?: {
+      persona?: string | null;
+      agent?: string | null;
+    } | null;
     provider: string;
     model: string | null;
     is_local?: boolean | null;
@@ -86,10 +86,8 @@ export const DEFAULT_AGENT_FORM: AgentFormData = {
   name: "",
   description: "",
   surfaces: ["spawn"],
-  role: "",
-  goal: "",
-  personality: "",
-  instructions: "",
+  persona_prompt: "",
+  agent_prompt: "",
   provider: "inherit",
   model: "",
   reasoning_effort: "auto",
@@ -221,7 +219,8 @@ export function filterAgentDefinitions(
     const searchable = [
       definition.definition.name,
       definition.definition.description,
-      definition.definition.role,
+      definition.definition.prompts?.persona,
+      definition.definition.prompts?.agent,
       definition.definition.provider,
       ...(definition.tags ?? []),
     ]
@@ -241,10 +240,8 @@ export function agentToDraft(agent: AgentDefInfo): AgentDraft {
       name: definition.name,
       description: definition.description ?? "",
       surfaces: definition.surfaces ?? ["spawn"],
-      role: definition.role ?? "",
-      goal: definition.goal ?? "",
-      personality: definition.personality ?? "",
-      instructions: definition.instructions ?? "",
+      persona_prompt: definition.prompts?.persona ?? "",
+      agent_prompt: definition.prompts?.agent ?? "",
       provider: definition.provider,
       model: definition.model ?? "",
       reasoning_effort: definition.reasoning_effort ?? "auto",

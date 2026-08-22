@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.definitions.agents import AgentDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import AgentDefinitionBody
 from tests.agents.detection_test_support import BundledDetectionRegistry
 
@@ -31,6 +31,7 @@ class TestFallbackAgent:
         fallback_agent: str | None = None,
     ) -> AgentDefinitionBody:
         body = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name=name,
             provider=provider,
             model=model,
@@ -333,6 +334,7 @@ class TestFallbackAgent:
     def test_fallback_agent_field_roundtrip(self) -> None:
         """AgentDefinitionBody with fallback_agent serializes/deserializes."""
         body = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="test-fb",
             provider="codex",
             fallback_agent="test-fb-claude",
@@ -343,6 +345,9 @@ class TestFallbackAgent:
 
     def test_fallback_agent_defaults_to_none(self) -> None:
         """Old JSON without fallback_agent deserializes to None."""
-        old_json = '{"name": "legacy-agent", "provider": "claude"}'
+        old_json = (
+            '{"name": "legacy-agent", "provider": "claude", '
+            '"prompts": {"agent": "Run the assigned task."}}'
+        )
         loaded = AgentDefinitionBody.model_validate_json(old_json)
         assert loaded.fallback_agent is None

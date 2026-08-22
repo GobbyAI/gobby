@@ -329,7 +329,7 @@ class CronExecutor:
                 project_id=job.project_id,
             )
             if agent_body:
-                preamble = agent_body.build_prompt_preamble()
+                preamble = agent_body.prompt_for("agent")
                 if preamble:
                     prompt = f"{preamble}\n\n---\n\n{prompt}"
                 # Use agent definition's provider if no explicit provider in config

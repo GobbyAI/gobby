@@ -138,7 +138,7 @@ class TestStepToolGates:
 
 class TestAgentToolGates:
     def test_agent_level_typo_in_blocked_tools_is_error(self) -> None:
-        agent = AgentDefinitionBody(name="merge-worker", blocked_tools=["Wokflow", "Task"])
+        agent = AgentDefinitionBody(prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."}, name="merge-worker", blocked_tools=["Wokflow", "Task"])
         result = _evaluation()
         check_agent_tool_gates(agent, result)
         errors = [i for i in result.items if i.level == "error"]
@@ -147,6 +147,7 @@ class TestAgentToolGates:
 
     def test_agent_inline_steps_are_linted(self) -> None:
         agent = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="worker",
             step_workflow=AgentStepWorkflowBody(
                 steps=[WorkflowStep(name="work", blocked_tools=["Wokflow"])],
@@ -159,6 +160,7 @@ class TestAgentToolGates:
     @pytest.mark.asyncio
     async def test_agent_blocked_mcp_unknown_tool_is_error(self) -> None:
         agent = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="worker",
             blocked_mcp_tools=["gobby-agents:kill_agentt"],
         )
@@ -173,6 +175,7 @@ class TestAgentToolGates:
     @pytest.mark.asyncio
     async def test_clean_agent_is_valid(self) -> None:
         agent = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="worker",
             blocked_tools=["Workflow", "Task"],
             blocked_mcp_tools=["gobby-agents:kill_agent"],
@@ -199,6 +202,7 @@ class TestBlockedMcpSemanticSeverity:
         mcp_manager.list_tools = AsyncMock(return_value={"gobby-agents": [{"name": "kill_agent"}]})
         result = await evaluate_agent_definition(
             AgentDefinitionBody(
+                prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
                 name="wf",
                 provider="claude",
                 step_workflow=AgentStepWorkflowBody(steps=definition.steps),
@@ -221,6 +225,7 @@ class TestBlockedMcpSemanticSeverity:
         mcp_manager.list_tools = AsyncMock(return_value={"gobby-agents": [{"name": "kill_agent"}]})
         result = await evaluate_agent_definition(
             AgentDefinitionBody(
+                prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
                 name="wf",
                 provider="claude",
                 step_workflow=AgentStepWorkflowBody(steps=definition.steps),

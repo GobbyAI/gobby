@@ -8,10 +8,8 @@ const form: AgentFormData = {
   name: "reviewer",
   description: "",
   surfaces: ["spawn"],
-  role: "",
-  goal: "",
-  personality: "",
-  instructions: "",
+  persona_prompt: "",
+  agent_prompt: "Review the assigned implementation.",
   provider: "inherit",
   model: "",
   reasoning_effort: "auto",
@@ -25,6 +23,38 @@ const form: AgentFormData = {
 };
 
 describe("AgentEditForm", () => {
+  it("shows only prompt editors declared by the selected surfaces", () => {
+    const { rerender } = render(
+      <AgentEditForm
+        isOpen
+        form={form}
+        onChange={vi.fn()}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+        isEditing
+        providerCatalog={[]}
+      />,
+    );
+
+    expect(screen.getByText("Agent prompt")).toBeInTheDocument();
+    expect(screen.queryByText("Persona prompt")).not.toBeInTheDocument();
+
+    rerender(
+      <AgentEditForm
+        isOpen
+        form={{ ...form, surfaces: ["spawn", "persona"] }}
+        onChange={vi.fn()}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+        isEditing
+        providerCatalog={[]}
+      />,
+    );
+
+    expect(screen.getByText("Agent prompt")).toBeInTheDocument();
+    expect(screen.getByText("Persona prompt")).toBeInTheDocument();
+  });
+
   it("renders the view picker as a roving tab list", () => {
     const onViewChange = vi.fn();
 

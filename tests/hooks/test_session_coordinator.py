@@ -70,6 +70,7 @@ def _install_step_workflow(db: HubDatabase, session_id: str, current_step: str) 
     from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
 
     definition = AgentDefinitionBody(
+        prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name="merge-worker",
         step_workflow=AgentStepWorkflowBody.model_validate(
             {

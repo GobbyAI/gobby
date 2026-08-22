@@ -58,10 +58,27 @@ class AgentStepWorkflowBody(BaseModel):
         return None
 
 
+class AgentPromptBlocks(BaseModel):
+    """Surface-specific, complete prompt preambles for an agent definition."""
+
+    persona: StrictStr | None = None
+    agent: StrictStr | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("persona", "agent")
+    @classmethod
+    def _require_non_empty_block(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not value.strip():
+            raise ValueError("prompt blocks must be non-empty strings")
+        return value
+
+
 class AgentDefinitionBody(BaseModel):
     """Stored as definition_json on agent_definitions.
 
-    Agent identity with structured prompt fields, provider config,
+    Agent identity with surface-specific prompt blocks, provider config,
     spawn parameters, and orchestration. Behavior is defined by rules
     and optional pipeline, not embedded workflows.
     """
@@ -86,11 +103,7 @@ class AgentDefinitionBody(BaseModel):
         default_factory=lambda: cast(list[Literal["spawn", "persona"]], ["spawn"]),
         description="Where this definition can be used: spawned execution, session personas, or both.",
     )
-    # Structured prompt fields (composed into preamble at spawn time)
-    role: str | None = None
-    goal: str | None = None
-    personality: str | None = None
-    instructions: str | None = None
+    prompts: AgentPromptBlocks = Field(default_factory=AgentPromptBlocks)
     # Execution
     provider: str = "inherit"
     model: StrictStr | None = None
@@ -122,7 +135,7 @@ class AgentDefinitionBody(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def reject_legacy_step_keys(cls, data: Any) -> Any:
-        """Reject removed top-level step keys so extra=ignore cannot drop them."""
+        """Reject removed keys so extra=ignore cannot silently drop them."""
         if not isinstance(data, dict):
             return data
         replacements = {
@@ -134,7 +147,31 @@ class AgentDefinitionBody(BaseModel):
         if present:
             named = ", ".join(f"{key} (use {replacements[key]})" for key in present)
             raise ValueError(f"top-level step fields are no longer accepted: {named}")
+
+        legacy_prompt_fields = [
+            key for key in ("role", "goal", "personality", "instructions") if key in data
+        ]
+        if legacy_prompt_fields:
+            named = ", ".join(legacy_prompt_fields)
+            raise ValueError(
+                f"legacy prompt fields are no longer accepted: {named}; "
+                "move interactive guidance to prompts.persona and spawned-run "
+                "instructions to prompts.agent"
+            )
         return data
+
+    @model_validator(mode="after")
+    def require_surface_prompt_blocks(self) -> AgentDefinitionBody:
+        """Require one complete prompt block for every declared usage surface."""
+        if "persona" in self.surfaces and self.prompts.persona is None:
+            raise ValueError(
+                "surfaces includes 'persona', so prompts.persona must be a non-empty string"
+            )
+        if "spawn" in self.surfaces and self.prompts.agent is None:
+            raise ValueError(
+                "surfaces includes 'spawn', so prompts.agent must be a non-empty string"
+            )
+        return self
 
     @field_validator("reasoning_effort", mode="before")
     @classmethod
@@ -166,15 +203,17 @@ class AgentDefinitionBody(BaseModel):
         """Return True when the definition explicitly supports the requested usage surface."""
         return surface in self.surfaces
 
-    def build_prompt_preamble(self) -> str | None:
-        """Build structured prompt preamble from role/goal/personality/instructions."""
-        parts: list[str] = []
-        if self.role:
-            parts.append(f"## Role\n{self.role}")
-        if self.goal:
-            parts.append(f"## Goal\n{self.goal}")
-        if self.personality:
-            parts.append(f"## Personality\n{self.personality}")
-        if self.instructions:
-            parts.append(f"## Instructions\n{self.instructions}")
-        return "\n\n".join(parts) if parts else None
+    def prompt_for(self, surface: Literal["persona", "agent"]) -> str:
+        """Return the complete preamble owned by the requested prompt surface."""
+        definition_surface: Literal["persona", "spawn"] = (
+            "persona" if surface == "persona" else "spawn"
+        )
+        if not self.supports_surface(definition_surface):
+            raise ValueError(
+                f"Agent definition '{self.name}' does not support the "
+                f"'{definition_surface}' surface"
+            )
+        prompt = self.prompts.persona if surface == "persona" else self.prompts.agent
+        if prompt is None:  # Defensive guard for model_construct() and mock boundaries.
+            raise ValueError(f"Agent definition '{self.name}' has no prompts.{surface} block")
+        return prompt

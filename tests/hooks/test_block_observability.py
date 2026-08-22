@@ -138,6 +138,7 @@ def _setup_step_workflow(
     instance_mgr.save(
         build_step_instance(
             AgentDefinitionBody(
+                prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
                 name="step-observability",
                 surfaces=["spawn"],
                 step_workflow=AgentStepWorkflowBody.model_validate(

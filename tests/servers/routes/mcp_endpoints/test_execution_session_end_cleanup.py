@@ -170,6 +170,7 @@ async def test_session_end_cleanup_unblocks_session_targeted_read_only_calls(
     instance_manager.save(
         build_step_instance(
             AgentDefinitionBody(
+                prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
                 name="plan-adversary",
                 surfaces=["spawn"],
                 step_workflow=AgentStepWorkflowBody.model_validate(

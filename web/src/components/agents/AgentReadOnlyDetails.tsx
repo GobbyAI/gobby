@@ -102,22 +102,16 @@ export function AgentReadOnlyDetails({ agentItem }: AgentReadOnlyDetailsProps) {
           content={definition.description}
         />
       )}
-      {definition.role && (
-        <DefinitionSection title="Role" content={definition.role} />
-      )}
-      {definition.goal && (
-        <DefinitionSection title="Goal" content={definition.goal} />
-      )}
-      {definition.personality && (
+      {definition.prompts?.persona && (
         <DefinitionSection
-          title="Personality"
-          content={definition.personality}
+          title="Persona prompt"
+          content={definition.prompts.persona}
         />
       )}
-      {definition.instructions && (
+      {definition.prompts?.agent && (
         <DefinitionSection
-          title="Instructions"
-          content={definition.instructions}
+          title="Agent prompt"
+          content={definition.prompts.agent}
         />
       )}
 

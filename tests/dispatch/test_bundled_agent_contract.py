@@ -156,8 +156,8 @@ def test_bundled_agents_use_end_agent_run_for_self_termination() -> None:
         _collect_self_termination_phrase_offenders(
             offenders,
             path=path,
-            field_name="instructions",
-            text=str(data.get("instructions") or ""),
+            field_name="prompts.agent",
+            text=str((data.get("prompts") or {}).get("agent") or ""),
         )
 
         nested = data.get("step_workflow") or {}

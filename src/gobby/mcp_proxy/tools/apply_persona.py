@@ -144,27 +144,15 @@ def build_session_persona_context(
     db: HubDatabase,
     *,
     cli_source: str,
-    identity_only: bool = False,
 ) -> tuple[str | None, set[str] | None]:
     """Build prompt context for a persona-capable agent definition."""
     from gobby.skills.manager import SkillManager
     from gobby.workflows.selectors import resolve_skills_for_agent
 
-    parts: list[str] = []
-    if agent_body.role:
-        parts.append(f"## Role\n{agent_body.role}")
-    if agent_body.goal:
-        parts.append(f"## Goal\n{agent_body.goal}")
-    if agent_body.personality:
-        parts.append(f"## Personality\n{agent_body.personality}")
-
-    if not identity_only and agent_body.instructions:
-        parts.append(f"## Instructions\n{agent_body.instructions}")
-
     all_skills = SkillManager(db).list_skills()
     active_skills = resolve_skills_for_agent(agent_body, all_skills)
 
-    return ("\n\n".join(parts) if parts else None), active_skills
+    return agent_body.prompt_for("persona"), active_skills
 
 
 def colliding_persona_variable_error(
@@ -259,7 +247,9 @@ async def apply_persona_impl(
     if not agent_body.supports_surface("persona"):
         return {
             "success": False,
-            "error": f"Agent definition '{agent_body.name}' is not persona-capable",
+            "error": (
+                f"Agent definition '{agent_body.name}' does not support the 'persona' surface"
+            ),
         }
 
     extra_vars: dict[str, Any] = {}

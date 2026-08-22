@@ -223,24 +223,6 @@ export function AgentEditForm({
               onChange={(value) => set("description", value)}
               placeholder="What this agent does..."
             />
-            <FormTextarea
-              label="Role"
-              value={form.role}
-              onChange={(value) => set("role", value)}
-              placeholder="e.g. Senior security engineer"
-            />
-            <FormTextarea
-              label="Goal"
-              value={form.goal}
-              onChange={(value) => set("goal", value)}
-              placeholder="What success looks like..."
-            />
-            <FormTextarea
-              label="Personality"
-              value={form.personality}
-              onChange={(value) => set("personality", value)}
-              placeholder="Communication style, tone..."
-            />
           </div>
 
           <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
@@ -248,15 +230,36 @@ export function AgentEditForm({
               level={4}
               className="mt-0 mb-1 text-sm font-semibold tracking-wider text-[var(--text-muted)] uppercase"
             >
-              Instructions
+              Prompts
             </Heading>
-            <div className="max-h-100 min-h-50 overflow-hidden rounded-md border border-border [&_.codemirror-container]:h-50">
-              <CodeMirrorEditor
-                content={form.instructions}
-                language="markdown"
-                onChange={(value) => set("instructions", value)}
-              />
-            </div>
+            {form.surfaces.includes("persona") && (
+              <div className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium text-foreground">
+                  Persona prompt
+                </span>
+                <div className="max-h-100 min-h-50 overflow-hidden rounded-md border border-border [&_.codemirror-container]:h-50">
+                  <CodeMirrorEditor
+                    content={form.persona_prompt}
+                    language="markdown"
+                    onChange={(value) => set("persona_prompt", value)}
+                  />
+                </div>
+              </div>
+            )}
+            {form.surfaces.includes("spawn") && (
+              <div className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium text-foreground">
+                  Agent prompt
+                </span>
+                <div className="max-h-100 min-h-50 overflow-hidden rounded-md border border-border [&_.codemirror-container]:h-50">
+                  <CodeMirrorEditor
+                    content={form.agent_prompt}
+                    language="markdown"
+                    onChange={(value) => set("agent_prompt", value)}
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           {onRulesChange && rules !== undefined && (

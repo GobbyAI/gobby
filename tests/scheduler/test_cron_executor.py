@@ -956,7 +956,7 @@ async def test_execute_agent_spawn_with_agent_definition(
 
     # Mock resolve_agent to return an agent with preamble
     mock_body = MagicMock()
-    mock_body.build_prompt_preamble.return_value = "## Role\nYou are a developer"
+    mock_body.prompt_for.return_value = "## Agent\nYou are a developer"
     mock_body.provider = "qwen"
 
     mock_result = {"success": True, "run_id": "dddddddd-dddd-4ddd-8ddd-dddddddd0def"}
@@ -974,7 +974,8 @@ async def test_execute_agent_spawn_with_agent_definition(
     call_kwargs = mock_spawn.call_args
     # Check preamble was prepended to prompt
     prompt = call_kwargs.kwargs.get("prompt", "")
-    assert "## Role" in prompt
+    assert "## Agent" in prompt
+    mock_body.prompt_for.assert_called_once_with("agent")
     assert "Fix the bug" in prompt
     # Provider from agent definition should be used (no explicit provider in config)
     assert call_kwargs.kwargs.get("provider") == "qwen"

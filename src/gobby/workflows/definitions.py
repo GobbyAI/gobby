@@ -19,6 +19,9 @@ if TYPE_CHECKING:
         AgentDefinitionBody as AgentDefinitionBody,
     )
     from gobby.workflows.agent_models import (
+        AgentPromptBlocks as AgentPromptBlocks,
+    )
+    from gobby.workflows.agent_models import (
         AgentSelector as AgentSelector,
     )
     from gobby.workflows.agent_models import (
@@ -632,7 +635,7 @@ def validate_workflow_definition_data(
     else:
         from gobby.workflows.agent_models import AgentDefinitionBody
 
-        agent_metadata = {"priority", "type", "version"}
+        agent_metadata = {"priority", "tags", "type", "version"}
         body = {key: value for key, value in data.items() if key not in agent_metadata}
         AgentDefinitionBody.model_validate(body, extra="forbid")
 
@@ -642,6 +645,7 @@ def validate_workflow_definition_data(
 _AGENT_MODEL_EXPORTS = frozenset(
     {
         "AgentDefinitionBody",
+        "AgentPromptBlocks",
         "AgentSelector",
         "AgentStepWorkflowBody",
         "AgentWorkflows",

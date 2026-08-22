@@ -110,6 +110,7 @@ def _setup_workflow(
         "exit_condition": "current_step == 'implement'",
     }
     definition = AgentDefinitionBody(
+        prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name="audit-workflow",
         step_workflow=AgentStepWorkflowBody.model_validate(workflow_data),
     )

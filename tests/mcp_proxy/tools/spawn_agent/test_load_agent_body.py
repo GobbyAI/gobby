@@ -18,9 +18,9 @@ class TestLoadAgentBody:
         from gobby.mcp_proxy.tools.spawn_agent._factory import _load_agent_body
 
         body = AgentDefinitionBody(
+            prompts={"agent": "Write clean code."},
             name="test-dev-load",
             description="Developer agent",
-            instructions="Write clean code.",
             provider="claude",
             model="claude-sonnet-4-6",
             isolation="worktree",

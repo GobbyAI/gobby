@@ -43,7 +43,7 @@ def test_success_path_uses_complete_stage_for_in_progress_epic_qa() -> None:
     agent = _agent()
     review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
     blocked = set(review_step["blocked_mcp_tools"])
-    instructions = agent["instructions"]
+    instructions = agent["prompts"]["agent"]
     status = review_step["status_message"]
 
     assert "complete_stage" in instructions
@@ -71,13 +71,13 @@ def test_reads_subtree() -> None:
 
     assert "gobby-tasks:get_task" in claim_step["allowed_mcp_tools"]
     assert "gobby-tasks:list_tasks" in claim_step["allowed_mcp_tools"]
-    assert "list_tasks(parent_task_id=" in agent["instructions"]
+    assert "list_tasks(parent_task_id=" in agent["prompts"]["agent"]
     assert "list_tasks(parent_task_id=assigned_task_id)" in review_text
 
 
 def test_docs_epics_can_use_discovery_brief_plan_substitute() -> None:
     agent = _agent()
-    instructions = agent["instructions"]
+    instructions = agent["prompts"]["agent"]
     status = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")["status_message"]
 
     assert "Discovery Brief" in instructions
@@ -89,7 +89,7 @@ def test_docs_epics_can_use_discovery_brief_plan_substitute() -> None:
 
 def test_epic_review_order_is_spec_quality_testing_proportionality() -> None:
     agent = _agent()
-    instructions = agent["instructions"]
+    instructions = agent["prompts"]["agent"]
     status = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")["status_message"]
 
     # Anchor on the explicit "Review in order" sentence: the `proportionality`
@@ -163,12 +163,12 @@ def test_closed_epic_routes_to_post_hoc_review_with_reopen_permission() -> None:
     ]
     assert "gobby-tasks:reopen_task" not in closed_review["blocked_mcp_tools"]
     assert "gobby-tasks:close_task" in closed_review["blocked_mcp_tools"]
-    assert "Call reopen_task only" in agent["instructions"]
+    assert "Call reopen_task only" in agent["prompts"]["agent"]
 
 
 def test_tdd_audit_evidence_is_language_aware() -> None:
     agent = _agent()
-    instructions = agent["instructions"]
+    instructions = agent["prompts"]["agent"]
     review_text = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")[
         "status_message"
     ]

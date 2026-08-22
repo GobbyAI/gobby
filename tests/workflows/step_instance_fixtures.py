@@ -24,6 +24,7 @@ def make_step_instance(
         names = [current_step, *names]
     return build_step_instance(
         AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name=agent_name,
             surfaces=["spawn", "persona"],
             step_workflow=AgentStepWorkflowBody(

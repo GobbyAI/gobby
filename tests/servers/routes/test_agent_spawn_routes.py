@@ -18,11 +18,13 @@ from gobby.config.runtime import ConfigRuntime
 from gobby.config.runtime_models import ConfigSnapshot
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.servers.http import HTTPServer
+from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.state_semantics import current_stage_state
 from gobby.utils.machine_id import require_machine_id
+from gobby.workflows.definitions import AgentDefinitionBody
 from tests.servers.conftest import StubConfigRuntime, create_http_server
 
 pytestmark = pytest.mark.unit
@@ -605,3 +607,28 @@ class TestPromptPreview:
         """Preview for nonexistent task returns 404."""
         response = client.post("/api/agents/spawn/prompt-preview?task_id=nonexistent")
         assert response.status_code == 404
+
+    def test_preview_rejects_persona_only_definition(
+        self,
+        client: TestClient,
+        server: HTTPServer,
+        task_manager: LocalTaskManager,
+        test_project: Any,
+    ) -> None:
+        task = _create_task(task_manager, test_project.id, "Coordinate release")
+        body = AgentDefinitionBody(
+            name="comms-agent",
+            surfaces=["persona"],
+            prompts={"persona": "Coordinate interactively."},
+        )
+        AgentDefinitionManager(server.services.database).create(
+            name=body.name,
+            definition_json=body.model_dump(mode="json"),
+        )
+
+        response = client.post(
+            f"/api/agents/spawn/prompt-preview?task_id={task.id}&agent_name=comms-agent"
+        )
+
+        assert response.status_code == 400
+        assert "does not support the 'spawn' surface" in response.text

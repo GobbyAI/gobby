@@ -46,6 +46,7 @@ async def test_evaluator_warns_when_success_handler_has_no_failure_route() -> No
     definition = _definition(success=[_handler("gobby-tasks", "close_task")], error=[])
     result = await evaluate_agent_definition(
         AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name=definition.name,
             provider="claude",
             step_workflow=AgentStepWorkflowBody(

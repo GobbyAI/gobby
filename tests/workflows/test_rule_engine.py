@@ -98,6 +98,7 @@ def _insert_agent(
     project_id: str | None = None,
 ) -> str:
     body = AgentDefinitionBody(
+        prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name=name,
         workflows=AgentWorkflows(
             rules=rules or [],
@@ -3165,6 +3166,7 @@ class TestLiveActiveRuleSelection:
         assert first_variables.get("new_matched") is None
 
         updated_agent = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="default",
             workflows=AgentWorkflows(
                 rules=[],

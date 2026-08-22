@@ -189,6 +189,7 @@ def _agent(
         step if isinstance(step, WorkflowStep) else WorkflowStep(name=step) for step in steps
     ]
     return AgentDefinitionBody(
+        prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name=name,
         surfaces=["persona", "spawn"],
         step_workflow=AgentStepWorkflowBody(
@@ -200,7 +201,11 @@ def _agent(
 
 
 def _stepless(name: str) -> AgentDefinitionBody:
-    return AgentDefinitionBody(name=name, surfaces=["persona"])
+    return AgentDefinitionBody(
+        prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
+        name=name,
+        surfaces=["persona"],
+    )
 
 
 def _row_variables(row: Any) -> dict[str, Any]:
@@ -693,7 +698,11 @@ def test_definition_delete_set_null_keeps_snapshot_enforcement(
     manager = AgentDefinitionManager(typed_snap_db)
     created = manager.upsert_with_steps(
         "coder",
-        {"name": "coder", "surfaces": ["spawn"]},
+        {
+            "name": "coder",
+            "surfaces": ["spawn"],
+            "prompts": {"agent": "Run the assigned task."},
+        },
         {
             "variables": {"goal": "ship"},
             "exit_condition": "done",
@@ -772,7 +781,11 @@ def test_project_scoped_override_is_snapshotted(typed_snap_db: PostgresHubDataba
     manager = AgentDefinitionManager(typed_snap_db)
     manager.upsert_with_steps(
         "coder",
-        {"name": "coder", "surfaces": ["spawn"]},
+        {
+            "name": "coder",
+            "surfaces": ["spawn"],
+            "prompts": {"agent": "Run the assigned task."},
+        },
         {
             "variables": {"scope": "global"},
             "exit_condition": "global_done",
@@ -781,7 +794,11 @@ def test_project_scoped_override_is_snapshotted(typed_snap_db: PostgresHubDataba
     )
     project_row = manager.upsert_with_steps(
         "coder",
-        {"name": "coder", "surfaces": ["spawn"], "goal": "project"},
+        {
+            "name": "coder",
+            "surfaces": ["spawn"],
+            "prompts": {"agent": "Project-scoped task guidance."},
+        },
         {
             "variables": {"scope": "project"},
             "exit_condition": "project_done",
@@ -1281,7 +1298,11 @@ async def _run_post_launch_failure_case(
             result = await spawn_agent_impl(
                 prompt="Test prompt",
                 runner=runner,
-                agent_body=AgentDefinitionBody(name="default", provider="claude"),
+                agent_body=AgentDefinitionBody(
+                    prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
+                    name="default",
+                    provider="claude",
+                ),
                 task_id=task.id,
                 task_manager=task_manager,
                 isolation="none",

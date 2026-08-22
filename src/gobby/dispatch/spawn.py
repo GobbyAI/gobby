@@ -231,7 +231,10 @@ async def spawn_agent(
 
     prompt = action.prompt
     if agent_body is not None:
-        preamble = agent_body.build_prompt_preamble()
+        try:
+            preamble = agent_body.prompt_for("agent")
+        except ValueError as exc:
+            raise DispatchSpawnFailed(f"agent_surface_invalid:{exc}") from exc
         if preamble:
             prompt = f"{preamble}\n\n---\n\n{prompt}"
 

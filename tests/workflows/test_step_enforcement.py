@@ -186,6 +186,7 @@ def _setup_step_workflow(
         for key, value in data.items()
         if key not in {"steps", "variables", "exit_condition", "step_workflow"}
     }
+    parent.setdefault("prompts", {"agent": "Run the assigned task."})
     row = manager.upsert_with_steps(str(data["name"]), parent, step_workflow)
     body = AgentDefinitionBody.model_validate(
         {**parent, "name": data["name"], "step_workflow": step_workflow}

@@ -223,21 +223,16 @@ class TestHandleBeforeAgent:
 
         assert result.decision == "allow"
         assert result.context is not None
+        persona = default_agent.prompt_for("persona")
+        assert persona is not None
+        assert persona in result.context
         assert "## Role" in result.context
-        assert default_agent.role is not None
-        assert default_agent.role in result.context
-        assert "## Personality" in result.context
-        assert default_agent.personality is not None
-        assert default_agent.personality in result.context
-        assert "## Instructions" in result.context
+        assert "## Working Style" in result.context
+        assert "## Platform Context" in result.context
+        assert "end_agent_run" not in result.context
         assert "Think out loud" not in result.context
         assert "Show your reasoning" not in result.context
-        assert default_agent.instructions is not None
-        assert "## Platform Context" in default_agent.instructions
-        assert default_agent.instructions in result.context
-        assert (
-            "You think hard, decide fast, and say only what matters." in default_agent.personality
-        )
+        assert "Be technically sharp, candid, concise, and curious." in persona
         assert "<active_skills>" not in result.context
         assert "### brevity" not in result.context
         mock_merge.assert_any_call(
@@ -257,11 +252,17 @@ class TestHandleBeforeAgent:
             metadata={"_platform_session_id": "sess-1"},
         )
         agent = AgentDefinitionBody(
+            prompts={
+                "persona": (
+                    "## Role\nAct as the daemon.\n\n"
+                    "## Goal\nKeep the session coherent.\n\n"
+                    "## Personality\nDirect and technical.\n\n"
+                    "## Instructions\nUse the session lifecycle correctly."
+                ),
+                "agent": "AUTOMATED AGENT PROMPT",
+            },
             name="default",
-            role="Act as the daemon.",
-            goal="Keep the session coherent.",
-            personality="Direct and technical.",
-            instructions="Use the session lifecycle correctly.",
+            surfaces=["spawn", "persona"],
         )
 
         with (
@@ -302,6 +303,40 @@ class TestHandleBeforeAgent:
                 "_agent_context_rehydrate_pending": False,
             },
         )
+
+    def test_spawned_hook_reinjects_agent_prompt_only(self) -> None:
+        handler = _TestHandler()
+        event = _make_event(
+            data={"prompt": "continue"},
+            metadata={"_platform_session_id": "sess-1"},
+        )
+        agent = AgentDefinitionBody(
+            name="backend-developer",
+            surfaces=["spawn", "persona"],
+            prompts={
+                "persona": "PERSONA SENTINEL",
+                "agent": "AGENT SENTINEL assigned_task_id end_agent_run",
+            },
+        )
+
+        with (
+            patch(
+                "gobby.workflows.state_manager.SessionVariableManager.get_variables",
+                return_value={
+                    "_agent_type": "backend-developer",
+                    "_agent_context_injected": False,
+                    "_agent_context_rehydrate_pending": True,
+                    "is_spawned_agent": True,
+                },
+            ),
+            patch("gobby.workflows.state_manager.SessionVariableManager.merge_variables"),
+            patch("gobby.workflows.agent_resolver.resolve_agent", return_value=agent),
+        ):
+            result = handler.handle_before_agent(event)
+
+        assert result.context is not None
+        assert "AGENT SENTINEL" in result.context
+        assert "PERSONA SENTINEL" not in result.context
 
     def test_stale_agent_context_false_with_prior_activity_repairs_without_preamble(
         self,
@@ -360,11 +395,17 @@ class TestHandleBeforeAgent:
             metadata={"_platform_session_id": "sess-1"},
         )
         agent = AgentDefinitionBody(
+            prompts={
+                "persona": (
+                    "## Role\nAct as the operator.\n\n"
+                    "## Goal\nKeep the persona current.\n\n"
+                    "## Personality\nPrecise.\n\n"
+                    "## Instructions\nUse the active persona."
+                ),
+                "agent": "AUTOMATED AGENT PROMPT",
+            },
             name="operator",
-            role="Act as the operator.",
-            goal="Keep the persona current.",
-            personality="Precise.",
-            instructions="Use the active persona.",
+            surfaces=["spawn", "persona"],
         )
 
         with (
@@ -423,11 +464,17 @@ class TestHandleBeforeAgent:
             metadata={"_platform_session_id": "sess-1"},
         )
         agent = AgentDefinitionBody(
+            prompts={
+                "persona": (
+                    "## Role\nAct as the daemon.\n\n"
+                    "## Goal\nRestore prompt context.\n\n"
+                    "## Personality\nDirect.\n\n"
+                    "## Instructions\nRehydrate after context loss."
+                ),
+                "agent": "AUTOMATED AGENT PROMPT",
+            },
             name="default",
-            role="Act as the daemon.",
-            goal="Restore prompt context.",
-            personality="Direct.",
-            instructions="Rehydrate after context loss.",
+            surfaces=["spawn", "persona"],
         )
 
         with (

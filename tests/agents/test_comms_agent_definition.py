@@ -41,7 +41,7 @@ def test_comms_agent_is_a_restricted_persona_coordinator() -> None:
         "shell",
         "write_file",
     } <= set(agent.blocked_tools)
-    assert agent.instructions is not None
-    assert "gobby-agents" in agent.instructions
-    assert "gobby-communications:set_channel_project" in agent.instructions
+    assert agent.prompts.persona is not None
+    assert "gobby-agents" in agent.prompts.persona
+    assert "gobby-communications:set_channel_project" in agent.prompts.persona
     assert all(is_known_native_tool(tool) for tool in agent.blocked_tools)

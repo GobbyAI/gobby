@@ -83,7 +83,7 @@ class PendingApproval(TypedDict):
 
 
 # Minimal base system prompt. The canonical persona lives on the `default`
-# agent-definition row: build_prompt_preamble() injects it once per context
+# agent-definition row: prompt_for() injects its surface block once per context
 # epoch at first prompt, and non-default agents set system_prompt_override.
 _FALLBACK_SYSTEM_PROMPT = "You are Gobby, a helpful AI coding assistant."
 

@@ -48,7 +48,7 @@ def test_adversary_agents_pin_the_reviewer_model() -> None:
 def test_adversaries_have_no_experiment_timeout_contract() -> None:
     for name in ADVERSARIES:
         agent = _agent(name)
-        instructions = " ".join(agent["instructions"].split())
+        instructions = " ".join(agent["prompts"]["agent"].split())
 
         assert "timeout" not in agent
         assert "2700-second agent timeout" not in instructions
@@ -56,7 +56,7 @@ def test_adversaries_have_no_experiment_timeout_contract() -> None:
 
 def test_adversaries_read_one_complete_evidence_snapshot() -> None:
     for name in ADVERSARIES:
-        instructions = " ".join(_agent(name)["instructions"].split())
+        instructions = " ".join(_agent(name)["prompts"]["agent"].split())
 
         assert "one complete decoded immutable snapshot" in instructions
         assert "`get_plan_review_snapshot" in instructions
@@ -85,7 +85,7 @@ def test_all_plan_agents_block_gobby_spawn_at_agent_level() -> None:
 def test_adversaries_use_internal_three_lane_research_contract() -> None:
     for name in ADVERSARIES:
         agent = _agent(name)
-        instructions = agent["instructions"]
+        instructions = agent["prompts"]["agent"]
         normalized = " ".join(instructions.split()).lower()
 
         assert "read-only provider-native internal subagent" in normalized
@@ -119,7 +119,7 @@ def test_adversaries_use_internal_three_lane_research_contract() -> None:
 
 def test_parent_adversary_retains_evidence_and_verdict_ownership() -> None:
     for name in ADVERSARIES:
-        instructions = " ".join(_agent(name)["instructions"].split()).lower()
+        instructions = " ".join(_agent(name)["prompts"]["agent"].split()).lower()
         assert "sole verdict" in instructions
         assert "derive_plan_review_manifest" in instructions
         assert "validate_plan_review_coverage" in instructions
@@ -170,7 +170,7 @@ def test_adversaries_remove_gobby_worker_state_and_spawn_hooks() -> None:
 def test_enhancers_remain_single_agent_better_bigger_advisers() -> None:
     for name in ("plan-enhancer", "plan-enhancer-taskless"):
         agent = _agent(name)
-        instructions = agent["instructions"]
+        instructions = agent["prompts"]["agent"]
         assert "Better" in instructions
         assert "Bigger" in instructions
         assert "Do NOT spawn other agents" in instructions

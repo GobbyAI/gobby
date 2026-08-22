@@ -116,6 +116,12 @@ async def spawn_agent_impl(
     held_task_mutex: Any | None = None,
 ) -> dict[str, Any]:
     """Core spawn_agent implementation used by the MCP tool and direct callers."""
+    if agent_body is not None:
+        try:
+            agent_body.prompt_for("agent")
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
+
     # 0. Plan-validation gate for planning agents.
     # Structural failures block planning roles. Authoring roles may continue
     # past symbol-only failures with repair diagnostics appended to the prompt.

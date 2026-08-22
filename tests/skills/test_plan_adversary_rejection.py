@@ -68,7 +68,7 @@ def _plan_review_body() -> str:
 def _adversary_prompt() -> str:
     data = yaml.safe_load(ADVERSARY.read_text(encoding="utf-8"))
     agent = AgentDefinitionBody.model_validate(data)
-    return agent.build_prompt_preamble() or ""
+    return agent.prompt_for("agent") or ""
 
 
 @pytest.mark.parametrize(("cause", "malformed_plan", "required_terms"), MALFORMED_CASES)

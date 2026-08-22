@@ -5,7 +5,9 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
+from gobby.agents.sync import get_bundled_agents_path
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import (
     AgentDefinitionBody,
@@ -38,7 +40,10 @@ class TestBuildPersonaChanges:
     def test_sets_agent_type_and_rules(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
 
-        agent = AgentDefinitionBody(name="developer")
+        agent = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
+            name="developer",
+        )
         changes, active_rules, active_skills = build_persona_changes(
             agent_body=agent,
             session_id="sess-1",
@@ -52,7 +57,10 @@ class TestBuildPersonaChanges:
     def test_spawned_flag(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
 
-        agent = AgentDefinitionBody(name="worker")
+        agent = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
+            name="worker",
+        )
         changes, _, _ = build_persona_changes(
             agent_body=agent,
             session_id="sess-1",
@@ -66,6 +74,7 @@ class TestBuildPersonaChanges:
         from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
 
         agent = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="custom",
             workflows=AgentWorkflows(
                 variables={"my_var": "hello", "another": 42},
@@ -84,6 +93,7 @@ class TestBuildPersonaChanges:
         from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
 
         agent = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="custom",
             workflows=AgentWorkflows(
                 variables={"_reserved": "bad", "good_var": "ok"},
@@ -102,6 +112,7 @@ class TestBuildPersonaChanges:
         from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
 
         agent = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="restricted",
             blocked_tools=["Write", "Bash"],
             blocked_mcp_tools=["gobby-tasks:delete_task"],
@@ -119,6 +130,7 @@ class TestBuildPersonaChanges:
         from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
 
         agent = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="compact",
             workflows=AgentWorkflows(skill_format="compact"),
         )
@@ -154,6 +166,7 @@ class TestBuildPersonaChanges:
         )
 
         agent = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="stepper",
             step_workflow=AgentStepWorkflowBody(
                 steps=[
@@ -210,6 +223,7 @@ class TestBuildPersonaChanges:
         )
         SessionVariableManager(db).merge_variables(session_id, task_variables)
         agent = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="stepper",
             step_workflow=AgentStepWorkflowBody(
                 steps=[WorkflowStep(name="plan", instructions="Plan the work")],
@@ -265,6 +279,7 @@ class TestBuildPersonaChanges:
         )
 
         agent = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="stepper",
             step_workflow=AgentStepWorkflowBody(
                 variables={"task_claimed": False, "loaded_skills": []},
@@ -291,7 +306,10 @@ class TestBuildPersonaChanges:
         """When enabled_rules and all_skills are passed, DB is not queried."""
         from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
 
-        agent = AgentDefinitionBody(name="test")
+        agent = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
+            name="test",
+        )
         changes, active_rules, active_skills = build_persona_changes(
             agent_body=agent,
             session_id="sess-1",
@@ -311,7 +329,10 @@ class TestBuildPersonaChanges:
 
         SessionVariableDefaultManager(db).create(name="my_db_var", default_value="from_db")
 
-        agent = AgentDefinitionBody(name="test")
+        agent = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
+            name="test",
+        )
         changes, _, _ = build_persona_changes(
             agent_body=agent,
             session_id="sess-1",
@@ -334,6 +355,7 @@ class TestBuildSessionPersonaChanges:
         from gobby.workflows.definitions import WorkflowStep
 
         agent = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="planner",
             surfaces=["persona"],
             workflows=AgentWorkflows(
@@ -357,6 +379,28 @@ class TestBuildSessionPersonaChanges:
             "_agent_identity_reinject": True,
         }
         assert active_skills is None
+
+    def test_backend_definition_separates_persona_from_agent_lifecycle(
+        self,
+        db: HubDatabase,
+    ) -> None:
+        from gobby.mcp_proxy.tools.apply_persona import build_session_persona_context
+
+        path = get_bundled_agents_path() / "backend-developer.yaml"
+        agent = AgentDefinitionBody.model_validate(yaml.safe_load(path.read_text()))
+
+        persona, _ = build_session_persona_context(agent, db, cli_source="codex")
+        assert persona is not None
+        assert "interactive backend engineering guidance" in persona
+        assert "assigned_task_id" not in persona
+        assert "end_agent_run" not in persona
+        assert "submit_for_review" not in persona
+
+        spawned = agent.prompt_for("agent")
+        assert spawned is not None
+        assert "assigned_task_id" in spawned
+        assert "end_agent_run" in spawned
+        assert "interactive backend engineering guidance" not in spawned
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -418,7 +462,14 @@ class TestApplyPersonaImpl:
             patch(
                 "gobby.workflows.agent_resolver.resolve_agent_with_row",
                 return_value=(
-                    AgentDefinitionBody(name="developer", surfaces=["persona"]),
+                    AgentDefinitionBody(
+                        prompts={
+                            "persona": "Interactive guidance.",
+                            "agent": "Run the assigned task.",
+                        },
+                        name="developer",
+                        surfaces=["persona"],
+                    ),
                     MagicMock(step_workflow_id=None),
                 ),
             ),
@@ -457,7 +508,14 @@ class TestApplyPersonaImpl:
             patch(
                 "gobby.workflows.agent_resolver.resolve_agent_with_row",
                 return_value=(
-                    AgentDefinitionBody(name="test", surfaces=["persona"]),
+                    AgentDefinitionBody(
+                        prompts={
+                            "persona": "Interactive guidance.",
+                            "agent": "Run the assigned task.",
+                        },
+                        name="test",
+                        surfaces=["persona"],
+                    ),
                     MagicMock(step_workflow_id=None),
                 ),
             ),
@@ -515,6 +573,7 @@ class TestApplyPersonaImpl:
             ),
         )
         reviewer = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="qa-reviewer",
             surfaces=["persona", "spawn"],
             step_workflow=AgentStepWorkflowBody(
@@ -560,7 +619,10 @@ class TestApplyPersonaImpl:
         with patch(
             "gobby.workflows.agent_resolver.resolve_agent_with_row",
             return_value=(
-                AgentDefinitionBody(name="spawn-only"),
+                AgentDefinitionBody(
+                    prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
+                    name="spawn-only",
+                ),
                 MagicMock(step_workflow_id=None),
             ),
         ):
@@ -571,7 +633,7 @@ class TestApplyPersonaImpl:
             )
 
         assert result["success"] is False
-        assert "persona-capable" in result["error"]
+        assert "'persona' surface" in result["error"]
 
     @pytest.mark.asyncio
     async def test_with_task_id(self, db: HubDatabase) -> None:
@@ -586,7 +648,14 @@ class TestApplyPersonaImpl:
             patch(
                 "gobby.workflows.agent_resolver.resolve_agent_with_row",
                 return_value=(
-                    AgentDefinitionBody(name="test", surfaces=["persona"]),
+                    AgentDefinitionBody(
+                        prompts={
+                            "persona": "Interactive guidance.",
+                            "agent": "Run the assigned task.",
+                        },
+                        name="test",
+                        surfaces=["persona"],
+                    ),
                     MagicMock(step_workflow_id=None),
                 ),
             ),

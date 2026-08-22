@@ -19,6 +19,7 @@ async def test_evaluate_spawn_tool_runs_workflow_validation_with_combined_invent
     temp_db: HubDatabase,
 ) -> None:
     agent = AgentDefinitionBody(
+        prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name="test-agent",
         provider="claude",
         workflows=AgentWorkflows(pipeline="test-workflow"),

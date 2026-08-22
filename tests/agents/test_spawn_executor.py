@@ -850,8 +850,8 @@ class TestExecuteSpawn:
             assert result.codex_session_id is None  # late-linked via SessionStart hook
 
     @pytest.mark.asyncio
-    async def test_codex_persona_precedes_task_prompt(self, mock_codex_prompt_delivery):
-        """The persona preamble rides ahead of the composer prompt and the
+    async def test_codex_agent_prompt_precedes_task_prompt(self, mock_codex_prompt_delivery):
+        """The agent preamble rides ahead of the composer prompt and the
         first-turn injection is suppressed (#20451)."""
         mock_session_manager = MagicMock()
         request = SpawnRequest(
@@ -883,7 +883,7 @@ class TestExecuteSpawn:
             tmux_session_name="agent-run-abc123def456",
         )
         agent_body = MagicMock()
-        agent_body.build_prompt_preamble.return_value = "## Persona\nYou are the QA reviewer."
+        agent_body.prompt_for.return_value = "## Agent\nYou are the QA reviewer."
 
         with (
             patch("gobby.agents.spawn_executor.TmuxSpawner", return_value=mock_spawner),
@@ -900,7 +900,8 @@ class TestExecuteSpawn:
         mock_resolve.assert_called_once()
         assert mock_resolve.call_args.args[0] == "qa-reviewer"
         delivered_prompt = mock_codex_prompt_delivery.call_args.args[2]
-        assert delivered_prompt.startswith("## Persona\nYou are the QA reviewer.")
+        agent_body.prompt_for.assert_called_once_with("agent")
+        assert delivered_prompt.startswith("## Agent\nYou are the QA reviewer.")
         assert delivered_prompt.endswith("Review the plan")
         mock_sv_mgr.return_value.merge_variables.assert_called_once_with(
             "gobby-sess-123",

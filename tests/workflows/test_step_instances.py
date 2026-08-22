@@ -72,7 +72,7 @@ def _workflow(
 def _agent(
     name: str, steps: list[str], variables: dict[str, Any] | None = None
 ) -> AgentDefinitionBody:
-    return AgentDefinitionBody(name=name, step_workflow=_workflow(name, steps, variables))
+    return AgentDefinitionBody(prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."}, name=name, step_workflow=_workflow(name, steps, variables))
 
 
 def _require_step_workflow(agent: AgentDefinitionBody) -> AgentStepWorkflowBody:

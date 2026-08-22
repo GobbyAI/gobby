@@ -225,20 +225,24 @@ export function AgentsDetailPanel({
         </div>
 
         <div className="mt-4 grid grid-cols-1 gap-4">
-          <TextAreaField
-            label="Role"
-            ariaLabel="Role"
-            value={form.role}
-            rows={3}
-            onChange={(value) => setFormField("role", value)}
-          />
-          <TextAreaField
-            label="Instructions"
-            ariaLabel="Instructions"
-            value={form.instructions}
-            rows={5}
-            onChange={(value) => setFormField("instructions", value)}
-          />
+          {form.surfaces.includes("persona") && (
+            <TextAreaField
+              label="Persona prompt"
+              ariaLabel="Persona prompt"
+              value={form.persona_prompt}
+              rows={5}
+              onChange={(value) => setFormField("persona_prompt", value)}
+            />
+          )}
+          {form.surfaces.includes("spawn") && (
+            <TextAreaField
+              label="Agent prompt"
+              ariaLabel="Agent prompt"
+              value={form.agent_prompt}
+              rows={8}
+              onChange={(value) => setFormField("agent_prompt", value)}
+            />
+          )}
 
           <section className="rounded-md border border-border bg-[var(--bg-secondary)] p-3">
             <h3 className="mb-2 text-sm font-medium text-foreground">Skills</h3>

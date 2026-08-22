@@ -33,12 +33,12 @@ def _agent_row(
     step_workflow: dict[str, Any] | None = None,
 ) -> AgentDefinitionRow:
     body = AgentDefinitionBody(
+        prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name=name,
         description=description,
         provider=provider,
         model=model,
         surfaces=surfaces or ["spawn"],
-        role="Builder",
         timeout=120.0,
         enabled=enabled,
         step_workflow=step_workflow,
@@ -153,7 +153,8 @@ class TestAgentDefinitionsShow:
         assert "Agent: developer" in result.output
         assert "Description: Build features" in result.output
         assert "Provider: claude" in result.output
-        assert "Role:" in result.output
+        assert "Persona prompt:" in result.output
+        assert "Agent prompt:" in result.output
 
     @patch("gobby.cli.agents.get_agent_definition_manager")
     def test_show_json_output(self, mock_get_manager: MagicMock, runner: CliRunner) -> None:

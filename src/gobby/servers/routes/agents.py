@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator, model_v
 from gobby.agents.reasoning import normalize_reasoning_effort
 from gobby.storage.definitions import DefinitionNameConflictError, DefinitionNotFoundError
 from gobby.storage.hub.protocol import WorkflowDefinitionMutation
+from gobby.workflows.agent_models import AgentPromptBlocks
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -36,6 +37,16 @@ def _reject_legacy_step_keys(data: Any) -> Any:
         for key, hint in _LEGACY_STEP_KEYS.items():
             if key in data:
                 raise ValueError(f"Use {hint} instead of top-level {key}")
+        legacy_prompts = [
+            key for key in ("role", "goal", "personality", "instructions") if key in data
+        ]
+        if legacy_prompts:
+            named = ", ".join(legacy_prompts)
+            raise ValueError(
+                f"Legacy prompt fields are no longer accepted: {named}. "
+                "Use prompts.persona for interactive guidance and prompts.agent "
+                "for spawned-run instructions."
+            )
     return data
 
 
@@ -90,10 +101,7 @@ class CreateAgentDefinitionRequest(BaseModel):
     description: str | None = None
     sources: list[str] | None = None
     surfaces: list[str] | None = None
-    role: str | None = None
-    goal: str | None = None
-    personality: str | None = None
-    instructions: str | None = None
+    prompts: AgentPromptBlocks = Field(default_factory=AgentPromptBlocks)
     provider: str = "inherit"
     model: str | None = None
     reasoning_effort: str | None = None
@@ -134,10 +142,7 @@ class UpdateAgentDefinitionRequest(BaseModel):
     description: str | None = None
     sources: list[str] | None = None
     surfaces: list[str] | None = None
-    role: str | None = None
-    goal: str | None = None
-    personality: str | None = None
-    instructions: str | None = None
+    prompts: AgentPromptBlocks | None = None
     provider: str | None = None
     model: str | None = None
     reasoning_effort: str | None = None
@@ -385,10 +390,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 description=request.description,
                 sources=request.sources,
                 surfaces=request.surfaces,
-                role=request.role,
-                goal=request.goal,
-                personality=request.personality,
-                instructions=request.instructions,
+                prompts=request.prompts,
                 provider=request.provider,
                 model=request.model,
                 reasoning_effort=request.reasoning_effort,
@@ -421,6 +423,8 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             return {"status": "success", "definition": row.to_dict()}
         except DefinitionNameConflictError as e:
             raise HTTPException(status_code=409, detail=str(e)) from e
+        except (TypeError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
             logger.exception("Error creating agent definition: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
@@ -463,10 +467,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                     "description",
                     "sources",
                     "surfaces",
-                    "role",
-                    "goal",
-                    "personality",
-                    "instructions",
+                    "prompts",
                     "provider",
                     "model",
                     "reasoning_effort",
@@ -516,9 +517,9 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
 
                 row = manager.update(definition_id, **update_fields)
             return {"status": "success", "definition": row.to_dict()}
-        except (DefinitionNotFoundError, ValueError) as e:
+        except DefinitionNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
-        except TypeError as e:
+        except (TypeError, ValueError) as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except HTTPException:
             raise

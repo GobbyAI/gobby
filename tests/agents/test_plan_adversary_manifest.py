@@ -31,7 +31,7 @@ class TestManifestEmissionOnApproval:
     def test_instructions_describe_typed_manifest_handoff_on_approval(
         self, agent: AgentDefinitionBody
     ) -> None:
-        instructions = agent.instructions or ""
+        instructions = agent.prompts.agent or ""
         assert "MANIFEST HANDOFF" in instructions
         assert "manifest_entries" in instructions
         assert "routing_decisions" in instructions
@@ -39,7 +39,7 @@ class TestManifestEmissionOnApproval:
         assert "approve_review" in instructions
 
     def test_instructions_require_canonical_round_result(self, agent: AgentDefinitionBody) -> None:
-        instructions = agent.instructions or ""
+        instructions = agent.prompts.agent or ""
         assert "canonical `round_result`" in instructions
         for field in (
             "`round_number`",
@@ -53,7 +53,7 @@ class TestManifestEmissionOnApproval:
 
     def test_manifest_emission_precedes_review_approval(self, agent: AgentDefinitionBody) -> None:
         """Typed manifest derivation must precede the approval call."""
-        instructions = agent.instructions or ""
+        instructions = agent.prompts.agent or ""
         manifest_index = instructions.find("Record routing decisions")
         derive_index = instructions.find("derive_plan_review_manifest", manifest_index)
         approval_index = instructions.find("On success, call `approve_review`")
@@ -68,7 +68,7 @@ class TestManifestEmissionOnApproval:
         self, agent: AgentDefinitionBody
     ) -> None:
         """Identity failure must stop before typed manifest derivation."""
-        instructions = agent.instructions or ""
+        instructions = agent.prompts.agent or ""
         normalized = " ".join(instructions.split())
         guard_index = normalized.find("If the Plan Identity Precondition fails")
         reject_index = normalized.find("Plan Identity Precondition failed")
@@ -84,7 +84,7 @@ class TestManifestEmissionOnApproval:
     def test_raw_instruction_order_keeps_identity_guard_before_manifest_derivation(
         self, agent: AgentDefinitionBody
     ) -> None:
-        instructions = agent.instructions or ""
+        instructions = agent.prompts.agent or ""
         manifest_index = instructions.find("Record routing decisions")
         reject_index = instructions.find("If the Plan Identity Precondition fails")
         assert reject_index >= 0
@@ -128,12 +128,12 @@ class TestCoordinatorOwnedWrites:
     """§2.22.3 — reviewer emits typed data; coordinator owns plan mutations."""
 
     def test_instructions_forbid_direct_plan_edits(self, agent: AgentDefinitionBody) -> None:
-        instructions = agent.instructions or ""
+        instructions = agent.prompts.agent or ""
         assert "Never edit the plan file" in instructions
         assert "Do NOT edit the plan file" in instructions
 
     def test_instructions_delegate_manifest_application(self, agent: AgentDefinitionBody) -> None:
-        instructions = agent.instructions or ""
+        instructions = agent.prompts.agent or ""
         assert "coordinator" in instructions
         assert "apply_plan_review_manifest" in instructions
 

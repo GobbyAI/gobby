@@ -123,6 +123,7 @@ def _register_agent_workflow(
     instance_manager.save(
         build_step_instance(
             AgentDefinitionBody(
+                prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
                 name=workflow_name,
                 step_workflow=AgentStepWorkflowBody.model_validate(
                     {
@@ -165,6 +166,7 @@ def _register_qa_reviewer_workflow(
     instance_manager.save(
         build_step_instance(
             AgentDefinitionBody(
+                prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
                 name=workflow_name,
                 step_workflow=AgentStepWorkflowBody.model_validate(agent["step_workflow"]),
             ),

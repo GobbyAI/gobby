@@ -34,13 +34,13 @@ from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.sessions import activity as session_activity
 from gobby.sessions.status_events import SessionStatusTransition
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._stage_states import StageManifestSpec
-from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.workflows.step_instances import AgentStepInstanceManager
 from tests.workflows.step_instance_fixtures import make_step_instance
 

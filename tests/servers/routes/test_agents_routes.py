@@ -59,6 +59,7 @@ def _create_agent_row(
 ) -> Any:
     """Create an agent definition row in the DB."""
     body = AgentDefinitionBody(
+        prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name=name,
         description=description or f"Agent {name}",
         provider=provider,
@@ -76,6 +77,15 @@ def _create_agent_row(
         source=source,  # type: ignore[arg-type]
         enabled=enabled,
     )
+
+
+def _agent_request(name: str, **fields: Any) -> dict[str, Any]:
+    """Build a valid spawn-surface agent-definition request."""
+    return {
+        "name": name,
+        "prompts": {"agent": "Run the assigned task."},
+        **fields,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -304,7 +314,7 @@ class TestCreateDefinition:
     def test_create_basic(self, client: TestClient) -> None:
         response = client.post(
             "/api/agents/definitions",
-            json={"name": "new-agent"},
+            json=_agent_request("new-agent"),
         )
         assert response.status_code == 200
         data = response.json()
@@ -318,8 +328,10 @@ class TestCreateDefinition:
                 "name": "full-agent",
                 "description": "Full test",
                 "surfaces": ["spawn", "persona"],
-                "role": "tester",
-                "goal": "test things",
+                "prompts": {
+                    "persona": "Help test things interactively.",
+                    "agent": "Test the assigned work.",
+                },
                 "provider": "codex",
                 "model": "gpt-5.4",
                 "mode": "interactive",
@@ -339,20 +351,24 @@ class TestCreateDefinition:
         project = project_manager.create(name="test-proj", repo_path="/tmp/test-proj")
         response = client.post(
             "/api/agents/definitions",
-            json={"name": "proj-agent", "project_id": project.id},
+            json=_agent_request("proj-agent", project_id=project.id),
         )
         assert response.status_code == 200
         assert response.json()["definition"]["project_id"] == project.id
 
     def test_create_duplicate_name_fails(self, client: TestClient) -> None:
-        client.post("/api/agents/definitions", json={"name": "dup"})
-        response = client.post("/api/agents/definitions", json={"name": "dup"})
+        client.post("/api/agents/definitions", json=_agent_request("dup"))
+        response = client.post("/api/agents/definitions", json=_agent_request("dup"))
         assert response.status_code == 409
 
     def test_create_with_tags_and_enabled(self, client: TestClient) -> None:
         response = client.post(
             "/api/agents/definitions",
-            json={"name": "tagged-agent", "tags": ["review", "qa"], "enabled": False},
+            json=_agent_request(
+                "tagged-agent",
+                tags=["review", "qa"],
+                enabled=False,
+            ),
         )
 
         assert response.status_code == 200
@@ -365,6 +381,7 @@ class TestCreateDefinition:
             "/api/agents/definitions",
             json={
                 "name": "steppy",
+                "prompts": {"agent": "Run the assigned task."},
                 "step_workflow": {
                     "variables": {"goal": "ship"},
                     "exit_condition": "done",
@@ -390,6 +407,7 @@ class TestCreateDefinition:
             "/api/agents/definitions",
             json={
                 "name": "atomic-agent",
+                "prompts": {"agent": "Run the assigned task."},
                 "step_workflow": {
                     "steps": [{"name": "claim"}],
                 },
@@ -401,6 +419,20 @@ class TestCreateDefinition:
         names = {row["name"] for row in listed.json()["definitions"]}
         assert "atomic-agent" not in names
 
+    @pytest.mark.parametrize("legacy_field", ["role", "goal", "personality", "instructions"])
+    def test_create_rejects_legacy_prompt_fields(
+        self,
+        client: TestClient,
+        legacy_field: str,
+    ) -> None:
+        response = client.post(
+            "/api/agents/definitions",
+            json={**_agent_request("legacy-agent"), legacy_field: "legacy prompt"},
+        )
+
+        assert response.status_code == 422
+        assert "prompts.persona" in response.text
+
 
 # ---------------------------------------------------------------------------
 # PUT /api/agents/definitions/{id}
@@ -409,7 +441,7 @@ class TestCreateDefinition:
 
 class TestUpdateDefinition:
     def test_update_fields(self, client: TestClient) -> None:
-        created = client.post("/api/agents/definitions", json={"name": "updatable"}).json()[
+        created = client.post("/api/agents/definitions", json=_agent_request("updatable")).json()[
             "definition"
         ]
         response = client.put(
@@ -420,7 +452,7 @@ class TestUpdateDefinition:
         assert response.json()["definition"]["description"] == "Updated"
 
     def test_update_no_fields_returns_400(self, client: TestClient) -> None:
-        created = client.post("/api/agents/definitions", json={"name": "no-update"}).json()[
+        created = client.post("/api/agents/definitions", json=_agent_request("no-update")).json()[
             "definition"
         ]
         response = client.put(f"/api/agents/definitions/{created['id']}", json={})
@@ -434,7 +466,7 @@ class TestUpdateDefinition:
         assert response.status_code == 404
 
     def test_update_enabled_field(self, client: TestClient) -> None:
-        created = client.post("/api/agents/definitions", json={"name": "toggle-me"}).json()[
+        created = client.post("/api/agents/definitions", json=_agent_request("toggle-me")).json()[
             "definition"
         ]
         response = client.put(f"/api/agents/definitions/{created['id']}", json={"enabled": False})
@@ -442,7 +474,7 @@ class TestUpdateDefinition:
         assert response.json()["definition"]["enabled"] is False
 
     def test_update_tags_field(self, client: TestClient) -> None:
-        created = client.post("/api/agents/definitions", json={"name": "tag-update"}).json()[
+        created = client.post("/api/agents/definitions", json=_agent_request("tag-update")).json()[
             "definition"
         ]
         response = client.put(
@@ -454,12 +486,20 @@ class TestUpdateDefinition:
         assert response.json()["definition"]["tags"] == ["ops", "nightly"]
 
     def test_update_body_fields(self, client: TestClient) -> None:
-        created = client.post("/api/agents/definitions", json={"name": "body-update"}).json()[
+        created = client.post("/api/agents/definitions", json=_agent_request("body-update")).json()[
             "definition"
         ]
         response = client.put(
             f"/api/agents/definitions/{created['id']}",
-            json={"model": "opus", "timeout": 600.0, "surfaces": ["spawn", "persona"]},
+            json={
+                "model": "opus",
+                "timeout": 600.0,
+                "surfaces": ["spawn", "persona"],
+                "prompts": {
+                    "persona": "Guide the user interactively.",
+                    "agent": "Run the assigned task.",
+                },
+            },
         )
         assert response.status_code == 200
         definition = AgentDefinitionBody.model_validate_json(
@@ -475,7 +515,12 @@ class TestUpdateDefinition:
         row = agent_manager.create(
             name="stale-limit",
             definition_json=json.dumps(
-                {"name": "stale-limit", "description": "Old row", "max_turns": 20}
+                {
+                    "name": "stale-limit",
+                    "description": "Old row",
+                    "prompts": {"agent": "Run the assigned task."},
+                    "max_turns": 20,
+                }
             ),
             description="Old row",
         )
@@ -494,7 +539,7 @@ class TestUpdateDefinition:
 
 class TestDeleteDefinition:
     def test_delete_existing(self, client: TestClient) -> None:
-        created = client.post("/api/agents/definitions", json={"name": "deletable"}).json()[
+        created = client.post("/api/agents/definitions", json=_agent_request("deletable")).json()[
             "definition"
         ]
         response = client.delete(f"/api/agents/definitions/{created['id']}")
@@ -506,7 +551,7 @@ class TestDeleteDefinition:
         assert response.status_code == 404
 
     def test_delete_idempotent(self, client: TestClient) -> None:
-        created = client.post("/api/agents/definitions", json={"name": "del-twice"}).json()[
+        created = client.post("/api/agents/definitions", json=_agent_request("del-twice")).json()[
             "definition"
         ]
         client.delete(f"/api/agents/definitions/{created['id']}")
@@ -525,7 +570,12 @@ class TestImportDefinition:
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
         (agents_dir / "importable.yaml").write_text(
-            "name: importable\ndescription: Imported agent\nprovider: claude\nmode: autonomous\n"
+            "name: importable\n"
+            "description: Imported agent\n"
+            "provider: claude\n"
+            "mode: autonomous\n"
+            "prompts:\n"
+            "  agent: Run the assigned task.\n"
         )
 
         with patch(
@@ -546,6 +596,8 @@ class TestImportDefinition:
             "name: stepped\n"
             "provider: claude\n"
             "mode: autonomous\n"
+            "prompts:\n"
+            "  agent: Run the assigned task.\n"
             "step_workflow:\n"
             "  exit_condition: done\n"
             "  steps:\n"
@@ -595,7 +647,11 @@ class TestImportDefinition:
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
         (agents_dir / "proj-agent.yaml").write_text(
-            "name: proj-agent\nprovider: claude\nmode: autonomous\n"
+            "name: proj-agent\n"
+            "provider: claude\n"
+            "mode: autonomous\n"
+            "prompts:\n"
+            "  agent: Run the assigned task.\n"
         )
 
         with patch(
@@ -632,7 +688,7 @@ class TestCrudRoundTrip:
         # Create
         resp = client.post(
             "/api/agents/definitions",
-            json={"name": "lifecycle-test", "description": "Round-trip"},
+            json=_agent_request("lifecycle-test", description="Round-trip"),
         )
         assert resp.status_code == 200
         defn = resp.json()["definition"]
@@ -664,7 +720,7 @@ class TestCrudRoundTrip:
 class TestRestoreDefinition:
     def test_restore_soft_deleted(self, client: TestClient) -> None:
         """Soft-deleted definition can be restored."""
-        created = client.post("/api/agents/definitions", json={"name": "restorable"}).json()[
+        created = client.post("/api/agents/definitions", json=_agent_request("restorable")).json()[
             "definition"
         ]
         client.delete(f"/api/agents/definitions/{created['id']}")
@@ -686,7 +742,7 @@ class TestRestoreDefinition:
 class TestPatchRules:
     def test_add_rules(self, client: TestClient) -> None:
         """Add rules to an agent definition."""
-        created = client.post("/api/agents/definitions", json={"name": "rules-test"}).json()[
+        created = client.post("/api/agents/definitions", json=_agent_request("rules-test")).json()[
             "definition"
         ]
         response = client.patch(
@@ -701,7 +757,7 @@ class TestPatchRules:
 
     def test_remove_rules(self, client: TestClient) -> None:
         """Remove rules from an agent definition."""
-        created = client.post("/api/agents/definitions", json={"name": "rules-rm"}).json()[
+        created = client.post("/api/agents/definitions", json=_agent_request("rules-rm")).json()[
             "definition"
         ]
         # Add first
@@ -720,7 +776,7 @@ class TestPatchRules:
 
     def test_add_duplicate_rule_is_idempotent(self, client: TestClient) -> None:
         """Adding a rule that already exists does not duplicate it."""
-        created = client.post("/api/agents/definitions", json={"name": "rules-dup"}).json()[
+        created = client.post("/api/agents/definitions", json=_agent_request("rules-dup")).json()[
             "definition"
         ]
         client.patch(
@@ -751,7 +807,7 @@ class TestPatchRules:
 class TestPatchRuleSelectors:
     def test_add_include_selectors(self, client: TestClient) -> None:
         """Add include selectors to an agent definition."""
-        created = client.post("/api/agents/definitions", json={"name": "sel-test"}).json()[
+        created = client.post("/api/agents/definitions", json=_agent_request("sel-test")).json()[
             "definition"
         ]
         response = client.patch(
@@ -764,7 +820,7 @@ class TestPatchRuleSelectors:
 
     def test_add_exclude_selectors(self, client: TestClient) -> None:
         """Add exclude selectors."""
-        created = client.post("/api/agents/definitions", json={"name": "sel-excl"}).json()[
+        created = client.post("/api/agents/definitions", json=_agent_request("sel-excl")).json()[
             "definition"
         ]
         response = client.patch(
@@ -776,7 +832,7 @@ class TestPatchRuleSelectors:
 
     def test_remove_include_selectors(self, client: TestClient) -> None:
         """Remove include selectors."""
-        created = client.post("/api/agents/definitions", json={"name": "sel-rm"}).json()[
+        created = client.post("/api/agents/definitions", json=_agent_request("sel-rm")).json()[
             "definition"
         ]
         client.patch(
@@ -793,7 +849,7 @@ class TestPatchRuleSelectors:
 
     def test_remove_exclude_selectors(self, client: TestClient) -> None:
         """Remove exclude selectors."""
-        created = client.post("/api/agents/definitions", json={"name": "sel-rm-excl"}).json()[
+        created = client.post("/api/agents/definitions", json=_agent_request("sel-rm-excl")).json()[
             "definition"
         ]
         client.patch(
@@ -817,7 +873,7 @@ class TestPatchRuleSelectors:
 
     def test_add_duplicate_selector_is_idempotent(self, client: TestClient) -> None:
         """Adding a selector that already exists does not duplicate it."""
-        created = client.post("/api/agents/definitions", json={"name": "sel-dup"}).json()[
+        created = client.post("/api/agents/definitions", json=_agent_request("sel-dup")).json()[
             "definition"
         ]
         client.patch(
@@ -840,7 +896,7 @@ class TestPatchRuleSelectors:
 class TestPatchVariables:
     def test_set_variables(self, client: TestClient) -> None:
         """Set variables on an agent definition."""
-        created = client.post("/api/agents/definitions", json={"name": "var-test"}).json()[
+        created = client.post("/api/agents/definitions", json=_agent_request("var-test")).json()[
             "definition"
         ]
         response = client.patch(
@@ -855,7 +911,7 @@ class TestPatchVariables:
 
     def test_remove_variables(self, client: TestClient) -> None:
         """Remove variables from an agent definition."""
-        created = client.post("/api/agents/definitions", json={"name": "var-rm"}).json()[
+        created = client.post("/api/agents/definitions", json=_agent_request("var-rm")).json()[
             "definition"
         ]
         client.patch(
@@ -872,7 +928,7 @@ class TestPatchVariables:
 
     def test_set_and_remove_in_one_request(self, client: TestClient) -> None:
         """Set and remove variables in the same request."""
-        created = client.post("/api/agents/definitions", json={"name": "var-both"}).json()[
+        created = client.post("/api/agents/definitions", json=_agent_request("var-both")).json()[
             "definition"
         ]
         client.patch(
@@ -903,7 +959,7 @@ class TestPatchVariables:
     ) -> None:
         """Concurrent read-modify-write patches serialize without losing an update."""
         created = client.post(
-            "/api/agents/definitions", json={"name": "variables-concurrent"}
+            "/api/agents/definitions", json=_agent_request("variables-concurrent")
         ).json()["definition"]
         definition_id = created["id"]
 
@@ -960,7 +1016,11 @@ class TestListDefinitionsSourceFilter:
     def test_source_filter(self, client: TestClient, agent_manager: AgentDefinitionManager) -> None:
         """Listing with source_filter only returns matching sources."""
         body1 = AgentDefinitionBody(
-            name="src-a", sources=["claude"], provider="claude", mode="autonomous"
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
+            name="src-a",
+            sources=["claude"],
+            provider="claude",
+            mode="autonomous",
         )
         agent_manager.create(
             name="src-a",
@@ -969,7 +1029,11 @@ class TestListDefinitionsSourceFilter:
             enabled=True,
         )
         body2 = AgentDefinitionBody(
-            name="src-b", sources=["codex"], provider="codex", mode="autonomous"
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
+            name="src-b",
+            sources=["codex"],
+            provider="codex",
+            mode="autonomous",
         )
         agent_manager.create(
             name="src-b",
@@ -993,7 +1057,7 @@ class TestListDefinitionsSourceFilter:
 class TestUpdateDefinitionNestedFields:
     def test_update_workflows(self, client: TestClient) -> None:
         """Update workflows field replaces it wholesale."""
-        created = client.post("/api/agents/definitions", json={"name": "wf-update"}).json()[
+        created = client.post("/api/agents/definitions", json=_agent_request("wf-update")).json()[
             "definition"
         ]
         response = client.put(
@@ -1004,7 +1068,7 @@ class TestUpdateDefinitionNestedFields:
 
     def test_update_sandbox_config(self, client: TestClient) -> None:
         """Update sandbox_config maps to sandbox field."""
-        created = client.post("/api/agents/definitions", json={"name": "sb-update"}).json()[
+        created = client.post("/api/agents/definitions", json=_agent_request("sb-update")).json()[
             "definition"
         ]
         response = client.put(
@@ -1015,7 +1079,7 @@ class TestUpdateDefinitionNestedFields:
 
     def test_update_lifecycle_variables(self, client: TestClient) -> None:
         """Update lifecycle_variables."""
-        created = client.post("/api/agents/definitions", json={"name": "lv-update"}).json()[
+        created = client.post("/api/agents/definitions", json=_agent_request("lv-update")).json()[
             "definition"
         ]
         response = client.put(
@@ -1026,7 +1090,7 @@ class TestUpdateDefinitionNestedFields:
 
     def test_update_default_variables(self, client: TestClient) -> None:
         """Update default_variables."""
-        created = client.post("/api/agents/definitions", json={"name": "dv-update"}).json()[
+        created = client.post("/api/agents/definitions", json=_agent_request("dv-update")).json()[
             "definition"
         ]
         response = client.put(
@@ -1036,9 +1100,9 @@ class TestUpdateDefinitionNestedFields:
         assert response.status_code == 200
 
     def test_update_step_workflow(self, client: TestClient) -> None:
-        created = client.post("/api/agents/definitions", json={"name": "steps-update"}).json()[
-            "definition"
-        ]
+        created = client.post(
+            "/api/agents/definitions", json=_agent_request("steps-update")
+        ).json()["definition"]
         response = client.put(
             f"/api/agents/definitions/{created['id']}",
             json={
@@ -1056,9 +1120,9 @@ class TestUpdateDefinitionNestedFields:
         assert body.step_workflow.steps[0].name == "step1"
 
     def test_update_rejects_legacy_step_keys(self, client: TestClient) -> None:
-        created = client.post("/api/agents/definitions", json={"name": "legacy-steps"}).json()[
-            "definition"
-        ]
+        created = client.post(
+            "/api/agents/definitions", json=_agent_request("legacy-steps")
+        ).json()["definition"]
         response = client.put(
             f"/api/agents/definitions/{created['id']}",
             json={"steps": [{"name": "step1", "prompt": "Do something"}]},
@@ -1068,7 +1132,7 @@ class TestUpdateDefinitionNestedFields:
 
     def test_update_blocked_tools(self, client: TestClient) -> None:
         """Update blocked_tools and blocked_mcp_tools."""
-        created = client.post("/api/agents/definitions", json={"name": "bt-update"}).json()[
+        created = client.post("/api/agents/definitions", json=_agent_request("bt-update")).json()[
             "definition"
         ]
         response = client.put(
@@ -1079,12 +1143,12 @@ class TestUpdateDefinitionNestedFields:
 
     def test_update_name_field(self, client: TestClient) -> None:
         """Update name updates both body and row-level name."""
-        created = client.post("/api/agents/definitions", json={"name": "nm-update"}).json()[
+        created = client.post("/api/agents/definitions", json=_agent_request("nm-update")).json()[
             "definition"
         ]
         response = client.put(
             f"/api/agents/definitions/{created['id']}",
-            json={"name": "renamed-agent"},
+            json=_agent_request("renamed-agent"),
         )
         assert response.status_code == 200
         assert response.json()["definition"]["name"] == "renamed-agent"
@@ -1131,6 +1195,7 @@ class TestCreateDefinitionExtended:
             "/api/agents/definitions",
             json={
                 "name": "wf-agent",
+                "prompts": {"agent": "Run the assigned task."},
                 "workflows": {"rules": ["rule-1"]},
             },
         )
@@ -1142,6 +1207,7 @@ class TestCreateDefinitionExtended:
             "/api/agents/definitions",
             json={
                 "name": "blocked-agent",
+                "prompts": {"agent": "Run the assigned task."},
                 "blocked_tools": ["Bash"],
                 "blocked_mcp_tools": ["dangerous"],
             },

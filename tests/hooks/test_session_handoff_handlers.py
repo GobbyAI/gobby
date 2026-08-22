@@ -1015,8 +1015,8 @@ class TestPrepareCompactContinuationVariables:
 
         assert response.context is not None
         assert "## Role" in response.context
-        assert default_agent.role is not None
-        assert default_agent.role in response.context
+        assert default_agent.prompts.persona is not None
+        assert default_agent.prompts.persona in response.context
         variables = sv_mgr.get_variables(session.id)
         assert variables["plan_mode"] is True
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Literal
 
 import psycopg
 
@@ -302,7 +302,10 @@ class AgentEventHandlerMixin(EventHandlersBase):
         if not agent_body:
             return
 
-        preamble = agent_body.build_prompt_preamble()
+        prompt_surface: Literal["persona", "agent"] = (
+            "agent" if variables.get("is_spawned_agent") else "persona"
+        )
+        preamble = agent_body.prompt_for(prompt_surface)
         if preamble:
             if response.context:
                 response.context = f"{preamble}\n\n{response.context}"

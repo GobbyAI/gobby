@@ -151,7 +151,7 @@ def test_merge_worker_allows_read_only_preflight_tools_without_prompting_them() 
     tools = set(merge["allowed_mcp_tools"])
     text = " ".join(
         [
-            _agent("merge-worker")["instructions"],
+            _agent("merge-worker")["prompts"]["agent"],
             merge["status_message"],
         ]
     )
@@ -236,7 +236,7 @@ def test_merge_worker_resolves_conflicts_sequentially() -> None:
 
 def test_merge_worker_guidance_stays_inside_merge_tool_surface() -> None:
     agent = _agent("merge-worker")
-    instructions = agent["instructions"]
+    instructions = agent["prompts"]["agent"]
     normalized_instructions = " ".join(instructions.split())
     merge_status = " ".join(_step(agent, "merge")["status_message"].split())
 
@@ -255,7 +255,7 @@ def test_merge_worker_preserves_guarded_verification_commands() -> None:
     agent = _agent("merge-worker")
     text = " ".join(
         [
-            agent["instructions"],
+            agent["prompts"]["agent"],
             _step(agent, "merge")["status_message"],
         ]
     )

@@ -23,8 +23,8 @@ from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._models import Task
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_instances import AgentStepInstanceManager
-from tests.workflows.step_instance_fixtures import make_step_instance
 from gobby.workflows.task_claim_state import add_claimed_task
+from tests.workflows.step_instance_fixtures import make_step_instance
 
 from .detection_test_support import BundledDetectionRegistry
 

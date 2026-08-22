@@ -35,8 +35,6 @@ def _agent_activation_context() -> AgentActivationResult:
     return AgentActivationResult(
         agent_name="default",
         description=None,
-        role="Senior engineer",
-        goal=None,
         rules_count=0,
         skills_count=0,
         variables_count=0,

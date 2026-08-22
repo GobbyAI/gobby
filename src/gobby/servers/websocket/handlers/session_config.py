@@ -166,7 +166,7 @@ async def _validate_persona_agent(
     if not persona_supported:
         await mixin._send_error(
             websocket,
-            f"Agent definition '{agent_name}' is not persona-capable",
+            f"Agent definition '{agent_name}' does not support the 'persona' surface",
         )
         return False
     return True

@@ -38,7 +38,7 @@ def agent() -> AgentDefinitionBody:
 class TestPlannerSkillLoading:
     def test_has_load_skill_step_between_claim_and_plan(self, agent: AgentDefinitionBody) -> None:
         """Ordering is load-bearing: skill must be in context before drafting."""
-        names = [s.name for s in ((agent.step_workflow.steps if agent.step_workflow else []))]
+        names = [s.name for s in (agent.step_workflow.steps if agent.step_workflow else [])]
         assert names == ["claim", "load_skill", "plan", "terminate"]
 
     def test_load_skill_step_targets_plan_draft(self, agent: AgentDefinitionBody) -> None:
@@ -95,7 +95,7 @@ class TestPlannerInstructionsPreserveContracts:
     def test_instructions_reference_plan_draft(self, agent: AgentDefinitionBody) -> None:
         """Inline instructions must explicitly direct the agent to load
         plan-draft via get_skill — not generically 'follow the methodology'."""
-        instructions = agent.instructions or ""
+        instructions = agent.prompts.agent or ""
         assert "plan-draft" in instructions
         assert "get_skill" in instructions
         assert "native Skill" in instructions
@@ -108,13 +108,13 @@ class TestPlannerInstructionsPreserveContracts:
     ) -> None:
         """Contract with the stage-native planning flow: when requirements are
         insufficient, escalate with the concrete missing questions."""
-        instructions = agent.instructions or ""
+        instructions = agent.prompts.agent or ""
         assert "concrete missing questions" in instructions
         assert "needs_requirements" not in instructions
 
     def test_critical_rules_preserved(self, agent: AgentDefinitionBody) -> None:
         """Worker-safety critical rules must survive the trim."""
-        instructions = agent.instructions or ""
+        instructions = agent.prompts.agent or ""
         for rule in (
             "close_task",
             "reopen_task",

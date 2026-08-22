@@ -184,8 +184,8 @@ def test_epic_reviewer_loads_skill_reads_files_and_terminates_cleanly() -> None:
     }.issubset(set(agent["step_workflow"]["variables"]["required_skills"]))
     for skill_name in agent["step_workflow"]["variables"]["required_skills"]:
         assert f'get_skill(name="{skill_name}")' in load_skill["status_message"]
-    assert "Discovery Brief" in agent["instructions"]
-    assert "descendant task set" in agent["instructions"]
+    assert "Discovery Brief" in agent["prompts"]["agent"]
+    assert "descendant task set" in agent["prompts"]["agent"]
     assert review["allowed_tools"] == "all"
     assert {
         "gobby-tasks:close_task",
@@ -220,8 +220,8 @@ def test_architect_requires_architecture_and_test_architecture_sections() -> Non
 
     assert "architecture" in set(agent["skills"]["methodology"])
     assert "test-architecture" not in set(agent["skills"]["methodology"])
-    assert "## Architecture Brief" in agent["instructions"]
-    assert "## Test Architecture" in agent["instructions"]
+    assert "## Architecture Brief" in agent["prompts"]["agent"]
+    assert "## Test Architecture" in agent["prompts"]["agent"]
     assert "tool_input.name == 'architecture'" in str(load_skill.get("on_mcp_success"))
 
 
@@ -230,7 +230,7 @@ def test_qa_reviewer_records_review_verdict_without_closing_task() -> None:
     review = _step(agent, "review")
     transitions = review["transitions"]
 
-    instructions = agent["instructions"]
+    instructions = agent["prompts"]["agent"]
     assert "approve_review" in instructions
     assert "reject_review" in instructions
     assert "escalate_task" in instructions
@@ -275,9 +275,9 @@ def test_developer_agents_support_toolchain_allowlists_and_additional_skills(
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_required)
     for skill_name in agent["step_workflow"]["variables"]["required_skills"]:
         assert f'get_skill(name="{skill_name}")' in load_required["status_message"]
-    assert "development-discipline" in agent["instructions"]
-    assert "tasks" in agent["instructions"]
-    assert "test-driven-development" in agent["instructions"]
+    assert "development-discipline" in agent["prompts"]["agent"]
+    assert "tasks" in agent["prompts"]["agent"]
+    assert "test-driven-development" in agent["prompts"]["agent"]
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_skills)
     assert "additional_skills" in load_skills["status_message"]
     assert "additional_skills_loaded" in agent["step_workflow"]["variables"]
@@ -293,7 +293,7 @@ def test_developer_agents_support_toolchain_allowlists_and_additional_skills(
 
 @pytest.mark.parametrize("agent_name", ["backend-developer", "fullstack-developer"])
 def test_developer_agents_avoid_full_cargo_test_suites(agent_name: str) -> None:
-    instructions = _agent(agent_name)["instructions"]
+    instructions = _agent(agent_name)["prompts"]["agent"]
 
     assert "**Never run the full test suite**" in instructions
     assert "`cargo test -p <package>`" in instructions
@@ -335,9 +335,9 @@ def test_qa_and_epic_reviewers_check_tdd_required_evidence() -> None:
     qa_review = _step(qa, "review")["status_message"]
     epic_review = _step(epic, "review")["status_message"]
     for text in (
-        qa["instructions"],
+        qa["prompts"]["agent"],
         qa_review,
-        epic["instructions"],
+        epic["prompts"]["agent"],
         epic_review,
         epic_skill,
     ):
@@ -348,9 +348,9 @@ def test_qa_and_epic_reviewers_check_tdd_required_evidence() -> None:
         assert "missing baseline" in text.lower()
         assert "unsupported-language" in text.lower()
         assert "repo-native validation" in text.lower()
-    assert "red evidence" in qa["instructions"].lower()
+    assert "red evidence" in qa["prompts"]["agent"].lower()
     assert "contains red, green" in qa_review.lower()
-    assert "checked red, green" in epic["instructions"].lower()
+    assert "checked red, green" in epic["prompts"]["agent"].lower()
     assert "red/green" in epic_review
     assert "red failure" in epic_skill.lower()
 
@@ -361,6 +361,7 @@ def test_agent_definition_model_preserves_skills_blocks() -> None:
     body = AgentDefinitionBody.model_validate(
         {
             "name": "backend-developer",
+            "prompts": {"agent": "Run the assigned task."},
             "skills": {
                 "baseline": ["Python backend"],
                 "tool_allowlist": ["pytest", "ruff"],
@@ -382,13 +383,13 @@ def test_triage_agent_uses_current_agent_schema_and_methodology_skill() -> None:
 
     assert "prompt" not in agent
     assert agent["skills"] == {"methodology": ["triage-judgment"]}
-    assert body.instructions is not None
-    assert "Return structured JSON only" in body.instructions
+    assert body.prompts.agent is not None
+    assert "Return structured JSON only" in body.prompts.agent
 
 
 def test_backend_developer_documents_default_fallback_audit_marker() -> None:
     agent = _agent("backend-developer")
-    instructions = agent["instructions"]
+    instructions = agent["prompts"]["agent"]
 
     assert "default-agent fallback" in instructions
     assert "## Agent Selection" in instructions
@@ -411,7 +412,7 @@ def test_tech_writer_loads_methodology_skill_after_claim() -> None:
 
 
 def test_planner_relies_on_review_handoff_to_clear_rejected_verdict_label() -> None:
-    instructions = " ".join(_agent("planner")["instructions"].split())
+    instructions = " ".join(_agent("planner")["prompts"]["agent"].split())
 
     assert "submit_for_review" in instructions
     assert "remove_label" in instructions

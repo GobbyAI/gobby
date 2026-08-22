@@ -41,7 +41,7 @@ def agent() -> AgentDefinitionBody:
 class TestAdversarySkillLoading:
     def test_has_load_skill_step_between_claim_and_review(self, agent: AgentDefinitionBody) -> None:
         """Ordering is load-bearing: skill must be in context before reviewing."""
-        names = [s.name for s in ((agent.step_workflow.steps if agent.step_workflow else []))]
+        names = [s.name for s in (agent.step_workflow.steps if agent.step_workflow else [])]
         assert names[:3] == ["claim", "load_skill", "review"]
         assert names[-1] == "terminate"
 
@@ -162,7 +162,7 @@ class TestAdversarySkillLoading:
 
 class TestAdversaryInstructionsPreserveContracts:
     def test_instructions_reference_plan_review(self, agent: AgentDefinitionBody) -> None:
-        instructions = agent.instructions or ""
+        instructions = agent.prompts.agent or ""
         assert "plan-review" in instructions
         assert "get_skill" in instructions
         assert "native Skill" in instructions
@@ -171,7 +171,7 @@ class TestAdversaryInstructionsPreserveContracts:
         assert "After `plan-review` is loaded" in instructions
 
     def test_instructions_reference_proportionality(self, agent: AgentDefinitionBody) -> None:
-        instructions = agent.instructions or ""
+        instructions = agent.prompts.agent or ""
         assert "proportionality" in instructions
         assert 'get_skill(name="proportionality")' in instructions
         # The over-engineering criterion must name the simpler form and never
@@ -184,7 +184,7 @@ class TestAdversaryInstructionsPreserveContracts:
     ) -> None:
         """Revision rounds should use review rejection; insufficient
         requirements context becomes a blocking finding, never a halt."""
-        instructions = agent.instructions or ""
+        instructions = agent.prompts.agent or ""
         assert "reject_review" in instructions
         assert "missing-requirement" in instructions
         assert "needs_requirements" not in instructions
@@ -192,7 +192,7 @@ class TestAdversaryInstructionsPreserveContracts:
     def test_plan_identity_precondition_blocks_unknown_covers(
         self, agent: AgentDefinitionBody
     ) -> None:
-        instructions = agent.instructions or ""
+        instructions = agent.prompts.agent or ""
         assert "PLAN IDENTITY PRECONDITION" in instructions
         assert "**Plan ID:** <id>" in instructions
         assert "outside fenced code" in instructions
@@ -204,7 +204,7 @@ class TestAdversaryInstructionsPreserveContracts:
         instructions reinforce plan-review's format so a sloppy adversary
         run doesn't write a bare `## Adversary Findings` that leaks into
         the next round's view."""
-        instructions = agent.instructions or ""
+        instructions = agent.prompts.agent or ""
         assert "Adversary Findings" in instructions
         assert "Round N" in instructions or "display round" in instructions.lower()
 
@@ -249,7 +249,7 @@ class TestAdversaryInstructionsPreserveContracts:
 
     def test_critical_rules_preserved(self, agent: AgentDefinitionBody) -> None:
         """Worker-safety critical rules must survive the trim."""
-        instructions = agent.instructions or ""
+        instructions = agent.prompts.agent or ""
         for rule in (
             "close_task",
             "reopen_task",
@@ -261,11 +261,11 @@ class TestAdversaryInstructionsPreserveContracts:
             assert rule in instructions, f"Missing critical rule: {rule}"
 
     def test_kill_agent_removed_from_instructions(self, agent: AgentDefinitionBody) -> None:
-        instructions = agent.instructions or ""
+        instructions = agent.prompts.agent or ""
         assert "kill_agent" not in instructions
 
     def test_call_tool_uses_ambient_session_context(self, agent: AgentDefinitionBody) -> None:
-        instructions = agent.instructions or ""
+        instructions = agent.prompts.agent or ""
         assert "Do NOT pass session_id to mcp__gobby__call_tool" in instructions
 
 

@@ -296,7 +296,10 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
         # Compose prompt with preamble
         effective_prompt = prompt
         if agent_body:
-            preamble = agent_body.build_prompt_preamble()
+            try:
+                preamble = agent_body.prompt_for("agent")
+            except ValueError as exc:
+                return AgentSpawnResponse(success=False, error=str(exc))
             if preamble:
                 effective_prompt = f"{preamble}\n\n---\n\n{prompt}"
 
@@ -511,8 +514,12 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                 pid = ctx.get("id") if ctx else None
                 agent_body = resolve_agent(agent_name, server.services.database, project_id=pid)
                 if agent_body:
-                    preamble = agent_body.build_prompt_preamble()
-            except (AgentResolutionError, Exception):
+                    preamble = agent_body.prompt_for("agent")
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except AgentResolutionError:
+                pass
+            except Exception:
                 pass
 
             return {

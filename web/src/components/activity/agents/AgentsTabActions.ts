@@ -64,10 +64,10 @@ export function buildAgentDefinitionBody(
     name: draft.form.name.trim(),
     description: optionalString(draft.form.description),
     surfaces: draft.form.surfaces,
-    role: optionalString(draft.form.role),
-    goal: optionalString(draft.form.goal),
-    personality: optionalString(draft.form.personality),
-    instructions: optionalString(draft.form.instructions),
+    prompts: {
+      persona: optionalString(draft.form.persona_prompt),
+      agent: optionalString(draft.form.agent_prompt),
+    },
     provider: draft.form.provider,
     model: optionalString(draft.form.model),
     reasoning_effort:

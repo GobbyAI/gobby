@@ -15,12 +15,15 @@ metadata:
 Switch the current session to a persona-capable agent definition.
 
 This command is for conversational session switching, not autonomous agent spawning.
-It updates the session persona and skill selection for the next user turn.
+It updates the session's `prompts.persona` selection and active skills for the
+next user turn.
 
 ## Behavior
 
 - Do not spawn an agent.
 - Do not change provider, model, reasoning effort, or isolation.
+- Do not create, replace, or snapshot an `agent_step_instances` row. Step
+  workflows belong to spawned runs.
 - Use `gobby-agents.apply_persona` as the canonical operation.
 
 ## Workflow

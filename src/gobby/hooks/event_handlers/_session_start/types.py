@@ -11,8 +11,6 @@ class AgentActivationResult:
 
     agent_name: str
     description: str | None
-    role: str | None
-    goal: str | None
     rules_count: int
     skills_count: int
     variables_count: int

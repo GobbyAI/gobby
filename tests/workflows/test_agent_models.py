@@ -13,6 +13,8 @@ pytestmark = pytest.mark.unit
 _STEPFUL_YAML = """
 name: planner
 description: Nested stepful agent
+prompts:
+  agent: Run the assigned task.
 step_workflow:
   variables:
     required_skills:
@@ -29,6 +31,8 @@ step_workflow:
 _STEPLESS_YAML = """
 name: coder
 description: Step-less agent
+prompts:
+  agent: Run the assigned task.
 """
 
 

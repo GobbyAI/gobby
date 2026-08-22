@@ -54,7 +54,7 @@ def _make_agent_body(
     """Create a mock agent body with optional default variables."""
     body = MagicMock()
     body.name = name
-    body.build_prompt_preamble.return_value = None
+    body.prompt_for.return_value = None
     body.workflows = MagicMock()
     body.workflows.skill_format = None
     body.workflows.variables = variables

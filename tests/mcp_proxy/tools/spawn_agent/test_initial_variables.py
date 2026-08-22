@@ -153,6 +153,7 @@ class TestSpawnAgentPipelineInjection:
         from gobby.workflows.definitions import PipelineDefinition
 
         agent_body = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="pipeline-agent",
             workflows=AgentWorkflows(pipeline="my-pipeline"),
         )
@@ -215,6 +216,7 @@ class TestSpawnAgentPipelineInjection:
         from gobby.workflows.definitions import WorkflowDefinition
 
         agent_body = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="step-agent",
             workflows=AgentWorkflows(pipeline="my-workflow"),
         )
@@ -278,6 +280,7 @@ class TestSpawnAgentStepVariables:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
         agent_body = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="qa-agent",
             provider="claude",
             workflows=AgentWorkflows(rules=["no-code-writing"]),
@@ -354,6 +357,7 @@ class TestSpawnAgentStepVariables:
         )
 
         agent_body = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="plan-adversary",
             provider="codex",
             step_workflow=AgentStepWorkflowBody(

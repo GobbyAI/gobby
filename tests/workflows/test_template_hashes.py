@@ -21,6 +21,8 @@ def test_load_agents_hashes_nested_step_workflow(tmp_path: Path) -> None:
         "name: coder\n"
         "provider: claude\n"
         "mode: interactive\n"
+        "prompts:\n"
+        "  agent: Run the assigned task.\n"
         "step_workflow:\n"
         "  variables:\n"
         "    goal: ship\n"
@@ -37,6 +39,8 @@ def test_load_agents_hashes_nested_step_workflow(tmp_path: Path) -> None:
         "name: coder\n"
         "provider: claude\n"
         "mode: interactive\n"
+        "prompts:\n"
+        "  agent: Run the assigned task.\n"
         "step_workflow:\n"
         "  variables:\n"
         "    goal: ship\n"
@@ -54,6 +58,7 @@ def test_load_agents_hashes_nested_step_workflow(tmp_path: Path) -> None:
             "name": "coder",
             "provider": "claude",
             "mode": "interactive",
+            "prompts": {"agent": "Run the assigned task."},
             "step_workflow": {
                 "variables": {"goal": "ship"},
                 "steps": [{"name": "review"}],

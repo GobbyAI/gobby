@@ -113,10 +113,7 @@ def _agent_definition_detail(row: AgentDefinitionRow) -> dict[str, Any]:
         **_agent_definition_summary(row),
         "base_branch": body.base_branch,
         "timeout": body.timeout,
-        "role": body.role,
-        "goal": body.goal,
-        "personality": body.personality,
-        "instructions": body.instructions,
+        "prompts": body.prompts.model_dump(exclude_none=True),
         "workflows": body.workflows.model_dump(exclude_none=True),
         "step_workflow": (
             body.step_workflow.model_dump(exclude_none=True) if body.step_workflow else None
@@ -352,7 +349,8 @@ def list_agent_definitions(
             summaries.append(_agent_definition_summary(row))
         except ValueError:
             name = getattr(row, "name", None) or getattr(row, "id", "<unknown>")
-            click.echo(f"Skipping invalid agent definition {name}", err=True)
+            if not json_format:
+                click.echo(f"Skipping invalid agent definition {name}", err=True)
             continue
     if surface:
         summaries = [agent for agent in summaries if surface in agent.get("surfaces", ["spawn"])]
@@ -412,14 +410,11 @@ def show_agent_definition(name: str, json_format: bool) -> None:
         click.echo(f"Project: {detail['project_id']}")
     if detail.get("timeout"):
         click.echo(f"Timeout: {detail['timeout']}")
-    if detail.get("role"):
-        click.echo(f"\nRole:\n{detail['role']}")
-    if detail.get("goal"):
-        click.echo(f"\nGoal:\n{detail['goal']}")
-    if detail.get("personality"):
-        click.echo(f"\nPersonality:\n{detail['personality']}")
-    if detail.get("instructions"):
-        click.echo(f"\nInstructions:\n{detail['instructions']}")
+    prompts = detail.get("prompts") or {}
+    if prompts.get("persona"):
+        click.echo(f"\nPersona prompt:\n{prompts['persona']}")
+    if prompts.get("agent"):
+        click.echo(f"\nAgent prompt:\n{prompts['agent']}")
     if detail.get("steps"):
         click.echo(f"\nSteps: {len(detail['steps'])}")
 

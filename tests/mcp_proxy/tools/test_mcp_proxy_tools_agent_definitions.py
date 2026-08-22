@@ -38,7 +38,14 @@ def _insert_agent(
     tags: list[str] | None = None,
     **overrides: object,
 ) -> None:
-    body = AgentDefinitionBody(name=name, enabled=enabled, **overrides)
+    fields: dict[str, object] = {
+        "prompts": {
+            "persona": "Interactive guidance.",
+            "agent": "Run the assigned task.",
+        }
+    }
+    fields.update(overrides)
+    body = AgentDefinitionBody(name=name, enabled=enabled, **fields)
     dumped = body.model_dump(mode="json")
     mgr.upsert_with_steps(
         name,
@@ -174,18 +181,14 @@ class TestGetAgentDefinition:
         _insert_agent(
             mgr,
             "detailed",
-            role="tester",
-            goal="test things",
-            personality="calm",
-            instructions="read first",
+            surfaces=["spawn", "persona"],
+            prompts={"persona": "Help test things calmly.", "agent": "read first"},
             timeout=300.0,
         )
         result = get_agent_definition(mgr, "detailed")
         agent = result["agent"]
-        assert agent["role"] == "tester"
-        assert agent["goal"] == "test things"
-        assert agent["personality"] == "calm"
-        assert agent["instructions"] == "read first"
+        assert agent["prompts"]["persona"] == "Help test things calmly."
+        assert agent["prompts"]["agent"] == "read first"
         assert agent["timeout"] == 300.0
         assert "max_turns" not in agent
 
@@ -210,7 +213,11 @@ class TestGetAgentDefinition:
 class TestCreateAgentDefinition:
     def test_basic(self, definition_db: PostgresHubDatabase) -> None:
         mgr = _setup(definition_db)
-        result = create_agent_definition(mgr, "new-agent", {"provider": "claude"})
+        result = create_agent_definition(
+            mgr,
+            "new-agent",
+            {"provider": "claude", "prompts": {"agent": "Run the assigned task."}},
+        )
         assert result["success"] is True
         assert result["agent"]["name"] == "new-agent"
 
@@ -221,8 +228,7 @@ class TestCreateAgentDefinition:
             "full-agent",
             {
                 "description": "Full agent",
-                "role": "dev",
-                "goal": "build things",
+                "prompts": {"agent": "Build things."},
                 "provider": "codex",
                 "model": "gpt-5.4",
                 "timeout": 300.0,
@@ -238,7 +244,11 @@ class TestCreateAgentDefinition:
         result = create_agent_definition(
             mgr,
             "stale-limit-agent",
-            {"description": "Old payload", "max_turns": 20},
+            {
+                "description": "Old payload",
+                "prompts": {"agent": "Run the assigned task."},
+                "max_turns": 20,
+            },
         )
         row = mgr.get_by_name("stale-limit-agent")
 
@@ -252,8 +262,9 @@ class TestCreateAgentDefinition:
 
     def test_duplicate_fails(self, definition_db: PostgresHubDatabase) -> None:
         mgr = _setup(definition_db)
-        create_agent_definition(mgr, "dup", {})
-        result = create_agent_definition(mgr, "dup", {})
+        definition = {"prompts": {"agent": "Run the assigned task."}}
+        create_agent_definition(mgr, "dup", definition.copy())
+        result = create_agent_definition(mgr, "dup", definition.copy())
         assert result["success"] is False
         assert "already exists" in result["error"]
 
@@ -265,7 +276,14 @@ class TestCreateAgentDefinition:
 
     def test_persists_to_db(self, definition_db: PostgresHubDatabase) -> None:
         mgr = _setup(definition_db)
-        create_agent_definition(mgr, "persistent", {"description": "Stays in DB"})
+        create_agent_definition(
+            mgr,
+            "persistent",
+            {
+                "description": "Stays in DB",
+                "prompts": {"agent": "Run the assigned task."},
+            },
+        )
         # Verify via list
         result = list_agent_definitions(mgr)
         assert any(a["name"] == "persistent" for a in result["agents"])

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 import pytest
 
 from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state

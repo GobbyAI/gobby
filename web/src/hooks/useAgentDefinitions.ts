@@ -4,7 +4,7 @@ export interface AgentDefInfo {
   definition: {
     name: string;
     description?: string | null;
-    role?: string | null;
+    prompts?: { persona?: string | null; agent?: string | null } | null;
     mode?: string;
     provider?: string;
     model?: string | null;

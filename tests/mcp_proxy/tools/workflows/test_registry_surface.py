@@ -109,7 +109,7 @@ async def test_evaluate_tools_cover_pipeline_and_agent(temp_db: HubDatabase) -> 
     )
     AgentDefinitionManager(temp_db).create(
         name="eval-agent",
-        definition_json=AgentDefinitionBody(name="eval-agent").model_dump(mode="json"),
+        definition_json=AgentDefinitionBody(prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."}, name="eval-agent").model_dump(mode="json"),
     )
     registry = create_workflows_registry(db=temp_db, loader=PipelineLoader(db=temp_db))
 

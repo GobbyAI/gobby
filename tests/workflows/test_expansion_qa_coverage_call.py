@@ -47,7 +47,7 @@ def test_expansion_qa_yaml_wires_coverage_gate() -> None:
     step = next(
         step for step in agent["step_workflow"]["steps"] if step["name"] == "coverage_check"
     )
-    instructions = agent["instructions"]
+    instructions = agent["prompts"]["agent"]
 
     assert "run_expansion_qa_coverage" in instructions
     assert "--plan <plan_path>" in instructions

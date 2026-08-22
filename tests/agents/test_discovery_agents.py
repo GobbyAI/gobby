@@ -100,7 +100,7 @@ def test_discovery_agent_yaml_validates_and_is_enabled(slug: str, spec: dict[str
     assert len(agent.surfaces) == len(set(agent.surfaces))
     assert set(agent.surfaces) == {"spawn", "persona"}
     assert raw["skills"]["methodology"] == spec["skills"]
-    assert f"Gobby acting as {slug.replace('-', ' ')}" in (agent.instructions or "")
+    assert f"Gobby acting as {slug.replace('-', ' ')}" in (agent.prompts.agent or "")
 
 
 @pytest.mark.parametrize(("slug", "spec"), DISCOVERY_AGENTS.items())
@@ -144,7 +144,7 @@ def test_discovery_agent_loads_expected_methodology_skill(
 @pytest.mark.parametrize(("slug", "spec"), DISCOVERY_AGENTS.items())
 def test_discovery_agent_marker_and_stage_contract(slug: str, spec: dict[str, Any]) -> None:
     agent = _agent(slug)
-    instructions = agent.instructions or ""
+    instructions = agent.prompts.agent or ""
     stage = spec["stage"]
 
     assert f"gobby:discovery-stage:{stage}:start" in instructions
@@ -179,7 +179,7 @@ def test_discovery_agent_mcp_allowlist_is_stage_scoped(slug: str, spec: dict[str
     agent = _agent(slug)
 
     assert _allowed_mcp_union(agent) == REQUIRED_STAGE_MCP_TOOLS
-    assert spec["stage"] in (agent.instructions or "")
+    assert spec["stage"] in (agent.prompts.agent or "")
 
 
 @pytest.mark.parametrize(("slug", "spec"), DISCOVERY_AGENTS.items())
@@ -213,7 +213,7 @@ def test_plan_adversary_documents_task_skill_gate_exclusion() -> None:
 
 def test_planner_treats_discovery_markers_as_authoritative_context() -> None:
     planner = _raw_agent("planner")
-    instructions = planner["instructions"]
+    instructions = planner["prompts"]["agent"]
 
     assert "gobby:discovery-stage:*:start" in instructions
     assert "authoritative upstream context" in instructions

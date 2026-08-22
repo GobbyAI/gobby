@@ -59,11 +59,29 @@ class TestProviderResolution:
     """Tests for provider resolution in spawn_agent_impl."""
 
     @pytest.mark.asyncio
+    async def test_persona_only_definition_is_rejected_before_spawn(self) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
+
+        result = await spawn_agent_impl(
+            prompt="Run work",
+            runner=_make_runner(),
+            agent_body=AgentDefinitionBody(
+                name="comms-agent",
+                surfaces=["persona"],
+                prompts={"persona": "Coordinate interactively."},
+            ),
+        )
+
+        assert result["success"] is False
+        assert "does not support the 'spawn' surface" in result["error"]
+
+    @pytest.mark.asyncio
     async def test_provider_none_falls_back_to_agent_body_provider(self) -> None:
         """When provider=None, agent_body.provider should be used."""
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
         agent_body = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="codex-worker",
             provider="codex",
         )
@@ -115,6 +133,7 @@ class TestProviderResolution:
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
         agent_body = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="codex-worker",
             provider="codex",
         )

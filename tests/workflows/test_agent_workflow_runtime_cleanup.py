@@ -261,6 +261,7 @@ async def test_submit_for_review_handoff_terminates_worker_and_unblocks_reviewer
     instance_manager.save(
         build_step_instance(
             AgentDefinitionBody(
+                prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
                 name="worker-submit",
                 surfaces=["spawn"],
                 step_workflow=AgentStepWorkflowBody.model_validate(

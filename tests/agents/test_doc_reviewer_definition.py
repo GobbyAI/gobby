@@ -32,12 +32,12 @@ def test_doc_reviewer_is_read_only() -> None:
     assert "gobby-tasks:close_task" in blocked_mcp_tools
     assert "gobby-agents:kill_agent" in blocked_mcp_tools
     assert "gobby-agents:end_agent_run" in terminate_allowed_mcp_tools
-    assert "read-only" in agent["instructions"]
+    assert "read-only" in agent["prompts"]["agent"]
 
 
 def test_doc_reviewer_avoids_full_test_suites() -> None:
     agent = _agent()
-    instructions = agent["instructions"]
+    instructions = agent["prompts"]["agent"]
     status_message = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")[
         "status_message"
     ]
@@ -70,7 +70,7 @@ def test_doc_reviewer_loads_required_skills() -> None:
 
 def test_doc_reviewer_uses_ordered_docs_review_and_verdict_tools() -> None:
     agent = _agent()
-    instructions = agent["instructions"]
+    instructions = agent["prompts"]["agent"]
     review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
     status_message = review_step["status_message"]
     allowed_mcp_tools = set(review_step.get("allowed_mcp_tools", []))

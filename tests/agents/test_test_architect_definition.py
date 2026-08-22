@@ -43,8 +43,8 @@ def test_architect_loads_test_architecture_methodology() -> None:
     assert agent["name"] == "architect"
     assert "architecture" in set(agent["skills"]["methodology"])
     assert "test-architecture" not in set(agent["skills"]["methodology"])
-    assert "## Architecture Brief" in agent["instructions"]
-    assert "## Test Architecture" in agent["instructions"]
+    assert "## Architecture Brief" in agent["prompts"]["agent"]
+    assert "## Test Architecture" in agent["prompts"]["agent"]
     assert 'get_skill(name="architecture")' in load_skill["status_message"]
     assert any(hook["when"] == "tool_input.name == 'architecture'" for hook in success_hooks)
     assert "## Test Architecture" in draft["status_message"]

@@ -197,11 +197,11 @@ async def _prepare_managed_code_index(
         return None
 
 
-def _persona_prompt_prefix(request: SpawnRequest) -> str:
-    """Resolve the spawned agent's persona preamble for prompt assembly.
+def _agent_prompt_prefix(request: SpawnRequest) -> str:
+    """Resolve the spawned agent's execution preamble for prompt assembly.
 
     Codex delivers hook-injected context after the composer prompt, so the
-    persona block used to trail the task prompt (#20451). Prepending it at
+    agent block used to trail the task prompt (#20451). Prepending it at
     spawn assembly puts identity before the task. Only an explicitly requested
     agent is resolved here — activation may pick a configured default agent,
     and guessing it at spawn time risks front-loading the wrong persona.
@@ -220,11 +220,11 @@ def _persona_prompt_prefix(request: SpawnRequest) -> str:
             project_id=request.project_id,
         )
     except Exception:
-        logger.debug("Persona resolution failed for spawn agent %r", agent_name, exc_info=True)
+        logger.debug("Prompt resolution failed for spawn agent %r", agent_name, exc_info=True)
         return ""
     if not agent_body:
         return ""
-    return agent_body.build_prompt_preamble() or ""
+    return agent_body.prompt_for("agent") or ""
 
 
 def _append_code_index_warning(prompt: str, warning: dict[str, str]) -> str:
@@ -665,12 +665,12 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
 
     if terminal_result.tmux_session_name:
         prompt_text = request.prompt or ""
-        persona = _persona_prompt_prefix(request)
-        if persona and request.session_manager is not None:
-            prompt_text = f"{persona}\n\n{prompt_text}" if prompt_text else persona
+        agent_prompt = _agent_prompt_prefix(request)
+        if agent_prompt and request.session_manager is not None:
+            prompt_text = f"{agent_prompt}\n\n{prompt_text}" if prompt_text else agent_prompt
             from gobby.workflows.state_manager import SessionVariableManager
 
-            # Suppress the first-turn persona injection — identity already
+            # Suppress first-turn agent prompt injection — the preamble already
             # precedes the task prompt in the composer text.
             SessionVariableManager(request.session_manager._storage.db).merge_variables(
                 gobby_session_id,

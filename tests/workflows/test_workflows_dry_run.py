@@ -75,6 +75,7 @@ def _make_definition(
 
 def _as_agent(definition: WorkflowDefinition) -> AgentDefinitionBody:
     return AgentDefinitionBody(
+        prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name=definition.name,
         provider="claude",
         step_workflow=AgentStepWorkflowBody(

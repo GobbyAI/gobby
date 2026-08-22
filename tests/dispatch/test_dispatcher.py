@@ -4449,6 +4449,7 @@ def test_build_context_project_disabled_agent_override_wins(
         source="project",
         enabled=False,
         definition_json=AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="merge-orchestrator",
             description="Project override",
             surfaces=["spawn"],
