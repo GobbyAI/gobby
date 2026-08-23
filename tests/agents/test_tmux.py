@@ -1523,6 +1523,41 @@ class TestTmuxPTYBridge:
         mock_proc.send_signal.assert_called_once_with(signal.SIGWINCH)
 
     @pytest.mark.asyncio
+    async def test_resize_to_the_size_it_already_has_is_not_a_resize(self) -> None:
+        """The web client resizes again right after activation.
+
+        Repainting for a resize that changed nothing lands after the attach's
+        history capture, and the history boundary is only correct for the
+        screen the capture's own repaint painted -- so the redundant redraw
+        costs the seam whatever scrolled in between.
+        """
+        from gobby.agents.tmux.pty_bridge import BridgeInfo
+
+        bridge = TmuxPTYBridge()
+        master_fd, slave_fd = os.openpty()
+        mock_proc = MagicMock()
+        bridge._bridges["same-id"] = BridgeInfo(
+            master_fd=master_fd,
+            proc=mock_proc,
+            session_name="sess",
+            socket_name="",
+            rows=39,
+            cols=80,
+        )
+
+        try:
+            assert await bridge.resize("same-id", 39, 80) is None
+            # A genuine change still resizes, and is then itself remembered.
+            assert await bridge.resize("same-id", 20, 80) is not None
+            assert await bridge.resize("same-id", 20, 80) is None
+        finally:
+            os.close(master_fd)
+            os.close(slave_fd)
+
+        assert mock_proc.send_signal.call_count == 1
+        assert (bridge._bridges["same-id"].rows, bridge._bridges["same-id"].cols) == (20, 80)
+
+    @pytest.mark.asyncio
     async def test_attach_forces_xterm_term_in_subprocess_env(self) -> None:
         """attach must override TERM: the daemon env has none (or an unusable
         one), and tmux attach-session exits immediately without a usable TERM,

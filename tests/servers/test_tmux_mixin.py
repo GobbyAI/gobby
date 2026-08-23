@@ -742,6 +742,30 @@ class TestTmuxResize:
         refresh_client.assert_awaited_once_with("demo")
         assert ws.sent_messages == []
 
+    @pytest.mark.asyncio
+    async def test_a_resize_that_changed_nothing_does_not_repaint(
+        self, server: WebSocketServer
+    ) -> None:
+        # The bridge reports no resize when the client is already that size,
+        # and a repaint the client did not ask for would land after the
+        # attach's history capture and cost the seam a line.
+        ws = MockWebSocket()
+
+        with (
+            patch.object(server._tmux_bridge, "resize", new_callable=AsyncMock, return_value=None),
+            patch.object(
+                server._tmux_mgr_gobby, "refresh_client", new_callable=AsyncMock
+            ) as refresh_client,
+            patch.object(
+                server._tmux_mgr_default, "refresh_client", new_callable=AsyncMock
+            ) as refresh_default,
+        ):
+            await server._handle_tmux_resize(ws, {"streaming_id": "s1", "rows": 24, "cols": 80})
+
+        refresh_client.assert_not_awaited()
+        refresh_default.assert_not_awaited()
+        assert ws.sent_messages == []
+
 
 class TestTmuxRefreshClient:
     @pytest.mark.parametrize("socket", ["default", "gobby"])

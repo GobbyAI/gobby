@@ -17,7 +17,7 @@ import os
 import signal
 import struct
 import termios
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
 from gobby.config.tmux import TmuxConfig
@@ -33,6 +33,12 @@ class BridgeInfo:
     proc: asyncio.subprocess.Process
     session_name: str
     socket_name: str
+    # The geometry tmux is currently running this client at. A resize to the
+    # size it already has is not a resize, and the repaint it would trigger is
+    # the one thing an attach must not do: activation's history boundary is
+    # only correct for the screen its own repaint painted.
+    rows: int = 50
+    cols: int = 200
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -149,6 +155,8 @@ class TmuxPTYBridge:
                     proc=proc,
                     session_name=session_name,
                     socket_name=cfg.socket_name,
+                    rows=rows,
+                    cols=cols,
                 )
 
                 async with self._lock:
@@ -216,11 +224,17 @@ class TmuxPTYBridge:
         """Resize the PTY (propagates to tmux client).
 
         Returns:
-            The BridgeInfo if resize succeeded (caller can use session_name/socket_name
-            to issue ``tmux refresh-client``), or None if no bridge found.
+            The BridgeInfo when the geometry actually changed, so the caller
+            knows the client needs a repaint (it can use session_name and
+            socket_name to issue ``tmux refresh-client``). ``None`` when there
+            is no such bridge, when the resize failed, or when the client is
+            already that size -- a repaint it does not need would land after
+            the attach's history capture and cost the seam a line.
         """
         async with self._lock:
             bridge = self._bridges.get(streaming_id)
+            if bridge and (bridge.rows, bridge.cols) == (rows, cols):
+                return None
 
         if bridge:
             try:
@@ -238,6 +252,11 @@ class TmuxPTYBridge:
                     bridge.proc.send_signal(signal.SIGWINCH)
                 except ProcessLookupError:
                     logger.debug("Bridge %s process exited before SIGWINCH", streaming_id)
+                async with self._lock:
+                    # Only record what tmux was actually told, so a failed
+                    # ioctl leaves the next resize to try again.
+                    if self._bridges.get(streaming_id) is bridge:
+                        self._bridges[streaming_id] = replace(bridge, rows=rows, cols=cols)
                 return bridge
             except OSError as e:
                 logger.warning("Resize failed for %s: %s", streaming_id, e)
