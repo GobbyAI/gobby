@@ -275,17 +275,43 @@ _CODEX_PROMPT_FAILURE_PANE_MAX_CHARS = 1024
 _CODEX_PROMPT_FAILURE_TRUNCATION_MARKER = "[truncated]\n"
 
 
-def _codex_prompt_failure_reason(pane: str | None) -> str:
+def _codex_prompt_failure_reason(
+    pane: str | None,
+    *,
+    code: str = "codex_composer_not_ready",
+    detail: str = "Codex composer did not render before prompt-delivery timeout",
+) -> str:
     redacted = redact_session_markdown((pane or "").strip()) or "<unavailable>"
     if len(redacted) > _CODEX_PROMPT_FAILURE_PANE_MAX_CHARS:
         tail_chars = _CODEX_PROMPT_FAILURE_PANE_MAX_CHARS - len(
             _CODEX_PROMPT_FAILURE_TRUNCATION_MARKER
         )
         redacted = f"{_CODEX_PROMPT_FAILURE_TRUNCATION_MARKER}{redacted[-tail_chars:]}"
-    return (
-        "codex_composer_not_ready: Codex composer did not render before "
-        f"prompt-delivery timeout\nPane output:\n{redacted}"
-    )
+    return f"{code}: {detail}\nPane output:\n{redacted}"
+
+
+async def _fail_codex_prompt_delivery(
+    tmux: "TmuxSessionManager",
+    session_name: str,
+    run_id: str,
+    run_manager: "LocalAgentRunManager | None",
+    error: str,
+) -> None:
+    """Settle a run whose Codex prompt never arrived: fail it, then kill the terminal.
+
+    Leaving the run alive would hand the diagnosis to the session-init watchdog,
+    which reports an unrelated provider-connection timeout.
+    """
+    logger.error("Codex prompt delivery failed for run %s: %s", run_id, error)
+    try:
+        if run_manager is None:
+            logger.error("Cannot persist Codex prompt delivery failure for run %s", run_id)
+        else:
+            run_manager.fail(run_id, error=error, tool_calls_count=0, turns_used=0)
+    except Exception:
+        logger.exception("Cannot persist Codex prompt delivery failure for run %s", run_id)
+    finally:
+        await tmux.kill_session(session_name, missing_ok=True)
 
 
 def schedule_codex_prompt_delivery(
@@ -316,10 +342,10 @@ async def _deliver_codex_prompt(
     run_id: str,
     run_manager: "LocalAgentRunManager | None",
 ) -> None:
+    last_pane: str | None = None
     try:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + _CODEX_COMPOSER_READY_TIMEOUT_SECONDS
-        last_pane: str | None = None
         while True:
             try:
                 pane = await tmux.capture_pane(
@@ -338,40 +364,51 @@ async def _deliver_codex_prompt(
             if pane and _CODEX_COMPOSER_MARKER in pane:
                 break
             if loop.time() >= deadline:
-                error = _codex_prompt_failure_reason(last_pane)
-                logger.error("Codex prompt delivery failed for run %s: %s", run_id, error)
-                try:
-                    if run_manager is None:
-                        logger.error(
-                            "Cannot persist Codex prompt delivery failure for run %s", run_id
-                        )
-                    else:
-                        run_manager.fail(
-                            run_id,
-                            error=error,
-                            tool_calls_count=0,
-                            turns_used=0,
-                        )
-                finally:
-                    await tmux.kill_session(session_name, missing_ok=True)
+                await _fail_codex_prompt_delivery(
+                    tmux,
+                    session_name,
+                    run_id,
+                    run_manager,
+                    _codex_prompt_failure_reason(last_pane),
+                )
                 return
             await asyncio.sleep(_CODEX_COMPOSER_POLL_SECONDS)
         await asyncio.sleep(_CODEX_COMPOSER_SETTLE_SECONDS)
         if not await tmux.send_keys(session_name, f"{prompt}\n", literal=True):
-            logger.error(
-                "Failed to paste spawn prompt into Codex terminal for run %s",
+            await _fail_codex_prompt_delivery(
+                tmux,
+                session_name,
                 run_id,
+                run_manager,
+                _codex_prompt_failure_reason(
+                    last_pane,
+                    code="codex_prompt_delivery_failed",
+                    detail="tmux rejected the spawn prompt paste into the Codex composer",
+                ),
             )
             return
         # A composer still settling the bracketed paste can swallow the
         # trailing Enter; this follow-up Enter submits in that case and is a
-        # no-op on an already-submitted composer.
+        # no-op on an already-submitted composer. The prompt and its newline
+        # already landed, so a failed safety Enter is not a delivery failure.
         await asyncio.sleep(_CODEX_PROMPT_SUBMIT_RETRY_DELAY_SECONDS)
-        await tmux.send_keys(session_name, "Enter", literal=False)
+        if not await tmux.send_keys(session_name, "Enter", literal=False):
+            logger.warning("Follow-up Enter after Codex prompt paste failed for run %s", run_id)
     except asyncio.CancelledError:
         raise
-    except Exception:
+    except Exception as exc:
         logger.exception("Codex prompt delivery failed for run %s", run_id)
+        await _fail_codex_prompt_delivery(
+            tmux,
+            session_name,
+            run_id,
+            run_manager,
+            _codex_prompt_failure_reason(
+                last_pane,
+                code="codex_prompt_delivery_failed",
+                detail=f"unexpected error during prompt delivery: {exc!r}",
+            ),
+        )
 
 
 def _codex_mcp_config_overrides(

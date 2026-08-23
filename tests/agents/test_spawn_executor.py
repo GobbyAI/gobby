@@ -2318,10 +2318,11 @@ class TestCodexPromptDelivery:
         assert "codex_composer_not_ready:" in caplog.text
 
     @pytest.mark.asyncio
-    async def test_failed_paste_skips_follow_up_enter(self) -> None:
+    async def test_failed_paste_fails_run_and_kills_session(self) -> None:
         tmux = MagicMock()
         tmux.capture_pane = AsyncMock(return_value="› ")
         tmux.send_keys = AsyncMock(return_value=False)
+        tmux.kill_session = AsyncMock(return_value=True)
         run_manager = MagicMock()
 
         with (
@@ -2336,11 +2337,102 @@ class TestCodexPromptDelivery:
                 run_manager,
             )
 
-        assert tmux.send_keys.await_count == 1
         assert tmux.send_keys.await_args_list == [
             call("sess", "Do the task\n", literal=True),
         ]
+        error = run_manager.fail.call_args.kwargs["error"]
+        assert error.startswith("codex_prompt_delivery_failed:")
+        assert "Provider connection" not in error
+        assert error.endswith("Pane output:\n›")
+        run_manager.fail.assert_called_once_with(
+            "run-1",
+            error=error,
+            tool_calls_count=0,
+            turns_used=0,
+        )
+        tmux.kill_session.assert_awaited_once_with("sess", missing_ok=True)
+
+    @pytest.mark.asyncio
+    async def test_paste_exception_fails_run_and_kills_session(self) -> None:
+        tmux = MagicMock()
+        tmux.capture_pane = AsyncMock(return_value="› ")
+        tmux.send_keys = AsyncMock(side_effect=OSError("tmux socket vanished"))
+        tmux.kill_session = AsyncMock(return_value=True)
+        run_manager = MagicMock()
+
+        with patch.object(spawn_executor_support, "_CODEX_COMPOSER_SETTLE_SECONDS", 0.0):
+            await _deliver_codex_prompt(
+                tmux,
+                "sess",
+                "Do the task",
+                "run-1",
+                run_manager,
+            )
+
+        error = run_manager.fail.call_args.kwargs["error"]
+        assert error.startswith("codex_prompt_delivery_failed:")
+        assert "OSError('tmux socket vanished')" in error
+        run_manager.fail.assert_called_once_with(
+            "run-1",
+            error=error,
+            tool_calls_count=0,
+            turns_used=0,
+        )
+        tmux.kill_session.assert_awaited_once_with("sess", missing_ok=True)
+
+    @pytest.mark.asyncio
+    async def test_failed_paste_without_run_manager_still_kills_session(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        tmux = MagicMock()
+        tmux.capture_pane = AsyncMock(return_value="› ")
+        tmux.send_keys = AsyncMock(return_value=False)
+        tmux.kill_session = AsyncMock(return_value=True)
+
+        with patch.object(spawn_executor_support, "_CODEX_COMPOSER_SETTLE_SECONDS", 0.0):
+            await _deliver_codex_prompt(tmux, "sess", "Do the task", "run-1", None)
+
+        assert tmux.send_keys.await_args_list == [call("sess", "Do the task\n", literal=True)]
+        tmux.kill_session.assert_awaited_once_with("sess", missing_ok=True)
+        assert "Cannot persist Codex prompt delivery failure for run run-1" in caplog.text
+        assert "codex_prompt_delivery_failed:" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_failed_follow_up_enter_does_not_fail_run(self) -> None:
+        tmux = MagicMock()
+        tmux.capture_pane = AsyncMock(return_value="› ")
+        tmux.send_keys = AsyncMock(side_effect=[True, False])
+        tmux.kill_session = AsyncMock(return_value=True)
+        run_manager = MagicMock()
+
+        with (
+            patch.object(spawn_executor_support, "_CODEX_COMPOSER_SETTLE_SECONDS", 0.0),
+            patch.object(spawn_executor_support, "_CODEX_PROMPT_SUBMIT_RETRY_DELAY_SECONDS", 0.0),
+        ):
+            await _deliver_codex_prompt(tmux, "sess", "Do the task", "run-1", run_manager)
+
+        assert tmux.send_keys.await_args_list == [
+            call("sess", "Do the task\n", literal=True),
+            call("sess", "Enter", literal=False),
+        ]
         run_manager.fail.assert_not_called()
+        tmux.kill_session.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_cancellation_propagates_without_failing_run(self) -> None:
+        tmux = MagicMock()
+        tmux.capture_pane = AsyncMock(side_effect=asyncio.CancelledError())
+        tmux.send_keys = AsyncMock()
+        tmux.kill_session = AsyncMock(return_value=True)
+        run_manager = MagicMock()
+
+        with pytest.raises(asyncio.CancelledError):
+            await _deliver_codex_prompt(tmux, "sess", "Do the task", "run-1", run_manager)
+
+        tmux.send_keys.assert_not_awaited()
+        run_manager.fail.assert_not_called()
+        tmux.kill_session.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_schedule_skips_empty_prompt(self) -> None:
