@@ -80,7 +80,6 @@ class LocalLLMProvider:
             raise ValueError("Local generation endpoint requires api_base and model")
         self._url = str(url)
         self._default_model = str(model)
-        self._api_key = str(getattr(local_cfg, "api_key", None) or "not-needed")
         self._endpoint = local_cfg
         self._adapter = create_local_provider_adapter(local_cfg)
         self._client: Any | None = self._adapter.client

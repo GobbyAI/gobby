@@ -109,10 +109,11 @@ class TestLocalLLMProviderInit:
         with pytest.raises(ValueError, match="Unknown generation endpoint"):
             LocalLLMProvider(DaemonConfig(), endpoint_name="lm-studio")
 
-    def test_api_key_defaults_to_not_needed(self, daemon_config: DaemonConfig) -> None:
+    def test_keyless_endpoint_sends_empty_api_key(self, daemon_config: DaemonConfig) -> None:
         with patch("openai.AsyncOpenAI") as mock_cls:
             LocalLLMProvider(daemon_config, endpoint_name="lm-studio")
-        _assert_bounded_openai_client(mock_cls, api_key="not-needed")
+        # An empty key makes the SDK omit the Authorization header entirely.
+        _assert_bounded_openai_client(mock_cls, api_key="")
 
     def test_api_key_passthrough(self) -> None:
         config = DaemonConfig(

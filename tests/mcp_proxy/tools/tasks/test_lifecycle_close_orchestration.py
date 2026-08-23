@@ -46,8 +46,8 @@ async def test_oversized_close_persists_and_launches_one_taskless_validator(
     assert launch_args["isolation"] == "none"
     assert launch_args["provider"] == "codex"
     assert launch_args["model"] == "gpt-5.6-terra"
-    # An unpinned candidate leaves the definition's `auto` default in force.
-    assert "reasoning_effort" not in launch_args
+    # An unpinned candidate inherits the profile default, which is always `auto`.
+    assert launch_args["reasoning_effort"] == "auto"
     assert result["error"] == "agentic_review_required"
     assert result["review_status"] == "running"
     assert result["run_id"] == "run"
@@ -85,7 +85,7 @@ async def test_launch_omits_model_overrides_without_validation_config(
         (
             ["codex/gpt-5.6-terra"],
             "feature_mid",
-            {"provider": "codex", "model": "gpt-5.6-terra"},
+            {"provider": "codex", "model": "gpt-5.6-terra", "reasoning_effort": "auto"},
         ),
         (
             [{"candidate": "codex/gpt-5.6-sol", "reasoning_effort": "xhigh"}, "claude/opus"],

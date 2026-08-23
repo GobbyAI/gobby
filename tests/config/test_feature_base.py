@@ -69,10 +69,9 @@ class TestFeatureProfile:
             "claude/opus",
         )
 
-    def test_default_reasoning_for_profile_is_auto_unset(self) -> None:
-        assert default_reasoning_for_profile(FeatureProfile.LOW) == "auto"
-        assert default_reasoning_for_profile(FeatureProfile.MID) is None
-        assert default_reasoning_for_profile(FeatureProfile.HIGH) is None
+    @pytest.mark.parametrize("profile", list(FeatureProfile))
+    def test_default_reasoning_for_profile_is_auto(self, profile: FeatureProfile) -> None:
+        assert default_reasoning_for_profile(profile) == "auto"
 
     def test_profiles_use_cloud_only_candidates(self) -> None:
         for candidates in DEFAULT_PROFILE_CANDIDATES.values():
@@ -163,6 +162,17 @@ class TestFeatureDefaultConfig:
         )
 
         assert entries[0].reasoning_effort == "xhigh"
+
+    @pytest.mark.parametrize("profile", list(FeatureProfile))
+    def test_candidate_runtime_entries_default_unpinned_candidates_to_auto(
+        self, profile: FeatureProfile
+    ) -> None:
+        entries = candidate_runtime_entries(
+            ["codex/gpt-5.6-terra", {"candidate": "claude/opus", "reasoning_effort": "high"}],
+            profile=profile,
+        )
+
+        assert [entry.reasoning_effort for entry in entries] == ["auto", "high"]
 
     def test_candidate_runtime_entries_preserve_auto_profile_default(self) -> None:
         entries = candidate_runtime_entries(

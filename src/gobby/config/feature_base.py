@@ -109,10 +109,12 @@ DEFAULT_PROFILE_CANDIDATES: dict[FeatureProfile, tuple[FeatureCandidateConfig, .
     ),
 }
 
-_DEFAULT_PROFILE_REASONING: dict[FeatureProfile, str | None] = {
+# Every profile defaults to ``auto`` (the provider's own default effort). Explicit
+# efforts belong on the configured candidate, not on the profile.
+_DEFAULT_PROFILE_REASONING: dict[FeatureProfile, str] = {
     FeatureProfile.LOW: "auto",
-    FeatureProfile.MID: None,
-    FeatureProfile.HIGH: None,
+    FeatureProfile.MID: "auto",
+    FeatureProfile.HIGH: "auto",
 }
 
 
@@ -124,7 +126,7 @@ def default_candidates_for_profile(profile: FeatureProfile | str) -> tuple[str, 
     return candidate_labels(DEFAULT_PROFILE_CANDIDATES[FeatureProfile(profile)])
 
 
-def default_reasoning_for_profile(profile: FeatureProfile | str) -> str | None:
+def default_reasoning_for_profile(profile: FeatureProfile | str) -> str:
     """Return the default reasoning effort for a feature profile."""
     return _DEFAULT_PROFILE_REASONING[FeatureProfile(profile)]
 
