@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
@@ -49,6 +49,26 @@ class MockWebSocket:
 class DisconnectingWebSocket(MockWebSocket):
     async def send(self, message: str) -> None:
         raise ConnectionClosedOK(Close(1001, "going away"), Close(1001, "going away"), True)
+
+
+class QueuedWebSocket(MockWebSocket):
+    """A websocket whose inbound frames are all available at once.
+
+    Iterating it yields every queued frame without awaiting anything, so the
+    connection loop -- not the transport -- is the only thing that can be
+    serializing message handling.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.inbound: list[str] = []
+
+    def queue(self, *frames: dict[str, Any]) -> None:
+        self.inbound.extend(json.dumps(frame) for frame in frames)
+
+    async def __aiter__(self) -> AsyncIterator[str]:
+        for frame in self.inbound:
+            yield frame
 
 
 class TracingWebSocket(MockWebSocket):
@@ -664,6 +684,28 @@ class TestTmuxResize:
         mock_resize.assert_not_awaited()
         assert ws.sent_messages == []
 
+    @pytest.mark.parametrize(
+        "rows,cols",
+        [
+            (True, 80),  # bool is an int subclass and would coerce to 1
+            (24.9, 80),  # a float would truncate to 24
+            (24, "80"),  # a numeric string would coerce to 80
+            (24, 80.0),  # even a whole float is not the wire contract
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_resize_rejects_non_integer_dimensions(
+        self, server: WebSocketServer, rows: object, cols: object
+    ) -> None:
+        # These size the tmux pane and arrive from an untrusted client, so the
+        # wire type is checked rather than coerced.
+        ws = MockWebSocket()
+        with patch.object(server._tmux_bridge, "resize", new_callable=AsyncMock) as mock_resize:
+            await server._handle_tmux_resize(ws, {"streaming_id": "s1", "rows": rows, "cols": cols})
+
+        mock_resize.assert_not_awaited()
+        assert ws.sent_messages == []
+
     @pytest.mark.asyncio
     async def test_resize_calls_bridge(self, server: WebSocketServer) -> None:
         ws = MockWebSocket()
@@ -1011,6 +1053,71 @@ class TestTmuxActivation:
         assert streaming_id not in server._tmux_client_bridges.get(ws, set())
 
     @pytest.mark.asyncio
+    async def test_cancel_while_probing_the_session_sends_no_history(
+        self, server: WebSocketServer
+    ) -> None:
+        # The degraded path probes has_session before deciding to degrade. That
+        # probe is an await, and its answer describes the moment before it: a
+        # kill landing while it is suspended must still stop the history frame.
+        ws = MockWebSocket()
+        killer = MockWebSocket()
+        server.session_manager = None
+        streaming_id = await reserve(server, ws)
+        gate = asyncio.Event()
+        reached = asyncio.Event()
+
+        with activation_harness(server) as harness:
+            harness.capture.side_effect = HistoryCaptureError("capture timed out")
+
+            async def blocking_has_session(*_args: Any, **_kwargs: Any) -> bool:
+                reached.set()
+                await gate.wait()
+                return True
+
+            harness.has_session.side_effect = blocking_has_session
+            task = asyncio.create_task(resize(server, ws, streaming_id))
+            await asyncio.wait_for(reached.wait(), timeout=5)
+            with patch.object(
+                server._tmux_mgr_default, "kill_session", new_callable=AsyncMock, return_value=True
+            ):
+                await server._handle_tmux_kill_session(
+                    killer, {"session_name": "demo", "socket": "default"}
+                )
+            gate.set()
+            await asyncio.wait_for(task, timeout=5)
+
+        assert ws.messages_of_type("terminal_attach_history") == []
+        harness.reader.start_reader.assert_not_awaited()
+        harness.detach.assert_any_await(streaming_id)
+        assert streaming_id not in server._tmux_pending
+
+    @pytest.mark.asyncio
+    async def test_bridge_dying_during_refresh_fails_activation(
+        self, server: WebSocketServer
+    ) -> None:
+        # refresh_client is the last await, and finalizing drops the
+        # reservation teardown keys on -- so a client that died during it must
+        # not be finalized as a live stream.
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws)
+        bridge = make_bridge()
+
+        with activation_harness(server, bridge=bridge) as harness:
+
+            async def kill_during_refresh(*_args: Any, **_kwargs: Any) -> None:
+                bridge.proc.returncode = 1
+
+            harness.refresh_client.side_effect = kill_during_refresh
+            await resize(server, ws, streaming_id)
+
+        failures = ws.messages_of_type("tmux_activation_failed")
+        assert [failure["code"] for failure in failures] == ["bridge_exited"]
+        assert len(ws.messages_of_type("terminal_attach_history")) == 1
+        harness.detach.assert_any_await(streaming_id)
+        assert streaming_id not in server._tmux_pending
+        assert streaming_id not in server._tmux_client_bridges.get(ws, set())
+
+    @pytest.mark.asyncio
     async def test_reader_refusing_to_start_fails_activation(self, server: WebSocketServer) -> None:
         ws = MockWebSocket()
         streaming_id = await reserve(server, ws)
@@ -1126,21 +1233,46 @@ class TestTmuxActivation:
     async def test_same_socket_detach_queues_behind_activation(
         self, server: WebSocketServer
     ) -> None:
-        # Connections are handled one message at a time, so a same-socket
-        # detach cannot interrupt a suspended capture -- it tears down whatever
-        # activation produced.
-        ws = MockWebSocket()
+        # Both frames are handed to the real connection loop at once, and the
+        # capture is suspended mid-activation. Activation is awaited inline on
+        # the connection task, so its correctness depends on the loop finishing
+        # one message before pulling the next -- driving _handle_tmux_detach
+        # directly could not tell serialized dispatch from concurrent dispatch.
+        ws = QueuedWebSocket()
         streaming_id = await reserve(server, ws)
+        ws.queue(
+            {"type": "tmux_resize", "streaming_id": streaming_id, "rows": 40, "cols": 120},
+            {"type": "tmux_detach", "streaming_id": streaming_id},
+        )
+        gate = asyncio.Event()
+        reached = asyncio.Event()
 
         with activation_harness(server) as harness:
-            await resize(server, ws, streaming_id)
-            assert len(ws.messages_of_type("terminal_attach_history")) == 1
-            await server._handle_tmux_detach(ws, {"streaming_id": streaming_id})
 
+            async def blocking_capture(*_args: Any, **_kwargs: Any) -> HistoryCapture:
+                reached.set()
+                await gate.wait()
+                return HistoryCapture(text="hist", truncated=False, dropped_bytes=0, total_bytes=4)
+
+            harness.capture.side_effect = blocking_capture
+            task = asyncio.create_task(server.handle_connection(ws))
+            await asyncio.wait_for(reached.wait(), timeout=5)
+
+            # The detach frame is already queued and the loop is free to read
+            # it; it stays unhandled because activation has not returned.
+            assert ws.messages_of_type("tmux_detach_result") == []
+            assert ws.messages_of_type("terminal_attach_history") == []
+
+            gate.set()
+            await asyncio.wait_for(task, timeout=5)
+
+        # Activation ran to completion first, then the detach tore it down.
+        assert len(ws.messages_of_type("terminal_attach_history")) == 1
+        assert ws.messages_of_type("tmux_detach_result")[0]["success"] is True
+        assert ws.messages_of_type("error") == []
         harness.detach.assert_any_await(streaming_id)
         harness.reader.stop_reader.assert_any_await(streaming_id)
-        assert streaming_id not in server._tmux_client_bridges[ws]
-        assert ws.messages_of_type("tmux_detach_result")[0]["success"] is True
+        assert streaming_id not in server._tmux_client_bridges.get(ws, set())
 
     @pytest.mark.asyncio
     async def test_client_disconnect_drops_an_unactivated_reservation(

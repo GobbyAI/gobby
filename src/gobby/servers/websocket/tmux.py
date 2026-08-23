@@ -18,6 +18,8 @@ from gobby.agents.tmux.pty_bridge import TmuxPTYBridge
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
 from gobby.servers.websocket.tmux_activation import (
+    MAX_TERMINAL_COLS,
+    MAX_TERMINAL_ROWS,
     STATE_ACTIVATING,
     STATE_RESERVED,
     PendingAttachment,
@@ -28,7 +30,7 @@ from gobby.servers.websocket.tmux_activation import (
     cancel_pending_for_session,
     cancel_stale_reservations,
     normalize_socket_name,
-    valid_dimensions,
+    parse_dimension,
 )
 from gobby.utils.json_helpers import json_dumps
 from gobby.utils.machine_id import require_machine_id
@@ -542,18 +544,13 @@ class TmuxMixin:
         rows = data.get("rows")
         cols = data.get("cols")
 
-        if not streaming_id or not rows or not cols:
+        if not streaming_id:
             return  # Silent failure for resize events
 
-        try:
-            parsed_rows = int(rows)
-            parsed_cols = int(cols)
-        except (TypeError, ValueError):
+        parsed_rows = parse_dimension(rows, MAX_TERMINAL_ROWS)
+        parsed_cols = parse_dimension(cols, MAX_TERMINAL_COLS)
+        if parsed_rows is None or parsed_cols is None:
             logger.debug("Invalid tmux_resize dimensions: rows=%r cols=%r", rows, cols)
-            return
-
-        if not valid_dimensions(parsed_rows, parsed_cols):
-            logger.debug("Out-of-bound tmux_resize dimensions: rows=%r cols=%r", rows, cols)
             return
 
         pending = self._tmux_pending.get(streaming_id)

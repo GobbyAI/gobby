@@ -92,9 +92,17 @@ def normalize_socket_name(value: str | None) -> str:
     return "gobby" if value == "gobby" else "default"
 
 
-def valid_dimensions(rows: int, cols: int) -> bool:
-    """Return whether client-supplied terminal dimensions are usable."""
-    return 0 < rows <= MAX_TERMINAL_ROWS and 0 < cols <= MAX_TERMINAL_COLS
+def parse_dimension(value: Any, limit: int) -> int | None:
+    """Return an in-bounds terminal dimension, or ``None`` if unusable.
+
+    These arrive from an untrusted client and they size the tmux pane, so the
+    wire type is checked rather than coerced: ``int()`` would quietly accept
+    ``True`` as 1, ``24.9`` as 24, and ``"200"`` as 200. The web client sends
+    floored integers, so nothing legitimate is rejected here.
+    """
+    if not isinstance(value, int) or isinstance(value, bool):
+        return None
+    return value if 0 < value <= limit else None
 
 
 def cancel_pending(host: TmuxAttachHost, streaming_id: str) -> None:
@@ -295,17 +303,22 @@ async def activate_attachment(
 
     if not await _checkpoint(host, websocket, streaming_id, pending, bridge.proc):
         return
-    if unavailable and not await manager.has_session(session_name):
-        # Nothing is left to stream, so degrading would hand the user a
-        # terminal that can never produce a byte.
-        await _fail(
-            host,
-            websocket,
-            streaming_id,
-            "session_missing",
-            f"Session '{session_name}' disappeared during attach",
-        )
-        return
+    if unavailable:
+        if not await manager.has_session(session_name):
+            # Nothing is left to stream, so degrading would hand the user a
+            # terminal that can never produce a byte.
+            await _fail(
+                host,
+                websocket,
+                streaming_id,
+                "session_missing",
+                f"Session '{session_name}' disappeared during attach",
+            )
+            return
+        # The probe is itself an await: a cross-socket kill can land while it
+        # is suspended, and the answer it returns is about the moment before.
+        if not await _checkpoint(host, websocket, streaming_id, pending, bridge.proc):
+            return
 
     try:
         await websocket.send(
@@ -355,6 +368,12 @@ async def activate_attachment(
         await manager.refresh_client(session_name)
     except Exception as exc:
         logger.debug("Post-activation refresh-client failed: %s", exc)
+
+    # The refresh is the last await, and finalizing means dropping the
+    # reservation that teardown keys on -- so a bridge that died during it
+    # would be left registered and presented as a live stream.
+    if not await _checkpoint(host, websocket, streaming_id, pending, bridge.proc):
+        return
 
     if host._tmux_pending.get(streaming_id) is pending:
         del host._tmux_pending[streaming_id]

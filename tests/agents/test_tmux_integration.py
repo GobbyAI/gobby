@@ -8,12 +8,13 @@ import re
 import shlex
 import shutil
 import subprocess
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
+from gobby.agents.tmux.history import capture_history
 from gobby.agents.tmux.output_reader import TmuxOutputReader
 from gobby.agents.tmux.pty_bridge import TmuxPTYBridge
 from gobby.agents.tmux.session_manager import TmuxSessionManager
@@ -203,3 +204,130 @@ async def test_output_reader_streams_multibyte_fifo_data(
         await _wait_for(lambda: "fifo-multibyte: cafe é 漢" in "".join(chunks))
     finally:
         await reader.stop_reader("run-fifo")
+
+
+async def _tmux_query(manager: TmuxSessionManager, *args: str) -> str:
+    """Run a read-only tmux command against the test server."""
+    proc = await asyncio.create_subprocess_exec(
+        *manager.base_args(),
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, _ = await proc.communicate()
+    return stdout.decode("utf-8", errors="replace").strip()
+
+
+async def _wait_until(
+    predicate: Callable[[], Awaitable[bool]],
+    *,
+    timeout: float = 10.0,
+) -> None:
+    """Poll an awaitable predicate, so tests wait on state rather than a clock."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        if await predicate():
+            return
+        await asyncio.sleep(0.05)
+    raise AssertionError("condition was not met before timeout")
+
+
+async def _visible_pane(manager: TmuxSessionManager, session: str) -> str:
+    return await _tmux_query(manager, "capture-pane", "-t", f"={session}:", "-p")
+
+
+async def test_capture_history_excludes_the_visible_pane(
+    tmux_manager: TmuxSessionManager,
+) -> None:
+    # -E -1 ends one line above the visible pane, so the history window and the
+    # repaint that follows it do not overlap. Only a real tmux server has a
+    # real screen/scrollback split to prove that against.
+    await tmux_manager.create_session(
+        name="history-boundary",
+        command="for i in $(seq 1 60); do printf 'hline-%04d\\n' \"$i\"; done; tail -f /dev/null",
+    )
+
+    async def printed() -> bool:
+        return "hline-0060" in await _visible_pane(tmux_manager, "history-boundary")
+
+    await _wait_until(printed)
+
+    capture = await capture_history(tmux_manager, "history-boundary")
+
+    # The first line has long since scrolled off a 24-row pane.
+    assert "hline-0001" in capture.text
+    # The last line printed is on screen -- the wait above just observed it
+    # there -- so the history window must stop short of it.
+    assert "hline-0060" not in capture.text
+    assert capture.truncated is False
+
+
+async def test_capture_history_probe_truncates_real_scrollback(
+    tmux_manager: TmuxSessionManager,
+) -> None:
+    await tmux_manager.create_session(
+        name="history-probe",
+        command="for i in $(seq 1 60); do printf 'pline-%04d\\n' \"$i\"; done; tail -f /dev/null",
+    )
+
+    async def printed() -> bool:
+        return "pline-0060" in await _visible_pane(tmux_manager, "history-probe")
+
+    await _wait_until(printed)
+
+    capture = await capture_history(tmux_manager, "history-probe", max_lines=5)
+
+    assert capture.truncated is True
+    assert len(capture.text.split("\r\n")) == 5
+    assert "pline-0001" not in capture.text
+
+
+async def test_capture_history_uses_the_attached_client_width(
+    tmux_manager: TmuxSessionManager,
+    tmux_config: TmuxConfig,
+) -> None:
+    # A scrollback row keeps the width it was stored at. If capture ran before
+    # the attaching client registered its geometry, a line wider than the
+    # default 80 columns would have been stored soft-wrapped, and -J is
+    # deliberately absent, so it would come back split across two rows.
+    wide = "W" * 100
+    await tmux_manager.create_session(name="history-width", command="tail -f /dev/null")
+
+    bridge = TmuxPTYBridge()
+    await bridge.attach(
+        session_name="history-width",
+        streaming_id="bridge-width",
+        config=tmux_config,
+        rows=40,
+        cols=120,
+    )
+    try:
+        # The client must be registered and the pane resized before anything is
+        # printed, or the wide line is stored at the old width.
+        async def resized() -> bool:
+            width = await _tmux_query(
+                tmux_manager, "display-message", "-p", "-t", "=history-width:", "#{pane_width}"
+            )
+            return width == "120"
+
+        await _wait_until(resized)
+
+        await tmux_manager.send_keys(
+            "history-width",
+            f"printf '%s\\n' {wide}; for i in $(seq 1 60); do printf 'x-%04d\\n' \"$i\"; done",
+        )
+
+        async def scrolled_off() -> bool:
+            return "W" in (await capture_history(tmux_manager, "history-width")).text
+
+        await _wait_until(scrolled_off)
+
+        capture = await capture_history(tmux_manager, "history-width")
+
+        rows = [row for row in capture.text.split("\r\n") if "W" in row]
+        assert rows, capture.text
+        # One unbroken row, not two halves of a soft wrap.
+        assert any(wide in row for row in rows), rows[:4]
+    finally:
+        await bridge.detach("bridge-width")

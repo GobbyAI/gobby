@@ -148,14 +148,23 @@ async def capture_history(
     """Capture a bounded scrollback window for ``session_name``.
 
     Raises:
-        HistoryCaptureError: capture-pane timed out or exited nonzero.
+        HistoryCaptureError: capture-pane could not be spawned, timed out, or
+            exited nonzero. Spawn failures are folded into this one domain
+            because the caller runs after the attach has been acknowledged --
+            an error escaping it there would surface as a generic frame the
+            client has already stopped matching, stranding the attachment.
     """
     args = build_capture_args(manager, session_name, max_lines=max_lines)
-    proc = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except OSError as exc:
+        raise HistoryCaptureError(
+            f"could not spawn tmux capture-pane for '{session_name}': {exc}"
+        ) from exc
 
     try:
         stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)

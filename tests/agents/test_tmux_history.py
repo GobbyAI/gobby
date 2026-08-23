@@ -111,7 +111,7 @@ class TestBoundHistoryLines:
         # The probe proves older history existed; no bytes of the delivered
         # window were dropped.
         assert capture.dropped_bytes == 0
-        assert capture.total_bytes == len("line-3\nline-4\nline-5".encode())
+        assert capture.total_bytes == len(b"line-3\nline-4\nline-5")
 
     def test_counters_ignore_crlf_expansion_and_the_reset(self) -> None:
         raw = "alpha\nbeta\ngamma"
@@ -126,7 +126,7 @@ class TestBoundHistoryLines:
         capture = bound_history("one\r\ntwo\rthree", max_lines=10, max_bytes=1024)
 
         assert capture.text == f"one\r\ntwo\r\nthree{_RESET}"
-        assert capture.total_bytes == len("one\ntwo\nthree".encode())
+        assert capture.total_bytes == len(b"one\ntwo\nthree")
 
 
 class TestBoundHistoryBytes:
@@ -229,6 +229,17 @@ class TestCaptureHistory:
                 await capture_history(manager, "demo")
 
     @pytest.mark.asyncio
+    async def test_spawn_failure_becomes_a_capture_error(self, manager: TmuxSessionManager) -> None:
+        # The caller runs after the attach is acknowledged, so an OSError
+        # escaping this function would strand the attachment behind a generic
+        # error frame the client no longer matches.
+        spawn = AsyncMock(side_effect=FileNotFoundError(2, "No such file or directory"))
+
+        with patch("asyncio.create_subprocess_exec", new=spawn):
+            with pytest.raises(HistoryCaptureError, match="could not spawn"):
+                await capture_history(manager, "demo")
+
+    @pytest.mark.asyncio
     async def test_timeout_kills_and_reaps_the_child(self, manager: TmuxSessionManager) -> None:
         proc = FakeProcess(hang=True)
 
@@ -253,3 +264,6 @@ class TestCaptureHistory:
                 await task
 
         assert proc.killed is True
+        # Reaping is the half that leaves no orphan behind, so it is asserted
+        # separately from the kill.
+        assert proc.waited is True
