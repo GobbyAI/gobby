@@ -21,6 +21,7 @@ from gobby.tasks.agentic_close_review import (
     TASK_CLOSE_VALIDATOR_AGENT,
     build_agentic_review_prompt,
     build_terminal_review_payload,
+    validator_spawn_overrides,
 )
 from gobby.utils.session_context import get_current_agent_run_id, get_current_session_id
 
@@ -99,6 +100,7 @@ async def launch_close_review(
                 "parent_session_id": review.caller_session_id,
                 "project_path": evaluation.repo_path,
                 "notify_parent_on_completion": True,
+                **validator_spawn_overrides(ctx.validation_config),
             },
         )
     except Exception as exc:

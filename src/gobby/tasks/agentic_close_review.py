@@ -6,9 +6,35 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from gobby.config.feature_base import candidate_runtime_entries, parse_feature_candidate
+from gobby.config.tasks import TaskValidationConfig
 from gobby.storage.task_close_reviews import TaskCloseReview, TerminalTaskCloseReviewStatus
 
 TASK_CLOSE_VALIDATOR_AGENT = "task-close-validator"
+
+
+def validator_spawn_overrides(
+    validation_config: TaskValidationConfig | None,
+) -> dict[str, str | None]:
+    """Return spawn overrides so the validator runs on the ``gobby_tasks.validation`` model.
+
+    The first configured candidate wins, with the feature profile's default
+    reasoning effort applied when the candidate carries no pin. Without a
+    validation config the agent definition's own defaults apply.
+    """
+    if validation_config is None:
+        return {}
+    entries = candidate_runtime_entries(
+        validation_config.candidates, profile=validation_config.profile
+    )
+    if not entries:
+        return {}
+    provider, model = parse_feature_candidate(entries[0].candidate)
+    return {
+        "provider": provider,
+        "model": model,
+        "reasoning_effort": entries[0].reasoning_effort,
+    }
 
 
 def build_agentic_review_prompt(

@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration as orchestration
+from gobby.config.tasks import TaskValidationConfig
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration import (
     launch_close_review,
@@ -19,6 +20,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration import (
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.storage.task_close_reviews import TaskCloseReview, TaskCloseReviewStatus
 from gobby.storage.tasks import Task
+from gobby.tasks import agentic_close_review as agentic_close_review_module
 
 pytestmark = pytest.mark.unit
 
@@ -42,11 +44,74 @@ async def test_oversized_close_persists_and_launches_one_taskless_validator(
     assert launch_args["agent"] == "task-close-validator"
     assert launch_args["task_id"] is None
     assert launch_args["isolation"] == "none"
+    assert launch_args["provider"] == "codex"
+    assert launch_args["model"] == "gpt-5.6-terra"
+    assert launch_args["reasoning_effort"] is None
     assert result["error"] == "agentic_review_required"
     assert result["review_status"] == "running"
     assert result["run_id"] == "run"
     assert "spawn_request" not in result
     assert "review_run_id" not in result
+
+
+@pytest.mark.asyncio
+async def test_launch_omits_model_overrides_without_validation_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _Store(_review(status="launching", run_id=None))
+    registry = SimpleNamespace(call=AsyncMock(return_value={"success": True, "run_id": "run"}))
+    ctx = cast(
+        RegistryContext,
+        SimpleNamespace(
+            task_manager=SimpleNamespace(db=object()),
+            agent_registry=registry,
+            validation_config=None,
+        ),
+    )
+    monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
+
+    await launch_close_review(ctx, evaluation=_evaluation(), close_arguments=_arguments())
+
+    launch_args = registry.call.call_args.args[1]
+    assert "provider" not in launch_args
+    assert "model" not in launch_args
+    assert "reasoning_effort" not in launch_args
+
+
+@pytest.mark.parametrize(
+    ("candidates", "profile", "expected"),
+    [
+        (
+            ["codex/gpt-5.6-terra"],
+            "feature_mid",
+            {"provider": "codex", "model": "gpt-5.6-terra", "reasoning_effort": None},
+        ),
+        (
+            [{"candidate": "codex/gpt-5.6-sol", "reasoning_effort": "xhigh"}, "claude/opus"],
+            "feature_high",
+            {"provider": "codex", "model": "gpt-5.6-sol", "reasoning_effort": "xhigh"},
+        ),
+        (
+            ["claude/sonnet"],
+            "feature_low",
+            {"provider": "claude", "model": "sonnet", "reasoning_effort": "auto"},
+        ),
+    ],
+)
+def test_validator_spawn_overrides_follow_first_validation_candidate(
+    candidates: list[object],
+    profile: str,
+    expected: dict[str, str | None],
+) -> None:
+    config = TaskValidationConfig(candidates=candidates, profile=profile)
+
+    overrides = agentic_close_review_module.validator_spawn_overrides(config)
+
+    assert overrides == expected
+
+
+def test_validator_spawn_overrides_are_empty_without_config() -> None:
+    assert agentic_close_review_module.validator_spawn_overrides(None) == {}
 
 
 @pytest.mark.asyncio
@@ -225,12 +290,19 @@ class _Store:
         return self.review
 
 
-def _ctx(*, registry: object | None = None) -> RegistryContext:
+def _ctx(
+    *,
+    registry: object | None = None,
+    validation_config: object | None = None,
+) -> RegistryContext:
+    if validation_config is None:
+        validation_config = TaskValidationConfig(candidates=["codex/gpt-5.6-terra"])
     return cast(
         RegistryContext,
         SimpleNamespace(
             task_manager=SimpleNamespace(db=object()),
             agent_registry=registry,
+            validation_config=validation_config,
         ),
     )
 

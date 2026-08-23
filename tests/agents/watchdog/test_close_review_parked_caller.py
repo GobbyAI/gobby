@@ -118,6 +118,7 @@ class _Harness:
             SimpleNamespace(
                 task_manager=SimpleNamespace(db=temp_db),
                 agent_registry=SimpleNamespace(call=self._spawn_validator),
+                validation_config=None,
             ),
         )
         runner = MagicMock()

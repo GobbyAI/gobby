@@ -2,13 +2,14 @@ name: task-close-validator
 description: |
   Taskless read-only validator for close reviews whose complete evidence exceeds
   the one-shot prompt limit.
-version: "1.1"
+version: "1.2"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
+# Launch overrides come from the first gobby_tasks.validation candidate; these
+# defaults mirror that feature's feature_mid profile for direct spawns.
 provider: codex
-model: gpt-5.6-sol
-reasoning_effort: xhigh
+model: gpt-5.6-terra
 isolation: none
 blocked_mcp_tools:
   - "gobby-tasks:create_task"
