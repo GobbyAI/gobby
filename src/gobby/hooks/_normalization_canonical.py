@@ -514,6 +514,7 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         return _build_canonical_tool_metadata("execute")
 
     paths: list[str] = []
+    mutation_paths: list[str] = []
     mutation_scope_unknown = False
     for item in active:
         resolvable = [path for path in item.paths if not _contains_unexpanded_shell_reference(path)]
@@ -524,6 +525,8 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         for path in resolvable:
             if path not in paths:
                 paths.append(path)
+            if item.repo_mutation and path not in mutation_paths:
+                mutation_paths.append(path)
 
     pure_gcode_navigation = any(item.pure_gcode_navigation for item in metadata) and all(
         item.neutral_setup or item.pure_gcode_navigation or item.read_only_pipeline_filter
@@ -545,9 +548,18 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
     if mutation_scope_unknown:
         extra["_canonical_repo_mutation_scope_unknown"] = True
 
+    # A write command's paths are the ones it writes. Segments that only name
+    # paths — a `for <var> in <words>` header, a read on the same line — are
+    # scope evidence, and pooling them here attributed loop counters to tasks
+    # and turned read-only probes into repo mutations. The header stays the
+    # fallback when a mutating segment's own operands are unexpanded, which is
+    # the only scope signal that case has. An empty mutation set is not a
+    # licence to relax: `paths_may_touch_project` treats it as unknown scope.
+    effective_paths = mutation_paths if kind == "write" and not mutation_scope_unknown else paths
+
     return _build_canonical_tool_metadata(
         kind,
-        paths=paths or None,
+        paths=effective_paths or None,
         repo_mutation=any(item.repo_mutation for item in active),
         extra=extra or None,
     )
