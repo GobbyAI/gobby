@@ -84,9 +84,7 @@ async def execute_mcp_step(
     # Downstream (external) servers answer with the SDK CallToolResult; it
     # fails closed on is_error before anything flows to later steps.
     if isinstance(result, CallToolResult):
-        output = "\n".join(
-            item.text for item in result.content if isinstance(item, TextContent)
-        )
+        output = "\n".join(item.text for item in result.content if isinstance(item, TextContent))
         if result.is_error:
             raise RuntimeError(
                 f"MCP step {rendered_step.id} failed: "
