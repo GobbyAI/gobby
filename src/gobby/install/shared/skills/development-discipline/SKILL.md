@@ -56,16 +56,18 @@ pure documentation, mechanical metadata, or code paths that cannot be executed
 locally; document the reason in the task handoff.
 
 When adding or heavily editing tests, run `gobby test-quality audit` on touched
-test paths when the touched test language is supported. For noisy areas, use:
+test paths when the touched test language is supported:
 
 ```bash
-uv run gobby test-quality audit <paths> --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high
+uv run gobby test-quality audit <paths> --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity low
 ```
 
-Do not skip the audit because `.gobby/test-quality-baseline.json` is missing;
-the CLI treats current supported-language issues at or above `--min-severity`
-as new. If the audit reports an unsupported-language warning outside the Gobby
-repo, include that warning plus focused repo-native validation evidence.
+Fix every reported finding regardless of severity — low and medium findings are
+defects, not noise. Never raise `--min-severity` to pass the gate. Do not skip
+the audit because `.gobby/test-quality-baseline.json` is missing; the CLI treats
+current supported-language issues as new. If the audit reports an
+unsupported-language warning outside the Gobby repo, include that warning plus
+focused repo-native validation evidence.
 
 When adding or heavily editing Python tests, also run `gobby test-types audit`
 on the touched test paths:

@@ -8,9 +8,10 @@ replacement for pytest.
 
 The analyzer walks supported test files, reports issues with severity and stable
 fingerprints, and can compare the current report to a baseline. The baseline lets
-Gobby tolerate known debt while failing on new issues at a chosen severity. If
-the requested baseline is missing, the audit still runs and treats current
-supported-language issues at or above `--min-severity` as new.
+Gobby tolerate known debt while failing on new issues. The gate is severity-agnostic:
+`--min-severity` defaults to `low`, so every new finding fails the audit and must be
+fixed rather than filtered. If the requested baseline is missing, the audit still
+runs and treats current supported-language issues as new.
 
 Use the audit before adding or expanding tests in an area with known quality
 concerns. Use focused mutation testing when static checks pass but the risk is in
@@ -49,7 +50,7 @@ Fail only on new high-severity issues:
 uv run gobby test-quality audit tests/tasks \
   --baseline .gobby/test-quality-baseline.json \
   --fail-on-new \
-  --min-severity high
+  --min-severity low
 ```
 
 ## Audit Findings

@@ -44,11 +44,12 @@ For noisy test areas, use baseline mode:
 uv run gobby test-quality audit <paths> \
   --baseline .gobby/test-quality-baseline.json \
   --fail-on-new \
-  --min-severity high
+  --min-severity low
 ```
 
-A missing baseline is not a skip reason; the CLI treats current
-supported-language issues at or above `--min-severity` as new. Outside Gobby,
+Every reported finding must be fixed regardless of severity; raising
+`--min-severity` to pass is not allowed. A missing baseline is not a skip
+reason; the CLI treats current supported-language issues as new. Outside Gobby,
 an unsupported-language warning must be paired with focused repo-native
 validation.
 

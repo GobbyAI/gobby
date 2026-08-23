@@ -2416,8 +2416,8 @@ class TestCodexPromptDelivery:
             call("sess", "Do the task\n", literal=True),
             call("sess", "Enter", literal=False),
         ]
-        run_manager.fail.assert_not_called()
-        tmux.kill_session.assert_not_awaited()
+        assert run_manager.fail.call_count == 0
+        assert tmux.kill_session.await_count == 0
 
     @pytest.mark.asyncio
     async def test_cancellation_propagates_without_failing_run(self) -> None:
@@ -2430,9 +2430,9 @@ class TestCodexPromptDelivery:
         with pytest.raises(asyncio.CancelledError):
             await _deliver_codex_prompt(tmux, "sess", "Do the task", "run-1", run_manager)
 
-        tmux.send_keys.assert_not_awaited()
-        run_manager.fail.assert_not_called()
-        tmux.kill_session.assert_not_awaited()
+        assert tmux.send_keys.await_count == 0
+        assert run_manager.fail.call_count == 0
+        assert tmux.kill_session.await_count == 0
 
     @pytest.mark.asyncio
     async def test_schedule_skips_empty_prompt(self) -> None:

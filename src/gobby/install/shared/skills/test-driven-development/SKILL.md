@@ -37,11 +37,12 @@ The task handoff must include:
 When tests were added or heavily edited, run:
 
 ```bash
-uv run gobby test-quality audit <paths> --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high
+uv run gobby test-quality audit <paths> --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity low
 ```
 
-A missing baseline is not a skip reason; the CLI falls back to treating current
-supported-language issues at or above `--min-severity` as new.
+Fix every reported finding regardless of severity; never raise `--min-severity`
+to pass. A missing baseline is not a skip reason; the CLI falls back to treating
+current supported-language issues as new.
 
 For Python test paths, also run:
 

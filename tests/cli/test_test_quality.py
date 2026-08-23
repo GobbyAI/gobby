@@ -315,6 +315,43 @@ def test_mixed_severity():
     assert "HIGH ASSERT_TRUE" in result.output
 
 
+def test_default_min_severity_fails_on_new_medium_issue() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem() as cwd:
+        root = Path(cwd)
+        test_path = _write_test(
+            root,
+            """
+def test_sleeps():
+    assert 1 == 1
+""",
+        )
+        baseline_path = root / ".gobby" / "test-quality-baseline.json"
+        runner.invoke(
+            quality_command,
+            ["audit", "tests", "--write-baseline", str(baseline_path)],
+        )
+        test_path.write_text(
+            """
+import time
+
+def test_sleeps():
+    time.sleep(0.01)
+    assert 1 == 1
+""",
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(
+            quality_command,
+            ["audit", "tests", "--baseline", str(baseline_path), "--fail-on-new"],
+        )
+
+    assert result.exit_code == 1
+    assert "Failing new issues >= low: 1" in result.output
+    assert "MEDIUM SLEEP_IN_TEST" in result.output
+
+
 def test_fail_on_new_missing_baseline_treats_current_issues_as_new() -> None:
     runner = CliRunner()
     with runner.isolated_filesystem() as cwd:

@@ -46,8 +46,9 @@ def test_quality() -> None:
 @click.option(
     "--min-severity",
     type=click.Choice(["low", "medium", "high"]),
-    default="high",
+    default="low",
     show_default=True,
+    help="Lowest severity that fails --fail-on-new. Every finding is a defect to fix.",
 )
 def audit(
     paths: tuple[Path, ...],
