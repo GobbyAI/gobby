@@ -177,7 +177,7 @@ class OutboundCommunications:
             filename=filename or file_path.name,
             content_type=content_type,
             size_bytes=size_bytes,
-            local_path=str(file_path),
+            local_path=None,
             created_at=datetime.now(UTC),
         )
 

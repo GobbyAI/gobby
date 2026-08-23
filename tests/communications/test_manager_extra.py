@@ -68,6 +68,7 @@ class TestAttachments:
         assert msg.platform_message_id == "plat_attach_123"
         assert attachment.filename == "hello.txt"
         assert attachment.size_bytes == 5
+        assert attachment.local_path is None
 
         manager._store.create_message.assert_called_once()
         manager._store.create_attachment.assert_called_once()
