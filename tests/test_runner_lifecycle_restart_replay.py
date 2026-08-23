@@ -6,7 +6,7 @@ import logging
 from copy import copy
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -15,6 +15,7 @@ import gobby.runner_lifecycle as runner_lifecycle
 from gobby.agents.tmux import configure_tmux, get_tmux_output_reader, get_tmux_session_manager
 from gobby.config.tmux import TmuxConfig
 from gobby.hooks.inbox import HookInboxBarrierResult
+from gobby.runner import GobbyRunner
 from gobby.runner_lifecycle_agents import (
     _RUN_REPLAY_PAGE_SIZE,
     _list_active_agent_runs_once,
@@ -27,14 +28,13 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.utils.machine_id import require_machine_id
 
 pytestmark = pytest.mark.unit
 
 
 class TestAgentRestartReconciliation:
     """Recover preserved tmux-backed agents after daemon startup."""
-
-    _MACHINE_ID = "11111111-1111-4111-8111-111111111111"
 
     @pytest.mark.asyncio
     async def test_restart_reconciles_and_rotates_managed_credentials_without_agent_runner(
@@ -53,6 +53,33 @@ class TestAgentRestartReconciliation:
         assert reconciled == 0
         credential_manager.reconcile.assert_called_once_with()
         credential_manager.rotate_due.assert_called_once_with()
+
+    @pytest.mark.asyncio
+    async def test_a_failed_credential_reconciliation_logs_what_failed(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Startup continues past this, but not silently.
+
+        Without the exception the log line names neither the failure nor which
+        of the two calls raised, which is all an operator has to go on.
+        """
+        credential_manager = MagicMock()
+        credential_manager.reconcile.side_effect = RuntimeError("keychain is locked")
+        runner = SimpleNamespace(
+            agent_runner=None,
+            managed_credential_manager=credential_manager,
+        )
+
+        with caplog.at_level(logging.ERROR):
+            reconciled = await runner_lifecycle._reconcile_agent_runs_after_restart(runner)
+
+        # Startup carried on rather than failing the daemon.
+        assert reconciled == 0
+        credential_manager.rotate_due.assert_not_called()
+        records = [r for r in caplog.records if "credential startup" in r.getMessage()]
+        assert len(records) == 1
+        assert records[0].exc_info is not None
+        assert "keychain is locked" in caplog.text
 
     @pytest.mark.asyncio
     async def test_recover_agent_runs_after_restart_paginates_active_runs(self) -> None:
@@ -364,7 +391,7 @@ class TestAgentRestartReconciliation:
         )
         parent = SessionManager(temp_db).register(
             external_id="parent-1",
-            machine_id=self._MACHINE_ID,
+            machine_id=require_machine_id(),
             source="test",
             project_id=sample_project["id"],
         )
@@ -414,7 +441,7 @@ class TestAgentRestartReconciliation:
         )
         parent = SessionManager(temp_db).register(
             external_id="parent-1",
-            machine_id=self._MACHINE_ID,
+            machine_id=require_machine_id(),
             source="test",
             project_id=sample_project["id"],
         )
@@ -456,7 +483,9 @@ class TestAgentRestartReconciliation:
         assert run_storage.get(run.id).tmux_session_name == "gobby-run-1"
 
     def test_list_active_agent_runs_requires_agent_runner(self) -> None:
-        runner = SimpleNamespace(agent_runner=None)
+        # A runner without an agent_runner is exactly the invalid input under
+        # test, so the fake is cast at the boundary rather than typed.
+        runner = cast(GobbyRunner, SimpleNamespace(agent_runner=None))
 
         with pytest.raises(RuntimeError, match="runner.agent_runner is not configured"):
             _list_active_agent_runs_once(runner)

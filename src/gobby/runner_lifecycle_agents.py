@@ -339,7 +339,10 @@ async def _reconcile_agent_runs_after_restart(
             await _run_db(runner, credential_manager.reconcile)
             await _run_db(runner, credential_manager.rotate_due)
         except Exception:
-            logger.error("Managed credential startup reconciliation failed")
+            # Startup deliberately continues past this, but discarding the
+            # reason leaves nothing in the log to act on -- the bare message
+            # names neither the failure nor which of the two calls raised.
+            logger.exception("Managed credential startup reconciliation failed")
     if runner.agent_runner is None:
         return 0
 
