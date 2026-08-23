@@ -71,10 +71,8 @@ const RECALL_PATHS = [
   "memory_recall.candidates",
   "memory_recall.enabled",
   "memory_recall.candidate_limit",
-  "memory_recall.selected_limit",
   "memory_recall.min_score",
-  "memory_recall.query_synthesis_threshold",
-  "memory_recall.query_max_chars",
+  "memory_recall.selection_min_score",
 ] as const;
 
 const EMBEDDINGS_PATHS = [
@@ -387,7 +385,7 @@ function RecallGroup({ fields }: { fields: SettingsSectionFields }) {
   return (
     <Subsection
       title="Recall"
-      hint="Observational recall that surfaces relevant memories during a session."
+      hint="Observational recall that surfaces relevant memories during a session. The search floor sharpens the candidate pool; the selection floor is the only control that can make a turn surface fewer memories than the candidate limit."
     >
       <SwitchConfigField
         fields={fields}
@@ -417,28 +415,17 @@ function RecallGroup({ fields }: { fields: SettingsSectionFields }) {
       />
       <NumberConfigField
         fields={fields}
-        path="memory_recall.selected_limit"
-        label="Selected limit"
-        ariaLabel="Recall selected limit"
-      />
-      <NumberConfigField
-        fields={fields}
         path="memory_recall.min_score"
-        label="Minimum score"
-        ariaLabel="Recall minimum score"
+        label="Search floor"
+        ariaLabel="Recall search floor"
         step={0.05}
       />
       <NumberConfigField
         fields={fields}
-        path="memory_recall.query_synthesis_threshold"
-        label="Query synthesis threshold"
-        ariaLabel="Query synthesis threshold"
-      />
-      <NumberConfigField
-        fields={fields}
-        path="memory_recall.query_max_chars"
-        label="Query max characters"
-        ariaLabel="Query max characters"
+        path="memory_recall.selection_min_score"
+        label="Selection floor"
+        ariaLabel="Recall selection floor"
+        step={0.05}
       />
     </Subsection>
   );

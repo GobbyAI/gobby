@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import {
   fireEvent,
   render,
@@ -11,6 +13,36 @@ import {
   SettingsSectionContext,
   type SettingsSectionContextValue,
 } from "../SettingsSectionContext";
+
+/**
+ * The generated runtime config contract is the live registry of every daemon
+ * config key. Reading it here — instead of trusting the hand-written SCHEMA
+ * fixture below — is what turns a backend field the daemon removed or added
+ * into a frontend failure, rather than a settings row bound to nothing.
+ */
+const CONTRACT_REL = "crates/gcore/assets/config/runtime_config_contract.json";
+
+/** Resolve a repo-root file whether vitest runs from `web/` or the repo root. */
+function resolveRepoFile(relative: string): string {
+  let dir = process.cwd();
+  for (;;) {
+    const candidate = resolve(dir, relative);
+    if (existsSync(candidate)) return candidate;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  throw new Error(`Could not locate ${relative} from cwd ${process.cwd()}`);
+}
+
+const RECALL_CONTRACT_KEYS: readonly string[] = (
+  JSON.parse(readFileSync(resolveRepoFile(CONTRACT_REL), "utf8")) as {
+    exactKeys: ReadonlyArray<{ key: string }>;
+  }
+).exactKeys
+  .map((entry) => entry.key)
+  .filter((key) => key.startsWith("memory_recall."))
+  .sort();
 
 // Schema covering the rows the assertions touch. The three `profile` selects
 // (`memory_recall.profile`, `memory.kg.profile`, `memory.dream.profile`) prove
@@ -31,12 +63,9 @@ const SCHEMA: Record<string, unknown> = {
         profile: { $ref: "#/$defs/FeatureProfile" },
         candidates: { type: "array", items: { type: "string" } },
         enabled: { type: "boolean" },
-        timeout: { type: "integer" },
         candidate_limit: { type: "integer" },
-        selected_limit: { type: "integer" },
-        min_score: { type: "number" },
-        query_synthesis_threshold: { type: "integer" },
-        query_max_chars: { type: "integer" },
+        min_score: { type: "number", minimum: 0, maximum: 1 },
+        selection_min_score: { type: "number", minimum: 0, maximum: 1 },
       },
     },
     MemoryKnowledgeGraphConfig: {
@@ -214,12 +243,9 @@ function makeConfigValues(): Record<string, unknown> {
       profile: "feature_high",
       candidates: ["claude/sonnet"],
       enabled: true,
-      timeout: 15,
       candidate_limit: 40,
-      selected_limit: 8,
       min_score: 0.3,
-      query_synthesis_threshold: 3,
-      query_max_chars: 2000,
+      selection_min_score: 0.7,
     },
     ai: {
       embeddings: {
@@ -307,6 +333,32 @@ describe("MemoryKnowledgeSection", () => {
     const backend = screen.getByLabelText("Memory backend");
     expect(backend).toHaveValue("local");
     expect(within(backend).getAllByRole("option")).toHaveLength(2);
+  });
+
+  it("renders exactly the memory_recall rows the config contract registers", () => {
+    // Guard against a vacuous pass if the contract moves or its shape changes.
+    expect(RECALL_CONTRACT_KEYS).toContain("memory_recall.min_score");
+    expect(RECALL_CONTRACT_KEYS.length).toBeGreaterThan(3);
+
+    const { container } = renderSection(makeContext());
+    const rendered = [
+      ...container.querySelectorAll("[data-config-path^='memory_recall.']"),
+    ]
+      .map((node) => node.getAttribute("data-config-path"))
+      .sort();
+
+    // Both directions matter: a row for a key the daemon dropped edits nothing,
+    // and a key with no row is a setting the user cannot reach.
+    expect(rendered).toEqual([...RECALL_CONTRACT_KEYS]);
+  });
+
+  it("renders the recall selection floor as a bounded 0..1 number row", () => {
+    renderSection(makeContext());
+
+    const floor = screen.getByLabelText("Recall selection floor");
+    expect(floor).toHaveValue(0.7);
+    expect(floor).toHaveAttribute("min", "0");
+    expect(floor).toHaveAttribute("max", "1");
   });
 
   it("resolves the recall profile enum through a multi-hop $ref", () => {
