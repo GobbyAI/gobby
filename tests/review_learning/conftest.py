@@ -159,6 +159,7 @@ class FakeMemoryManager:
         limit: int | None = None,
         offset: int = 0,
         tags_all: list[str] | None = None,
+        tags_any: list[str] | None = None,
         tags_none: list[str] | None = None,
         include_global: bool = True,
     ) -> list[FakeMemory]:
@@ -168,9 +169,26 @@ class FakeMemoryManager:
             limit=limit,
             offset=offset,
             tags_all=tags_all,
+            tags_any=tags_any,
             tags_none=tags_none,
             include_global=include_global,
         )
+
+    async def update_memory(
+        self,
+        memory_id: str,
+        content: str | None = None,
+        tags: list[str] | None = None,
+    ) -> FakeMemory:
+        await asyncio.sleep(0)
+        for memory in self.memories:
+            if memory.id == memory_id:
+                if content is not None:
+                    memory.content = content
+                if tags is not None:
+                    memory.tags = list(tags)
+                return memory
+        raise ValueError(f"Memory {memory_id} not found")
 
     async def search_memories(
         self,

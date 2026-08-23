@@ -416,6 +416,7 @@ class MemoryBackendProtocol(Protocol):
         limit: int = 50,
         offset: int = 0,
         tags_all: list[str] | None = None,
+        tags_any: list[str] | None = None,
         tags_none: list[str] | None = None,
         *,
         visibility: Visibility = "active",
@@ -428,6 +429,9 @@ class MemoryBackendProtocol(Protocol):
             memory_type: Filter by memory type
             limit: Maximum number of results
             offset: Number of results to skip
+            tags_all: Memory must have ALL of these tags
+            tags_any: Memory must have at least ONE of these tags
+            tags_none: Memory must have NONE of these tags
 
         Returns:
             List of MemoryRecords

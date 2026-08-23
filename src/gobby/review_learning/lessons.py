@@ -75,6 +75,15 @@ VALID_RISKS: set[str] = {"low", "medium", "high"}
 CI_SOURCE_KINDS: set[str] = {"ci_check", "static_analysis", "test_failure"}
 CODE_DOMAIN_EXCLUDED_TAGS = ("lesson-domain:plan",)
 
+UNSCOPED_SCOPE_TAG = "scope:unscoped"
+"""Marks a lesson that resolves no file path, so it applies to every file.
+
+Path tags are an open namespace (`path:<short_hash>`) and `tags_none` matches
+whole tags only, so "carries no path tag" is inexpressible as a tag filter.
+Stamping the absence makes it a bounded query instead of a Python partition
+over an over-fetched page.
+"""
+
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 _CHECK_KEY_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
@@ -280,11 +289,12 @@ def build_tags(
     if category:
         tags.append(f"category:{slugify(category)}")
     tags.extend(_optional_tags(finding=finding, repo=repo, language=language))
-    tags.extend(
+    path_tags = [
         tag
         for path in extract_lesson_file_paths(finding=finding, evidence=evidence)
         if (tag := path_tag(path))
-    )
+    ]
+    tags.extend(path_tags or [UNSCOPED_SCOPE_TAG])
     if not identity.promotable:
         tags.append("non-promotable")
     return _dedupe(tags)

@@ -249,6 +249,39 @@ class TestStorageAdapter:
         results = await backend.list_memories(limit=3)
         assert len(results) == 3
 
+    @pytest.mark.asyncio
+    async def test_storage_adapter_list_pushes_tags_any_to_sql(self, hub_db: HubDatabase) -> None:
+        """1.4.1: the async list path matches any-of tags in Postgres, not in Python."""
+        backend = _make_adapter(hub_db)
+        await backend.create(content="alpha lesson", tags=["review-lesson", "path:aaaa"])
+        await backend.create(content="beta lesson", tags=["review-lesson", "path:bbbb"])
+        await backend.create(content="gamma lesson", tags=["review-lesson", "path:cccc"])
+
+        results = await backend.list_memories(
+            limit=10,
+            tags_all=["review-lesson"],
+            tags_any=["path:aaaa", "path:cccc"],
+        )
+
+        assert {record.content for record in results} == {"alpha lesson", "gamma lesson"}
+
+    @pytest.mark.asyncio
+    async def test_storage_adapter_tags_any_bounds_rows_by_limit(self, hub_db: HubDatabase) -> None:
+        """The `limit` applies to the filtered set, so the caller never over-fetches."""
+        backend = _make_adapter(hub_db)
+        for index in range(5):
+            await backend.create(content=f"lesson {index}", tags=["review-lesson", "path:aaaa"])
+        await backend.create(content="excluded", tags=["review-lesson", "path:zzzz"])
+
+        results = await backend.list_memories(
+            limit=2,
+            tags_all=["review-lesson"],
+            tags_any=["path:aaaa"],
+        )
+
+        assert len(results) == 2
+        assert all("excluded" not in record.content for record in results)
+
 
 # =============================================================================
 # Test: Module Exports

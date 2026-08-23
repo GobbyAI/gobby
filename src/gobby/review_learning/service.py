@@ -32,6 +32,7 @@ from gobby.review_learning.guidance import (
 from gobby.review_learning.lessons import (
     CI_SOURCE_KINDS,
     CODE_DOMAIN_EXCLUDED_TAGS,
+    UNSCOPED_SCOPE_TAG,
     derive_lesson_domain,
     has_verified_fix,
     normalize_lesson,
@@ -53,7 +54,10 @@ MAX_RECALL_FLAT_MATCHES = 100
 
 _SPACE_RE = re.compile(r"\s+")
 _LESSON_FIELD_RE = re.compile(r"^-\s+(?P<key>[a-zA-Z_]+):\s*(?P<value>.*)$")
-_LEGACY_SCAN_LIMIT = 200
+# `_build_file_lesson` drops non-actionable rows after the fetch, so a page of
+# exactly `limit` can yield nothing. Fetch a small multiple as the candidate
+# pool: peak rows stays constant as the lesson corpus grows.
+_CANDIDATE_OVERFETCH = 4
 
 
 class ReviewLearningMemoryManager(Protocol):
@@ -93,6 +97,7 @@ class ReviewLearningMemoryManager(Protocol):
         limit: int | None = None,
         offset: int = 0,
         tags_all: list[str] | None = None,
+        tags_any: list[str] | None = None,
         tags_none: list[str] | None = None,
         include_global: bool = True,
     ) -> list[Any]: ...
@@ -514,21 +519,39 @@ class ReviewLearningService:
         touched_paths: list[str],
         limit: int,
     ) -> list[tuple[Any, str | None]]:
-        tagged_paths = {tag: path for path in touched_paths if (tag := path_tag(path))}
-        tagged_candidates: list[tuple[Any, str | None]] = []
-        untagged_candidates: list[tuple[Any, str | None]] = []
-        seen: set[str] = set()
-        code_domain_exclusions = list(CODE_DOMAIN_EXCLUDED_TAGS)
+        """Return path-matched lessons first, then unscoped ones.
 
-        memories = await self.memory_manager.alist_memories(
+        Postgres performs both tag matches, so peak rows per call is
+        ``2 x _CANDIDATE_OVERFETCH x limit`` and stays there as the lesson corpus
+        grows, rather than the fixed 200-row page this replaces.
+        """
+        tagged_paths = {tag: path for path in touched_paths if (tag := path_tag(path))}
+        code_domain_exclusions = list(CODE_DOMAIN_EXCLUDED_TAGS)
+        candidate_limit = limit * _CANDIDATE_OVERFETCH
+
+        path_matched: list[Any] = []
+        if tagged_paths:
+            path_matched = await self.memory_manager.alist_memories(
+                project_id=project_id,
+                memory_type="pattern",
+                limit=candidate_limit,
+                tags_all=["review-lesson", "confirmed"],
+                tags_any=list(tagged_paths),
+                tags_none=code_domain_exclusions,
+                include_global=False,
+            )
+        unscoped = await self.memory_manager.alist_memories(
             project_id=project_id,
             memory_type="pattern",
-            limit=max(_LEGACY_SCAN_LIMIT, limit),
-            tags_all=["review-lesson", "confirmed"],
+            limit=candidate_limit,
+            tags_all=["review-lesson", "confirmed", UNSCOPED_SCOPE_TAG],
             tags_none=code_domain_exclusions,
             include_global=False,
         )
-        for memory in memories:
+
+        candidates: list[tuple[Any, str | None]] = []
+        seen: set[str] = set()
+        for memory in (*path_matched, *unscoped):
             memory_id = str(getattr(memory, "id", "") or "")
             if not memory_id or memory_id in seen:
                 continue
@@ -538,13 +561,8 @@ class ReviewLearningService:
                 (path for tag, path in tagged_paths.items() if tag in memory_tags),
                 None,
             )
-            candidate = (memory, matched_path)
-            if matched_path is None:
-                untagged_candidates.append(candidate)
-            else:
-                tagged_candidates.append(candidate)
-
-        return tagged_candidates + untagged_candidates
+            candidates.append((memory, matched_path))
+        return candidates
 
 
 def build_recall_queries(

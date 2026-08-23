@@ -4,6 +4,7 @@ from typing import cast
 
 import pytest
 
+from gobby.cli.memory import crud
 from gobby.review_learning.class_recall import RetirementTaskManager
 from gobby.review_learning.file_paths import path_tag
 from gobby.review_learning.fingerprint import build_occurrence_key
@@ -23,6 +24,9 @@ from gobby.review_learning.service import ReviewLearningMemoryManager, ReviewLea
 from tests.review_learning.conftest import FakeMemoryManager, FakeTaskManager
 
 pytestmark = pytest.mark.unit
+
+# The literal `build_tags` stamps on a lesson that resolves no file path.
+UNSCOPED_SCOPE_TAG = "scope:unscoped"
 
 
 def _service(
@@ -290,6 +294,64 @@ def test_normalized_lesson_tags_evidence_paths() -> None:
     )
 
     assert path_tag("src/gobby/review_learning/service.py") in lesson.tags
+    assert UNSCOPED_SCOPE_TAG not in lesson.tags
+
+
+def test_build_tags_stamps_unscoped_when_no_file_path_resolves() -> None:
+    """1.4.3: a lesson that resolves no file path is explicitly marked unscoped."""
+    lesson = normalize_lesson(
+        source_kind="review_comment",
+        source="coderabbit",
+        source_review="review-1",
+        decision="confirmed",
+        finding={"title": "No path anywhere", "principle": "Applies to every file"},
+        evidence={"commit": "abc123"},
+        finding_fingerprint="native-1",
+        occurrence_key=build_occurrence_key("review-1", "native-1"),
+        repo="josh/gobby",
+        language="python",
+        risk="medium",
+    )
+
+    assert UNSCOPED_SCOPE_TAG in lesson.tags
+    assert not any(tag.startswith("path:") for tag in lesson.tags)
+
+
+@pytest.mark.asyncio
+async def test_unscoped_backfill_is_idempotent(fake_memory_manager: FakeMemoryManager) -> None:
+    """1.4.4: only eligible path-less lessons get stamped, and a rerun is a no-op."""
+    eligible = await fake_memory_manager.create_memory(
+        content="no path",
+        project_id="project",
+        tags=["review-lesson", "confirmed"],
+    )
+    path_scoped = await fake_memory_manager.create_memory(
+        content="has a path",
+        project_id="project",
+        tags=["review-lesson", "confirmed", path_tag("src/gobby/example.py")],
+    )
+    plan_domain = await fake_memory_manager.create_memory(
+        content="plan lesson",
+        project_id="project",
+        tags=["review-lesson", "confirmed", "lesson-domain:plan"],
+    )
+    unconfirmed = await fake_memory_manager.create_memory(
+        content="not confirmed",
+        project_id="project",
+        tags=["review-lesson", "rejected"],
+    )
+
+    stamped = await crud.backfill_unscoped_lessons(fake_memory_manager, project_id="project")
+
+    assert stamped == 1
+    assert UNSCOPED_SCOPE_TAG in (eligible.tags or [])
+    for untouched in (path_scoped, plan_domain, unconfirmed):
+        assert UNSCOPED_SCOPE_TAG not in (untouched.tags or [])
+
+    replay = await crud.backfill_unscoped_lessons(fake_memory_manager, project_id="project")
+
+    assert replay == 0
+    assert (eligible.tags or []).count(UNSCOPED_SCOPE_TAG) == 1
 
 
 @pytest.mark.parametrize(

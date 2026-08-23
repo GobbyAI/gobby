@@ -18,6 +18,7 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.memory.manager import MemoryManager
 from gobby.review_learning.class_recall import RetirementTaskManager
 from gobby.review_learning.file_paths import path_tag
+from gobby.review_learning.lessons import UNSCOPED_SCOPE_TAG
 from gobby.review_learning.service import (
     ReviewLearningMemoryManager,
     ReviewLearningService,
@@ -359,7 +360,10 @@ async def test_recall_review_lessons_matches_path_tags_across_checkouts(
     assert result["success"] is True
     assert result["count"] == 1
     assert [lesson["pattern_id"] for lesson in result["lessons"]] == ["shared-coordinator"]
-    assert list_calls == [["review-lesson", "confirmed"]]
+    assert list_calls == [
+        ["review-lesson", "confirmed"],
+        ["review-lesson", "confirmed", UNSCOPED_SCOPE_TAG],
+    ]
 
 
 @pytest.mark.asyncio
@@ -367,7 +371,12 @@ async def test_recall_review_lessons_for_files_ignores_unrelated_path() -> None:
     memory_manager = FakeMemoryManager()
     await memory_manager.create_memory(
         LEGACY_SERVICE_CONFIG_LESSON,
-        tags=["review-lesson", "confirmed", "pattern:service-config-propagate-db-errors"],
+        tags=[
+            "review-lesson",
+            "confirmed",
+            UNSCOPED_SCOPE_TAG,
+            "pattern:service-config-propagate-db-errors",
+        ],
         project_id="_personal",
     )
     registry = create_review_learning_registry(memory_manager, FakeTaskManager())
@@ -396,7 +405,12 @@ async def test_recall_review_lessons_for_files_matches_legacy_evidence_paths(
     memory_manager = FakeMemoryManager()
     await memory_manager.create_memory(
         LEGACY_SERVICE_CONFIG_LESSON,
-        tags=["review-lesson", "confirmed", "pattern:service-config-propagate-db-errors"],
+        tags=[
+            "review-lesson",
+            "confirmed",
+            UNSCOPED_SCOPE_TAG,
+            "pattern:service-config-propagate-db-errors",
+        ],
         project_id="_personal",
     )
     registry = create_review_learning_registry(memory_manager, FakeTaskManager())
@@ -436,7 +450,7 @@ async def test_recall_uses_anchored_evidence_and_renders_avoid_only_guidance() -
 ## Evidence
 {"changed_files": ["src/gobby/review_learning/service.py"]}
 """,
-        tags=["review-lesson", "confirmed", "pattern:avoid-bare-except"],
+        tags=["review-lesson", "confirmed", UNSCOPED_SCOPE_TAG, "pattern:avoid-bare-except"],
         project_id="_personal",
     )
     registry = create_review_learning_registry(memory_manager, FakeTaskManager())
@@ -477,7 +491,12 @@ async def test_recall_review_lessons_for_files_excludes_global_review_lessons(
     )
     await memory_manager.create_memory(
         LEGACY_SERVICE_CONFIG_LESSON,
-        tags=["review-lesson", "confirmed", "pattern:service-config-propagate-db-errors"],
+        tags=[
+            "review-lesson",
+            "confirmed",
+            UNSCOPED_SCOPE_TAG,
+            "pattern:service-config-propagate-db-errors",
+        ],
         project_id="_personal",
     )
     registry = create_review_learning_registry(memory_manager, FakeTaskManager())

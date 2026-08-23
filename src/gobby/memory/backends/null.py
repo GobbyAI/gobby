@@ -118,6 +118,7 @@ class NullBackend:
         limit: int = 50,
         offset: int = 0,
         tags_all: list[str] | None = None,
+        tags_any: list[str] | None = None,
         tags_none: list[str] | None = None,
         *,
         visibility: Visibility = "active",

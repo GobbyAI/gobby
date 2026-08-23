@@ -145,6 +145,7 @@ class StorageAdapter:
         limit: int = 50,
         offset: int = 0,
         tags_all: list[str] | None = None,
+        tags_any: list[str] | None = None,
         tags_none: list[str] | None = None,
         *,
         visibility: Visibility = "active",
@@ -156,6 +157,7 @@ class StorageAdapter:
             limit=limit,
             offset=offset,
             tags_all=tags_all,
+            tags_any=tags_any,
             tags_none=tags_none,
             visibility=visibility,
         )

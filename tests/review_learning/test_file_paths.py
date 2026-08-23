@@ -14,7 +14,7 @@ from gobby.review_learning.file_paths import (
     path_tag,
     paths_match,
 )
-from gobby.review_learning.lessons import CODE_DOMAIN_EXCLUDED_TAGS
+from gobby.review_learning.lessons import CODE_DOMAIN_EXCLUDED_TAGS, UNSCOPED_SCOPE_TAG
 from gobby.review_learning.service import ReviewLearningMemoryManager, ReviewLearningService
 from tests.review_learning.conftest import FakeMemory, FakeMemoryManager, FakeTaskManager
 
@@ -178,7 +178,13 @@ async def test_plan_lesson_colliding_path_excluded(candidate_path: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_file_lesson_recall_fetches_once_and_prioritizes_matching_tags() -> None:
+async def test_file_lesson_recall_prioritizes_matching_tags_over_unscoped() -> None:
+    """Two bounded queries now feed recall: path-matched first, then unscoped.
+
+    The legacy lesson carries its path in content rather than as a tag, which is
+    the shape the `scope:unscoped` backfill stamps, so it arrives via the second
+    query and still ranks behind the directly tagged lesson.
+    """
     first_path = "src/gobby/review_learning/service.py"
     second_path = "src/gobby/hooks/session_activation.py"
     legacy = FakeMemory(
@@ -192,7 +198,7 @@ async def test_file_lesson_recall_fetches_once_and_prioritizes_matching_tags() -
                 f"- path: {first_path}",
             ]
         ),
-        tags=["review-lesson", "confirmed"],
+        tags=["review-lesson", "confirmed", UNSCOPED_SCOPE_TAG],
     )
     tagged = FakeMemory(
         id="mem-tagged",
@@ -212,7 +218,7 @@ async def test_file_lesson_recall_fetches_once_and_prioritizes_matching_tags() -
         cast(ReviewLearningMemoryManager, memory_manager),
         cast(RetirementTaskManager, FakeTaskManager()),
     )
-    list_memories = AsyncMock(return_value=[legacy, tagged, tagged])
+    list_memories = AsyncMock(side_effect=[[tagged, tagged], [legacy]])
 
     with patch.object(memory_manager, "alist_memories", list_memories):
         result = await service.recall_review_lessons_for_files(
@@ -221,10 +227,15 @@ async def test_file_lesson_recall_fetches_once_and_prioritizes_matching_tags() -
             limit=2,
         )
 
-    assert list_memories.await_count == 1
-    await_args = list_memories.await_args
-    assert await_args is not None
-    assert await_args.kwargs["tags_all"] == ["review-lesson", "confirmed"]
+    assert list_memories.await_count == 2
+    path_call, unscoped_call = list_memories.await_args_list
+    assert path_call.kwargs["tags_all"] == ["review-lesson", "confirmed"]
+    assert set(path_call.kwargs["tags_any"]) == {path_tag(first_path), path_tag(second_path)}
+    assert unscoped_call.kwargs["tags_all"] == [
+        "review-lesson",
+        "confirmed",
+        UNSCOPED_SCOPE_TAG,
+    ]
     assert [lesson["memory_id"] for lesson in result["lessons"]] == [
         "mem-tagged",
         "mem-legacy",

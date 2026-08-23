@@ -11,6 +11,7 @@ TDD RED phase: These tests define expected behavior before implementation.
 
 from __future__ import annotations
 
+import inspect
 from datetime import UTC, datetime
 from typing import cast
 
@@ -342,6 +343,13 @@ class TestMemoryBackendProtocolCompliance:
     def test_mock_satisfies_protocol(self, mock_backend: MemoryBackendProtocol) -> None:
         """Test that mock backend is recognized as implementing the protocol."""
         assert isinstance(mock_backend, MemoryBackendProtocol)
+
+    def test_list_memories_declares_tags_any(self) -> None:
+        """1.4.1: the backend protocol carries the any-of tag filter the SQL supports."""
+        parameters = inspect.signature(MemoryBackendProtocol.list_memories).parameters
+
+        assert "tags_any" in parameters
+        assert parameters["tags_any"].default is None
 
     @pytest.mark.asyncio
     async def test_create_returns_record(self, mock_backend: MemoryBackendProtocol) -> None:

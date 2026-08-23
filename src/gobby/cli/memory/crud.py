@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import importlib
 from types import ModuleType
+from typing import Any
 
 import click
 
+from gobby.review_learning.lessons import CODE_DOMAIN_EXCLUDED_TAGS, UNSCOPED_SCOPE_TAG
 from gobby.storage.memories import MEMORY_TYPE_VALUES
 
 from ._formatting import format_tags, parse_tags, truncate
@@ -223,6 +225,44 @@ def update_memory(
         click.echo(f"  Content: {truncate(memory.content, 80)}")
     except ValueError as e:
         raise click.ClickException(str(e)) from e
+
+
+async def backfill_unscoped_lessons(manager: Any, *, project_id: str | None = None) -> int:
+    """Stamp `scope:unscoped` on eligible lessons that carry no `path:` tag.
+
+    Eligible means a confirmed code-domain review lesson, matching the filters
+    `ReviewLearningService._candidate_lesson_memories` uses. Re-running is a
+    no-op because an already-stamped lesson is skipped.
+    """
+    lessons = await manager.alist_memories(
+        project_id=project_id,
+        memory_type="pattern",
+        limit=None,
+        tags_all=["review-lesson", "confirmed"],
+        tags_none=list(CODE_DOMAIN_EXCLUDED_TAGS),
+        include_global=False,
+    )
+    stamped = 0
+    for lesson in lessons:
+        tags = list(getattr(lesson, "tags", None) or [])
+        if UNSCOPED_SCOPE_TAG in tags or any(tag.startswith("path:") for tag in tags):
+            continue
+        await manager.update_memory(memory_id=lesson.id, tags=[*tags, UNSCOPED_SCOPE_TAG])
+        stamped += 1
+    return stamped
+
+
+@click.command("backfill-unscoped-lessons")
+@click.option("--project", "-p", "project_ref", help="Project (name or UUID)")
+@click.pass_context
+def backfill_unscoped_lessons_command(ctx: click.Context, project_ref: str | None) -> None:
+    """Stamp scope:unscoped on confirmed review lessons that carry no path tag."""
+    memory_module = _facade()
+    project_id = memory_module.resolve_project_ref(project_ref) if project_ref else None
+    manager = memory_module.get_memory_manager(ctx)
+
+    stamped = asyncio.run(backfill_unscoped_lessons(manager, project_id=project_id))
+    click.echo(f"Stamped {stamped} unscoped lesson(s).")
 
 
 @click.command("stats")

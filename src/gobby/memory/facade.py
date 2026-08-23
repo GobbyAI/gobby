@@ -453,6 +453,7 @@ class MemoryManagerFacadeMethods:
         limit: int | None = DEFAULT_LIST_LIMIT,
         offset: int = 0,
         tags_all: list[str] | None = None,
+        tags_any: list[str] | None = None,
         tags_none: list[str] | None = None,
         visibility: Visibility = "active",
         include_global: bool = True,
@@ -463,6 +464,7 @@ class MemoryManagerFacadeMethods:
             limit=limit,
             offset=offset,
             tags_all=tags_all,
+            tags_any=tags_any,
             tags_none=tags_none,
             visibility=visibility,
         )
