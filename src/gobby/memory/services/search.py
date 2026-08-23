@@ -122,12 +122,19 @@ class SearchService:
         tags_none: list[str] | None = None,
         min_score: float | None = None,
         *,
+        embed_text: str | None = None,
         session_id: str | None = None,
         recall_request_id: str | None = None,
         caller: str = "memory.search",
         include_global: bool = True,
     ) -> list[Memory]:
-        """Retrieve memories via VectorStore + optional FalkorDB graph search."""
+        """Retrieve memories via VectorStore + optional FalkorDB graph search.
+
+        The vector and graph legs run on the embedding; the BM25 leg runs on
+        ``query``. ``embed_text`` splits those representations: when supplied it
+        is embedded verbatim (YAKE is skipped) while ``query`` stays the term
+        bag the keyword leg needs. Omitting it keeps the YAKE-derived embedding.
+        """
         if memory_type is not None:
             memory_type = validate_memory_type(memory_type)
         scope = ALL_MEMORIES
@@ -138,9 +145,12 @@ class SearchService:
                 else MemoryScope.project_only(project_id)
             )
         if query and self._vector_store and self._embed_fn:
-            from gobby.search.keywords import extract_keywords
+            if embed_text is None:
+                from gobby.search.keywords import extract_keywords
 
-            embed_query = extract_keywords(query) or query
+                embed_query = extract_keywords(query) or query
+            else:
+                embed_query = embed_text
             query_embedding = await self._embed_fn(embed_query, is_query=True)
             half_life = self._recall_constants.half_life_days
             effective_min_score = min_score if min_score is not None else 0.0

@@ -6,7 +6,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -43,6 +43,10 @@ class _Storage:
 
     def get_memory(self, memory_id: str, scope: Any = None) -> Memory:
         return self._memory(memory_id)
+
+    def list_memories(self, **_kwargs: Any) -> list[Memory]:
+        """The queryless branch of `search()` lists instead of ranking."""
+        return [self._memory(memory_id) for memory_id in self._memory_ids]
 
     def update_access_stats(self, memory_id: str, accessed_at: str) -> None:
         return None
@@ -125,6 +129,7 @@ def _service(
     search_debug_sink: Callable[[SearchDebugSnapshot], None] | None = None,
     falkordb_graph_search: bool = False,
     recall_constants: RecallConstants | None = None,
+    embed_fn: Callable[..., Any] | None = None,
 ) -> SearchService:
     async def _embed(text: str, is_query: bool = False) -> list[float]:
         return [1.0, 0.0]
@@ -132,7 +137,7 @@ def _service(
     return SearchService(
         storage=storage or _Storage(memory_ids),  # type: ignore[arg-type]
         vector_store=vector_store or _VectorStore(vector_results or []),  # type: ignore[arg-type]
-        embed_fn=_embed,
+        embed_fn=embed_fn or _embed,
         kg_service=object() if falkordb_graph_search else None,  # type: ignore[arg-type]
         keyword_search=keyword_search
         or (lambda query, limit, project_id, *, include_global=True: []),
@@ -711,3 +716,126 @@ async def test_search_with_graph_qdrant_timeout_is_info_soft_miss(
         record.levelno >= logging.WARNING and "Qdrant search failed" in record.getMessage()
         for record in caplog.records
     )
+
+
+# ---------------------------------------------------------------------------
+# 2.1 — split query representations across the search legs
+# ---------------------------------------------------------------------------
+
+# A deliberately conversational prompt: long enough for YAKE to fire and noisy
+# enough to clear the extractor's noise threshold, so the YAKE-derived embedding
+# text is provably different from the raw string.
+_NOISY_PROMPT = "hey could you maybe take a look at the webhook handler thing please"
+
+
+def _recorded_search_service(
+    *,
+    embedded: list[tuple[str, bool]],
+    keyword_queries: list[str],
+) -> SearchService:
+    """SearchService whose embed and BM25 legs record the text each one received."""
+
+    async def _embed(text: str, is_query: bool = False) -> list[float]:
+        embedded.append((text, is_query))
+        return [1.0, 0.0]
+
+    def _keyword(
+        query: str,
+        limit: int,
+        project_id: str | None,
+        *,
+        include_global: bool = True,
+    ) -> list[tuple[str, float]]:
+        keyword_queries.append(query)
+        return []
+
+    return _service(
+        ["m1"],
+        vector_results=[("m1", 0.9)],
+        embed_fn=_embed,
+        keyword_search=_keyword,
+    )
+
+
+@pytest.mark.asyncio
+async def test_embed_text_absent_preserves_yake_path() -> None:
+    """2.1.2: omitting `embed_text` leaves the YAKE-derived embedding untouched.
+
+    Passing the new keyword explicitly as ``None`` is the same contract as omitting
+    it, so both spellings must keep the pre-2.1 behavior for every existing caller.
+    """
+    from gobby.search.keywords import extract_keywords
+
+    expected = extract_keywords(_NOISY_PROMPT) or _NOISY_PROMPT
+    assert expected != _NOISY_PROMPT, "fixture must be noisy enough for YAKE to rewrite"
+
+    embedded: list[tuple[str, bool]] = []
+    keyword_queries: list[str] = []
+    service = _recorded_search_service(embedded=embedded, keyword_queries=keyword_queries)
+
+    await service.search(_NOISY_PROMPT, limit=1)
+    await service.search(_NOISY_PROMPT, limit=1, embed_text=None)
+
+    assert [text for text, _ in embedded] == [expected, expected]
+    assert all(is_query for _, is_query in embedded)
+    assert keyword_queries == [_NOISY_PROMPT, _NOISY_PROMPT]
+
+
+@pytest.mark.asyncio
+async def test_embed_text_present_is_embedded_verbatim() -> None:
+    """2.1.1: a supplied `embed_text` is embedded as-is, with YAKE skipped."""
+    embedded: list[tuple[str, bool]] = []
+    keyword_queries: list[str] = []
+    service = _recorded_search_service(embedded=embedded, keyword_queries=keyword_queries)
+
+    await service.search("webhook handler", limit=1, embed_text=_NOISY_PROMPT)
+
+    assert [text for text, _ in embedded] == [_NOISY_PROMPT]
+    # The BM25 leg keeps the term-bag query; only the vector leg sees the prose.
+    assert keyword_queries == ["webhook handler"]
+
+
+@pytest.mark.asyncio
+async def test_embed_text_is_ignored_without_a_query() -> None:
+    """`query` still gates the hybrid path: no query means no embedding at all."""
+    embedded: list[tuple[str, bool]] = []
+    keyword_queries: list[str] = []
+    service = _recorded_search_service(embedded=embedded, keyword_queries=keyword_queries)
+
+    await service.search(None, limit=1, embed_text=_NOISY_PROMPT)
+
+    assert embedded == []
+    assert keyword_queries == []
+
+
+def test_search_and_facade_declare_embed_text_as_optional_keyword() -> None:
+    """The seam is opt-in on both surfaces, so no existing caller changes."""
+    import inspect
+
+    from gobby.memory.facade import MemoryManagerFacadeMethods
+
+    for func in (SearchService.search, MemoryManagerFacadeMethods.search_memories):
+        parameter = inspect.signature(func).parameters["embed_text"]
+        assert parameter.kind is inspect.Parameter.KEYWORD_ONLY, func.__qualname__
+        assert parameter.default is None, func.__qualname__
+
+
+@pytest.mark.asyncio
+async def test_facade_threads_embed_text_to_the_search_service() -> None:
+    """The facade forwards `embed_text` rather than dropping it on the floor."""
+    from gobby.memory.facade import MemoryManagerFacadeMethods
+
+    calls: list[dict[str, Any]] = []
+
+    class _RecordingSearchService:
+        async def search(self, **kwargs: Any) -> list[Memory]:
+            calls.append(kwargs)
+            return []
+
+    facade = MemoryManagerFacadeMethods()
+    facade._search_service = cast(Any, _RecordingSearchService())
+
+    await facade.search_memories(query="webhook handler", embed_text=_NOISY_PROMPT)
+    await facade.search_memories(query="webhook handler")
+
+    assert [call["embed_text"] for call in calls] == [_NOISY_PROMPT, None]
