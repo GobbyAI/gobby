@@ -1560,6 +1560,79 @@ class TestTmuxAttachmentReap:
         assert server._tmux_client_bridges[gone] == set()
 
     @pytest.mark.asyncio
+    async def test_concurrent_reattach_leaves_exactly_one_bridge_and_reader(
+        self, server: WebSocketServer
+    ) -> None:
+        """The reconnecting-browser race, genuinely interleaved.
+
+        Socket A's activation is parked inside its capture when the browser
+        drops A and re-attaches on socket B. B's reap must take A's bridge
+        down mid-flight, and A must abort at its next checkpoint rather than
+        finish a stream nothing owns.
+        """
+        bridges: dict[str, Any] = {}
+        ws_a = MockWebSocket()
+        sid_a = await reserve(server, ws_a)
+
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        captures = 0
+
+        with activation_harness(server, bridges=bridges) as harness:
+
+            async def stateful_attach(**kwargs: Any) -> int:
+                bridges[kwargs["streaming_id"]] = make_bridge(session_name=kwargs["session_name"])
+                return 42
+
+            async def stateful_detach(streaming_id: str) -> None:
+                bridges.pop(streaming_id, None)
+
+            async def gated_capture(*_args: Any, **_kwargs: Any) -> HistoryCapture:
+                nonlocal captures
+                captures += 1
+                if captures == 1:
+                    entered.set()
+                    await release.wait()
+                return HistoryCapture(
+                    text="hist", truncated=False, dropped_bytes=0, total_bytes=4, repainted=True
+                )
+
+            harness.attach.side_effect = stateful_attach
+            harness.detach.side_effect = stateful_detach
+            harness.capture.side_effect = gated_capture
+
+            task_a = asyncio.create_task(resize(server, ws_a, sid_a))
+            await asyncio.wait_for(entered.wait(), timeout=2)
+
+            # The browser dropped A; its connection cleanup has not run yet.
+            ws_a.closed = True
+            ws_b = MockWebSocket()
+            sid_b = await reserve(server, ws_b)
+            await resize(server, ws_b, sid_b)
+
+            # While A is still parked in its capture, B's reap must already
+            # have taken A's bridge down -- this is the window in which tmux
+            # would otherwise size the session against two clients. Waiting
+            # for A to notice on its own does not satisfy this.
+            assert set(bridges) == {sid_b}
+            harness.detach.assert_any_await(sid_a)
+            assert all(sid_a not in ids for ids in server._tmux_client_bridges.values())
+
+            release.set()
+            await asyncio.wait_for(task_a, timeout=2)
+
+        # Exactly one live stream survives: B started the only reader, A's
+        # bridge was reaped mid-activation, and A delivered nothing.
+        assert harness.reader.start_reader.await_count == 1
+        harness.detach.assert_any_await(sid_a)
+        assert ws_a.messages_of_type("terminal_attach_history") == []
+        assert len(ws_b.messages_of_type("terminal_attach_history")) == 1
+        assert set(bridges) == {sid_b}
+        assert server._tmux_pending == {}
+        assert sid_b in server._tmux_client_bridges[ws_b]
+        assert all(sid_a not in ids for ids in server._tmux_client_bridges.values())
+
+    @pytest.mark.asyncio
     async def test_an_unowned_bridge_is_reaped(self, server: WebSocketServer) -> None:
         ws = MockWebSocket()
         streaming_id = await reserve(server, ws)
