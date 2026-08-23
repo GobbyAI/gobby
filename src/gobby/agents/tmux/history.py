@@ -18,9 +18,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# The governing bound. @wterm/dom materializes one DOM row per scrollback line
-# with no virtualization, so this is a renderer budget, not a wire budget.
-ATTACH_HISTORY_LINES = 2000
+# The governing bound. This is a renderer budget, not a wire budget: the client
+# writes the whole window in one call, and the Ghostty VT core costs ~0.75 ms
+# per line to ingest it. Measured under the pinned protocol (4x CPU throttle, 1
+# warm-up, 5 samples, median, timed from frame send to a settled scrollback
+# render): 300 lines -> 229 ms, 400 -> 338 ms, 500 -> 470 ms, 2000 -> 1690 ms.
+# 300 is the largest bound clearing the 250 ms budget. The wterm fallback core
+# is ~6x cheaper (57 ms at 300) and never binds. Ghostty's default ring also
+# retains only ~823 rows, so a larger window would be evicted on arrival.
+ATTACH_HISTORY_LINES = 300
 # Backstop only, sized so the line count decides and bytes catch just the
 # pathological per-cell-color case.
 ATTACH_HISTORY_MAX_BYTES = 1024 * 1024
