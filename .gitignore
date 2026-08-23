@@ -234,8 +234,6 @@ __marimo__/
 !.gobby/project.jsonl
 !.gobby/plans/
 !.gobby/plans/**
-!.gobby/rules/
-!.gobby/rules/**
 
 screenshots/
 reports/

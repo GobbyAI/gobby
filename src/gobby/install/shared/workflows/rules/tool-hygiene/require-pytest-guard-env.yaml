@@ -1,17 +1,11 @@
-# Project-local rule for the gobby repo. Not a bundled template — install with:
-#   uv run gobby rules import .gobby/rules/gobby-project-testing.yaml
-# The installed DB row is the active enforcement; this file is the durable source.
-# The `default` tag is what agent rule_selectors include (tag:default), so the
-# rule is active for interactive and worker agents alike; the `when` condition
-# confines it to this project.
-group: gobby-project-testing
-tags: [user, project, testing, enforcement, default]
+tags: [tool-hygiene, enforcement, python, testing, gobby, default]
 
 rules:
   require-pytest-guard-env:
     description: >-
       Require the guard_tests env prefix (GOBBY_TEST_PROTECT=1 and a test
-      DATABASE_URL) on agent pytest runs in the gobby repo.
+      DATABASE_URL) on agent pytest runs in the gobby repo. Scoped to the
+      gobby project by UUID; inert everywhere else.
     event: before_tool
     enabled: true
     priority: 40
@@ -19,9 +13,10 @@ rules:
     effect:
       type: block
       tools: [Bash]
-      # Match pytest only in command position (segment start, uv run, python -m)
-      # so prose mentions of "pytest" in commit messages or echoes don't trip it.
-      command_pattern: "(^\\s*|[;&|(]\\s*|\\buv\\s+run\\s+|\\bpython3?\\s+-m\\s+)pytest\\b"
+      # Match pytest only in command position (shared segment-anchored idiom)
+      # so prose mentions in commit messages or echoes don't trip it; env-var
+      # prefixes still count as invocations.
+      command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:uv\\s+run\\s+|python3?\\s+-m\\s+)?pytest\\b"
       command_not_pattern: "(?s)(?=.*GOBBY_TEST_PROTECT=1)(?=.*DATABASE_URL=)"
       reason: >-
         Run pytest through the project's guard prefix (verification.custom.guard_tests
