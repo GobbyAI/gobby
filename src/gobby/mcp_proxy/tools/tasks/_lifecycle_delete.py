@@ -6,6 +6,7 @@ Handles the delete_task tool registration with cascade and unlink options.
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.tasks._authorization import require_claim_authority
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.tasks import TaskNotFoundError
@@ -15,11 +16,12 @@ from gobby.storage.tasks._models import TaskHasChildrenError, TaskHasDependentsE
 def register_delete_task(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
     """Register the delete_task tool on the given registry."""
 
-    def delete_task(task_id: str, cascade: bool = True, unlink: bool = False) -> dict[str, Any]:
+    def delete_task(task_id: str, cascade: bool = False, unlink: bool = False) -> dict[str, Any]:
         """Delete a task.
 
-        By default (cascade=True), deletes subtasks and dependent tasks.
-        Use unlink=True to remove dependency links but preserve dependent tasks.
+        By default (cascade=False), fails if the task has children or dependents.
+        Use cascade=True to delete subtasks and dependent tasks, or unlink=True
+        to remove dependency links but preserve dependent tasks.
         """
         try:
             resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
@@ -31,6 +33,10 @@ def register_delete_task(registry: InternalToolRegistry, ctx: RegistryContext) -
         if not task:
             return {"error": f"Task {task_id} not found"}
         ref = f"#{task.seq_num}" if task.seq_num else resolved_id
+
+        denied = require_claim_authority(ctx.task_manager, task, "delete_task")
+        if denied:
+            return denied
 
         try:
             deleted = ctx.task_manager.delete_task(resolved_id, cascade=cascade, unlink=unlink)
@@ -62,8 +68,8 @@ def register_delete_task(registry: InternalToolRegistry, ctx: RegistryContext) -
 
     registry.register(
         name="delete_task",
-        description="Delete a task. By default (cascade=True), deletes subtasks and dependent tasks. "
-        "Set cascade=False to fail if task has children or dependents. "
+        description="Delete a task. By default (cascade=False), fails if the task has children "
+        "or dependents. Set cascade=True to delete subtasks and dependent tasks. "
         "Use unlink=True to remove dependency links but preserve dependent tasks.",
         input_schema={
             "type": "object",
@@ -74,8 +80,8 @@ def register_delete_task(registry: InternalToolRegistry, ctx: RegistryContext) -
                 },
                 "cascade": {
                     "type": "boolean",
-                    "description": "If True, delete subtasks and dependent tasks. Defaults to True.",
-                    "default": True,
+                    "description": "If True, delete subtasks and dependent tasks. Defaults to False.",
+                    "default": False,
                 },
                 "unlink": {
                     "type": "boolean",

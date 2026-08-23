@@ -8,6 +8,7 @@ import logging
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.tasks._authorization import has_delegated_agent_run
 from gobby.mcp_proxy.tools.tasks._claim_activity import confirm_claiming_session_activity
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
@@ -17,41 +18,6 @@ from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
 from gobby.workflows.claimed_task_skills import build_claimed_task_skill_state
 
 logger = logging.getLogger(__name__)
-
-
-def _has_delegated_agent_run(
-    ctx: RegistryContext,
-    *,
-    child_session_id: str,
-    task_id: str,
-    current_owner: str | None,
-) -> bool:
-    """Return true when an active agent run proves parent-to-child delegation."""
-    if not current_owner:
-        return False
-
-    try:
-        row = ctx.task_manager.db.fetchone(
-            """
-            SELECT id FROM agent_runs
-            WHERE child_session_id = %s
-              AND task_id = %s
-              AND parent_session_id = %s
-              AND status IN ('pending', 'running')
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            (child_session_id, task_id, current_owner),
-        )
-    except Exception as e:
-        logger.debug("Delegated claim lookup failed: %s", e)
-        return False
-
-    try:
-        run_id = row["id"] if row is not None else None
-    except (KeyError, TypeError, IndexError):
-        return False
-    return isinstance(run_id, str) and bool(run_id)
 
 
 def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
@@ -129,11 +95,11 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         current_owner = get_claimed_session_id(task)
         delegated_claim = False
         if current_owner and current_owner != resolved_session_id and not force:
-            delegated_claim = _has_delegated_agent_run(
-                ctx,
-                child_session_id=resolved_session_id,
+            delegated_claim = has_delegated_agent_run(
+                ctx.task_manager.db,
+                caller_session_id=resolved_session_id,
                 task_id=resolved_id,
-                current_owner=current_owner,
+                owner_session_id=current_owner,
             )
 
         if (

@@ -7,7 +7,9 @@ relationships.
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.tasks._authorization import has_delegated_agent_run
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.tasks import TaskNotFoundError
 
@@ -48,6 +50,28 @@ def create_session_registry(ctx: RegistryContext) -> InternalToolRegistry:
             resolved_session_id = ctx.resolve_session_id(effective_session_id)
         except ValueError as e:
             return {"error": f"Invalid session_id '{effective_session_id}': {e}"}
+
+        # An explicit session_id naming another session is allowed only for
+        # self or the task's agent-run delegation lineage (#20821).
+        caller_session_id = get_current_session_id()
+        if (
+            session_id is not None
+            and caller_session_id
+            and resolved_session_id != caller_session_id
+            and not has_delegated_agent_run(
+                ctx.task_manager.db,
+                caller_session_id=caller_session_id,
+                task_id=resolved_id,
+                owner_session_id=resolved_session_id,
+            )
+        ):
+            return task_error(
+                f"Cannot link task to session '{session_id}': linking another "
+                "session requires agent-run delegation lineage with that session "
+                "for this task.",
+                TaskToolErrorCode.TASK_CLAIM_CONFLICT,
+                target_session=resolved_session_id,
+            )
 
         try:
             ctx.session_task_manager.link_task(resolved_session_id, resolved_id, action)

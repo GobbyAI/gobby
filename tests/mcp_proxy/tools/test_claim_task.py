@@ -312,7 +312,14 @@ class TestClaimTaskTool:
 
             assert "error" not in result
             assert any(
-                call.args[1] == ("my-session-id", parent_owned_task.id, "parent-session-id")
+                call.args[1]
+                == (
+                    parent_owned_task.id,
+                    "my-session-id",
+                    "parent-session-id",
+                    "parent-session-id",
+                    "my-session-id",
+                )
                 for call in mock_task_manager.db.fetchone.call_args_list
             )
             mock_task_manager.claim_task.assert_called_once_with(
@@ -366,7 +373,13 @@ class TestClaimTaskTool:
             assert "already claimed" in result["error"].lower()
             assert any(
                 call.args[1]
-                == ("my-session-id", third_party_owned_task.id, "third-party-session-id")
+                == (
+                    third_party_owned_task.id,
+                    "my-session-id",
+                    "third-party-session-id",
+                    "third-party-session-id",
+                    "my-session-id",
+                )
                 for call in mock_task_manager.db.fetchone.call_args_list
             )
             mock_task_manager.claim_task.assert_not_called()

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 import psycopg
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.tasks._authorization import require_claim_authority
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.hub.protocol import TaskLifecycleMutation
 from gobby.storage.tasks import (
@@ -84,6 +85,22 @@ def _resolve_task(ctx: RegistryContext, task_id: str) -> str | dict[str, str]:
         return {"error": f"Invalid task_id: {error}"}
 
 
+def _resolve_task_for_mutation(
+    ctx: RegistryContext, task_id: str, action: str
+) -> str | dict[str, Any]:
+    """Resolve a task reference and enforce claim authority for a mutation."""
+    resolved_id = _resolve_task(ctx, task_id)
+    if isinstance(resolved_id, dict):
+        return resolved_id
+    task = ctx.task_manager.get_task(resolved_id)
+    if task is None:
+        return {"error": f"Task {task_id} not found"}
+    denied = require_claim_authority(ctx.task_manager, task, action)
+    if denied:
+        return denied
+    return resolved_id
+
+
 def _append_section_body(heading: str, body: str) -> str:
     normalized_heading = heading.strip()
     if not normalized_heading:
@@ -105,7 +122,7 @@ def create_ops_artifact_registry(ctx: RegistryContext) -> InternalToolRegistry:
         invalid = _validate_artifact_fields({field})
         if invalid:
             return invalid
-        resolved_id = _resolve_task(ctx, task_id)
+        resolved_id = _resolve_task_for_mutation(ctx, task_id, "set_artifact")
         if isinstance(resolved_id, dict):
             return resolved_id
         try:
@@ -151,7 +168,7 @@ def create_ops_artifact_registry(ctx: RegistryContext) -> InternalToolRegistry:
         invalid = _validate_artifact_fields(set(fields))
         if invalid:
             return invalid
-        resolved_id = _resolve_task(ctx, task_id)
+        resolved_id = _resolve_task_for_mutation(ctx, task_id, "set_artifacts_atomic")
         if isinstance(resolved_id, dict):
             return resolved_id
         try:
@@ -187,7 +204,7 @@ def create_ops_artifact_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
     def clear_isolation_pair(task_id: str, family: str) -> dict[str, Any]:
         """Clear a worktree or clone isolation artifact pair."""
-        resolved_id = _resolve_task(ctx, task_id)
+        resolved_id = _resolve_task_for_mutation(ctx, task_id, "clear_isolation_pair")
         if isinstance(resolved_id, dict):
             return resolved_id
         try:
@@ -222,7 +239,7 @@ def create_ops_artifact_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
     def append_description_section(task_id: str, heading: str, body: str) -> dict[str, Any]:
         """Append an idempotent markdown section to a task description."""
-        resolved_id = _resolve_task(ctx, task_id)
+        resolved_id = _resolve_task_for_mutation(ctx, task_id, "append_description_section")
         if isinstance(resolved_id, dict):
             return resolved_id
         try:

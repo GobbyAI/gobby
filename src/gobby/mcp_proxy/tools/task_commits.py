@@ -69,6 +69,7 @@ def create_commit_registry(
     """
     # Lazy import to avoid circular dependency
     from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
+    from gobby.mcp_proxy.tools.tasks._authorization import require_claim_authority
 
     registry = InternalToolRegistry(
         name="gobby-tasks-commits",
@@ -114,7 +115,11 @@ def create_commit_registry(
         task_and_repo_path = _get_task_and_repo_path(resolved_task_id, task_id, project_path)
         if isinstance(task_and_repo_path, dict):
             return task_and_repo_path
-        _, repo_path = task_and_repo_path
+        current_task, repo_path = task_and_repo_path
+
+        denied = require_claim_authority(task_manager, current_task, "link_commit")
+        if denied:
+            return denied
 
         try:
             task = task_manager.link_commit(resolved_task_id, commit_sha, cwd=repo_path)
@@ -169,7 +174,11 @@ def create_commit_registry(
         task_and_repo_path = _get_task_and_repo_path(resolved_task_id, task_id, project_path)
         if isinstance(task_and_repo_path, dict):
             return task_and_repo_path
-        _, repo_path = task_and_repo_path
+        current_task, repo_path = task_and_repo_path
+
+        denied = require_claim_authority(task_manager, current_task, "unlink_commit")
+        if denied:
+            return denied
 
         try:
             task = task_manager.unlink_commit(resolved_task_id, commit_sha, cwd=repo_path)

@@ -1090,10 +1090,11 @@ class TestReopenTask:
         mock_task_manager.get_task.return_value = _make_task(status="in_progress")
         registry = _create_registry(mock_task_manager)
 
-        result = await registry.call(
-            "reopen_task",
-            {"task_id": "550e8400-e29b-41d4-a716-446655440000"},
-        )
+        with session_context_for_test():
+            result = await registry.call(
+                "reopen_task",
+                {"task_id": "550e8400-e29b-41d4-a716-446655440000"},
+            )
         assert "error" not in result
 
     @pytest.mark.asyncio
@@ -1137,7 +1138,8 @@ class TestReopenTask:
                 return_value=mock_svm,
             ):
                 registry = create_task_registry(mock_task_manager)
-                result = await registry.call("reopen_task", {"task_id": task_id})
+                with session_context_for_test(session_id):
+                    result = await registry.call("reopen_task", {"task_id": task_id})
 
             assert "error" not in result
             assert result == {}
@@ -1150,10 +1152,11 @@ class TestReopenTask:
         mock_task_manager.reopen_task.side_effect = ValueError("cannot reopen")
         registry = _create_registry(mock_task_manager)
 
-        result = await registry.call(
-            "reopen_task",
-            {"task_id": "550e8400-e29b-41d4-a716-446655440000"},
-        )
+        with session_context_for_test():
+            result = await registry.call(
+                "reopen_task",
+                {"task_id": "550e8400-e29b-41d4-a716-446655440000"},
+            )
         assert "error" in result
         assert "cannot reopen" in result["error"]
 
@@ -1378,10 +1381,11 @@ class TestEscalateTask:
             }
 
             registry = _create_registry(mock_task_manager)
-            result = await registry.call(
-                "escalate_task",
-                {"task_id": task_id, "reason": "blocked"},
-            )
+            with session_context_for_test(session_id):
+                result = await registry.call(
+                    "escalate_task",
+                    {"task_id": task_id, "reason": "blocked"},
+                )
 
         assert "error" not in result
         mock_release.assert_called_once_with(mock_svm.get_variables.return_value, task_id)

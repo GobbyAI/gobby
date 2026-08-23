@@ -6,6 +6,7 @@ Handles add_label and remove_label tool registrations.
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.tasks._authorization import require_claim_authority
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._live_session_label import live_session_label_change_error
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
@@ -24,6 +25,9 @@ def register_add_label(registry: InternalToolRegistry, ctx: RegistryContext) -> 
         current_task = ctx.task_manager.get_task(resolved_id)
         if current_task is None:
             return {"error": f"Task {task_id} not found"}
+        denied = require_claim_authority(ctx.task_manager, current_task, "add_label")
+        if denied:
+            return denied
         label_error = live_session_label_change_error(
             ctx,
             current_task.labels,
@@ -66,6 +70,9 @@ def register_remove_label(registry: InternalToolRegistry, ctx: RegistryContext) 
         current_task = ctx.task_manager.get_task(resolved_id)
         if current_task is None:
             return {"error": f"Task {task_id} not found"}
+        denied = require_claim_authority(ctx.task_manager, current_task, "remove_label")
+        if denied:
+            return denied
         next_labels = [item for item in current_task.labels or () if item != label]
         label_error = live_session_label_change_error(ctx, current_task.labels, next_labels)
         if label_error:

@@ -1127,9 +1127,10 @@ class TestReopenTaskTool:
         reopened_task = MagicMock()
         mock_task_manager.reopen_task.return_value = reopened_task
 
-        result = await registry.call(
-            "reopen_task", {"task_id": "550e8400-e29b-41d4-a716-446655440000"}
-        )
+        with session_context_for_test("test-session"):
+            result = await registry.call(
+                "reopen_task", {"task_id": "550e8400-e29b-41d4-a716-446655440000"}
+            )
 
         mock_task_manager.reopen_task.assert_called_with(
             "550e8400-e29b-41d4-a716-446655440000", reason=None
@@ -1148,10 +1149,11 @@ class TestReopenTaskTool:
         }
         mock_task_manager.reopen_task.return_value = reopened_task
 
-        await registry.call(
-            "reopen_task",
-            {"task_id": "550e8400-e29b-41d4-a716-446655440000", "reason": "Needs more work"},
-        )
+        with session_context_for_test("test-session"):
+            await registry.call(
+                "reopen_task",
+                {"task_id": "550e8400-e29b-41d4-a716-446655440000", "reason": "Needs more work"},
+            )
 
         mock_task_manager.reopen_task.assert_called_with(
             "550e8400-e29b-41d4-a716-446655440000", reason="Needs more work"
@@ -1166,11 +1168,13 @@ class TestReopenTaskTool:
 
         mock_task_manager.reopen_task.side_effect = ValueError("Task not found")
 
-        result = await registry.call(
-            "reopen_task", {"task_id": "00000000-0000-0000-0000-000000000000"}
-        )
+        with session_context_for_test("test-session"):
+            result = await registry.call(
+                "reopen_task", {"task_id": "00000000-0000-0000-0000-000000000000"}
+            )
 
         assert "error" in result
+        assert "Task not found" in result["error"]
 
     @pytest.mark.asyncio
     async def test_reopen_task_leaves_worktree_status_unchanged(

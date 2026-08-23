@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.tasks._authorization import require_claim_authority
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
 from gobby.mcp_proxy.tools.tasks._escalation_coordinator import (
@@ -51,6 +52,15 @@ def register_reopen_task(registry: InternalToolRegistry, ctx: RegistryContext) -
             task_id: Task reference (#N, path, or UUID)
             reason: Optional reason for reopening
         """
+        from gobby.utils.session_context import get_current_session_id
+
+        session_id = get_current_session_id()
+        if not session_id:
+            return task_error(
+                "No session context available. Ensure session_id is set.",
+                TaskToolErrorCode.SESSION_REQUIRED,
+            )
+
         try:
             resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
         except (TaskNotFoundError, ValueError) as e:
@@ -59,6 +69,11 @@ def register_reopen_task(registry: InternalToolRegistry, ctx: RegistryContext) -
         # Capture owner before reopen clears it for session variable cleanup.
         task = ctx.task_manager.get_task(resolved_id)
         prior_owner_session_id = get_claimed_session_id(task) if task else None
+
+        if task is not None:
+            denied = require_claim_authority(ctx.task_manager, task, "reopen_task")
+            if denied:
+                return denied
 
         try:
             ctx.task_manager.reopen_task(resolved_id, reason=reason)
@@ -80,6 +95,13 @@ def register_reopen_task(registry: InternalToolRegistry, ctx: RegistryContext) -
                     )
                 except Exception as e:
                     logger.debug("Best-effort session link update on reopen failed: %s", e)
+
+            # Attribute the reopen to the calling session (best-effort)
+            try:
+                resolved_session_id = ctx.resolve_session_id(session_id)
+                ctx.session_task_manager.link_task(resolved_session_id, resolved_id, "reopened")
+            except Exception as e:
+                logger.debug("Best-effort reopen attribution failed: %s", e)
 
             return {}
         except ValueError as e:
@@ -146,6 +168,10 @@ def register_escalate_task(registry: InternalToolRegistry, ctx: RegistryContext)
         if not task:
             return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
         prior_owner_session_id = get_claimed_session_id(task)
+
+        denied = require_claim_authority(ctx.task_manager, task, "escalate_task")
+        if denied:
+            return denied
 
         projected_state = projected_task_state(task)
         if projected_state in {"escalated", "closed"}:
@@ -238,6 +264,10 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
         task = ctx.task_manager.get_task(resolved_id)
         if not task:
             return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
+
+        denied = require_claim_authority(ctx.task_manager, task, "de_escalate_task")
+        if denied:
+            return denied
 
         projected_state = projected_task_state(task)
         if projected_state != "escalated":

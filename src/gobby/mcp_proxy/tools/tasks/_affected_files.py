@@ -11,6 +11,7 @@ import logging
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.tasks._authorization import require_claim_authority
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.task_affected_files import AnnotationSource, TaskAffectedFileManager
@@ -181,6 +182,13 @@ def create_ops_affected_files_registry(ctx: "RegistryContext") -> InternalToolRe
             resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
         except (TaskNotFoundError, ValueError) as e:
             return {"error": f"Invalid task_id: {e}"}
+
+        task = ctx.task_manager.get_task(resolved_id)
+        if task is None:
+            return {"error": f"Task {task_id} not found"}
+        denied = require_claim_authority(ctx.task_manager, task, "set_affected_files")
+        if denied:
+            return denied
 
         if source not in ("expansion", "manual", "observed"):
             return {

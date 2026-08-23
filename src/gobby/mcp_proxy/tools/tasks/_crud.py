@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.tasks._authorization import require_claim_authority
 from gobby.mcp_proxy.tools.tasks._claim_activity import confirm_claiming_session_activity
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._formatters import (
@@ -511,6 +512,9 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         current_task = ctx.task_manager.get_task(resolved_id)
         if current_task is None:
             return {"error": f"Task {task_id} not found"}
+        denied = require_claim_authority(ctx.task_manager, current_task, "update_task")
+        if denied:
+            return denied
         if escalation_reason is not None and not current_task.is_escalated:
             return {"error": "Cannot update escalation_reason for a task that is not escalated."}
         if labels is not None:

@@ -838,7 +838,7 @@ class TestDeleteTaskTool:
         )
 
         mock_task_manager.delete_task.assert_called_with(
-            "550e8400-e29b-41d4-a716-446655440000", cascade=True, unlink=False
+            "550e8400-e29b-41d4-a716-446655440000", cascade=False, unlink=False
         )
         assert "error" not in result
         assert result["deleted_task_id"] == "550e8400-e29b-41d4-a716-446655440000"

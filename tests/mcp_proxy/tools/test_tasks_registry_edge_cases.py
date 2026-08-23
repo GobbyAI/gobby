@@ -94,6 +94,8 @@ class TestSessionIntegrationTools:
             mock_session_manager = MagicMock()
             mock_session_manager.resolve_session_reference.return_value = "explicit-session-uuid"
             MockSessionManager.return_value = mock_session_manager
+            # Naming another session requires agent-run delegation lineage (#20821).
+            mock_task_manager.db.fetchone.return_value = {"id": "run-delegated"}
             registry = create_task_registry(mock_task_manager)
 
             result = await registry.call(
