@@ -1016,6 +1016,62 @@ class TestTmuxActivation:
         assert streaming_id not in server._tmux_pending
 
     @pytest.mark.asyncio
+    async def test_capture_spawn_failure_degrades_with_a_working_stream(
+        self, server: WebSocketServer
+    ) -> None:
+        # capture-pane is a short-lived read child. Failing to spawn it says
+        # nothing about the bridge's tmux client, so by the blast-radius rule
+        # this degrades rather than failing -- but it must reach that decision
+        # instead of escaping activation, which is what it used to do.
+        from gobby.agents.tmux.history import capture_history as real_capture_history
+
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws)
+
+        with activation_harness(server) as harness:
+            harness.capture.side_effect = real_capture_history
+            harness.has_session.return_value = True
+            with patch(
+                "asyncio.create_subprocess_exec",
+                new=AsyncMock(side_effect=OSError(24, "Too many open files")),
+            ):
+                await resize(server, ws, streaming_id)
+
+        history = ws.messages_of_type("terminal_attach_history")
+        assert len(history) == 1
+        assert history[0]["unavailable"] is True
+        assert history[0]["text"] == ""
+        assert ws.messages_of_type("tmux_activation_failed") == []
+        # The terminal still works: losing scrollback must not cost the stream.
+        harness.reader.start_reader.assert_awaited()
+        assert streaming_id not in server._tmux_pending
+
+    @pytest.mark.asyncio
+    async def test_capture_spawn_failure_on_a_dead_session_fails_activation(
+        self, server: WebSocketServer
+    ) -> None:
+        from gobby.agents.tmux.history import capture_history as real_capture_history
+
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws)
+
+        with activation_harness(server) as harness:
+            harness.capture.side_effect = real_capture_history
+            harness.has_session.return_value = False
+            with patch(
+                "asyncio.create_subprocess_exec",
+                new=AsyncMock(side_effect=OSError(24, "Too many open files")),
+            ):
+                await resize(server, ws, streaming_id)
+
+        failures = ws.messages_of_type("tmux_activation_failed")
+        assert [failure["code"] for failure in failures] == ["session_missing"]
+        assert ws.messages_of_type("terminal_attach_history") == []
+        harness.reader.start_reader.assert_not_awaited()
+        harness.detach.assert_any_await(streaming_id)
+        assert streaming_id not in server._tmux_pending
+
+    @pytest.mark.asyncio
     async def test_bridge_process_exiting_during_capture_fails_activation(
         self, server: WebSocketServer
     ) -> None:
