@@ -13,6 +13,8 @@ import pytest
 
 from gobby.config.sessions import MemoryRecallConfig
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.memory_recall_delivery import _memory_bodies
+from gobby.mcp_proxy.tools.memory_recall import _next_chunk
 from gobby.memory import generation_schemas
 from gobby.memory import recall as recall_module
 from gobby.memory.recall import (
@@ -23,12 +25,14 @@ from gobby.memory.recall import (
     MemoryRecallRunner,
     PromptDecisionKind,
     RecallSessionState,
+    _memory_to_payload,
     scrub_memory_recall_query,
 )
 from gobby.review_learning.fingerprint import build_occurrence_key
 from gobby.review_learning.lessons import normalize_lesson
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import Memory
+from gobby.workflows.engine.delivery_formatting import _format_project_memory
 from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.unit
@@ -140,6 +144,7 @@ def _memory(
     *,
     similarity: float | None = 0.91,
     tags: list[str] | None = None,
+    rationale: str | None = None,
 ) -> Memory:
     return Memory(
         id=memory_id,
@@ -151,6 +156,7 @@ def _memory(
         tags=tags or ["test"],
         similarity=similarity,
         search_via="hybrid",
+        rationale=rationale,
     )
 
 
@@ -641,3 +647,35 @@ async def test_digest_tail_is_the_slice_of_the_turn_not_a_cleaned_window(
     assert "project-memory" not in embed_text
     assert "Recalled memory" not in embed_text
     assert "Alpha line" not in embed_text, "cleaning must not widen the slice"
+
+
+def test_inline_and_queued_bodies_match() -> None:
+    """Rationale is writer provenance; neither delivery route may surface it.
+
+    Both routes read the same `_memory_to_payload` output, so dropping the
+    field there is what keeps the queued chunk from saying more about a memory
+    than the inline block does.
+    """
+    rationale = "keep the TS convention for future sessions"
+    payload = _memory_to_payload(
+        _memory("memory-parity", content="Prefer explicit return types.", rationale=rationale)
+    )
+    assert "rationale" not in payload
+
+    inline_body = _format_project_memory(payload)
+
+    queued_body = _memory_bodies([payload])[0]
+    chunk, _cursor = _next_chunk(
+        {
+            "recall_request_id": "request-parity",
+            "memories": [queued_body],
+            "cursor": {"memory_index": 0, "content_offset": 0, "chunk_index": 0},
+        }
+    )
+    queued_memory = chunk["memories"][0]
+
+    assert queued_memory["memory_complete"] is True, "the whole memory fits in one chunk"
+    assert "rationale" not in queued_body
+    assert "rationale" not in queued_memory
+    assert _format_project_memory(queued_memory) == inline_body
+    assert rationale not in inline_body

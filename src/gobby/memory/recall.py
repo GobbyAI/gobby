@@ -586,7 +586,13 @@ def _is_technical_term(term: str) -> bool:
 
 
 def _memory_to_payload(memory: Memory) -> dict[str, Any]:
-    """Retain body fields for delivery and search fields for diagnostics only."""
+    """Retain body fields for delivery and search fields for diagnostics only.
+
+    `rationale` is writer provenance, not memory text. Both delivery routes read
+    this payload, so omitting it here is what keeps the queued route from saying
+    more about a memory than the inline block does. `recall_signal` and dream
+    read provenance from the row itself.
+    """
     payload: dict[str, Any] = {
         "id": memory.id,
         "content": memory.content,
@@ -598,7 +604,6 @@ def _memory_to_payload(memory: Memory) -> dict[str, Any]:
         "tags": list(memory.tags or []),
         "created_at": datetime_to_required_iso(memory.created_at),
         "updated_at": datetime_to_required_iso(memory.updated_at),
-        "rationale": memory.rationale,
     }
     for key in ("similarity", "search_via", "ranking_score", "ranking_mode"):
         value = getattr(memory, key, None)

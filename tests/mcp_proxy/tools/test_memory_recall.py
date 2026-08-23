@@ -367,7 +367,8 @@ def test_main_memory_registry_includes_inline_and_overflow_tools(
 
 
 @pytest.mark.asyncio
-async def test_recall_chunks_include_rationale(temp_db: HubDatabase) -> None:
+async def test_recall_chunks_carry_no_rationale(temp_db: HubDatabase) -> None:
+    """Overflow retrieval delivers memory text only, never the writer's justification."""
     now = datetime.now(UTC)
     populated = Memory(
         id="memory-1",
@@ -386,25 +387,12 @@ async def test_recall_chunks_include_rationale(temp_db: HubDatabase) -> None:
     )
     populated_payload = _memory_to_payload(populated)
     legacy_payload = _memory_to_payload(legacy)
-    assert populated_payload["rationale"] == "keep the TS convention for future sessions"
-    assert "rationale" in legacy_payload
-    assert legacy_payload["rationale"] is None
+    assert populated.rationale, "the source row still records why it was written"
+    assert "rationale" not in populated_payload
+    assert "rationale" not in legacy_payload
 
-    bodies = _memory_bodies(
-        [
-            populated_payload,
-            legacy_payload,
-            {
-                "id": "memory-3",
-                "content": "Empty claim.",
-                "memory_type": "fact",
-                "rationale": "",
-            },
-        ]
-    )
-    assert bodies[0]["rationale"] == "keep the TS convention for future sessions"
-    assert "rationale" not in bodies[1]
-    assert "rationale" not in bodies[2]
+    bodies = _memory_bodies([populated_payload, legacy_payload])
+    assert all("rationale" not in body for body in bodies)
 
     chunk, _cursor = _next_chunk(
         {
@@ -414,29 +402,17 @@ async def test_recall_chunks_include_rationale(temp_db: HubDatabase) -> None:
         }
     )
     assert chunk["memories"][0]["memory_type"] == "pattern"
-    assert chunk["memories"][0]["rationale"] == "keep the TS convention for future sessions"
+    assert "rationale" not in chunk["memories"][0]
 
     _create_sessions(temp_db)
-    _queue(
-        temp_db,
-        "request-rationale",
-        21,
-        [
-            {
-                "id": "memory-1",
-                "content": "Exact body.",
-                "memory_type": "pattern",
-                "rationale": "keep the TS convention for future sessions",
-            }
-        ],
-    )
+    _queue(temp_db, "request-rationale", 21, bodies[:1])
     with session_context_for_test(SESSION_ID):
         result = await _registry(temp_db).call(
             "get_recall_memories",
             {"recall_request_id": "request-rationale"},
         )
     assert result["success"] is True
-    assert result["memories"][0]["rationale"] == "keep the TS convention for future sessions"
+    assert "rationale" not in result["memories"][0]
     stored = SessionVariableManager(temp_db).get_variables(SESSION_ID)
     queued = stored[MEMORY_RECALL_DELIVERIES_VARIABLE][0]["memories"][0]
-    assert queued["rationale"] == "keep the TS convention for future sessions"
+    assert "rationale" not in queued
