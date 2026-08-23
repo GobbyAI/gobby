@@ -1062,3 +1062,79 @@ async def test_uncompounded_passing_run_is_still_a_success(tmp_path: Path) -> No
     )
 
     assert [(run.outcome, run.exit_code) for run in evidence.validation_runs] == [("success", 0)]
+
+
+def _codex_nested_exec_pair(*, command: str, result: dict[str, Any]) -> list[dict[str, Any]]:
+    """A `tools.exec_command` call nested inside `exec`, which Codex outcomes drive."""
+    return [
+        _codex_response_item(
+            {
+                "type": "custom_tool_call",
+                "call_id": "outer-exec",
+                "name": "exec",
+                "input": (
+                    f"const r = await tools.exec_command({{cmd:{json.dumps(command)}}}); text(r);"
+                ),
+            },
+            BASE_TIME,
+        ),
+        _codex_response_item(
+            {
+                "type": "custom_tool_call_output",
+                "call_id": "outer-exec",
+                "output": json.dumps(result),
+            },
+            BASE_TIME + timedelta(seconds=1),
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_codex_wrapper_zeroed_exit_code_still_yields_a_failure_run(tmp_path: Path) -> None:
+    """A.3: Codex records its own outcomes, and the same shell truth applies there.
+
+    `_consume_codex_outcome` classifies the run itself rather than going through
+    `_record_validation_run`, so a fix confined to the Claude path would leave every
+    Codex session filing wrapper-zeroed reds as passes.
+    """
+    transcript = tmp_path / "codex-zeroed.jsonl"
+    _write_jsonl(
+        transcript,
+        _codex_nested_exec_pair(
+            command="uv run pytest tests/tasks -q 2>&1 | tail -20",
+            result={"exit_code": 0, "output": _RED_PYTEST_OUTPUT},
+        ),
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("codex", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [(run.outcome, run.exit_code) for run in evidence.validation_runs] == [("failure", 0)]
+
+
+@pytest.mark.asyncio
+async def test_codex_uncompounded_passing_run_is_still_a_success(tmp_path: Path) -> None:
+    """The Codex path keeps its previous behavior for the non-compound shape."""
+    transcript = tmp_path / "codex-plain.jsonl"
+    _write_jsonl(
+        transcript,
+        _codex_nested_exec_pair(
+            command="uv run pytest tests/tasks -q",
+            result={"exit_code": 0, "output": "21 passed in 0.13s"},
+        ),
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("codex", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [(run.outcome, run.exit_code) for run in evidence.validation_runs] == [("success", 0)]

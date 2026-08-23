@@ -377,8 +377,12 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
     match = classify_validation_command(outcome.command, state.detection_config)
     if match is None:
         return
-    status, exit_code, unknown_reason = _extract_outcome(outcome.result)
     output, output_truncated = _extract_output(outcome.result)
+    status, exit_code, unknown_reason = _extract_outcome(
+        outcome.result,
+        output,
+        aggregate_status_is_trustworthy=not match.is_compound,
+    )
     if direct_pending:
         if status == "unknown":
             # Keep the call pending so ParsedMessage can recover structured
