@@ -18,9 +18,11 @@ def validator_spawn_overrides(
 ) -> dict[str, str | None]:
     """Return spawn overrides so the validator runs on the ``gobby_tasks.validation`` model.
 
-    The first configured candidate wins, with the feature profile's default
-    reasoning effort applied when the candidate carries no pin. Without a
-    validation config the agent definition's own defaults apply.
+    The first configured candidate wins. Its reasoning effort (or the feature
+    profile's default) is forwarded only when it resolves to a concrete value;
+    an unpinned candidate leaves the agent definition's own effort default in
+    force, since an explicit ``None`` would suppress it. Without a validation
+    config the definition's defaults apply entirely.
     """
     if validation_config is None:
         return {}
@@ -30,11 +32,10 @@ def validator_spawn_overrides(
     if not entries:
         return {}
     provider, model = parse_feature_candidate(entries[0].candidate)
-    return {
-        "provider": provider,
-        "model": model,
-        "reasoning_effort": entries[0].reasoning_effort,
-    }
+    overrides: dict[str, str | None] = {"provider": provider, "model": model}
+    if entries[0].reasoning_effort is not None:
+        overrides["reasoning_effort"] = entries[0].reasoning_effort
+    return overrides
 
 
 def build_agentic_review_prompt(
