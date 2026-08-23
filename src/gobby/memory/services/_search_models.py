@@ -33,6 +33,10 @@ class SearchDebugSnapshot:
     ranking_score_map: dict[str, float]
     rrf_applied: bool
     query: str = ""
+    # The BM25 term bag, recorded only when it differs from ``query``. Once a
+    # caller splits the two representations, the term bag is not recoverable from
+    # an enriched query, so a hybrid replay needs both legs stored.
+    bm25_query: str | None = None
     project_id: str | None = None
     session_id: str | None = None
     recall_request_id: str | None = None

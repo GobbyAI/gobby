@@ -6,6 +6,7 @@ import hashlib
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -255,6 +256,40 @@ def test_build_recall_signal_event_defaults_join_metadata_for_non_recall() -> No
     assert event["session_id"] is None
     assert event["recall_request_id"] is None
     assert event["caller"] == "memory.search"
+
+
+def test_enriched_request_records_both_query_legs() -> None:
+    """2.4.4: `query` is the judge's prompt input; `weighting` carries the term bag.
+
+    An enriched embed text is the prompt plus a digest tail, so the BM25 term bag
+    is not recoverable from the stored query. Both legs have to survive for a
+    hybrid replay to reproduce the retrieval these labels describe.
+    """
+    snapshot = replace(_snapshot(), query="enriched prompt text", bm25_query="raw user query")
+
+    event = build_recall_signal_event(
+        snapshot=snapshot,
+        timestamp="2026-06-15T00:00:00+00:00",
+        weighting={"rrf_k": 60},
+    )
+
+    assert event["query"] == "enriched prompt text"
+    assert event["weighting"] == {"rrf_k": 60, "bm25_query": "raw user query"}
+
+
+def test_unenriched_request_records_no_bm25_query() -> None:
+    """2.4.5: with one representation, `weighting` stays a pure constants snapshot."""
+    weighting = {"rrf_k": 60}
+
+    event = build_recall_signal_event(
+        snapshot=_snapshot(),
+        timestamp="2026-06-15T00:00:00+00:00",
+        weighting=weighting,
+    )
+
+    assert event["query"] == "raw user query"
+    assert event["weighting"] == {"rrf_k": 60}
+    assert weighting == {"rrf_k": 60}, "the caller's constants snapshot is not mutated"
 
 
 def test_append_recall_signal_events_writes_parseable_jsonl_and_appends(tmp_path: Path) -> None:

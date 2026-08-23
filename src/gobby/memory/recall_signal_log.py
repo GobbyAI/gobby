@@ -112,8 +112,17 @@ def build_recall_signal_event(
     timestamp: str,
     weighting: Mapping[str, object],
 ) -> dict[str, Any]:
-    """Build one deterministic JSON-serializable event for a completed search."""
+    """Build one deterministic JSON-serializable event for a completed search.
+
+    ``query`` is the text retrieval was driven by, because the shadow judge renders
+    it as the user's question. When the search split that from the BM25 term bag,
+    the term bag rides in ``weighting`` as ``bm25_query`` so a hybrid replay can
+    reproduce both legs; ``weighting`` is otherwise a pure constants snapshot.
+    """
     graph_score_map = _sanitize_float_map(snapshot.graph_score_map)
+    weighting_snapshot = dict(weighting)
+    if snapshot.bm25_query:
+        weighting_snapshot["bm25_query"] = snapshot.bm25_query
     return {
         "schema_version": RECALL_SIGNAL_SCHEMA_VERSION,
         "timestamp": timestamp,
@@ -131,7 +140,7 @@ def build_recall_signal_event(
         ),
         "ranking_score_map": _sanitize_float_map(snapshot.ranking_score_map),
         "graph_score_map": graph_score_map,
-        "weighting": dict(weighting),
+        "weighting": weighting_snapshot,
         "hits": [
             _hit_to_event(
                 hit=hit,

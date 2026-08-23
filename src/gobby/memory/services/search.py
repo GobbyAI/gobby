@@ -164,6 +164,7 @@ class SearchService:
             if use_graph:
                 memories = await self._search_with_graph(
                     query=query,
+                    embed_text=embed_text,
                     query_embedding=query_embedding,
                     limit=limit,
                     filters=filters,
@@ -182,6 +183,7 @@ class SearchService:
             else:
                 memories = await self._search_qdrant_keyword(
                     query=query,
+                    embed_text=embed_text,
                     query_embedding=query_embedding,
                     limit=limit,
                     filters=filters,
@@ -206,6 +208,7 @@ class SearchService:
                 tags_all,
                 tags_any,
                 tags_none,
+                embed_text=embed_text,
                 session_id=session_id,
                 recall_request_id=recall_request_id,
                 caller=caller,
@@ -239,6 +242,7 @@ class SearchService:
         tags_none: list[str] | None,
         half_life: float,
         effective_min_score: float,
+        embed_text: str | None = None,
         session_id: str | None = None,
         recall_request_id: str | None = None,
         caller: str = "memory.search",
@@ -247,6 +251,7 @@ class SearchService:
         return await search_with_graph(
             self,
             query=query,
+            embed_text=embed_text,
             query_embedding=query_embedding,
             limit=limit,
             filters=filters,
@@ -279,6 +284,7 @@ class SearchService:
         tags_none: list[str] | None,
         half_life: float,
         effective_min_score: float,
+        embed_text: str | None = None,
         session_id: str | None = None,
         recall_request_id: str | None = None,
         caller: str = "memory.search",
@@ -287,6 +293,7 @@ class SearchService:
         return await search_qdrant_keyword(
             self,
             query=query,
+            embed_text=embed_text,
             query_embedding=query_embedding,
             limit=limit,
             filters=filters,
@@ -332,13 +339,20 @@ class SearchService:
         returned: list[Memory],
         ranking_score_map: dict[str, float],
         rrf_applied: bool,
+        embed_text: str | None = None,
         graph_score_map: dict[str, float] | None = None,
         graph_component_map: dict[str, dict[str, float | None]] | None = None,
     ) -> None:
+        # The logged query is the text retrieval was actually driven by, because the
+        # shadow judge renders it as the user's question. When the caller split the
+        # two representations, the term bag is kept beside it — nothing recovers it
+        # from an enriched embed text.
+        logged_query = embed_text or query
         await self._run_storage(
             emit_search_debug,
             search_debug_sink=self._search_debug_sink,
-            query=query,
+            query=logged_query,
+            bm25_query=query if logged_query != query else None,
             project_id=project_id,
             session_id=session_id,
             recall_request_id=recall_request_id,
@@ -455,6 +469,7 @@ class SearchService:
         tags_any: list[str] | None,
         tags_none: list[str] | None,
         *,
+        embed_text: str | None = None,
         session_id: str | None = None,
         recall_request_id: str | None = None,
         caller: str = "memory.search",
@@ -476,6 +491,7 @@ class SearchService:
         # One event per completed search — fallback searches must not be silent.
         await self._emit_search_debug(
             query=query,
+            embed_text=embed_text,
             project_id=project_id,
             session_id=session_id,
             recall_request_id=recall_request_id,

@@ -129,6 +129,7 @@ class SearchPathHost(Protocol):
         returned: list[Memory],
         ranking_score_map: dict[str, float],
         rrf_applied: bool,
+        embed_text: str | None = None,
         graph_score_map: dict[str, float] | None = None,
         graph_component_map: dict[str, dict[str, float | None]] | None = None,
     ) -> None: ...
@@ -150,6 +151,7 @@ async def search_with_graph(
     effective_min_score: float,
     graph_min_score: float,
     rrf_k: int,
+    embed_text: str | None = None,
     session_id: str | None = None,
     recall_request_id: str | None = None,
     caller: str = "memory.search",
@@ -299,6 +301,7 @@ async def search_with_graph(
     )
     await service._emit_search_debug(
         query=query,
+        embed_text=embed_text,
         project_id=project_id,
         session_id=session_id,
         recall_request_id=recall_request_id,
@@ -328,6 +331,7 @@ async def search_qdrant_keyword(
     half_life: float,
     effective_min_score: float,
     rrf_k: int,
+    embed_text: str | None = None,
     session_id: str | None = None,
     recall_request_id: str | None = None,
     caller: str = "memory.search",
@@ -441,6 +445,7 @@ async def search_qdrant_keyword(
     )
     await service._emit_search_debug(
         query=query,
+        embed_text=embed_text,
         project_id=project_id,
         session_id=session_id,
         recall_request_id=recall_request_id,

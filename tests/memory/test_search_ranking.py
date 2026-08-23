@@ -843,3 +843,96 @@ async def test_facade_threads_embed_text_to_the_search_service() -> None:
     await facade.search_memories(query="webhook handler")
 
     assert [call["embed_text"] for call in calls] == [_NOISY_PROMPT, None]
+
+
+# ---------------------------------------------------------------------------
+# 2.4 — log the query that actually drove retrieval
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_graph_path_logs_embed_text(monkeypatch: Any) -> None:
+    """2.4.3: the graph path logs the embed text, keeping the term bag beside it.
+
+    The shadow judge renders the stored query as the user's question, so it has to
+    be the string retrieval was actually driven by. The term bag rides along
+    because an enriched embed text is the prompt plus a digest tail and no
+    deterministic function recovers the term bag from it.
+    """
+    snapshots: list[SearchDebugSnapshot] = []
+    service = _service(
+        ["m1"],
+        vector_results=[("m1", 0.9)],
+        search_debug_sink=snapshots.append,
+        falkordb_graph_search=True,
+    )
+
+    async def graph_search(**_kwargs: Any) -> GraphScoredResult:
+        return GraphScoredResult(scored=[], component_map={})
+
+    monkeypatch.setattr(service, "_search_graph_scored", graph_search)
+
+    await service.search("webhook handler", limit=1, embed_text=_NOISY_PROMPT)
+
+    assert [snapshot.query for snapshot in snapshots] == [_NOISY_PROMPT]
+    assert [snapshot.bm25_query for snapshot in snapshots] == ["webhook handler"]
+
+
+@pytest.mark.asyncio
+async def test_qdrant_keyword_and_fallback_paths_log_embed_text() -> None:
+    """2.4.2: every emission site is threaded, so no path logs the term bag alone."""
+    qdrant_snapshots: list[SearchDebugSnapshot] = []
+    qdrant_service = _service(
+        ["m1"],
+        vector_results=[("m1", 0.9)],
+        search_debug_sink=qdrant_snapshots.append,
+    )
+    await qdrant_service.search("webhook handler", limit=1, embed_text=_NOISY_PROMPT)
+
+    fallback_snapshots: list[SearchDebugSnapshot] = []
+    fallback_service = _fallback_service(
+        ["kw"],
+        keyword_results=[("kw", 0.7)],
+        search_debug_sink=fallback_snapshots.append,
+    )
+    await fallback_service.search("webhook handler", limit=1, embed_text=_NOISY_PROMPT)
+
+    for snapshots in (qdrant_snapshots, fallback_snapshots):
+        assert [snapshot.query for snapshot in snapshots] == [_NOISY_PROMPT]
+        assert [snapshot.bm25_query for snapshot in snapshots] == ["webhook handler"]
+
+
+@pytest.mark.asyncio
+async def test_search_without_embed_text_logs_the_query_alone() -> None:
+    """2.4.5: an unenriched caller logs exactly what it logged before 2.4.
+
+    The YAKE-derived embedding text stays out of the log: it is a derived detail of
+    the vector leg, not a second representation the caller chose.
+    """
+    snapshots: list[SearchDebugSnapshot] = []
+    service = _service(
+        ["m1"],
+        vector_results=[("m1", 0.9)],
+        search_debug_sink=snapshots.append,
+    )
+
+    await service.search(_NOISY_PROMPT, limit=1)
+
+    assert [snapshot.query for snapshot in snapshots] == [_NOISY_PROMPT]
+    assert [snapshot.bm25_query for snapshot in snapshots] == [None]
+
+
+@pytest.mark.asyncio
+async def test_embed_text_matching_the_query_records_no_second_leg() -> None:
+    """One representation stays one representation, whatever spelling produced it."""
+    snapshots: list[SearchDebugSnapshot] = []
+    service = _service(
+        ["m1"],
+        vector_results=[("m1", 0.9)],
+        search_debug_sink=snapshots.append,
+    )
+
+    await service.search("webhook handler", limit=1, embed_text="webhook handler")
+
+    assert [snapshot.query for snapshot in snapshots] == ["webhook handler"]
+    assert [snapshot.bm25_query for snapshot in snapshots] == [None]
