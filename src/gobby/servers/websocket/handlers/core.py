@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import uuid
 from typing import Any
 
 from gobby.mcp_proxy.manager import MCPClientManager
@@ -329,6 +330,17 @@ class HandlerMixin:
                 except OSError as e:
                     logger.warning("Failed to write to tmux bridge %s: %s", run_id, e)
                 return
+
+        # Only an agent run is left to try, and the runs table keys on a uuid
+        # column -- an id that cannot be one raises instead of missing. The web
+        # terminal answers tmux's DA and DSR queries as terminal_input, so a
+        # reply that lands after its bridge detached arrives here carrying a
+        # tmux streaming id, which is exactly such an id.
+        try:
+            uuid.UUID(run_id)
+        except ValueError:
+            logger.debug("Ignoring terminal_input for non-agent id %s", run_id)
+            return
 
         # Look up agent run from DB to get tmux_session_name
         from gobby.storage.agents import LocalAgentRunManager

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import uuid
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -147,6 +148,11 @@ class ActivationHarness:
     calls: list[str]
 
 
+# The tty the harness's registration poll reports, and therefore the one the
+# capture's command list is expected to repaint.
+HARNESS_CLIENT_TTY = "/dev/ttys009"
+
+
 @contextlib.contextmanager
 def activation_harness(
     server: WebSocketServer,
@@ -174,7 +180,9 @@ def activation_harness(
 
     async def record_capture(*_args: Any, **_kwargs: Any) -> HistoryCapture:
         calls.append("capture")
-        return HistoryCapture(text="hist", truncated=False, dropped_bytes=0, total_bytes=4)
+        return HistoryCapture(
+            text="hist", truncated=False, dropped_bytes=0, total_bytes=4, repainted=True
+        )
 
     async def record_start_reader(*_args: Any, **_kwargs: Any) -> bool:
         calls.append("start_reader")
@@ -220,7 +228,7 @@ def activation_harness(
                 patch(
                     "gobby.servers.websocket.tmux_activation._wait_for_client",
                     new_callable=AsyncMock,
-                    return_value=True,
+                    return_value=HARNESS_CLIENT_TTY,
                 )
             ),
             capture=stack.enter_context(
@@ -862,16 +870,50 @@ class TestTerminalInputBridgeRouting:
         server.session_manager = mock_session_mgr
         mock_arm = MagicMock()
         mock_arm.get.return_value = None
+        run_id = str(uuid.uuid4())
 
         # Bridge returns None for fd - should fall through to DB lookup
         with patch.object(
             server._tmux_bridge, "get_master_fd", new_callable=AsyncMock, return_value=None
         ):
             with patch("gobby.storage.agents.LocalAgentRunManager", return_value=mock_arm):
-                await server._handle_terminal_input(ws, {"run_id": "some-agent", "data": "x"})
-                mock_arm.get.assert_called_once_with("some-agent")
+                await server._handle_terminal_input(ws, {"run_id": run_id, "data": "x"})
+                mock_arm.get.assert_called_once_with(run_id)
                 assert mock_arm.get.call_count == 1
                 assert mock_arm.get.call_args is not None
+
+    @pytest.mark.asyncio
+    async def test_input_for_a_detached_tmux_id_never_reaches_the_run_lookup(
+        self, server: WebSocketServer
+    ) -> None:
+        """A tmux streaming id is not a uuid, so the runs query would raise on it.
+
+        The web terminal answers tmux's DA and DSR queries as terminal_input, so
+        a reply that lands after its bridge detached arrives with no bridge to
+        write to and a run_id the uuid-keyed lookup cannot parse.
+        """
+        ws = MockWebSocket()
+        # A database has to be reachable, or the handler would stop short of
+        # the lookup for a reason that has nothing to do with the id.
+        server.session_manager = SimpleNamespace(db=object())
+
+        def refuse_db(*_args: Any, **_kwargs: Any) -> Any:
+            raise AssertionError("a tmux streaming id must never reach the agent-run lookup")
+
+        with (
+            patch.object(
+                server._tmux_bridge, "get_master_fd", new_callable=AsyncMock, return_value=None
+            ) as get_master_fd,
+            patch("gobby.storage.agents.LocalAgentRunManager", side_effect=refuse_db),
+        ):
+            await server._handle_terminal_input(
+                ws, {"run_id": "tmux-68bd19945ce3", "data": "\x1b[?1;2c"}
+            )
+
+        # The bridge is still the first thing tried; it is only once that comes
+        # back empty that the id has nowhere left to go.
+        get_master_fd.assert_awaited_once_with("tmux-68bd19945ce3")
+        assert ws.sent_messages == []
 
 
 class TestTmuxActivation:
@@ -893,8 +935,12 @@ class TestTmuxActivation:
             "capture",
             "send:terminal_attach_history",
             "start_reader",
-            "refresh_client",
         ]
+        # The repaint is issued inside the capture's own tmux command list, so
+        # a captured attachment never makes a second refresh call of its own.
+        harness.refresh_client.assert_not_awaited()
+        assert harness.capture.await_args is not None
+        assert harness.capture.await_args.kwargs["refresh_tty"] == HARNESS_CLIENT_TTY
         assert harness.attach.await_args is not None
         assert harness.attach.await_args.kwargs["rows"] == 40
         assert harness.attach.await_args.kwargs["cols"] == 120
@@ -1166,22 +1212,43 @@ class TestTmuxActivation:
         assert streaming_id not in server._tmux_pending
 
     @pytest.mark.asyncio
-    async def test_bridge_dying_during_refresh_fails_activation(
+    async def test_a_capture_whose_repaint_failed_still_gets_a_screen(
         self, server: WebSocketServer
     ) -> None:
-        # refresh_client is the last await, and finalizing drops the
-        # reservation teardown keys on -- so a client that died during it must
-        # not be finalized as a live stream.
+        # The capture's own repaint is what the seam depends on, but a client
+        # that still has history and no screen is worse than a seam.
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws)
+
+        with activation_harness(server) as harness:
+            harness.capture.side_effect = None
+            harness.capture.return_value = HistoryCapture(
+                text="hist", truncated=False, dropped_bytes=0, total_bytes=4, repainted=False
+            )
+            await resize(server, ws, streaming_id)
+
+        harness.refresh_client.assert_awaited_once()
+        assert ws.messages_of_type("tmux_activation_failed") == []
+        assert ws.messages_of_type("terminal_attach_history")[0]["text"] == "hist"
+
+    @pytest.mark.asyncio
+    async def test_bridge_dying_during_the_reader_start_fails_activation(
+        self, server: WebSocketServer
+    ) -> None:
+        # start_reader is the last await, and finalizing drops the reservation
+        # teardown keys on -- so a client that died during it must not be
+        # finalized as a live stream.
         ws = MockWebSocket()
         streaming_id = await reserve(server, ws)
         bridge = make_bridge()
 
         with activation_harness(server, bridge=bridge) as harness:
 
-            async def kill_during_refresh(*_args: Any, **_kwargs: Any) -> None:
+            async def kill_during_reader_start(*_args: Any, **_kwargs: Any) -> bool:
                 bridge.proc.returncode = 1
+                return True
 
-            harness.refresh_client.side_effect = kill_during_refresh
+            harness.reader.start_reader.side_effect = kill_during_reader_start
             await resize(server, ws, streaming_id)
 
         failures = ws.messages_of_type("tmux_activation_failed")
@@ -1492,19 +1559,21 @@ class TestTmuxClientRegistration:
 
         proc = SimpleNamespace(
             returncode=0,
-            communicate=AsyncMock(return_value=(b"4242\n9001\n", b"")),
+            communicate=AsyncMock(return_value=(b"4242 /dev/ttys004\n9001 /dev/ttys009\n", b"")),
             kill=MagicMock(),
             wait=AsyncMock(return_value=0),
         )
         with patch(
             "asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)
         ) as create_proc:
-            assert await _wait_for_client(server._tmux_mgr_default, "demo", 9001) is True
+            # The tty is the registration signal and the refresh target at once.
+            tty = await _wait_for_client(server._tmux_mgr_default, "demo", 9001)
 
+        assert tty == "/dev/ttys009"
         assert create_proc.await_args is not None
         args = create_proc.await_args.args
         assert "list-clients" in args
-        assert "#{client_pid}" in args
+        assert "#{client_pid} #{client_tty}" in args
         assert args[args.index("-t") + 1] == "=demo:"
 
     @pytest.mark.asyncio
@@ -1513,7 +1582,7 @@ class TestTmuxClientRegistration:
 
         proc = SimpleNamespace(
             returncode=0,
-            communicate=AsyncMock(return_value=(b"4242\n", b"")),
+            communicate=AsyncMock(return_value=(b"4242 /dev/ttys004\n", b"")),
             kill=MagicMock(),
             wait=AsyncMock(return_value=0),
         )
@@ -1521,8 +1590,7 @@ class TestTmuxClientRegistration:
             "asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)
         ) as create_proc:
             assert (
-                await _wait_for_client(server._tmux_mgr_default, "demo", 9001, timeout=0.05)
-                is False
+                await _wait_for_client(server._tmux_mgr_default, "demo", 9001, timeout=0.05) is None
             )
 
         # It kept polling to the deadline rather than giving up on one miss.
@@ -1537,7 +1605,7 @@ class TestTmuxClientRegistration:
 
         proc = SimpleNamespace(
             returncode=1,
-            communicate=AsyncMock(return_value=(b"9001\n", b"no server running")),
+            communicate=AsyncMock(return_value=(b"9001 /dev/ttys009\n", b"no server running")),
             kill=MagicMock(),
             wait=AsyncMock(return_value=1),
         )
@@ -1545,8 +1613,7 @@ class TestTmuxClientRegistration:
             "asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)
         ) as create_proc:
             assert (
-                await _wait_for_client(server._tmux_mgr_default, "demo", 9001, timeout=0.05)
-                is False
+                await _wait_for_client(server._tmux_mgr_default, "demo", 9001, timeout=0.05) is None
             )
 
         # A nonzero list-clients is never read as "registered", even though the
@@ -1784,19 +1851,23 @@ class TestTmuxActivationBudget:
         loop = asyncio.get_running_loop()
         observed: list[tuple[str, float, float]] = []
 
-        def watch(step: str, result: Any) -> Any:
+        def watch(step: str, result: Any, *, raises: Exception | None = None) -> Any:
             async def record(*_args: Any, **kwargs: Any) -> Any:
                 observed.append((step, loop.time(), kwargs["timeout"]))
+                if raises is not None:
+                    raise raises
                 return result
 
             return record
 
+        # A failing capture is what puts all three timed steps on one path: the
+        # captured path repaints inside the capture's own command list, so its
+        # standalone refresh only exists where the history did not arrive.
         with activation_harness(server) as harness, budget_of(budget, tail=0.05):
             started = loop.time()
-            harness.wait_for_client.side_effect = watch("registration", True)
+            harness.wait_for_client.side_effect = watch("registration", HARNESS_CLIENT_TTY)
             harness.capture.side_effect = watch(
-                "capture",
-                HistoryCapture(text="h", truncated=False, dropped_bytes=0, total_bytes=1),
+                "capture", None, raises=HistoryCaptureError("wedged")
             )
             harness.refresh_client.side_effect = watch("refresh", None)
             await resize(server, ws, streaming_id)
@@ -1811,6 +1882,7 @@ class TestTmuxActivationBudget:
         assert deadline_of["capture"] == pytest.approx(deadline_of["registration"] - 0.05, abs=0.02)
         assert deadline_of["registration"] - started <= budget + 0.02
         assert ws.messages_of_type("tmux_activation_failed") == []
+        assert ws.messages_of_type("terminal_attach_history")[0]["unavailable"] is True
 
     @pytest.mark.asyncio
     async def test_capture_is_skipped_when_delivering_it_would_not_fit(
