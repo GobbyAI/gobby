@@ -31,13 +31,19 @@ async def test_workflow_calls_evaluate_with_full_scope(
     monkeypatch.setattr(expansion_qa_coverage, "_evaluate_with_a4", fake_evaluate)
     monkeypatch.setattr(expansion_qa_coverage, "_load_a4_manifest_writer", lambda: None)
 
-    result = await case["registry"].call("run_expansion_qa_coverage", call_args(case))
+    args = call_args(case)
+    assert args["root_task"].startswith("#"), "the caller spells the ref with its prefix"
+
+    result = await case["registry"].call("run_expansion_qa_coverage", args)
 
     assert result["ok"] is True
     assert captured["plan_path"] == case["plan_path"].resolve()
     assert captured["plan_id"] == "task-qa-plan"
     assert captured["plan_hash"] == case["plan_hash"]
-    assert captured["root_task_ref"] == case["root_task"]
+    # Coverage-manifest identity treats ref spelling as significant, and the
+    # gobby-plans registry writes the ref unprefixed, so the prefix is stripped
+    # on the way in rather than round-tripped.
+    assert captured["root_task_ref"] == str(case["parent"].seq_num)
     assert captured["project_id"] == case["project"].id
     assert captured["task_tree"] == "db"
 

@@ -10,12 +10,11 @@ from typing import Any
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.definitions.agents import AgentDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.workflows.agent_models import AgentStepWorkflowBody
 from gobby.workflows.definitions import WorkflowDefinition
 from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.agent_models import AgentStepWorkflowBody
-from gobby.workflows.definitions import WorkflowStep
 from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
 
 pytestmark = pytest.mark.unit
@@ -81,12 +80,18 @@ def _setup_workflow(
         definition_json=json.dumps(workflow_data),
         enabled=True,
     )
+    # The engine reads the current step from the instance snapshot, never from
+    # the registered definition, so the snapshot has to carry the real steps or
+    # no handler and no transition is reachable.
     instance_mgr.save(
         AgentStepInstance(
             id=str(uuid.uuid4()),
             session_id=session_id,
             agent_name=definition.name,
-            snapshot=AgentStepWorkflowBody(steps=[WorkflowStep(name=current_step)]),
+            snapshot=AgentStepWorkflowBody(
+                variables=dict(definition.variables),
+                steps=list(definition.steps),
+            ),
             enabled=True,
             current_step=current_step,
             step_entered_at=datetime.now(UTC),

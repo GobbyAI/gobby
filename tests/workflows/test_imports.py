@@ -75,7 +75,13 @@ async def test_sync_imported_workflows_loads_project_and_global_files_without_re
 def test_sync_imported_definition_writes_all_four_kinds(temp_db: HubDatabase) -> None:
     agent = sync_imported_definition(
         temp_db,
-        {"name": "imported-agent", "type": "agent", "provider": "claude"},
+        {
+            "name": "imported-agent",
+            "type": "agent",
+            "provider": "claude",
+            # surfaces defaults to ["spawn"], which requires prompts.agent.
+            "prompts": {"agent": "Do the imported work."},
+        },
         None,
     )
     rule = sync_imported_definition(
@@ -148,6 +154,8 @@ def test_sync_imported_agent_persists_nested_step_workflow(temp_db: HubDatabase)
             "name": "imported-step-agent",
             "type": "agent",
             "provider": "claude",
+            # surfaces defaults to ["spawn"], which requires prompts.agent.
+            "prompts": {"agent": "Run the imported step workflow."},
             "step_workflow": _STEP_WORKFLOW,
         },
         None,

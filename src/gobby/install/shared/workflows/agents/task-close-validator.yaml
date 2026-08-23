@@ -2,7 +2,7 @@ name: task-close-validator
 description: |
   Taskless read-only validator for close reviews whose complete evidence exceeds
   the one-shot prompt limit.
-version: "1.3"
+version: "1.4"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -70,6 +70,12 @@ prompts:
     After a terminal closed, invalid, stale, or error response, call the
     zero-argument end_agent_run. Gobby delivers the persisted terminal payload
     to the originating session automatically.
+
+    Lifecycle model:
+    - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
+    - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
+    - They are observation points for this run, never review- or task-mutation hooks.
+    - Ending the current turn is separate from the explicit `end_agent_run` termination above.
 
 workflows:
   rule_selectors:

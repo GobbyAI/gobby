@@ -27,12 +27,19 @@ SKILL_DISCOVERY_RULES = (
     Path(__file__).parents[2] / "src/gobby/install/shared/workflows/rules/skill-discovery"
 )
 
+# These two require-*-skill rules gate on a path predicate rather than a file
+# extension — require-plan-skill on the `.gobby/plans/` prefix and
+# require-impeccable-skill on `touches_ui_design_path` — so neither can have an
+# entry in an extension map. Every other rule blocks a write keyed on the
+# file's extension and must be covered.
+PATH_PREDICATE_SKILL_RULES = frozenset({"require-plan-skill", "require-impeccable-skill"})
+
 
 def test_language_skill_extension_map_covers_installed_language_rules() -> None:
     installed_language_skills = {
         path.stem.removeprefix("require-").removesuffix("-skill")
         for path in SKILL_DISCOVERY_RULES.glob("require-*-skill.yaml")
-        if path.stem != "require-plan-skill"
+        if path.stem not in PATH_PREDICATE_SKILL_RULES
     }
 
     assert set(LANGUAGE_SKILL_EXTENSIONS) == installed_language_skills
