@@ -17,6 +17,7 @@ import pytest
 from gobby.config.persistence import MemoryConfig
 from gobby.memory.recall_constants import (
     DEFAULT_DECISION_PATH,
+    RECALL_QUERY_CONSTRUCTION_VERSION,
     RecallConstants,
     decision_record_path,
     resolve_recall_constants,
@@ -264,3 +265,14 @@ class TestSignalLogProvenance:
 
         assert snapshot["temporal_decay_half_life_days"] == 60.0
         assert "recall_constants_source" not in snapshot
+
+
+def test_query_construction_version_is_shared_without_an_import_cycle() -> None:
+    """2.2.2: neither recall module owns the version, so 4.1 can read it from here."""
+    from gobby.memory import recall, recall_constants
+
+    assert RECALL_QUERY_CONSTRUCTION_VERSION == "nl-embed-v1"
+    assert vars(recall)["RECALL_QUERY_CONSTRUCTION_VERSION"] is RECALL_QUERY_CONSTRUCTION_VERSION
+    source = Path(recall_constants.__file__ or "").read_text(encoding="utf-8")
+    assert "from gobby.memory.recall import" not in source
+    assert "from gobby.memory.recall_signal_log import" not in source

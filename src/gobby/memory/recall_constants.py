@@ -28,6 +28,12 @@ logger = logging.getLogger(__name__)
 
 MEMORY_RECALL_PRODUCER = "daemon_memory_recall"
 
+# How `MemoryRecallRunner` assembles the query it embeds. It lives here rather
+# than in `recall.py` because `recall.py` already imports `recall_signal_log`,
+# which needs to read this to stamp the cohort fence; defining it there would
+# close an import cycle. This module imports only stdlib.
+RECALL_QUERY_CONSTRUCTION_VERSION = "nl-embed-v1"
+
 # Daemon-global pooled location; the gate fit is pooled across projects, so the
 # shipped record lives outside any repo checkout.
 DEFAULT_DECISION_PATH = "~/.gobby/recall_refit_decision.json"

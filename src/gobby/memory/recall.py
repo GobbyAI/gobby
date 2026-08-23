@@ -12,9 +12,11 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.memory.recall_constants import RECALL_QUERY_CONSTRUCTION_VERSION
 from gobby.memory.recall_signal_log import make_injection_outcome_recorder
 from gobby.memory.synthetic_prompts import synthetic_prompt_reason
 from gobby.utils.datetime import datetime_to_required_iso
+from gobby.utils.injected_context import strip_injected_context
 from gobby.workflows.state_manager import SessionVariableManager
 
 if TYPE_CHECKING:
@@ -28,6 +30,12 @@ logger = logging.getLogger(__name__)
 MAX_RECALL_MEMORIES = 3
 MAX_QUERY_TERMS = 80
 MAX_QUERY_CHARS = 1_200
+
+# A scrubbed bag this thin carries too little for an embedding to match, so the
+# tail of the previous turn is appended as context. Measured on the term bag
+# because that is the signal already logged and already bounded.
+RECALL_THIN_QUERY_TERMS = 8
+RECALL_DIGEST_TAIL_CHARS = 600
 
 PARENT_USER_PROMPT_SOURCES = frozenset(
     {
@@ -99,6 +107,10 @@ _LIFECYCLE_COMMAND_PATTERN = re.compile(
     r"^(?:please\s+)?(?:compact|handoff|resume|start|stop|end|close|pause)\b"
     r".*\b(?:agent|goal|session|task|turn)\b",
     re.IGNORECASE,
+)
+_PROJECT_MEMORY_BLOCK_PATTERN = re.compile(
+    r"<project-memory>.*?(?:</project-memory>|\Z)",
+    re.DOTALL,
 )
 _QUERY_TERM_PATTERN = re.compile(
     r"`[^`\r\n]+`"
@@ -209,11 +221,49 @@ def scrub_memory_recall_query(prompt: str) -> str:
         )
         selected.remove(removable)
 
-    final_term = scrubbed[-1]
-    if len(final_term) <= MAX_QUERY_CHARS:
-        return final_term
+    return _elide_to_max_chars(scrubbed[-1])
+
+
+def _elide_to_max_chars(text: str) -> str:
+    """Bound `text` to `MAX_QUERY_CHARS`, keeping its head and its tail."""
+    if len(text) <= MAX_QUERY_CHARS:
+        return text
     half = (MAX_QUERY_CHARS - 3) // 2
-    return f"{final_term[:half]}...{final_term[-half:]}"
+    return f"{text[:half]}...{text[-half:]}"
+
+
+def _strip_project_memory_blocks(text: str) -> str:
+    """Drop rendered `<project-memory>` blocks, including an unterminated one.
+
+    Recall-local on purpose: `strip_injected_context` has six production
+    consumers that must not inherit a rule about memory delivery.
+    """
+    return _PROJECT_MEMORY_BLOCK_PATTERN.sub("", text)
+
+
+def _digest_tail(last_turn_markdown: str) -> str:
+    """The previous turn's tail, with everything Gobby injected removed.
+
+    Stripping precedes the slice so a block whose opening tag falls outside the
+    tail cannot survive it — otherwise recalled memory text would feed back
+    into the query that retrieves memories.
+    """
+    cleaned = _strip_project_memory_blocks(strip_injected_context(last_turn_markdown)).strip()
+    return cleaned[-RECALL_DIGEST_TAIL_CHARS:]
+
+
+def _build_embed_text(prompt: str, query: str, last_turn_markdown: str | None) -> str:
+    """Assemble the natural-language query for the vector side of one recall.
+
+    BM25 keeps the scrubbed term bag; an embedding matches the prompt as
+    written. A thin bag earns the previous turn's tail as context.
+    """
+    text = prompt.strip()
+    if len(query.split()) < RECALL_THIN_QUERY_TERMS and last_turn_markdown:
+        tail = _digest_tail(last_turn_markdown)
+        if tail:
+            text = f"{text}\n\n{tail}" if text else tail
+    return _elide_to_max_chars(text)
 
 
 @dataclass(frozen=True)
@@ -277,6 +327,7 @@ class MemoryRecallRunner:
             )
             return None
 
+        embed_text = _build_embed_text(_prompt_text(event), query, state.last_turn_markdown)
         recall_request_id = str(uuid4())
         started = time.monotonic()
         candidates = await self._search_once(
@@ -284,6 +335,7 @@ class MemoryRecallRunner:
             event.project_id,
             session_id=session_id,
             recall_request_id=recall_request_id,
+            embed_text=embed_text,
         )
         selected, drops = self._filter_ranked(candidates, state.injected_memory_ids)
         await self._record_selection_outcomes(
@@ -295,10 +347,13 @@ class MemoryRecallRunner:
         )
         self.logger.debug(
             "Memory recall search complete: session=%s recall_request_id=%s "
-            "query_chars=%d candidates=%d selected=%d latency_ms=%.1f",
+            "construction=%s query_chars=%d embed_chars=%d candidates=%d "
+            "selected=%d latency_ms=%.1f",
             session_id,
             recall_request_id,
+            RECALL_QUERY_CONSTRUCTION_VERSION,
             len(query),
+            len(embed_text),
             len(candidates),
             len(selected),
             (time.monotonic() - started) * 1_000,
@@ -318,6 +373,7 @@ class MemoryRecallRunner:
         *,
         session_id: str,
         recall_request_id: str,
+        embed_text: str,
     ) -> list[Memory]:
         try:
             return await self.memory_manager.search_memories(
@@ -326,6 +382,7 @@ class MemoryRecallRunner:
                 limit=self.config.candidate_limit,
                 min_score=self.config.min_score,
                 tags_none=[REVIEW_LESSON_TAG],
+                embed_text=embed_text,
                 session_id=session_id,
                 recall_request_id=recall_request_id,
                 caller="memory.recall",

@@ -18,6 +18,7 @@ from gobby.memory import recall as recall_module
 from gobby.memory.recall import (
     MAX_QUERY_CHARS,
     MAX_QUERY_TERMS,
+    RECALL_DIGEST_TAIL_CHARS,
     REVIEW_LESSON_TAG,
     MemoryRecallRunner,
     PromptDecisionKind,
@@ -457,3 +458,90 @@ async def test_outcome_write_failure_preserves_delivery(
     assert result is not None
     assert [memory["id"] for memory in result.memories] == ["m1", "m2", "m3"]
     assert manager.db_calls[1:] == ["record"], "the rank-limit drop attempted one write"
+
+
+@pytest.mark.asyncio
+async def test_substantive_prompt_is_embedded_as_natural_language(
+    temp_db: HubDatabase,
+    persisted_session: None,
+) -> None:
+    """2.2.1: BM25 keeps the scrubbed bag; the vector side gets the sentence."""
+    prompt = (
+        "Refactor the dispatcher so worktree cleanup happens before "
+        "the merge stage records its commit."
+    )
+    manager = FakeMemoryManager([_memory("m1")])
+
+    await _runner(temp_db, manager).run(_event(prompt), SESSION_ID, _variables())
+
+    call = manager.calls[0]
+    assert call.get("embed_text") == prompt
+    assert call["query"] != prompt, "the scrubbed term bag still drives BM25"
+
+
+@pytest.mark.asyncio
+async def test_thin_query_enriched_with_bounded_digest_tail(
+    temp_db: HubDatabase,
+    persisted_session: None,
+) -> None:
+    """2.2.3: a thin bag borrows the previous turn's tail to embed against."""
+    digest = "".join(f"Previous turn line {index} about the parser. " for index in range(200))
+    temp_db.execute(
+        "UPDATE sessions SET last_turn_markdown = %s WHERE id = %s",
+        (digest, SESSION_ID),
+    )
+    manager = FakeMemoryManager([_memory("m1")])
+    prompt = "fix the parser"
+
+    await _runner(temp_db, manager).run(_event(prompt), SESSION_ID, _variables())
+
+    embed_text = manager.calls[0].get("embed_text") or ""
+    assert embed_text.startswith(prompt), "the prompt still leads the embedded query"
+    tail = embed_text[len(prompt) :].strip()
+    assert digest.strip().endswith(tail), "the enrichment is the tail of the previous turn"
+    assert len(tail) == RECALL_DIGEST_TAIL_CHARS
+
+
+@pytest.mark.asyncio
+async def test_embed_text_respects_max_query_chars(
+    temp_db: HubDatabase,
+    persisted_session: None,
+) -> None:
+    """2.2.4: the assembled query obeys the bound the scrubbed bag obeys."""
+    unit = "Refactor the dispatcher module carefully. "
+    manager = FakeMemoryManager([_memory("m1")])
+
+    await _runner(temp_db, manager).run(_event(unit * 60), SESSION_ID, _variables())
+
+    embed_text = manager.calls[0].get("embed_text") or ""
+    assert 0 < len(embed_text) <= MAX_QUERY_CHARS
+    assert "..." in embed_text, "the bound is the head-and-tail elision, not a hard cut"
+    assert embed_text.startswith(unit.strip())
+    assert embed_text.endswith(unit.strip())
+
+
+@pytest.mark.asyncio
+async def test_digest_tail_drops_previously_injected_context(
+    temp_db: HubDatabase,
+    persisted_session: None,
+) -> None:
+    """2.2.5: recalled memory text must not feed back into the query that recalls it."""
+    digest = (
+        "<!-- gobby:injected-context:begin -->\nStale handoff notes.\n"
+        "<!-- gobby:injected-context:end -->\n"
+        "<project-memory>\nGobby prefers uv for every Python operation.\n</project-memory>\n"
+        "The parser still drops the trailing newline."
+    )
+    temp_db.execute(
+        "UPDATE sessions SET last_turn_markdown = %s WHERE id = %s",
+        (digest, SESSION_ID),
+    )
+    manager = FakeMemoryManager([_memory("m1")])
+
+    await _runner(temp_db, manager).run(_event("fix the parser"), SESSION_ID, _variables())
+
+    embed_text = manager.calls[0].get("embed_text") or ""
+    assert "project-memory" not in embed_text
+    assert "uv for every Python operation" not in embed_text
+    assert "Stale handoff notes" not in embed_text
+    assert "The parser still drops the trailing newline." in embed_text
