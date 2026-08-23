@@ -112,6 +112,7 @@ function makeConfigValues(): Record<string, unknown> {
       config_file: null,
       session_prefix: "gobby-",
       history_limit: 10000,
+      attach_history_lines: 500,
       wsl_distribution: null,
       idle_check_enabled: true,
       idle_timeout_seconds: 120,

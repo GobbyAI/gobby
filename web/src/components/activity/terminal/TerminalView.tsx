@@ -19,9 +19,9 @@ import { coarseHitAreaCls } from "../../ui/controlStyles";
 
 const RESIZE_DEBOUNCE_MS = 200;
 
-// Neutral because either bound may have cut: the 2,000-line window or the
-// byte backstop. Plain text, never faint SGR — dim escapes leave contrast
-// unproven and land below AA in light mode.
+// Neutral because either bound may have cut: the configured line window
+// (tmux.attach_history_lines) or the byte backstop. Plain text, never faint
+// SGR — dim escapes leave contrast unproven and land below AA in light mode.
 const HISTORY_TRUNCATED_LABEL = "earlier output not shown";
 const HISTORY_UNAVAILABLE_LABEL = "history unavailable";
 

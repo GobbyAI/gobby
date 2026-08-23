@@ -440,7 +440,11 @@ async def _activate(
         CAPTURE_TIMEOUT_SECONDS, budget.remaining() - ACTIVATION_TAIL_RESERVE_SECONDS
     )
     unavailable = capture_timeout <= 0
-    if unavailable:
+    if config.attach_history_lines <= 0:
+        # Configured off: the empty frame is the intended payload, not a
+        # degraded one, so it carries unavailable=False and renders no marker.
+        unavailable = False
+    elif unavailable:
         logger.warning(
             "Skipping tmux history capture for '%s': too little of the activation budget left",
             session_name,
@@ -448,7 +452,11 @@ async def _activate(
     else:
         try:
             history = await capture_history(
-                manager, session_name, timeout=capture_timeout, refresh_tty=client_tty
+                manager,
+                session_name,
+                max_lines=config.attach_history_lines,
+                timeout=capture_timeout,
+                refresh_tty=client_tty,
             )
         except HistoryCaptureError as exc:
             logger.warning("tmux history capture failed for '%s': %s", session_name, exc)

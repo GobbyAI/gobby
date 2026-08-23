@@ -35,6 +35,9 @@ from gobby.servers.websocket.tmux_activation import (
 from gobby.utils.json_helpers import json_dumps
 from gobby.utils.machine_id import require_machine_id
 
+if TYPE_CHECKING:
+    from gobby.config.app import DaemonConfig
+
 logger = logging.getLogger(__name__)
 
 # Default server config (no socket = user's default tmux)
@@ -61,9 +64,13 @@ class TmuxMixin:
     _tmux_client_bridges: dict[Any, set[str]]
     _tmux_pending: dict[str, PendingAttachment]
 
-    # These are provided by other mixins (BroadcastMixin, HandlerMixin).
+    # These are provided by other mixins (BroadcastMixin, HandlerMixin) or by
+    # WebSocketServer itself (daemon_config, the live config-store projection).
     # Declared as TYPE_CHECKING-only protocol hints to avoid shadowing real methods.
     if TYPE_CHECKING:
+
+        @property
+        def daemon_config(self) -> DaemonConfig | None: ...
 
         async def broadcast_terminal_output(self, run_id: str, data: str) -> None: ...
         async def _send_error(
@@ -113,10 +120,20 @@ class TmuxMixin:
         return self._tmux_mgr_default
 
     def _get_tmux_config(self, socket: str) -> TmuxConfig:
-        """Get the config for a given socket."""
-        if socket == "gobby":
-            return _GOBBY_CONFIG
-        return _DEFAULT_CONFIG
+        """Get the config for a given socket.
+
+        The socket templates are fixed (they exist to target the gobby socket
+        vs the user's personal default server), but the attach-history bound
+        is the config store's to set, so the live daemon value overlays the
+        template's default.
+        """
+        template = _GOBBY_CONFIG if socket == "gobby" else _DEFAULT_CONFIG
+        daemon = self.daemon_config
+        if daemon is None:
+            return template
+        return template.model_copy(
+            update={"attach_history_lines": daemon.tmux.attach_history_lines}
+        )
 
     @staticmethod
     def _terminal_context_matches_socket(

@@ -50,6 +50,18 @@ class TmuxConfig(BaseModel):
             "full-capture history."
         ),
     )
+    attach_history_lines: int = Field(
+        default=500,
+        ge=0,
+        le=2000,
+        description=(
+            "Scrollback lines restored to the web terminal on attach; 0 disables the "
+            "restore. Render cost is linear in lines on the primary VT core "
+            "(~0.26 ms/line on a desktop, ~0.9 ms/line at the pinned 4x mobile "
+            "throttle), and the built-in fallback core retains at most 1000 rows, "
+            "so the ceiling is where a larger window stops being deliverable."
+        ),
+    )
     wsl_distribution: str | None = Field(
         default=None,
         description="WSL distribution for Windows (e.g., 'Ubuntu'). None uses default.",

@@ -18,15 +18,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# The governing bound. This is a renderer budget, not a wire budget: the client
-# writes the whole window in one call, and the Ghostty VT core costs ~0.75 ms
-# per line to ingest it. Measured under the pinned protocol (4x CPU throttle, 1
-# warm-up, 5 samples, median, timed from frame send to a settled scrollback
-# render): 300 lines -> 229 ms, 400 -> 338 ms, 500 -> 470 ms, 2000 -> 1690 ms.
-# 300 is the largest bound clearing the 250 ms budget. The wterm fallback core
-# is ~6x cheaper (57 ms at 300) and never binds. Ghostty's default ring also
-# retains only ~823 rows, so a larger window would be evicted on arrival.
-ATTACH_HISTORY_LINES = 300
+# Default only: TmuxConfig.attach_history_lines governs, set through the
+# config store, and the activation path always passes it. The cost model is a
+# renderer budget, not a wire budget -- the client writes the whole window in
+# one call, and the Ghostty VT core ingests it linearly at ~0.9 ms/line under
+# the pinned protocol (4x CPU throttle, 1 warm-up, 5 samples, median, frame
+# send to settled scrollback render; web/tests/history-perf.spec.ts) and
+# ~0.26 ms/line unthrottled. 500 matches herdr's default bound; the config
+# ceiling of 2000 is where the fallback core's ~1000-row ring makes a larger
+# window undeliverable regardless of speed.
+ATTACH_HISTORY_LINES = 500
 # Backstop only, sized so the line count decides and bytes catch just the
 # pathological per-cell-color case.
 ATTACH_HISTORY_MAX_BYTES = 1024 * 1024

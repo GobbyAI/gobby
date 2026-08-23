@@ -80,6 +80,7 @@ const TMUX_PATHS = [
   "tmux.config_file",
   "tmux.session_prefix",
   "tmux.history_limit",
+  "tmux.attach_history_lines",
   "tmux.wsl_distribution",
   "tmux.idle_check_enabled",
   "tmux.idle_timeout_seconds",
@@ -428,6 +429,12 @@ function TmuxGroup({ fields }: { fields: SettingsSectionFields }) {
         path="tmux.history_limit"
         label="Scrollback history limit"
         ariaLabel="Scrollback history limit"
+      />
+      <NumberConfigField
+        fields={fields}
+        path="tmux.attach_history_lines"
+        label="Attach history lines (0 disables)"
+        ariaLabel="Attach history lines (0 disables)"
       />
       <TextConfigField
         fields={fields}

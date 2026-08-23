@@ -18,6 +18,8 @@ from websockets.frames import Close
 
 from gobby.agents.tmux.alt_screen import AltScreenFilter
 from gobby.agents.tmux.history import HistoryCapture, HistoryCaptureError
+from gobby.config.app import DaemonConfig
+from gobby.config.tmux import TmuxConfig
 from gobby.servers.websocket.server import WebSocketServer
 
 pytestmark = pytest.mark.unit
@@ -980,6 +982,60 @@ class TestTmuxActivation:
 
         assert streaming_id not in server._tmux_pending
         assert streaming_id in server._tmux_client_bridges[ws]
+
+    @pytest.mark.asyncio
+    async def test_capture_uses_the_config_store_history_bound(
+        self, server: WebSocketServer
+    ) -> None:
+        server.daemon_config = DaemonConfig(tmux=TmuxConfig(attach_history_lines=750))
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws)
+
+        with activation_harness(server) as harness:
+            await resize(server, ws, streaming_id)
+
+        assert harness.capture.await_args is not None
+        assert harness.capture.await_args.kwargs["max_lines"] == 750
+        # The overlay takes only the bound; the socket templates keep their
+        # identity (the default socket's config value stays "").
+        assert server._get_tmux_config("default").socket_name == ""
+        assert server._get_tmux_config("gobby").socket_name == "gobby"
+        assert server._get_tmux_config("default").attach_history_lines == 750
+
+    @pytest.mark.asyncio
+    async def test_history_bound_falls_back_to_the_schema_default_without_a_config(
+        self, server: WebSocketServer
+    ) -> None:
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws)
+
+        with activation_harness(server) as harness:
+            await resize(server, ws, streaming_id)
+
+        assert harness.capture.await_args is not None
+        assert harness.capture.await_args.kwargs["max_lines"] == TmuxConfig().attach_history_lines
+
+    @pytest.mark.asyncio
+    async def test_zero_history_bound_skips_capture_and_is_not_degraded(
+        self, server: WebSocketServer
+    ) -> None:
+        server.daemon_config = DaemonConfig(tmux=TmuxConfig(attach_history_lines=0))
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws)
+
+        with activation_harness(server) as harness:
+            await resize(server, ws, streaming_id)
+
+        harness.capture.assert_not_awaited()
+        # No capture also means no command-list repaint, so the screen paint
+        # falls back to an explicit refresh.
+        harness.refresh_client.assert_awaited_once()
+        history = ws.messages_of_type("terminal_attach_history")[0]
+        assert history["text"] == ""
+        assert history["truncated"] is False
+        assert history["unavailable"] is False
+        assert harness.reader.start_reader.await_count == 1
+        assert streaming_id not in server._tmux_pending
 
     @pytest.mark.asyncio
     async def test_history_is_serialized_without_ascii_escaping(
