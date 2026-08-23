@@ -216,6 +216,18 @@ def scrub_memory_recall_query(prompt: str) -> str:
     return f"{final_term[:half]}...{final_term[-half:]}"
 
 
+@dataclass(frozen=True)
+class RecallSessionState:
+    """Everything one recall turn reads from the database, in a single batch.
+
+    `last_turn_markdown` is the digest slice; 2.2 enriches a thin query with its
+    tail, and batching it here keeps a turn at one executor round trip.
+    """
+
+    injected_memory_ids: frozenset[str]
+    last_turn_markdown: str | None
+
+
 class MemoryRecallRunner:
     """Classify one parent prompt and directly rank one hybrid search."""
 
@@ -257,6 +269,14 @@ class MemoryRecallRunner:
         if not query:
             return None
 
+        try:
+            state = await self.memory_manager.run_db(self._read_session_state, session_id)
+        except Exception as exc:  # noqa: BLE001 - partial state is not a basis for injection
+            self.logger.warning(
+                "Memory recall session read failed; injecting nothing this turn: %s", exc
+            )
+            return None
+
         recall_request_id = str(uuid4())
         started = time.monotonic()
         candidates = await self._search_once(
@@ -265,8 +285,8 @@ class MemoryRecallRunner:
             session_id=session_id,
             recall_request_id=recall_request_id,
         )
-        selected, drops = self._filter_ranked(candidates, session_id)
-        self._record_selection_outcomes(
+        selected, drops = self._filter_ranked(candidates, state.injected_memory_ids)
+        await self._record_selection_outcomes(
             session_id=session_id,
             recall_request_id=recall_request_id,
             project_id=event.project_id,
@@ -317,9 +337,8 @@ class MemoryRecallRunner:
     def _filter_ranked(
         self,
         candidates: list[Memory],
-        session_id: str,
+        injected: frozenset[str],
     ) -> tuple[list[dict[str, Any]], list[tuple[str, str, str | None]]]:
-        injected = self._injected_memory_ids(session_id)
         seen: set[str] = set()
         selected: list[dict[str, Any]] = []
         drops: list[tuple[str, str, str | None]] = []
@@ -346,21 +365,31 @@ class MemoryRecallRunner:
                 drops.append((memory_id, "other", "rank_limit"))
         return selected, drops
 
-    def _injected_memory_ids(self, session_id: str) -> set[str]:
-        try:
-            injected = (
-                SessionVariableManager(self.db).get_variables(session_id).get("injected_memory_ids")
+    def _read_session_state(self, session_id: str) -> RecallSessionState:
+        """Read the dedupe ledger and the digest slice in one executor round trip.
+
+        Runs on the database executor, never on the daemon loop. A raise here
+        reaches `run` and costs the turn its injection rather than degrading it
+        to partial state.
+        """
+        injected = (
+            SessionVariableManager(self.db).get_variables(session_id).get("injected_memory_ids")
+        )
+        row = self.db.fetchone(
+            "SELECT last_turn_markdown FROM sessions WHERE id = %s",
+            (session_id,),
+        )
+        last_turn = row["last_turn_markdown"] if row is not None else None
+        return RecallSessionState(
+            injected_memory_ids=frozenset(
+                value for value in injected if isinstance(value, str) and value
             )
-        except Exception as exc:  # noqa: BLE001 - filtering may fail open
-            self.logger.debug("Failed to read injected memory ledger: %s", exc)
-            return set()
-        return (
-            {value for value in injected if isinstance(value, str) and value}
             if isinstance(injected, list)
-            else set()
+            else frozenset(),
+            last_turn_markdown=last_turn if isinstance(last_turn, str) else None,
         )
 
-    def _record_selection_outcomes(
+    async def _record_selection_outcomes(
         self,
         *,
         session_id: str,
@@ -386,7 +415,7 @@ class MemoryRecallRunner:
             for memory_id, drop_reason, drop_detail in drops
         ]
         try:
-            self._outcome_recorder(rows)
+            await self.memory_manager.run_db(self._outcome_recorder, rows)
         except Exception:  # noqa: BLE001 - diagnostics must fail open
             self.logger.debug("Failed to record recall selection outcomes", exc_info=True)
 

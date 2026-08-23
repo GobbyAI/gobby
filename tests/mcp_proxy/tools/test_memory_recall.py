@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import pytest
 
+from gobby.config.sessions import MemoryRecallConfig
 from gobby.hooks.memory_recall_delivery import (
     MEMORY_RECALL_DELIVERIES_VARIABLE,
     MemoryRecallDeliveryQueue,
@@ -305,6 +306,54 @@ async def test_queue_resolver_runtime_error_uses_retrieval_error_contract(
         and "runtime is rebuilding" in str(record.exc_info[1])
     )
     assert rebuild.exc_info is not None
+
+
+@pytest.mark.asyncio
+async def test_runtime_config_change_reaches_next_call(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """1.3.5: the runner is rebuilt per call, so no runtime config edit is pinned.
+
+    A cache keyed on manager identity would freeze the first resolved config for
+    the process lifetime; rebuilding is what lets an edit land on the next turn
+    with no daemon restart.
+    """
+    _create_sessions(temp_db)
+    resolved_floors: list[float] = []
+    runners: list[MemoryRecallRunner] = []
+
+    async def capture_run(
+        runner: MemoryRecallRunner,
+        _event: Any,
+        _session_id: str,
+        _variables: dict[str, Any],
+    ) -> None:
+        resolved_floors.append(runner.config.min_score)
+        runners.append(runner)
+
+    monkeypatch.setattr(MemoryRecallRunner, "run", capture_run)
+    registry = InternalToolRegistry("test-memory-recall-runtime-config")
+    manager = cast(MemoryManager, FakeMemoryManager(temp_db))
+    live_config = MemoryRecallConfig(min_score=0.45)
+    register_memory_recall_tool(
+        registry,
+        lambda: manager,
+        config_resolver=lambda: live_config,
+    )
+    arguments = {
+        "prompt": "Implement the requested memory recall change.",
+        "source": "codex",
+        "parent_turn_seq": "7",
+    }
+
+    with session_context_for_test(SESSION_ID):
+        await registry.call("recall_memories_for_prompt", arguments)
+        live_config = MemoryRecallConfig(min_score=0.8)
+        await registry.call("recall_memories_for_prompt", arguments)
+
+    assert resolved_floors == [0.45, 0.8]
+    assert runners[0] is not runners[1], "a cached runner would pin the first resolved config"
 
 
 def test_main_memory_registry_includes_inline_and_overflow_tools(

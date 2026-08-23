@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
+import threading
+from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -18,6 +21,7 @@ from gobby.memory.recall import (
     REVIEW_LESSON_TAG,
     MemoryRecallRunner,
     PromptDecisionKind,
+    RecallSessionState,
     scrub_memory_recall_query,
 )
 from gobby.review_learning.fingerprint import build_occurrence_key
@@ -33,17 +37,74 @@ SESSION_ID = "55555555-5555-4555-8555-555555555555"
 EXTERNAL_SESSION_ID = "external-memory-recall"
 
 
+class FakeMemoryConfig:
+    """Stand-in for `MemoryConfig` with the durable outcome writer switched on."""
+
+    recall_signal_hub = True
+
+
 class FakeMemoryManager:
-    def __init__(self, memories: list[Memory] | None = None, error: Exception | None = None):
+    def __init__(
+        self,
+        memories: list[Memory] | None = None,
+        error: Exception | None = None,
+        *,
+        record_outcomes: bool = False,
+        read_error: Exception | None = None,
+        write_error: Exception | None = None,
+    ):
         self.memories = memories or []
         self.error = error
         self.calls: list[dict[str, Any]] = []
+        self.config = FakeMemoryConfig() if record_outcomes else None
+        self.read_error = read_error
+        self.write_error = write_error
+        self.db_calls: list[str] = []
+        self.db_results: list[Any] = []
 
     async def search_memories(self, **kwargs: Any) -> list[Memory]:
         self.calls.append(kwargs)
         if self.error is not None:
             raise self.error
         return [memory for memory in self.memories if _passes_tags_none(memory, kwargs)]
+
+    async def run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Mirror `MemoryManager.run_db`: every call leaves the event loop thread."""
+        name = getattr(func, "__name__", "")
+        self.db_calls.append(name)
+        failure = self.read_error if name == _BATCHED_READ else self.write_error
+        if failure is not None:
+            raise failure
+        result = await asyncio.to_thread(func, *args, **kwargs)
+        self.db_results.append(result)
+        return result
+
+
+_BATCHED_READ = "_read_session_state"
+
+
+class EventLoopThreadDbCall(BaseException):
+    """Escapes recall's fail-open handlers so a loop-thread DB call cannot hide."""
+
+
+class LoopThreadGuardDb:
+    """Database proxy that fails any call made on the event loop thread."""
+
+    def __init__(self, inner: HubDatabase, loop_thread_id: int) -> None:
+        self._inner = inner
+        self._loop_thread_id = loop_thread_id
+
+    def __getattr__(self, name: str) -> Any:
+        attribute = getattr(self._inner, name)
+        if not callable(attribute):
+            return attribute
+
+        def guarded(*args: Any, **kwargs: Any) -> Any:
+            if threading.get_ident() == self._loop_thread_id:
+                raise EventLoopThreadDbCall(f"{name} ran on the daemon event loop thread")
+            return attribute(*args, **kwargs)
+
+        return guarded
 
 
 def _passes_tags_none(memory: Memory, kwargs: dict[str, Any]) -> bool:
@@ -318,3 +379,81 @@ async def test_search_failure_allows_turn_to_continue(temp_db: HubDatabase) -> N
 
     assert result is None
     assert len(manager.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_recall_runs_every_database_call_off_the_event_loop(
+    temp_db: HubDatabase,
+    persisted_session: None,
+) -> None:
+    """1.3.1: recall's DB work belongs to the executor, never to the daemon loop.
+
+    The guard raises a `BaseException`, so recall's fail-open `except Exception`
+    handlers cannot turn a loop-thread call into a silently degraded turn.
+    """
+    SessionVariableManager(temp_db).set_variable(SESSION_ID, "injected_memory_ids", ["m2"])
+    guarded = cast(HubDatabase, LoopThreadGuardDb(temp_db, threading.get_ident()))
+    manager = FakeMemoryManager([_memory("m1"), _memory("m2")], record_outcomes=True)
+
+    result = await _runner(guarded, manager).run(_event(), SESSION_ID, _variables())
+
+    assert result is not None
+    assert [memory["id"] for memory in result.memories] == ["m1"]
+    assert manager.db_calls[0] == _BATCHED_READ
+    assert len(manager.db_calls) == 2, "the ledger read and the outcome write both go off-loop"
+
+
+@pytest.mark.asyncio
+async def test_one_batched_read_serves_the_ledger_and_the_digest_slice(
+    temp_db: HubDatabase,
+    persisted_session: None,
+) -> None:
+    """1.3.2: one executor round trip carries both, so 2.2 adds no second trip."""
+    SessionVariableManager(temp_db).set_variable(SESSION_ID, "injected_memory_ids", ["m2"])
+    temp_db.execute(
+        "UPDATE sessions SET last_turn_markdown = %s WHERE id = %s",
+        ("Previous turn digest slice.", SESSION_ID),
+    )
+    manager = FakeMemoryManager([_memory("m1"), _memory("m2")])
+
+    result = await _runner(temp_db, manager).run(_event(), SESSION_ID, _variables())
+
+    assert result is not None
+    assert [memory["id"] for memory in result.memories] == ["m1"]
+    reads = [state for state in manager.db_results if isinstance(state, RecallSessionState)]
+    assert len(reads) == 1
+    assert reads[0].injected_memory_ids == frozenset({"m2"})
+    assert reads[0].last_turn_markdown == "Previous turn digest slice."
+
+
+@pytest.mark.asyncio
+async def test_batched_read_failure_injects_nothing(temp_db: HubDatabase) -> None:
+    """1.3.3: a turn with no dedupe ledger and no digest slice injects nothing."""
+    manager = FakeMemoryManager(
+        [_memory("m1")],
+        read_error=RuntimeError("database executor queue is full"),
+    )
+
+    result = await _runner(temp_db, manager).run(_event(), SESSION_ID, _variables())
+
+    assert result is None
+    assert manager.db_calls == [_BATCHED_READ]
+
+
+@pytest.mark.asyncio
+async def test_outcome_write_failure_preserves_delivery(
+    temp_db: HubDatabase,
+    persisted_session: None,
+) -> None:
+    """1.3.4: outcome capture is telemetry and never retracts what the turn delivered."""
+    manager = FakeMemoryManager(
+        [_memory(f"m{index}") for index in range(1, 5)],
+        record_outcomes=True,
+        write_error=RuntimeError("outcome writer is down"),
+    )
+
+    result = await _runner(temp_db, manager).run(_event(), SESSION_ID, _variables())
+
+    assert result is not None
+    assert [memory["id"] for memory in result.memories] == ["m1", "m2", "m3"]
+    assert manager.db_calls[1:] == ["record"], "the rank-limit drop attempted one write"
