@@ -1597,7 +1597,14 @@ class TestTmuxActivationBudget:
 
     @pytest.mark.parametrize(
         "step",
-        ["list_bridges", "set_option", "attach", "get_bridge", "start_reader"],
+        [
+            "list_bridges",
+            "set_option",
+            "set_option_mouse",
+            "attach",
+            "get_bridge",
+            "start_reader",
+        ],
     )
     @pytest.mark.asyncio
     async def test_a_step_that_hangs_exhausts_the_budget_and_fails_typed(
@@ -1607,10 +1614,22 @@ class TestTmuxActivationBudget:
         streaming_id = await reserve(server, ws)
 
         with activation_harness(server) as harness, budget_of(0.2, tail=0.05):
-            target = (
-                harness.reader.start_reader if step == "start_reader" else getattr(harness, step)
-            )
-            target.side_effect = _never_returns
+            if step == "start_reader":
+                harness.reader.start_reader.side_effect = _never_returns
+            elif step == "set_option_mouse":
+                # The two set-option calls share one mock, so only the second
+                # hangs -- the first has to be allowed through to reach it.
+                seen = 0
+
+                async def hang_on_mouse(*_args: Any, **_kwargs: Any) -> None:
+                    nonlocal seen
+                    seen += 1
+                    if seen > 1:
+                        await asyncio.Event().wait()
+
+                harness.set_option.side_effect = hang_on_mouse
+            else:
+                getattr(harness, step).side_effect = _never_returns
             await resize(server, ws, streaming_id)
 
         failures = ws.messages_of_type("tmux_activation_failed")
@@ -1621,8 +1640,101 @@ class TestTmuxActivationBudget:
         # Only the reader starts after the history frame; a step that hangs
         # before it leaves the client with nothing to render.
         assert bool(ws.messages_of_type("terminal_attach_history")) is (step == "start_reader")
+        harness.reader.stop_reader.assert_any_await(streaming_id)
         assert streaming_id not in server._tmux_pending
         assert streaming_id not in server._tmux_client_bridges.get(ws, set())
+
+    @pytest.mark.asyncio
+    async def test_a_registration_poll_that_never_lands_stops_at_the_budget(
+        self, server: WebSocketServer
+    ) -> None:
+        # The real _wait_for_client runs here against a real (fake-subprocess)
+        # list-clients that never reports our pid. Its own cap is 2s, so the
+        # only thing that can end this inside the budget is the slice it was
+        # handed -- a mocked poll could not tell the two apart.
+        from gobby.servers.websocket.tmux_activation import (
+            CLIENT_REGISTRATION_TIMEOUT_SECONDS,
+            _wait_for_client,
+        )
+
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws)
+        budget = 0.4
+        other_pid = SimpleNamespace(
+            returncode=0,
+            communicate=AsyncMock(return_value=(b"4242\n", b"")),
+            kill=MagicMock(),
+            wait=AsyncMock(return_value=0),
+        )
+        loop = asyncio.get_running_loop()
+
+        with (
+            activation_harness(server) as harness,
+            budget_of(budget, tail=0.05),
+            patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=other_pid)),
+        ):
+            harness.wait_for_client.side_effect = _wait_for_client
+            started = loop.time()
+            await resize(server, ws, streaming_id)
+            elapsed = loop.time() - started
+
+        # Comfortably short of the poll's own cap, so it was the slice that
+        # ended it, and no shorter than the budget it was given.
+        assert elapsed < CLIENT_REGISTRATION_TIMEOUT_SECONDS / 2
+        assert elapsed >= budget - 0.05
+        failure = ws.messages_of_type("tmux_activation_failed")[0]
+        assert failure["code"] == "activation_timed_out"
+        assert ws.messages_of_type("terminal_attach_history") == []
+        harness.capture.assert_not_awaited()
+        harness.detach.assert_any_await(streaming_id)
+        harness.reader.stop_reader.assert_any_await(streaming_id)
+        harness.reader.start_reader.assert_not_awaited()
+        assert streaming_id not in server._tmux_pending
+        assert streaming_id not in server._tmux_client_bridges.get(ws, set())
+
+    @pytest.mark.asyncio
+    async def test_a_capture_that_hangs_degrades_at_the_budget_slice(
+        self, server: WebSocketServer
+    ) -> None:
+        # The real capture_history runs against a capture-pane child that never
+        # answers. Its own cap is 5s, so ending inside the budget proves the
+        # slice bound it -- and history being degradable means the user still
+        # gets a working terminal out of it.
+        from gobby.agents.tmux.history import CAPTURE_TIMEOUT_SECONDS, capture_history
+
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws)
+        budget = 0.5
+        tail = 0.1
+        wedged = SimpleNamespace(
+            returncode=None,
+            communicate=_never_returns,
+            kill=MagicMock(),
+            wait=AsyncMock(return_value=-9),
+        )
+        loop = asyncio.get_running_loop()
+
+        with (
+            activation_harness(server) as harness,
+            budget_of(budget, tail=tail),
+            patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=wedged)),
+        ):
+            harness.capture.side_effect = capture_history
+            started = loop.time()
+            await resize(server, ws, streaming_id)
+            elapsed = loop.time() - started
+
+        assert elapsed < CAPTURE_TIMEOUT_SECONDS / 2
+        assert elapsed >= budget - tail - 0.05
+        # The wedged child was killed rather than left behind.
+        assert wedged.kill.call_count == 1
+        history = ws.messages_of_type("terminal_attach_history")[0]
+        assert history["unavailable"] is True
+        assert history["text"] == ""
+        # Losing scrollback must not cost the user a working terminal.
+        harness.reader.start_reader.assert_awaited_once()
+        assert ws.messages_of_type("tmux_activation_failed") == []
+        assert streaming_id not in server._tmux_pending
 
     @pytest.mark.asyncio
     async def test_a_hanging_history_send_exhausts_the_budget(

@@ -412,6 +412,9 @@ async def _activate(
         if not _still_activating(host, streaming_id, pending):
             await _teardown(host, streaming_id)
             return
+        # A poll cut short because its slice ran out says nothing about tmux;
+        # it is the deadline that expired, and the code has to say so.
+        budget.check()
         await _fail(
             host,
             websocket,
