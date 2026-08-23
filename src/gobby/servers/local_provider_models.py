@@ -79,11 +79,7 @@ async def discover_local_endpoint_model_group(
             probed_tools=endpoint.probed_tools,
         )
     except Exception as exc:
-        logger.warning(
-            "Model discovery failed for endpoint %r: %s; falling back to configured models",
-            endpoint_name,
-            _short_error(exc),
-        )
+        _log_discovery_failure(endpoint_name, exc)
         return LocalEndpointModelGroup(
             endpoint_name=endpoint_name,
             provider_type=endpoint.protocol,
@@ -93,6 +89,28 @@ async def discover_local_endpoint_model_group(
             error=_short_error(exc),
             probed_tools=endpoint.probed_tools,
         )
+
+
+def _log_discovery_failure(endpoint_name: str, exc: BaseException) -> None:
+    """Log a discovery failure at a severity matching what it means.
+
+    A local endpoint that is not running (connection refused, timeout) is a
+    normal availability state for an optional local server, so it stays at
+    debug. Any other failure -- HTTP errors from a server that is up, malformed
+    payloads -- is unexpected and warrants a warning.
+    """
+    if isinstance(exc, httpx.TransportError | asyncio.TimeoutError):
+        logger.debug(
+            "Endpoint %r is offline: %s; falling back to configured models",
+            endpoint_name,
+            _short_error(exc),
+        )
+        return
+    logger.warning(
+        "Model discovery failed for endpoint %r: %s; falling back to configured models",
+        endpoint_name,
+        _short_error(exc),
+    )
 
 
 def local_provider_display_label(provider: str) -> str:

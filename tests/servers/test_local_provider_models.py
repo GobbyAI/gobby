@@ -85,7 +85,7 @@ class _FakeResponse:
             raise httpx.HTTPStatusError(
                 f"{self.status_code} error",
                 request=self.request,
-                response=self,
+                response=httpx.Response(self.status_code, request=self.request),
             )
 
 
@@ -453,8 +453,47 @@ async def test_openai_compatible_empty_discovery_uses_config_fallback(
     ]
 
 
+def _discovery_records(
+    caplog: pytest.LogCaptureFixture, endpoint_name: str
+) -> list[logging.LogRecord]:
+    return [record for record in caplog.records if endpoint_name in record.getMessage()]
+
+
 @pytest.mark.asyncio
-async def test_discovery_failure_falls_back_to_configured_default(
+@pytest.mark.parametrize(
+    ("protocol", "api_base"),
+    [
+        ("lmstudio", "http://localhost:1234/v1"),
+        ("ollama", "http://localhost:11434/v1"),
+        ("vllm", "http://localhost:8321/v1"),
+    ],
+)
+async def test_offline_endpoint_falls_back_to_configured_default_without_warning(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    protocol: str,
+    api_base: str,
+) -> None:
+    endpoint = GenerationEndpointConfig(protocol=protocol, api_base=api_base, model="auto")
+    fake_client = _FakeAsyncClient({})
+    monkeypatch.setattr(
+        "gobby.servers.local_provider_models.httpx.AsyncClient",
+        lambda: fake_client,
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="gobby.servers.local_provider_models"):
+        group = await discover_local_endpoint_model_group(protocol, endpoint)
+
+    assert group.source == "config"
+    assert group.error
+    assert group.models == []
+    records = _discovery_records(caplog, protocol)
+    assert [record.levelno for record in records] == [logging.DEBUG]
+    assert "offline" in records[0].getMessage()
+
+
+@pytest.mark.asyncio
+async def test_unexpected_discovery_failure_warns(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -463,24 +502,21 @@ async def test_discovery_failure_falls_back_to_configured_default(
         api_base="http://localhost:1234/v1",
         model="gemma-local",
     )
-    fake_client = _FakeAsyncClient({})
+    models_url = "http://localhost:1234/api/v1/models"
+    fake_client = _FakeAsyncClient({models_url: _FakeResponse(models_url, {}, status_code=500)})
     monkeypatch.setattr(
         "gobby.servers.local_provider_models.httpx.AsyncClient",
         lambda: fake_client,
     )
 
-    with caplog.at_level(logging.WARNING, logger="gobby.servers.local_provider_models"):
+    with caplog.at_level(logging.DEBUG, logger="gobby.servers.local_provider_models"):
         group = await discover_local_endpoint_model_group("lm-studio", endpoint)
 
     assert group.source == "config"
-    assert group.error
+    assert group.error == "500 error"
     assert group.models == []
-    warnings = [
-        record
-        for record in caplog.records
-        if record.levelno == logging.WARNING and "lm-studio" in record.getMessage()
-    ]
-    assert len(warnings) == 1
+    records = _discovery_records(caplog, "lm-studio")
+    assert [record.levelno for record in records] == [logging.WARNING]
 
 
 _VLLM_HEALTH_URL = "http://localhost:8000/health"
