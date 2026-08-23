@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
+
 import pytest
 
 from gobby.hooks._normalization_canonical import (
     _classify_shell_segment_without_redirection,
     _merge_shell_segment_metadata,
-    _normalize_shell_tool_metadata,
+    _set_canonical_tool_metadata,
     _ShellSegmentMetadata,
 )
 
@@ -60,14 +63,48 @@ def test_read_only_loop_header_paths_stay_out_of_the_mutation_set() -> None:
     assert metadata["canonical_file_paths"] == ["/dev/null"]
 
 
-def test_read_only_probe_loop_is_not_an_in_project_mutation() -> None:
-    """The command that mis-attributed `1`, `2`, and `3` to a claimed task."""
-    metadata = _normalize_shell_tool_metadata(
-        'for i in 1 2 3; do curl -s -o /dev/null -w "attempt $i" '
-        "http://localhost:60887/health; done"
-    )
+def test_read_only_probe_loop_is_not_an_in_project_mutation(tmp_path: Path) -> None:
+    """The command that mis-attributed `1`, `2`, and `3` to a claimed task.
 
-    assert metadata["canonical_file_paths"] == ["/dev/null"]
+    Runs the whole annotation path, `apply_path_scope_metadata` included, then
+    checks the exact predicate `_tool.py` uses to decide whether to attribute
+    edited files. A false predicate means `_record_successful_file_mutation`
+    is never reached for this command.
+    """
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": (
+                'for i in 1 2 3; do curl -s -o /dev/null -w "attempt $i" '
+                "http://localhost:60887/health; done"
+            ),
+            "cwd": str(tmp_path),
+        },
+        "project_path": str(tmp_path),
+    }
+
+    _set_canonical_tool_metadata(data)
+
+    assert data["canonical_file_paths"] == ["/dev/null"]
+    assert data.get("canonical_repo_mutation") is not True
+    is_canonical_edit = (
+        data.get("canonical_tool_kind") == "write" and data.get("canonical_repo_mutation") is True
+    )
+    assert is_canonical_edit is False, "no edited-file attribution is recorded"
+
+
+def test_in_project_shell_write_still_attributes_its_own_path(tmp_path: Path) -> None:
+    """Guard: the same annotation path still reports a real in-project write."""
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {"command": "echo hi > out.txt", "cwd": str(tmp_path)},
+        "project_path": str(tmp_path),
+    }
+
+    _set_canonical_tool_metadata(data)
+
+    assert data["canonical_file_paths"] == ["out.txt"]
+    assert data["canonical_repo_mutation"] is True
 
 
 def test_loop_header_still_scopes_a_mutating_body_with_unexpanded_paths() -> None:
