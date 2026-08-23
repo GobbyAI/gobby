@@ -108,8 +108,10 @@ _LIFECYCLE_COMMAND_PATTERN = re.compile(
     r".*\b(?:agent|goal|session|task|turn)\b",
     re.IGNORECASE,
 )
+_PROJECT_MEMORY_OPEN = "<project-memory>"
+_PROJECT_MEMORY_CLOSE = "</project-memory>"
 _PROJECT_MEMORY_BLOCK_PATTERN = re.compile(
-    r"<project-memory>.*?(?:</project-memory>|\Z)",
+    rf"{re.escape(_PROJECT_MEMORY_OPEN)}.*?(?:{re.escape(_PROJECT_MEMORY_CLOSE)}|\Z)",
     re.DOTALL,
 )
 _QUERY_TERM_PATTERN = re.compile(
@@ -233,23 +235,33 @@ def _elide_to_max_chars(text: str) -> str:
 
 
 def _strip_project_memory_blocks(text: str) -> str:
-    """Drop rendered `<project-memory>` blocks, including an unterminated one.
+    """Drop rendered `<project-memory>` blocks from a whole turn or a slice of one.
 
     Recall-local on purpose: `strip_injected_context` has six production
-    consumers that must not inherit a rule about memory delivery.
+    consumers that must not inherit a rule about memory delivery. The two
+    fragment cases mirror that helper's, because both run on a slice: an
+    unterminated block runs to the end, and a closing tag with no opener means
+    the slice began inside a block, so everything up to it is memory text.
     """
+    close_index = text.find(_PROJECT_MEMORY_CLOSE)
+    open_index = text.find(_PROJECT_MEMORY_OPEN)
+    if close_index != -1 and (open_index == -1 or close_index < open_index):
+        text = text[close_index + len(_PROJECT_MEMORY_CLOSE) :]
     return _PROJECT_MEMORY_BLOCK_PATTERN.sub("", text)
 
 
 def _digest_tail(last_turn_markdown: str) -> str:
-    """The previous turn's tail, with everything Gobby injected removed.
+    """The previous turn's bounded tail, with everything Gobby injected removed.
 
-    Stripping precedes the slice so a block whose opening tag falls outside the
-    tail cannot survive it — otherwise recalled memory text would feed back
-    into the query that retrieves memories.
+    The slice precedes the strippers, so the enrichment is always the tail of
+    the turn as it was written. Cleaning first would let the window reach
+    further back whenever the turn carried injected blocks, and the bound is on
+    the turn rather than on whatever survives cleaning. Both strippers handle a
+    block the slice cut through, so recalled memory text cannot feed back into
+    the query that retrieves memories.
     """
-    cleaned = _strip_project_memory_blocks(strip_injected_context(last_turn_markdown)).strip()
-    return cleaned[-RECALL_DIGEST_TAIL_CHARS:]
+    sliced = last_turn_markdown[-RECALL_DIGEST_TAIL_CHARS:]
+    return _strip_project_memory_blocks(strip_injected_context(sliced)).strip()
 
 
 def _build_embed_text(prompt: str, query: str, last_turn_markdown: str | None) -> str:

@@ -499,7 +499,8 @@ async def test_thin_query_enriched_with_bounded_digest_tail(
     assert embed_text.startswith(prompt), "the prompt still leads the embedded query"
     tail = embed_text[len(prompt) :].strip()
     assert digest.strip().endswith(tail), "the enrichment is the tail of the previous turn"
-    assert len(tail) == RECALL_DIGEST_TAIL_CHARS
+    assert tail == digest[-RECALL_DIGEST_TAIL_CHARS:].strip(), "the tail is the bounded slice"
+    assert 0 < len(tail) <= RECALL_DIGEST_TAIL_CHARS
 
 
 @pytest.mark.asyncio
@@ -545,3 +546,35 @@ async def test_digest_tail_drops_previously_injected_context(
     assert "uv for every Python operation" not in embed_text
     assert "Stale handoff notes" not in embed_text
     assert "The parser still drops the trailing newline." in embed_text
+
+
+@pytest.mark.asyncio
+async def test_digest_tail_is_the_slice_of_the_turn_not_a_cleaned_window(
+    temp_db: HubDatabase,
+    persisted_session: None,
+) -> None:
+    """2.2.5: the enrichment is the bounded slice of the turn, then stripped.
+
+    A `<project-memory>` block the slice cuts through leaves a closing tag with
+    no opener. Dropping that orphan is the stripper's job; reaching further
+    back than `RECALL_DIGEST_TAIL_CHARS` of the turn to refill the budget is
+    not, because the bound is on the turn, not on what survives cleaning.
+    """
+    older = "".join(f"Alpha line {index} about the dispatcher. " for index in range(30))
+    injected = "".join(f"Recalled memory {index} says use uv. " for index in range(20))
+    recent = "".join(f"Bravo line {index} about the parser. " for index in range(5))
+    digest = f"{older}<project-memory>\n{injected}\n</project-memory>\n{recent}"
+    assert len(injected) > RECALL_DIGEST_TAIL_CHARS, "the block must span the slice boundary"
+    temp_db.execute(
+        "UPDATE sessions SET last_turn_markdown = %s WHERE id = %s",
+        (digest, SESSION_ID),
+    )
+    manager = FakeMemoryManager([_memory("m1")])
+
+    await _runner(temp_db, manager).run(_event("fix the parser"), SESSION_ID, _variables())
+
+    embed_text = manager.calls[0].get("embed_text") or ""
+    assert "Bravo line 4" in embed_text, "the tail of the turn survives"
+    assert "project-memory" not in embed_text
+    assert "Recalled memory" not in embed_text
+    assert "Alpha line" not in embed_text, "cleaning must not widen the slice"
