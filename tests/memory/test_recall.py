@@ -11,13 +11,17 @@ import pytest
 from gobby.config.sessions import MemoryRecallConfig
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.memory import generation_schemas
+from gobby.memory import recall as recall_module
 from gobby.memory.recall import (
     MAX_QUERY_CHARS,
     MAX_QUERY_TERMS,
+    REVIEW_LESSON_TAG,
     MemoryRecallRunner,
     PromptDecisionKind,
     scrub_memory_recall_query,
 )
+from gobby.review_learning.fingerprint import build_occurrence_key
+from gobby.review_learning.lessons import normalize_lesson
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import Memory
 from gobby.workflows.state_manager import SessionVariableManager
@@ -39,7 +43,13 @@ class FakeMemoryManager:
         self.calls.append(kwargs)
         if self.error is not None:
             raise self.error
-        return self.memories
+        return [memory for memory in self.memories if _passes_tags_none(memory, kwargs)]
+
+
+def _passes_tags_none(memory: Memory, kwargs: dict[str, Any]) -> bool:
+    """Mirror the `tags_none` drop `build_results` applies to every hybrid hit."""
+    excluded = kwargs.get("tags_none") or []
+    return not any(tag in (memory.tags or []) for tag in excluded)
 
 
 def _event(
@@ -157,7 +167,7 @@ async def test_prompt_past_hard_skip_runs_one_hybrid_search(temp_db: HubDatabase
     assert [memory["id"] for memory in result.memories] == ["m1", "m2", "m3"]
     assert len(manager.calls) == 1
     assert manager.calls[0]["caller"] == "memory.recall"
-    assert manager.calls[0]["tags_none"] == ["review_lesson"]
+    assert manager.calls[0]["tags_none"] == ["review-lesson"]
 
 
 def test_runner_takes_no_llm_service() -> None:
@@ -208,7 +218,7 @@ def test_scrubber_considers_full_prompt_and_preserves_technical_tail() -> None:
 
 
 @pytest.mark.asyncio
-async def test_filters_review_duplicates_and_injected_ids_in_rank_order(
+async def test_filters_duplicates_and_injected_ids_in_rank_order(
     temp_db: HubDatabase,
     persisted_session: None,
 ) -> None:
@@ -217,7 +227,6 @@ async def test_filters_review_duplicates_and_injected_ids_in_rank_order(
         [
             _memory("m1"),
             _memory("m1"),
-            _memory("review", tags=["review_lesson"]),
             _memory("m2"),
             _memory("m3", similarity=None),
         ]
@@ -229,6 +238,55 @@ async def test_filters_review_duplicates_and_injected_ids_in_rank_order(
         "m1",
         "m3",
     ]
+
+
+def test_review_lesson_tag_matches_what_lessons_are_written_with() -> None:
+    """1.2.1: the recall exclusion tag is the tag the lesson writer stamps."""
+    lesson = normalize_lesson(
+        source_kind="review_comment",
+        source="coderabbit",
+        source_review="review-1",
+        decision="confirmed",
+        finding={"title": "Use psycopg placeholders", "severity": "high"},
+        evidence={"commit": "abc123"},
+        finding_fingerprint="native-1",
+        occurrence_key=build_occurrence_key("review-1", "native-1"),
+        repo="josh/gobby",
+        language="python",
+        risk="high",
+    )
+
+    assert REVIEW_LESSON_TAG in lesson.tags
+
+
+@pytest.mark.asyncio
+async def test_review_lessons_excluded_from_prompt_recall(
+    temp_db: HubDatabase,
+    persisted_session: None,
+) -> None:
+    """1.2.3: the search layer drops review lessons, so recall never sees one.
+
+    The lesson carries the literal tag `build_tags` stamps, not the constant, so a
+    constant that drifts from the writer lets the lesson through.
+    """
+    manager = FakeMemoryManager(
+        [
+            _memory("lesson", tags=["review-lesson", "confirmed"]),
+            _memory("m1"),
+        ]
+    )
+
+    result = await _runner(temp_db, manager).run(_event(), SESSION_ID, _variables())
+
+    assert result is not None
+    assert [memory["id"] for memory in result.memories] == ["m1"]
+    assert manager.calls[0]["tags_none"] == ["review-lesson"]
+
+
+def test_filter_ranked_no_longer_carries_a_review_lesson_branch() -> None:
+    """1.2.2: the drop is unreachable once the tag is right, so the branch is gone."""
+    assert not hasattr(recall_module, "_has_review_lesson_tag")
+    assert "review_lesson" not in inspect.getsource(MemoryRecallRunner._filter_ranked)
 
 
 @pytest.mark.asyncio

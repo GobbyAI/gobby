@@ -40,7 +40,8 @@ PARENT_USER_PROMPT_SOURCES = frozenset(
     }
 )
 
-REVIEW_LESSON_TAG = "review_lesson"
+REVIEW_LESSON_TAG = "review-lesson"
+"""The tag `review_learning.lessons.build_tags` stamps on every recorded lesson."""
 
 _SHORT_ACKNOWLEDGMENTS = frozenset(
     {
@@ -327,9 +328,6 @@ class MemoryRecallRunner:
             if not isinstance(memory_id, str) or not memory_id or memory_id in seen:
                 continue
             seen.add(memory_id)
-            if _has_review_lesson_tag(getattr(memory, "tags", None)):
-                drops.append((memory_id, "review_lesson", None))
-                continue
             if memory_id in injected:
                 drops.append((memory_id, "already_injected", None))
                 continue
@@ -483,10 +481,6 @@ def _is_technical_term(term: str) -> bool:
     return bool(_TECHNICAL_PATTERN.fullmatch(term)) or any(
         marker in term for marker in ("/", "\\", "_", ".", "::", "--")
     )
-
-
-def _has_review_lesson_tag(tags: Any) -> bool:
-    return isinstance(tags, (list, tuple, set)) and REVIEW_LESSON_TAG in tags
 
 
 def _memory_to_payload(memory: Memory) -> dict[str, Any]:
