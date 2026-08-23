@@ -51,6 +51,22 @@ MUTATOR_RECONCILIATION_BUDGET_SECONDS = 5.0
 WRITE_MARK_DUE_MAX_CONCURRENCY = 2
 _local_mode_dedup_warning_logged = False
 
+# Memory bodies are bounded at write time so an oversize row can never reach the
+# recall injection budget. 3,000 comes from the live distribution rather than
+# from budget headroom: p99 is 2,468 chars and p99.9 is 3,179, so the cap leaves
+# routine records untouched while keeping a worst-case three-memory injection
+# inside the existing inline budget.
+MAX_MEMORY_CONTENT_CHARS = 3000
+
+
+def _enforce_content_cap(content: str | None) -> None:
+    """Reject memory content over the write cap, naming the length and limit."""
+    if content is not None and len(content) > MAX_MEMORY_CONTENT_CHARS:
+        raise ValueError(
+            f"memory content is {len(content)} characters, over the "
+            f"{MAX_MEMORY_CONTENT_CHARS}-character limit; condense it before writing"
+        )
+
 
 class MemoryLifecycleService:
     """Create, update, delete, embed, and queue memory side effects."""
@@ -346,6 +362,7 @@ class MemoryLifecycleService:
         created_by_agent: str | None = None,
     ) -> Memory:
         """Store a new memory in storage and secondary indices."""
+        _enforce_content_cap(content)
         memory_type = validate_memory_type(memory_type)
         result = await self.backend.create(
             content=content,
@@ -626,6 +643,7 @@ class MemoryLifecycleService:
         memory_type: str | None = None,
     ) -> Memory:
         """Update a memory and refresh secondary indices after content revisions."""
+        _enforce_content_cap(content)
         old_memory = (
             await self._run_storage(self.storage.get_memory, memory_id, visibility="all")
             if content is not None or memory_type is not None
@@ -650,6 +668,7 @@ class MemoryLifecycleService:
         memory_type: str | None = None,
     ) -> Memory:
         """Update a memory visible to a project and refresh its secondary indices."""
+        _enforce_content_cap(content)
         old_memory = (
             await self._run_storage(
                 self.storage.get_memory,
@@ -678,6 +697,7 @@ class MemoryLifecycleService:
         tags: list[str] | None = None,
     ) -> Memory:
         """Update an existing memory through the async backend."""
+        _enforce_content_cap(content)
         old_record = (
             await self.backend.get(memory_id, visibility="all") if content is not None else None
         )

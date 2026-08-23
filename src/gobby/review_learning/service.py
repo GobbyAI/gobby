@@ -366,7 +366,7 @@ class ReviewLearningService:
             check_key = str(normalized.finding.get("check_key") or "unspecified")
             source_task_id: str | None = None
             if source_session_id:
-                from gobby.mcp_proxy.tools.memory import derive_memory_create_provenance
+                from gobby.mcp_proxy.tools.memory_write import derive_memory_create_provenance
 
                 source_task_id, _created_by_agent = derive_memory_create_provenance(
                     self.memory_manager.db,

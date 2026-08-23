@@ -13,6 +13,7 @@ import asyncio
 import inspect
 import uuid
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -897,3 +898,45 @@ class TestMemoryDreamTools:
                 "success": False,
                 "error": "memory dream coordinator is unavailable",
             }
+
+
+class TestMemoryWriteToolModuleSplit:
+    """Deliverable 3.1: write-path tools live in their own module.
+
+    `memory.py` sat at 999 lines, one line under the production ceiling, so the
+    write tools moved to `memory_write.py` behind a single entry point that
+    `create_memory_registry` calls.
+    """
+
+    _WRITE_TOOLS = ("create_memory", "update_memory", "delete_memory", "restore_memory")
+
+    def test_write_tools_register_through_the_new_module(
+        self, mock_memory_manager: MagicMock
+    ) -> None:
+        from gobby.mcp_proxy.tools import memory_write
+
+        registry = create_memory_registry(lambda: mock_memory_manager)
+
+        for name in self._WRITE_TOOLS:
+            assert name in registry, f"{name} is not registered"
+        assert callable(memory_write.register_memory_write_tools)
+
+    def test_write_tools_are_defined_in_memory_write(self) -> None:
+        from gobby.mcp_proxy.tools import memory as memory_module
+        from gobby.mcp_proxy.tools import memory_write
+
+        source = inspect.getsource(memory_write.register_memory_write_tools)
+        for name in self._WRITE_TOOLS:
+            assert f"def {name}(" in source, f"{name} was not moved to memory_write"
+        assert "register_memory_write_tools" in inspect.getsource(
+            memory_module.create_memory_registry
+        )
+
+    def test_both_modules_stay_under_the_production_ceiling(self) -> None:
+        from gobby.mcp_proxy.tools import memory as memory_module
+        from gobby.mcp_proxy.tools import memory_write
+
+        for module in (memory_module, memory_write):
+            path = Path(str(module.__file__))
+            line_count = len(path.read_text(encoding="utf-8").splitlines())
+            assert line_count < 1000, f"{path.name} is {line_count} lines"

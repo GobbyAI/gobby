@@ -18,7 +18,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.mcp_proxy.tools.memory import create_memory_registry, get_current_project_id
+from gobby.mcp_proxy.tools.memory import create_memory_registry
+from gobby.mcp_proxy.tools.memory_scope import get_current_project_id
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 pytestmark = pytest.mark.unit
@@ -266,7 +267,7 @@ class TestCreateMemory:
                 return_value=resolved_uuid,
             ) as mock_resolve,
             patch(
-                "gobby.mcp_proxy.tools.memory.derive_memory_create_provenance",
+                "gobby.mcp_proxy.tools.memory_write.derive_memory_create_provenance",
                 return_value=(None, None),
             ),
         ):
