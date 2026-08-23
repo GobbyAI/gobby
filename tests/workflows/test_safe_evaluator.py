@@ -997,3 +997,29 @@ class TestAllowedFuncNameResolution:
         ev = SafeExpressionEvaluator({}, {"isinstance": isinstance})
         with pytest.raises(ValueError, match="Unknown variable"):
             ev.evaluate_value("isinstance(missing, dict)")
+
+
+class TestErrorHandlerConditionTypeSafety:
+    """The bundled TASK_CLOSED handler condition tolerates every output shape."""
+
+    CONDITION = "isinstance(tool_output, dict) and tool_output.get('error_code') == \"TASK_CLOSED\""
+
+    @pytest.mark.parametrize(
+        ("tool_output", "expected"),
+        [
+            ({"error_code": "TASK_CLOSED"}, True),
+            ({"error_code": "OTHER"}, False),
+            ({}, False),
+            (None, False),
+            ("close_task failed: validation_failed", False),
+            ([{"type": "text", "text": "backgrounding notice"}], False),
+        ],
+    )
+    def test_condition_evaluates_without_raising(self, tool_output: Any, expected: bool) -> None:
+        ctx: dict[str, Any] = {
+            "vars": {},
+            "tool_input": {"task_id": "#42"},
+            "tool_output": tool_output,
+        }
+        ev = SafeExpressionEvaluator(ctx, {"isinstance": isinstance, "dict": dict})
+        assert ev.evaluate(self.CONDITION) is expected

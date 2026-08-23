@@ -173,7 +173,7 @@ class TestAdversarySkillLoading:
         assert claim_handlers
         assert (
             _field(claim_handlers[0], "when")
-            == "(tool_output or {}).get('error_code') == \"TASK_CLOSED\""
+            == "isinstance(tool_output, dict) and tool_output.get('error_code') == \"TASK_CLOSED\""
         )
 
 
@@ -261,7 +261,7 @@ class TestAdversaryInstructionsPreserveContracts:
             assert matches
             assert (
                 _field(matches[0], "when")
-                == "(tool_output or {}).get('error_code') == \"TASK_CLOSED\""
+                == "isinstance(tool_output, dict) and tool_output.get('error_code') == \"TASK_CLOSED\""
             )
         matches = [
             entry
@@ -270,7 +270,8 @@ class TestAdversaryInstructionsPreserveContracts:
         ]
         assert matches
         assert (
-            _field(matches[0], "when") == "(tool_output or {}).get('error_code') == \"TASK_CLOSED\""
+            _field(matches[0], "when")
+            == "isinstance(tool_output, dict) and tool_output.get('error_code') == \"TASK_CLOSED\""
         )
 
     def test_critical_rules_preserved(self, agent: AgentDefinitionBody) -> None:
