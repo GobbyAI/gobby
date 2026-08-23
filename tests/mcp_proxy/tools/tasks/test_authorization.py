@@ -12,6 +12,7 @@ from gobby.mcp_proxy.tools.tasks._authorization import (
 )
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_delete import register_delete_task
+from gobby.mcp_proxy.tools.tasks._session import create_session_registry
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.utils.session_context import session_context_for_test
 
@@ -171,3 +172,17 @@ class TestDeleteTaskGuard:
 
         assert result["error_code"] == "TASK_CLAIM_CONFLICT"
         task_manager.delete_task.assert_not_called()
+
+
+class TestLinkTaskToSessionGuard:
+    def test_link_foreign_claimed_task_refused(self, task_manager: MagicMock) -> None:
+        task_manager.get_task.return_value = _task(OWNER_SESSION)
+        ctx = RegistryContext(task_manager=task_manager)
+        tool = create_session_registry(ctx).get_tool("link_task_to_session")
+        assert tool is not None
+
+        with session_context_for_test(CALLER_SESSION):
+            result = tool(task_id=TASK_UUID)
+
+        assert result["error_code"] == "TASK_CLAIM_CONFLICT"
+        assert result["claimed_by"] == OWNER_SESSION

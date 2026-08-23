@@ -7,7 +7,10 @@ relationships.
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.mcp_proxy.tools.tasks._authorization import has_delegated_agent_run
+from gobby.mcp_proxy.tools.tasks._authorization import (
+    has_delegated_agent_run,
+    require_claim_authority,
+)
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
@@ -44,6 +47,13 @@ def create_session_registry(ctx: RegistryContext) -> InternalToolRegistry:
             resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
         except (TaskNotFoundError, ValueError) as e:
             return {"error": str(e)}
+
+        task = ctx.task_manager.get_task(resolved_id)
+        if task is None:
+            return {"error": f"Task {task_id} not found"}
+        denied = require_claim_authority(ctx.task_manager, task, "link_task_to_session")
+        if denied:
+            return denied
 
         # Resolve session_id to UUID (accepts #N, N, UUID, or prefix)
         try:
