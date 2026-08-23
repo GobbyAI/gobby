@@ -285,7 +285,7 @@ step_workflow:
       on_mcp_error:
         - server: gobby-tasks
           tool: claim_task
-          when: tool_output.error_code == "TASK_CLOSED"
+          when: (tool_output or {}).get('error_code') == "TASK_CLOSED"
           action: set_variable
           variable: task_claimed
           value: true
@@ -394,19 +394,19 @@ step_workflow:
       on_mcp_error:
         - server: gobby-tasks-ops
           tool: approve_review
-          when: tool_output.error_code == "TASK_CLOSED"
+          when: (tool_output or {}).get('error_code') == "TASK_CLOSED"
           action: set_variable
           variable: review_complete
           value: true
         - server: gobby-tasks-ops
           tool: reject_review
-          when: tool_output.error_code == "TASK_CLOSED"
+          when: (tool_output or {}).get('error_code') == "TASK_CLOSED"
           action: set_variable
           variable: review_complete
           value: true
         - server: gobby-tasks
           tool: escalate_task
-          when: tool_output.error_code == "TASK_CLOSED"
+          when: (tool_output or {}).get('error_code') == "TASK_CLOSED"
           action: set_variable
           variable: review_complete
           value: true

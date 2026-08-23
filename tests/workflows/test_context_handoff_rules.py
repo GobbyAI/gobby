@@ -19,6 +19,12 @@ from typing import Any
 
 import pytest
 
+from gobby.adapters.claude_code import ClaudeCodeAdapter
+from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+from gobby.adapters.codex_impl.item_normalization import build_tool_event_data
+from gobby.adapters.droid import DroidAdapter
+from gobby.adapters.grok import GrokAdapter
+from gobby.adapters.qwen import QwenAdapter
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT, HANDOFF_SUMMARY_INJECT_BUDGET
 from gobby.sessions.compact_markers import COMPACT_SELF_INTERRUPT_WARNING
@@ -1500,3 +1506,176 @@ def test_plan_mode_resets_pressure_band() -> None:
 
     assert variables["context_compact_guidance_kind"] == "strong"
     assert "Context pressure is 90%" in variables["context_compact_guidance_message"]
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# auto-compact-after-task-close: per-CLI native payload coverage (#20813)
+# ═══════════════════════════════════════════════════════════════════════
+
+_CLOSE_PAYLOAD_TEXT = json.dumps({"success": True, "result": {"closed": True, "task_id": "#42"}})
+_WRAPPER_INPUT: dict[str, Any] = {
+    "server_name": "gobby-tasks",
+    "tool_name": "close_task",
+    "arguments": {"task_id": "#42", "commit_sha": "abc123"},
+}
+_MCP_RESULT_ENVELOPE: dict[str, Any] = {
+    "content": [{"type": "text", "text": _CLOSE_PAYLOAD_TEXT}],
+    "isError": False,
+}
+
+
+def _claude_close_event(tool_response: Any) -> HookEvent | None:
+    return ClaudeCodeAdapter().translate_to_hook_event(
+        {
+            "hook_type": "post-tool-use",
+            "input_data": {
+                "session_id": SESSION_ID,
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": dict(_WRAPPER_INPUT),
+                "tool_response": tool_response,
+            },
+        }
+    )
+
+
+def _codex_app_server_close_event() -> HookEvent:
+    data = build_tool_event_data(
+        {
+            "id": "item-1",
+            "type": "mcpToolCall",
+            "server": "gobby",
+            "tool": "call_tool",
+            "arguments": dict(_WRAPPER_INPUT),
+            "result": dict(_MCP_RESULT_ENVELOPE),
+            "status": "completed",
+        }
+    )
+    return HookEvent(
+        event_type=HookEventType.AFTER_TOOL,
+        session_id=SESSION_ID,
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data=data,
+        metadata={"session_type": "terminal"},
+    )
+
+
+def _codex_hooks_close_event() -> HookEvent | None:
+    return CodexHooksAdapter().translate_to_hook_event(
+        {
+            "hook_type": "PostToolUse",
+            "input_data": {
+                "session_id": SESSION_ID,
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": dict(_WRAPPER_INPUT),
+                "tool_response": dict(_MCP_RESULT_ENVELOPE),
+            },
+        }
+    )
+
+
+def _grok_close_event(tool_result: Any) -> HookEvent | None:
+    return GrokAdapter().translate_to_hook_event(
+        {
+            "source": "grok",
+            "hook_type": "post_tool_use",
+            "input_data": {
+                "sessionId": SESSION_ID,
+                "toolName": "mcp__gobby__call_tool",
+                "toolInput": dict(_WRAPPER_INPUT),
+                "toolResult": tool_result,
+            },
+        }
+    )
+
+
+def _qwen_close_event() -> HookEvent | None:
+    return QwenAdapter().translate_to_hook_event(
+        {
+            "hook_type": "PostToolUse",
+            "input_data": {
+                "session_id": SESSION_ID,
+                "tool_name": "call_tool",
+                "tool_input": dict(_WRAPPER_INPUT),
+                "tool_response": dict(_MCP_RESULT_ENVELOPE),
+            },
+        }
+    )
+
+
+def _droid_close_event() -> HookEvent | None:
+    return DroidAdapter().translate_to_hook_event(
+        {
+            "hook_type": "PostToolUse",
+            "input_data": {
+                "session_id": SESSION_ID,
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": dict(_WRAPPER_INPUT),
+                "tool_response": dict(_MCP_RESULT_ENVELOPE),
+            },
+        }
+    )
+
+
+class TestAutoCompactAfterTaskCloseAcrossClis:
+    """The rule condition fires on every supported CLI's native after-tool payload.
+
+    Each case drives the CLI's native close_task hook payload through its real
+    adapter translation (which applies shared tool-field normalization), then
+    through RuleEngine evaluation against the synced bundled rule. Regression
+    coverage for the list-shaped MCP tool_output that silently disabled the
+    rule condition before #20807.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("label", "build_event"),
+        [
+            (
+                "claude-content-block-list",
+                lambda: _claude_close_event([{"type": "text", "text": _CLOSE_PAYLOAD_TEXT}]),
+            ),
+            ("claude-dict-envelope", lambda: _claude_close_event(dict(_MCP_RESULT_ENVELOPE))),
+            ("codex-app-server-mcp-tool-call", _codex_app_server_close_event),
+            ("codex-hooks-json", _codex_hooks_close_event),
+            ("grok-dict-tool-result", lambda: _grok_close_event(dict(_MCP_RESULT_ENVELOPE))),
+            ("grok-string-tool-result", lambda: _grok_close_event(_CLOSE_PAYLOAD_TEXT)),
+            ("qwen-post-tool-use", _qwen_close_event),
+            ("droid-post-tool-use", _droid_close_event),
+        ],
+    )
+    async def test_native_close_payload_queues_compact_self(
+        self,
+        db: HubDatabase,
+        label: str,
+        build_event: Any,
+    ) -> None:
+        _sync_bundled(db)
+        event = build_event()
+        assert event is not None, f"{label}: adapter did not translate the payload"
+        assert event.event_type == HookEventType.AFTER_TOOL
+        assert event.data.get("mcp_server") == "gobby-tasks", label
+        assert event.data.get("mcp_tool") == "close_task", label
+        tool_output = event.data.get("tool_output")
+        assert isinstance(tool_output, dict), (
+            f"{label}: tool_output is {type(tool_output).__name__}"
+        )
+
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={
+                "claimed_tasks": {
+                    "task-a": {"task_type": "task"},
+                    "task-b": {"task_type": "task"},
+                }
+            },
+        )
+
+        compact_calls = [
+            call
+            for call in response.metadata.get("mcp_calls", [])
+            if call["server"] == "gobby-sessions" and call["tool"] == "compact_self"
+        ]
+        assert len(compact_calls) == 1, label
+        assert compact_calls[0]["arguments"] == {"rule_name": "auto-compact-after-task-close"}
