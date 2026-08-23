@@ -215,7 +215,8 @@ def test_register_command_writes_plan_row(
     assert record.plan_id == "cli-register-plan"
     assert record.plan_path == ".gobby/plans/cli-register-plan.md"
     assert record.plan_kind == "implementation"
-    assert record.root_task_ref == root_task_ref
+    # Registration canonicalizes the ref unprefixed so expansion QA resolves the manifest.
+    assert record.root_task_ref == root_task_ref.removeprefix("#")
     assert record.state == "active"
 
 

@@ -1,11 +1,11 @@
 header:
   plan_id: wiki-output-design
   plan_hash: d017d79b5bc8373ac33a3fe30baf27a7a1500e22c3153d2e7072607a5a606a64
-  root_task_ref: '#19664'
+  root_task_ref: '19664'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-08-07T17:40:42Z'
+  generated_at: '2026-08-23T14:03:43Z'
   task_tree_source: db
-  task_tree_source_hash: d67ccd28f4aae3f43fb0a5629b5f29804962c5e7037773c9e2d2b5666a71f1e3
+  task_tree_source_hash: 8fb33fb8815a7d7a7d5f21449cffc304d8206b9ae4739cb00871b52ca662032c
   evidence_summary: []
   evidence: []
 rows:
@@ -774,7 +774,7 @@ rows:
 - section_id: D3
   item_id: D3.1
   plan_node_hash: f60578f22f0e13a79cac42f3ac77fd46fd2f1b45541a973dc3606975d9733385
-  status: deferred
+  status: invalid
   leaves: []
   deferral_target: '#19672'
 - section_id: D4
@@ -786,12 +786,12 @@ rows:
 - section_id: D5
   item_id: D5.1
   plan_node_hash: e172df10dae65979738ccea541df0b6c8a13f7fe3fa9d4fc012360e6155a9591
-  status: deferred
+  status: invalid
   leaves: []
   deferral_target: '#18902'
 - section_id: D6
   item_id: D6.1
   plan_node_hash: 15c54aa78cc3bb9210d2af80b9166e4981edcfe08d7ffa4ee67b0d47654e1863
-  status: deferred
+  status: invalid
   leaves: []
   deferral_target: '#17678'

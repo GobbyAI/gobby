@@ -112,6 +112,12 @@ class LocalPlanManager:
             project_root / relative_path, plan_kind=PlanKind(plan_kind), parse_mode="draft"
         )
         resolve_task_reference(self.db, root_task_ref, project_id)
+        # Every plans/coverage consumer canonicalizes the ref unprefixed — the manifest
+        # path via `_sanitize(kind="root_task_ref")`, the bootstrap ledger, and
+        # expansion QA — so store that form instead of whichever spelling the caller
+        # used. A prefixed row makes ManifestIdentity report a foreign owner for the
+        # manifest its own path resolves to, which blocks the expansion-QA gate.
+        root_task_ref = _normalize_ref(root_task_ref)
         record_id = str(uuid.uuid4())
 
         with self.db.transaction() as conn:
@@ -130,7 +136,7 @@ class LocalPlanManager:
                     root_task_ref = excluded.root_task_ref,
                     updated_at = excluded.updated_at,
                     archived_at = NULL
-                WHERE plans.root_task_ref = excluded.root_task_ref
+                WHERE ltrim(plans.root_task_ref, '#') = excluded.root_task_ref
                   AND (plans.state != 'archived' OR %s)
                 RETURNING *
                 """,
@@ -157,7 +163,7 @@ class LocalPlanManager:
                 ).fetchone()
                 if existing is None:
                     raise ValueError(f"plan registration conflict: {plan_id}")
-                if existing["root_task_ref"] != root_task_ref:
+                if _normalize_ref(existing["root_task_ref"]) != root_task_ref:
                     raise ValueError(
                         f"plan {plan_id} is already registered to root task "
                         f"{existing['root_task_ref']}"
@@ -351,7 +357,7 @@ class LocalPlanManager:
         return self.db.fetchone(
             f"""
             SELECT * FROM plans
-            WHERE (plan_id = %s OR root_task_ref = %s)
+            WHERE (plan_id = %s OR ltrim(root_task_ref, '#') = %s)
             {project_clause}
             ORDER BY updated_at DESC
             LIMIT 1
@@ -391,12 +397,15 @@ class LocalPlanManager:
 
 
 def _normalize_ref(ref: str) -> str:
+    """Canonicalize a plan root-task ref to the unprefixed form the subsystem stores.
+
+    `plans.bootstrap_ledger`, `coverage_manifest._sanitize` and expansion QA all
+    canonicalize unprefixed, so `#18653` and `18653` name one plan here too.
+    """
     stripped = ref.strip()
     if not stripped:
         raise ValueError("plan ref must not be blank")
-    if stripped.isdecimal():
-        return f"#{stripped}"
-    return stripped
+    return stripped.removeprefix("#")
 
 
 def _plan_carries_coverage_manifest(plan_kind: str) -> bool:

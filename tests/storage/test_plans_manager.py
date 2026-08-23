@@ -176,7 +176,7 @@ def test_create_plan_refuses_root_task_reassignment(temp_db: HubDatabase, tmp_pa
         root_task_ref="#100",
     )
 
-    with pytest.raises(ValueError, match="already registered to root task #100"):
+    with pytest.raises(ValueError, match="already registered to root task 100"):
         manager.create_plan(
             project_id=project_id,
             plan_id="task-100-demo",
@@ -184,7 +184,77 @@ def test_create_plan_refuses_root_task_reassignment(temp_db: HubDatabase, tmp_pa
             root_task_ref="#101",
         )
 
+    assert manager.get_plan("task-100-demo", project_id=project_id).root_task_ref == "100"
+
+
+def test_create_plan_stores_root_task_ref_unprefixed(temp_db: HubDatabase, tmp_path: Path) -> None:
+    """Expansion QA resolves the manifest by the unprefixed ref, so writes canonicalize."""
+    project_id = _project(temp_db, tmp_path)
+    manager = LocalPlanManager(temp_db)
+    plan_path = _write_plan(tmp_path)
+
+    record = manager.create_plan(
+        project_id=project_id,
+        plan_id="task-100-demo",
+        plan_path=plan_path,
+        root_task_ref="#100",
+    )
+
+    assert record.root_task_ref == "100"
+    manifest = coverage_manifest_path(
+        tmp_path,
+        project_id=project_id,
+        root_task_ref="100",
+        plan_id="task-100-demo",
+    )
+    header = yaml.safe_load(manifest.read_text(encoding="utf-8"))["header"]
+    assert header["root_task_ref"] == "100"
+
+
+def test_create_plan_renormalizes_legacy_prefixed_row(temp_db: HubDatabase, tmp_path: Path) -> None:
+    """A row stored before canonicalization re-registers in place instead of conflicting."""
+    project_id = _project(temp_db, tmp_path)
+    manager = LocalPlanManager(temp_db)
+    plan_path = _write_plan(tmp_path)
+    record = manager.create_plan(
+        project_id=project_id,
+        plan_id="task-100-demo",
+        plan_path=plan_path,
+        root_task_ref="#100",
+    )
+    with temp_db.transaction() as conn:
+        conn.execute(
+            "UPDATE plans SET root_task_ref = %s WHERE id = %s",
+            ("#100", record.id),
+        )
+
     assert manager.get_plan("task-100-demo", project_id=project_id).root_task_ref == "#100"
+
+    renormalized = manager.create_plan(
+        project_id=project_id,
+        plan_id="task-100-demo",
+        plan_path=plan_path,
+        root_task_ref="100",
+    )
+
+    assert renormalized.root_task_ref == "100"
+
+
+def test_get_plan_resolves_root_task_ref_under_either_spelling(
+    temp_db: HubDatabase, tmp_path: Path
+) -> None:
+    project_id = _project(temp_db, tmp_path)
+    manager = LocalPlanManager(temp_db)
+    plan_path = _write_plan(tmp_path)
+    manager.create_plan(
+        project_id=project_id,
+        plan_id="task-100-demo",
+        plan_path=plan_path,
+        root_task_ref="#100",
+    )
+
+    for ref in ("100", "#100"):
+        assert manager.get_plan(ref, project_id=project_id).plan_id == "task-100-demo"
 
 
 def test_update_plan_hash_regens_manifest(temp_db: HubDatabase, tmp_path: Path) -> None:
