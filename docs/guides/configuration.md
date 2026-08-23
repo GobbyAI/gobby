@@ -444,9 +444,6 @@ workflow:
   timeout: 90.0
   debug_echo_context: false
 
-memory_recall:
-  timeout: 60
-
 hooks:
   adapter_timeout: 105.0
   provider_timeout: 120
@@ -463,8 +460,8 @@ details below that authoring API. See [rules.md](./rules.md) for the complete
 rule model.
 
 Hook deadlines must stay strictly ordered:
-`memory_recall.timeout < workflow.timeout < hooks.adapter_timeout <
-hooks.provider_timeout`. All four values must be positive. Changes require a
+`workflow.timeout < hooks.adapter_timeout < hooks.provider_timeout`. All three
+values must be positive. Changes require a
 daemon restart. A `hooks.provider_timeout` change also requires `gobby install`
 to rewrite provider settings. Qwen stores the provider value in milliseconds;
 Claude caps `SessionEnd` at 60 seconds; Codex keeps its enqueue-only `SessionEnd`

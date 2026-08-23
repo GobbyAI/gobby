@@ -494,15 +494,14 @@ class DaemonConfig(BaseModel):
     def validate_hook_timeout_order(self) -> DaemonConfig:
         """Require each enclosing hook layer to outlive the work it contains."""
         timeouts = (
-            self.memory_recall.timeout,
             self.workflow.timeout,
             self.hooks.adapter_timeout,
             self.hooks.provider_timeout,
         )
         if not all(inner < outer for inner, outer in zip(timeouts, timeouts[1:], strict=False)):
             raise ValueError(
-                "Hook timeouts must satisfy memory_recall.timeout < workflow.timeout < "
-                "hooks.adapter_timeout < hooks.provider_timeout"
+                "Hook timeouts must satisfy workflow.timeout < hooks.adapter_timeout "
+                "< hooks.provider_timeout"
             )
         return self
 

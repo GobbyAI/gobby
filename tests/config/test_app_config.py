@@ -480,7 +480,6 @@ class TestDaemonConfig:
     def test_coordinated_hook_timeout_defaults(self) -> None:
         config = DaemonConfig()
 
-        assert config.memory_recall.timeout == 60
         assert config.workflow.timeout == 90
         assert config.hooks.adapter_timeout == 105
         assert config.hooks.provider_timeout == 120
@@ -490,7 +489,6 @@ class TestDaemonConfig:
     @pytest.mark.parametrize(
         ("overrides", "message"),
         [
-            ({"memory_recall": {"timeout": 90}}, "memory_recall.timeout"),
             ({"workflow": {"timeout": 105}}, "workflow.timeout"),
             ({"hooks": {"adapter_timeout": 120}}, "hooks.adapter_timeout"),
         ],

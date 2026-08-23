@@ -2,19 +2,20 @@
 
 from __future__ import annotations
 
+import inspect
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 
-from gobby.config.feature_base import FeatureProfile
 from gobby.config.sessions import MemoryRecallConfig
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.memory.generation_schemas import RECALL_CLASSIFICATION_SCHEMA
+from gobby.memory import generation_schemas
 from gobby.memory.recall import (
     MAX_QUERY_CHARS,
     MAX_QUERY_TERMS,
     MemoryRecallRunner,
+    PromptDecisionKind,
     scrub_memory_recall_query,
 )
 from gobby.storage.hub.protocol import HubDatabase
@@ -39,37 +40,6 @@ class FakeMemoryManager:
         if self.error is not None:
             raise self.error
         return self.memories
-
-
-class FakeLLMService:
-    def __init__(self, response: Any):
-        self.response = response
-        self.error: Exception | None = None
-        self.calls: list[dict[str, Any]] = []
-
-    async def call_json_feature(
-        self,
-        feature_config: Any,
-        prompt: str,
-        system_prompt: str | None = None,
-        *,
-        json_schema: dict[str, Any],
-        caller: str | None = None,
-        total_timeout_seconds: float | None = None,
-    ) -> Any:
-        self.calls.append(
-            {
-                "feature_config": feature_config,
-                "prompt": prompt,
-                "system_prompt": system_prompt,
-                "json_schema": json_schema,
-                "caller": caller,
-                "total_timeout_seconds": total_timeout_seconds,
-            }
-        )
-        if self.error is not None:
-            raise self.error
-        return self.response
 
 
 def _event(
@@ -116,15 +86,10 @@ def _variables(**overrides: Any) -> dict[str, Any]:
     return {"parent_turn_seq": 3, "is_spawned_agent": False, **overrides}
 
 
-def _runner(
-    db: HubDatabase,
-    manager: FakeMemoryManager,
-    llm: FakeLLMService | None,
-) -> MemoryRecallRunner:
+def _runner(db: HubDatabase, manager: FakeMemoryManager) -> MemoryRecallRunner:
     return MemoryRecallRunner(
         db=db,
         memory_manager=manager,  # type: ignore[arg-type]
-        llm_service=llm,
         config=MemoryRecallConfig(),
     )
 
@@ -169,150 +134,59 @@ def persisted_session(temp_db: HubDatabase) -> None:
     ],
 )
 @pytest.mark.asyncio
-async def test_hard_skips_without_classifier_or_search(
+async def test_hard_skips_reach_no_search(
     temp_db: HubDatabase,
     event: HookEvent,
     variables: dict[str, Any],
 ) -> None:
     manager = FakeMemoryManager([_memory("m1")])
-    llm = FakeLLMService({"substantive": True, "reason": "task"})
 
-    result = await _runner(temp_db, manager, llm).run(event, SESSION_ID, variables)
+    result = await _runner(temp_db, manager).run(event, SESSION_ID, variables)
 
     assert result is None
-    assert llm.calls == []
     assert manager.calls == []
 
 
 @pytest.mark.asyncio
-async def test_classifier_approval_runs_one_low_feature_and_one_hybrid_search(
-    temp_db: HubDatabase,
-) -> None:
+async def test_prompt_past_hard_skip_runs_one_hybrid_search(temp_db: HubDatabase) -> None:
     manager = FakeMemoryManager([_memory(f"m{index}") for index in range(1, 6)])
-    llm = FakeLLMService({"substantive": True, "reason": "task"})
 
-    result = await _runner(temp_db, manager, llm).run(_event(), SESSION_ID, _variables())
+    result = await _runner(temp_db, manager).run(_event(), SESSION_ID, _variables())
 
     assert result is not None
-    assert [memory["id"] for memory in result.memories] == [
-        "m1",
-        "m2",
-        "m3",
-    ]
-    assert len(llm.calls) == 1
-    assert llm.calls[0]["caller"] == "memory.recall.classify"
-    assert llm.calls[0]["json_schema"] == RECALL_CLASSIFICATION_SCHEMA
-    assert llm.calls[0]["feature_config"].profile == FeatureProfile.LOW
+    assert [memory["id"] for memory in result.memories] == ["m1", "m2", "m3"]
     assert len(manager.calls) == 1
     assert manager.calls[0]["caller"] == "memory.recall"
     assert manager.calls[0]["tags_none"] == ["review_lesson"]
 
 
+def test_runner_takes_no_llm_service() -> None:
+    """No LLM call can occur on the recall path: the runner holds no LLM service."""
+    parameters = inspect.signature(MemoryRecallRunner.__init__).parameters
+
+    assert "llm_service" not in parameters
+    assert not hasattr(MemoryRecallRunner, "_classify")
+
+
+def test_prompt_decision_kind_keeps_only_hard_skip() -> None:
+    assert [kind.value for kind in PromptDecisionKind] == ["hard_skip"]
+
+
+def test_recall_classification_schema_is_gone() -> None:
+    """1.1.4: the classifier's JSON schema has no remaining references."""
+    assert not hasattr(generation_schemas, "RECALL_CLASSIFICATION_SCHEMA")
+    assert "RECALL_CLASSIFICATION_SCHEMA" not in generation_schemas.__all__
+
+
 @pytest.mark.asyncio
-async def test_classifier_rejection_does_not_search(temp_db: HubDatabase) -> None:
+async def test_short_prompt_past_hard_skip_reaches_search(temp_db: HubDatabase) -> None:
+    """The deleted heuristic rejected this prompt; hard-skip alone now lets it through."""
     manager = FakeMemoryManager([_memory("m1")])
-    llm = FakeLLMService({"substantive": False, "reason": "conversational"})
 
-    result = await _runner(temp_db, manager, llm).run(_event(), SESSION_ID, _variables())
-
-    assert result is None
-    assert len(llm.calls) == 1
-    assert llm.calls[0]["total_timeout_seconds"] == 60
-    assert manager.calls == []
-
-
-@pytest.mark.asyncio
-async def test_classifier_boolean_wins_when_true_reason_is_non_substantive(
-    temp_db: HubDatabase,
-) -> None:
-    manager = FakeMemoryManager([_memory("m1")])
-    llm = FakeLLMService({"substantive": True, "reason": "status_question"})
-
-    result = await _runner(temp_db, manager, llm).run(
-        _event("Which lane?"),
+    result = await _runner(temp_db, manager).run(
+        _event("Which lane should this go in?"),
         SESSION_ID,
         _variables(),
-    )
-
-    assert result is not None
-    assert len(manager.calls) == 1
-
-
-@pytest.mark.asyncio
-async def test_classifier_boolean_wins_when_false_reason_is_substantive(
-    temp_db: HubDatabase,
-) -> None:
-    manager = FakeMemoryManager([_memory("m1")])
-    llm = FakeLLMService({"substantive": False, "reason": "technical_question"})
-    prompt = (
-        "Please inspect this complicated regression and implement the complete focused "
-        "durable repair today."
-    )
-
-    result = await _runner(temp_db, manager, llm).run(
-        _event(prompt),
-        SESSION_ID,
-        _variables(),
-    )
-
-    assert result is None
-    assert manager.calls == []
-
-
-@pytest.mark.parametrize(
-    "response",
-    [
-        {"substantive": "yes", "reason": "task"},
-        {"substantive": True, "reason": "unknown"},
-        {"substantive": True},
-    ],
-)
-@pytest.mark.asyncio
-async def test_malformed_classifier_uses_eight_token_fallback(
-    temp_db: HubDatabase,
-    response: Any,
-) -> None:
-    manager = FakeMemoryManager([_memory("m1")])
-    llm = FakeLLMService(response)
-    prompt = (
-        "Please inspect this complicated regression and implement the complete focused "
-        "durable repair today."
-    )
-
-    result = await _runner(temp_db, manager, llm).run(_event(prompt), SESSION_ID, _variables())
-
-    assert result is not None
-    assert len(manager.calls) == 1
-
-
-@pytest.mark.asyncio
-async def test_classifier_failure_uses_technical_action_fallback(temp_db: HubDatabase) -> None:
-    manager = FakeMemoryManager([_memory("m1")])
-    llm = FakeLLMService({"substantive": True, "reason": "task"})
-    llm.error = RuntimeError("offline")
-
-    result = await _runner(temp_db, manager, llm).run(
-        _event("Fix src/gobby/memory/recall.py"), SESSION_ID, _variables()
-    )
-
-    assert result is not None
-    assert len(manager.calls) == 1
-
-
-@pytest.mark.asyncio
-async def test_classifier_timeout_uses_heuristic_fallback(
-    temp_db: HubDatabase,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def timeout(*_args: Any, **_kwargs: Any) -> Any:
-        raise TimeoutError
-
-    monkeypatch.setattr("gobby.memory.recall.asyncio.wait_for", timeout)
-    manager = FakeMemoryManager([_memory("m1")])
-    llm = FakeLLMService({"substantive": True, "reason": "task"})
-
-    result = await _runner(temp_db, manager, llm).run(
-        _event("Why does ParserError happen?"), SESSION_ID, _variables()
     )
 
     assert result is not None
@@ -348,9 +222,7 @@ async def test_filters_review_duplicates_and_injected_ids_in_rank_order(
             _memory("m3", similarity=None),
         ]
     )
-    llm = FakeLLMService({"substantive": True, "reason": "technical_question"})
-
-    result = await _runner(temp_db, manager, llm).run(_event(), SESSION_ID, _variables())
+    result = await _runner(temp_db, manager).run(_event(), SESSION_ID, _variables())
 
     assert result is not None
     assert [memory["id"] for memory in result.memories] == [
@@ -374,9 +246,7 @@ async def test_candidates_below_min_score_floor_are_dropped(
             _memory("unscored", similarity=None),
         ]
     )
-    llm = FakeLLMService({"substantive": True, "reason": "technical_question"})
-
-    result = await _runner(temp_db, manager, llm).run(_event(), SESSION_ID, _variables())
+    result = await _runner(temp_db, manager).run(_event(), SESSION_ID, _variables())
 
     assert result is not None
     assert [memory["id"] for memory in result.memories] == ["strong", "unscored"]
@@ -385,10 +255,8 @@ async def test_candidates_below_min_score_floor_are_dropped(
 @pytest.mark.asyncio
 async def test_search_failure_allows_turn_to_continue(temp_db: HubDatabase) -> None:
     manager = FakeMemoryManager(error=RuntimeError("search unavailable"))
-    llm = FakeLLMService({"substantive": True, "reason": "task"})
 
-    result = await _runner(temp_db, manager, llm).run(_event(), SESSION_ID, _variables())
+    result = await _runner(temp_db, manager).run(_event(), SESSION_ID, _variables())
 
     assert result is None
-    assert len(llm.calls) == 1
     assert len(manager.calls) == 1

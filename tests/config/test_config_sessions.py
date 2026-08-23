@@ -14,12 +14,11 @@ pytestmark = pytest.mark.unit
 
 
 def test_memory_recall_config_fields() -> None:
-    """Memory recall config exposes only classifier and search controls."""
+    """Memory recall config exposes only search controls; the classifier is gone."""
     assert set(MemoryRecallConfig.model_fields) == {
         "profile",
         "candidates",
         "enabled",
-        "timeout",
         "candidate_limit",
         "min_score",
     }
@@ -30,7 +29,6 @@ def test_memory_recall_config_defaults() -> None:
     assert cfg.enabled is True
     assert cfg.profile == FeatureProfile.LOW
     assert "claude/haiku" in candidate_labels(cfg.candidates)
-    assert cfg.timeout == 60
     assert cfg.candidate_limit == 8
     assert cfg.min_score == 0.45
     assert DaemonConfig().memory_recall.enabled is True
@@ -48,13 +46,6 @@ def test_memory_recall_config_validation_bounds() -> None:
     with pytest.raises(ValidationError) as exc_info:
         MemoryRecallConfig(min_score=1.1)
     _assert_field_error(exc_info.value, "min_score")
-    with pytest.raises(ValidationError) as exc_info:
-        MemoryRecallConfig(timeout=0)
-    _assert_field_error(exc_info.value, "timeout")
-    assert MemoryRecallConfig(timeout=89).timeout == 89
-    with pytest.raises(ValidationError) as exc_info:
-        MemoryRecallConfig(timeout=90)
-    _assert_field_error(exc_info.value, "timeout")
 
 
 def test_memory_recall_config_yaml_loading(temp_dir: Path) -> None:
@@ -65,7 +56,6 @@ def test_memory_recall_config_yaml_loading(temp_dir: Path) -> None:
                 "memory_recall": {
                     "enabled": False,
                     "candidates": ["endpoint:lm-studio/llama"],
-                    "timeout": 12,
                     "candidate_limit": 5,
                     "min_score": 0.75,
                 }
@@ -77,7 +67,6 @@ def test_memory_recall_config_yaml_loading(temp_dir: Path) -> None:
     assert candidate_labels(disabled_config.memory_recall.candidates) == (
         "endpoint:lm-studio/llama",
     )
-    assert disabled_config.memory_recall.timeout == 12
     assert disabled_config.memory_recall.candidate_limit == 5
     assert disabled_config.memory_recall.min_score == 0.75
 
@@ -94,3 +83,11 @@ def test_removed_memory_recall_helper_config_fails_loud(temp_dir: Path) -> None:
 
     with pytest.raises(ValueError, match="memory_recall_helper config has been removed"):
         DaemonConfig(**load_yaml(str(config_file)))
+
+
+def test_daemon_config_validates_without_a_recall_timeout() -> None:
+    """1.1.3: the load-order validator lost its first term and must still hold."""
+    assert "timeout" not in MemoryRecallConfig.model_fields
+    config = DaemonConfig()
+    assert config.workflow.timeout < config.hooks.adapter_timeout
+    assert config.hooks.adapter_timeout < config.hooks.provider_timeout

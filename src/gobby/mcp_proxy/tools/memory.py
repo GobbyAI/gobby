@@ -658,7 +658,6 @@ def create_memory_registry(
     register_memory_recall_tool(
         registry,
         memory_manager_resolver,
-        llm_service_resolver=_llm_service,
         config_resolver=lambda: (
             config.memory_recall if (config := _config()) is not None else None
         ),

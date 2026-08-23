@@ -70,7 +70,6 @@ const RECALL_PATHS = [
   "memory_recall.profile",
   "memory_recall.candidates",
   "memory_recall.enabled",
-  "memory_recall.timeout",
   "memory_recall.candidate_limit",
   "memory_recall.selected_limit",
   "memory_recall.min_score",
@@ -409,12 +408,6 @@ function RecallGroup({ fields }: { fields: SettingsSectionFields }) {
         ariaLabel="Recall model candidates"
         addLabel="Add candidate"
         placeholder="provider/model"
-      />
-      <NumberConfigField
-        fields={fields}
-        path="memory_recall.timeout"
-        label="Timeout (seconds)"
-        ariaLabel="Recall timeout (seconds)"
       />
       <NumberConfigField
         fields={fields}

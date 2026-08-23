@@ -141,17 +141,11 @@ class MemoryUsefulnessConfig(FeatureDefaultConfig):
 
 
 class MemoryRecallConfig(FeatureDefaultConfig):
-    """Inline substantive-prompt memory recall configuration."""
+    """Inline parent-prompt memory recall configuration."""
 
     enabled: bool = Field(
         default=True,
         description="Enable inline substantive-prompt memory recall.",
-    )
-    timeout: int = Field(
-        default=60,
-        gt=0,
-        le=89,
-        description="Timeout in seconds for the FEATURE_LOW substantive classifier.",
     )
     candidate_limit: int = Field(
         default=8,

@@ -28,7 +28,6 @@ def register_memory_recall_tool(
     registry: InternalToolRegistry,
     memory_manager_resolver: Callable[[], MemoryManager | None],
     *,
-    llm_service_resolver: Callable[[], Any | None] | None = None,
     config_resolver: Callable[[], MemoryRecallConfig | None] | None = None,
 ) -> None:
     """Register inline recall and overflow-only retrieval."""
@@ -45,15 +44,14 @@ def register_memory_recall_tool(
         return MemoryRecallRunner(
             db=manager.db,
             memory_manager=manager,
-            llm_service=llm_service_resolver() if llm_service_resolver is not None else None,
             config=recall_config or MemoryRecallConfig(),
         )
 
     @registry.tool(
         name="recall_memories_for_prompt",
         description=(
-            "Classify one parent-user prompt and return up to three direct hybrid-search "
-            "memory results for inline hook delivery."
+            "Return up to three direct hybrid-search memory results for one "
+            "parent-user prompt, for inline hook delivery."
         ),
     )
     async def recall_memories_for_prompt(

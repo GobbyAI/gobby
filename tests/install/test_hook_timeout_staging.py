@@ -28,7 +28,6 @@ def _timeout_values(value: Any) -> list[int]:
 def test_hook_timeout_layers_leave_ordered_cleanup_windows() -> None:
     config = DaemonConfig()
 
-    assert config.memory_recall.timeout == 60
     assert DEFAULT_WORKFLOW_TIMEOUT_SECONDS == 90
     assert config.hooks.adapter_timeout == 105
     assert config.hooks.provider_timeout == 120

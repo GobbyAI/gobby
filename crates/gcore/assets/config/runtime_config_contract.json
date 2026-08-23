@@ -133,7 +133,7 @@
     {
       "activation": "live",
       "default": "srt",
-      "description": "Host sandbox backend. Managed agents default this field to SRT.",
+      "description": "Managed Sandbox Runtime backend.",
       "key": "agent_sandbox.backend",
       "machineExport": false,
       "namespace": "agent_sandbox",
@@ -1858,7 +1858,7 @@
     },
     {
       "activation": "live",
-      "default": 32000,
+      "default": 256000,
       "description": "Maximum rendered character count for the task-close criteria-review prompt.",
       "key": "gobby_tasks.validation.close_review_prompt_max_chars",
       "machineExport": false,
@@ -3299,17 +3299,6 @@
       "namespace": "memory_recall",
       "secrecy": "none",
       "type": "string",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": 60,
-      "description": "Timeout in seconds for the FEATURE_LOW substantive classifier.",
-      "key": "memory_recall.timeout",
-      "machineExport": false,
-      "namespace": "memory_recall",
-      "secrecy": "none",
-      "type": "integer",
       "visibility": "public"
     },
     {
@@ -5453,7 +5442,7 @@
     },
     {
       "activation": "live",
-      "default": true,
+      "default": false,
       "description": "Allow daemon-owned runtimes to access the network.",
       "key": "web_chat_sandbox.allow_network",
       "machineExport": false,
@@ -5497,8 +5486,8 @@
     },
     {
       "activation": "live",
-      "default": "provider-native",
-      "description": "Host sandbox backend. Managed agents default this field to SRT.",
+      "default": "srt",
+      "description": "Managed Sandbox Runtime backend.",
       "key": "web_chat_sandbox.backend",
       "machineExport": false,
       "namespace": "web_chat_sandbox",

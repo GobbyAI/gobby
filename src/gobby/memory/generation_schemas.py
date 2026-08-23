@@ -2,34 +2,6 @@
 
 from typing import Any
 
-RECALL_CLASSIFICATION_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "substantive": {"type": "boolean"},
-        "reason": {
-            "type": "string",
-            "enum": [
-                "task",
-                "technical_question",
-                "problem_report",
-                "design_request",
-                "detailed_follow_up",
-                "other_substantive",
-                "acknowledgment",
-                "approval",
-                "continuation",
-                "status_question",
-                "wait",
-                "lifecycle_command",
-                "conversational",
-                "other_non_substantive",
-            ],
-        },
-    },
-    "required": ["substantive", "reason"],
-    "additionalProperties": False,
-}
-
 TURN_RECORD_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -149,7 +121,6 @@ SHADOW_RELEVANCE_SCHEMA: dict[str, Any] = {
 __all__ = [
     "DREAM_ACTIONS_SCHEMA",
     "ENTITY_EXTRACTION_SCHEMA",
-    "RECALL_CLASSIFICATION_SCHEMA",
     "RELATIONSHIP_DELETION_SCHEMA",
     "RELATIONSHIP_EXTRACTION_SCHEMA",
     "SHADOW_RELEVANCE_SCHEMA",

@@ -220,7 +220,7 @@ already-created registry continue to use the live per-epoch configuration contra
 | memory_recall.profile | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField select | live | keep | memory-knowledge |  |
 | memory_recall.candidates | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for array | mismatched-type | fix | memory-knowledge | array items=string map= |
 | memory_recall.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | memory-knowledge |  |
-| memory_recall.timeout | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | memory-knowledge | Default 60 seconds; daemon restart required; must remain below workflow.timeout. |
+| memory_recall.timeout | Retired with the substantive-prompt classifier; recall makes no LLM call | (none — no surface) | retired | drop | (none) | removed from the runtime config contract; the hook load-order chain now starts at workflow.timeout |
 | memory_recall.candidate_limit | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | memory-knowledge |  |
 | memory_recall.selected_limit | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | memory-knowledge |  |
 | memory_recall.min_score | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | memory-knowledge |  |

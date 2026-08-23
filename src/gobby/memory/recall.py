@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import math
 import re
@@ -12,9 +11,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from gobby.config.feature_base import DEFAULT_PROFILE_CANDIDATES, FeatureProfile
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.memory.generation_schemas import RECALL_CLASSIFICATION_SCHEMA
 from gobby.memory.recall_signal_log import make_injection_outcome_recorder
 from gobby.memory.synthetic_prompts import synthetic_prompt_reason
 from gobby.utils.datetime import datetime_to_required_iso
@@ -44,43 +41,6 @@ PARENT_USER_PROMPT_SOURCES = frozenset(
 )
 
 REVIEW_LESSON_TAG = "review_lesson"
-CLASSIFIER_SYSTEM_PROMPT = """\
-Classify whether the parent user's prompt contains substantive work or a substantive
-question. Return strict JSON with exactly two fields:
-{"substantive":true|false,"reason":"<reason>"}
-
-When substantive is true, reason must be one of:
-task, technical_question, problem_report, design_request, detailed_follow_up,
-other_substantive.
-
-When substantive is false, reason must be one of:
-acknowledgment, approval, continuation, status_question, wait, lifecycle_command,
-conversational, other_non_substantive.
-"""
-
-_ALLOWED_SUBSTANTIVE_REASONS = frozenset(
-    {
-        "task",
-        "technical_question",
-        "problem_report",
-        "design_request",
-        "detailed_follow_up",
-        "other_substantive",
-    }
-)
-_ALLOWED_NON_SUBSTANTIVE_REASONS = frozenset(
-    {
-        "acknowledgment",
-        "approval",
-        "continuation",
-        "status_question",
-        "wait",
-        "lifecycle_command",
-        "conversational",
-        "other_non_substantive",
-    }
-)
-_ALLOWED_CLASSIFIER_REASONS = _ALLOWED_SUBSTANTIVE_REASONS | _ALLOWED_NON_SUBSTANTIVE_REASONS
 
 _SHORT_ACKNOWLEDGMENTS = frozenset(
     {
@@ -176,12 +136,6 @@ _MEANINGFUL_STOPWORDS = frozenset(
         "you",
     }
 )
-_ACTION_PATTERN = re.compile(
-    r"\b(?:add|analy[sz]e|build|change|check|debug|design|diagnose|explain|find|fix|"
-    r"implement|investigate|remove|review|run|test|update|verify|why|how|what|where|"
-    r"can|could|should|does)\b",
-    re.IGNORECASE,
-)
 _TECHNICAL_PATTERN = re.compile(
     r"`[^`]+`|(?:[./~][^\s]+)|--?[A-Za-z][\w-]*|"
     r"\b[A-Za-z_][A-Za-z0-9_]*(?:(?:::|\.)[A-Za-z_][A-Za-z0-9_]*)+\b|"
@@ -194,8 +148,6 @@ class PromptDecisionKind(str, Enum):
     """How a prompt reached its recall eligibility decision."""
 
     HARD_SKIP = "hard_skip"
-    CLASSIFIER = "classifier"
-    HEURISTIC = "heuristic"
 
 
 @dataclass(frozen=True)
@@ -209,7 +161,7 @@ class MemoryRecallResult:
 
 @dataclass(frozen=True)
 class MemoryRecallPromptDecision:
-    """Typed substantive-prompt classification."""
+    """Why a prompt was excluded from recall, for the decision log."""
 
     substantive: bool
     kind: PromptDecisionKind
@@ -271,13 +223,11 @@ class MemoryRecallRunner:
         *,
         db: HubDatabase,
         memory_manager: MemoryManager,
-        llm_service: Any | None,
         config: MemoryRecallConfig,
         log: logging.Logger | None = None,
     ) -> None:
         self.db = db
         self.memory_manager = memory_manager
-        self.llm_service = llm_service
         self.config = config
         self.logger = log or logger
         memory_config = getattr(memory_manager, "config", None)
@@ -293,7 +243,7 @@ class MemoryRecallRunner:
         session_id: str,
         variables: dict[str, Any],
     ) -> MemoryRecallResult | None:
-        """Return up to three direct ranked results for one substantive prompt."""
+        """Return up to three direct ranked results for one parent prompt."""
         hard_skip = _hard_skip_reason(event, variables, self.config)
         if hard_skip is not None:
             self._log_decision(
@@ -302,13 +252,7 @@ class MemoryRecallRunner:
             )
             return None
 
-        prompt = _prompt_text(event)
-        decision = await self._classify(prompt, event)
-        self._log_decision(decision, session_id)
-        if not decision.substantive:
-            return None
-
-        query = scrub_memory_recall_query(prompt)
+        query = scrub_memory_recall_query(_prompt_text(event))
         if not query:
             return None
 
@@ -345,46 +289,6 @@ class MemoryRecallRunner:
             recall_request_id=recall_request_id,
             memories=selected,
         )
-
-    async def _classify(
-        self,
-        prompt: str,
-        event: HookEvent,
-    ) -> MemoryRecallPromptDecision:
-        fallback = _heuristic_decision(prompt, event)
-        call_json_feature = getattr(self.llm_service, "call_json_feature", None)
-        if not callable(call_json_feature):
-            return fallback
-
-        classifier_config = self.config.model_copy(
-            update={
-                "profile": FeatureProfile.LOW,
-                "candidates": list(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.LOW]),
-            }
-        )
-        try:
-            response = await asyncio.wait_for(
-                call_json_feature(
-                    classifier_config,
-                    f"Parent user prompt:\n{prompt}",
-                    system_prompt=CLASSIFIER_SYSTEM_PROMPT,
-                    json_schema=RECALL_CLASSIFICATION_SCHEMA,
-                    caller="memory.recall.classify",
-                    total_timeout_seconds=self.config.timeout,
-                ),
-                timeout=self.config.timeout,
-            )
-            substantive, reason = _parse_classifier_response(response)
-        except TimeoutError:
-            self.logger.info("Memory recall classifier timed out; using heuristic fallback")
-            return fallback
-        except (TypeError, ValueError) as exc:
-            self.logger.info("Memory recall classifier output malformed; using fallback: %s", exc)
-            return fallback
-        except Exception as exc:  # noqa: BLE001 - recall must fail open
-            self.logger.warning("Memory recall classifier failed; using fallback: %s", exc)
-            return fallback
-        return _decision(substantive, PromptDecisionKind.CLASSIFIER, reason, event)
 
     async def _search_once(
         self,
@@ -543,44 +447,6 @@ def _hard_skip_reason(
     if len(normalized.split()) <= 12 and _LIFECYCLE_COMMAND_PATTERN.match(normalized):
         return "lifecycle_command"
     return None
-
-
-def _heuristic_decision(prompt: str, event: HookEvent) -> MemoryRecallPromptDecision:
-    tokens = [
-        term
-        for term in _QUERY_TERM_PATTERN.findall(prompt)
-        if term.casefold() not in _MEANINGFUL_STOPWORDS
-    ]
-    has_technical_action = bool(_TECHNICAL_PATTERN.search(prompt)) and (
-        bool(_ACTION_PATTERN.search(prompt)) or "?" in prompt
-    )
-    substantive = len(tokens) >= 8 or has_technical_action
-    reason = "heuristic_substantive" if substantive else "heuristic_non_substantive"
-    return _decision(substantive, PromptDecisionKind.HEURISTIC, reason, event)
-
-
-def _parse_classifier_response(response: Any) -> tuple[bool, str]:
-    if not isinstance(response, dict) or set(response) != {"substantive", "reason"}:
-        raise ValueError("expected exactly substantive and reason")
-    substantive = response["substantive"]
-    reason = response["reason"]
-    if not isinstance(substantive, bool) or not isinstance(reason, str):
-        raise TypeError("substantive must be bool and reason must be str")
-    if reason not in _ALLOWED_CLASSIFIER_REASONS:
-        raise ValueError(f"unsupported reason: {reason}")
-    if substantive and reason not in _ALLOWED_SUBSTANTIVE_REASONS:
-        logger.debug(
-            "Memory recall classifier reason %s contradicted substantive=true; normalizing",
-            reason,
-        )
-        reason = "other_substantive"
-    if not substantive and reason not in _ALLOWED_NON_SUBSTANTIVE_REASONS:
-        logger.debug(
-            "Memory recall classifier reason %s contradicted substantive=false; normalizing",
-            reason,
-        )
-        reason = "other_non_substantive"
-    return substantive, reason
 
 
 def _decision(
