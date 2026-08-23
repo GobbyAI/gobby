@@ -153,17 +153,31 @@ class MemoryRecallConfig(FeatureDefaultConfig):
         description="Maximum ranked candidates returned by the single hybrid search.",
     )
     min_score: float = Field(
-        default=0.45,
+        default=0.55,
         ge=0.0,
         le=1.0,
         description=(
-            "Minimum decayed semantic similarity for recall candidates. Applies only "
-            "to hits carrying a numeric similarity; keyword/RRF-ranked hits pass "
-            "through in direct hybrid-search order. Default 0.45 sits at the 10th "
-            "percentile of the logged recall_signal similarity distribution "
-            "(memory.recall caller, 2026-07 through 2026-08: p10=0.45, p25=0.50), "
-            "trimming the low-signal tail that the transcript audit showed was "
-            "injected but never referenced (#20447)."
+            "Minimum decayed semantic similarity the hybrid search itself applies. "
+            "The backfill loop doubles the candidate pool until candidate_limit hits "
+            "clear this floor, so raising it sharpens the pool without reducing how "
+            "much a turn injects. Default 0.55 sits at the 25th percentile of the "
+            "logged recall_signal similarity distribution (memory.recall caller, "
+            "2026-07 through 2026-08: p10=0.45, p25=0.50)."
+        ),
+    )
+    selection_min_score: float = Field(
+        default=0.65,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum similarity a candidate must carry to be injected. Unlike "
+            "min_score the backfill loop does not chase this floor, so it is the "
+            "only control that can make a turn inject less than the rank limit. "
+            "A candidate with no finite similarity is dropped rather than admitted. "
+            "Default 0.65 is the calibration knee across both judge cohorts: it "
+            "keeps roughly a fifth of labeled hits, adds about 20 points of "
+            "precision to each cohort (haiku 31.9 -> 52.3, luna 46.3 -> 67.2), and "
+            "lands the mean per-turn injection at one memory (#20771)."
         ),
     )
 

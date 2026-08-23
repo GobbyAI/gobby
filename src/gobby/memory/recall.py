@@ -420,13 +420,17 @@ class MemoryRecallRunner:
                 drops.append((memory_id, "already_injected", None))
                 continue
             similarity = getattr(memory, "similarity", None)
-            if similarity is not None and (
+            if (
                 not isinstance(similarity, int | float)
                 or isinstance(similarity, bool)
                 or not math.isfinite(float(similarity))
-                or float(similarity) < self.config.min_score
             ):
-                drops.append((memory_id, "other", "below_min_score"))
+                # An unscored candidate cannot be shown to clear the floor, so it
+                # is dropped rather than admitted on the strength of its rank.
+                drops.append((memory_id, "other", "null_similarity"))
+                continue
+            if float(similarity) < self.config.selection_min_score:
+                drops.append((memory_id, "other", "selection_min_score"))
                 continue
             if len(selected) < MAX_RECALL_MEMORIES:
                 selected.append(_memory_to_payload(memory))

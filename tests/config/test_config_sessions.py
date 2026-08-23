@@ -21,6 +21,7 @@ def test_memory_recall_config_fields() -> None:
         "enabled",
         "candidate_limit",
         "min_score",
+        "selection_min_score",
     }
 
 
@@ -30,7 +31,12 @@ def test_memory_recall_config_defaults() -> None:
     assert cfg.profile == FeatureProfile.LOW
     assert "claude/haiku" in candidate_labels(cfg.candidates)
     assert cfg.candidate_limit == 8
-    assert cfg.min_score == 0.45
+    assert cfg.min_score == 0.55
+    # The selection floor sits above the search floor on purpose: the backfill
+    # loop chases min_score until the candidate pool fills, so only a floor it
+    # does not chase can make a turn inject less than the rank limit.
+    assert cfg.selection_min_score == 0.65
+    assert cfg.selection_min_score > cfg.min_score
     assert DaemonConfig().memory_recall.enabled is True
 
 
@@ -38,14 +44,15 @@ def _assert_field_error(exc: ValidationError, field: str) -> None:
     assert any(error["loc"] == (field,) for error in exc.errors())
 
 
-def test_memory_recall_config_validation_bounds() -> None:
-    assert MemoryRecallConfig(min_score=0.75).min_score == 0.75
+@pytest.mark.parametrize("field", ["min_score", "selection_min_score"])
+def test_memory_recall_config_validation_bounds(field: str) -> None:
+    assert getattr(MemoryRecallConfig(**{field: 0.75}), field) == 0.75
     with pytest.raises(ValidationError) as exc_info:
-        MemoryRecallConfig(min_score=-0.1)
-    _assert_field_error(exc_info.value, "min_score")
+        MemoryRecallConfig(**{field: -0.1})
+    _assert_field_error(exc_info.value, field)
     with pytest.raises(ValidationError) as exc_info:
-        MemoryRecallConfig(min_score=1.1)
-    _assert_field_error(exc_info.value, "min_score")
+        MemoryRecallConfig(**{field: 1.1})
+    _assert_field_error(exc_info.value, field)
 
 
 def test_memory_recall_config_yaml_loading(temp_dir: Path) -> None:
@@ -58,6 +65,7 @@ def test_memory_recall_config_yaml_loading(temp_dir: Path) -> None:
                     "candidates": ["endpoint:lm-studio/llama"],
                     "candidate_limit": 5,
                     "min_score": 0.75,
+                    "selection_min_score": 0.85,
                 }
             }
         )
@@ -69,6 +77,7 @@ def test_memory_recall_config_yaml_loading(temp_dir: Path) -> None:
     )
     assert disabled_config.memory_recall.candidate_limit == 5
     assert disabled_config.memory_recall.min_score == 0.75
+    assert disabled_config.memory_recall.selection_min_score == 0.85
 
     default_config_file = temp_dir / "default.yaml"
     default_config_file.write_text(yaml.safe_dump({"daemon_port": 60999}))

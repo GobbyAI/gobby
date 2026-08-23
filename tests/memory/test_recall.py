@@ -290,7 +290,9 @@ async def test_filters_duplicates_and_injected_ids_in_rank_order(
             _memory("m1"),
             _memory("m1"),
             _memory("m2"),
-            _memory("m3", similarity=None),
+            # Lower-ranked than m1 but still over the selection floor, so what
+            # this test observes is dedupe and the ledger, never the floor.
+            _memory("m3", similarity=0.70),
         ]
     )
     result = await _runner(temp_db, manager).run(_event(), SESSION_ID, _variables())
@@ -351,25 +353,86 @@ def test_filter_ranked_no_longer_carries_a_review_lesson_branch() -> None:
     assert "review_lesson" not in inspect.getsource(MemoryRecallRunner._filter_ranked)
 
 
+def _drop_row(db: HubDatabase, memory_id: str) -> dict[str, Any]:
+    row = db.fetchone(
+        "SELECT drop_reason, drop_detail FROM recall_injection_outcomes WHERE memory_id = %s",
+        (memory_id,),
+    )
+    assert row is not None, f"no injection outcome recorded for {memory_id}"
+    return dict(row)
+
+
 @pytest.mark.asyncio
-async def test_candidates_below_min_score_floor_are_dropped(
+async def test_selection_floor_can_yield_zero_memories(
     temp_db: HubDatabase,
     persisted_session: None,
 ) -> None:
-    """The default floor (p10 of the logged distribution) trims low-signal hits."""
-    floor = MemoryRecallConfig().min_score
-    assert floor == 0.45
+    """2.3.2: candidates the search floor admits can still all miss the selection floor.
+
+    `collect_active_results` doubles the candidate pool until `limit` hits clear
+    `min_score`, so a floor the backfill loop chases can never empty a turn. Only
+    the independent selection floor can.
+    """
+    config = MemoryRecallConfig()
     manager = FakeMemoryManager(
         [
-            _memory("strong", similarity=0.6),
-            _memory("weak", similarity=floor - 0.01),
-            _memory("unscored", similarity=None),
+            _memory("near", similarity=config.selection_min_score - 0.01),
+            _memory("far", similarity=config.min_score + 0.01),
         ]
     )
+
+    result = await _runner(temp_db, manager).run(_event(), SESSION_ID, _variables())
+
+    assert result is None
+    assert manager.calls[0]["min_score"] == config.min_score, (
+        "the search still runs on the search floor"
+    )
+
+
+@pytest.mark.asyncio
+async def test_selection_floor_drop_detail(
+    temp_db: HubDatabase,
+    persisted_session: None,
+) -> None:
+    """2.3.3: the floor drop is distinguishable from every other filtered row."""
+    floor = MemoryRecallConfig().selection_min_score
+    manager = FakeMemoryManager(
+        [_memory("kept", similarity=floor + 0.01), _memory("dropped", similarity=floor - 0.01)],
+        record_outcomes=True,
+    )
+
     result = await _runner(temp_db, manager).run(_event(), SESSION_ID, _variables())
 
     assert result is not None
-    assert [memory["id"] for memory in result.memories] == ["strong", "unscored"]
+    assert [memory["id"] for memory in result.memories] == ["kept"]
+    assert _drop_row(temp_db, "dropped") == {
+        "drop_reason": "other",
+        "drop_detail": "selection_min_score",
+    }
+
+
+@pytest.mark.asyncio
+async def test_null_similarity_candidates_are_dropped(
+    temp_db: HubDatabase,
+    persisted_session: None,
+) -> None:
+    """2.3.4: an unscored hit cannot be shown to clear the floor, so it never ships."""
+    manager = FakeMemoryManager(
+        [
+            _memory("scored", similarity=MemoryRecallConfig().selection_min_score + 0.01),
+            _memory("unscored", similarity=None),
+        ],
+        record_outcomes=True,
+    )
+
+    result = await _runner(temp_db, manager).run(_event(), SESSION_ID, _variables())
+
+    assert result is not None
+    assert [memory["id"] for memory in result.memories] == ["scored"]
+    assert _drop_row(temp_db, "unscored") == {
+        "drop_reason": "other",
+        "drop_detail": "null_similarity",
+    }
 
 
 @pytest.mark.asyncio
