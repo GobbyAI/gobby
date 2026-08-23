@@ -666,11 +666,77 @@ class TestTmuxSessionManager:
         with patch.object(mgr, "_run", side_effect=fake_run):
             await mgr.refresh_client("demo")
 
-        assert run_calls == [
-            ("list-clients", "-t", "demo", "-F", "#{client_tty}"),
+        assert run_calls[0] == ("list-clients", "-t", "demo", "-F", "#{client_tty}")
+        assert sorted(run_calls[1:]) == [
             ("refresh-client", "-t", "/dev/ttys001"),
             ("refresh-client", "-t", "/dev/ttys002"),
         ]
+
+    @pytest.mark.asyncio
+    async def test_refresh_client_fans_the_per_tty_redraws_out_concurrently(self) -> None:
+        # Serial redraws made the worst case scale with the number of attached
+        # clients, and that cost is charged to whoever is waiting -- on the
+        # attach path, to a user whose next request is queued behind it. Every
+        # redraw parks until all three have started, so a serial implementation
+        # deadlocks here rather than passing more slowly.
+        mgr = TmuxSessionManager()
+        all_started = asyncio.Event()
+        started: list[str] = []
+
+        async def fake_run(*tmux_args: str, timeout: float = 0) -> tuple[int, str, str]:
+            if tmux_args[0] == "list-clients":
+                return (0, "/dev/ttys001\n/dev/ttys002\n/dev/ttys003\n", "")
+            started.append(tmux_args[2])
+            if len(started) == 3:
+                all_started.set()
+            await all_started.wait()
+            return (0, "", "")
+
+        with patch.object(mgr, "_run", side_effect=fake_run):
+            await asyncio.wait_for(mgr.refresh_client("demo"), timeout=5)
+
+        assert sorted(started) == ["/dev/ttys001", "/dev/ttys002", "/dev/ttys003"]
+
+    @pytest.mark.asyncio
+    async def test_refresh_client_shares_one_deadline_across_the_whole_sweep(self) -> None:
+        mgr = TmuxSessionManager()
+        timeouts: list[float] = []
+
+        async def fake_run(*tmux_args: str, timeout: float = 0) -> tuple[int, str, str]:
+            timeouts.append(timeout)
+            if tmux_args[0] == "list-clients":
+                return (0, "/dev/ttys001\n/dev/ttys002\n", "")
+            return (0, "", "")
+
+        with patch.object(mgr, "_run", side_effect=fake_run):
+            await mgr.refresh_client("demo", timeout=0.5)
+
+        assert timeouts[0] == 0.5
+        # The redraws get what the lookup left over, once, rather than a fresh
+        # 0.5s each -- which is what stopped the sweep scaling with client count.
+        assert timeouts[1] == timeouts[2]
+        assert 0 < timeouts[1] < 0.5
+
+    @pytest.mark.asyncio
+    async def test_refresh_client_reports_one_failing_tty_without_dropping_the_rest(
+        self,
+    ) -> None:
+        mgr = TmuxSessionManager()
+        refreshed: list[str] = []
+
+        async def fake_run(*tmux_args: str, timeout: float = 0) -> tuple[int, str, str]:
+            if tmux_args[0] == "list-clients":
+                return (0, "/dev/ttys001\n/dev/ttys002\n", "")
+            tty = tmux_args[2]
+            if tty == "/dev/ttys001":
+                raise TimeoutError
+            refreshed.append(tty)
+            return (0, "", "")
+
+        with patch.object(mgr, "_run", side_effect=fake_run):
+            await mgr.refresh_client("demo")
+
+        assert refreshed == ["/dev/ttys002"]
 
     @pytest.mark.asyncio
     async def test_refresh_client_raises_when_list_clients_fails(self) -> None:

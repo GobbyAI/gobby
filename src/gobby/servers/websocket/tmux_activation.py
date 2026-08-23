@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from typing import Any, NamedTuple, Protocol, cast
 
 from gobby.agents.tmux.history import (
+    CAPTURE_TIMEOUT_SECONDS,
     HistoryCapture,
     HistoryCaptureError,
     capture_history,
@@ -45,6 +47,22 @@ CLIENT_REGISTRATION_TIMEOUT_SECONDS = 2.0
 CLIENT_REGISTRATION_POLL_SECONDS = 0.05
 LIST_CLIENTS_TIMEOUT_SECONDS = 2.0
 
+# One deadline for the whole activation. Activation is awaited inline and the
+# connection dispatches one message at a time, so everything the user does next
+# queues behind it -- and the web client abandons a tmux request after 10s,
+# reporting the timeout against *that* request rather than the attach. The
+# individual steps below are each bounded, but their caps sum well past 10s, so
+# the total is what has to be bounded. 6s leaves the queued request room to be
+# served and answered inside the client's deadline.
+ACTIVATION_BUDGET_SECONDS = 6.0
+# Delivering the capture -- the history frame, the reader, the repaint -- has
+# to fit in whatever the capture leaves behind. History is the one degradable
+# step, so it is the one that yields when time is short.
+ACTIVATION_TAIL_RESERVE_SECONDS = 1.5
+# Every step whose own worst case carries no meaning beyond "tmux is wedged".
+# The budget is the real bound; this only stops one step eating all of it.
+TMUX_STEP_TIMEOUT_SECONDS = 2.0
+
 STATE_RESERVED = "reserved"
 STATE_ACTIVATING = "activating"
 
@@ -61,6 +79,62 @@ class PendingAttachment:
     # cannot cancel a task handle without killing the whole connection. It sets
     # this flag instead; activation observes it at its next revalidation point.
     cancelled: bool = False
+
+
+class ActivationBudgetExpired(Exception):
+    """The activation deadline ran out, or a step overran its share of it."""
+
+    def __init__(self, step: str) -> None:
+        super().__init__(f"tmux activation ran out of time during {step}")
+        self.step = step
+
+
+class ActivationBudget:
+    """One deadline for a whole activation, drawn down step by step.
+
+    Every awaited step is capped at the smaller of its own timeout and what is
+    left, so no sequence of slow steps can sum past the deadline.
+    """
+
+    def __init__(self, seconds: float) -> None:
+        self._loop = asyncio.get_running_loop()
+        self._deadline = self._loop.time() + seconds
+        self._step = "start"
+
+    def remaining(self) -> float:
+        """Return the seconds left, which may be zero or negative."""
+        return self._deadline - self._loop.time()
+
+    def slice(self, step: str, cap: float) -> float:
+        """Reserve at most ``cap`` seconds for ``step``, or raise if none are left."""
+        remaining = self.remaining()
+        if remaining <= 0:
+            raise ActivationBudgetExpired(step)
+        self._step = step
+        return min(cap, remaining)
+
+    async def run[T](self, step: str, cap: float, awaitable: Awaitable[T]) -> T:
+        """Await one step within its share of the budget.
+
+        Callers build the awaitable at the call site, so an already-expired
+        budget has to dispose of a coroutine that will never be awaited.
+        """
+        try:
+            timeout = self.slice(step, cap)
+        except ActivationBudgetExpired:
+            close = getattr(awaitable, "close", None)
+            if callable(close):
+                close()
+            raise
+        try:
+            return await asyncio.wait_for(awaitable, timeout)
+        except TimeoutError:
+            raise ActivationBudgetExpired(step) from None
+
+    def check(self) -> None:
+        """Raise if the step that just finished used up the budget."""
+        if self.remaining() <= 0:
+            raise ActivationBudgetExpired(self._step)
 
 
 class _BridgeAgent(NamedTuple):
@@ -222,6 +296,35 @@ async def activate_attachment(
 ) -> None:
     """Build the bridge, deliver history, then start streaming.
 
+    The whole sequence runs under one deadline; running out of it is a typed
+    failure like any other, so the client is told rather than left waiting on a
+    request that has already been abandoned.
+    """
+    budget = ActivationBudget(ACTIVATION_BUDGET_SECONDS)
+    try:
+        await _activate(host, websocket, streaming_id, pending, rows, cols, budget)
+    except ActivationBudgetExpired as exc:
+        logger.warning(
+            "tmux activation for '%s' exceeded its budget: %s", pending.session_name, exc
+        )
+        # The client renders this after a full stop, so it stands alone as a
+        # sentence; which step ran out is a daemon-log concern.
+        await _fail(
+            host, websocket, streaming_id, "activation_timed_out", "It took too long to start."
+        )
+
+
+async def _activate(
+    host: TmuxAttachHost,
+    websocket: Any,
+    streaming_id: str,
+    pending: PendingAttachment,
+    rows: int,
+    cols: int,
+    budget: ActivationBudget,
+) -> None:
+    """Run the activation steps, each bounded by its share of ``budget``.
+
     Every awaited boundary revalidates: connections are separate tasks, so a
     different websocket can kill the session, reap the bridge, or stop the
     server mid-activation.
@@ -231,30 +334,52 @@ async def activate_attachment(
     manager = host._get_tmux_manager(socket)
     config = host._get_tmux_config(socket)
 
-    await reap_stale_attachments(
-        host, session_name, socket, websocket, exclude_streaming_id=streaming_id
+    await budget.run(
+        "reap",
+        TMUX_STEP_TIMEOUT_SECONDS,
+        reap_stale_attachments(
+            host, session_name, socket, websocket, exclude_streaming_id=streaming_id
+        ),
     )
     if not _still_activating(host, streaming_id, pending):
         return
+    budget.check()
 
     # Hide the status bar and enable mouse reporting before the tmux client's
     # first paint, so it never renders chrome the web terminal has no use for.
     try:
-        await manager.set_option(session_name, "status", "off")
-        await manager.set_option(session_name, "mouse", "on")
+        await budget.run(
+            "set-option status",
+            TMUX_STEP_TIMEOUT_SECONDS,
+            manager.set_option(session_name, "status", "off"),
+        )
+        await budget.run(
+            "set-option mouse",
+            TMUX_STEP_TIMEOUT_SECONDS,
+            manager.set_option(session_name, "mouse", "on"),
+        )
+    except ActivationBudgetExpired:
+        raise
     except Exception as exc:
         logger.debug("Failed to configure tmux session '%s': %s", session_name, exc)
     if not _still_activating(host, streaming_id, pending):
         return
+    budget.check()
 
     try:
-        master_fd = await host._tmux_bridge.attach(
-            session_name=session_name,
-            streaming_id=streaming_id,
-            config=config,
-            rows=rows,
-            cols=cols,
+        master_fd = await budget.run(
+            "bridge attach",
+            TMUX_STEP_TIMEOUT_SECONDS,
+            host._tmux_bridge.attach(
+                session_name=session_name,
+                streaming_id=streaming_id,
+                config=config,
+                rows=rows,
+                cols=cols,
+            ),
         )
+    except ActivationBudgetExpired:
+        raise
     except Exception as exc:
         logger.error("Failed to build tmux bridge for '%s': %s", session_name, exc)
         await _fail(host, websocket, streaming_id, "bridge_failed", f"Attach failed: {exc}")
@@ -264,7 +389,9 @@ async def activate_attachment(
     # find a bridge to clean up.
     host._tmux_client_bridges.setdefault(websocket, set()).add(streaming_id)
 
-    bridge = await host._tmux_bridge.get_bridge(streaming_id)
+    bridge = await budget.run(
+        "bridge lookup", TMUX_STEP_TIMEOUT_SECONDS, host._tmux_bridge.get_bridge(streaming_id)
+    )
     if bridge is None:
         await _fail(
             host, websocket, streaming_id, "bridge_failed", "Bridge disappeared after attach"
@@ -273,8 +400,15 @@ async def activate_attachment(
     if not _still_activating(host, streaming_id, pending):
         await _teardown(host, streaming_id)
         return
+    budget.check()
 
-    if not await _wait_for_client(manager, session_name, bridge.proc.pid):
+    registered = await _wait_for_client(
+        manager,
+        session_name,
+        bridge.proc.pid,
+        timeout=budget.slice("client registration", CLIENT_REGISTRATION_TIMEOUT_SECONDS),
+    )
+    if not registered:
         if not _still_activating(host, streaming_id, pending):
             await _teardown(host, streaming_id)
             return
@@ -286,25 +420,39 @@ async def activate_attachment(
             f"tmux client for '{session_name}' never registered",
         )
         return
-    if not await _checkpoint(host, websocket, streaming_id, pending, bridge.proc):
+    if not await _checkpoint(host, websocket, streaming_id, pending, bridge.proc, budget):
         return
 
     # The kernel PTY buffer is the queue: the tmux client has been painting at
     # the client's real geometry since attach, and the reader drains it in
     # order right after the history frame, so the capture-to-stream seam has
     # no gap and no duplicate row.
-    unavailable = False
     history = HistoryCapture(text="", truncated=False, dropped_bytes=0, total_bytes=0)
-    try:
-        history = await capture_history(manager, session_name)
-    except HistoryCaptureError as exc:
-        logger.warning("tmux history capture failed for '%s': %s", session_name, exc)
-        unavailable = True
+    # Capture draws from the budget minus the tail the delivery steps need. A
+    # capture that would leave nothing to deliver with is not attempted at all.
+    capture_timeout = min(
+        CAPTURE_TIMEOUT_SECONDS, budget.remaining() - ACTIVATION_TAIL_RESERVE_SECONDS
+    )
+    unavailable = capture_timeout <= 0
+    if unavailable:
+        logger.warning(
+            "Skipping tmux history capture for '%s': too little of the activation budget left",
+            session_name,
+        )
+    else:
+        try:
+            history = await capture_history(manager, session_name, timeout=capture_timeout)
+        except HistoryCaptureError as exc:
+            logger.warning("tmux history capture failed for '%s': %s", session_name, exc)
+            unavailable = True
 
-    if not await _checkpoint(host, websocket, streaming_id, pending, bridge.proc):
+    if not await _checkpoint(host, websocket, streaming_id, pending, bridge.proc, budget):
         return
     if unavailable:
-        if not await manager.has_session(session_name):
+        alive = await budget.run(
+            "session probe", TMUX_STEP_TIMEOUT_SECONDS, manager.has_session(session_name)
+        )
+        if not alive:
             # Nothing is left to stream, so degrading would hand the user a
             # terminal that can never produce a byte.
             await _fail(
@@ -317,27 +465,28 @@ async def activate_attachment(
             return
         # The probe is itself an await: a cross-socket kill can land while it
         # is suspended, and the answer it returns is about the moment before.
-        if not await _checkpoint(host, websocket, streaming_id, pending, bridge.proc):
+        if not await _checkpoint(host, websocket, streaming_id, pending, bridge.proc, budget):
             return
 
+    frame = json_dumps(
+        {
+            "type": "terminal_attach_history",
+            "streaming_id": streaming_id,
+            "text": history.text,
+            "truncated": history.truncated,
+            "unavailable": unavailable,
+            "dropped_bytes": history.dropped_bytes,
+            "total_bytes": history.total_bytes,
+        },
+        # json_dumps defaults to ensure_ascii=True, which renders every ESC
+        # byte and every box-drawing glyph as a six-byte \uXXXX escape. Agent
+        # CLIs are full of both.
+        ensure_ascii=False,
+    )
     try:
-        await websocket.send(
-            json_dumps(
-                {
-                    "type": "terminal_attach_history",
-                    "streaming_id": streaming_id,
-                    "text": history.text,
-                    "truncated": history.truncated,
-                    "unavailable": unavailable,
-                    "dropped_bytes": history.dropped_bytes,
-                    "total_bytes": history.total_bytes,
-                },
-                # json_dumps defaults to ensure_ascii=True, which renders every
-                # ESC byte and every box-drawing glyph as a six-byte \uXXXX
-                # escape. Agent CLIs are full of both.
-                ensure_ascii=False,
-            )
-        )
+        await budget.run("history send", TMUX_STEP_TIMEOUT_SECONDS, websocket.send(frame))
+    except ActivationBudgetExpired:
+        raise
     except Exception as exc:
         # The socket is broken, so a second frame on it cannot be trusted to
         # arrive; the client learns through the connection-close path.
@@ -346,7 +495,7 @@ async def activate_attachment(
         await _teardown(host, streaming_id)
         return
 
-    if not await _checkpoint(host, websocket, streaming_id, pending, bridge.proc):
+    if not await _checkpoint(host, websocket, streaming_id, pending, bridge.proc, budget):
         return
 
     from gobby.agents.pty_reader import get_pty_reader_manager
@@ -358,10 +507,15 @@ async def activate_attachment(
     # above lives in the primary screen's scrollback, which the alternate
     # screen has none of -- so without this filter the restored window is
     # retained by the VT and unreachable until detach.
-    if not await reader.start_reader(
-        cast(Any, _BridgeAgent(streaming_id, master_fd)),
-        transform=AltScreenFilter(),
-    ):
+    started = await budget.run(
+        "reader start",
+        TMUX_STEP_TIMEOUT_SECONDS,
+        reader.start_reader(
+            cast(Any, _BridgeAgent(streaming_id, master_fd)),
+            transform=AltScreenFilter(),
+        ),
+    )
+    if not started:
         await _fail(
             host,
             websocket,
@@ -370,18 +524,32 @@ async def activate_attachment(
             f"PTY reader refused to start for '{session_name}'",
         )
         return
-    if not await _checkpoint(host, websocket, streaming_id, pending, bridge.proc):
+    if not await _checkpoint(host, websocket, streaming_id, pending, bridge.proc, budget):
         return
 
+    # The repaint is a convenience the stream recovers from on its own, so a
+    # budget that runs out here must not undo an otherwise working attachment.
     try:
-        await manager.refresh_client(session_name)
+        await manager.refresh_client(
+            session_name, timeout=min(TMUX_STEP_TIMEOUT_SECONDS, max(budget.remaining(), 0.0))
+        )
     except Exception as exc:
         logger.debug("Post-activation refresh-client failed: %s", exc)
 
     # The refresh is the last await, and finalizing means dropping the
     # reservation that teardown keys on -- so a bridge that died during it
     # would be left registered and presented as a live stream.
-    if not await _checkpoint(host, websocket, streaming_id, pending, bridge.proc):
+    if not _still_activating(host, streaming_id, pending):
+        await _teardown(host, streaming_id)
+        return
+    if bridge.proc.returncode is not None:
+        await _fail(
+            host,
+            websocket,
+            streaming_id,
+            "bridge_exited",
+            f"tmux client exited during attach (rc={bridge.proc.returncode})",
+        )
         return
 
     if host._tmux_pending.get(streaming_id) is pending:
@@ -399,8 +567,14 @@ async def _checkpoint(
     streaming_id: str,
     pending: PendingAttachment,
     proc: asyncio.subprocess.Process,
+    budget: ActivationBudget,
 ) -> bool:
-    """Revalidate after an awaited step; clean up and return False on loss."""
+    """Revalidate after an awaited step; clean up and return False on loss.
+
+    Raises:
+        ActivationBudgetExpired: the step that just finished used up the
+            deadline, so there is no time left to build the rest.
+    """
     if not _still_activating(host, streaming_id, pending):
         await _teardown(host, streaming_id)
         return False
@@ -413,6 +587,7 @@ async def _checkpoint(
             f"tmux client exited during attach (rc={proc.returncode})",
         )
         return False
+    budget.check()
     return True
 
 

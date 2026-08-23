@@ -39,6 +39,9 @@ _MISSING_TARGET_ERRORS = (
     "no such window",
 )
 TMUX_COMMAND_TIMEOUT_SECONDS = 10.0
+# One deadline for a whole refresh-client sweep: the lookup and every per-tty
+# redraw it fans out share it, so the cost does not scale with attached clients.
+REFRESH_CLIENT_TIMEOUT_SECONDS = 5.0
 TMUX_HEALTH_CHECK_TIMEOUT_FAILURE_LIMIT = 3
 
 
@@ -369,24 +372,48 @@ class TmuxSessionManager:
         """Set an option on a tmux session."""
         await self._run("set-option", "-t", session_name, option, value, timeout=5.0)
 
-    async def refresh_client(self, session_name: str) -> None:
-        """Redraw every client attached to a tmux session.
+    async def refresh_client(
+        self,
+        session_name: str,
+        *,
+        timeout: float = REFRESH_CLIENT_TIMEOUT_SECONDS,
+    ) -> None:
+        """Redraw every client attached to a tmux session, within ``timeout``.
 
         refresh-client targets a client tty, not a session, so the session's
         clients are resolved first. A session with no attached clients is a
         no-op; a client that detaches between the two commands is ignored.
+
+        The per-tty refreshes are independent, so they fan out concurrently and
+        share one deadline with the lookup. Running them serially made the
+        worst case scale with the number of attached clients, which is charged
+        to whichever caller is waiting -- on the attach path, to a user whose
+        next request is queued behind it.
         """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
         rc, stdout, stderr = await self._run(
-            "list-clients", "-t", session_name, "-F", "#{client_tty}", timeout=5.0
+            "list-clients", "-t", session_name, "-F", "#{client_tty}", timeout=timeout
         )
         if rc != 0:
             raise RuntimeError(f"tmux list-clients failed for '{session_name}': {stderr.strip()}")
-        for tty in (line.strip() for line in stdout.splitlines()):
-            if not tty:
+
+        ttys = [tty for tty in (line.strip() for line in stdout.splitlines()) if tty]
+        if not ttys:
+            return
+
+        remaining = max(deadline - loop.time(), 0.0)
+        outcomes = await asyncio.gather(
+            *(self._run("refresh-client", "-t", tty, timeout=remaining) for tty in ttys),
+            return_exceptions=True,
+        )
+        for tty, outcome in zip(ttys, outcomes, strict=True):
+            if isinstance(outcome, BaseException):
+                if isinstance(outcome, asyncio.CancelledError):
+                    raise outcome
+                logger.debug("tmux refresh-client errored for tty %s: %s", tty, outcome)
                 continue
-            refresh_rc, _stdout, refresh_stderr = await self._run(
-                "refresh-client", "-t", tty, timeout=5.0
-            )
+            refresh_rc, _stdout, refresh_stderr = outcome
             if refresh_rc != 0:
                 logger.debug(
                     "tmux refresh-client failed for tty %s: %s", tty, refresh_stderr.strip()

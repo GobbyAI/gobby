@@ -190,18 +190,20 @@ class TestPendingProviderOverride:
         runtime_manager.create_session.return_value = mock_session
         mixin.web_chat_runtime_manager = runtime_manager
 
+        # qwen carries no reasoning flag (provider_capabilities.py), so the
+        # binding is exercised without one -- and the configured candidate's
+        # xhigh must not leak in behind it.
         await mixin._create_chat_session(
             conversation_id="test-conv-routing",
             provider="qwen",
             model="qwen3-coder",
-            reasoning_effort="high",
         )
 
         assert runtime_manager.create_session.call_args.kwargs == {
             "provider": "qwen",
             "conversation_id": "test-conv-routing",
             "model": "qwen3-coder",
-            "reasoning_effort": "high",
+            "reasoning_effort": None,
         }
         mock_session.start.assert_awaited_once_with(model="qwen3-coder")
 

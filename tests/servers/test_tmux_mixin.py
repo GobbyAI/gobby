@@ -1553,3 +1553,231 @@ class TestTmuxClientRegistration:
         # matching pid is present on stdout.
         assert create_proc.await_count >= 1
         assert proc.kill.call_count == 0
+
+
+class SlowHistorySendWebSocket(MockWebSocket):
+    """Accepts the attach ack, then never finishes the history frame."""
+
+    async def send(self, message: str) -> None:
+        if json.loads(message).get("type") == "terminal_attach_history":
+            await asyncio.Event().wait()
+        await super().send(message)
+
+
+@contextlib.contextmanager
+def budget_of(seconds: float, *, tail: float | None = None) -> Iterator[None]:
+    """Shrink the activation budget so a real-clock test stays fast."""
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(
+            patch(
+                "gobby.servers.websocket.tmux_activation.ACTIVATION_BUDGET_SECONDS",
+                seconds,
+            )
+        )
+        if tail is not None:
+            stack.enter_context(
+                patch(
+                    "gobby.servers.websocket.tmux_activation.ACTIVATION_TAIL_RESERVE_SECONDS",
+                    tail,
+                )
+            )
+        yield
+
+
+async def _never_returns(*_args: Any, **_kwargs: Any) -> Any:
+    await asyncio.Event().wait()
+
+
+class TestTmuxActivationBudget:
+    """Activation is awaited inline and this socket dispatches one message at a
+    time, so its total cost is charged to whatever the user does next. The web
+    client abandons a tmux request after TMUX_REQUEST_TIMEOUT_MS (10s) and
+    reports the timeout against *that* request, so an activation that overruns
+    surfaces as a failure naming the wrong operation."""
+
+    @pytest.mark.parametrize(
+        "step",
+        ["list_bridges", "set_option", "attach", "get_bridge", "start_reader"],
+    )
+    @pytest.mark.asyncio
+    async def test_a_step_that_hangs_exhausts_the_budget_and_fails_typed(
+        self, server: WebSocketServer, step: str
+    ) -> None:
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws)
+
+        with activation_harness(server) as harness, budget_of(0.2, tail=0.05):
+            target = (
+                harness.reader.start_reader if step == "start_reader" else getattr(harness, step)
+            )
+            target.side_effect = _never_returns
+            await resize(server, ws, streaming_id)
+
+        failures = ws.messages_of_type("tmux_activation_failed")
+        assert [f["code"] for f in failures] == ["activation_timed_out"]
+        assert failures[0]["streaming_id"] == streaming_id
+        # Rendered after a full stop by the web client, so it stands alone.
+        assert failures[0]["message"] == "It took too long to start."
+        # Only the reader starts after the history frame; a step that hangs
+        # before it leaves the client with nothing to render.
+        assert bool(ws.messages_of_type("terminal_attach_history")) is (step == "start_reader")
+        assert streaming_id not in server._tmux_pending
+        assert streaming_id not in server._tmux_client_bridges.get(ws, set())
+
+    @pytest.mark.asyncio
+    async def test_a_hanging_history_send_exhausts_the_budget(
+        self, server: WebSocketServer
+    ) -> None:
+        # The send is the one step whose slowness the socket itself causes, and
+        # it is still the connection task that is stuck on it.
+        ws = SlowHistorySendWebSocket()
+        streaming_id = await reserve(server, ws)
+
+        with activation_harness(server) as harness, budget_of(0.2, tail=0.05):
+            await resize(server, ws, streaming_id)
+
+        assert ws.messages_of_type("tmux_activation_failed")[0]["code"] == "activation_timed_out"
+        harness.reader.start_reader.assert_not_awaited()
+        harness.detach.assert_any_await(streaming_id)
+        assert streaming_id not in server._tmux_pending
+
+    @pytest.mark.asyncio
+    async def test_a_hanging_session_probe_exhausts_the_budget(
+        self, server: WebSocketServer
+    ) -> None:
+        # has_session is only awaited on the degraded path, so reaching it
+        # takes a capture failure first.
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws)
+
+        with activation_harness(server) as harness, budget_of(0.2, tail=0.05):
+            harness.capture.side_effect = HistoryCaptureError("boom")
+            harness.has_session.side_effect = _never_returns
+            await resize(server, ws, streaming_id)
+
+        assert ws.messages_of_type("tmux_activation_failed")[0]["code"] == "activation_timed_out"
+        assert ws.messages_of_type("terminal_attach_history") == []
+        assert streaming_id not in server._tmux_pending
+
+    @pytest.mark.asyncio
+    async def test_no_step_is_allowed_to_run_past_the_shared_deadline(
+        self, server: WebSocketServer
+    ) -> None:
+        # This is what makes the bound structural rather than per-step: each
+        # step's own timeout draws from one deadline, so however slow the ones
+        # before it were, it cannot push the total past the budget.
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws)
+        budget = 1.0
+        loop = asyncio.get_running_loop()
+        observed: list[tuple[str, float, float]] = []
+
+        def watch(step: str, result: Any) -> Any:
+            async def record(*_args: Any, **kwargs: Any) -> Any:
+                observed.append((step, loop.time(), kwargs["timeout"]))
+                return result
+
+            return record
+
+        with activation_harness(server) as harness, budget_of(budget, tail=0.05):
+            started = loop.time()
+            harness.wait_for_client.side_effect = watch("registration", True)
+            harness.capture.side_effect = watch(
+                "capture",
+                HistoryCapture(text="h", truncated=False, dropped_bytes=0, total_bytes=1),
+            )
+            harness.refresh_client.side_effect = watch("refresh", None)
+            await resize(server, ws, streaming_id)
+
+        assert [step for step, _, _ in observed] == ["registration", "capture", "refresh"]
+        # Each step's timeout expires at the one deadline the activation was
+        # given, so a slow predecessor shortens its successors rather than
+        # extending the total.
+        deadline_of = {step: at + timeout for step, at, timeout in observed}
+        assert deadline_of["refresh"] == pytest.approx(deadline_of["registration"], abs=0.02)
+        # Capture stops early by the tail the delivery steps are owed.
+        assert deadline_of["capture"] == pytest.approx(deadline_of["registration"] - 0.05, abs=0.02)
+        assert deadline_of["registration"] - started <= budget + 0.02
+        assert ws.messages_of_type("tmux_activation_failed") == []
+
+    @pytest.mark.asyncio
+    async def test_capture_is_skipped_when_delivering_it_would_not_fit(
+        self, server: WebSocketServer
+    ) -> None:
+        # History is the one degradable step, so it yields when time is short
+        # rather than costing the user a terminal that works. A tail wider than
+        # the budget is the same arithmetic as a budget already spent by the
+        # time capture is reached.
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws)
+
+        with activation_harness(server) as harness, budget_of(0.3, tail=0.4):
+            await resize(server, ws, streaming_id)
+
+        harness.capture.assert_not_awaited()
+        history = ws.messages_of_type("terminal_attach_history")[0]
+        assert history["unavailable"] is True
+        assert history["text"] == ""
+        harness.reader.start_reader.assert_awaited_once()
+        assert ws.messages_of_type("tmux_activation_failed") == []
+        assert streaming_id not in server._tmux_pending
+
+    @pytest.mark.asyncio
+    async def test_a_refresh_that_runs_out_of_time_leaves_the_attachment_up(
+        self, server: WebSocketServer
+    ) -> None:
+        # The repaint is a convenience the live stream recovers from on its
+        # own; it is the last await and must not undo a working attachment.
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws)
+
+        with activation_harness(server) as harness, budget_of(0.5, tail=0.05):
+            harness.refresh_client.side_effect = TimeoutError()
+            await resize(server, ws, streaming_id)
+
+        assert ws.messages_of_type("tmux_activation_failed") == []
+        assert len(ws.messages_of_type("terminal_attach_history")) == 1
+        harness.reader.start_reader.assert_awaited_once()
+        assert streaming_id not in server._tmux_pending
+        assert streaming_id in server._tmux_client_bridges[ws]
+
+    @pytest.mark.asyncio
+    async def test_the_next_queued_message_is_served_within_the_budget(
+        self, server: WebSocketServer
+    ) -> None:
+        # The whole point: a maximally slow activation must not hold the socket
+        # past the client's request deadline. Every step here hangs forever, so
+        # the elapsed time is the budget and nothing else.
+        ws = QueuedWebSocket()
+        streaming_id = await reserve(server, ws)
+        ws.queue(
+            {"type": "tmux_resize", "streaming_id": streaming_id, "rows": 40, "cols": 120},
+            {"type": "tmux_detach", "streaming_id": streaming_id},
+        )
+        budget = 0.3
+
+        with activation_harness(server) as harness, budget_of(budget, tail=0.05):
+            harness.attach.side_effect = _never_returns
+            started = asyncio.get_running_loop().time()
+            await asyncio.wait_for(server.handle_connection(ws), timeout=5)
+            elapsed = asyncio.get_running_loop().time() - started
+
+        # A margin, not a second budget: the ratio is what has to hold, and it
+        # is the same ratio at the shipped 6s against the client's 10s.
+        assert elapsed < budget * 2
+        assert ws.messages_of_type("tmux_activation_failed")[0]["code"] == "activation_timed_out"
+        assert ws.messages_of_type("tmux_detach_result")[0]["success"] is True
+
+    def test_the_budget_leaves_room_for_the_queued_request(self) -> None:
+        from gobby.servers.websocket.tmux_activation import (
+            ACTIVATION_BUDGET_SECONDS,
+            ACTIVATION_TAIL_RESERVE_SECONDS,
+        )
+
+        # web/src/hooks/useTmuxSessions.ts: TMUX_REQUEST_TIMEOUT_MS = 10_000.
+        # A request arriving the instant activation starts waits out the whole
+        # budget before it is even read, so the remainder is what it has to be
+        # served in.
+        assert ACTIVATION_BUDGET_SECONDS <= 6.0
+        # Capture cannot consume the delivery steps' share of the budget.
+        assert 0 < ACTIVATION_TAIL_RESERVE_SECONDS < ACTIVATION_BUDGET_SECONDS

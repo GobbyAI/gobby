@@ -7,6 +7,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from gobby.servers.grant_auth import AuthDecision
 from gobby.servers.middleware.auth import AuthMiddleware
 from gobby.servers.routes.sessions import create_sessions_router
 
@@ -24,7 +25,11 @@ def test_statusline_usage_endpoint_is_removed(
 ) -> None:
     server = MagicMock()
     server.auth_service.enabled = True
-    server.auth_service.is_request_authenticated.return_value = authenticated
+    # AuthMiddleware reads the decision from authenticate(); a MagicMock's
+    # attribute would answer every question truthily, including the shutdown
+    # gate, and turn both cases into a 503.
+    server.auth_service.authenticate.return_value = AuthDecision(allowed=authenticated)
+    server.services.http_admission_closed = False
     server.run_db = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
 
     app = FastAPI()
