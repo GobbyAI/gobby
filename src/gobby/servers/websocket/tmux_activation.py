@@ -402,13 +402,13 @@ async def _activate(
         return
     budget.check()
 
-    registered = await _wait_for_client(
+    client_tty = await _wait_for_client(
         manager,
         session_name,
         bridge.proc.pid,
         timeout=budget.slice("client registration", CLIENT_REGISTRATION_TIMEOUT_SECONDS),
     )
-    if not registered:
+    if not client_tty:
         if not _still_activating(host, streaming_id, pending):
             await _teardown(host, streaming_id)
             return
@@ -426,10 +426,13 @@ async def _activate(
     if not await _checkpoint(host, websocket, streaming_id, pending, bridge.proc, budget):
         return
 
-    # The kernel PTY buffer is the queue: the tmux client has been painting at
-    # the client's real geometry since attach, and the reader drains it in
-    # order right after the history frame, so the capture-to-stream seam has
-    # no gap and no duplicate row.
+    # The capture also repaints our own client, in the same tmux command list.
+    # The redraw is what the web terminal actually renders as its screen -- it
+    # clears first, which discards the stale paint tmux made at attach and is
+    # why the seam has no duplicate row. Deciding the two together is what
+    # keeps it from having a gap either: issued separately, the redraw lands a
+    # round trip after the capture, and whatever scrolled out of the pane in
+    # between is in neither half.
     history = HistoryCapture(text="", truncated=False, dropped_bytes=0, total_bytes=0)
     # Capture draws from the budget minus the tail the delivery steps need. A
     # capture that would leave nothing to deliver with is not attempted at all.
@@ -444,7 +447,9 @@ async def _activate(
         )
     else:
         try:
-            history = await capture_history(manager, session_name, timeout=capture_timeout)
+            history = await capture_history(
+                manager, session_name, timeout=capture_timeout, refresh_tty=client_tty
+            )
         except HistoryCaptureError as exc:
             logger.warning("tmux history capture failed for '%s': %s", session_name, exc)
             unavailable = True
@@ -530,18 +535,23 @@ async def _activate(
     if not await _checkpoint(host, websocket, streaming_id, pending, bridge.proc, budget):
         return
 
-    # The repaint is a convenience the stream recovers from on its own, so a
-    # budget that runs out here must not undo an otherwise working attachment.
-    try:
-        await manager.refresh_client(
-            session_name, timeout=min(TMUX_STEP_TIMEOUT_SECONDS, max(budget.remaining(), 0.0))
-        )
-    except Exception as exc:
-        logger.debug("Post-activation refresh-client failed: %s", exc)
+    if unavailable or not history.repainted:
+        # A capture repaints alongside itself, and that is the repaint the
+        # seam depends on. What is left here is an attachment that has no
+        # history to be consistent with, or one whose repaint failed -- both
+        # still need a screen. The repaint is a convenience the stream
+        # recovers from on its own, so a budget that runs out here must not
+        # undo an otherwise working attachment.
+        try:
+            await manager.refresh_client(
+                session_name, timeout=min(TMUX_STEP_TIMEOUT_SECONDS, max(budget.remaining(), 0.0))
+            )
+        except Exception as exc:
+            logger.debug("Post-activation refresh-client failed: %s", exc)
 
-    # The refresh is the last await, and finalizing means dropping the
-    # reservation that teardown keys on -- so a bridge that died during it
-    # would be left registered and presented as a live stream.
+    # The reader is the last await before finalizing, and finalizing means
+    # dropping the reservation that teardown keys on -- so a bridge that died
+    # during it would be left registered and presented as a live stream.
     if not _still_activating(host, streaming_id, pending):
         await _teardown(host, streaming_id)
         return
@@ -642,29 +652,35 @@ async def _wait_for_client(
     pid: int,
     *,
     timeout: float = CLIENT_REGISTRATION_TIMEOUT_SECONDS,
-) -> bool:
-    """Poll ``list-clients`` until tmux reports our attach process as a client."""
+) -> str | None:
+    """Poll ``list-clients`` until tmux reports our attach process as a client.
+
+    Returns that client's tty, which is what ``refresh-client`` targets, or
+    ``None`` if it never registered. A registered client always has a tty, so
+    the tty doubles as the registration signal.
+    """
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     target = str(pid)
     while True:
-        if target in await _list_client_pids(manager, session_name):
-            return True
+        tty = (await _list_client_ttys(manager, session_name)).get(target)
+        if tty:
+            return tty
         if loop.time() >= deadline:
             logger.debug("tmux client pid %s never appeared for session '%s'", target, session_name)
-            return False
+            return None
         await asyncio.sleep(CLIENT_REGISTRATION_POLL_SECONDS)
 
 
-async def _list_client_pids(manager: TmuxSessionManager, session_name: str) -> set[str]:
-    """Return the client pids tmux reports for a session, empty on any failure."""
+async def _list_client_ttys(manager: TmuxSessionManager, session_name: str) -> dict[str, str]:
+    """Map client pid to tty for a session, empty on any failure."""
     args = [
         *manager.base_args(),
         "list-clients",
         "-t",
         _exact_session_target(session_name),
         "-F",
-        "#{client_pid}",
+        "#{client_pid} #{client_tty}",
     ]
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -674,7 +690,7 @@ async def _list_client_pids(manager: TmuxSessionManager, session_name: str) -> s
         )
     except OSError as exc:
         logger.debug("tmux list-clients could not start for '%s': %s", session_name, exc)
-        return set()
+        return {}
 
     try:
         stdout_bytes, _stderr_bytes = await asyncio.wait_for(
@@ -682,15 +698,20 @@ async def _list_client_pids(manager: TmuxSessionManager, session_name: str) -> s
         )
     except TimeoutError:
         await kill_and_reap(proc)
-        return set()
+        return {}
     except asyncio.CancelledError:
         await kill_and_reap(proc)
         raise
 
     if proc.returncode:
-        return set()
+        return {}
     decoded = (stdout_bytes or b"").decode("utf-8", errors="replace")
-    return {line.strip() for line in decoded.splitlines() if line.strip()}
+    ttys: dict[str, str] = {}
+    for line in decoded.splitlines():
+        client_pid, _, client_tty = line.strip().partition(" ")
+        if client_pid and client_tty:
+            ttys[client_pid] = client_tty.strip()
+    return ttys
 
 
 def _owner_is_closed(owner: Any) -> bool:

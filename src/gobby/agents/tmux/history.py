@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -49,6 +49,10 @@ class HistoryCapture:
     truncated: bool
     dropped_bytes: int
     total_bytes: int
+    # Whether the repaint that shares this capture's command list succeeded.
+    # It is what makes the window and the screen the client renders consistent,
+    # so a capture that was not repainted still owes one.
+    repainted: bool = False
 
 
 class HistoryCaptureError(RuntimeError):
@@ -60,6 +64,7 @@ def build_capture_args(
     session_name: str,
     *,
     max_lines: int = ATTACH_HISTORY_LINES,
+    refresh_tty: str | None = None,
 ) -> list[str]:
     """Build the ``capture-pane`` argv for a bounded history read.
 
@@ -68,10 +73,17 @@ def build_capture_args(
     visible pane so history and the repaint that follows do not overlap.
     ``max_lines + 1`` is the truncation probe -- asking for one line more than
     the bound is the only way to observe that older history existed.
+
+    ``refresh_tty`` appends ``; refresh-client -t <tty>`` to the same command
+    list. The boundary this capture reports is only correct for the screen the
+    client is about to paint, and the two have to be decided together: a redraw
+    issued as its own tmux call runs a round trip later, and every line that
+    scrolls out of the pane in between belongs to neither half. tmux runs a
+    command list back to back, so nothing the pane emits can land between them.
     """
     from gobby.agents.tmux.session_manager import _exact_session_target
 
-    return [
+    args = [
         *manager.base_args(),
         "capture-pane",
         "-t",
@@ -82,6 +94,9 @@ def build_capture_args(
         "-E",
         "-1",
     ]
+    if refresh_tty:
+        args += [";", "refresh-client", "-t", refresh_tty]
+    return args
 
 
 def bound_history(
@@ -144,8 +159,12 @@ async def capture_history(
     max_lines: int = ATTACH_HISTORY_LINES,
     max_bytes: int = ATTACH_HISTORY_MAX_BYTES,
     timeout: float = CAPTURE_TIMEOUT_SECONDS,
+    refresh_tty: str | None = None,
 ) -> HistoryCapture:
     """Capture a bounded scrollback window for ``session_name``.
+
+    ``refresh_tty`` redraws that client in the same tmux command list, which is
+    what keeps the captured boundary and the painted screen consistent.
 
     Raises:
         HistoryCaptureError: capture-pane could not be spawned, timed out, or
@@ -154,7 +173,7 @@ async def capture_history(
             an error escaping it there would surface as a generic frame the
             client has already stopped matching, stranding the attachment.
     """
-    args = build_capture_args(manager, session_name, max_lines=max_lines)
+    args = build_capture_args(manager, session_name, max_lines=max_lines, refresh_tty=refresh_tty)
     try:
         proc = await asyncio.create_subprocess_exec(
             *args,
@@ -177,15 +196,29 @@ async def capture_history(
         await kill_and_reap(proc)
         raise
 
+    raw = (stdout_bytes or b"").decode("utf-8", errors="replace")
+    repainted = bool(refresh_tty)
     if proc.returncode:
         stderr = (stderr_bytes or b"").decode("utf-8", errors="replace").strip()
-        raise HistoryCaptureError(
-            f"tmux capture-pane failed for '{session_name}' "
-            f"(rc={proc.returncode}): {stderr or 'no stderr'}"
+        # A command list reports one status for both commands, so a repaint
+        # that failed marks the whole call failed. capture-pane writes nothing
+        # when it is the one that failed, which is what tells them apart --
+        # and a window that did arrive is worth keeping, repaint or not.
+        if not (refresh_tty and raw):
+            raise HistoryCaptureError(
+                f"tmux capture-pane failed for '{session_name}' "
+                f"(rc={proc.returncode}): {stderr or 'no stderr'}"
+            )
+        logger.warning(
+            "tmux repaint of %s failed for '%s': %s",
+            refresh_tty,
+            session_name,
+            stderr or "no stderr",
         )
+        repainted = False
 
-    raw = (stdout_bytes or b"").decode("utf-8", errors="replace")
-    return bound_history(raw, max_lines=max_lines, max_bytes=max_bytes)
+    capture = bound_history(raw, max_lines=max_lines, max_bytes=max_bytes)
+    return replace(capture, repainted=repainted)
 
 
 async def kill_and_reap(proc: asyncio.subprocess.Process) -> None:

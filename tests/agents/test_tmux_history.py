@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -84,6 +85,105 @@ class TestBuildCaptureArgs:
 
     def test_probe_tracks_the_requested_bound(self, manager: TmuxSessionManager) -> None:
         assert "-S-6" in build_capture_args(manager, "demo", max_lines=5)
+
+    def test_no_repaint_is_appended_without_a_tty(self, manager: TmuxSessionManager) -> None:
+        args = build_capture_args(manager, "demo", max_lines=5)
+
+        assert ";" not in args
+        assert "refresh-client" not in args
+
+    def test_the_repaint_rides_in_the_same_command_list(self, manager: TmuxSessionManager) -> None:
+        """The boundary and the screen have to be decided at the same instant.
+
+        A redraw issued as its own tmux call lands a round trip after the
+        capture, and every line that scrolls out of the pane in between is in
+        neither the history nor the painted screen.
+        """
+        args = build_capture_args(manager, "demo", max_lines=5, refresh_tty="/dev/ttys009")
+
+        separator = args.index(";")
+        # Everything the capture needs precedes the separator, and the repaint
+        # is the whole of what follows it.
+        assert "capture-pane" in args[:separator]
+        assert args[separator + 1 :] == ["refresh-client", "-t", "/dev/ttys009"]
+
+    @pytest.mark.asyncio
+    async def test_capture_history_passes_the_tty_through(
+        self, manager: TmuxSessionManager
+    ) -> None:
+        proc = SimpleNamespace(
+            returncode=0,
+            communicate=AsyncMock(return_value=(b"one\ntwo\n", b"")),
+            kill=MagicMock(),
+            wait=AsyncMock(return_value=0),
+        )
+        with patch(
+            "asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)
+        ) as create_proc:
+            await capture_history(manager, "demo", refresh_tty="/dev/ttys009")
+
+        assert create_proc.await_args is not None
+        argv = list(create_proc.await_args.args)
+        assert argv[argv.index(";") + 1 :] == ["refresh-client", "-t", "/dev/ttys009"]
+
+    @pytest.mark.asyncio
+    async def test_a_failed_repaint_keeps_the_window_it_captured(
+        self, manager: TmuxSessionManager
+    ) -> None:
+        """A command list reports one status for both of its commands.
+
+        The capture wrote its window to stdout, so the nonzero status belongs
+        to the repaint -- discarding a history that did arrive would cost the
+        user their scrollback over a screen the stream repaints anyway.
+        """
+        proc = SimpleNamespace(
+            returncode=1,
+            communicate=AsyncMock(return_value=(b"one\ntwo\n", b"can't find client: /dev/x")),
+            kill=MagicMock(),
+            wait=AsyncMock(return_value=1),
+        )
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+            capture = await capture_history(manager, "demo", refresh_tty="/dev/x")
+
+        assert capture.text == "one\r\ntwo\x1b[0m"
+        assert capture.repainted is False
+
+    @pytest.mark.asyncio
+    async def test_a_failed_capture_still_raises_when_nothing_was_written(
+        self, manager: TmuxSessionManager
+    ) -> None:
+        # capture-pane writes nothing when it is the command that failed, which
+        # is what separates it from a repaint failure.
+        proc = SimpleNamespace(
+            returncode=1,
+            communicate=AsyncMock(return_value=(b"", b"can't find pane")),
+            kill=MagicMock(),
+            wait=AsyncMock(return_value=1),
+        )
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+            with pytest.raises(HistoryCaptureError) as raised:
+                await capture_history(manager, "demo", refresh_tty="/dev/x")
+
+        message = str(raised.value)
+        assert "can't find pane" in message
+        assert "demo" in message
+        assert "rc=1" in message
+        # The child exited on its own, so nothing was killed or reaped.
+        assert proc.kill.call_count == 0
+        assert proc.wait.await_count == 0
+
+    @pytest.mark.asyncio
+    async def test_a_clean_capture_reports_its_repaint(self, manager: TmuxSessionManager) -> None:
+        proc = SimpleNamespace(
+            returncode=0,
+            communicate=AsyncMock(return_value=(b"one\n", b"")),
+            kill=MagicMock(),
+            wait=AsyncMock(return_value=0),
+        )
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+            assert (await capture_history(manager, "demo", refresh_tty="/dev/x")).repainted is True
+            # Without a tty there was no repaint to report.
+            assert (await capture_history(manager, "demo")).repainted is False
 
 
 class TestBoundHistoryLines:
