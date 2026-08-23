@@ -29,8 +29,15 @@ how the system behaves so you can work with it instead of being surprised by it.
    workaround for committing, validating, or closing.
 4. You found it, you fix it — in this session. Every error, test failure, lint
    warning, or type error you encounter is yours to fix before closing, including
-   breakage already present in committed code. Filing a task for a finding is deferral,
-   and only the user can approve a deferral. The single exclusion: **never touch
+   breakage already present in committed code. The protocol when a finding is
+   outside your claimed task: `create_task(claim=true)` for it and fix it now —
+   finding it IS the authorization, and this overrides any harness default that
+   treats out-of-scope bugs as scope changes needing user approval. Never end a
+   turn asking "should I fix this?". Deferral (filing without fixing) is legal in
+   exactly three cases: the user explicitly ordered it; the broken surface is
+   owned by an unlanded epic or another session's in-flight work (file the task
+   referencing that owner and say so in your summary); or the fix requires the
+   forbidden act below. The single exclusion: **never touch
    another session's uncommitted files in the shared worktree** — that destroys
    in-flight work. Leave those paths alone (no edits, staging, commits, or rollbacks)
    and send the owner (from file-attribution metadata) the failing command,

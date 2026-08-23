@@ -1,7 +1,7 @@
 ---
 name: tasks
 description: Use when creating, claiming, implementing, reviewing, transitioning, or closing Gobby tasks.
-version: "1.0.0"
+version: "1.1.0"
 category: core
 triggers: create task, claim task, close task, submit for review, task transition, validation evidence
 metadata:
@@ -72,6 +72,10 @@ labels, or writing expanded validation criteria.
 - Preserve unrelated worktree changes.
 - Run focused tests for behavior changes.
 - Fix every error, warning, test failure, lint failure, and type error encountered.
+- A defect outside the claimed task's scope: `create_task` with `claim=true`
+  and fix it in this session. Asking the user whether to fix is prohibited;
+  deferral is only by explicit user order or when the surface belongs to an
+  unlanded epic or another session (file the task naming that owner).
 - Never run the full test suite unless the user explicitly requests it.
 - Check current and projected line counts before touching applicable production
   source. Exactly 1,000 lines violates the ceiling. Load `decompose-monolith`
@@ -165,5 +169,5 @@ Autonomous agents use the stage-specific tools on `gobby-tasks-ops`.
 ## Memory Rule
 
 Use `gobby-memory` for durable codebase facts, decisions, conventions, and stale
-memory cleanup. Bugs and errors belong in tasks. Memory maintenance is independent
-of task transitions.
+memory cleanup. A bug you find becomes a claimed task you fix now — a task, never
+a memory. Memory maintenance is independent of task transitions.
