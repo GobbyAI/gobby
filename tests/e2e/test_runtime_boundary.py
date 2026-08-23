@@ -46,53 +46,6 @@ from tests.e2e.conftest import (
 pytestmark = pytest.mark.e2e
 
 
-_HEARTBEAT_SQL = """
-CREATE OR REPLACE FUNCTION gobby_agent_auth.heartbeat_daemon(
-    p_machine_id UUID,
-    p_lease_duration INTERVAL DEFAULT INTERVAL '2 minutes'
-) RETURNS UUID
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = pg_catalog, gobby_agent_auth
-AS $function$
-DECLARE
-    v_now TIMESTAMPTZ := clock_timestamp();
-BEGIN
-    IF p_lease_duration <= INTERVAL '0 seconds'
-       OR p_lease_duration > INTERVAL '5 minutes' THEN
-        RAISE EXCEPTION 'daemon lease duration must be between zero and five minutes'
-            USING ERRCODE = '22023';
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM public.machines WHERE id = p_machine_id) THEN
-        RAISE EXCEPTION 'unknown issuing machine' USING ERRCODE = '23503';
-    END IF;
-
-    INSERT INTO gobby_agent_auth.daemon_registry (
-        machine_id, heartbeat_at, lease_expires_at, started_at
-    ) VALUES (
-        p_machine_id, v_now, v_now + p_lease_duration, v_now
-    )
-    ON CONFLICT (machine_id) DO UPDATE
-    SET heartbeat_at = EXCLUDED.heartbeat_at,
-        lease_expires_at = EXCLUDED.lease_expires_at;
-    RETURN p_machine_id;
-END
-$function$;
-"""
-
-
-def _repair_shared_auth_functions(postgres_db: Any) -> None:
-    postgres_db.execute(_HEARTBEAT_SQL)
-    postgres_db.execute(
-        """
-        GRANT EXECUTE ON FUNCTION gobby_agent_auth.heartbeat_daemon(UUID, INTERVAL)
-        TO gobby_daemon_runtime
-        """
-    )
-    postgres_db.execute("GRANT SELECT ON public.machines TO gobby_agent_issuer")
-    postgres_db.execute("GRANT SELECT ON machines TO gobby_agent_issuer")
-
-
 def _compose_falkor_password() -> str | None:
     env_password = os.environ.get("GOBBY_FALKORDB_PASSWORD")
     if env_password:
@@ -123,14 +76,6 @@ def _compose_falkor_password() -> str | None:
 
 
 def _seed_identity_rows(postgres_db: Any, machine_id: str, user_id: str) -> None:
-    postgres_db.execute(
-        """
-        INSERT INTO public.machines (id, owner_user_id)
-        VALUES (%s, %s)
-        ON CONFLICT (id) DO NOTHING
-        """,
-        (machine_id, user_id),
-    )
     postgres_db.execute(
         """
         INSERT INTO machines (id, owner_user_id)
@@ -211,21 +156,12 @@ def e2e_pre_daemon_setup(
         TEST_USER_PASSWORD_HASH,
     )
 
-    _repair_shared_auth_functions(postgres_db)
     if not postgres_schema.replace("_", "").isalnum():
         raise RuntimeError(f"refusing to GRANT on unexpected schema {postgres_schema!r}")
     postgres_db.execute(f"GRANT USAGE ON SCHEMA {postgres_schema} TO gobby_gcode_capability")
     postgres_db.execute(
         "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA "
         f"{postgres_schema} TO gobby_gcode_capability"
-    )
-    postgres_db.execute(
-        """
-        INSERT INTO public.users (id, email, name, password_hash)
-        VALUES (%s, %s, %s, %s)
-        ON CONFLICT (id) DO NOTHING
-        """,
-        (TEST_USER_ID, TEST_USER_EMAIL, TEST_USER_NAME, TEST_USER_PASSWORD_HASH),
     )
     postgres_db.execute(
         """
@@ -1278,7 +1214,6 @@ def test_restore_replay_rejected(
         if boundary.daemon.is_alive():
             boundary.daemon.stop()
         _restore_schema(postgres_database_url, postgres_schema, dump, postgres_db)
-        _repair_shared_auth_functions(postgres_db)
         boundary.daemon.restart()
         assert wait_for_daemon_health(boundary.daemon.http_port)
         presented = _present_embeddings(boundary.daemon, boundary.home, archived)
@@ -1486,9 +1421,10 @@ def test_takeover_fencing(
                         json={"project_id": E2E_PROJECT_ID},
                     )
                 assert refused.status_code == 409, refused.text
-            except httpx.ConnectError:
-                # Lease-loss drain also shuts the displaced listener down.
-                # Either 409 or a closed socket proves it cannot mutate.
+            except (httpx.ConnectError, httpx.RemoteProtocolError):
+                # Lease-loss drain also shuts the displaced listener down: the
+                # connect is refused, or an accepted socket closes before any
+                # response. Either 409 or a dropped socket proves it cannot mutate.
                 pass
         finally:
             release_path.write_text("1")

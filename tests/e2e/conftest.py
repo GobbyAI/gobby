@@ -1533,6 +1533,9 @@ def assert_no_external_writes() -> Generator[None]:
                 or rel_path.startswith("session_summaries/")
                 or rel_path.startswith("session_transcripts/")
                 or rel_path.startswith("worktrees/")
+                # ManagedCredentialManager writes one bootstrap.json per
+                # maintenance/agent credential the production daemon issues.
+                or rel_path.startswith("runtime/managed-executions/")
                 or basename.endswith(".pid")
             ):
                 continue  # Known production daemon artifact
