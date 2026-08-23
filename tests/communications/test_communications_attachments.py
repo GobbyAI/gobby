@@ -453,6 +453,67 @@ def test_attachment_cascade_on_message_delete(
 
 
 @pytest.mark.integration
+@pytest.mark.asyncio
+async def test_message_cleanup_returns_only_managed_attachment_paths(
+    comms_store: LocalCommunicationsStore,
+    attachment_manager: AttachmentManager,
+    tmp_path: Path,
+) -> None:
+    channel_id = _create_test_channel(comms_store)
+    outbound_message_id = _create_test_message(comms_store, channel_id)
+    inbound_message_id = comms_store.create_message(
+        CommsMessage(
+            id="",
+            channel_id=channel_id,
+            direction="inbound",
+            content="managed attachment",
+            content_type="attachment",
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
+        )
+    ).id
+    comms_store.db.execute(
+        "UPDATE comms_messages SET created_at = %s WHERE id IN (%s, %s)",
+        (
+            datetime(2024, 1, 1, tzinfo=UTC),
+            outbound_message_id,
+            inbound_message_id,
+        ),
+    )
+
+    caller_owned_path = tmp_path / "README.md"
+    caller_owned_path.write_text("caller owned")
+    managed_path = await attachment_manager.store(b"managed", "inbound.txt")
+    comms_store.create_attachment(
+        CommsAttachment(
+            id="",
+            message_id=outbound_message_id,
+            filename=caller_owned_path.name,
+            content_type="text/plain",
+            size_bytes=caller_owned_path.stat().st_size,
+            local_path=None,
+        )
+    )
+    comms_store.create_attachment(
+        CommsAttachment(
+            id="",
+            message_id=inbound_message_id,
+            filename=managed_path.name,
+            content_type="text/plain",
+            size_bytes=managed_path.stat().st_size,
+            local_path=str(managed_path),
+        )
+    )
+
+    deleted_count, local_paths = comms_store.delete_messages_before(
+        datetime(2025, 1, 1, tzinfo=UTC)
+    )
+
+    assert deleted_count == 2
+    assert local_paths == [str(managed_path)]
+    assert str(caller_owned_path) not in local_paths
+
+
+@pytest.mark.integration
 def test_attachment_crud_and_message_cleanup_are_machine_scoped(
     temp_db: HubDatabase,
     tmp_path: Path,
