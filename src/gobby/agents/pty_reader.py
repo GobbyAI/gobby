@@ -27,6 +27,11 @@ logger = logging.getLogger(__name__)
 # Type for output callback: async function(run_id, data)
 OutputCallback = Callable[[str, str], Awaitable[None]]
 
+# Per-stream rewrite applied to each decoded chunk before it is broadcast.
+# Stateful across chunks by contract, so a caller passes one instance per
+# reader rather than a shared function.
+StreamTransform = Callable[[str], str]
+
 
 class PTYReaderManager:
     """
@@ -52,12 +57,20 @@ class PTYReaderManager:
         """Set the output callback for terminal data."""
         self._output_callback = callback
 
-    async def start_reader(self, agent: HasMasterFd) -> bool:
+    async def start_reader(
+        self,
+        agent: HasMasterFd,
+        *,
+        transform: StreamTransform | None = None,
+    ) -> bool:
         """
         Start a PTY reader for an agent.
 
         Args:
             agent: Object with run_id and master_fd attributes
+            transform: Optional per-stream rewrite applied to each decoded
+                chunk before broadcast. Opt-in, so streams that do not ask for
+                one are byte-for-byte unchanged.
 
         Returns:
             True if reader was started, False if already running or no fd
@@ -73,7 +86,7 @@ class PTYReaderManager:
             self._stop_events[agent.run_id] = stop_event
 
             task = asyncio.create_task(
-                self._read_loop(agent.run_id, agent.master_fd, stop_event),
+                self._read_loop(agent.run_id, agent.master_fd, stop_event, transform),
                 name=f"pty_reader_{agent.run_id}",
             )
             self._reader_tasks[agent.run_id] = task
@@ -122,6 +135,7 @@ class PTYReaderManager:
         run_id: str,
         master_fd: int,
         stop_event: asyncio.Event,
+        transform: StreamTransform | None = None,
     ) -> None:
         """
         Read loop for a single PTY.
@@ -133,6 +147,7 @@ class PTYReaderManager:
             run_id: Agent run ID
             master_fd: PTY master file descriptor
             stop_event: Event to signal stop
+            transform: Optional per-stream rewrite for each decoded chunk
         """
         loop = asyncio.get_running_loop()
         # Incremental decoder buffers incomplete multi-byte UTF-8 sequences
@@ -169,6 +184,8 @@ class PTYReaderManager:
                 if not data:
                     # EOF — flush any remaining buffered bytes
                     text = decoder.decode(b"", final=True)
+                    if text and transform is not None:
+                        text = transform(text)
                     if text and self._output_callback:
                         try:
                             await self._output_callback(run_id, text)
@@ -178,6 +195,8 @@ class PTYReaderManager:
 
                 # Decode incrementally (buffers incomplete sequences)
                 text = decoder.decode(data)
+                if text and transform is not None:
+                    text = transform(text)
 
                 if text and self._output_callback:
                     try:

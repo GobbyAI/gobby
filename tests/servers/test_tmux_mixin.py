@@ -15,6 +15,7 @@ import pytest
 from websockets.exceptions import ConnectionClosedOK
 from websockets.frames import Close
 
+from gobby.agents.tmux.alt_screen import AltScreenFilter
 from gobby.agents.tmux.history import HistoryCapture, HistoryCaptureError
 from gobby.servers.websocket.server import WebSocketServer
 
@@ -946,6 +947,23 @@ class TestTmuxActivation:
         harness.attach.assert_awaited_once()
         assert harness.reader.start_reader.await_count == 1
         assert len(ws.messages_of_type("terminal_attach_history")) == 1
+
+    @pytest.mark.asyncio
+    async def test_activation_strips_the_alternate_screen_switch_from_the_stream(
+        self, server: WebSocketServer
+    ) -> None:
+        # tmux opens its stream with smcup, and the alternate screen has no
+        # scrollback -- without this transform the history sent one step
+        # earlier is retained by the VT and unreachable until detach.
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws)
+
+        with activation_harness(server) as harness:
+            await resize(server, ws, streaming_id)
+
+        transform = harness.reader.start_reader.await_args.kwargs["transform"]
+        assert isinstance(transform, AltScreenFilter)
+        assert transform("\x1b[?1049hrepaint") == "repaint"
 
     @pytest.mark.asyncio
     async def test_resize_from_a_foreign_socket_is_rejected(self, server: WebSocketServer) -> None:

@@ -350,9 +350,18 @@ async def activate_attachment(
         return
 
     from gobby.agents.pty_reader import get_pty_reader_manager
+    from gobby.agents.tmux.alt_screen import AltScreenFilter
 
     reader = get_pty_reader_manager()
-    if not await reader.start_reader(cast(Any, _BridgeAgent(streaming_id, master_fd))):
+    # tmux opens its stream with smcup, which parks the client on the
+    # alternate screen for the whole attachment. The history written just
+    # above lives in the primary screen's scrollback, which the alternate
+    # screen has none of -- so without this filter the restored window is
+    # retained by the VT and unreachable until detach.
+    if not await reader.start_reader(
+        cast(Any, _BridgeAgent(streaming_id, master_fd)),
+        transform=AltScreenFilter(),
+    ):
         await _fail(
             host,
             websocket,
