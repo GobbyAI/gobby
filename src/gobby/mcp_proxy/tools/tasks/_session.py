@@ -43,6 +43,16 @@ def create_session_registry(ctx: RegistryContext) -> InternalToolRegistry:
         if not effective_session_id:
             return {"error": "No session context available. Ensure session_id is set."}
 
+        # An explicit session_id cannot be verified as self or delegation
+        # lineage without a caller identity (#20821).
+        caller_session_id = get_current_session_id()
+        if session_id is not None and not caller_session_id:
+            return task_error(
+                "No session context available to verify an explicit session_id. "
+                "Ensure session_id is set.",
+                TaskToolErrorCode.SESSION_REQUIRED,
+            )
+
         try:
             resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
         except (TaskNotFoundError, ValueError) as e:
@@ -63,7 +73,6 @@ def create_session_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         # An explicit session_id naming another session is allowed only for
         # self or the task's agent-run delegation lineage (#20821).
-        caller_session_id = get_current_session_id()
         if (
             session_id is not None
             and caller_session_id

@@ -175,6 +175,16 @@ class TestDeleteTaskGuard:
 
 
 class TestLinkTaskToSessionGuard:
+    def test_link_explicit_session_without_context_refused(self, task_manager: MagicMock) -> None:
+        task_manager.get_task.return_value = _task(None)
+        ctx = RegistryContext(task_manager=task_manager)
+        tool = create_session_registry(ctx).get_tool("link_task_to_session")
+        assert tool is not None
+
+        result = tool(task_id=TASK_UUID, session_id="#42")
+
+        assert result["error_code"] == "SESSION_REQUIRED"
+
     def test_link_foreign_claimed_task_refused(self, task_manager: MagicMock) -> None:
         task_manager.get_task.return_value = _task(OWNER_SESSION)
         ctx = RegistryContext(task_manager=task_manager)
