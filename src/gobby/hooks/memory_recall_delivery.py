@@ -45,11 +45,7 @@ class MemoryRecallDeliveryQueue:
             "project_id": project_id,
             "status": _PENDING,
             "memories": bodies,
-            "cursor": {
-                "memory_index": 0,
-                "content_offset": 0,
-                "chunk_index": 0,
-            },
+            "cursor": {"memory_index": 0, "chunk_index": 0},
         }
         self._variables.upsert_bounded_list_variable(
             session_id,
@@ -176,15 +172,13 @@ def _memory_bodies(memories: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]
             continue
         seen.add(memory_id)
         memory_type = memory.get("memory_type")
-        body: dict[str, Any] = {
-            "id": memory_id,
-            "content": content,
-            "memory_type": memory_type if isinstance(memory_type, str) else "fact",
-        }
-        rationale = memory.get("rationale")
-        if isinstance(rationale, str) and rationale:
-            body["rationale"] = rationale
-        bodies.append(body)
+        bodies.append(
+            {
+                "id": memory_id,
+                "content": content,
+                "memory_type": memory_type if isinstance(memory_type, str) else "fact",
+            }
+        )
     return bodies
 
 
@@ -210,15 +204,19 @@ def _cursor(delivery: Mapping[str, Any]) -> dict[str, int] | None:
         return None
     return {
         "memory_index": value["memory_index"],
-        "content_offset": value["content_offset"],
         "chunk_index": value["chunk_index"],
     }
 
 
 def _valid_cursor(value: Mapping[str, Any]) -> bool:
-    return all(
-        isinstance(value.get(key), int) and value[key] >= 0
-        for key in ("memory_index", "content_offset", "chunk_index")
+    """A cursor addresses whole memories, so an extra key means a foreign shape.
+
+    Matching the key set exactly rather than probing for the two we need is what
+    retires a delivery queued against the old content-offset cursor instead of
+    resuming it under a reading its writer never intended.
+    """
+    return set(value) == {"memory_index", "chunk_index"} and all(
+        isinstance(value[key], int) and value[key] >= 0 for key in value
     )
 
 

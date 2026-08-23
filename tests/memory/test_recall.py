@@ -669,12 +669,12 @@ def test_inline_and_queued_bodies_match() -> None:
         {
             "recall_request_id": "request-parity",
             "memories": [queued_body],
-            "cursor": {"memory_index": 0, "content_offset": 0, "chunk_index": 0},
+            "cursor": {"memory_index": 0, "chunk_index": 0},
         }
     )
     queued_memory = chunk["memories"][0]
 
-    assert queued_memory["memory_complete"] is True, "the whole memory fits in one chunk"
+    assert chunk["final_chunk"] is True, "the whole memory ships in one chunk"
     assert "rationale" not in queued_body
     assert "rationale" not in queued_memory
     assert _format_project_memory(queued_memory) == inline_body

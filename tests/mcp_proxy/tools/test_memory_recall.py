@@ -13,6 +13,7 @@ from gobby.hooks.memory_recall_delivery import (
     MEMORY_RECALL_DELIVERIES_VARIABLE,
     MemoryRecallDeliveryQueue,
     _memory_bodies,
+    _valid_cursor,
 )
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.memory import create_memory_registry
@@ -158,8 +159,6 @@ async def test_small_overflow_returns_body_and_completes_on_final_chunk(
             "id": "memory-1",
             "memory_type": "pattern",
             "content": "Exact body.",
-            "content_offset": 0,
-            "memory_complete": True,
         }
     ]
     assert "similarity" not in result["memories"][0]
@@ -168,48 +167,96 @@ async def test_small_overflow_returns_body_and_completes_on_final_chunk(
     assert variables["injected_memory_ids"] == ["existing", "memory-1"]
 
 
-@pytest.mark.asyncio
-async def test_large_overflow_reconstructs_every_character_below_chunk_budget(
-    temp_db: HubDatabase,
-) -> None:
-    _create_sessions(temp_db)
-    bodies = ["αβγ" * 8_000, "tail-" + ("z" * 15_000)]
-    _queue(
-        temp_db,
-        "request-large",
-        12,
-        [
-            {"id": "memory-1", "content": bodies[0], "memory_type": "fact"},
-            {"id": "memory-2", "content": bodies[1], "memory_type": "context"},
-        ],
-    )
-    registry = _registry(temp_db)
-    reconstructed = {"memory-1": "", "memory-2": ""}
+async def _drain(registry: InternalToolRegistry, request_id: str) -> list[dict[str, Any]]:
+    """Retrieve every chunk of one queued delivery, oldest chunk first."""
     chunks: list[dict[str, Any]] = []
-
     with session_context_for_test(SESSION_ID):
         while True:
-            chunk = await registry.call(
-                "get_recall_memories",
-                {"recall_request_id": "request-large"},
-            )
+            chunk = await registry.call("get_recall_memories", {"recall_request_id": request_id})
+            assert chunk["success"] is True, chunk
             chunks.append(chunk)
-            segment = chunk["memories"][0]
-            reconstructed[segment["id"]] += segment["content"]
-            variables = SessionVariableManager(temp_db).get_variables(SESSION_ID)
             if chunk["final_chunk"]:
-                assert variables["injected_memory_ids"] == ["memory-1", "memory-2"]
-                break
-            assert variables.get("injected_memory_ids", []) == []
-            assert variables[MEMORY_RECALL_DELIVERIES_VARIABLE][0]["status"] == "pending"
+                return chunks
+            assert len(chunks) <= 16, "pagination is not converging on a final chunk"
 
-    assert reconstructed == {"memory-1": bodies[0], "memory-2": bodies[1]}
+
+@pytest.mark.asyncio
+async def test_pagination_packs_whole_memories(temp_db: HubDatabase) -> None:
+    """Each chunk carries as many whole memories as the budget allows, in queued order."""
+    _create_sessions(temp_db)
+    bodies = {f"memory-{index}": f"body-{index}-" + ("δ" * 3_000) for index in range(1, 6)}
+    _queue(
+        temp_db,
+        "request-pagination",
+        12,
+        [{"id": key, "content": value, "memory_type": "fact"} for key, value in bodies.items()],
+    )
+
+    chunks = await _drain(_registry(temp_db), "request-pagination")
+
+    delivered = [memory for chunk in chunks for memory in chunk["memories"]]
+    assert [memory["id"] for memory in delivered] == list(bodies)
+    assert {memory["id"]: memory["content"] for memory in delivered} == bodies
+    assert all("content_offset" not in memory for memory in delivered)
+    assert all("memory_complete" not in memory for memory in delivered)
+
+    assert len(chunks) > 1, "five oversized-but-legal bodies cannot fit in one chunk"
+    assert max(len(chunk["memories"]) for chunk in chunks) > 1, "chunks must pack whole memories"
     assert [chunk["chunk_index"] for chunk in chunks] == list(range(len(chunks)))
+    assert [chunk["final_chunk"] for chunk in chunks] == [False] * (len(chunks) - 1) + [True]
     assert all(
         len(json.dumps(chunk, ensure_ascii=False, separators=(",", ":")))
         < MAX_DIRECT_MCP_SERIALIZED_CHARS
         for chunk in chunks
     )
+
+    variables = SessionVariableManager(temp_db).get_variables(SESSION_ID)
+    assert variables["injected_memory_ids"] == sorted(bodies)
+    assert variables[MEMORY_RECALL_DELIVERIES_VARIABLE][0]["status"] == "complete"
+
+
+@pytest.mark.asyncio
+async def test_oversize_memory_emitted_whole(temp_db: HubDatabase) -> None:
+    """An over-budget body ships whole and alone; a truncated memory is the worse failure."""
+    _create_sessions(temp_db)
+    oversize = "ω" * (MAX_DIRECT_MCP_SERIALIZED_CHARS + 5_000)
+    _queue(
+        temp_db,
+        "request-oversize",
+        13,
+        [
+            {"id": "memory-big", "content": oversize, "memory_type": "fact"},
+            {"id": "memory-small", "content": "Short tail.", "memory_type": "context"},
+        ],
+    )
+
+    chunks = await _drain(_registry(temp_db), "request-oversize")
+
+    assert [[memory["id"] for memory in chunk["memories"]] for chunk in chunks] == [
+        ["memory-big"],
+        ["memory-small"],
+    ]
+    assert chunks[0]["memories"][0]["content"] == oversize
+    assert chunks[1]["memories"][0]["content"] == "Short tail."
+    assert (
+        len(json.dumps(chunks[0], ensure_ascii=False, separators=(",", ":")))
+        > MAX_DIRECT_MCP_SERIALIZED_CHARS
+    ), "the fail-open case overshoots the budget instead of splitting the body"
+
+
+def test_delivery_cursor_carries_memory_index_and_chunk_index_only(
+    temp_db: HubDatabase,
+) -> None:
+    """Nothing tracks a position inside a body, so no third key may reach the cursor."""
+    _create_sessions(temp_db)
+    _queue(temp_db, "request-cursor", 14, [{"id": "memory-1", "content": "Body."}])
+
+    stored = SessionVariableManager(temp_db).get_variables(SESSION_ID)
+    cursor = stored[MEMORY_RECALL_DELIVERIES_VARIABLE][0]["cursor"]
+    assert cursor == {"memory_index": 0, "chunk_index": 0}
+    assert _valid_cursor(cursor)
+    assert not _valid_cursor({"memory_index": 0, "content_offset": 0, "chunk_index": 0})
+    assert not _valid_cursor({"memory_index": 0})
 
 
 @pytest.mark.asyncio
@@ -398,7 +445,7 @@ async def test_recall_chunks_carry_no_rationale(temp_db: HubDatabase) -> None:
         {
             "recall_request_id": "request-rationale",
             "memories": bodies[:1],
-            "cursor": {"memory_index": 0, "content_offset": 0, "chunk_index": 0},
+            "cursor": {"memory_index": 0, "chunk_index": 0},
         }
     )
     assert chunk["memories"][0]["memory_type"] == "pattern"

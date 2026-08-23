@@ -172,76 +172,64 @@ def _next_chunk(
     *,
     max_serialized_chars: int = MAX_DIRECT_MCP_SERIALIZED_CHARS,
 ) -> tuple[dict[str, Any], dict[str, int]]:
+    """Pack whole memories into one chunk, never slicing a body to fit the budget.
+
+    A chunk takes memories in queued order while the serialized payload stays
+    under the budget, and always carries at least one memory. That last rule is
+    deliberate fail-open: an over-budget response is recoverable by the caller,
+    while a body cut in half reaches the model as a memory that says something
+    its author never wrote.
+    """
     memories = delivery.get("memories")
     cursor = delivery.get("cursor")
     if not isinstance(memories, list) or not isinstance(cursor, Mapping):
         raise TypeError("invalid queued delivery")
     memory_index = cursor.get("memory_index")
-    content_offset = cursor.get("content_offset")
     chunk_index = cursor.get("chunk_index")
     if not all(isinstance(value, int) and value >= 0 for value in cursor.values()):
         raise TypeError("invalid queued cursor")
-    if not isinstance(memory_index, int) or memory_index >= len(memories):
-        raise ValueError("queued cursor is past the final memory")
-    if not isinstance(content_offset, int) or not isinstance(chunk_index, int):
+    if not isinstance(memory_index, int) or not isinstance(chunk_index, int):
         raise TypeError("invalid queued cursor")
+    if memory_index >= len(memories):
+        raise ValueError("queued cursor is past the final memory")
 
-    memory = memories[memory_index]
+    def build(bodies: list[dict[str, Any]], next_memory_index: int) -> dict[str, Any]:
+        return {
+            "success": True,
+            "recall_request_id": delivery["recall_request_id"],
+            "chunk_index": chunk_index,
+            "final_chunk": next_memory_index == len(memories),
+            "memories": bodies,
+        }
+
+    packed: list[dict[str, Any]] = []
+    payload = build(packed, memory_index)
+    next_memory_index = memory_index
+    while next_memory_index < len(memories):
+        candidate = [*packed, _memory_payload(memories[next_memory_index])]
+        candidate_payload = build(candidate, next_memory_index + 1)
+        if packed and _serialized_chars(candidate_payload) >= max_serialized_chars:
+            break
+        packed = candidate
+        payload = candidate_payload
+        next_memory_index += 1
+
+    return payload, {"memory_index": next_memory_index, "chunk_index": chunk_index + 1}
+
+
+def _memory_payload(memory: Any) -> dict[str, Any]:
     if not isinstance(memory, Mapping):
         raise TypeError("invalid queued memory")
     memory_id = memory.get("id")
     content = memory.get("content")
     memory_type = memory.get("memory_type")
-    rationale = memory.get("rationale")
     if not isinstance(memory_id, str) or not isinstance(content, str):
         raise TypeError("invalid queued memory body")
-    if content_offset > len(content):
-        raise ValueError("queued content offset is out of range")
-
-    def build(segment_end: int) -> tuple[dict[str, Any], dict[str, int]]:
-        memory_complete = segment_end == len(content)
-        next_memory_index = memory_index + 1 if memory_complete else memory_index
-        next_content_offset = 0 if memory_complete else segment_end
-        final_chunk = memory_complete and next_memory_index == len(memories)
-        memory_payload: dict[str, Any] = {
-            "id": memory_id,
-            "memory_type": memory_type if isinstance(memory_type, str) else "fact",
-        }
-        if isinstance(rationale, str):
-            memory_payload["rationale"] = rationale
-        memory_payload["content"] = content[content_offset:segment_end]
-        memory_payload["content_offset"] = content_offset
-        memory_payload["memory_complete"] = memory_complete
-        payload = {
-            "success": True,
-            "recall_request_id": delivery["recall_request_id"],
-            "chunk_index": chunk_index,
-            "final_chunk": final_chunk,
-            "memories": [memory_payload],
-        }
-        next_cursor = {
-            "memory_index": next_memory_index,
-            "content_offset": next_content_offset,
-            "chunk_index": chunk_index + 1,
-        }
-        return payload, next_cursor
-
-    low = content_offset
-    high = len(content)
-    best: tuple[dict[str, Any], dict[str, int]] | None = None
-    while low <= high:
-        middle = (low + high) // 2
-        candidate = build(middle)
-        if _serialized_chars(candidate[0]) < max_serialized_chars:
-            best = candidate
-            low = middle + 1
-        else:
-            high = middle - 1
-    if best is None or (
-        best[1]["memory_index"] == memory_index and best[1]["content_offset"] == content_offset
-    ):
-        raise ValueError("chunk metadata leaves no room for memory content")
-    return best
+    return {
+        "id": memory_id,
+        "memory_type": memory_type if isinstance(memory_type, str) else "fact",
+        "content": content,
+    }
 
 
 def _serialized_chars(payload: Mapping[str, Any]) -> int:
