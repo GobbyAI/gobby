@@ -44,7 +44,7 @@ Write a baseline:
 uv run gobby test-quality audit tests/tasks --write-baseline .gobby/test-quality-baseline.json
 ```
 
-Fail only on new high-severity issues:
+Fail on every new issue (the default `--min-severity low`, shown explicitly):
 
 ```bash
 uv run gobby test-quality audit tests/tasks \
