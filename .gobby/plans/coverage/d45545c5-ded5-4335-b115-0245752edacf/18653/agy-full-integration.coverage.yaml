@@ -1,0 +1,2504 @@
+header:
+  plan_id: agy-full-integration
+  plan_hash: c2ec61e30c8a0549652b3d8a86424f7073ed0a4b207bbcb941eff0d848eb54d9
+  root_task_ref: '18653'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-08-23T14:05:23Z'
+  task_tree_source: db
+  task_tree_source_hash: 85ebdb198b926913271104c32411cce36fb1108f52d7bf2c590ad71cea1892b9
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '2.1'
+  item_id: 2.1.1
+  plan_node_hash: 7f53d8b1b19f5c144fda802b7df9b7ed6a01556e176f85501980337096ae2b8e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20742'
+    validation_criteria_snippet: "2.1.1: `_get_parser` is deleted and its callers\
+      \ \u2014 including the same-module `_parse_lines` \u2014 route through the shared\
+      \ registry. file: `src/gobby/sessions/trans..."
+    matched_artifact_ref: src/gobby/sessions/transcript_parsing.py
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.2
+  plan_node_hash: d3d87b250d5eade613e65eb8748ff6939010cf0790351e6ac003e4e5f0de5c82
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20742'
+    validation_criteria_snippet: "2.1.1: `_get_parser` is deleted and its callers\
+      \ \u2014 including the same-module `_parse_lines` \u2014 route through the shared\
+      \ registry. file: `src/gobby/sessions/trans..."
+    matched_artifact_ref: TranscriptProcessingMixin._process_session_transcript
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.3
+  plan_node_hash: 8bb324275de6810195c903f8dd3ad12d183a5d5e5a3aba963a958f8b2f825200
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20742'
+    validation_criteria_snippet: "2.1.1: `_get_parser` is deleted and its callers\
+      \ \u2014 including the same-module `_parse_lines` \u2014 route through the shared\
+      \ registry. file: `src/gobby/sessions/trans..."
+    matched_artifact_ref: get_parser
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.4
+  plan_node_hash: c2ceaa207795b3a89ca54b220bc96275b6db6c47e7c7528bc4b046320f424b1e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20742'
+    validation_criteria_snippet: "2.1.1: `_get_parser` is deleted and its callers\
+      \ \u2014 including the same-module `_parse_lines` \u2014 route through the shared\
+      \ registry. file: `src/gobby/sessions/trans..."
+    matched_artifact_ref: _build_summary_prompt_context
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.5
+  plan_node_hash: 3d3588a329cbeef670ccccdf42b2aad828a5509197b05f1d309e87a410788fd1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20742'
+    validation_criteria_snippet: "2.1.1: `_get_parser` is deleted and its callers\
+      \ \u2014 including the same-module `_parse_lines` \u2014 route through the shared\
+      \ registry. file: `src/gobby/sessions/trans..."
+    matched_artifact_ref: _load_session_messages
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.6
+  plan_node_hash: 8727dd2cbe2608f4deff4d7f56ea658abdef175f3baf05a527ce4f7dd670f1ad
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20742'
+    validation_criteria_snippet: "2.1.1: `_get_parser` is deleted and its callers\
+      \ \u2014 including the same-module `_parse_lines` \u2014 route through the shared\
+      \ registry. file: `src/gobby/sessions/trans..."
+    matched_artifact_ref: tests/sessions/test_transcript_parsers.py
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.7
+  plan_node_hash: b44ad1a255d6b1141f63d67c2a244ff4a0ff7b9b0afb218e71b6a73c02a2ab1d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20742'
+    validation_criteria_snippet: "2.1.1: `_get_parser` is deleted and its callers\
+      \ \u2014 including the same-module `_parse_lines` \u2014 route through the shared\
+      \ registry. file: `src/gobby/sessions/trans..."
+    matched_artifact_ref: tests/sessions/test_sessions_lifecycle.py
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.8
+  plan_node_hash: 536d0cf45b10c376399da422c43dd0049f5fed633b74c4a69678496f808368b8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20742'
+    validation_criteria_snippet: "2.1.1: `_get_parser` is deleted and its callers\
+      \ \u2014 including the same-module `_parse_lines` \u2014 route through the shared\
+      \ registry. file: `src/gobby/sessions/trans..."
+    matched_artifact_ref: TranscriptAnalyzer.__init__
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.9
+  plan_node_hash: 8a2827d95fdd02d87c46c2738092284872c30d120df134b7b28bc39ec146c8e8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20742'
+    validation_criteria_snippet: "2.1.1: `_get_parser` is deleted and its callers\
+      \ \u2014 including the same-module `_parse_lines` \u2014 route through the shared\
+      \ registry. file: `src/gobby/sessions/trans..."
+    matched_artifact_ref: HookManagerFactory.create
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.10
+  plan_node_hash: 32e2b56e1b55d3a8037b0e9807d079fa56ac7528f27c64f21bb428fbb72dd8d2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20742'
+    validation_criteria_snippet: "2.1.1: `_get_parser` is deleted and its callers\
+      \ \u2014 including the same-module `_parse_lines` \u2014 route through the shared\
+      \ registry. file: `src/gobby/sessions/trans..."
+    matched_artifact_ref: src/gobby/hooks/hook_manager_dispatch.py
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.1
+  plan_node_hash: cc61d4492f8c9e0b6eed0a446dfe1c84a7bfd581c054cd54967b626bddb2bbe9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20743'
+    validation_criteria_snippet: '2.2.1: Every provider resolves through one hook-first/disk-fallback
+      path. symbol: `derive_transcript_path`. file: `src/gobby/hooks/event_handlers/_session_star...'
+    matched_artifact_ref: derive_transcript_path
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.2
+  plan_node_hash: c634804af7ba1054b14f6e837904062ff2b188ee6bd639817b06eaaace14d0a4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20743'
+    validation_criteria_snippet: '2.2.1: Every provider resolves through one hook-first/disk-fallback
+      path. symbol: `derive_transcript_path`. file: `src/gobby/hooks/event_handlers/_session_star...'
+    matched_artifact_ref: find_transcript_on_disk
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.3
+  plan_node_hash: a9b7e030c11b8d5f8872b99e2b8bc4f5bf686fb7b88bd632714295286326aaf0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20743'
+    validation_criteria_snippet: '2.2.1: Every provider resolves through one hook-first/disk-fallback
+      path. symbol: `derive_transcript_path`. file: `src/gobby/hooks/event_handlers/_session_star...'
+    matched_artifact_ref: derive_transcript_path
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.4
+  plan_node_hash: fda7be58c9d8ab4517149da4ff4127be4f38e1f4455363bbe329edd6884245ed
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20743'
+    validation_criteria_snippet: '2.2.1: Every provider resolves through one hook-first/disk-fallback
+      path. symbol: `derive_transcript_path`. file: `src/gobby/hooks/event_handlers/_session_star...'
+    matched_artifact_ref: find_transcript_on_disk
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.5
+  plan_node_hash: 2e34bae8d20e37d22f2c0b8f24859bb10314bcbd3506b3113d605f782ca0f258
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20743'
+    validation_criteria_snippet: '2.2.1: Every provider resolves through one hook-first/disk-fallback
+      path. symbol: `derive_transcript_path`. file: `src/gobby/hooks/event_handlers/_session_star...'
+    matched_artifact_ref: handle_session_start
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.6
+  plan_node_hash: 2102cbcdb71a764770f2198fadf9b7b4e03c8bde574d097af824f93af301b9f0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20743'
+    validation_criteria_snippet: '2.2.1: Every provider resolves through one hook-first/disk-fallback
+      path. symbol: `derive_transcript_path`. file: `src/gobby/hooks/event_handlers/_session_star...'
+    matched_artifact_ref: tests/hooks/test_transcript_path_derivation.py
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.7
+  plan_node_hash: 5c18806a3a296efadd00e48c9fe478962446343d44666718ad2a484b44df8da2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20743'
+    validation_criteria_snippet: '2.2.1: Every provider resolves through one hook-first/disk-fallback
+      path. symbol: `derive_transcript_path`. file: `src/gobby/hooks/event_handlers/_session_star...'
+    matched_artifact_ref: tests/agents/test_idle_check_transcript_paths.py
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.8
+  plan_node_hash: 24666bc5eae883af4d56ddf19a956b89211e71b3eeb03a3e4c192257327a8c92
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20743'
+    validation_criteria_snippet: '2.2.1: Every provider resolves through one hook-first/disk-fallback
+      path. symbol: `derive_transcript_path`. file: `src/gobby/hooks/event_handlers/_session_star...'
+    matched_artifact_ref: tests/tasks/test_transcript_evidence.py
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.9
+  plan_node_hash: 56321fff0a6313a4cedd34e33ef7404808ee08fc050e9784a047488b537c81df
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20743'
+    validation_criteria_snippet: '2.2.1: Every provider resolves through one hook-first/disk-fallback
+      path. symbol: `derive_transcript_path`. file: `src/gobby/hooks/event_handlers/_session_star...'
+    matched_artifact_ref: tests/agents/test_lifecycle_monitor_watchdog_idle_recovery.py
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.10
+  plan_node_hash: ee8f095a8ce4477ed3d4cef55303011a05fc5260b69966883a46ffc716fc62e8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20743'
+    validation_criteria_snippet: '2.2.1: Every provider resolves through one hook-first/disk-fallback
+      path. symbol: `derive_transcript_path`. file: `src/gobby/hooks/event_handlers/_session_star...'
+    matched_artifact_ref: find_transcript_on_disk
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.11
+  plan_node_hash: 3414ff8a4a0178ed153e24bec72e03e8c334eadd5cc257df58ce1211db28caed
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20743'
+    validation_criteria_snippet: '2.2.1: Every provider resolves through one hook-first/disk-fallback
+      path. symbol: `derive_transcript_path`. file: `src/gobby/hooks/event_handlers/_session_star...'
+    matched_artifact_ref: _detect_source_from_path
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.12
+  plan_node_hash: 4698bf72563e4460904f5e18cf78941fe5fa7e8b5c6c572ae0e9b158c528fa1a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20743'
+    validation_criteria_snippet: '2.2.1: Every provider resolves through one hook-first/disk-fallback
+      path. symbol: `derive_transcript_path`. file: `src/gobby/hooks/event_handlers/_session_star...'
+    matched_artifact_ref: _resolve_transcript_path
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.1
+  plan_node_hash: 780225533511c74fdebf72bba9559d9c19bef309f93ec33851eabfc79b278f9e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20744'
+    validation_criteria_snippet: '2.3.1: AGY''s unreachable `SessionStart` critical
+      hook is removed. symbol: `CliConfig::for_cli`. file: `crates/ghook/src/cli_config.rs`.
+      2.3.2: Droid''s short-ci...'
+    matched_artifact_ref: CliConfig::for_cli
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.2
+  plan_node_hash: a572916b99b9afdcdd6c4eeb9cba4790cf0a2db17323ed94ef09e2be4298d58b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20744'
+    validation_criteria_snippet: '2.3.1: AGY''s unreachable `SessionStart` critical
+      hook is removed. symbol: `CliConfig::for_cli`. file: `crates/ghook/src/cli_config.rs`.
+      2.3.2: Droid''s short-ci...'
+    matched_artifact_ref: action_from_failure
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.3
+  plan_node_hash: 3e456bb893801289d65f353712bbe834fefe450a210af93825d2bf9deb34debf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20744'
+    validation_criteria_snippet: '2.3.1: AGY''s unreachable `SessionStart` critical
+      hook is removed. symbol: `CliConfig::for_cli`. file: `crates/ghook/src/cli_config.rs`.
+      2.3.2: Droid''s short-ci...'
+    matched_artifact_ref: PreToolUse denial degrades to allow when the daemon is unreachable
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.4
+  plan_node_hash: 2d663f116fcfdf18135f7dfaeb90261d4fce94c93f9757da3f5299ccef21ef53
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20744'
+    validation_criteria_snippet: '2.3.1: AGY''s unreachable `SessionStart` critical
+      hook is removed. symbol: `CliConfig::for_cli`. file: `crates/ghook/src/cli_config.rs`.
+      2.3.2: Droid''s short-ci...'
+    matched_artifact_ref: CliConfig::for_cli
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.5
+  plan_node_hash: 9501337e18e5e981c566bfb42320423d1044d01710702a95850262b87971b615
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20744'
+    validation_criteria_snippet: '2.3.1: AGY''s unreachable `SessionStart` critical
+      hook is removed. symbol: `CliConfig::for_cli`. file: `crates/ghook/src/cli_config.rs`.
+      2.3.2: Droid''s short-ci...'
+    matched_artifact_ref: crates/ghook/tests/contract.rs
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.6
+  plan_node_hash: 593978a4f0b05d18caf89f08a2d4e37af435ddfc0e71a10e63addc14357857b5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20744'
+    validation_criteria_snippet: '2.3.1: AGY''s unreachable `SessionStart` critical
+      hook is removed. symbol: `CliConfig::for_cli`. file: `crates/ghook/src/cli_config.rs`.
+      2.3.2: Droid''s short-ci...'
+    matched_artifact_ref: crates/ghook/src/diagnose.rs
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.7
+  plan_node_hash: 0e3e0c2532c01580acaf079ad3135cd1956dabae46fb80b178674c0c5bc6730f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20744'
+    validation_criteria_snippet: '2.3.1: AGY''s unreachable `SessionStart` critical
+      hook is removed. symbol: `CliConfig::for_cli`. file: `crates/ghook/src/cli_config.rs`.
+      2.3.2: Droid''s short-ci...'
+    matched_artifact_ref: action_from_failure
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.8
+  plan_node_hash: 32100eb355e61d81101870254de286ea1bbadb3c59615f51735074ee02ab590d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20744'
+    validation_criteria_snippet: '2.3.1: AGY''s unreachable `SessionStart` critical
+      hook is removed. symbol: `CliConfig::for_cli`. file: `crates/ghook/src/cli_config.rs`.
+      2.3.2: Droid''s short-ci...'
+    matched_artifact_ref: crates/ghook/tests/contract.rs
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.9
+  plan_node_hash: 89070d736d9d73d8a4ceb0a68cb36f2406c5363e43fd0592423156cc97a6fbdc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20744'
+    validation_criteria_snippet: '2.3.1: AGY''s unreachable `SessionStart` critical
+      hook is removed. symbol: `CliConfig::for_cli`. file: `crates/ghook/src/cli_config.rs`.
+      2.3.2: Droid''s short-ci...'
+    matched_artifact_ref: agy_uses_antigravity_pascal_case_hooks
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.10
+  plan_node_hash: 90c6b671a8afe6b249f9f30e632a5c1d0eb43561f22204a8b1491e54a8136bc0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20744'
+    validation_criteria_snippet: '2.3.1: AGY''s unreachable `SessionStart` critical
+      hook is removed. symbol: `CliConfig::for_cli`. file: `crates/ghook/src/cli_config.rs`.
+      2.3.2: Droid''s short-ci...'
+    matched_artifact_ref: tests/hooks/test_events.py
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.11
+  plan_node_hash: 7c1851c3b0a1d568e69bb9188983e0bb648ee453ba063d06ad5c14369df77372
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20744'
+    validation_criteria_snippet: '2.3.1: AGY''s unreachable `SessionStart` critical
+      hook is removed. symbol: `CliConfig::for_cli`. file: `crates/ghook/src/cli_config.rs`.
+      2.3.2: Droid''s short-ci...'
+    matched_artifact_ref: "AGY: PreInvocation, PreToolUse, PostToolUse, PostInvocation,\
+      \ Stop \u2014 none critical"
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.12
+  plan_node_hash: 7c720729cda7de4b98a87e01cb76d460af663cafe4fbbe3ccc56e301bdbf5cfe
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20744'
+    validation_criteria_snippet: '2.3.1: AGY''s unreachable `SessionStart` critical
+      hook is removed. symbol: `CliConfig::for_cli`. file: `crates/ghook/src/cli_config.rs`.
+      2.3.2: Droid''s short-ci...'
+    matched_artifact_ref: crates/ghook/tests/contract.rs
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.13
+  plan_node_hash: 6d2d7cddaf9451dc44d92fc1cf63fc2da64a7a65018b50dcd97446f20e6e899f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20744'
+    validation_criteria_snippet: '2.3.1: AGY''s unreachable `SessionStart` critical
+      hook is removed. symbol: `CliConfig::for_cli`. file: `crates/ghook/src/cli_config.rs`.
+      2.3.2: Droid''s short-ci...'
+    matched_artifact_ref: crates/ghook/tests/contract.rs
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.14
+  plan_node_hash: 76521b40f053272c841020be752e2b4d117f74f5b1325e6f95d7ebdecdf8a309
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20744'
+    validation_criteria_snippet: '2.3.1: AGY''s unreachable `SessionStart` critical
+      hook is removed. symbol: `CliConfig::for_cli`. file: `crates/ghook/src/cli_config.rs`.
+      2.3.2: Droid''s short-ci...'
+    matched_artifact_ref: crates/ghook/tests/contract.rs
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.15
+  plan_node_hash: 80296ebd102f96698b65ab46ef0cbd48f48d629aa8e50e6d7404dcaa0954aab8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20744'
+    validation_criteria_snippet: '2.3.1: AGY''s unreachable `SessionStart` critical
+      hook is removed. symbol: `CliConfig::for_cli`. file: `crates/ghook/src/cli_config.rs`.
+      2.3.2: Droid''s short-ci...'
+    matched_artifact_ref: crates/ghook/tests/contract.rs
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.16
+  plan_node_hash: c3dfc811a55ccfc9f33a16ce12aa41d4e68d47f23888c6f49d03bd82caa27744
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20744'
+    validation_criteria_snippet: '2.3.1: AGY''s unreachable `SessionStart` critical
+      hook is removed. symbol: `CliConfig::for_cli`. file: `crates/ghook/src/cli_config.rs`.
+      2.3.2: Droid''s short-ci...'
+    matched_artifact_ref: crates/ghook/tests/contract.rs
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.17
+  plan_node_hash: 732ca166a66bb4a66e25f9aa083e4b9746a69a291456a4bb672dcf1ac934120c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20744'
+    validation_criteria_snippet: '2.3.1: AGY''s unreachable `SessionStart` critical
+      hook is removed. symbol: `CliConfig::for_cli`. file: `crates/ghook/src/cli_config.rs`.
+      2.3.2: Droid''s short-ci...'
+    matched_artifact_ref: crates/ghook/tests/contract.rs
+  deferral_target: null
+- section_id: '2.4'
+  item_id: 2.4.1
+  plan_node_hash: 1c8d581b41de58df46ca9ede34edfd0e2716d21ac5836197ed8641b5b772805b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20745'
+    validation_criteria_snippet: '2.4.1: The runtime manager imports `AGY_UNAVAILABLE_REASON`
+      instead of duplicating it. symbol: `WebChatRuntimeManager.health`. file: `src/gobby/servers/websock...'
+    matched_artifact_ref: WebChatRuntimeManager.health
+  deferral_target: null
+- section_id: '2.4'
+  item_id: 2.4.2
+  plan_node_hash: 196c7d3c60e811aa9a81e9a3607e34c6e606128a914ccfb2b256dd03dd6deb07
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20745'
+    validation_criteria_snippet: '2.4.1: The runtime manager imports `AGY_UNAVAILABLE_REASON`
+      instead of duplicating it. symbol: `WebChatRuntimeManager.health`. file: `src/gobby/servers/websock...'
+    matched_artifact_ref: _tool_chat_binding
+  deferral_target: null
+- section_id: '2.4'
+  item_id: 2.4.3
+  plan_node_hash: 601f8405410f9118e9b5fe6149af0bb69509a8efc05faac5eecc32fdeef15d54
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20745'
+    validation_criteria_snippet: '2.4.1: The runtime manager imports `AGY_UNAVAILABLE_REASON`
+      instead of duplicating it. symbol: `WebChatRuntimeManager.health`. file: `src/gobby/servers/websock...'
+    matched_artifact_ref: src/gobby/servers/websocket/chat/backends/droid.py
+  deferral_target: null
+- section_id: '2.4'
+  item_id: 2.4.4
+  plan_node_hash: d591a1ddf83dba1bedb9d9385b7b87119a84a7e07a4c4b9bd38c971a5a2382b7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20745'
+    validation_criteria_snippet: '2.4.1: The runtime manager imports `AGY_UNAVAILABLE_REASON`
+      instead of duplicating it. symbol: `WebChatRuntimeManager.health`. file: `src/gobby/servers/websock...'
+    matched_artifact_ref: tests/servers/websocket/chat/test_droid_backend.py
+  deferral_target: null
+- section_id: '2.5'
+  item_id: 2.5.1
+  plan_node_hash: dcb2b26c7c701a60caf109aa89502ef75f9cbc348e5563dc9278c53f18debe2a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20746'
+    validation_criteria_snippet: '2.5.1: An async startup probe resolves the AGY version
+      once and publishes an immutable support record readable from synchronous consumers.
+      file: `src/gobby/pro...'
+    matched_artifact_ref: src/gobby/providers/version_gate.py
+  deferral_target: null
+- section_id: '2.5'
+  item_id: 2.5.2
+  plan_node_hash: abe45de295162b2c6956b03e533cc28940147e616ed7a1b89e533a6f34ff1955
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20746'
+    validation_criteria_snippet: '2.5.1: An async startup probe resolves the AGY version
+      once and publishes an immutable support record readable from synchronous consumers.
+      file: `src/gobby/pro...'
+    matched_artifact_ref: src/gobby/providers/version_gate.py
+  deferral_target: null
+- section_id: '2.5'
+  item_id: 2.5.3
+  plan_node_hash: 6d689e4a2f0056ecfcf07d2c8f52977e80ae6cafbf58bb0dc1424267bcbd25be
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20746'
+    validation_criteria_snippet: '2.5.1: An async startup probe resolves the AGY version
+      once and publishes an immutable support record readable from synchronous consumers.
+      file: `src/gobby/pro...'
+    matched_artifact_ref: tests/providers/test_version_gate.py
+  deferral_target: null
+- section_id: '2.5'
+  item_id: 2.5.4
+  plan_node_hash: 08163f46ca85c7a4e3602bf8aab3c770789604ea98c963a6d29975f389280b2f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20746'
+    validation_criteria_snippet: '2.5.1: An async startup probe resolves the AGY version
+      once and publishes an immutable support record readable from synchronous consumers.
+      file: `src/gobby/pro...'
+    matched_artifact_ref: run_gobby
+  deferral_target: null
+- section_id: '2.5'
+  item_id: 2.5.5
+  plan_node_hash: 9499d05995f7a280742954424f7bc4ee96b735fdfc08a2ebb5cdc594fa3524d7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20746'
+    validation_criteria_snippet: '2.5.1: An async startup probe resolves the AGY version
+      once and publishes an immutable support record readable from synchronous consumers.
+      file: `src/gobby/pro...'
+    matched_artifact_ref: _agy_unavailable_bindings
+  deferral_target: null
+- section_id: '2.5'
+  item_id: 2.5.6
+  plan_node_hash: 3ccc16c9b66e58a366a03f4d74af782435392810157e94c4f12bff7c20f32d1a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20746'
+    validation_criteria_snippet: '2.5.1: An async startup probe resolves the AGY version
+      once and publishes an immutable support record readable from synchronous consumers.
+      file: `src/gobby/pro...'
+    matched_artifact_ref: src/gobby/providers/version_gate.py
+  deferral_target: null
+- section_id: '2.5'
+  item_id: 2.5.7
+  plan_node_hash: ed4bf313f7f7e44164bc864f87bb221d8cd3d1f62b757d049648af7df2f6f2b6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20746'
+    validation_criteria_snippet: '2.5.1: An async startup probe resolves the AGY version
+      once and publishes an immutable support record readable from synchronous consumers.
+      file: `src/gobby/pro...'
+    matched_artifact_ref: tests/providers/test_version_gate.py
+  deferral_target: null
+- section_id: '2.5'
+  item_id: 2.5.8
+  plan_node_hash: 6ecf31eeb4fcd8bfde1a638f833fb64261ba24aab45d04b180637d23d235fa42
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20746'
+    validation_criteria_snippet: '2.5.1: An async startup probe resolves the AGY version
+      once and publishes an immutable support record readable from synchronous consumers.
+      file: `src/gobby/pro...'
+    matched_artifact_ref: tests/providers/test_version_gate.py
+  deferral_target: null
+- section_id: '2.5'
+  item_id: 2.5.9
+  plan_node_hash: d89faa7b6d0c542583c5012d0c4cb88659b0085b70e37e40d221161d8b29953f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20746'
+    validation_criteria_snippet: '2.5.1: An async startup probe resolves the AGY version
+      once and publishes an immutable support record readable from synchronous consumers.
+      file: `src/gobby/pro...'
+    matched_artifact_ref: tests/providers/test_version_gate.py
+  deferral_target: null
+- section_id: '2.5'
+  item_id: 2.5.10
+  plan_node_hash: 13892fb435b6e9811f751234f3255db4d2f9930662ac4a986514dc189e9b80c9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20746'
+    validation_criteria_snippet: '2.5.1: An async startup probe resolves the AGY version
+      once and publishes an immutable support record readable from synchronous consumers.
+      file: `src/gobby/pro...'
+    matched_artifact_ref: tests/providers/test_version_gate.py
+  deferral_target: null
+- section_id: '2.6'
+  item_id: 2.6.1
+  plan_node_hash: f1df4388664b12bd7bb22ce3cecde043f4ad76c02941c244d4d359b688e2525d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20747'
+    validation_criteria_snippet: '2.6.1: `install_agy` accepts `hook_timeout_seconds`,
+      the standard-install dispatcher passes it like every other CLI, and both the
+      flat-list and matcher-group h...'
+    matched_artifact_ref: install_agy
+  deferral_target: null
+- section_id: '2.6'
+  item_id: 2.6.2
+  plan_node_hash: af54e884b6df1aeac21750c2e2c6fbf90d8d754de7811e7e75d8d47e2d13b384
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20747'
+    validation_criteria_snippet: '2.6.1: `install_agy` accepts `hook_timeout_seconds`,
+      the standard-install dispatcher passes it like every other CLI, and both the
+      flat-list and matcher-group h...'
+    matched_artifact_ref: install_agy
+  deferral_target: null
+- section_id: '2.6'
+  item_id: 2.6.3
+  plan_node_hash: c8d4393f5c8f386f636e42ac8befdefe75946b908b6e12c79e73a10d9a532ef3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20747'
+    validation_criteria_snippet: '2.6.1: `install_agy` accepts `hook_timeout_seconds`,
+      the standard-install dispatcher passes it like every other CLI, and both the
+      flat-list and matcher-group h...'
+    matched_artifact_ref: get_coding_cli_hooks_status
+  deferral_target: null
+- section_id: '2.6'
+  item_id: 2.6.4
+  plan_node_hash: cdc0235254460038848bba37ce8f32d5124f59b63a4cef70c235f9204e57dbc8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20747'
+    validation_criteria_snippet: '2.6.1: `install_agy` accepts `hook_timeout_seconds`,
+      the standard-install dispatcher passes it like every other CLI, and both the
+      flat-list and matcher-group h...'
+    matched_artifact_ref: _format_coding_cli_details
+  deferral_target: null
+- section_id: '2.6'
+  item_id: 2.6.5
+  plan_node_hash: a3408e9190d8dee321fcf9a0f7cedf9947f94b02e23d8935e0105c51a4607bab
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20747'
+    validation_criteria_snippet: '2.6.1: `install_agy` accepts `hook_timeout_seconds`,
+      the standard-install dispatcher passes it like every other CLI, and both the
+      flat-list and matcher-group h...'
+    matched_artifact_ref: tests/cli/installers/test_cli_installers_agy.py
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.1
+  plan_node_hash: 526fe4bfc267a5a494350b7b7c3cfcaacdd40575c91204f5be416e76ecc4645c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20748'
+    validation_criteria_snippet: '3.1.1: Web-chat subprocess launches are wrapped
+      by `prepare_sandbox_launch` at the asynchronous post-hydration seam, and no
+      subprocess launch occurs in synchro...'
+    matched_artifact_ref: ChatSessionMixin._create_chat_session_inner
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.2
+  plan_node_hash: daa263b6eef8538e363a51d76f49fffd4fe7932ce5989dcadbf527c47babc95b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20748'
+    validation_criteria_snippet: '3.1.1: Web-chat subprocess launches are wrapped
+      by `prepare_sandbox_launch` at the asynchronous post-hydration seam, and no
+      subprocess launch occurs in synchro...'
+    matched_artifact_ref: DaemonConfig
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.3
+  plan_node_hash: cfd541189bfa6f89b70346ca1986065b08b553a3da1e9fb0695d5b0fe38b0fd3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20748'
+    validation_criteria_snippet: '3.1.1: Web-chat subprocess launches are wrapped
+      by `prepare_sandbox_launch` at the asynchronous post-hydration seam, and no
+      subprocess launch occurs in synchro...'
+    matched_artifact_ref: WebChatRuntimeManager.policy_mismatch_reason
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.4
+  plan_node_hash: 1033f496b91f180b0a9769f784f49d9ceed5754f89d2ce7499b8454625ba2a87
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20748'
+    validation_criteria_snippet: '3.1.1: Web-chat subprocess launches are wrapped
+      by `prepare_sandbox_launch` at the asynchronous post-hydration seam, and no
+      subprocess launch occurs in synchro...'
+    matched_artifact_ref: src/gobby/servers/websocket/chat/backends/codex.py
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.5
+  plan_node_hash: b9c86eb20915377acc198c91bea157dc1ebfee0829fb8bd8421564f39e720038
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20748'
+    validation_criteria_snippet: '3.1.1: Web-chat subprocess launches are wrapped
+      by `prepare_sandbox_launch` at the asynchronous post-hydration seam, and no
+      subprocess launch occurs in synchro...'
+    matched_artifact_ref: tests/servers/websocket/chat/test_launch_contracts.py
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.6
+  plan_node_hash: 32dac0a0c46df692808d8a37a4cdb42240e51b279fc4b0caf12ad3a954752fb4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20748'
+    validation_criteria_snippet: '3.1.1: Web-chat subprocess launches are wrapped
+      by `prepare_sandbox_launch` at the asynchronous post-hydration seam, and no
+      subprocess launch occurs in synchro...'
+    matched_artifact_ref: web_chat_sandbox_policy_hash
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.7
+  plan_node_hash: 562e356ff12f21d8b302cccf813dfb327b3a7702c988e3d904f1e3dc52c3a5a2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20748'
+    validation_criteria_snippet: '3.1.1: Web-chat subprocess launches are wrapped
+      by `prepare_sandbox_launch` at the asynchronous post-hydration seam, and no
+      subprocess launch occurs in synchro...'
+    matched_artifact_ref: tests/servers/websocket/chat/test_launch_contracts.py
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.8
+  plan_node_hash: fee4c17c6308aa41a6db0212ba54717975d752841eff3b6f0f83330be9bc5c8e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20748'
+    validation_criteria_snippet: '3.1.1: Web-chat subprocess launches are wrapped
+      by `prepare_sandbox_launch` at the asynchronous post-hydration seam, and no
+      subprocess launch occurs in synchro...'
+    matched_artifact_ref: tests/servers/websocket/chat/test_launch_contracts.py
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.9
+  plan_node_hash: 865c4a32f7d794117ba30d8f7bc1422051c0a2177c0788d9acee9f54dcc941ce
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20748'
+    validation_criteria_snippet: '3.1.1: Web-chat subprocess launches are wrapped
+      by `prepare_sandbox_launch` at the asynchronous post-hydration seam, and no
+      subprocess launch occurs in synchro...'
+    matched_artifact_ref: src/gobby/adapters/acp_client.py
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.10
+  plan_node_hash: 2510fd9c9a66cbe68cde1e61973449631b8c420c917153006b305d673107c754
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20748'
+    validation_criteria_snippet: '3.1.1: Web-chat subprocess launches are wrapped
+      by `prepare_sandbox_launch` at the asynchronous post-hydration seam, and no
+      subprocess launch occurs in synchro...'
+    matched_artifact_ref: src/gobby/servers/websocket/chat/_session_launch.py
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.11
+  plan_node_hash: 9e1b7bf763a6ab8b9bd19e57dd94c8eb284e504ef0474295a7554ec8a47dde85
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20748'
+    validation_criteria_snippet: '3.1.1: Web-chat subprocess launches are wrapped
+      by `prepare_sandbox_launch` at the asynchronous post-hydration seam, and no
+      subprocess launch occurs in synchro...'
+    matched_artifact_ref: init_servers
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.12
+  plan_node_hash: 35a8511c1dfde0408d533fe9be3a2c1294ef9c5bcb6a7867097a45e2d889714d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20748'
+    validation_criteria_snippet: '3.1.1: Web-chat subprocess launches are wrapped
+      by `prepare_sandbox_launch` at the asynchronous post-hydration seam, and no
+      subprocess launch occurs in synchro...'
+    matched_artifact_ref: ACPSessionLifecycleService
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.13
+  plan_node_hash: c5c2d961c9210714200de51dfd50870fe5cf393e6621d9c165629b2cb5452814
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20748'
+    validation_criteria_snippet: '3.1.1: Web-chat subprocess launches are wrapped
+      by `prepare_sandbox_launch` at the asynchronous post-hydration seam, and no
+      subprocess launch occurs in synchro...'
+    matched_artifact_ref: tests/config/test_daemon_sandbox.py
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.14
+  plan_node_hash: e16513cc154b66b4e6dd3984ab6a10b27629715b53db86e74c4f7c9355a1e72c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20748'
+    validation_criteria_snippet: '3.1.1: Web-chat subprocess launches are wrapped
+      by `prepare_sandbox_launch` at the asynchronous post-hydration seam, and no
+      subprocess launch occurs in synchro...'
+    matched_artifact_ref: tests/sessions/test_acp_lifecycle_service.py
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.15
+  plan_node_hash: 72c324a3774863eec470cade1ab33809edf0133ba3fbb494c39a95d0b2ce2d1b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20748'
+    validation_criteria_snippet: '3.1.1: Web-chat subprocess launches are wrapped
+      by `prepare_sandbox_launch` at the asynchronous post-hydration seam, and no
+      subprocess launch occurs in synchro...'
+    matched_artifact_ref: crates/gcore/assets/schema/migrations/403_sessions_workspace_path.sql
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.16
+  plan_node_hash: 251d8568aa8a75e40be519d72815328184bad5532d1bcf3fc027cf8d70e0f100
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20748'
+    validation_criteria_snippet: '3.1.1: Web-chat subprocess launches are wrapped
+      by `prepare_sandbox_launch` at the asynchronous post-hydration seam, and no
+      subprocess launch occurs in synchro...'
+    matched_artifact_ref: tests/servers/websocket/test_set_worktree.py
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.17
+  plan_node_hash: 5825d04a42cf61df09a887fcf0ffe58484dab2c63de488be785e6a3fdd455167
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20748'
+    validation_criteria_snippet: '3.1.1: Web-chat subprocess launches are wrapped
+      by `prepare_sandbox_launch` at the asynchronous post-hydration seam, and no
+      subprocess launch occurs in synchro...'
+    matched_artifact_ref: src/gobby/agents/sandbox_resolvers.py
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.18
+  plan_node_hash: efc47a573bc384b1a30a746e0c38313cb7024a78f8ef7cb2181844ba0db12c34
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20748'
+    validation_criteria_snippet: '3.1.1: Web-chat subprocess launches are wrapped
+      by `prepare_sandbox_launch` at the asynchronous post-hydration seam, and no
+      subprocess launch occurs in synchro...'
+    matched_artifact_ref: WebChatRuntimeManager._refresh_sandbox_config
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.19
+  plan_node_hash: ffb927480aad07df2ede5dceb44579376a0c761d7abd1c25181161ba478a67ad
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20748'
+    validation_criteria_snippet: '3.1.1: Web-chat subprocess launches are wrapped
+      by `prepare_sandbox_launch` at the asynchronous post-hydration seam, and no
+      subprocess launch occurs in synchro...'
+    matched_artifact_ref: crates/gcore/src/schema/assets.rs
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.20
+  plan_node_hash: 147eca15b9c12080058e5786ec67e01be7e689a560de4e0ab8398305eecb0fb6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20748'
+    validation_criteria_snippet: '3.1.1: Web-chat subprocess launches are wrapped
+      by `prepare_sandbox_launch` at the asynchronous post-hydration seam, and no
+      subprocess launch occurs in synchro...'
+    matched_artifact_ref: WebChatRuntimeManager._refresh_sandbox_config
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.21
+  plan_node_hash: e4c8417e18fdfe02059b063b959417e50930a841ba5d485d384be559843858a8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20748'
+    validation_criteria_snippet: '3.1.1: Web-chat subprocess launches are wrapped
+      by `prepare_sandbox_launch` at the asynchronous post-hydration seam, and no
+      subprocess launch occurs in synchro...'
+    matched_artifact_ref: tests/servers/websocket/chat/test_servers_websocket_chat_session.py
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.22
+  plan_node_hash: 03b8c79b965acd5b0cc0b8657965279f8bb3ff14a4e972286651c600f13855d9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20748'
+    validation_criteria_snippet: '3.1.1: Web-chat subprocess launches are wrapped
+      by `prepare_sandbox_launch` at the asynchronous post-hydration seam, and no
+      subprocess launch occurs in synchro...'
+    matched_artifact_ref: crates/gcore/assets/schema/migrations/403_sessions_workspace_path.sql
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.23
+  plan_node_hash: d7d8098317109fd847f3902697b4e9ce9554263437d0246b5301397fbe962903
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20748'
+    validation_criteria_snippet: '3.1.1: Web-chat subprocess launches are wrapped
+      by `prepare_sandbox_launch` at the asynchronous post-hydration seam, and no
+      subprocess launch occurs in synchro...'
+    matched_artifact_ref: tests/servers/websocket/chat/test_servers_websocket_chat_session.py
+  deferral_target: null
+- section_id: '3.2'
+  item_id: 3.2.1
+  plan_node_hash: 0da668c64185c2a452deb2251bc42e860438b5784483faef702a417fcca981bc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20749'
+    validation_criteria_snippet: '3.2.1: `AgySandboxResolver` exists and returns AGY''s
+      `--sandbox` for provider-native. file: `src/gobby/agents/sandbox_resolvers.py`.
+      3.2.2: `sandbox.py` gains ...'
+    matched_artifact_ref: src/gobby/agents/sandbox_resolvers.py
+  deferral_target: null
+- section_id: '3.2'
+  item_id: 3.2.2
+  plan_node_hash: 8755d8d6055c144d1f1fd8d367d604cefefc6aae1ff2fc23456376a678fe9baf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20749'
+    validation_criteria_snippet: '3.2.1: `AgySandboxResolver` exists and returns AGY''s
+      `--sandbox` for provider-native. file: `src/gobby/agents/sandbox_resolvers.py`.
+      3.2.2: `sandbox.py` gains ...'
+    matched_artifact_ref: src/gobby/agents/sandbox_resolvers.py
+  deferral_target: null
+- section_id: '3.2'
+  item_id: 3.2.3
+  plan_node_hash: cb469cd83348813e3d7af2b53475f5c8fff96d585d2a44d99e8320cfc4f727f8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20749'
+    validation_criteria_snippet: '3.2.1: `AgySandboxResolver` exists and returns AGY''s
+      `--sandbox` for provider-native. file: `src/gobby/agents/sandbox_resolvers.py`.
+      3.2.2: `sandbox.py` gains ...'
+    matched_artifact_ref: src/gobby/agents/sandbox_resolvers.py
+  deferral_target: null
+- section_id: '3.2'
+  item_id: 3.2.4
+  plan_node_hash: c87080435671051fcbd44e79ff9328672c8bf4926d4d2c48cafac356acfe5b4c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20749'
+    validation_criteria_snippet: '3.2.1: `AgySandboxResolver` exists and returns AGY''s
+      `--sandbox` for provider-native. file: `src/gobby/agents/sandbox_resolvers.py`.
+      3.2.2: `sandbox.py` gains ...'
+    matched_artifact_ref: src/gobby/agents/sandbox_policy.py
+  deferral_target: null
+- section_id: '3.2'
+  item_id: 3.2.5
+  plan_node_hash: d992d362758840f59c1ab4c61b766da7247cacd11c15b23cc7cab21910c04b85
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20749'
+    validation_criteria_snippet: '3.2.1: `AgySandboxResolver` exists and returns AGY''s
+      `--sandbox` for provider-native. file: `src/gobby/agents/sandbox_resolvers.py`.
+      3.2.2: `sandbox.py` gains ...'
+    matched_artifact_ref: tests/agents/test_sandbox.py
+  deferral_target: null
+- section_id: '3.2'
+  item_id: 3.2.6
+  plan_node_hash: 73cd68de8c37779d3515325d2693686284806edf04d20acdd9cfad694e82236a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20749'
+    validation_criteria_snippet: '3.2.1: `AgySandboxResolver` exists and returns AGY''s
+      `--sandbox` for provider-native. file: `src/gobby/agents/sandbox_resolvers.py`.
+      3.2.2: `sandbox.py` gains ...'
+    matched_artifact_ref: src/gobby/agents/sandbox_resolvers.py
+  deferral_target: null
+- section_id: '3.2'
+  item_id: 3.2.7
+  plan_node_hash: ddbdcc7c1f832c524fbc37d75247869b7a4b4191c4caad6b1c2b7ef631d621b5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20749'
+    validation_criteria_snippet: '3.2.1: `AgySandboxResolver` exists and returns AGY''s
+      `--sandbox` for provider-native. file: `src/gobby/agents/sandbox_resolvers.py`.
+      3.2.2: `sandbox.py` gains ...'
+    matched_artifact_ref: tests/agents/test_sandbox.py
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.1
+  plan_node_hash: 03d49ee6d7e090c26c2b6ec8e1d304bbdf16631b9bbf3292b26817b025081b92
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: AgyAdapter.translate_to_hook_event
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.2
+  plan_node_hash: f22253aec70b6c4cd0b9c9ebecb181841da38457a99deb608f5a4b33d5e186f8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: AgyAdapter
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.3
+  plan_node_hash: 2eaab2589ae4f4f446c9f390f573aa9f8339b41a1fe09e41dd24083a725e7f9d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: _agy_capabilities
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.4
+  plan_node_hash: 950b43deb925d8700160e4a3808c3f2d5b5b690c76e5cb39de86e36204e1e617
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: src/gobby/adapters/agy.py
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.5
+  plan_node_hash: d7827e769ff6fb34a017509a1a78067487265408b7804749783256cb5a1ff4d3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: AgyAdapter.translate_from_hook_response
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.6
+  plan_node_hash: e960fccb07b9f6c24fc38717cc1abb14e9c53c959df0f5cd143903d63c7bbb76
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: tests/adapters/test_adapters_agy.py
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.7
+  plan_node_hash: 66236fe066a07e8bdbf8d0a7a26dea55028438e24db38c1279fc39a3d427e8f1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: handle_session_start
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.8
+  plan_node_hash: 3a5467c2a0d038cdcd57efce4d534a987299bb037122c4bacd7cb4523e4dce1f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: tests/adapters/test_adapters_agy.py
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.9
+  plan_node_hash: c80d60c6487da7426b4e690e42f2ffe202fab5bcbeccbdddb932df3c785e8721
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: src/gobby/hooks/event_handlers/_session_start/flow.py
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.10
+  plan_node_hash: 62d54952269c6467298933cc92711291b342747f58bf2e61436eda144cb6df01
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: tests/servers/routes/test_hooks_agy_dispatch.py
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.11
+  plan_node_hash: 95d51338cb42895621a7f04043b2d6d663e170f4d5cd72b711b858a7127c63af
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: tests/hooks/test_pending_message_provider_contracts.py
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.12
+  plan_node_hash: e324729e9de64cdce7af2bead6d57e8bd23f7ced2997adbe0c3179607d9f7c28
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: tests/servers/routes/test_hooks_agy_dispatch.py
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.13
+  plan_node_hash: b9e1eea3a44c6be66ac1eaca544f334ae0bb029db79947af9a60de3117032eb5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: src/gobby/servers/routes/mcp/hooks.py
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.14
+  plan_node_hash: 8cc3892f82d1a02b43497af773ecf7ff6ed1ac27c61239d2430e97d7634b7b6a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: tests/storage/test_schema_contract.py
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.15
+  plan_node_hash: f53a008051cf409308fb0dba22210e5a7548c1ebad889835355a76c5d4bee0f8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: tests/servers/routes/test_hooks_agy_dispatch.py
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.16
+  plan_node_hash: dd16760f68020ba39f8869dab9ddc7984d2510fe39819b40fee20b0b262260cd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: tests/servers/test_mcp_routes.py
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.17
+  plan_node_hash: 8aee1312375d49ccc224b1e47e426ed920da3bb98730625609405233b04324d5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: tests/workflows/test_hooks.py
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.18
+  plan_node_hash: 35acc6d2c7c66b0f53ff394acffea9f02fe9793546cde30674ce4da306eb8e14
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: src/gobby/hooks/runtime_compat.py
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.19
+  plan_node_hash: 89f2b05aa49edbe654ee55ea4e7aa40a25464ff77ef622a5208667a95f92212f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: src/gobby/storage/hook_receipts.py
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.20
+  plan_node_hash: 816f5989642d68e7c4a43a48e785dc5d507e17277b38a65db8403dc713dbdeaf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: tests/adapters/test_adapters_agy.py
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.21
+  plan_node_hash: ee4ea2a4ac72ab95b940e890b123907bf1d4e60a8a89a9d3c0e7dd8126ed387f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: ContextChannel
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.22
+  plan_node_hash: 76435fbc01cedaf4d37b7df925a0f6062e230adb6c7028f9901576b4d87f9228
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: AgyAdapter.translate_from_hook_response
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.23
+  plan_node_hash: a40e5ead2274642b29101c2760bf79449d2ae1e127e46728fd3b17524d235327
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: tests/servers/routes/test_hooks_agy_dispatch.py
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.24
+  plan_node_hash: 60e260da14f3054c619fd1ad50ea53fc8bc545d9db0168e747e5eea2f10f1de6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: crates/gcore/src/schema/assets.rs
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.25
+  plan_node_hash: 906cccd5ca0a5bdb16b681926ec69ea6782712a52f316bb7df0d66e57d996906
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: crates/ghook/src/action.rs
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.26
+  plan_node_hash: c700ddc821a0c6a99608741d30f3a7116e0f6b3e4dbb6a1e98d2d2895c8271c3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: src/gobby/storage/hook_receipts.py
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.27
+  plan_node_hash: a618bc32acf9c9fe46c6b614582faeb7e2c652b66c378294cd1e8c508f0b0bef
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: tests/storage/test_hook_receipts.py
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.28
+  plan_node_hash: 7a7f09c33a15094fc52900dd0721d38e81b9c99580ea85694718ba16e5226413
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: tests/servers/routes/test_hooks_agy_dispatch.py
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.29
+  plan_node_hash: e97408a37d18e79a1dd89ef98ec50324db9fb03172646aed77a6219751b624af
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: tests/servers/routes/test_hooks_agy_dispatch.py
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.30
+  plan_node_hash: 5981edba4f18e98999626ec6a7bd7a3705d6bff96e46d5cae785af1e6d39dc61
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20750'
+    validation_criteria_snippet: '4.1.1: camelCase `transcriptPath`, `conversationId`
+      and `workspacePaths` are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`.
+      file: `src/g...'
+    matched_artifact_ref: src/gobby/workflows/engine/effects.py
+  deferral_target: null
+- section_id: '4.2'
+  item_id: 4.2.1
+  plan_node_hash: 9dc9faa4af1e006a65e20cab2588ba1a709ce18936e3af5df14bf802f0f74316
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20751'
+    validation_criteria_snippet: '4.2.1: `AgyTranscriptParser` is registered in `PARSER_REGISTRY`.
+      symbol: `get_parser`. file: `src/gobby/sessions/transcripts/__init__.py`. 4.2.2:
+      Every non-`PL...'
+    matched_artifact_ref: get_parser
+  deferral_target: null
+- section_id: '4.2'
+  item_id: 4.2.2
+  plan_node_hash: 1156fc3d7dae2fe08602ddac4b19aa0a015236c58ad7f873ec3087b9b82cd1bd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20751'
+    validation_criteria_snippet: '4.2.1: `AgyTranscriptParser` is registered in `PARSER_REGISTRY`.
+      symbol: `get_parser`. file: `src/gobby/sessions/transcripts/__init__.py`. 4.2.2:
+      Every non-`PL...'
+    matched_artifact_ref: src/gobby/sessions/transcripts/agy.py
+  deferral_target: null
+- section_id: '4.2'
+  item_id: 4.2.3
+  plan_node_hash: 2293561d9021086ce4965e3f7b64d03b7465941b3e6770196ebd6c48c40ce1ef
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20751'
+    validation_criteria_snippet: '4.2.1: `AgyTranscriptParser` is registered in `PARSER_REGISTRY`.
+      symbol: `get_parser`. file: `src/gobby/sessions/transcripts/__init__.py`. 4.2.2:
+      Every non-`PL...'
+    matched_artifact_ref: src/gobby/sessions/transcripts/agy.py
+  deferral_target: null
+- section_id: '4.2'
+  item_id: 4.2.4
+  plan_node_hash: c54ba2245937a888c31b57e560bd3d231320d28ce666f2f9b019157d2dc0723f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20751'
+    validation_criteria_snippet: '4.2.1: `AgyTranscriptParser` is registered in `PARSER_REGISTRY`.
+      symbol: `get_parser`. file: `src/gobby/sessions/transcripts/__init__.py`. 4.2.2:
+      Every non-`PL...'
+    matched_artifact_ref: src/gobby/sessions/transcripts/agy.py
+  deferral_target: null
+- section_id: '4.2'
+  item_id: 4.2.5
+  plan_node_hash: 43b37499a786d5e857c05a8a207dda662b513e97351cde4e75afc696deab3ca1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20751'
+    validation_criteria_snippet: '4.2.1: `AgyTranscriptParser` is registered in `PARSER_REGISTRY`.
+      symbol: `get_parser`. file: `src/gobby/sessions/transcripts/__init__.py`. 4.2.2:
+      Every non-`PL...'
+    matched_artifact_ref: src/gobby/sessions/transcripts/agy.py
+  deferral_target: null
+- section_id: '4.2'
+  item_id: 4.2.6
+  plan_node_hash: cb5acdef5e0042c8cc68f202077b7a86e9fa69e5122c0882c573106ac84c4f5d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20751'
+    validation_criteria_snippet: '4.2.1: `AgyTranscriptParser` is registered in `PARSER_REGISTRY`.
+      symbol: `get_parser`. file: `src/gobby/sessions/transcripts/__init__.py`. 4.2.2:
+      Every non-`PL...'
+    matched_artifact_ref: src/gobby/sessions/transcripts/agy.py
+  deferral_target: null
+- section_id: '4.2'
+  item_id: 4.2.7
+  plan_node_hash: 7f909286d2cab49115354ad1b4bc427beaa1903354c296443a8b0a30cef2042c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20751'
+    validation_criteria_snippet: '4.2.1: `AgyTranscriptParser` is registered in `PARSER_REGISTRY`.
+      symbol: `get_parser`. file: `src/gobby/sessions/transcripts/__init__.py`. 4.2.2:
+      Every non-`PL...'
+    matched_artifact_ref: src/gobby/sessions/transcripts/agy.py
+  deferral_target: null
+- section_id: '4.2'
+  item_id: 4.2.8
+  plan_node_hash: ec3b0bd101c8d04c125c86d847af090a6e356da6426eb88607c0baa22ac2b478
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20751'
+    validation_criteria_snippet: '4.2.1: `AgyTranscriptParser` is registered in `PARSER_REGISTRY`.
+      symbol: `get_parser`. file: `src/gobby/sessions/transcripts/__init__.py`. 4.2.2:
+      Every non-`PL...'
+    matched_artifact_ref: tests/sessions/test_agy_transcript_parser.py
+  deferral_target: null
+- section_id: '4.2'
+  item_id: 4.2.9
+  plan_node_hash: 1aa921e24e73dfa2a793582318cc855605d8f72b14d977c4091b617fa32132e3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20751'
+    validation_criteria_snippet: '4.2.1: `AgyTranscriptParser` is registered in `PARSER_REGISTRY`.
+      symbol: `get_parser`. file: `src/gobby/sessions/transcripts/__init__.py`. 4.2.2:
+      Every non-`PL...'
+    matched_artifact_ref: tests/tasks/test_agy_validation_evidence.py
+  deferral_target: null
+- section_id: '4.2'
+  item_id: 4.2.10
+  plan_node_hash: c4964187974e7aed7040149789e8b4f7ffa6fb5601b4df7faf46a87636f02035
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20751'
+    validation_criteria_snippet: '4.2.1: `AgyTranscriptParser` is registered in `PARSER_REGISTRY`.
+      symbol: `get_parser`. file: `src/gobby/sessions/transcripts/__init__.py`. 4.2.2:
+      Every non-`PL...'
+    matched_artifact_ref: tests/tasks/test_agy_validation_evidence.py
+  deferral_target: null
+- section_id: '4.2'
+  item_id: 4.2.11
+  plan_node_hash: 66fcae771ac24001f0f5a844582fca5df87ffde479d6cc02de732a09ec540c8a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20751'
+    validation_criteria_snippet: '4.2.1: `AgyTranscriptParser` is registered in `PARSER_REGISTRY`.
+      symbol: `get_parser`. file: `src/gobby/sessions/transcripts/__init__.py`. 4.2.2:
+      Every non-`PL...'
+    matched_artifact_ref: tests/sessions/test_agy_transcript_parser.py
+  deferral_target: null
+- section_id: '4.2'
+  item_id: 4.2.12
+  plan_node_hash: 74100d071959db00a8d72d8388bea684fd2f912fcb61d505271b045aac953459
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20751'
+    validation_criteria_snippet: '4.2.1: `AgyTranscriptParser` is registered in `PARSER_REGISTRY`.
+      symbol: `get_parser`. file: `src/gobby/sessions/transcripts/__init__.py`. 4.2.2:
+      Every non-`PL...'
+    matched_artifact_ref: ProcessorLifecycleMixin._hydrate_registration_from_sidecar
+  deferral_target: null
+- section_id: '4.2'
+  item_id: 4.2.13
+  plan_node_hash: f7ff5807e4e486d37ffd255bf90f8bc1e815959bc11da20e4ea1d8fe23f23441
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20751'
+    validation_criteria_snippet: '4.2.1: `AgyTranscriptParser` is registered in `PARSER_REGISTRY`.
+      symbol: `get_parser`. file: `src/gobby/sessions/transcripts/__init__.py`. 4.2.2:
+      Every non-`PL...'
+    matched_artifact_ref: src/gobby/sessions/transcripts/agy.py
+  deferral_target: null
+- section_id: '4.2'
+  item_id: 4.2.14
+  plan_node_hash: 3ae506147664388ec870431c6748038e73de8d01591de76ce4a4704a9af10433
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20751'
+    validation_criteria_snippet: '4.2.1: `AgyTranscriptParser` is registered in `PARSER_REGISTRY`.
+      symbol: `get_parser`. file: `src/gobby/sessions/transcripts/__init__.py`. 4.2.2:
+      Every non-`PL...'
+    matched_artifact_ref: src/gobby/sessions/transcripts/agy.py
+  deferral_target: null
+- section_id: '4.2'
+  item_id: 4.2.15
+  plan_node_hash: 6720381928c5673b7fb0d983793856cd5ee5cd4794541a4bd368d341caddc9d9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20751'
+    validation_criteria_snippet: '4.2.1: `AgyTranscriptParser` is registered in `PARSER_REGISTRY`.
+      symbol: `get_parser`. file: `src/gobby/sessions/transcripts/__init__.py`. 4.2.2:
+      Every non-`PL...'
+    matched_artifact_ref: src/gobby/sessions/processor_transcripts.py
+  deferral_target: null
+- section_id: '4.2'
+  item_id: 4.2.16
+  plan_node_hash: d61141e34e80c775f6306dce8cb7d15cb7962a8fcf8f89da74745b80ea95aad4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20751'
+    validation_criteria_snippet: '4.2.1: `AgyTranscriptParser` is registered in `PARSER_REGISTRY`.
+      symbol: `get_parser`. file: `src/gobby/sessions/transcripts/__init__.py`. 4.2.2:
+      Every non-`PL...'
+    matched_artifact_ref: src/gobby/sessions/transcripts/agy.py
+  deferral_target: null
+- section_id: '4.2'
+  item_id: 4.2.17
+  plan_node_hash: dea4845acee69ad42cf6bdfc5794424447e03cd3424fd637992a1b794975b94f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20751'
+    validation_criteria_snippet: '4.2.1: `AgyTranscriptParser` is registered in `PARSER_REGISTRY`.
+      symbol: `get_parser`. file: `src/gobby/sessions/transcripts/__init__.py`. 4.2.2:
+      Every non-`PL...'
+    matched_artifact_ref: tests/sessions/test_agy_transcript_parser.py
+  deferral_target: null
+- section_id: '5.1'
+  item_id: 5.1.1
+  plan_node_hash: 13b737f6bc680e11eeb33a66608093c67e3127ac8b901738cca9849e47cd6ef8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20752'
+    validation_criteria_snippet: '5.1.1: `init`, `step_update` and `result` records
+      map onto shared `StreamEvent` types, read from the nested `record[record["event"]]`
+      body rather than a flat l...'
+    matched_artifact_ref: src/gobby/servers/websocket/chat/backends/agy_stream.py
+  deferral_target: null
+- section_id: '5.1'
+  item_id: 5.1.2
+  plan_node_hash: 85bd0081c2595765770bc1e6a05941ded9446dc9e23044d555d968947afcc545
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20752'
+    validation_criteria_snippet: '5.1.1: `init`, `step_update` and `result` records
+      map onto shared `StreamEvent` types, read from the nested `record[record["event"]]`
+      body rather than a flat l...'
+    matched_artifact_ref: src/gobby/servers/websocket/chat/backends/agy_stream.py
+  deferral_target: null
+- section_id: '5.1'
+  item_id: 5.1.3
+  plan_node_hash: d83dd12de9a5bc1a70aa30aaa44e62ecc25c7fce68bbc8d02dbc1e42168b7c63
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20752'
+    validation_criteria_snippet: '5.1.1: `init`, `step_update` and `result` records
+      map onto shared `StreamEvent` types, read from the nested `record[record["event"]]`
+      body rather than a flat l...'
+    matched_artifact_ref: src/gobby/servers/websocket/chat/backends/agy_stream.py
+  deferral_target: null
+- section_id: '5.1'
+  item_id: 5.1.4
+  plan_node_hash: 076bed299000db251cb2b8f146e017f02edc333a2597b172e8eb6c53bca05d8e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20752'
+    validation_criteria_snippet: '5.1.1: `init`, `step_update` and `result` records
+      map onto shared `StreamEvent` types, read from the nested `record[record["event"]]`
+      body rather than a flat l...'
+    matched_artifact_ref: src/gobby/servers/websocket/chat/backends/agy_stream.py
+  deferral_target: null
+- section_id: '5.1'
+  item_id: 5.1.5
+  plan_node_hash: 6497226da4b49ab923f21631ebf1bdfa63ea97e5fbc9a18925c92fbe2a2de939
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20752'
+    validation_criteria_snippet: '5.1.1: `init`, `step_update` and `result` records
+      map onto shared `StreamEvent` types, read from the nested `record[record["event"]]`
+      body rather than a flat l...'
+    matched_artifact_ref: tests/servers/websocket/chat/test_agy_stream.py
+  deferral_target: null
+- section_id: '5.1'
+  item_id: 5.1.6
+  plan_node_hash: b22a52753af8e876259c6656f1ed3d0b2a09df17645849893d6544549bd18b40
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20752'
+    validation_criteria_snippet: '5.1.1: `init`, `step_update` and `result` records
+      map onto shared `StreamEvent` types, read from the nested `record[record["event"]]`
+      body rather than a flat l...'
+    matched_artifact_ref: src/gobby/servers/websocket/chat/backends/agy_stream.py
+  deferral_target: null
+- section_id: '5.1'
+  item_id: 5.1.7
+  plan_node_hash: ac4b8dcd481943e7fa14b7aa25da0b634760287992b2e6c4e2c5c835869b5f27
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20752'
+    validation_criteria_snippet: '5.1.1: `init`, `step_update` and `result` records
+      map onto shared `StreamEvent` types, read from the nested `record[record["event"]]`
+      body rather than a flat l...'
+    matched_artifact_ref: tests/servers/websocket/chat/test_agy_stream.py
+  deferral_target: null
+- section_id: '5.1'
+  item_id: 5.1.8
+  plan_node_hash: c04bad88b21161cf2c6b0235e025e2ec9cb65ec8b5ac980b9003b84b8c93d5eb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20752'
+    validation_criteria_snippet: '5.1.1: `init`, `step_update` and `result` records
+      map onto shared `StreamEvent` types, read from the nested `record[record["event"]]`
+      body rather than a flat l...'
+    matched_artifact_ref: src/gobby/servers/websocket/chat/backends/agy_stream.py
+  deferral_target: null
+- section_id: '5.1'
+  item_id: 5.1.9
+  plan_node_hash: db550d71b1ee6cc45c3d3d13ec52ed98ef1e4951576be0155496b82e3496b4fe
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20752'
+    validation_criteria_snippet: '5.1.1: `init`, `step_update` and `result` records
+      map onto shared `StreamEvent` types, read from the nested `record[record["event"]]`
+      body rather than a flat l...'
+    matched_artifact_ref: tests/servers/websocket/chat/test_agy_stream.py
+  deferral_target: null
+- section_id: '5.1'
+  item_id: 5.1.10
+  plan_node_hash: 241e8d5df7f47cf6aea79482a3c00a6ce641e27dbfc8420c4d8cf90698a52279
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20752'
+    validation_criteria_snippet: '5.1.1: `init`, `step_update` and `result` records
+      map onto shared `StreamEvent` types, read from the nested `record[record["event"]]`
+      body rather than a flat l...'
+    matched_artifact_ref: tests/servers/websocket/chat/test_agy_stream.py
+  deferral_target: null
+- section_id: '5.2'
+  item_id: 5.2.1
+  plan_node_hash: a12039cbce70dfba8fc9eff1b82a6af0524dc2320b68fc820fd3fffe4ed720ca
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20753'
+    validation_criteria_snippet: "5.2.1: A first turn spawns the documented argv \u2014\
+      \ no `-p`, with `--input-format stream-json`, `--dangerously-skip-permissions`,\
+      \ `--add-dir <workspace>`, and `--..."
+    matched_artifact_ref: src/gobby/servers/websocket/chat/backends/agy.py
+  deferral_target: null
+- section_id: '5.2'
+  item_id: 5.2.2
+  plan_node_hash: e033e0d1efe6a1b7b9ec084120eac2b0af45525d5b902569e4fd3692388ccc0b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20753'
+    validation_criteria_snippet: "5.2.1: A first turn spawns the documented argv \u2014\
+      \ no `-p`, with `--input-format stream-json`, `--dangerously-skip-permissions`,\
+      \ `--add-dir <workspace>`, and `--..."
+    matched_artifact_ref: src/gobby/servers/websocket/chat/backends/agy.py
+  deferral_target: null
+- section_id: '5.2'
+  item_id: 5.2.3
+  plan_node_hash: a2da4703db53e3795eaeac2583457cad92f245c962240d34fdfaca2219cc4335
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20753'
+    validation_criteria_snippet: "5.2.1: A first turn spawns the documented argv \u2014\
+      \ no `-p`, with `--input-format stream-json`, `--dangerously-skip-permissions`,\
+      \ `--add-dir <workspace>`, and `--..."
+    matched_artifact_ref: src/gobby/servers/websocket/chat/backends/agy.py
+  deferral_target: null
+- section_id: '5.2'
+  item_id: 5.2.4
+  plan_node_hash: b189378a87f39927428d06694582d87c7354072c07f64b1687bafb8f7519e840
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20753'
+    validation_criteria_snippet: "5.2.1: A first turn spawns the documented argv \u2014\
+      \ no `-p`, with `--input-format stream-json`, `--dangerously-skip-permissions`,\
+      \ `--add-dir <workspace>`, and `--..."
+    matched_artifact_ref: src/gobby/servers/websocket/chat/backends/agy.py
+  deferral_target: null
+- section_id: '5.2'
+  item_id: 5.2.5
+  plan_node_hash: d6edcc37ea948aef7858be286bcb9606efc7557e68c20213e5329ec51de54154
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20753'
+    validation_criteria_snippet: "5.2.1: A first turn spawns the documented argv \u2014\
+      \ no `-p`, with `--input-format stream-json`, `--dangerously-skip-permissions`,\
+      \ `--add-dir <workspace>`, and `--..."
+    matched_artifact_ref: src/gobby/servers/websocket/chat/backends/agy.py
+  deferral_target: null
+- section_id: '5.2'
+  item_id: 5.2.6
+  plan_node_hash: 51bf29a90a6ff18481f25917e726fe41b328979523d7a1263dd2d9a7b7395b0a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20753'
+    validation_criteria_snippet: "5.2.1: A first turn spawns the documented argv \u2014\
+      \ no `-p`, with `--input-format stream-json`, `--dangerously-skip-permissions`,\
+      \ `--add-dir <workspace>`, and `--..."
+    matched_artifact_ref: src/gobby/servers/websocket/chat/backends/agy.py
+  deferral_target: null
+- section_id: '5.2'
+  item_id: 5.2.7
+  plan_node_hash: 114b092ecf9a407c9e1761a3e6239a3e5afa5d6c146fc8f893aa27268376766c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20753'
+    validation_criteria_snippet: "5.2.1: A first turn spawns the documented argv \u2014\
+      \ no `-p`, with `--input-format stream-json`, `--dangerously-skip-permissions`,\
+      \ `--add-dir <workspace>`, and `--..."
+    matched_artifact_ref: src/gobby/servers/websocket/chat/backends/agy.py
+  deferral_target: null
+- section_id: '5.2'
+  item_id: 5.2.8
+  plan_node_hash: ab24338b2a974fc16e20c5fb45b913f1e67078e39e6ddfc01cda69734e54fbc5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20753'
+    validation_criteria_snippet: "5.2.1: A first turn spawns the documented argv \u2014\
+      \ no `-p`, with `--input-format stream-json`, `--dangerously-skip-permissions`,\
+      \ `--add-dir <workspace>`, and `--..."
+    matched_artifact_ref: src/gobby/servers/websocket/chat/backends/agy.py
+  deferral_target: null
+- section_id: '5.2'
+  item_id: 5.2.9
+  plan_node_hash: 38f03ed02cacba9d4d09ba0d82fa416b8aab93131ea0496cb2bf3daf69927a01
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20753'
+    validation_criteria_snippet: "5.2.1: A first turn spawns the documented argv \u2014\
+      \ no `-p`, with `--input-format stream-json`, `--dangerously-skip-permissions`,\
+      \ `--add-dir <workspace>`, and `--..."
+    matched_artifact_ref: tests/servers/websocket/chat/test_agy_backend.py
+  deferral_target: null
+- section_id: '5.2'
+  item_id: 5.2.10
+  plan_node_hash: 2745666c11d6336d57a826f6bc8268ef48f817d55440ab8a25615a9c667159a3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20753'
+    validation_criteria_snippet: "5.2.1: A first turn spawns the documented argv \u2014\
+      \ no `-p`, with `--input-format stream-json`, `--dangerously-skip-permissions`,\
+      \ `--add-dir <workspace>`, and `--..."
+    matched_artifact_ref: src/gobby/servers/websocket/chat/backends/agy.py
+  deferral_target: null
+- section_id: '5.2'
+  item_id: 5.2.11
+  plan_node_hash: 8248e3ac88a8e69ca5cbd09e127dbaca95211678e306164dab8bce0b7779dca9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20753'
+    validation_criteria_snippet: "5.2.1: A first turn spawns the documented argv \u2014\
+      \ no `-p`, with `--input-format stream-json`, `--dangerously-skip-permissions`,\
+      \ `--add-dir <workspace>`, and `--..."
+    matched_artifact_ref: tests/servers/websocket/chat/test_launch_contracts.py
+  deferral_target: null
+- section_id: '5.2'
+  item_id: 5.2.12
+  plan_node_hash: 029cb625d62f4c13597f88554d5035f2412288ea17843b6d3a40d1f6d1c492fa
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20753'
+    validation_criteria_snippet: "5.2.1: A first turn spawns the documented argv \u2014\
+      \ no `-p`, with `--input-format stream-json`, `--dangerously-skip-permissions`,\
+      \ `--add-dir <workspace>`, and `--..."
+    matched_artifact_ref: tests/servers/websocket/chat/test_agy_backend.py
+  deferral_target: null
+- section_id: '5.2'
+  item_id: 5.2.13
+  plan_node_hash: a6e3b2863eded70ef291c7457a568afdb27da0044a463589f78d9ec3815905b6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20753'
+    validation_criteria_snippet: "5.2.1: A first turn spawns the documented argv \u2014\
+      \ no `-p`, with `--input-format stream-json`, `--dangerously-skip-permissions`,\
+      \ `--add-dir <workspace>`, and `--..."
+    matched_artifact_ref: tests/servers/websocket/chat/test_agy_backend.py
+  deferral_target: null
+- section_id: '5.2'
+  item_id: 5.2.14
+  plan_node_hash: f5c2463418b486d9250ee54abbd15c88cc83bb6d796ca5542193bce23202e089
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20753'
+    validation_criteria_snippet: "5.2.1: A first turn spawns the documented argv \u2014\
+      \ no `-p`, with `--input-format stream-json`, `--dangerously-skip-permissions`,\
+      \ `--add-dir <workspace>`, and `--..."
+    matched_artifact_ref: tests/servers/websocket/chat/test_agy_backend.py
+  deferral_target: null
+- section_id: '5.2'
+  item_id: 5.2.15
+  plan_node_hash: 8b4050aeb6fee39fe65b936f9d3fb5289ee5c2a91653652bfea5091cdb26e1f8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20753'
+    validation_criteria_snippet: "5.2.1: A first turn spawns the documented argv \u2014\
+      \ no `-p`, with `--input-format stream-json`, `--dangerously-skip-permissions`,\
+      \ `--add-dir <workspace>`, and `--..."
+    matched_artifact_ref: tests/servers/websocket/chat/test_agy_backend.py
+  deferral_target: null
+- section_id: '5.2'
+  item_id: 5.2.16
+  plan_node_hash: eafb1272f96bcb4d30dda77aa11cd798d2c6e9d4b0b144da544ca9af6275a4fd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20753'
+    validation_criteria_snippet: "5.2.1: A first turn spawns the documented argv \u2014\
+      \ no `-p`, with `--input-format stream-json`, `--dangerously-skip-permissions`,\
+      \ `--add-dir <workspace>`, and `--..."
+    matched_artifact_ref: tests/servers/websocket/chat/test_agy_backend.py
+  deferral_target: null
+- section_id: '5.2'
+  item_id: 5.2.17
+  plan_node_hash: d90c6e02ec9e62300df32d55635d1a3c40e00f8e38aedfcd668b82d3fd6e5168
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20753'
+    validation_criteria_snippet: "5.2.1: A first turn spawns the documented argv \u2014\
+      \ no `-p`, with `--input-format stream-json`, `--dangerously-skip-permissions`,\
+      \ `--add-dir <workspace>`, and `--..."
+    matched_artifact_ref: tests/servers/websocket/chat/test_agy_backend.py
+  deferral_target: null
+- section_id: '5.2'
+  item_id: 5.2.18
+  plan_node_hash: b865beae9642e0eec6cfd4439d479e43ceb6386dd063933630a9c2168ecdd39e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20753'
+    validation_criteria_snippet: "5.2.1: A first turn spawns the documented argv \u2014\
+      \ no `-p`, with `--input-format stream-json`, `--dangerously-skip-permissions`,\
+      \ `--add-dir <workspace>`, and `--..."
+    matched_artifact_ref: tests/servers/websocket/chat/test_agy_backend.py
+  deferral_target: null
+- section_id: '5.2'
+  item_id: 5.2.19
+  plan_node_hash: 76e4723c29cc8e27674474593d5dbc6be5668f5d30ccdfa865e275fb02626848
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20753'
+    validation_criteria_snippet: "5.2.1: A first turn spawns the documented argv \u2014\
+      \ no `-p`, with `--input-format stream-json`, `--dangerously-skip-permissions`,\
+      \ `--add-dir <workspace>`, and `--..."
+    matched_artifact_ref: tests/servers/websocket/chat/test_agy_backend.py
+  deferral_target: null
+- section_id: '5.2'
+  item_id: 5.2.20
+  plan_node_hash: a8f5f18fb08b4ff0e430ecce003db46ffa963f390072ae29043e42ac5f1136a4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20753'
+    validation_criteria_snippet: "5.2.1: A first turn spawns the documented argv \u2014\
+      \ no `-p`, with `--input-format stream-json`, `--dangerously-skip-permissions`,\
+      \ `--add-dir <workspace>`, and `--..."
+    matched_artifact_ref: src/gobby/servers/websocket/chat/backends/agy.py
+  deferral_target: null
+- section_id: '5.2'
+  item_id: 5.2.21
+  plan_node_hash: c36dc1d7039eba2ca5bf8984768cb55db5a61480c9dcac951fb204f234ac307b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20753'
+    validation_criteria_snippet: "5.2.1: A first turn spawns the documented argv \u2014\
+      \ no `-p`, with `--input-format stream-json`, `--dangerously-skip-permissions`,\
+      \ `--add-dir <workspace>`, and `--..."
+    matched_artifact_ref: tests/servers/websocket/chat/test_agy_backend.py
+  deferral_target: null
+- section_id: '5.3'
+  item_id: 5.3.1
+  plan_node_hash: a964383ac13ecc3a0daff0abd129b0e7fea5ce2afa87d6cb1a25eeb317bb0481
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20754'
+    validation_criteria_snippet: '5.3.1: `create_session(provider="agy")` returns
+      a live session instead of raising. symbol: `WebChatRuntimeManager.create_session`.
+      file: `src/gobby/servers/web...'
+    matched_artifact_ref: WebChatRuntimeManager.create_session
+  deferral_target: null
+- section_id: '5.3'
+  item_id: 5.3.2
+  plan_node_hash: 5dbd4003c6ee8cd4420a393e21eec817e2023037a3c8301e22b8fd487083564b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20754'
+    validation_criteria_snippet: '5.3.1: `create_session(provider="agy")` returns
+      a live session instead of raising. symbol: `WebChatRuntimeManager.create_session`.
+      file: `src/gobby/servers/web...'
+    matched_artifact_ref: WebChatRuntimeManager.health
+  deferral_target: null
+- section_id: '5.3'
+  item_id: 5.3.3
+  plan_node_hash: 7536508ac417e3a871a00a2cd7bcdbdd8e84f3ad72bed40ae0b9bab081b59755
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20754'
+    validation_criteria_snippet: '5.3.1: `create_session(provider="agy")` returns
+      a live session instead of raising. symbol: `WebChatRuntimeManager.create_session`.
+      file: `src/gobby/servers/web...'
+    matched_artifact_ref: tests/servers/websocket/chat/test_agy_backend.py
+  deferral_target: null
+- section_id: '5.3'
+  item_id: 5.3.4
+  plan_node_hash: 247eb32c4640c68af125e2185bb4ba43edb0007a652cc78088325566170bacd8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20754'
+    validation_criteria_snippet: '5.3.1: `create_session(provider="agy")` returns
+      a live session instead of raising. symbol: `WebChatRuntimeManager.create_session`.
+      file: `src/gobby/servers/web...'
+    matched_artifact_ref: tests/servers/websocket/test_set_provider.py
+  deferral_target: null
+- section_id: '5.3'
+  item_id: 5.3.5
+  plan_node_hash: ec778e004560815e8b0960610541f14be7905e4f07db236e45c7f553ca6e0e32
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20754'
+    validation_criteria_snippet: '5.3.1: `create_session(provider="agy")` returns
+      a live session instead of raising. symbol: `WebChatRuntimeManager.create_session`.
+      file: `src/gobby/servers/web...'
+    matched_artifact_ref: ChatLifecycleMixin._fire_lifecycle
+  deferral_target: null
+- section_id: '6.1'
+  item_id: 6.1.1
+  plan_node_hash: a4a930fd4e55f70706bb729a979b0a3e5ddb662633f3874059b058e53df5bcf8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20755'
+    validation_criteria_snippet: '6.1.1: The AGY spawn rejection is removed and `_spawn_agy_terminal`
+      exists. symbol: `execute_spawn`. file: `src/gobby/agents/spawn_executor.py`.
+      6.1.2: `build_...'
+    matched_artifact_ref: execute_spawn
+  deferral_target: null
+- section_id: '6.1'
+  item_id: 6.1.2
+  plan_node_hash: 45a58284c6bca5f63993c8823980bc5c8f9c9f3c344e1bdd099fcf96d7c9d589
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20755'
+    validation_criteria_snippet: '6.1.1: The AGY spawn rejection is removed and `_spawn_agy_terminal`
+      exists. symbol: `execute_spawn`. file: `src/gobby/agents/spawn_executor.py`.
+      6.1.2: `build_...'
+    matched_artifact_ref: build_cli_command
+  deferral_target: null
+- section_id: '6.1'
+  item_id: 6.1.3
+  plan_node_hash: a8940852e6d8abbb641343f1c8dcd0d54979be76d8456f20e1c1b308d7debec8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20755'
+    validation_criteria_snippet: '6.1.1: The AGY spawn rejection is removed and `_spawn_agy_terminal`
+      exists. symbol: `execute_spawn`. file: `src/gobby/agents/spawn_executor.py`.
+      6.1.2: `build_...'
+    matched_artifact_ref: src/gobby/agents/spawn_executor.py
+  deferral_target: null
+- section_id: '6.1'
+  item_id: 6.1.4
+  plan_node_hash: 308c6979e903f7eee344fe0abd0c022a755015cd625ae46dca4086fc537f82e2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20755'
+    validation_criteria_snippet: '6.1.1: The AGY spawn rejection is removed and `_spawn_agy_terminal`
+      exists. symbol: `execute_spawn`. file: `src/gobby/agents/spawn_executor.py`.
+      6.1.2: `build_...'
+    matched_artifact_ref: tests/agents/test_spawn_executor.py
+  deferral_target: null
+- section_id: '6.1'
+  item_id: 6.1.5
+  plan_node_hash: dd45b1b5dedcfe8f15bd99ad2907a0920c349e0d7434478b95ee991bbd70abec
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20755'
+    validation_criteria_snippet: '6.1.1: The AGY spawn rejection is removed and `_spawn_agy_terminal`
+      exists. symbol: `execute_spawn`. file: `src/gobby/agents/spawn_executor.py`.
+      6.1.2: `build_...'
+    matched_artifact_ref: src/gobby/agents/spawn_executor.py
+  deferral_target: null
+- section_id: '6.1'
+  item_id: 6.1.6
+  plan_node_hash: b6b60bef59d953576981d625a2c120591feafc258875e832bd33d6afd8ade676
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20755'
+    validation_criteria_snippet: '6.1.1: The AGY spawn rejection is removed and `_spawn_agy_terminal`
+      exists. symbol: `execute_spawn`. file: `src/gobby/agents/spawn_executor.py`.
+      6.1.2: `build_...'
+    matched_artifact_ref: src/gobby/agents/spawn_executor.py
+  deferral_target: null
+- section_id: '6.1'
+  item_id: 6.1.7
+  plan_node_hash: 60c1a04e323b2a796cf2fbb4e994de213afaf0edadff5e8419cb67dedf14a5a5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20755'
+    validation_criteria_snippet: '6.1.1: The AGY spawn rejection is removed and `_spawn_agy_terminal`
+      exists. symbol: `execute_spawn`. file: `src/gobby/agents/spawn_executor.py`.
+      6.1.2: `build_...'
+    matched_artifact_ref: tests/mcp_proxy/tools/spawn_agent/test_provider_resolution.py
+  deferral_target: null
+- section_id: '6.1'
+  item_id: 6.1.8
+  plan_node_hash: 77f2e49e15d8bb9544b7d87faab85fd6ddd1d4de03e563c87120295a05d1d796
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20755'
+    validation_criteria_snippet: '6.1.1: The AGY spawn rejection is removed and `_spawn_agy_terminal`
+      exists. symbol: `execute_spawn`. file: `src/gobby/agents/spawn_executor.py`.
+      6.1.2: `build_...'
+    matched_artifact_ref: tests/agents/spawners/test_command_builder.py
+  deferral_target: null
+- section_id: '6.1'
+  item_id: 6.1.9
+  plan_node_hash: 8707b5d95f9b7f9e2a3acec80644a38a8514d84967b855b023e60d03a8da9589
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20755'
+    validation_criteria_snippet: '6.1.1: The AGY spawn rejection is removed and `_spawn_agy_terminal`
+      exists. symbol: `execute_spawn`. file: `src/gobby/agents/spawn_executor.py`.
+      6.1.2: `build_...'
+    matched_artifact_ref: tests/agents/watchdog/test_agents_watchdog_registry.py
+  deferral_target: null
+- section_id: '6.1'
+  item_id: 6.1.10
+  plan_node_hash: a354d9876287edcf58147b41cdbdb61f1d2e797e2e4a91413177c84505639a24
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20755'
+    validation_criteria_snippet: '6.1.1: The AGY spawn rejection is removed and `_spawn_agy_terminal`
+      exists. symbol: `execute_spawn`. file: `src/gobby/agents/spawn_executor.py`.
+      6.1.2: `build_...'
+    matched_artifact_ref: tests/agents/test_resume_executor.py
+  deferral_target: null
+- section_id: '6.1'
+  item_id: 6.1.11
+  plan_node_hash: 883c21ff6a2933ead0fadca443a101705cfbcaefb18fbefd68e596d68e332c5f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20755'
+    validation_criteria_snippet: '6.1.1: The AGY spawn rejection is removed and `_spawn_agy_terminal`
+      exists. symbol: `execute_spawn`. file: `src/gobby/agents/spawn_executor.py`.
+      6.1.2: `build_...'
+    matched_artifact_ref: tests/adapters/test_plan_keystrokes.py
+  deferral_target: null
+- section_id: '6.1'
+  item_id: 6.1.12
+  plan_node_hash: c1d360958661e5fb85be4ee8092ee8c639f5e2550ba591fa5e0b45c1c22e05ee
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20755'
+    validation_criteria_snippet: '6.1.1: The AGY spawn rejection is removed and `_spawn_agy_terminal`
+      exists. symbol: `execute_spawn`. file: `src/gobby/agents/spawn_executor.py`.
+      6.1.2: `build_...'
+    matched_artifact_ref: tests/agents/spawners/test_auth_env.py
+  deferral_target: null
+- section_id: '6.1'
+  item_id: 6.1.13
+  plan_node_hash: 808b4eeea00dea2da2361526ed6dd9d53a9327ff15087491a7632ae0819505ae
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20755'
+    validation_criteria_snippet: '6.1.1: The AGY spawn rejection is removed and `_spawn_agy_terminal`
+      exists. symbol: `execute_spawn`. file: `src/gobby/agents/spawn_executor.py`.
+      6.1.2: `build_...'
+    matched_artifact_ref: tests/agents/test_spawn_executor.py
+  deferral_target: null
+- section_id: '6.1'
+  item_id: 6.1.14
+  plan_node_hash: c015969f085e08a92fd905fef717ba35259c6997ad1f25b72e2ec7a69df92d0b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20755'
+    validation_criteria_snippet: '6.1.1: The AGY spawn rejection is removed and `_spawn_agy_terminal`
+      exists. symbol: `execute_spawn`. file: `src/gobby/agents/spawn_executor.py`.
+      6.1.2: `build_...'
+    matched_artifact_ref: tests/agents/spawners/test_command_builder.py
+  deferral_target: null
+- section_id: '6.1'
+  item_id: 6.1.15
+  plan_node_hash: 0966991aae22e26c4720f3d05a626d0e3bf4ed29f0769b9239bbd5132694164d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20755'
+    validation_criteria_snippet: '6.1.1: The AGY spawn rejection is removed and `_spawn_agy_terminal`
+      exists. symbol: `execute_spawn`. file: `src/gobby/agents/spawn_executor.py`.
+      6.1.2: `build_...'
+    matched_artifact_ref: tests/agents/test_idle_detector.py
+  deferral_target: null
+- section_id: '6.2'
+  item_id: 6.2.1
+  plan_node_hash: 9bc29685d2e52d80c7936679269696036028540211a139fe31f43b06ea296293
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20756'
+    validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
+      and agent spawn, and advertises tool chat only on a positive record 1.1.25;
+      controlled-tool execution runs thro...'
+    matched_artifact_ref: _agy_unavailable_bindings
+  deferral_target: null
+- section_id: '6.2'
+  item_id: 6.2.2
+  plan_node_hash: 3f055bdcf4256a83ac8c32755d81fb219ee7923987e380500ec162a24e5336a0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20756'
+    validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
+      and agent spawn, and advertises tool chat only on a positive record 1.1.25;
+      controlled-tool execution runs thro...'
+    matched_artifact_ref: ProviderMetadata
+  deferral_target: null
+- section_id: '6.2'
+  item_id: 6.2.3
+  plan_node_hash: 9c5766e431898c8830d3166900b8ebf455b88e8813dc247dfe04a67f10ab71bc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20756'
+    validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
+      and agent spawn, and advertises tool chat only on a positive record 1.1.25;
+      controlled-tool execution runs thro...'
+    matched_artifact_ref: src/gobby/providers/registry.py
+  deferral_target: null
+- section_id: '6.2'
+  item_id: 6.2.4
+  plan_node_hash: c2cc72f6e7e9c4ea11e0ab4f9dd821ed913e688554caffae9ce02c5c78d2efe1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20756'
+    validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
+      and agent spawn, and advertises tool chat only on a positive record 1.1.25;
+      controlled-tool execution runs thro...'
+    matched_artifact_ref: _agy_unavailable_bindings
+  deferral_target: null
+- section_id: '6.2'
+  item_id: 6.2.5
+  plan_node_hash: d5550450e67f116f8a936eeee3608b9543a880b0807b92c2a82fbf869be6c639
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20756'
+    validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
+      and agent spawn, and advertises tool chat only on a positive record 1.1.25;
+      controlled-tool execution runs thro...'
+    matched_artifact_ref: tests/ai/test_agy_tool_chat_contract.py
+  deferral_target: null
+- section_id: '6.2'
+  item_id: 6.2.6
+  plan_node_hash: 1f2ee684affda9673f7675fab5a3f383a94e93eb02a3cc1147082c3c46f8b072
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20756'
+    validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
+      and agent spawn, and advertises tool chat only on a positive record 1.1.25;
+      controlled-tool execution runs thro...'
+    matched_artifact_ref: _daemon_tool_chat_adapter_factories
+  deferral_target: null
+- section_id: '6.2'
+  item_id: 6.2.7
+  plan_node_hash: f2d3af141899a47a6efc851d5ed9a7d1f698939ddae4294fd47527bb01e2dc8e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20756'
+    validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
+      and agent spawn, and advertises tool chat only on a positive record 1.1.25;
+      controlled-tool execution runs thro...'
+    matched_artifact_ref: ToolChatService
+  deferral_target: null
+- section_id: '6.2'
+  item_id: 6.2.8
+  plan_node_hash: cdd0ca1f99884dad424dd08b4b73f8b7295a9fcff0235171b93453265a6dbe49
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20756'
+    validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
+      and agent spawn, and advertises tool chat only on a positive record 1.1.25;
+      controlled-tool execution runs thro...'
+    matched_artifact_ref: web/src/lib/__tests__/providerModels.test.ts
+  deferral_target: null
+- section_id: '6.2'
+  item_id: 6.2.9
+  plan_node_hash: c0b173ff2ea5d7503a7b37203b92395080f96744c2b40bc1e423bef5ef9dcdd2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20756'
+    validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
+      and agent spawn, and advertises tool chat only on a positive record 1.1.25;
+      controlled-tool execution runs thro...'
+    matched_artifact_ref: _validate_agy_stdout
+  deferral_target: null
+- section_id: '6.2'
+  item_id: 6.2.10
+  plan_node_hash: 3b9e30336496bc9d3c514ab10198ca706671d4d9393d8127cfc4e65b1f1f45d5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20756'
+    validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
+      and agent spawn, and advertises tool chat only on a positive record 1.1.25;
+      controlled-tool execution runs thro...'
+    matched_artifact_ref: tests/servers/routes/test_servers_routes_providers.py
+  deferral_target: null
+- section_id: '6.2'
+  item_id: 6.2.11
+  plan_node_hash: 78e3f649c58d5cc7294f5ba8559cc52bd8ab467b0ba7e6469d9b53c2815f14f8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20756'
+    validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
+      and agent spawn, and advertises tool chat only on a positive record 1.1.25;
+      controlled-tool execution runs thro...'
+    matched_artifact_ref: tests/ai/test_agy_tool_chat_contract.py
+  deferral_target: null
+- section_id: '6.2'
+  item_id: 6.2.12
+  plan_node_hash: e93bcb8272a228f2008f745274f10a005dd241355c6dfdaaaab692942ba26899
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20756'
+    validation_criteria_snippet: '6.2.1: Installed AGY 1.1.18 advertises web chat
+      and agent spawn, and advertises tool chat only on a positive record 1.1.25;
+      controlled-tool execution runs thro...'
+    matched_artifact_ref: _agy_unavailable_bindings
+  deferral_target: null
+- section_id: '6.3'
+  item_id: 6.3.1
+  plan_node_hash: 69d947129a09c52c617833d286f9221fed50eba6f40db590aa48ededdf666280
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20757'
+    validation_criteria_snippet: '6.3.1: `agy --output-format json models` output
+      (flag before subcommand, per record 1.1.20) is parsed by the collector at capability
+      refresh, with the bundled ...'
+    matched_artifact_ref: AgyCollector.collect
+  deferral_target: null
+- section_id: '6.3'
+  item_id: 6.3.2
+  plan_node_hash: cc5b2bc3f8fad9013005043f44abf2caefdbb755485cea5480edccb829978774
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20757'
+    validation_criteria_snippet: '6.3.1: `agy --output-format json models` output
+      (flag before subcommand, per record 1.1.20) is parsed by the collector at capability
+      refresh, with the bundled ...'
+    matched_artifact_ref: src/gobby/servers/provider_model_defaults.py
+  deferral_target: null
+- section_id: '6.3'
+  item_id: 6.3.3
+  plan_node_hash: 07d905a13dce641a0b9f603d0313305fe6538148800f4e480e48c903938d8637
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20757'
+    validation_criteria_snippet: '6.3.1: `agy --output-format json models` output
+      (flag before subcommand, per record 1.1.20) is parsed by the collector at capability
+      refresh, with the bundled ...'
+    matched_artifact_ref: tests/fixtures/provider_contracts/agy/command-captures.json
+  deferral_target: null
+- section_id: '6.3'
+  item_id: 6.3.4
+  plan_node_hash: 5ff3ab7292b70dcaf01222ebb5e1ec910f4e261cd7fc0e0c66e3a92f32090e6d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20757'
+    validation_criteria_snippet: '6.3.1: `agy --output-format json models` output
+      (flag before subcommand, per record 1.1.20) is parsed by the collector at capability
+      refresh, with the bundled ...'
+    matched_artifact_ref: tests/providers/capabilities/collectors/test_providers_capabilities_collectors_agy.py
+  deferral_target: null
+- section_id: '6.3'
+  item_id: 6.3.5
+  plan_node_hash: f98271994891a790415f356bcef57d60507690899ce2457ba708cbe4feca7ffb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20757'
+    validation_criteria_snippet: '6.3.1: `agy --output-format json models` output
+      (flag before subcommand, per record 1.1.20) is parsed by the collector at capability
+      refresh, with the bundled ...'
+    matched_artifact_ref: tests/servers/routes/test_servers_routes_providers.py
+  deferral_target: null
+- section_id: '6.3'
+  item_id: 6.3.6
+  plan_node_hash: e31e532aadc272cf212b6e15e573942e830106b1d5e6456c961ef3fb42033aba
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20757'
+    validation_criteria_snippet: '6.3.1: `agy --output-format json models` output
+      (flag before subcommand, per record 1.1.20) is parsed by the collector at capability
+      refresh, with the bundled ...'
+    matched_artifact_ref: tests/providers/capabilities/collectors/test_providers_capabilities_collectors_agy.py
+  deferral_target: null
+- section_id: '6.3'
+  item_id: 6.3.7
+  plan_node_hash: 09cfa5e9c290cb94940dfe66e712b0269be57a1878747f31c7d891df99c1f3fa
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20757'
+    validation_criteria_snippet: '6.3.1: `agy --output-format json models` output
+      (flag before subcommand, per record 1.1.20) is parsed by the collector at capability
+      refresh, with the bundled ...'
+    matched_artifact_ref: tests/providers/capabilities/collectors/test_providers_capabilities_collectors_agy.py
+  deferral_target: null
+- section_id: '6.3'
+  item_id: 6.3.8
+  plan_node_hash: b0c07493b8a983fc843da553532a4a9412bd9fbc495afafc980ba0abae19ac8b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20757'
+    validation_criteria_snippet: '6.3.1: `agy --output-format json models` output
+      (flag before subcommand, per record 1.1.20) is parsed by the collector at capability
+      refresh, with the bundled ...'
+    matched_artifact_ref: tests/ai/test_text_generation.py
+  deferral_target: null
+- section_id: '6.3'
+  item_id: 6.3.9
+  plan_node_hash: b4e91626c2a2e6d855bfe32bf89a5d0eec3a901eacc51c480d9abac03137fde9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20757'
+    validation_criteria_snippet: '6.3.1: `agy --output-format json models` output
+      (flag before subcommand, per record 1.1.20) is parsed by the collector at capability
+      refresh, with the bundled ...'
+    matched_artifact_ref: tests/providers/capabilities/collectors/test_providers_capabilities_collectors_agy.py
+  deferral_target: null
+- section_id: '6.3'
+  item_id: 6.3.10
+  plan_node_hash: 5a8c04a5ba5fca14ef64016df72674e9f82860b67f9e48efd1239a7f80319b2b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20757'
+    validation_criteria_snippet: '6.3.1: `agy --output-format json models` output
+      (flag before subcommand, per record 1.1.20) is parsed by the collector at capability
+      refresh, with the bundled ...'
+    matched_artifact_ref: list_provider_models
+  deferral_target: null
+- section_id: '6.3'
+  item_id: 6.3.11
+  plan_node_hash: 774d43f0e43cb5c25eb6f1b0729153b422e714d348d2d2acc50fe2f157483131
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20757'
+    validation_criteria_snippet: '6.3.1: `agy --output-format json models` output
+      (flag before subcommand, per record 1.1.20) is parsed by the collector at capability
+      refresh, with the bundled ...'
+    matched_artifact_ref: _context_window_for_agy_model
+  deferral_target: null
+- section_id: '6.4'
+  item_id: 6.4.1
+  plan_node_hash: 5d92260e76f97fabc547481e4f9d6c36407fa7b0c76856f423a8d5ef39f2721b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20758'
+    validation_criteria_snippet: '6.4.1: `AgyUsageReporter.report` parses the 1.1.19-recorded
+      `/usage` envelope (healthy and exhausted fixtures) into one `ProviderUsageSnapshot`
+      with one `Usage...'
+    matched_artifact_ref: tests/providers/test_usage.py
+  deferral_target: null
+- section_id: '6.4'
+  item_id: 6.4.2
+  plan_node_hash: 45fcccff6586343e40abbf8bb556e0578c188e11324a59f1fceee5e8db51f978
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20758'
+    validation_criteria_snippet: '6.4.1: `AgyUsageReporter.report` parses the 1.1.19-recorded
+      `/usage` envelope (healthy and exhausted fixtures) into one `ProviderUsageSnapshot`
+      with one `Usage...'
+    matched_artifact_ref: tests/providers/test_usage.py
+  deferral_target: null
+- section_id: '6.4'
+  item_id: 6.4.3
+  plan_node_hash: 45436f43133a8b4dae4dfac9308912441d81ea6405deefa7c402402010526fb1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20758'
+    validation_criteria_snippet: '6.4.1: `AgyUsageReporter.report` parses the 1.1.19-recorded
+      `/usage` envelope (healthy and exhausted fixtures) into one `ProviderUsageSnapshot`
+      with one `Usage...'
+    matched_artifact_ref: tests/servers/routes/test_servers_routes_providers.py
+  deferral_target: null
+- section_id: '6.4'
+  item_id: 6.4.4
+  plan_node_hash: 74757698e4d645aa6b33e3f7db2f7b349de7c7136238f8116962179ae46126eb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20758'
+    validation_criteria_snippet: '6.4.1: `AgyUsageReporter.report` parses the 1.1.19-recorded
+      `/usage` envelope (healthy and exhausted fixtures) into one `ProviderUsageSnapshot`
+      with one `Usage...'
+    matched_artifact_ref: crates/gcore/src/schema/assets.rs
+  deferral_target: null
+- section_id: '6.4'
+  item_id: 6.4.5
+  plan_node_hash: a20ad2db6ab2827e1133dfa1b5450594f0520eddd05eb992f55b698bacc32625
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20758'
+    validation_criteria_snippet: '6.4.1: `AgyUsageReporter.report` parses the 1.1.19-recorded
+      `/usage` envelope (healthy and exhausted fixtures) into one `ProviderUsageSnapshot`
+      with one `Usage...'
+    matched_artifact_ref: tests/storage/test_provider_capacity.py
+  deferral_target: null
+- section_id: '6.4'
+  item_id: 6.4.6
+  plan_node_hash: 2c269376631b85e4fb1d545246eeb886fbab984751be75971aad72df0db6fefc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20758'
+    validation_criteria_snippet: '6.4.1: `AgyUsageReporter.report` parses the 1.1.19-recorded
+      `/usage` envelope (healthy and exhausted fixtures) into one `ProviderUsageSnapshot`
+      with one `Usage...'
+    matched_artifact_ref: tests/providers/test_capacity_service.py
+  deferral_target: null
+- section_id: '6.4'
+  item_id: 6.4.7
+  plan_node_hash: e23347045a2fe1098f168c9a85820840077ac0d1e66f0e051e616cf290b49a49
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20758'
+    validation_criteria_snippet: '6.4.1: `AgyUsageReporter.report` parses the 1.1.19-recorded
+      `/usage` envelope (healthy and exhausted fixtures) into one `ProviderUsageSnapshot`
+      with one `Usage...'
+    matched_artifact_ref: tests/providers/test_capacity_service.py
+  deferral_target: null
+- section_id: '6.4'
+  item_id: 6.4.8
+  plan_node_hash: aaaae01432e72e0d31a6ac629d9370cc822b4f2191b1509e40003701dfd9f90b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20758'
+    validation_criteria_snippet: '6.4.1: `AgyUsageReporter.report` parses the 1.1.19-recorded
+      `/usage` envelope (healthy and exhausted fixtures) into one `ProviderUsageSnapshot`
+      with one `Usage...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_metrics_tool.py
+  deferral_target: null
+- section_id: '6.4'
+  item_id: 6.4.9
+  plan_node_hash: e29edb11cf16ca71ad36078425f3eb14c3d825455ac17e7feab5e499314162a2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20758'
+    validation_criteria_snippet: '6.4.1: `AgyUsageReporter.report` parses the 1.1.19-recorded
+      `/usage` envelope (healthy and exhausted fixtures) into one `ProviderUsageSnapshot`
+      with one `Usage...'
+    matched_artifact_ref: tests/test_runner_lifecycle.py
+  deferral_target: null
+- section_id: '6.4'
+  item_id: 6.4.10
+  plan_node_hash: c9db6c1b26311a7df8ed61bb0e4f18ef8af6aa99c8a0ea88e441941266b655fe
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20758'
+    validation_criteria_snippet: '6.4.1: `AgyUsageReporter.report` parses the 1.1.19-recorded
+      `/usage` envelope (healthy and exhausted fixtures) into one `ProviderUsageSnapshot`
+      with one `Usage...'
+    matched_artifact_ref: tests/providers/test_capacity_service.py
+  deferral_target: null
+- section_id: '6.4'
+  item_id: 6.4.11
+  plan_node_hash: 41370eab68c131e91a8f27ad4632456f418c7af145b2ba9350434e7b5121bd77
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20758'
+    validation_criteria_snippet: '6.4.1: `AgyUsageReporter.report` parses the 1.1.19-recorded
+      `/usage` envelope (healthy and exhausted fixtures) into one `ProviderUsageSnapshot`
+      with one `Usage...'
+    matched_artifact_ref: tests/mcp_proxy/test_registries.py
+  deferral_target: null
+- section_id: '7.1'
+  item_id: 7.1.1
+  plan_node_hash: 7873fcdf02141f4d83b7cd2330b7b66385fa714c3cece606fbf571ead8b3f8fa
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20759'
+    validation_criteria_snippet: "7.1.1: The AGY row reads Hook=Full, Transcript=JSONL,\
+      \ Web-chat=custom stream-json, and Status=FULL \u2014 the three readiness surfaces\
+      \ plus the status column, each ..."
+    matched_artifact_ref: docs/research/cli-integration-matrix.md
+  deferral_target: null
+- section_id: '7.1'
+  item_id: 7.1.2
+  plan_node_hash: a802ac8afff3f7d4e82ccf23ef119ee30f88bf1db827b9915692cbb298ab9d8b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20759'
+    validation_criteria_snippet: "7.1.1: The AGY row reads Hook=Full, Transcript=JSONL,\
+      \ Web-chat=custom stream-json, and Status=FULL \u2014 the three readiness surfaces\
+      \ plus the status column, each ..."
+    matched_artifact_ref: AGY exposes JSONL transcripts and a stream-json transport
+  deferral_target: null
+- section_id: '7.1'
+  item_id: 7.1.3
+  plan_node_hash: 0c22c8e41ae1caef5f236db6b643a194c7910797c853e4d03d87f6835008d42c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20759'
+    validation_criteria_snippet: "7.1.1: The AGY row reads Hook=Full, Transcript=JSONL,\
+      \ Web-chat=custom stream-json, and Status=FULL \u2014 the three readiness surfaces\
+      \ plus the status column, each ..."
+    matched_artifact_ref: docs/research/cli-integration-matrix-claude-code.md
+  deferral_target: null
+- section_id: '7.1'
+  item_id: 7.1.4
+  plan_node_hash: a27978bdec7e40c173f20c02b86f09fa77be8d8941cc598b5a82f729fc252db0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20759'
+    validation_criteria_snippet: "7.1.1: The AGY row reads Hook=Full, Transcript=JSONL,\
+      \ Web-chat=custom stream-json, and Status=FULL \u2014 the three readiness surfaces\
+      \ plus the status column, each ..."
+    matched_artifact_ref: docs/guides/sandbox-compatibility.md
+  deferral_target: null
+- section_id: '7.1'
+  item_id: 7.1.5
+  plan_node_hash: 8ecb3b748fab49ea305dae1d4f323eee689339c71f8d0ca2d76bd5ff73853c7e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20759'
+    validation_criteria_snippet: "7.1.1: The AGY row reads Hook=Full, Transcript=JSONL,\
+      \ Web-chat=custom stream-json, and Status=FULL \u2014 the three readiness surfaces\
+      \ plus the status column, each ..."
+    matched_artifact_ref: docs/guides/adapter-fidelity.md
+  deferral_target: null
+- section_id: '7.1'
+  item_id: 7.1.6
+  plan_node_hash: 561fe461f4d6915fa9b44e47bd2e2ca744bc59bfa53781dabcbd4e5d5d521063
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20759'
+    validation_criteria_snippet: "7.1.1: The AGY row reads Hook=Full, Transcript=JSONL,\
+      \ Web-chat=custom stream-json, and Status=FULL \u2014 the three readiness surfaces\
+      \ plus the status column, each ..."
+    matched_artifact_ref: docs/guides/ghook-user-guide.md
+  deferral_target: null
+- section_id: '7.1'
+  item_id: 7.1.7
+  plan_node_hash: 9414a3f696a1b519f18649fc3f23bc4b6877cabf1649830d4df9becee4eb6d9a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20759'
+    validation_criteria_snippet: "7.1.1: The AGY row reads Hook=Full, Transcript=JSONL,\
+      \ Web-chat=custom stream-json, and Status=FULL \u2014 the three readiness surfaces\
+      \ plus the status column, each ..."
+    matched_artifact_ref: docs/guides/providers-and-models.md
+  deferral_target: null
+- section_id: '7.1'
+  item_id: 7.1.8
+  plan_node_hash: bd8a88db775baf5bc06b6015f11a40c25a04a9c2dd8ded1d7492edba2ee2455b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#20759'
+    validation_criteria_snippet: "7.1.1: The AGY row reads Hook=Full, Transcript=JSONL,\
+      \ Web-chat=custom stream-json, and Status=FULL \u2014 the three readiness surfaces\
+      \ plus the status column, each ..."
+    matched_artifact_ref: docs/guides/adapter-fidelity.md
+  deferral_target: null

@@ -150,8 +150,12 @@ cumulative state:
   (1.1.12 changed headless `--mode`, 1.1.13 transcript writing, 1.1.15 stream-json
   text encoding, and between 1.1.16 and 1.1.18 the typed tool transcript records
   disappeared — §4.2). The auto-updater is itself a constraint: AGY upgrades in place
-  without a pin, so the daemon's version probe (§2.5) must be re-run per session, not
-  cached at install, and a future contract drift surfaces first as fixture mismatch.
+  without a pin, so the daemon's version probe (§2.5) is cached against the **resolved
+  executable identity** — never against install time and never against daemon start
+  alone — and every version-gated side effect (registry advertisement, spawn, web-chat
+  streaming, model discovery, usage reporting) reads a record whose identity still
+  matches the binary it is about to run; a future contract drift surfaces first as
+  fixture mismatch.
   AGY becomes the first version-gated provider CLI; reuse `is_at_least_version`
   (`src/gobby/install/bin_freshness_models.py`) for the comparison and the existing
   `get_cli_version` (`src/gobby/servers/provider_model_discovery.py`) for the daemon's
@@ -185,7 +189,7 @@ cumulative state:
   owning deliverable. If any production file projects at or above 1,000 lines, load the
   `decompose-monolith` skill and decompose in the same task — 2.1, 3.1 and 4.1 name the
   concrete extraction targets.
-- **Schema changes are gcore migrations, registered, numbered 402+.** The Python
+- **Schema changes are gcore migrations, registered, numbered 403+.** The Python
   migration directory is gone: `src/gobby/storage/migrations/` is empty and
   `src/gobby/storage/postgres_baseline_schema.sql` no longer exists
   (`tests/storage/test_schema_contract.py::test_production_python_has_no_persistent_postgres_ddl`
@@ -216,10 +220,11 @@ cumulative state:
   and the counts in `crates/gcore/tests/catalog_manifest_freshness.rs`; and the four
   signed golden grant vectors under `tests/runtime_grants/golden/` that embed the
   schema identity. Python carries no DDL. The reserved 371–373 were consumed while the
-  plan was parked and 399–401 were consumed between the 2026-08-20 re-baseline draft
-  and this revision (latest applied: `401_model_metadata_reasoning.sql`), so the plan's
-  reservations are **402** (3.1 workspace identity), **403** (4.1 startup claim
-  generation), **404** (4.1 receipt effects), re-checked against
+  plan was parked and 399–402 were consumed between the 2026-08-20 re-baseline draft
+  and this revision (latest applied: `402_task_close_reviews.sql`), so the plan's
+  reservations are **403** (3.1 workspace identity), **404** (4.1 startup claim
+  generation), **405** (4.1 receipt effects), **406** (6.4 provider capacity snapshots),
+  re-checked against
   `ls crates/gcore/assets/schema/migrations | tail -1` at implementation time.
 - **No raw local transcripts or account data in fixtures.** Every fixture is scrubbed and
   minimal, derived from verified shapes.
@@ -274,7 +279,7 @@ submitted for planning approval it is created as a standalone `category: test` t
 referencing `agy-full-integration:1.1`, executed, committed, and closed — and any
 disproof-driven revisions pass a fresh reviewed round — ahead of the approval that applies
 this plan's implementation manifest and auto-advances into expansion. It emits no
-manifest leaf. The numbered records below (1.1.1–1.1.24) are the probe-record IDs
+manifest leaf. The numbered records below (1.1.1–1.1.25) are the probe-record IDs
 downstream sections cite; each is satisfied by the closed prerequisite task's fixtures.
 
 The probe runs twice per question where a live turn is involved: once in print mode
@@ -418,6 +423,12 @@ Twenty questions are open and each one changes downstream design:
     forced-end after N continuations (1.1.9 changelog — record N); and what AGY does
     with a hook that exits 1 or 2 with legal stdout and a stderr message. 4.1's
     response translation embeds only honored fields.
+21. **Request-scoped controlled-tool confinement** (1.1.25). Can one AGY process be
+    pointed at an MCP server the daemon correlates to a single in-flight tool-chat
+    request — inherited environment reaching the stdio MCP child, a per-process
+    configuration, or an ephemeral registration bound to one conversation and removed
+    on completion — while the globally registered servers and AGY's built-in tools stay
+    unreachable to that process? 6.2's `TOOL_CHAT` branch consumes the answer.
 
 Capture a scrubbed NDJSON sample covering: `init`, resumed turn, assistant `text_delta`,
 tool `ACTIVE`/`DONE`/`ERROR`, malformed line, unsuccessful `result`, and a >64 KiB tool output.
@@ -507,6 +518,7 @@ identifiers are replaced. No record may reference a path under
 - 1.1.22 - **[confirmed on 1.1.18: parser input is `transcript_full.jsonl`]** The transcript layout is recorded — `transcript.jsonl` vs `transcript_full.jsonl` vs `chunks/` — naming the one append-only complete file the parser consumes and the file `transcriptPath` points at. file: `tests/fixtures/provider_contracts/agy/transcript-manifest.json`.
 - 1.1.23 - **[confirmed on 1.1.18]** `--mode plan|accept-edits` behavior is recorded in headless and terminal modes, including how plan approval is expressed and the terminal menu keystrokes — extending 1.1.14 with the recorded flag. file: `tests/fixtures/provider_contracts/agy/README.md`.
 - 1.1.24 - **[confirmed on 1.1.18 with negatives: `permissionOverrides` and `injectSteps.toolCall` not honored; hook exit 1/2 blocks the tool fail-closed; `Stop` exit ignored; `continue` honored 10 times]** Live acceptance is recorded per response field — `deny_unless_prior_grant`, `permissionOverrides`, `terminationBehavior`, `injectSteps.toolCall`, `Stop` `decision:"continue"` and its forced-end count — and for hook exit codes 1 and 2 with legal stdout; §4.1 embeds only honored fields. file: `tests/fixtures/provider_contracts/agy/hook-payloads.jsonl`.
+- 1.1.25 - **[open: probed before approval]** Request-scoped controlled-tool confinement is recorded: whether one AGY process can reach an MCP server correlated to a single in-flight request — through inherited environment, a per-process configuration, or an ephemeral single-conversation registration — while the globally registered servers and AGY's built-in tools stay unreachable to it, or the evidence that it cannot — the record §6.2's `TOOL_CHAT` branch consumes. file: `tests/fixtures/provider_contracts/agy/README.md`.
 
 ### 1.2 Gate 0 execution record
 `kind: framing`
@@ -569,6 +581,7 @@ table is its projection.
 | 1.1.22 transcript layout | **confirmed** | Parser input `transcript_full.jsonl`; `transcript.jsonl` is the truncated twin; `chunks/` byte-identical copies. |
 | 1.1.23 `--mode` | **confirmed** | Headless `plan` writes `brain/<id>/<name>.md`, no approval record; `accept-edits` writes without prompting; `bogus` → warning. |
 | 1.1.24 response fields | **confirmed with negatives** | Honored: `deny`, `deny_unless_prior_grant`, `overwrite`, `terminationBehavior`, `injectSteps.userMessage`/`ephemeralMessage`, `Stop continue` ×10. Not honored: `permissionOverrides` (headless), `injectSteps.toolCall` (fatal). PreToolUse exit 1/2 blocks the tool; Stop exit 2 ignored. |
+| 1.1.25 tool-runtime confinement | **open** | Not probed on 1.1.18; §6.2's `TOOL_CHAT` branch is gated on it, `WEB_CHAT` and `AGENT_SPAWN` are not. |
 
 Disproven contracts repaired in the plan: §5.1's nested record shape and `step_type`
 vocabulary (Run 1); §5.2/1.1.13's timeout contract (Run 1); and from Run 2 the
@@ -608,7 +621,7 @@ implemented" table):
 | 5.2 | 1.1.1, 1.1.8, 1.1.13, 1.1.18 (transport choice) |
 | 5.3 | 1.1.16, 1.1.18 |
 | 6.1 | 1.1.3, 1.1.7, 1.1.11, 1.1.14, 1.1.17, 1.1.23 |
-| 6.2 | 1.1.4, 1.1.12 |
+| 6.2 | 1.1.4, 1.1.12, 1.1.25 |
 | 6.3 | 1.1.20 |
 | 6.4 (usage-capacity, folds #19364) | 1.1.19 |
 | 7.1 | every row above |
@@ -618,7 +631,9 @@ the planning approval that applies its implementation manifest:
 
 1. **Satisfied (2026-08-22).** Gate 0 is complete in **both** print mode and
    interactive/tmux mode: every record 1.1.1–1.1.24 reads confirmed,
-   re-confirmed, negative, or disproven (§1.2 Run 2).
+   re-confirmed, negative, or disproven (§1.2 Run 2). Record 1.1.25, added in
+   Round 21, is the one open probe: it is answered in the same prerequisite
+   task before this condition holds.
 2. **Satisfied to the extent the current code allows.** The live route is proven
    to the daemon, not only the capture hook: turns for an MCP tool, a built-in
    tool, and a shell command reached the daemon through the real hook binary
@@ -674,6 +689,12 @@ Targets:
 - `tests/cli/test_tokens_cli.py::*` — scope-reason: the tokens CLI parse-error case patches the module-local ClaudeTranscriptParser and migrates to the registry seam
 - `tests/sessions/test_summarize.py::*` — scope-reason: summary-path cases patch the Droid, Qwen, and Claude parser constructors and migrate to the registry seam
 - `tests/sessions/test_token_tracker_attribution.py::*` — scope-reason: token-attribution cases patch the transcript_processing Codex and Qwen parser aliases and migrate to the registry seam
+- `src/gobby/memory/digest.py::*` — scope-reason: consumer of `get_parser`; re-anchored when that contract changes
+- `src/gobby/servers/routes/sessions/analytics.py::*` — scope-reason: consumer of `get_parser`; re-anchored when that contract changes
+- `tests/hooks/test_hook_manager_factory_injection.py::*` — scope-reason: consumer of `create`; re-anchored when that contract changes
+- `tests/hooks/test_inline_mcp_dispatcher.py::*` — scope-reason: consumer of `create`; re-anchored when that contract changes
+- `tests/servers/conftest.py::*` — scope-reason: consumer of `create`; re-anchored when that contract changes
+- `tests/sessions/test_summary_context.py::*` — scope-reason: consumer of `_build_summary_prompt_context`; re-anchored when that contract changes
 
 Seven independent source-to-parser sites exist: `PARSER_REGISTRY` plus `get_parser` in
 `transcripts/__init__.py`; a duplicate if/elif `_get_parser` in `transcript_parsing.py`; and
@@ -757,6 +778,10 @@ Targets:
 - `tests/tasks/test_transcript_evidence.py::*` — scope-reason: validation-evidence recovery tests adopt the split contract with its caller context
 - `src/gobby/sessions/transcript_source.py::_detect_source_from_path`
 - `tests/sessions/test_transcript_source.py`
+- `src/gobby/hooks/hook_manager.py::*` — scope-reason: the shared hook path gains the bounded pending-transcript recheck between canonical session resolution and per-event dispatch
+- `tests/hooks/test_handler_execution.py::*` — scope-reason: the shared hook seam gains the bounded pending-transcript recheck between canonical session resolution and per-event dispatch
+- `tests/hooks/test_session_events_coverage.py::*` — scope-reason: consumer of `_derive_transcript_path`; re-anchored when that contract changes
+- `tests/sessions/test_machine_scoped_consumers.py::*` — scope-reason: consumer of `derive_transcript_path`; re-anchored when that contract changes
 
 Discovery is inconsistent: claude/codex/droid read `transcript_path` from the hook payload,
 qwen/grok derive it on disk, agy has neither. `derive_transcript_path` handles only qwen and
@@ -775,7 +800,15 @@ carries camelCase `transcriptPath` (normalized to `transcript_path` by the adapt
 reported-but-absent path is **pending**: it gets a
 bounded recheck on subsequent hook events (`PreToolUse`, `PostToolUse`,
 `PostInvocation`, `Stop`) rather than blocking session start, and only a usable path
-is persisted on the session. A malformed or unreadable path is **invalid** and falls
+is persisted on the session. That recheck has a named owner, because AGY synthesizes
+`SESSION_START` from the first `PreInvocation` alone and every later event routes to a
+different handler: it runs in the shared hook path,
+`HookManager._handle_after_daemon_ready` (`hooks/hook_manager.py`), after canonical
+session resolution and before per-event dispatch, so any of the four later events can
+complete the association — including a single-invocation turn that only ever reaches
+`PostInvocation` and `Stop`. It is idempotent and bounded: a session whose transcript
+path is already persisted, or whose recheck budget is spent, does no work, and it
+mutates nothing but that one path. A malformed or unreadable path is **invalid** and falls
 through to disk derivation immediately. Disk fallback is bounded: the per-provider
 table yields direct candidate paths — for AGY the single candidate
 `~/.gemini/antigravity-cli/brain/<external_id>/.system_generated/logs/transcript_full.jsonl`
@@ -818,14 +851,14 @@ that no-mutation assertion preserved.
 
 - 2.2.1 - Every provider resolves through one hook-first/disk-fallback path. symbol: `derive_transcript_path`. file: `src/gobby/hooks/event_handlers/_session_start/transcripts.py`.
 - 2.2.2 - Per-provider disk derivation is table-driven rather than an if/elif chain. symbol: `find_transcript_on_disk`. file: `src/gobby/sessions/transcript_paths.py`.
-- 2.2.3 - Hook-reported paths are classified usable, pending, or invalid; pending paths get a bounded recheck without blocking session start, and only usable paths are persisted. symbol: `derive_transcript_path`. file: `src/gobby/hooks/event_handlers/_session_start/transcripts.py`.
+- 2.2.3 - Hook-reported paths are classified usable, pending, or invalid; pending paths get a bounded recheck without blocking session start, run at the shared hook seam after canonical session resolution and before per-event dispatch so a later `PreToolUse`, `PostToolUse`, `PostInvocation`, or `Stop` completes the association, and only usable paths are persisted. symbol: `derive_transcript_path`. file: `src/gobby/hooks/event_handlers/_session_start/transcripts.py`.
 - 2.2.4 - Disk fallback derives bounded direct candidates from the per-provider table, with no unbounded traversal on the synchronous hook path. symbol: `find_transcript_on_disk`. file: `src/gobby/sessions/transcript_paths.py`.
 - 2.2.5 - Session-start flow routes every hook-reported path through the classifier before selection or persistence — a truthy but absent or unreadable path is never persisted directly. symbol: `handle_session_start`. file: `src/gobby/hooks/event_handlers/_session_start/flow.py`.
 - 2.2.6 - The watchdog, transcript-reader (`TranscriptReader._ensure_transcript_path`), and validation-evidence recovery callers retain discovery through the split contract with explicit caller context, with usable/pending/invalid, bounded-retry, and fallback cases tested. test: `tests/hooks/test_transcript_path_derivation.py`.
 - 2.2.7 - Watchdog recovery keeps caller-context discovery through the split contract: the resolver-seam suite re-anchors its cache, invalid-path, attempted-path, and fallback cases to the new contract at the real caller. test: `tests/agents/test_idle_check_transcript_paths.py`.
 - 2.2.8 - Validation-evidence recovery keeps caller-context discovery through the split contract, with its recovery cases re-anchored at the real caller. test: `tests/tasks/test_transcript_evidence.py`.
 - 2.2.9 - The stale-session idle-recovery case re-anchors to the split caller-context contract, preserving the assertion that discovery does not mutate the session row. test: `tests/agents/test_lifecycle_monitor_watchdog_idle_recovery.py`.
-- 2.2.10 - The per-provider table carries the AGY entry — the `brain/<external_id>/.system_generated/logs/` direct candidate naming the file record 1.1.22 proves — and a hook-payload fixture line proves the pending→usable transition across consecutive AGY events. symbol: `find_transcript_on_disk`. file: `src/gobby/sessions/transcript_paths.py`.
+- 2.2.10 - The per-provider table carries the AGY entry — the `brain/<external_id>/.system_generated/logs/` direct candidate naming the file record 1.1.22 proves — and a hook-payload fixture line proves the pending→usable transition across consecutive AGY events, including a single-invocation sequence where `PreInvocation` reports an absent path, the file then appears, and `PostInvocation` or `Stop` performs the only successful association. symbol: `find_transcript_on_disk`. file: `src/gobby/sessions/transcript_paths.py`.
 - 2.2.11 - `_detect_source_from_path` returns `agy` for the `.gemini/antigravity-cli/brain/` path shape and continues to return `None` for unknown shapes. symbol: `_detect_source_from_path`. file: `src/gobby/sessions/transcript_source.py`.
 - 2.2.12 - Validation-evidence recovery resolves an AGY session's transcript through the table instead of failing at `_resolve_transcript_path`. symbol: `_resolve_transcript_path`. file: `src/gobby/tasks/transcript_evidence.py`.
 
@@ -844,7 +877,7 @@ Targets:
 - `crates/ghook/src/action.rs::skip_stdout_json`
 - `crates/ghook/src/action.rs::action_from_failure_returns_json_for_noncritical_hooks`
 - `crates/ghook/tests/contract.rs::*` — scope-reason: contract tests asserting per-CLI critical-hook and fail-open behavior are updated wholesale to the revised policy, and the agy rows use the five real events
-- `crates/ghook/src/diagnose.rs::*` — scope-reason: the module-local terminal-hook criticality matrix test pins Codex and Qwen Stop as critical and updates wholesale to the final six-provider matrix, and `agy_uses_antigravity_pascal_case_hooks` is rewritten to the five real AGY events
+- `crates/ghook/src/diagnose.rs::*` — scope-reason: the module-local terminal-hook criticality matrix test currently pins Codex and Qwen Stop as critical and is rewritten in place — not renamed, not replaced by a new case — to the final six-provider matrix in which Codex Stop and Qwen Stop are noncritical, and `agy_uses_antigravity_pascal_case_hooks` is rewritten to the five real AGY events
 - `src/gobby/hooks/events.py::*` — scope-reason: the module-level `EVENT_TYPE_CLI_SUPPORT` table gains AGY's five native event rows
 - `tests/hooks/test_events.py::TestEventTypeMapping`
 - `docs/guides/sandboxing.md`
@@ -923,6 +956,12 @@ largest dispatch-gated section — a declarative truth fix should not wait on it
 - 2.3.9 - The module-local diagnose case for agy probes exactly `PreInvocation`, `PreToolUse`, `PostToolUse`, `PostInvocation`, `Stop`, all noncritical. symbol: `agy_uses_antigravity_pascal_case_hooks`. file: `crates/ghook/src/diagnose.rs`.
 - 2.3.10 - `EVENT_TYPE_CLI_SUPPORT` declares AGY's five native events and keeps `SESSION_START` unset, and a mapping-matches-contract test mirrors the droid one against `AGY_HOOK_NAMES`. test: `tests/hooks/test_events.py`.
 - 2.3.11 - The ghook user guide and hook-schemas guide list AGY's five events with no critical hook and no `SessionStart`/`UserPromptSubmit`. behavior: "AGY: PreInvocation, PreToolUse, PostToolUse, PostInvocation, Stop — none critical" in `docs/guides/ghook-user-guide.md`.
+- 2.3.12 - Claude declares exactly session-start, session-end, and pre-compact as critical, with its daemon-down row pinned. test: `crates/ghook/tests/contract.rs`.
+- 2.3.13 - Codex declares SessionStart, SessionEnd, and PreCompact as critical while Stop is noncritical, with malformed-input exit behavior pinned. test: `crates/ghook/tests/contract.rs`.
+- 2.3.14 - Qwen declares SessionStart, SessionEnd, and PreCompact as critical while Stop is noncritical, with malformed-input exit behavior pinned. test: `crates/ghook/tests/contract.rs`.
+- 2.3.15 - Grok declares session_start, session_end, and pre_compact as critical, with its daemon-down row pinned. test: `crates/ghook/tests/contract.rs`.
+- 2.3.16 - Droid declares SessionStart, SessionEnd, and PreCompact as critical after removal of the short circuit, with its daemon-down row pinned. test: `crates/ghook/tests/contract.rs`.
+- 2.3.17 - AGY declares no critical native event, and its five real events fail open with protojson-legal responses. test: `crates/ghook/tests/contract.rs`.
 
 ### 2.4 Share stream-reader limits and dedupe provider constants [category: code]
 `kind: deliverable`
@@ -934,7 +973,12 @@ Targets:
 - `src/gobby/servers/websocket/chat/runtime_manager.py::WebChatRuntimeManager.create_session`
 - `src/gobby/ai/registry_builder.py::_tool_chat_binding`
 - `src/gobby/ai/registry_builder.py::_tool_chat_adapter_style`
-- `tests/servers/websocket/chat/test_droid_backend.py::*` — scope-reason: existing droid backend tests gain the inactivity-timeout expiry, reset-on-activity, and cancellation cases
+- `tests/servers/websocket/chat/test_droid_backend.py::*` — scope-reason: existing droid backend tests gain the progress-timeout expiry, progress-renewal, endless-discarded-line, and cancellation cases
+- `src/gobby/servers/websocket/chat/backends/__init__.py::*` — scope-reason: consumer of `DroidWebChatBackend`; re-anchored when that contract changes
+- `tests/servers/test_local_llm.py::*` — scope-reason: consumer of `health`; re-anchored when that contract changes
+- `tests/servers/websocket/chat/test_clear_context_contract.py::*` — scope-reason: consumer of `DroidWebChatBackend`; re-anchored when that contract changes
+- `tests/servers/websocket/chat/test_managed_plan_broadcast.py::*` — scope-reason: consumer of `DroidWebChatBackend`; re-anchored when that contract changes
+- `tests/servers/websocket/test_set_mode.py::*` — scope-reason: consumer of `DroidManagedChatSession`; re-anchored when that contract changes
 
 Three concrete duplications. `WebChatRuntimeManager.health` and
 `WebChatRuntimeManager.create_session` each hardcode a **divergent copy** of
@@ -953,9 +997,14 @@ Droid's subprocess creation (`DroidWebChatBackend.attach_session`) pass
 import it.
 
 The timeout is a contract, not a number. Reuse the ACP precedent —
-`DEFAULT_ACP_PROMPT_TIMEOUT_SECONDS` (120 s, `acp_client.py:55`) — as an **inactivity**
-timeout on each `readline()`, reset by every received line, with an env override following
-the existing `GOBBY_<PROVIDER>_ACP_PROMPT_TIMEOUT_SECONDS` pattern. On expiry: emit exactly
+`DEFAULT_ACP_PROMPT_TIMEOUT_SECONDS` (120 s, `acp_client.py:55`) — as a **progress**
+timeout on each `readline()`, with an env override following the existing
+`GOBBY_<PROVIDER>_ACP_PROMPT_TIMEOUT_SECONDS` pattern. Each line is parsed and classified
+before the deadline moves: only a line that yields a translated event or an accepted stream
+state transition renews it. The input `parse_droid_stream_line` deliberately discards —
+blank, malformed, non-object, and malformed-record lines — is noise, and noise never
+extends the turn, so a low-rate trickle of discarded records cannot hold the turn lock and
+the subprocess open indefinitely. On expiry: emit exactly
 one terminal error event for the turn, terminate the owned subprocess tree, remove the
 session handle, and leave the session reconnectable — never a silent hang, an orphaned
 Droid process, or a dead handle that blocks a new attach.
@@ -964,8 +1013,8 @@ Droid process, or a dead handle that blocks a new attach.
 
 - 2.4.1 - The runtime manager imports `AGY_UNAVAILABLE_REASON` instead of duplicating it. symbol: `WebChatRuntimeManager.health`. file: `src/gobby/servers/websocket/chat/runtime_manager.py`.
 - 2.4.2 - The unreachable agy tool-chat branch is deleted. symbol: `_tool_chat_binding`. file: `src/gobby/ai/registry_builder.py`.
-- 2.4.3 - Droid's NDJSON reader uses the shared 16 MiB limit and the inactivity timeout, reset by received lines. file: `src/gobby/servers/websocket/chat/backends/droid.py`.
-- 2.4.4 - Timeout expiry emits one terminal error, terminates the owned process tree, removes the handle, and leaves the session reconnectable, with focused tests covering expiry, reset-on-activity, and cancellation. test: `tests/servers/websocket/chat/test_droid_backend.py`.
+- 2.4.3 - Droid's NDJSON reader uses the shared 16 MiB limit and the progress timeout, renewed only by lines that parse to a translated event or an accepted state transition. file: `src/gobby/servers/websocket/chat/backends/droid.py`.
+- 2.4.4 - Timeout expiry emits one terminal error, terminates the owned process tree, removes the handle, and leaves the session reconnectable, with focused tests covering expiry, renewal on parsed progress, an endless low-rate stream of discarded lines still expiring, and cancellation. test: `tests/servers/websocket/chat/test_droid_backend.py`.
 
 ### 2.5 AGY version-gate foundation [category: code] (depends: 2.4)
 `kind: deliverable`
@@ -973,7 +1022,7 @@ Droid process, or a dead handle that blocks a new attach.
 Targets:
 - `src/gobby/providers/version_gate.py`
 - `src/gobby/servers/_app_lifecycle.py::lifespan`
-- `src/gobby/runner.py::run_gobby`
+- `src/gobby/runner.py::*` — scope-reason: the daemon entrypoint anchors the AGY version probe after singleton PID ownership resolution
 - `src/gobby/servers/provider_model_discovery.py::get_cli_version`
 - `src/gobby/ai/registry_builder.py::_agy_unavailable_bindings`
 - `src/gobby/servers/routes/providers.py::_agy_snapshot_payload`
@@ -981,6 +1030,7 @@ Targets:
 - `tests/providers/test_version_gate.py`
 - `tests/test_runner_lifecycle.py::*` — scope-reason: run_gobby entry-point tests patch the version probe and assert publication precedes runner construction
 - `tests/test_runner_pid_file.py::*` — scope-reason: the lock-contention branch asserts the version probe never runs in a losing daemon invocation
+- `src/gobby/servers/app_factory.py::*` — scope-reason: consumer of `lifespan`; re-anchored when that contract changes
 
 The 1.1.18 floor has consumers with incompatible seams. The only async version
 probe in the tree, `get_cli_version` (`servers/provider_model_discovery.py`), has
@@ -990,24 +1040,51 @@ consumer that must gate on the floor is synchronous: capability-registry constru
 `WebChatRuntimeManager` health, spawn gating, and the `/providers` route's
 `_agy_snapshot_payload`. And 5.3 cannot gate on a deliverable (6.2) that depends on
 5.3. Break both problems with one earlier foundation: an async startup probe in the
-new module `src/gobby/providers/version_gate.py` resolves the installed AGY version
-exactly once, reusing `get_cli_version` and `is_at_least_version`, and publishes an
+new module `src/gobby/providers/version_gate.py` resolves the installed AGY version at
+startup, reusing `get_cli_version` and `is_at_least_version`, and publishes an
 immutable support record (installed version, required floor `1.1.18` as a module
 constant, supported flag, actionable upgrade message naming both versions).
 Synchronous consumers read the record; none of them await, subprocess, or re-probe.
-Once per daemon start is the right cadence because AGY's auto-updater replaces the
-binary in place between launches (Gate 0 watched 1.1.16 become 1.1.18 mid-run): an
-install-time cache would go stale silently, while a per-start probe sees each upgrade.
-A missing or unparseable binary yields an unsupported record with a truthful reason,
-never an exception at read time. 5.3, 6.2 and 6.3 consume this record and depend on
-this deliverable.
 
-"Exactly one probe" is scoped to the daemon process. `utils/deps.py::get_agy_cli_version`
-also runs `agy --version`, but for `gobby status` in the CLI process, where no record
-is published; it stays independent and is not a consumer of this module. The
-invariant is therefore: the daemon performs one AGY version subprocess call per
-startup, and no daemon code path other than `version_gate` invokes `get_cli_version`
-for agy.
+The record's cache key is the **resolved executable identity** — the realpath of the
+`agy` binary plus its `st_dev`, `st_ino`, `st_size`, and `st_mtime_ns` — captured in the
+same `os.stat` call that the probe runs against, and carried on the record. The probe
+invokes that resolved path directly rather than the bare `agy` name through `PATH`, and
+the identity is re-stat'd when the probe returns: the record is published only when the
+pre- and post-probe identities match, so a replacement landing mid-probe publishes
+nothing and the next access re-probes against the new bytes. AGY's
+auto-updater replaces the binary in place while the daemon runs (Gate 0 watched 1.1.16
+become 1.1.18 mid-run), so a startup-only record would let the daemon advertise, spawn,
+stream, discover, or report usage against bytes it never validated. Each version-gated
+side effect therefore re-stats the resolved path immediately before it acts: an
+unchanged identity reads the published record with no subprocess, and a changed identity
+atomically replaces the record — one probe under a per-path lock, losers reading the
+winner's result — before the side effect proceeds under the new record. Re-stat is a
+single `os.stat`, not a re-probe; only an identity change costs a subprocess. The
+accessor has two forms, because the probe is async while the capability seams that read
+the record are not. The synchronous form is a no-I/O peek: it stats the resolved path and
+returns the published record when the identity matches, and a fail-closed unsupported
+record — reason "AGY binary changed; revalidating" — when it does not; it never awaits,
+subprocesses, or blocks, so an unrevalidated replacement withdraws advertisement instead
+of authorizing a side effect under stale evidence. The asynchronous form awaits that
+single re-probe and returns the record covering the current bytes. Every version-gated
+side effect awaits the async form at the async owner it already has — tool-chat binding
+selection, web-chat launch at the post-hydration seam, spawn gating, model collection
+(6.3), and capacity refresh (6.4) — while synchronous availability reads
+(`CapabilityBinding.available`, registry selection, and 5.3's health serialization) use
+the peek. Publication
+and replacement are both atomic: a reader sees either the old complete record or the new
+one, never a partially updated one. A missing or unparseable binary yields an unsupported
+record with a truthful reason, never an exception at read time. 5.3, 6.2 and 6.3 consume
+this record and depend on this deliverable.
+
+"One probe per executable identity" is scoped to the daemon process.
+`utils/deps.py::get_agy_cli_version` also runs `agy --version`, but for `gobby status`
+in the CLI process, where no record is published; it stays independent and is not a
+consumer of this module. The invariant is therefore: the daemon performs one AGY version
+subprocess call at startup and exactly one more per observed executable-identity change
+(concurrent observers of the same change share that single call), and no daemon code path
+other than `version_gate` invokes `get_cli_version` for agy.
 
 The record has a concrete initialization owner, and it must run **before** any consumer
 freezes its value — and that owner must be able to await. The FastAPI lifespan is too
@@ -1042,9 +1119,14 @@ the `/providers` AGY payload (`_agy_snapshot_payload`). None re-probe.
 
 - 2.5.1 - An async startup probe resolves the AGY version once and publishes an immutable support record readable from synchronous consumers. file: `src/gobby/providers/version_gate.py`.
 - 2.5.2 - Below the 1.1.18 floor, and when the binary is absent or unparseable, the record is unsupported with a message naming the installed and required versions. file: `src/gobby/providers/version_gate.py`.
-- 2.5.3 - Focused tests cover supported, sub-floor, absent-binary and unparseable-output records, and prove sync consumers never trigger a re-probe. test: `tests/providers/test_version_gate.py`.
+- 2.5.3 - Focused tests cover supported, sub-floor, absent-binary and unparseable-output records, and prove sync consumers reading the record never await, subprocess, or trigger a re-probe while the executable identity is unchanged. test: `tests/providers/test_version_gate.py`.
 - 2.5.4 - `run_gobby` resolves PID ownership first, then awaits the probe and publishes the record, then constructs `GobbyRunner` — publication precedes every support-dependent service the synchronous init seam builds, and the probe never runs in an invocation that loses the daemon lock; the lifespan asserts publication, pre-publication reads return the fail-closed sentinel, a startup-order test in `tests/test_runner_lifecycle.py` proves publication precedes retained registry construction with no nested event-loop execution, the existing `run_gobby` entry-point tests patch the probe so no unit test launches a live version subprocess, and the lock-contention branch in `tests/test_runner_pid_file.py` asserts the probe is not called when acquisition loses. symbol: `run_gobby`. file: `src/gobby/runner.py`.
 - 2.5.5 - The capability registry's AGY bindings and the `/providers` AGY payload read the published support record and never launch their own AGY version probe; a daemon-construction test proves the installed `ToolChatService` registry sees the record and a `/providers` request triggers no second probe, and `get_cli_version` has no agy caller outside `version_gate`. symbol: `_agy_unavailable_bindings`. file: `src/gobby/ai/registry_builder.py`.
+- 2.5.6 - The support record carries the resolved executable identity (realpath plus `st_dev`, `st_ino`, `st_size`, `st_mtime_ns`) captured with the probe, and every version-gated side effect re-stats that path and reads the matching record before acting — awaiting the async accessor form, while synchronous availability reads use the no-I/O peek. file: `src/gobby/providers/version_gate.py`.
+- 2.5.7 - Replacing the AGY binary between two spawns in one daemon re-probes exactly once and the second spawn reads the new record, while an unchanged binary across repeated side effects launches no further subprocess. test: `tests/providers/test_version_gate.py`.
+- 2.5.8 - Concurrent observers of one identity change share a single re-probe under a per-path lock and all read the winner's complete record, never a partially replaced one. test: `tests/providers/test_version_gate.py`.
+- 2.5.9 - The probe executes the resolved path rather than the bare name through `PATH`, and re-stats that path when it returns: matching pre- and post-probe identities publish the record, a mismatch publishes nothing and leaves the next access to re-probe, proven by a forced replacement-during-probe test. test: `tests/providers/test_version_gate.py`.
+- 2.5.10 - The synchronous peek never awaits, subprocesses, or blocks: on an identity mismatch it reports unsupported with the revalidating reason rather than the stale record, while the async accessor awaits the single re-probe and every version-gated side effect — tool-chat binding selection, web-chat launch, spawn gating, model collection, and capacity refresh — awaits it before acting. test: `tests/providers/test_version_gate.py`.
 
 ### 2.6 Installer and status truthfulness [category: code]
 `kind: deliverable`
@@ -1060,6 +1142,14 @@ Targets:
 - `tests/install/test_agy_template.py::*` — scope-reason: the hardcoded 45 s template timeout becomes the configured value
 - `tests/utils/test_deps.py::*` — scope-reason: AGY hooks-installed detection against `~/.gemini/config/hooks.json`
 - `tests/utils/test_utils_status.py::*` — scope-reason: the "unavailable: no machine transport" AGY suffix is removed
+- `src/gobby/cli/install.py::*` — scope-reason: consumer of `_run_standard_cli_install`; re-anchored when that contract changes
+- `src/gobby/cli/installers/claude.py::*` — scope-reason: consumer of `set_gobby_hook_timeouts`; re-anchored when that contract changes
+- `src/gobby/cli/installers/codex.py::*` — scope-reason: consumer of `set_gobby_hook_timeouts`; re-anchored when that contract changes
+- `src/gobby/cli/installers/droid.py::*` — scope-reason: consumer of `set_gobby_hook_timeouts`; re-anchored when that contract changes
+- `src/gobby/cli/installers/grok.py::*` — scope-reason: consumer of `set_gobby_hook_timeouts`; re-anchored when that contract changes
+- `src/gobby/cli/installers/qwen.py::*` — scope-reason: consumer of `set_gobby_hook_timeouts`; re-anchored when that contract changes
+- `tests/cli/installers/test_hook_commands.py::*` — scope-reason: consumer of `set_gobby_hook_timeouts`; re-anchored when that contract changes
+- `tests/cli/test_install_prompts.py::*` — scope-reason: consumer of `_run_standard_cli_install`; re-anchored when that contract changes
 
 Three surfaces still tell the user AGY hooks cannot work. `install_agy` is the only
 standard installer not given `hook_timeout_seconds` — `_run_standard_cli_install`
@@ -1107,7 +1197,7 @@ Targets:
 - `src/gobby/servers/websocket/chat/runtime_manager.py::WebChatRuntimeManager.start`
 - `src/gobby/servers/websocket/chat/runtime_manager.py::WebChatRuntimeManager.__init__`
 - `src/gobby/runner_init/servers.py::init_servers`
-- `src/gobby/config/app.py::DaemonConfig`
+- `src/gobby/config/app.py::*` — scope-reason: the daemon config's `web_chat_sandbox` backend default flips to `srt`
 - `src/gobby/config/daemon_sandbox.py::DaemonOwnedSandboxConfig`
 - `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: the runtime config contract carries the flipped web_chat_sandbox default (derived carrier for the config models)
 - `src/gobby/servers/websocket/chat/runtime_manager.py::WebChatRuntimeManager._refresh_sandbox_config`
@@ -1122,8 +1212,8 @@ Targets:
 - `src/gobby/agents/spawn_executor.py::*` — scope-reason: spawn preparation resolves the worktree workspace persisted on the pre-created child session
 - `src/gobby/hooks/event_handlers/_session_start/flow.py::handle_session_start`
 - `tests/agents/test_spawn_executor.py::*` — scope-reason: the spawn-time workspace persistence case joins the spawn-executor suite
-- `crates/gcore/assets/schema/migrations/402_sessions_workspace_path.sql`
-- `crates/gcore/src/schema/assets.rs::*` — scope-reason: the 402 EmbeddedMigration entry registers the migration in MIGRATIONS
+- `crates/gcore/assets/schema/migrations/403_sessions_workspace_path.sql`
+- `crates/gcore/src/schema/assets.rs::*` — scope-reason: the 403 EmbeddedMigration entry registers the migration in MIGRATIONS
 - `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: regenerated catalog entries for the sessions workspace-identity column
 - `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: latest_version, latest_checksum, and assets_root_hash follow the new latest asset
 - `crates/gcore/src/grant/bundle.rs::*` — scope-reason: the pinned latest_version literal follows the new latest asset
@@ -1138,7 +1228,7 @@ Targets:
 - `tests/runtime_grants/golden/unavailable_datastores.json::*` — scope-reason: signed golden grant vector embeds the schema identity
 - `src/gobby/servers/websocket/handlers/session_config.py::handle_set_project`
 - `src/gobby/servers/websocket/handlers/session_config.py::handle_set_worktree`
-- `src/gobby/storage/worktrees.py::LocalWorktreeManager.delete`
+- `src/gobby/storage/worktrees.py::*` — scope-reason: worktree deletion tombstones the persisted workspace rows and bumps the identity generation in the same transaction
 - `tests/servers/websocket/test_set_worktree.py::*` — scope-reason: project-switch and worktree-switch cases assert workspace-identity update or invalidation before teardown
 - `tests/storage/test_schema_contract.py::*` — scope-reason: the identity-pin and no-Python-DDL contracts cover the new migration
 - `tests/storage/sessions/test_metadata.py::*` — scope-reason: the workspace-identity column round-trips through session persistence
@@ -1161,6 +1251,15 @@ Targets:
 - `tests/servers/websocket/chat/test_runtime_manager.py::*` — scope-reason: shared-client identity tests split into daemon-preservation and per-session ownership cases
 - `tests/test_runner_lifecycle.py::*` — scope-reason: the shared-codex-client bootstrap identity test splits into daemon-preservation and per-session factory cases
 - `tests/servers/websocket/chat/test_launch_contracts.py`
+- `src/gobby/runner_init/__init__.py::*` — scope-reason: consumer of `init_servers`; re-anchored when that contract changes
+- `src/gobby/servers/websocket/chat/backends/grok.py::*` — scope-reason: consumer of `ACPWebChatBackend`; re-anchored when that contract changes
+- `src/gobby/servers/websocket/chat/backends/qwen.py::*` — scope-reason: consumer of `ACPWebChatBackend`; re-anchored when that contract changes
+- `tests/adapters/test_acp_client_session_lifecycle.py::*` — scope-reason: consumer of `ACPWebChatBackend`; re-anchored when that contract changes
+- `tests/config/test_restart_config_consumers.py::*` — scope-reason: consumer of `init_servers`; re-anchored when that contract changes
+- `tests/runner_init/test_config_runtime_startup.py::*` — scope-reason: consumer of `init_servers`; re-anchored when that contract changes
+- `tests/servers/test_local_llm.py::*` — scope-reason: consumer of `create_session`; re-anchored when that contract changes
+- `tests/servers/websocket/chat/test_clear_context_contract.py::*` — scope-reason: consumer of `attach_session`; re-anchored when that contract changes
+- `tests/servers/websocket/chat/test_managed_plan_broadcast.py::*` — scope-reason: consumer of `attach_session`; re-anchored when that contract changes
 
 SRT adoption (commit `af1908b3e`) reached only the spawn path — the spawn and resume
 executors and the tmux spawner. `prepare_sandbox_launch` is called from exactly two places,
@@ -1233,7 +1332,29 @@ composes with both. `WebChatRuntimeManager.__init__` now takes
 `web_chat_sandbox_config`/`web_chat_sandbox_policy_hash`, and pushes `set_sandbox_config`
 to every backend. The post-hydration launch must consume *that* per-creation config and
 hash — one resolution per `create_session`, never a second `DaemonConfig` read at launch
-time, or the hash the session persists and the policy SRT enforces can diverge. Second,
+time, or the hash the session persists and the policy SRT enforces can diverge.
+
+Naming that requirement is not enough, because `_refresh_sandbox_config` writes
+manager-wide fields and pushes `set_sandbox_config` to shared backend instances. Launch
+is asynchronous and later, so two overlapping `create_session` calls with a `DaemonConfig`
+change between them leave the first launch reading the second creation's policy off the
+manager while persisting the first creation's hash — the exact divergence the rule
+forbids, arrived at through shared mutable state rather than a second read. The carrier
+is therefore explicit, and it is assembled where every field is already final.
+`_refresh_sandbox_config` **returns** an immutable policy snapshot — the resolved
+`SandboxConfig` and its policy hash — in addition to updating the manager fields that
+non-launch consumers still read. It cannot carry the project path: `create_session` takes
+no path argument, and the repository path and any pending worktree override are resolved
+later, at the post-hydration seam. `_create_chat_session_inner` therefore combines that
+snapshot with the resolved path into the immutable per-creation `SessionLaunchContext`
+once the path is final, and passes that value object through `_session.py` into
+`_session_launch.py`, and the launch path reads sandbox policy **only** from its context
+argument — never from `self.web_chat_sandbox_config`, never from
+`self.web_chat_sandbox_policy_hash`. Any backend that needs the policy at launch receives
+it as a call argument rather than through `set_sandbox_config` state. The interleaving is
+tested directly: two creations with a config change between them, the first launch
+delayed until after the second creation completes, asserting the first session launches
+under and persists its own policy and hash. Second,
 `create_session` rejects any provider whose `PROVIDER_CAPABILITIES` row lacks
 `sensitive_path_enforcement` when sandboxing is enabled (today only Claude sets it).
 Under `backend="srt"` the sensitive-root contract is SRT's, so the gate is satisfied by
@@ -1268,13 +1389,13 @@ version bumps. Launch surfaces:
   the canonical resolved workspace path is recorded on the session row when the
   session's workspace is first resolved — spawn-time worktree, web-chat post-hydration
   project path, or session-start adoption — carried by the numbered migration
-  `crates/gcore/assets/schema/migrations/402_sessions_workspace_path.sql`, which this
-  deliverable claims; 4.1's claim-generation and receipt-effects migrations are 403
-  and 404. The live migration home is the gcore embedded-asset set: 371–375 were
+  `crates/gcore/assets/schema/migrations/403_sessions_workspace_path.sql`, which this
+  deliverable claims; 4.1's claim-generation and receipt-effects migrations are 404
+  and 405. The live migration home is the gcore embedded-asset set: 371–375 were
   consumed pre-park and flattened into the sealed baseline at `BASELINE_VERSION` 375,
-  376–401 are registered in `crates/gcore/src/schema/assets.rs`, and the plan claims
-  the contiguous 402–404 range after the latest applied asset
-  (`401_model_metadata_reasoning.sql`). Each migration lands through the full
+  376–402 are registered in `crates/gcore/src/schema/assets.rs`, and the plan claims
+  the contiguous 403–406 range (6.4 takes 406) after the latest applied asset
+  (`402_task_close_reviews.sql`). Each migration lands through the full
   embedded-asset contract in the Constraints — `EmbeddedMigration` entry in
   `assets.rs`, regenerated `catalog.manifest.json`, refreshed
   `src/gobby/storage/schema_expected_identity.json`, the `latest_version` pins in
@@ -1303,6 +1424,27 @@ version bumps. Launch surfaces:
   lifecycle error when it is absent or invalid — never a repository-root fallback. The
   operation-owned client is acquired through an async context manager or try/finally
   and finalized on every branch — ACP failure, storage failure, and success alike.
+  Validation and launch must not be separable, because the three mutation writers above
+  write atomically but do not serialize with the read-validate-then-launch path: a
+  project switch, worktree switch, or worktree deletion landing between the validation
+  and the `asyncio.create_subprocess_exec` would launch an ACP client under confinement
+  that no longer exists. The identity row therefore carries a **monotonic workspace
+  generation**, incremented by every one of those three writers in the same transaction
+  that changes or tombstones the identity. Close/delete reads the identity and its
+  generation, validates confinement, and — immediately before process creation, after
+  every await in between — re-reads the generation; a changed value aborts the launch
+  with the same truthful fail-closed lifecycle error as an invalid identity, and no
+  subprocess is created. Closing the window rather than narrowing it takes a read on both
+  sides of process creation, because a writer can still commit while
+  `create_subprocess_exec` is in flight: the authorizing read is the last read before
+  creation, and the generation is read once more as soon as the child exists — before it is
+  bound to the operation or issued any request. A change observed in that second read
+  terminates the just-created process tree, finalizes the operation-owned client, and fails
+  closed with the same lifecycle error, so a mutation that lands during creation destroys the
+  child instead of inheriting it. The client is bound only to a generation both reads agree
+  on, so a later change cannot retroactively legitimize it. Each of the three writers gets
+  forced race tests that interleave its mutation before creation and during creation,
+  asserting abort-without-subprocess and terminate-after-creation respectively.
 - **Codex**: the app-server subprocess, moved from shared-warm to session-owned lifetime;
   the provider-native policy threading is superseded. This split reaches runner
   bootstrap, not just the backend: `init_servers` (`runner_init/servers.py:191-193`) creates
@@ -1380,11 +1522,15 @@ new module imports `SandboxConfig`/`ResolvedSandboxPaths` from `sandbox.py`, so
 - 3.1.12 - ACP `session/close` and `session/delete` for inactive and post-restart sessions obtain an operation-owned client whose confinement root is the persisted session workspace identity — recorded at first workspace resolution, validated against project/worktree confinement at use, failing closed when absent or invalid, never falling back to the repository root — under the target session's SRT policy; capability gating and close/expire/delete fallback behavior are preserved, the client is finalized on success and every failure branch, no warm shared ACP subprocess remains, and closed-task, released-task, escalated, deleted-worktree, and post-restart cases plus ACP- and storage-failure finalization are tested. symbol: `ACPSessionLifecycleService`. file: `src/gobby/sessions/acp_lifecycle.py`.
 - 3.1.13 - The daemon-sandbox config suite asserts the new `backend="srt"` bounded-network default and keeps explicit provider-native override coverage. test: `tests/config/test_daemon_sandbox.py`.
 - 3.1.14 - The direct lifecycle suites migrate with the ownership change: the ACP lifecycle suite's `acp_backend` fake becomes the operation-owned client contract, the Claude chat-session suite's start/stop and option-cleanup assertions adopt the shim launch contract, and the websocket session suite pins the post-hydration launch order. test: `tests/sessions/test_acp_lifecycle_service.py`.
-- 3.1.15 - The canonical workspace identity persists on the session row through migration `402_sessions_workspace_path.sql` with model, hydration, serialization, and embedded-asset identity coverage, and the production ACP route constructor supplies the lifecycle service's dependencies; every first-resolution writer persists the validated identity — spawn-time registration (with a persistence case in `tests/agents/test_spawn_executor.py`), hook adoption, and web-chat hydration. file: `crates/gcore/assets/schema/migrations/402_sessions_workspace_path.sql`.
+- 3.1.15 - The canonical workspace identity persists on the session row through migration `403_sessions_workspace_path.sql` with model, hydration, serialization, and embedded-asset identity coverage, and the production ACP route constructor supplies the lifecycle service's dependencies; every first-resolution writer persists the validated identity — spawn-time registration (with a persistence case in `tests/agents/test_spawn_executor.py`), hook adoption, and web-chat hydration. file: `crates/gcore/assets/schema/migrations/403_sessions_workspace_path.sql`.
 - 3.1.16 - Every workspace-identity mutation writer is covered: `handle_set_project` and `handle_set_worktree` atomically update or invalidate the persisted identity before teardown, worktree deletion tombstones referencing identities, and tests cover project switch, worktree switch, deletion before close/delete, and restart before rehydration — a stale or tombstoned identity always fails closed at use. test: `tests/servers/websocket/test_set_worktree.py`.
 - 3.1.17 - The resolver hierarchy and Claude settings helpers move from `sandbox.py` to `sandbox_resolvers.py` with no re-export shim; `resume_executor.py`, `spawn_executor.py`, `spawn_executor_support.py`, `tmux/spawner.py`, `backends/codex.py`, `srt_runtime.py`, and the agents test suites import from the new module, and `sandbox.py` stays below 1,000 lines after the policy-hash rework with headroom for 3.2. file: `src/gobby/agents/sandbox_resolvers.py`.
 - 3.1.18 - The post-hydration launch consumes the sandbox config and policy hash produced by `_refresh_sandbox_config` for that `create_session` call — one `DaemonConfig` resolution per session creation — and the `sensitive_path_enforcement` gate in `create_session` is satisfied by the SRT boundary under `backend="srt"` while remaining per-provider under explicit provider-native; both are pinned per provider in the launch-contract matrix. symbol: `WebChatRuntimeManager._refresh_sandbox_config`. file: `src/gobby/servers/websocket/chat/runtime_manager.py`.
-- 3.1.19 - Migration 402 lands through the embedded-asset contract: an `EmbeddedMigration` entry in `assets.rs`, regenerated `catalog.manifest.json`, refreshed `schema_expected_identity.json` (`latest_version` 402), the `latest_version` pins in `grant/bundle.rs` and `grant/tests.rs`, the identity assertions in `schema_contract.rs` and `cli_contract.rs`, the `runner_tests.rs` enumeration, the freshness counts, the signed golden grant vectors, an untouched `baseline.sql`, and no DDL in Python. file: `crates/gcore/src/schema/assets.rs`.
+- 3.1.19 - Migration 403 lands through the embedded-asset contract: an `EmbeddedMigration` entry in `assets.rs`, regenerated `catalog.manifest.json`, refreshed `schema_expected_identity.json` (`latest_version` 403), the `latest_version` pins in `grant/bundle.rs` and `grant/tests.rs`, the identity assertions in `schema_contract.rs` and `cli_contract.rs`, the `runner_tests.rs` enumeration, the freshness counts, the signed golden grant vectors, an untouched `baseline.sql`, and no DDL in Python. file: `crates/gcore/src/schema/assets.rs`.
+- 3.1.20 - `_refresh_sandbox_config` returns an immutable per-creation policy snapshot (resolved `SandboxConfig` and policy hash); `_create_chat_session_inner` combines it with the repository path resolved at the post-hydration seam into the `SessionLaunchContext` it threads through `_session_launch`, and the launch path reads policy only from that argument, never from manager fields or backend `set_sandbox_config` state. symbol: `WebChatRuntimeManager._refresh_sandbox_config`. file: `src/gobby/servers/websocket/chat/runtime_manager.py`.
+- 3.1.21 - Two interleaved session creations with a `DaemonConfig` change between them — the first launch delayed until the second creation completes — each launch under and persist their own sandbox policy and hash, and a creation carrying a pending worktree override launches under the override's resolved path rather than the pre-resolution project path. test: `tests/servers/websocket/chat/test_servers_websocket_chat_session.py`.
+- 3.1.22 - The workspace-identity row carries a monotonic generation incremented by `handle_set_project`, `handle_set_worktree`, and `LocalWorktreeManager.delete` in the same transaction as the identity change or tombstone. file: `crates/gcore/assets/schema/migrations/403_sessions_workspace_path.sql`.
+- 3.1.23 - Close/delete re-reads the workspace generation immediately before process creation and again as soon as the child exists, before binding or first use: an unchanged value binds the client, while a changed value creates no subprocess in the first window and terminates the just-created process tree in the second, both failing closed with the same lifecycle error; forced races against project switch, worktree switch, and worktree deletion each prove both windows. test: `tests/servers/websocket/chat/test_servers_websocket_chat_session.py`.
 
 ### 3.2 Add the AGY sandbox resolver [category: code] (depends: 3.1)
 `kind: deliverable`
@@ -1457,7 +1603,7 @@ deliverable; `HIDDEN_PROVIDERS` un-hiding is 6.2's.
 Targets:
 - `src/gobby/adapters/agy.py::AgyAdapter`
 - `src/gobby/adapters/agy_contract.py::*` — scope-reason: the module-level hook contract tables (not indexed symbols) gain camelCase payload-key metadata
-- `src/gobby/adapters/capabilities.py::_agy_capabilities`
+- `src/gobby/adapters/capabilities.py::*` — scope-reason: the AGY capability row is corrected and `ContextChannel` gains `INJECT_STEPS`
 - `src/gobby/hooks/event_handlers/_session_start/flow.py::handle_session_start`
 - `src/gobby/hooks/event_handlers/_session_start/flow.py::handle_pre_created_session`
 - `src/gobby/hooks/event_handlers/_session_start/context.py::mark_startup_context_injected`
@@ -1466,9 +1612,9 @@ Targets:
 - `src/gobby/storage/sessions/_terminal.py::_TerminalMixin.update_terminal_pickup_metadata`
 - `src/gobby/workflows/state_manager.py::SessionVariableManager.claim_startup_context`
 - `src/gobby/storage/session_models.py::*` — scope-reason: the Session model, row hydration, and serialization gain the startup-context claim generation together
-- `crates/gcore/assets/schema/migrations/403_sessions_startup_claim_generation.sql`
-- `crates/gcore/assets/schema/migrations/404_hook_receipt_effects.sql`
-- `crates/gcore/src/schema/assets.rs::*` — scope-reason: the 403 and 404 EmbeddedMigration entries register both migrations in MIGRATIONS
+- `crates/gcore/assets/schema/migrations/404_sessions_startup_claim_generation.sql`
+- `crates/gcore/assets/schema/migrations/405_hook_receipt_effects.sql`
+- `crates/gcore/src/schema/assets.rs::*` — scope-reason: the 404 and 405 EmbeddedMigration entries register both migrations in MIGRATIONS
 - `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: regenerated catalog entries for the claim-generation column and the hook_receipt_effects table
 - `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: latest_version, latest_checksum, and assets_root_hash follow the new latest asset
 - `crates/gcore/src/grant/bundle.rs::*` — scope-reason: the pinned latest_version literal follows the new latest asset
@@ -1499,7 +1645,6 @@ Targets:
 - `crates/ghook/schemas/delivery-receipt.v1.schema.json`
 - `schemas/delivery-receipt.v1.schema.json`
 - `crates/ghook/src/action.rs::skip_stdout_json`
-- `src/gobby/adapters/capabilities.py::ContextChannel`
 - `tests/adapters/test_capabilities.py::test_agy_hook_capabilities_have_no_live_transport_claims`
 - `tests/adapters/test_agy_contract.py::*` — scope-reason: the alias table and decode helper join the contract-data tests
 - `crates/ghook/src/output.rs::*` — scope-reason: emission-plus-flush returns an I/O result that gates acknowledgment enqueue
@@ -1528,7 +1673,7 @@ Targets:
 - `src/gobby/workflows/engine/injection_tracking.py::InjectionTrackingMixin._filter_and_track_new_review_lessons`
 - `tests/hooks/test_hook_extracted_helpers.py::*` — scope-reason: the evaluator-result merging cases adjacent to the staged dedupe seam stay green through the boundary move
 - `tests/hooks/test_hook_manager_extra.py::*` — scope-reason: TestDedupMemoryResults and TestDedupSkillResults directly assert the eager claim_set_variable_values dedupe contract and migrate to receipt-staged boundaries
-- `src/gobby/workflows/definitions.py::RuleEffect`
+- `src/gobby/workflows/definitions.py::*` — scope-reason: `RuleEffect` gains an explicit delivery disposition defaulting to eager
 - `src/gobby/install/shared/workflows/rules/memory-lifecycle/guard-plan-memory-writes.yaml::*` — scope-reason: the acknowledge_variable guard declares the on_receipt delivery disposition
 - `src/gobby/install/shared/workflows/rules/memory-lifecycle/memory-capture-nudge.yaml::*` — scope-reason: the inject_context plus one-shot set_variable guards declare the on_receipt disposition
 - `src/gobby/install/shared/workflows/rules/plan-mode/handle-plan-mode-entry.yaml::*` — scope-reason: both rules' one-shot guards declare the on_receipt disposition
@@ -1561,7 +1706,7 @@ Targets:
 - `tests/workflows/test_rule_yaml_sync.py::*` — scope-reason: first-run, repeated-run zero-writes, ambiguous-rollback, partial-failure, and concurrent-edit disposition-migration cases join the direct sync suite
 - `tests/test_runner_lifecycle.py::*` — scope-reason: the daemon-startup seam gains cases proving the non-dev disposition migration runs exactly once before hook service, aborts on an ambiguous or partial diagnostic, and proceeds on a clean zero-write repeat
 - `tests/test_runner_maintenance_startup.py::*` — scope-reason: the injected-loop harness proves the receipt-retention and quarantine pruning owners register and schedule exactly once in start_periodic_tasks
-- `src/gobby/runner.py::GobbyRunner`
+- `src/gobby/runner.py::*` — scope-reason: daemon startup publishes the receipt-capability record before runner construction
 - `src/gobby/runner_lifecycle_shutdown.py::_cancel_periodic_tasks`
 - `tests/test_runner_shutdown.py::*` — scope-reason: shutdown cases prove both retention-loop tasks join failure tracking and are cancelled and awaited exactly once before hook storage and database teardown
 - `tests/cli/test_sync_reinstall.py::*` — scope-reason: typed-failure and intact-row cases for ambiguous/partial disposition results
@@ -1575,6 +1720,16 @@ Targets:
 - `tests/servers/routes/test_hold_open_gate.py::*` — scope-reason: the raw envelope constructor gains the supported response-capability value
 - `tests/servers/test_http_endpoints.py::*` — scope-reason: the raw envelope constructor gains the supported response-capability value
 - `tests/servers/test_http_server.py::*` — scope-reason: the raw envelope constructor gains the supported response-capability value
+- `crates/ghook/src/main.rs::*` — scope-reason: consumer of `write_runtime_stamp`; re-anchored when that contract changes
+- `src/gobby/adapters/__init__.py::*` — scope-reason: consumer of `AgyAdapter`; re-anchored when that contract changes
+- `src/gobby/cli/install_setup.py::*` — scope-reason: consumer of `sync_bundled_content_to_db`; re-anchored when that contract changes
+- `tests/cli/installers/test_bundled_sync_logging.py::*` — scope-reason: consumer of `sync_bundled_content_to_db`; re-anchored when that contract changes
+- `tests/cli/installers/test_shared.py::*` — scope-reason: consumer of `sync_bundled_content_to_db`; re-anchored when that contract changes
+- `tests/e2e/test_stateless_ambient_session.py::*` — scope-reason: consumer of `sync_bundled_content_to_db`; re-anchored when that contract changes
+- `tests/mcp_proxy/tools/workflows/test_registry_surface.py::*` — scope-reason: consumer of `sync_bundled_content_to_db`; re-anchored when that contract changes
+- `tests/test_runner_model_metadata_refresh.py::*` — scope-reason: consumer of `_cancel_periodic_tasks`; re-anchored when that contract changes
+- `tests/wiki/test_watcher_lifecycle.py::*` — scope-reason: consumer of `_cancel_periodic_tasks`; re-anchored when that contract changes
+- `tests/workflows/test_hook_evaluation_timeout.py::*` — scope-reason: consumer of `_run_adapter_hook`; re-anchored when that contract changes
 
 Two defects. First, AGY sends **camelCase protojson** payloads — `conversationId`,
 `transcriptPath`, `workspacePaths`, `stepIdx`, `toolCall` — but the adapter
@@ -1644,7 +1799,7 @@ the session row's `context_injected boolean` (`crates/gcore/assets/schema/baseli
 identify the claimant for commit, rollback, or invalidation. The marker becomes a durable
 claim **generation**: a token-bearing record at the atomic owner with claim, commit,
 compare-and-rollback, and invalidate operations, carried by a new numbered sessions
-migration (`crates/gcore/assets/schema/migrations/403_sessions_startup_claim_generation.sql`,
+migration (`crates/gcore/assets/schema/migrations/404_sessions_startup_claim_generation.sql`,
 through the embedded-asset contract in the Constraints; the sealed baseline is untouched)
 plus `Session` model/row hydration and serialization. The generation is allocated **before executor
 submission**, and that allocation must have an identity to claim against:
@@ -1805,9 +1960,9 @@ acknowledgments generate no receipts of their own, and a consumed acknowledgment
 terminalizes the original envelope without re-executing its hook. The receipt
 states have a concrete storage authority, not just behavioral prose: a
 relational receipt-effects table — receipt id as primary key, original envelope
-id, canonical session identity, delivery generation, state, staged payload, and transition
-timestamps — lands as migration
-`crates/gcore/assets/schema/migrations/404_hook_receipt_effects.sql` (through the
+id, **current envelope id**, canonical session identity, delivery generation, state,
+staged payload, and transition timestamps — lands as migration
+`crates/gcore/assets/schema/migrations/405_hook_receipt_effects.sql` (through the
 embedded-asset contract; the sealed baseline is untouched) with a dedicated storage
 module (`storage/hook_receipts.py` — DML only; the table DDL lives exclusively in the
 migration) owning the compare-and-set transition guards,
@@ -1816,18 +1971,22 @@ restart recovery, and cleanup APIs; the inbox acknowledgment consumer, the
 no-ops all mutate state through that one authority. The table's growth is
 bounded by an explicit per-state retention lifecycle, not a named-but-ownerless
 cleanup API — and the lifecycle is numerically implementable, not adjectivally
-"explicit": the recovery/idempotency window is a named constant,
-`HOOK_RECEIPT_IDEMPOTENCY_WINDOW`, with a fixed default declared in
-`storage/hook_receipts.py` (configuration may override it; the default is the
-contract), measured on wall-clock time against the row's recorded transition
+"explicit": the recovery/idempotency window is a fixed named constant,
+`HOOK_RECEIPT_IDEMPOTENCY_WINDOW`, declared in `storage/hook_receipts.py` with no
+configuration override — one bounded window satisfies the requirement, no operator or
+profile needs a second value, and a knob with a single value is surface without a
+consumer — measured on wall-clock time against the row's recorded transition
 timestamp — the cutoff is `transition_timestamp + window`, and a row becomes
 prune-eligible strictly **after** the cutoff (a row exactly at the boundary is
 retained). `prepared` rows are never pruned. `released` rows have both exits
 defined, not merely named: when the released payload moves to the next durable
 envelope, the **same receipt row** atomically re-prepares — a compare-and-set
-from `released` to `prepared` that records envelope lineage (the original
-envelope id is kept and the current envelope id updated) so a receipt is one
-delivery obligation across however many envelopes carry it; and the terminal
+from `released` to `prepared` that records envelope lineage in two distinct
+columns: the immutable `original_envelope_id` is kept and the mutable
+`current_envelope_id` is set to the new carrying envelope in the same statement that
+increments the delivery generation, so a receipt is one delivery obligation across
+however many envelopes carry it and the row always names the envelope whose emission
+the current attempt is waiting on; and the terminal
 owners (`Stop`, both expiry owners) compare-and-set from `released` to
 `terminal-undelivered` exactly as they do from `prepared`, so a released row
 always has a reachable terminal transition and can never be permanently
@@ -1865,9 +2024,13 @@ and commits a receipt, and a session that ends on the fallback path — `Stop`
 or expiry with no durable successor — records terminal-undelivered exactly
 as a transport loss does; and terminal
 owners compare-and-set only from `prepared` or `released` — never from
-`acknowledged` — so an acknowledgment durably
-enqueued before a `Stop` or expiry wins the CAS and a late acknowledgment
-arriving after terminal-undelivered is a recorded no-op. The residual crash window is stated
+`acknowledged`. A durable enqueue is not itself a state transition, so a `Stop`
+or expiry landing between ghook's enqueue and the drain terminalizes first; an
+exact acknowledgment for the current delivery generation arriving within the
+retention window then compare-and-sets `terminal-undelivered` back to
+`acknowledged` and commits its staged effects, so a delivery the provider
+already saw is never discarded, while stale-generation, already-acknowledged,
+and missing-row acknowledgments stay terminal no-ops. The residual crash window is stated
 honestly: a ghook death after a successful write but before the acknowledgment
 persists means provider-visible presentation is **at-least-once** — the generation
 commit and every staged effect are compare-and-set exactly-once, and
@@ -2114,7 +2277,13 @@ the two `flow.py::handle_session_start` edits are thereby ordered, not concurren
 Each hook fires in a separate `ghook`
 process, so the adapter has no process-local "first event" state to consult: it emits the
 synthetic phase unconditionally, and idempotency lives at the session registration
-boundary — `handle_session_start` keyed by provider plus `conversationId`. Repeated
+boundary — `handle_session_start` keyed by the canonical session row that the
+transactional resolve-or-adopt-or-register helper returns after full validation, never by
+provider plus `conversationId`, which this section already proved cannot distinguish
+project, machine, session type, or a pre-created row. `conversationId` remains the
+provider-native external identity carried on that canonical row (the `external_id`
+component of the four-column `idx_sessions_unique` tuple) and is never the idempotency key
+on its own. Repeated
 synthetic `SESSION_START` events for one conversation must yield one canonical session,
 one startup-context injection, and one transcript association, while every `PreInvocation`
 still receives its own `BEFORE_AGENT` dispatch — first and repeated invocations are both
@@ -2201,7 +2370,47 @@ because AGY does not honor them. Because `force_continue` is unbounded on AGY's 
 the adapter owns the bound: the existing `_is_cancelled_after_agent` heuristic stays
 and the adapter emits `force_continue` at most `AGY_FORCE_CONTINUE_LIMIT` consecutive
 times per execution (a module constant in `agy_contract.py`), after which a deny is
-downgraded to an `ephemeralMessage`-only response. Tool-failure observation never
+downgraded to an `ephemeralMessage`-only response.
+
+The counter cannot live in the adapter and cannot be daemon-global. Each hook fires in
+its own `ghook` process against a fresh per-request adapter instance, so adapter-local
+state counts nothing across requests; a process-wide counter would let one session's
+denials bound another's. The counter is therefore a durable per-session row keyed by
+`(canonical_session_id, execution_num)` — the canonical session identity that §4.1's
+resolve/adopt/register returns, and AGY's `executionNum` from the `PostInvocation`
+payload — owned by the same receipt-effects storage authority
+(`storage/hook_receipts.py`) that already owns staged one-shot effects, so it inherits
+that module's transaction boundary, restart recovery, and retention lifecycle instead of
+introducing a second durable ledger. Its transitions are:
+
+- **Increment** commits at the receipt boundary, in the same transaction that prepares
+  the `force_continue` response's receipt — never at response construction — so a
+  response built and then discarded before preparation never consumes budget. The budget
+  is deliberately conservative past that point: preparation consumes one slot, and a later
+  ghook write failure does not refund it, because the daemon cannot observe that failure
+  at prepare time and an unrefunded slot errs toward the bound rather than past it. The
+  increment is an atomic compare-and-set returning the new count;
+  concurrent `PostInvocation` hooks for one execution serialize on the row, and the loser
+  reads the incremented value rather than duplicating it.
+- **Reset** happens on a new `executionNum` for the same session (a fresh row, so the
+  previous execution's count is never consulted) and on terminal completion — the `Stop`
+  handler and both session-expiry owners retire the row alongside the receipt rows they
+  already terminalize.
+- **Replay** of a duplicate acknowledgment or a re-delivered `PostInvocation` for an
+  already-counted receipt is a no-op: the count belongs to the receipt's prepare, so a
+  receipt that is already `prepared` or `acknowledged` never increments again.
+- **Restart** preserves the count because the row is durable; a daemon restart mid-
+  execution resumes at the persisted value rather than granting a fresh budget.
+- **Identity-less fallback** emits no `force_continue` at all. The
+  `direct_post_after_enqueue_failure` path creates no receipt, so it has no budget row to
+  charge, and repeated fallback deliveries across consecutive enqueue failures could
+  otherwise present unbounded continuations. That path emits only the explanatory
+  `ephemeralMessage` step, so a continuation is never presented without a durable slot
+  behind it.
+- At exactly `AGY_FORCE_CONTINUE_LIMIT` the next deny is downgraded; the limit-th
+  emission is still a `force_continue`.
+
+Tool-failure observation never
 relies on `PostToolUse`: `AFTER_TOOL` is absent for failed tools on AGY, so failure
 is visible only through the stream (§5.1) and the transcript (§4.2).
 
@@ -2220,18 +2429,23 @@ is visible only through the stream (§5.1) and the transcript (§4.2).
 - 4.1.11 - Pending-message delivery moves to the staged receipt commit for all six providers: the provider matrix — the five incumbents plus AGY — proves prepare-without-mark, acknowledged commit, transport release, duplicate-ack no-op, daemon restart, and terminal expiry. test: `tests/hooks/test_pending_message_provider_contracts.py`.
 - 4.1.12 - Adapter timeout is a retryable envelope outcome with worker-exit fencing and a decoupled provider action: the retryable non-2xx carries a stable `retry_kind` discriminator and the 2.3-computed criticality action — `ingress_backpressure` keeps ghook's unconditional continue with retention, `adapter_timeout` honors the computed action with critical lifecycle hooks failing closed and noncritical hooks including every AGY event continuing — the envelope-claim disposition is decided at the finalization of the shielded executor future by compare-and-set on the lease token — a completed worker terminally processes the envelope with no replay, a failed worker releases the claim for daemon replay, and replay before finalization backs off — replay completes daemon-side effects only and never commits the claim generation or fabricates a provider-visible response, the uncommitted startup context re-delivers on the next live `PreInvocation`, and a forced-overlap test covers session registration, a non-idempotent rule, pending-message consumption, and activity mutation, plus non-AGY response-bearing critical and noncritical timeout cases in both retry classes pinning the same fencing and dispositions. test: `tests/servers/routes/test_hooks_agy_dispatch.py`.
 - 4.1.13 - `hooks.py` remains below 1,000 lines, or the adapter-execution and envelope-finalization claim-lifecycle seam is decomposed in the same task. file: `src/gobby/servers/routes/mcp/hooks.py`.
-- 4.1.14 - The claim generation lands as a numbered gcore migration and in the incumbent suites: the migration is registered through the embedded-asset contract (the number is claimed at implementation — 403 as of this revision, after 3.1's workspace-identity migration takes 402 with 376–401 registered in `crates/gcore/src/schema/assets.rs`; the receipt-effects migration takes 404 — and the range is re-checked against the applied set at implementation time, since parked plans go stale) with schema-identity coverage, and the hook fixtures and session-storage suites that hardcode the eager `context_injected` boolean — the direct handler case in `tests/hooks/event_handlers/test_session_variable_preservation.py` and the `update_terminal_pickup_metadata` signature pin in `tests/storage/test_sessions_import.py` included — re-anchor to claim, commit, rollback, and invalidate boundaries. test: `tests/storage/test_schema_contract.py`.
-- 4.1.15 - One-shot response effects are staged behind the versioned delivery receipt, backed by the relational receipt-effects storage authority (`storage/hook_receipts.py`, migration `404_hook_receipt_effects.sql` registered through the embedded-asset contract, with focused storage tests in `tests/storage/test_hook_receipts.py`): the receipt carries `receipt_id`, the original envelope id, canonical session identity, and the monotonic delivery generation, echoed by the acknowledging ghook; ghook acknowledges only after emission-plus-flush succeeds — `output.rs` returns the I/O result and receipt metadata is stripped before action mapping; the original envelope is retained until the acknowledgment is durably enqueued; the identity-less `direct_post_after_enqueue_failure` fallback is explicit at-least-once presentation — the emitted response carries the one-shot payload while no receipt is created and no effect or dedupe claim commits, repeated presentation across consecutive enqueue failures is the tested mode, a later durable hook creates and commits the receipt, and a fallback-only session ending in Stop or expiry records terminal-undelivered; terminal owners compare-and-set only from prepared or released — never from acknowledged — so a durably enqueued acknowledgment beats a later Stop or expiry; the drain routes acknowledgments to a dedicated idempotent compare-and-set consumer where the CAS keys on `receipt_id`, delivery generation, and prepared state together — a stale-generation ack from an earlier carrying envelope is a recorded terminal no-op — duplicate direct and replayed acks are no-ops, no acknowledgment generates a receipt of its own, and a consumed acknowledgment terminalizes the original envelope without re-executing its hook; staged effects traverse durable prepared, acknowledged, released, and terminal-undelivered states with the `Stop` handler and both expiry owners recording terminal-undelivered; and write-failure, partial-flush-failure, death-after-write-before-ack, ack-write disk and permission failure, original-versus-ack drain ordering, queued-ack-then-Stop, restart recovery, duplicate replay, single-turn timeout, disconnect-after-persistence, acknowledged-delivery, pending-message rollback, repeated-enqueue-failure-with-no-durable-successor, durable-recovery-after-fallback-only-stretch, and stale-generation-ack-after-release-and-re-prepare cases are tested. test: `tests/servers/routes/test_hooks_agy_dispatch.py`.
+- 4.1.14 - The claim generation lands as a numbered gcore migration and in the incumbent suites: the migration is registered through the embedded-asset contract (the number is claimed at implementation — 404 as of this revision, after 3.1's workspace-identity migration takes 403 with 376–402 registered in `crates/gcore/src/schema/assets.rs`; the receipt-effects migration takes 405 — and the range is re-checked against the applied set at implementation time, since parked plans go stale) with schema-identity coverage, and the hook fixtures and session-storage suites that hardcode the eager `context_injected` boolean — the direct handler case in `tests/hooks/event_handlers/test_session_variable_preservation.py` and the `update_terminal_pickup_metadata` signature pin in `tests/storage/test_sessions_import.py` included — re-anchor to claim, commit, rollback, and invalidate boundaries. test: `tests/storage/test_schema_contract.py`.
+- 4.1.15 - One-shot response effects are staged behind the versioned delivery receipt, backed by the relational receipt-effects storage authority (`storage/hook_receipts.py`, migration `405_hook_receipt_effects.sql` registered through the embedded-asset contract, with focused storage tests in `tests/storage/test_hook_receipts.py`): the receipt row carries `receipt_id`, the immutable `original_envelope_id`, the mutable `current_envelope_id`, canonical session identity, and the monotonic delivery generation — re-prepare sets `current_envelope_id` to the new carrying envelope in the same compare-and-set that increments the generation, and storage tests assert both columns after a release-and-re-prepare while the wire acknowledgment echoes `receipt_id`, the original envelope id, and the generation; ghook acknowledges only after emission-plus-flush succeeds — `output.rs` returns the I/O result and receipt metadata is stripped before action mapping; the original envelope is retained until the acknowledgment is durably enqueued; the identity-less `direct_post_after_enqueue_failure` fallback is explicit at-least-once presentation — the emitted response carries the one-shot payload while no receipt is created and no effect or dedupe claim commits, repeated presentation across consecutive enqueue failures is the tested mode, a later durable hook creates and commits the receipt, and a fallback-only session ending in Stop or expiry records terminal-undelivered; terminal owners compare-and-set only from prepared or released — never from acknowledged — and because a durably enqueued acknowledgment is not yet a state transition, an exact acknowledgment for the current delivery generation arriving within the retention window also compare-and-sets terminal-undelivered back to acknowledged and commits its staged effects, so a Stop or expiry landing between ghook's durable enqueue and the drain cannot discard a delivery the provider already saw, while stale-generation, already-acknowledged, and missing-row acknowledgments stay terminal no-ops; the drain routes acknowledgments to a dedicated idempotent compare-and-set consumer whose one authoritative predicate keys on `receipt_id`, delivery generation, and source state and admits exactly two source cases — `prepared`, and `terminal-undelivered` only for an exact current-generation acknowledgment inside the retention window — committing the staged effects atomically with whichever transition succeeds and leaving every other source state, released and expired rows included, a recorded no-op — a stale-generation ack from an earlier carrying envelope is a recorded terminal no-op — duplicate direct and replayed acks are no-ops, no acknowledgment generates a receipt of its own, and a consumed acknowledgment terminalizes the original envelope without re-executing its hook; staged effects traverse durable prepared, acknowledged, released, and terminal-undelivered states with the `Stop` handler and both expiry owners recording terminal-undelivered; and write-failure, partial-flush-failure, death-after-write-before-ack, ack-write disk and permission failure, original-versus-ack drain ordering, queued-ack-then-Stop-then-drained-ack-commit, restart recovery, duplicate replay, single-turn timeout, disconnect-after-persistence, acknowledged-delivery, pending-message rollback, repeated-enqueue-failure-with-no-durable-successor, durable-recovery-after-fallback-only-stretch, and stale-generation-ack-after-release-and-re-prepare cases are tested. test: `tests/servers/routes/test_hooks_agy_dispatch.py`.
 - 4.1.16 - The envelope processing marker is a verifiable ownership lease at the route seam: renewed while the shielded future is live, reclaimable only after lease expiry plus failed owner-liveness validation, finalized by compare-and-set — with a worker forced past the replay grace period retaining exclusion, daemon-death recovery, and losing-owner finalization each pinned. test: `tests/servers/test_mcp_routes.py`.
 - 4.1.17 - Every response-visible one-shot producer stages through the receipt authority: rule one-shot guards and sibling `set_variable`/`mcp_call` success variables, staged-memory injected-ID finalization, the discovery-dedupe claims (`dedup_memory_results`/`injected_memory_ids`, `dedup_skill_results`/`suggested_skill_names`, `_filter_and_track_new_review_lessons`/`injected_review_lesson_ids`), and the first-turn agent-preamble guard each commit on acknowledgment, release on transport loss, and terminalize on Stop or expiry — a write failure before emission suppresses no future delivery, and the rule-persistence, delivery-pipeline, and extracted-helper suites migrate to the staged boundaries — with the direct owners correctly attributed: the eager `claim_set_variable_values` dedupe contract lives in `TestDedupMemoryResults` and `TestDedupSkillResults` in `tests/hooks/test_hook_manager_extra.py`, which migrate to prepare-without-claim, acknowledged-commit, transport-loss release, duplicate-ack no-op, and terminalization cases while their ID-less and fail-open filtering cases are retained, and the first-turn preamble suite `tests/hooks/test_agent_events_coverage.py` re-anchors its first-prompt, persona-switch, and rehydration cases to staged guard boundaries, with the prior-activity stale-repair branch explicitly classified eager — it marks the guard from prior-session evidence and delivers no payload, so it pairs with no receipt. The split is producer-declared: `RuleEffect` carries the explicit delivery disposition (`eager` default, `on_receipt` on delivery-suppressing mutations, grouped with the payload they suppress within one fired rule), staged-commit code never infers one-shot status from sibling variable diffs or condition shapes, deliberately per-turn unguarded context and ordinary state stay eager, and the model round-trip and legacy-row deserialization are pinned in `tests/workflows/test_rule_models.py`. Propagation covers every ownership class: the bundled sweep enumerates all one-shot-guard templates — `guard-plan-memory-writes.yaml`, `memory-capture-nudge.yaml`, `handle-plan-mode-entry.yaml` (both rules), `discover-skill-hubs-on-turn-start.yaml` — while the sync path's typed data-migration/validation owner writes an explicit disposition onto matching user- and project-owned definitions preserving ownership and enabled toggles, fails ambiguous rows with an actionable diagnostic, and installed-global, user-global, and project-owned rows plus a mixed eager-plus-staged single-evaluation case are each tested. The direct behavioral suites for the edited templates — `tests/workflows/test_memory_lifecycle_rules.py`, `test_plan_mode_rules.py` (both rules), and `test_skill_discovery_rules.py` — assert each rule's eager/`on_receipt` payload grouping; `src/gobby/install/bundled_content_manifest.json` is regenerated with the YAML edits and the committed-manifest parity test stays green; and the disposition migration has one ordered production trigger — the narrow rule-disposition entry point invoked unconditionally from `runner_init/storage.py` at daemon startup, completing before receipt-capability activation, while the full `sync_bundled_content_to_db` aggregator stays install/CLI/dev-mode-only — applying by definition-version compare-and-set with a zero-write second run, every caller (installer, CLI sync, direct CLI `cli/sync.py`, MCP reload `_import.py`) propagating the failure diagnostic, and first-run, repeated-run zero-writes, ambiguous-rollback, partial-failure, and concurrent-edit cases pinned in `tests/workflows/test_rule_yaml_sync.py`; the invariant is write-preserved after activation: one shared write-time disposition classifier gates every post-activation rule ingress — MCP `create_rule`/`update_rule`, the HTTP create and full-replacement update endpoints, the CLI rule-file import, and `sync_imported_definition` — persisting explicit `on_receipt` grouping for recognizable delivery suppressors and failing ambiguous definitions with the same rule/effect diagnostic, with post-activation create-and-replace cases in `tests/mcp_proxy/tools/test_rule_tools.py`, `tests/servers/routes/test_rules_routes.py`, `tests/cli/test_cli_rules.py`, and `tests/workflows/test_imports.py` proving no eager one-shot guard activates; the startup trigger — the narrow entry point, unconditional at startup while the full aggregator stays install/CLI/dev-mode-only — is proven at the daemon-startup seam in `tests/test_runner_lifecycle.py` (ordinary non-dev daemon runs the migration exactly once before hook service, ambiguous or partial diagnostic aborts before hooks are served, clean or zero-write repeat proceeds, and the other bundled domains and user-template import are not invoked), and caller propagation is pinned at each direct seam — `tests/cli/test_sync_reinstall.py` and `tests/mcp_proxy/tools/workflows/test_import_reload.py` inject ambiguous and partial sync results and assert daemon reload/notification and stale-cache activation suppressed and the rule/effect diagnostic preserved, the CLI failure raising through Click with `CliRunner` exit code 1, and the reinstall path keeping its existing per-domain atomic delete-plus-reinstall transaction so both failure shapes leave the seeded installed row set byte-for-byte intact with safe retry. test: `tests/workflows/test_hooks.py`.
 - 4.1.18 - The hook-response protocol is strict-versioned with request-carried provenance: every envelope carries an immutable producer response-capability field beside `schema_version` (`envelope.rs`), preserved through inbox persistence and replay, and the daemon gates on that request-carried value — never the mutable machine-global stamp — before adapter execution or effect preparation; `runtime.rs::write_runtime_stamp` publishes the capability beside `schema_version` and `ghook_version` as installation-health diagnostics joining the `runtime_compat.py` contract; `adapter_timeout` and receipt-bearing responses are never emitted to a request that has not advertised the capability, and the transport-path matrix is pinned — direct and detached POSTs gate before execution; below-floor enqueue-only envelopes are terminally quarantined at drain per the `_quarantine_or_warn` precedent with no adapter or effect execution, lease release, an actionable protocol diagnostic, startup-barrier settlement, and any prepared receipt terminalized undelivered — quarantine retention is the named `HOOK_QUARANTINE_RETENTION_WINDOW` constant with a fixed default in `hooks/inbox.py`, wall-clock against the sidecar-persisted quarantine timestamp, prune-eligible strictly after the cutoff (exact-boundary entries retained), pruned in bounded batches that remove payload and `.meta.json` sidecar coherently with orphan-pair recovery, from the same `start_periodic_tasks` loop as receipt retention, registration proven in the `tests/test_runner_maintenance_startup.py` injected-loop harness and shutdown owned end to end — typed task attribute on `GobbyRunner`, failure tracking, and cancel-and-await exactly once in `runner_lifecycle_shutdown.py::_cancel_periodic_tasks` before hook storage and database teardown, proven in `tests/test_runner_shutdown.py` — with repeated-drain, restart, inside/exact/outside-cutoff retention, orphan-file, bounded-batch, concurrent quarantine-versus-prune, and zero-effect assertions in `tests/hooks/test_inbox.py`; the v1 envelope schema — tracked as two byte-identical copies, `crates/ghook/schemas/inbox-envelope.v1.schema.json` and the root public mirror `schemas/inbox-envelope.v1.schema.json`, today `additionalProperties: false` — admits the optional response-capability property in both copies, kept byte-identical by a focused parity assertion, and an absent field parses cleanly and means legacy/below-floor — never malformed — with missing-field parsing tested through the direct, detached, and enqueue-only paths; every exhaustive `Envelope` literal is owned by the field addition — the diagnostics fixture (`crates/ghook/src/diagnostics.rs::envelope`) populates the response-capability member or migrates to a constructor — and every success-path raw-envelope test fixture carries the supported capability value: the constructors in `tests/servers/routes/mcp/test_hook_session_metadata.py`, `tests/servers/routes/test_hooks_droid_dispatch.py`, `tests/e2e/conftest.py::CLIEventSimulator._hook_envelope`, `tests/e2e/test_daemon_auth.py`, `tests/servers/routes/mcp_endpoints/test_execution_session_end_cleanup.py`, `tests/servers/routes/test_hold_open_gate.py`, `tests/servers/test_http_endpoints.py`, and `tests/servers/test_http_server.py`, while focused missing-field cases keep asserting pre-execution rejection and enqueue-only terminal quarantine; the identity-less fallback stages nothing at any floor; and statusline is asserted to remain a local daemon-free non-effect path outside envelope construction; both version skews plus the reinstall-boundary provenance races — an old envelope drained after reinstall and a still-running old ghook posting after reinstall — are tested, and the V2 reinstall-plus-activation check runs after this deliverable. file: `src/gobby/hooks/runtime_compat.py`.
-- 4.1.19 - Receipt-effects growth is bounded by an implementable per-state retention lifecycle: the recovery/idempotency window is the named `HOOK_RECEIPT_IDEMPOTENCY_WINDOW` constant with a fixed default in `storage/hook_receipts.py`, measured on wall-clock time against the row's recorded transition timestamp with prune eligibility strictly after `transition_timestamp + window` (a row exactly at the boundary is retained); prepared rows are never pruned; released rows have both exits — the same receipt row atomically re-prepares by CAS from released to prepared when its payload moves to the next durable envelope, recording envelope lineage and incrementing the delivery generation so acknowledgments from the earlier carrying envelope can no longer commit, and terminal owners CAS from released to terminal-undelivered exactly as from prepared, so no released row is permanently non-prunable; acknowledged and terminal-undelivered rows become prune-eligible only after the window, a duplicate ack after pruning is a terminal idempotent no-op in the dedicated receipt consumer — a `receipt_id` resolving to no row executes no adapter or effect and writes no new record, with no dependence on any second durable ledger — and pruning runs in bounded indexed batches from the periodic receipt-retention loop registered in `start_periodic_tasks`, its registration proven in the `tests/test_runner_maintenance_startup.py` injected-loop harness (both retention owners schedule exactly once with the intended database and shutdown inputs and join the tracked periodic-task set) and its shutdown owned in the typed runner inventory — declared on `GobbyRunner`, cancelled and awaited exactly once in `_cancel_periodic_tasks` before hook storage and database teardown, with idempotent-shutdown coverage in `tests/test_runner_shutdown.py` — with just-inside-window, exact-boundary, just-outside-window, released-re-prepare, released-terminalization, stale-generation-ack-after-re-prepare, duplicate-ack-after-pruning, restart-recovery, and concurrent ack/terminal/prune race cases tested. file: `src/gobby/storage/hook_receipts.py`.
+- 4.1.19 - Receipt-effects growth is bounded by an implementable per-state retention lifecycle: the recovery/idempotency window is the fixed named `HOOK_RECEIPT_IDEMPOTENCY_WINDOW` constant in `storage/hook_receipts.py`, with no configuration override, measured on wall-clock time against the row's recorded transition timestamp with prune eligibility strictly after `transition_timestamp + window` (a row exactly at the boundary is retained); prepared rows are never pruned; released rows have both exits — the same receipt row atomically re-prepares by CAS from released to prepared when its payload moves to the next durable envelope, keeping `original_envelope_id`, setting `current_envelope_id` to the new carrying envelope, and incrementing the delivery generation in that one statement so acknowledgments from the earlier carrying envelope can no longer commit, and terminal owners CAS from released to terminal-undelivered exactly as from prepared, so no released row is permanently non-prunable; acknowledged and terminal-undelivered rows become prune-eligible only after the window, a duplicate ack after pruning is a terminal idempotent no-op in the dedicated receipt consumer — a `receipt_id` resolving to no row executes no adapter or effect and writes no new record, with no dependence on any second durable ledger — and pruning runs in bounded indexed batches from the periodic receipt-retention loop registered in `start_periodic_tasks`, its registration proven in the `tests/test_runner_maintenance_startup.py` injected-loop harness (both retention owners schedule exactly once with the intended database and shutdown inputs and join the tracked periodic-task set) and its shutdown owned in the typed runner inventory — declared on `GobbyRunner`, cancelled and awaited exactly once in `_cancel_periodic_tasks` before hook storage and database teardown, with idempotent-shutdown coverage in `tests/test_runner_shutdown.py` — with just-inside-window, exact-boundary, just-outside-window, released-re-prepare, released-terminalization, stale-generation-ack-after-re-prepare, duplicate-ack-after-pruning, restart-recovery, and concurrent ack/terminal/prune race cases tested. file: `src/gobby/storage/hook_receipts.py`.
 - 4.1.20 - camelCase aliasing is AGY-local: `agy_contract.py` declares `AGY_PAYLOAD_ALIASES` and the `toolCall{name,args}`→`tool_name`/`tool_input` flatten with `workspacePaths[0]`→`cwd`, `AgyAdapter.translate_to_hook_event` applies it before `ACPHookAdapter` extracts `session_id` and `cwd`, `normalize_tool_fields` and `ACPHookAdapter` gain no AGY keys, and `tool_input` string values decode through `decode_agy_tool_args` iff record 1.1.5 shows encoded-string args. test: `tests/adapters/test_adapters_agy.py`.
 - 4.1.21 - `ContextChannel` gains `INJECT_STEPS`; `_agy_capabilities` declares it on `PreInvocation` and `PostInvocation` only; the hooks route and event enrichment treat it as a live channel; `test_agy_hook_capabilities_have_no_live_transport_claims` is re-anchored to the per-event channels with `transport_capabilities` still empty. symbol: `ContextChannel`. file: `src/gobby/adapters/capabilities.py`.
 - 4.1.22 - Response fields are mapped per record 1.1.24's honored set: `AFTER_AGENT` deny/block emits `terminationBehavior: force_continue` with the reason as an `ephemeralMessage` step, capped at `AGY_FORCE_CONTINUE_LIMIT` consecutive emissions per execution, allow omits it, `terminate` is never emitted; `deny_unless_prior_grant` is emitted only from an explicit `HookResponse` field added against the recorded shape; `force_ask`, `permissionOverrides` (not honored), and `toolCall` inject steps (fatal on AGY) are never emitted and never inferred from `updated_permissions`; and the first synthetic `SESSION_START` of a live conversation produces the `source=agy` line in `~/.gobby/logs/hooks.log` and an AGY session row — the Dispatch Evidence Gate's condition-2 evidence, proven against the committed `hook-payloads.jsonl` fixtures. symbol: `AgyAdapter.translate_from_hook_response`. file: `src/gobby/adapters/agy.py`.
 - 4.1.23 - `PreInvocation` cardinality follows records 1.1.5/1.1.17/1.1.18: under `--input-format stream-json` one process yields one canonical session; the sequence PreInvocation(turn 1, timeout) → Stop(turn 1) → PreInvocation(turn 2) commits the generation exactly once on turn 2 with Stop releasing rather than marking delivered; interactive and print dispatch share the payload-driven path; and because `invocationNum` is a per-turn origin, `invocationNum == 0` dispatches `BEFORE_AGENT` while later invocations in the same turn dispatch `BEFORE_MODEL`. test: `tests/servers/routes/test_hooks_agy_dispatch.py`.
-- 4.1.24 - Migrations 403 and 404 land through the embedded-asset contract (`assets.rs` entries, regenerated `catalog.manifest.json`, `schema_expected_identity.json`, grant bundle pins, the `schema_contract.rs` and `cli_contract.rs` identity assertions, the `runner_tests.rs` enumeration, the freshness counts, the signed golden grant vectors, an untouched `baseline.sql`), `storage/hook_receipts.py` carries DML only, and `delivery-receipt.v1.schema.json` is tracked as two byte-identical copies with a parity assertion. file: `crates/gcore/src/schema/assets.rs`.
+- 4.1.24 - Migrations 404 and 405 land through the embedded-asset contract (`assets.rs` entries, regenerated `catalog.manifest.json`, `schema_expected_identity.json`, grant bundle pins, the `schema_contract.rs` and `cli_contract.rs` identity assertions, the `runner_tests.rs` enumeration, the freshness counts, the signed golden grant vectors, an untouched `baseline.sql`), `storage/hook_receipts.py` carries DML only, and `delivery-receipt.v1.schema.json` is tracked as two byte-identical copies with a parity assertion. file: `crates/gcore/src/schema/assets.rs`.
 - 4.1.25 - The `adapter_timeout` provider-visible continue for agy is the protojson-legal per-event body from `action.rs::skip_stdout_json` (the body 2.3.7 establishes), never `{"continue":true}` nor `{"status":"error"}`, pinned per AGY event in `contract.rs`. file: `crates/ghook/src/action.rs`.
+- 4.1.26 - The `force_continue` budget is a durable row keyed by `(canonical_session_id, execution_num)` owned by `storage/hook_receipts.py`, incremented by atomic compare-and-set in the same transaction that prepares the response's receipt: a response discarded before preparation consumes no slot, and a slot consumed by preparation is never refunded by a later ghook write failure the daemon cannot observe at prepare time. file: `src/gobby/storage/hook_receipts.py`.
+- 4.1.27 - The budget resets on a new `executionNum` and is retired on terminal completion by the `Stop` handler and both expiry owners; a duplicate acknowledgment or re-delivered `PostInvocation` for an already-prepared receipt never increments again, and a daemon restart mid-execution resumes at the persisted count. test: `tests/storage/test_hook_receipts.py`.
+- 4.1.28 - Concurrent `PostInvocation` hooks for one execution serialize on the counter row and the loser reads the incremented value; the limit-th emission is still a `force_continue` and the next deny is downgraded to an `ephemeralMessage`-only response. test: `tests/servers/routes/test_hooks_agy_dispatch.py`.
+- 4.1.29 - The identity-less `direct_post_after_enqueue_failure` fallback never emits `terminationBehavior: force_continue`, emitting only the explanatory `ephemeralMessage` step, so repeated fallback deliveries across consecutive enqueue failures present no continuation without a durable slot behind it, and a durable write failure after preparation still leaves its slot consumed. test: `tests/servers/routes/test_hooks_agy_dispatch.py`.
+- 4.1.30 - `effects.py` (897 lines at this revision) remains below 1,000 lines, or the receipt-staged one-shot grouping and commit-application seam is decomposed in the same task. file: `src/gobby/workflows/engine/effects.py`.
 
 ### 4.2 Add the AGY transcript parser [category: code] (depends: 2.1, 4.1)
 `kind: deliverable`
@@ -2248,6 +2462,9 @@ Targets:
 - `tests/sessions/test_transcript_parsers.py::*` — scope-reason: the frozen registry assertion TestParserRegistry.test_registry_has_correct_parsers gains the agy entry
 - `tests/sessions/test_agy_transcript_parser.py`
 - `tests/tasks/test_agy_validation_evidence.py`
+- `src/gobby/memory/digest.py::*` — scope-reason: consumer of `get_parser`; re-anchored when that contract changes
+- `src/gobby/servers/routes/sessions/analytics.py::*` — scope-reason: consumer of `get_parser`; re-anchored when that contract changes
+- `src/gobby/sessions/processor_types.py::*` — scope-reason: consumer of `_hydrate_registration_from_sidecar`; re-anchored when that contract changes
 
 Add `AgyTranscriptParser` in the new module `src/gobby/sessions/transcripts/agy.py`,
 subclassing `BaseTranscriptParser`, registered in `PARSER_REGISTRY`, and modeled on the
@@ -2303,8 +2520,12 @@ for the `.gemini/antigravity-cli/brain/` form — chunked copies included — is
 `tests/sessions/test_transcript_source.py`; this deliverable consumes it.
 
 Tool calls pair to results by `step_index` order: a `PLANNER_RESPONSE` bearing `tool_calls`
-is followed by its result record. AGY emits no tool-call ID, so derive a stable one from
-conversation id plus `step_index`. Pairing is **positional only**: call-level names are
+is followed by its result record. AGY emits no tool-call ID and `tool_calls` is an array,
+so derive a stable one from conversation id plus `step_index` plus the call's zero-based
+index within that array — two calls in one `PLANNER_RESPONSE` share a `step_index` and
+would otherwise collide on a single ID, overwriting one pending call and mis-attaching its
+result. Pending calls are held as an ordered queue carrying those ordinals, and results
+attach to it in order. Pairing is **positional only**: call-level names are
 snake_case (`list_dir`, `find_by_name`, `run_command`, `call_mcp_tool`) while result
 `type` is `GENERIC` on 1.1.18 (SCREAMING typed names on older versions) and never a case
 transform of the name — names are never compared. `ParsedToolEvent.tool_name` carries
@@ -2322,7 +2543,8 @@ persistence is currently Codex-only — `processor_transcripts.py:220` snapshots
 `parser.snapshot_state()` only when the parser source is `codex` — and the base snapshot
 carries no call/result correlation. Because AGY pairs a `PLANNER_RESPONSE` bearing
 `tool_calls` with a *later* result record by `step_index` order, a restart whose saved
-cursor falls between the two would otherwise lose the pending tool-call ID. Persistence
+cursor falls between the two would otherwise lose the ordered pending-call queue and its
+ordinals. Persistence
 is three gates, not one: `_parse_incremental_records` in `processor_transcripts.py`
 (the codex-only `iter_parse_events`+`finalize` path), the snapshot gate in the same
 module, and the reconstruction-side admission gate in
@@ -2373,7 +2595,7 @@ correlated definitive success restores readiness and close-time context.
 - 4.2.3 - `thinking` on `PLANNER_RESPONSE` is parsed distinctly from `content`. file: `src/gobby/sessions/transcripts/agy.py`.
 - 4.2.4 - Records naming `truncated_fields` parse without raising. file: `src/gobby/sessions/transcripts/agy.py`.
 - 4.2.5 - Malformed lines and unknown record types are tolerated with stable ordering preserved. file: `src/gobby/sessions/transcripts/agy.py`.
-- 4.2.6 - Tool-call IDs are derived stably from conversation id plus `step_index`. file: `src/gobby/sessions/transcripts/agy.py`.
+- 4.2.6 - Tool-call IDs are derived stably from conversation id plus `step_index` plus the call's index within `tool_calls`, so two calls in one `PLANNER_RESPONSE` never collide. file: `src/gobby/sessions/transcripts/agy.py`.
 - 4.2.7 - Incremental reads resume correctly on an append-only file. file: `src/gobby/sessions/transcripts/agy.py`.
 - 4.2.8 - Focused fixture-backed tests cover every record class, unknown `MODEL/*` tools, `truncated_fields`, malformed lines, stable tool-call IDs, interrupted `RUNNING` records, and append-only incremental reads. test: `tests/sessions/test_agy_transcript_parser.py`.
 - 4.2.9 - Success, failure, nonterminal, contradictory, unstructured, and provenance-free AGY outcomes flow through `ParsedToolEvent`, stored `TranscriptEvidence`, readiness, and close-time context with the same fail-closed behavior as the five incumbent providers. test: `tests/tasks/test_agy_validation_evidence.py`.
@@ -2384,6 +2606,7 @@ correlated definitive success restores readiness and close-time context.
 - 4.2.14 - Call/result pairing is positional by `step_index` only; snake_case call names and SCREAMING result types are never compared; `ParsedToolEvent.tool_name` carries the snake_case call name normalized through the shared AGY tool map and the result type is preserved as metadata. file: `src/gobby/sessions/transcripts/agy.py`.
 - 4.2.15 - All three codex-only gates — `_parse_incremental_records`, the snapshot gate, and `_hydrate_registration_from_sidecar`'s `allow_append` — admit agy by parser capability rather than source string, and no sidecar is written under `~/.gemini`. file: `src/gobby/sessions/processor_transcripts.py`.
 - 4.2.16 - AGY transcript records carry no usage: the parser emits `usage=None`, the window-only branch and `ContextUsageSnapshot.from_agy` stay the transcript-side contract, and stream-usage context pressure is owned by 5.2 via `from_token_breakdown`. file: `src/gobby/sessions/transcripts/agy.py`.
+- 4.2.17 - A two-call `PLANNER_RESPONSE` fixture with positional results pairs each result to its own call, and a restart between the call record and the results rehydrates the ordered pending-call queue with its ordinals intact through `snapshot_state`/`hydrate_state`. test: `tests/sessions/test_agy_transcript_parser.py`.
 
 ## P5: AGY Streaming Web Chat
 `kind: framing`
@@ -2594,18 +2817,33 @@ group), not the CLI pid alone. Exactly one terminal event, lock release, last co
 usable id preserved. Never invented semantics.
 
 The read timeout is the 2.4 contract, restated so no implementer invents a different one:
-`DEFAULT_ACP_PROMPT_TIMEOUT_SECONDS` (120 s) as a **per-line inactivity** clock on each
-`readline()`, reset by every received line, with env override
-`GOBBY_AGY_ACP_PROMPT_TIMEOUT_SECONDS`. On expiry: exactly one terminal error event for
+`DEFAULT_ACP_PROMPT_TIMEOUT_SECONDS` (120 s) as a **progress** clock on each
+`readline()`, with env override `GOBBY_AGY_ACP_PROMPT_TIMEOUT_SECONDS`.
+
+The clock renews on **protocol progress only**, never on line arrival. This is the
+difference between a bounded turn and a livelock: §5.1's parser deliberately ignores
+malformed lines, unknown record types, repeated `init` records, and the bookkeeping
+`step_type` values (`user_input`, `checkpoint`, `system_message`, `error_message`,
+`unknown`), and with `--print-timeout 2562047h` there is no absolute bound behind it — so
+a stream emitting one ignored line every 90 s would hold the turn lock and the subprocess
+open indefinitely while producing no result. The backend therefore classifies every line
+before touching the clock: a line that the parser translates into an emitted event, or
+that advances the turn state machine (`init` accepted once, a tool step transition, a
+`result` record), is **progress** and resets the clock; every line the parser ignores is
+**noise** and leaves the clock running. Noise is still consumed and still counted for
+diagnostics — it simply cannot extend the turn. A turn producing nothing but noise
+expires on the progress clock exactly as a silent one does.
+
+On expiry: exactly one terminal error event for
 the turn, termination of the owned subprocess tree, lock release, the last confirmed
 usable conversation id preserved, and a session that remains reconstructable — never a
 silent hang, a duplicate terminal error, or a locked orphaned session.
 
-Two clocks exist and they are different kinds. The wrapper's inactivity clock is
-**renewable** — every received line resets it — while `--print-timeout` is an **absolute
-whole-turn** limit, so no finite value of it can be subordinate to a renewable clock: a
-healthy stream that keeps resetting the inactivity window will eventually cross any
-finite whole-turn bound. Probe record 1.1.13 settles the policy (recorded on 1.1.10,
+Two clocks exist and they are different kinds. The wrapper's progress clock is
+**renewable by progress** — a translated event or turn-state advance resets it, ignored
+noise does not — while `--print-timeout` is an **absolute whole-turn** limit, so no
+finite value of it can be subordinate to a renewable clock: a healthy stream that keeps
+producing progress will eventually cross any finite whole-turn bound. Probe record 1.1.13 settles the policy (recorded on 1.1.10,
 re-confirmed on 1.1.18):
 
 - The flag takes **Go duration syntax** (`90s`, `5m`, `2h30m`) and defaults to `5m0s`;
@@ -2624,7 +2862,7 @@ re-confirmed on 1.1.18):
 - Under `--input-format stream-json` the clock is **per turn**: a process idled 25 s
   past a 2 m timeout between turns survived and answered the next turn.
 
-5.2 therefore passes `--print-timeout 2562047h` and lets the renewable inactivity clock
+5.2 therefore passes `--print-timeout 2562047h` and lets the progress clock
 be the only real limit, exactly as the disabled-or-unbounded branch intended. Because the
 flag is per turn, the default would not kill an idle persistent session, but it would
 still cap a long healthy turn, so the effectively-unbounded value remains mandatory.
@@ -2670,7 +2908,7 @@ is **not** passed at attach.
 - 5.2.9 - After teardown and reconstruction of the managed session, the next turn's argv carries the same `--conversation` id. test: `tests/servers/websocket/chat/test_agy_backend.py`.
 - 5.2.10 - Cancellation or a failed result preserves the last confirmed usable conversation id, matching the post-interrupt resumability recorded by 1.1.8 and 1.1.18. file: `src/gobby/servers/websocket/chat/backends/agy.py`.
 - 5.2.11 - The AGY row joins the launch-contract matrix: exactly one SRT wrapper, bounded-network-policy representation, native `--sandbox` off in the 1.1.7 form, stale-hash refusal, and the 3.2.4 sandbox-policy entries proven at the launch seam — credentials readable, state and transcript roots writable, probe-recorded domains granted, everything else refused — and one real-backend case captures the wrapped argv and the final child environment **together** at the child boundary, proving the canonical identity variables and `launch.provider_env` (TMPDIR included) both survive 3.1's composition algorithm in the production launch. test: `tests/servers/websocket/chat/test_launch_contracts.py`.
-- 5.2.12 - Timeout expiry and reset follow the 2.4 inactivity contract: exactly one terminal error, owned process-tree cleanup, lock release, preserved confirmed conversation id, and a reconstructable session, with expiry and reset-on-activity tests. test: `tests/servers/websocket/chat/test_agy_backend.py`.
+- 5.2.12 - The read clock inherits only §2.4's shared timeout value and environment-override source, renewing on validated AGY protocol progress; expiry follows the same contract — exactly one terminal error, owned process-tree cleanup, lock release, preserved confirmed conversation id, and a reconstructable session — with expiry and progress-renewal tests. test: `tests/servers/websocket/chat/test_agy_backend.py`.
 - 5.2.13 - The turn-limit policy matches the 1.1.13 record: the argv carries `--print-timeout 2562047h` (the accepted effectively-unbounded value; no disable sentinel exists and omission would apply the `5m0s` default), a turn streaming steadily past the former 60-second setting completes under the inactivity clock alone, and a CLI-timeout expiry is asserted as a nonzero exit whose stdout `result{status:ERROR,error:"timeout waiting for response"}` record is routed through the 5.2.7 nonzero-exit path — one terminal error, process-tree cleanup, lock release, and conversation-id preservation — with no zero-exit error payload expected anywhere. test: `tests/servers/websocket/chat/test_agy_backend.py`.
 - 5.2.14 - Provider-native identity survives the five-part session contract end to end through the production handoff: the AGY web-chat subprocess spawn environment carries the canonical `db_session_id`, project id, and source through the ghook-recognized `GOBBY_SESSION_ID`/`GOBBY_PROJECT_ID` context — captured from the real backend launch, not injected by the test — an AGY web-chat session persists and reconstructs its upstream conversation id, a terminal session sharing the same `conversationId` coexists as a distinct row, hooks driven through the actual adapter/hook route resolve the web_chat row by canonical identity and terminal hooks only the terminal row with no external-id fallback selecting across `session_type`, and neither path mints, rebinds, or resumes the other. test: `tests/servers/websocket/chat/test_agy_backend.py`.
 - 5.2.15 - Per record 1.1.16 (negative): the backend has no compaction path, never invokes a `PRE_COMPACT` callback, and a test pins that a `checkpoint` step triggers no lifecycle call; `PRE_COMPACT` drops from the AGY parity claim. test: `tests/servers/websocket/chat/test_agy_backend.py`.
@@ -2678,6 +2916,8 @@ is **not** passed at attach.
 - 5.2.17 - The `result` `usage` object reaches persistence: `_translate_event` emits a `DoneEvent` with input, output, and cache-read tokens and the resolved AGY context window, and `persist_done_metadata` is invoked once per turn with those values. test: `tests/servers/websocket/chat/test_agy_backend.py`.
 - 5.2.18 - Persistent-mode process loss (EOF before `result`, nonzero exit, or `_terminate_handle`) yields exactly one terminal error, preserves the last confirmed conversation id, and the next turn reattaches with `--conversation` carrying it; `switch_model` detaches and reattaches with the same id. test: `tests/servers/websocket/chat/test_agy_backend.py`.
 - 5.2.19 - The AGY child environment never contains `GOBBY_HOOKS_DISABLED`, does contain `GOBBY_WEB_CHAT_CHILD=1`, the argv never carries `--mode`, and plan-mode write blocking is asserted through the native `PreToolUse` deny path (per record 1.1.23). test: `tests/servers/websocket/chat/test_agy_backend.py`.
+- 5.2.20 - The read clock renews only on protocol progress — a translated event, an accepted `init`, a tool-step transition, or a `result` record — and never on a line the parser ignores. file: `src/gobby/servers/websocket/chat/backends/agy.py`.
+- 5.2.21 - An endless low-rate stream of ignored lines (malformed, repeated `init`, unknown record type, and each bookkeeping `step_type`) still expires on the progress clock, yielding exactly one terminal error event, owned process-tree cleanup, turn-lock release, and a session that stays reconstructable. test: `tests/servers/websocket/chat/test_agy_backend.py`.
 
 ### 5.3 Integrate AGY into WebChatRuntimeManager [category: code] (depends: 5.2, 2.5)
 `kind: deliverable`
@@ -2694,6 +2934,9 @@ Targets:
 - `tests/servers/websocket/test_set_provider.py::*` — scope-reason: provider-switch cases gain the agy row across switching, cancellation, teardown, pending-provider state, and confirmation
 - `tests/servers/test_fire_lifecycle_parity.py::*` — scope-reason: the managed web provider lifecycle parity matrix gains a behavioral agy row driving all five lifecycle events
 - `tests/servers/websocket/chat/test_agy_backend.py`
+- `tests/servers/test_local_llm.py::*` — scope-reason: consumer of `create_session`; re-anchored when that contract changes
+- `tests/servers/websocket/chat/test_messaging.py::*` — scope-reason: consumer of `_fire_lifecycle`; re-anchored when that contract changes
+- `tests/servers/websocket/chat/test_session_registry.py::*` — scope-reason: consumer of `_fire_lifecycle`; re-anchored when that contract changes
 
 Replace the two hardcoded AGY rejections — the `RuntimeError` in `create_session` and the
 unavailable `ProviderBackendHealth` in `health` — with real startup health, session creation,
@@ -2806,6 +3049,8 @@ Targets:
 - `tests/agents/detection/test_agents_detection_registry.py::test_bundled_manifests_cover_supported_providers_and_rule_contract`
 - `tests/test_build_backend.py::test_committed_bundled_content_manifest_matches_shared_tree`
 - `src/gobby/install/bundled_content_manifest.json::*` — scope-reason: the agy.toml hash entry is regenerated with the detection-rule rewrite
+- `src/gobby/agents/spawners/__init__.py::*` — scope-reason: consumer of `build_cli_command`; re-anchored when that contract changes
+- `tests/agents/test_command_builder.py::*` — scope-reason: consumer of `build_cli_command`; re-anchored when that contract changes
 
 Remove the early-return rejection in `execute_spawn` and add `_spawn_agy_terminal` alongside
 the five existing spawners. Add AGY to `SPAWN_CAPABLE_PROVIDERS`; the `PROVIDER_CAPABILITIES`
@@ -2974,6 +3219,12 @@ Targets:
 - `tests/ai/test_agy_probe.py::*` — scope-reason: the module docstring's live opt-in reference moves from the deleted test_provider_models.py to the 6.3 collector test
 - `tests/providers/test_providers_registry.py::*` — scope-reason: the registry table test gains the flipped agy flags
 - `tests/servers/routes/test_servers_routes_providers.py::*` — scope-reason: agy availability/supports_web_chat assertions follow the support record
+- `src/gobby/ai/text_generation.py::*` — scope-reason: consumer of `AgyCLITextGenerateAdapter`; re-anchored when that contract changes
+- `src/gobby/ai/tool_chat.py::*` — scope-reason: consumer of `ToolChatService`; re-anchored when that contract changes
+- `tests/ai/test_tool_chat_builder.py::*` — scope-reason: consumer of `_daemon_tool_chat_adapter_factories`; re-anchored when that contract changes
+- `tests/ai/test_tool_chat_speed.py::*` — scope-reason: consumer of `ToolChatService`; re-anchored when that contract changes
+- `web/src/components/activity/agents/AgentsTabData.ts::*` — scope-reason: consumer of `fetchProviderModelCatalog`; re-anchored when that contract changes
+- `web/src/components/settings/sections/ProvidersModelsSection.tsx::*` — scope-reason: consumer of `fetchProviderModelCatalog`; re-anchored when that contract changes
 
 Flip `ProviderMetadata("agy")` to `supports_web_chat=True`, `supports_agent_spawn=True`,
 `live_model_discovery=True` and drop `AGY_UNAVAILABLE_REASON` from it. Replace
@@ -2985,12 +3236,35 @@ would hand AGY prompts to Droid's command and JSON-RPC protocol. Make the CLI-st
 provider-aware and add a dedicated `AgyToolChatAdapter` in the new module
 `src/gobby/ai/_tool_chat_agy.py`, speaking the 5.1/5.2 stream-json transport and
 implementing the full ToolRuntime contract: controlled tools, `ToolLoopLimits`, timeouts,
-cancellation, and normalized results. On 1.1.18 a controlled-tool bridge is
-feasible without a bespoke protocol: the persistent process (`--input-format stream-json`),
-`--json-schema` for structured final output, and MCP registration (Gobby's own MCP server
-is already registered with agy — `agy mcp list` shows it, from the installer's
-`configure_mcp_server_json` write) let Gobby expose controlled tools as MCP tools and observe/deny calls through the native
-`PreToolUse` hook. Record 1.1.12 decided it: **supported.** The recorded transport is the
+cancellation, and normalized results.
+
+The controlled-tool contract has an enforcement boundary, and on 1.1.18 the global MCP
+registration is not it. Gobby's MCP server is registered with AGY once, in the single
+global `~/.gemini/config/mcp_config.json` the installer's `configure_mcp_server_json`
+writes (`agy mcp add` has no per-project or per-process scope and no `--mcp-config` flag
+exists), so that registration exposes one tool set to every AGY process and carries no
+request identity. The `PreToolUse` deny hook cannot substitute for it: a hook that times
+out against the daemon fails open (§2.3), and no per-request call budget can be counted
+from a stateless deny. The boundary is the incumbent one — the request-scoped
+`ToolRuntimeMCPServer` plus `ToolLoopController` (`src/gobby/ai/_tool_chat_mcp_server.py`),
+which `DroidSpawnToolChatAdapter` already starts per request on an authenticated loopback
+socket and hands to its child through init parameters — so `AgyToolChatAdapter` must reach
+that server, and only that server, from the AGY process it owns. Droid's confinement is
+not transferable: it isolates through a temporary `HOME`, and record 1.1.15 proved a
+foreign `HOME` breaks AGY authentication outright.
+
+Whether that confinement is reachable is the one open question, and record 1.1.25 answers
+it: can one AGY process be given a request-correlated MCP server — through environment the
+stdio child inherits, a per-process configuration, or an ephemeral registration bound to a
+single conversation — while the globally registered servers and AGY's own built-in tools
+stay unreachable to that process? A positive record makes `TOOL_CHAT` available on that
+boundary, with the recorded 1.1.12 `PreToolUse` deny transport suppressing built-ins as the
+second gate. A negative record makes `TOOL_CHAT` unavailable with the reason "AGY
+configures MCP servers only globally; a per-request controlled-tool set cannot be confined
+to one process", and the dedicated `AgyToolChatAdapter`, the provider-aware CLI factory,
+and the provider-keyed adapter cache fold away with it — exactly as §6.1 converts on a
+negative interactive-dispatch record. `WEB_CHAT` and `AGENT_SPAWN` are unaffected either
+way. The recorded 1.1.12 transport is the
 `PreToolUse` hook answering `{"decision":"deny","reason":…}` — the denied call becomes a
 `tool` step in `ERROR` state with `tool_info.error {type: TOOL_ERROR, message: "tool call
 denied by pre-tool hook: <reason>"}`, no `PostToolUse` fires, the model sees the reason
@@ -3042,7 +3316,15 @@ its non-CLI cases keep passing unchanged, and both same-instance cache-order reg
 Gate all of it on the immutable support record from 2.5. AGY is the **first version-gated
 provider CLI**, so this establishes the pattern: below the floor, capabilities stay
 unavailable with the record's upgrade message naming the installed and required versions.
-Registry build reads the record; it never probes.
+The gate is a resolution-time read rather than a build-time freeze, because §2.5's record
+follows the executable and the registry is built once at startup. AGY's `WEB_CHAT`,
+`AGENT_SPAWN`, and `TOOL_CHAT` bindings are therefore registered structurally at registry
+build; synchronous capability availability resolves through §2.5's no-I/O peek and every
+adapter execution awaits §2.5's async accessor, on each access. An in-place AGY replacement then takes effect
+in the running daemon — an upgrade across the floor becomes available, a downgrade below it
+becomes unavailable — matching what `/api/providers` already reports per request, with no
+registry rebuild and no restart. Registry build reads the record; neither it nor any
+consumer probes.
 
 `VISION_EXTRACT` follows 1.1.4, which is negative: AGY has no image-input flag, `@path`
 mentions are plain text, and stream-input `{"type":"image"}` content blocks are rejected
@@ -3060,7 +3342,7 @@ versions below 1.1.18 never advertise the binding.
 
 **Acceptance:**
 
-- 6.2.1 - Installed AGY 1.1.18 advertises web chat, agent spawn, and tool chat; tool chat uses the record-1.1.12 transport (`PreToolUse` deny on `call_mcp_tool` matched by `ServerName`/`ToolName`, denial observed from the stream) — never Droid-routed. symbol: `_agy_unavailable_bindings`. file: `src/gobby/ai/registry_builder.py`.
+- 6.2.1 - Installed AGY 1.1.18 advertises web chat and agent spawn, and advertises tool chat only on a positive record 1.1.25; controlled-tool execution runs through the request-scoped `ToolRuntimeMCPServer` and `ToolLoopController`, with the record-1.1.12 `PreToolUse` deny transport (matched by `ServerName`/`ToolName` on `call_mcp_tool`, denial observed from the stream) suppressing built-ins — never Droid-routed. symbol: `_agy_unavailable_bindings`. file: `src/gobby/ai/registry_builder.py`.
 - 6.2.2 - AGY below 1.1.18 stays unavailable with a message naming installed and required versions. symbol: `ProviderMetadata`. file: `src/gobby/providers/registry.py`.
 - 6.2.3 - `AGY_UNAVAILABLE_REASON` no longer gates a capable installation. file: `src/gobby/providers/registry.py`.
 - 6.2.4 - `VISION_EXTRACT` stays unavailable per the negative 1.1.4 finding, with the narrow no-image-input reason. symbol: `_agy_unavailable_bindings`. file: `src/gobby/ai/registry_builder.py`.
@@ -3070,6 +3352,8 @@ versions below 1.1.18 never advertise the binding.
 - 6.2.8 - `HIDDEN_PROVIDERS` no longer contains `agy`; `isHiddenProvider("agy")` is false; the spawn form, chat model picker, reasoning preferences, Settings providers, sessions filter, and `ProviderPicker` offer AGY when `/api/providers` reports `available: true`, and do not when it reports `available: false`. test: `web/src/lib/__tests__/providerModels.test.ts`.
 - 6.2.9 - `AgyCLITextGenerateAdapter` failure is decided by nonzero exit plus stderr per record 1.1.13; an `Error:`-prefixed stdout with exit 0 is returned as text, empty stdout still raises, and the renamed test pins the nonzero-exit path. symbol: `_validate_agy_stdout`. file: `src/gobby/ai/_text_generation_adapters.py`.
 - 6.2.10 - `/api/providers` and `/api/providers/models` report agy `available`/`supports_web_chat`/`supports_agent_spawn` from the 2.5 support record, with the sub-floor case naming installed and required versions. test: `tests/servers/routes/test_servers_routes_providers.py`.
+- 6.2.11 - Replacing the AGY binary in one running daemon flips capability state without a restart: a sub-floor-to-supported replacement makes the `TOOL_CHAT` binding resolvable and executable, a supported-to-sub-floor replacement makes it unavailable, and `/api/providers` reports the same state as the registry in that same daemon. test: `tests/ai/test_agy_tool_chat_contract.py`.
+- 6.2.12 - On a negative record 1.1.25, `TOOL_CHAT` stays unavailable with the reason naming AGY's global-only MCP configuration, no `AgyToolChatAdapter` module is added, and the CLI-style factory and adapter cache keep their current identity while `WEB_CHAT` and `AGENT_SPAWN` remain available. symbol: `_agy_unavailable_bindings`. file: `src/gobby/ai/registry_builder.py`.
 
 ### 6.3 Move the AGY model catalog to live discovery [category: code] (depends: 6.2)
 `kind: deliverable`
@@ -3092,6 +3376,7 @@ Targets:
 - `tests/servers/routes/test_servers_routes_providers.py::*` — scope-reason: the static agy snapshot assertions become live/bundled source transitions
 - `tests/ai/test_text_generation.py::*` — scope-reason: default-effort normalization cases pin the fixture-recorded AGY efforts through the text-generation consumer
 - `tests/fixtures/provider_contracts/agy/command-captures.json::*` — scope-reason: the record-1.1.20 `models` and `/model` entries are read as the collector fixture and the live drift baseline
+- `tests/sessions/test_context_usage.py::*` — scope-reason: consumer of `_context_window_for_agy_model`; re-anchored when that contract changes
 
 Gobby has **no AGY discovery seam at all**. The legacy `ProviderModelCatalog` was retired
 (c49f706479, #19632); live model facts now come from per-provider collectors in
@@ -3199,10 +3484,52 @@ this plan closes only the `gemini-3.5-flash` mismatch.
 
 Targets:
 - `src/gobby/providers/usage.py`
+- `src/gobby/providers/capacity_service.py`
+- `src/gobby/storage/provider_capacity.py`
+- `crates/gcore/assets/schema/migrations/406_provider_capacity_snapshots.sql`
+- `crates/gcore/src/schema/assets.rs::*` — scope-reason: the 406 EmbeddedMigration entry registers the migration in MIGRATIONS
+- `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: latest_version, latest_checksum, and assets_root_hash follow the new latest asset
+- `crates/gcore/src/grant/bundle.rs::*` — scope-reason: the pinned latest_version literal follows the new latest asset
+- `crates/gcore/src/grant/tests.rs::*` — scope-reason: the expected schema-identity latest_version follows the new latest asset
+- `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: the regenerated catalog manifest records the new embedded asset
+- `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`
+- `crates/gdaemon/tests/cli_contract.rs::*` — scope-reason: the version-json schema-identity assertions follow the new latest asset
+- `crates/gcore/src/schema/runner_tests.rs::migrations_directory_exists_and_copy_agent_entry_is_registered`
+- `crates/gcore/tests/catalog_manifest_freshness.rs::catalog_manifest_is_fresh_for_embedded_assets`
+- `tests/runtime_grants/golden/brokered_datastores.json::*` — scope-reason: signed golden grant vector embeds the schema identity
+- `tests/runtime_grants/golden/direct_datastores.json::*` — scope-reason: signed golden grant vector embeds the schema identity
+- `tests/runtime_grants/golden/old_client_new_grant.json::*` — scope-reason: signed golden grant vector embeds the schema identity
+- `tests/runtime_grants/golden/unavailable_datastores.json::*` — scope-reason: signed golden grant vector embeds the schema identity
+- `tests/storage/test_schema_contract.py::*` — scope-reason: the identity-pin and no-Python-DDL contracts cover the new migration
 - `src/gobby/servers/routes/providers.py::create_providers_router`
+- `src/gobby/mcp_proxy/tools/metrics.py::*` — scope-reason: the existing metrics tool surface gains the provider-capacity MCP consumer beside the session token summary
 - `tests/providers/test_usage.py`
+- `tests/providers/test_capacity_service.py`
+- `tests/storage/test_provider_capacity.py`
+- `tests/mcp_proxy/tools/test_metrics_tool.py::*` — scope-reason: the new provider-capacity MCP tool gains available, exhausted, stale, and unknown cases
 - `tests/servers/routes/test_servers_routes_providers.py::*` — scope-reason: the new usage route gains AGY supported and non-AGY unsupported cases
 - `tests/fixtures/provider_contracts/agy/command-captures.json::*` — scope-reason: the record-1.1.19 healthy and exhausted `/usage` entries are the reporter's parse fixtures
+- `src/gobby/app_context.py::*` — scope-reason: the service container gains the shared `ProviderCapacityService`
+- `src/gobby/runner_init/servers.py::init_servers`
+- `src/gobby/servers/http.py::HTTPServer._init_mcp_subsystems`
+- `src/gobby/mcp_proxy/registries.py::setup_internal_registries`
+- `tests/mcp_proxy/test_registries.py::*` — scope-reason: internal metrics registry construction gains shared ProviderCapacityService identity coverage
+- `tests/test_runner_lifecycle.py::*` — scope-reason: daemon bootstrap gains one ProviderCapacityService instance shared by HTTP and MCP consumers
+- `src/gobby/ai/embedding_switch_runner.py::EmbeddingSwitchRunner._build_tool_collection`
+- `src/gobby/mcp_proxy/stdio_server.py::create_stdio_mcp_server`
+- `src/gobby/mcp_proxy/stdio.py::*` — scope-reason: consumer of `setup_internal_registries`; re-anchored when that contract changes
+- `src/gobby/runner_init/__init__.py::*` — scope-reason: consumer of `init_servers`; re-anchored when that contract changes
+- `src/gobby/servers/routes/__init__.py::*` — scope-reason: consumer of `create_providers_router`; re-anchored when that contract changes
+- `tests/ai/test_embedding_switch_runner.py::*` — scope-reason: consumer of `_build_tool_collection`; re-anchored when that contract changes
+- `tests/config/test_config_runtime_config_resolution.py::*` — scope-reason: consumer of `setup_internal_registries`; re-anchored when that contract changes
+- `tests/config/test_restart_config_consumers.py::*` — scope-reason: consumer of `init_servers`; re-anchored when that contract changes
+- `tests/dispatch/test_bundled_agent_contract.py::*` — scope-reason: consumer of `setup_internal_registries`; re-anchored when that contract changes
+- `tests/mcp_proxy/test_merge_integration.py::*` — scope-reason: consumer of `setup_internal_registries`; re-anchored when that contract changes
+- `tests/mcp_proxy/test_stdio_config_runtime.py::*` — scope-reason: consumer of `create_stdio_mcp_server`; re-anchored when that contract changes
+- `tests/mcp_proxy/test_stdio_proxy.py::*` — scope-reason: consumer of `create_stdio_mcp_server`; re-anchored when that contract changes
+- `tests/mcp_proxy/tools/test_mcp_proxy_tools_wiki.py::*` — scope-reason: consumer of `setup_internal_registries`; re-anchored when that contract changes
+- `tests/mcp_proxy/tools/test_review_learning.py::*` — scope-reason: consumer of `setup_internal_registries`; re-anchored when that contract changes
+- `tests/runner_init/test_config_runtime_startup.py::*` — scope-reason: consumer of `init_servers`; re-anchored when that contract changes
 
 Folds task #19364. No per-provider usage/capacity surface exists today — only
 Gobby-internal token accounting (`GET /api/sessions/usage` →
@@ -3224,24 +3551,86 @@ Add `src/gobby/providers/usage.py` with a frozen `ProviderUsageSnapshot` datacla
 a `ProviderUsageReporter` protocol with `async def report() -> ProviderUsageSnapshot`,
 and one implementation `AgyUsageReporter` that runs `/usage` only (`/quota` is an
 alias and `/credits` is a negative contract — a nonzero exit that must not mark the
-whole snapshot unsupported) with a 15 s timeout under the 2.5 support record
-(sub-floor/absent → `supported=False` with the record's reason; nonzero exit →
-`supported=False` with the envelope's `error` or stderr detail), maps each bucket to a
+whole snapshot unsupported) with a 15 s timeout, maps each bucket to a
 `UsageWindow` (`label` = group name + bucket name, `used` = `1 - remaining_fraction`,
-`limit` = `1`, `unit` = `"fraction"`, `resets_at` = `reset_time`), and caches the
-snapshot for 60 s. Expose `GET /api/providers/{provider}/usage` in
-`create_providers_router`: AGY returns the snapshot; every other provider returns
-`{"provider": name, "supported": false, "reason": "no usage reporter"}` with 200. No web
-UI work in this plan. No agent turn is ever started by this path. The fixture is the record-1.1.19 `/usage`
-entries (healthy and exhausted) in
-`tests/fixtures/provider_contracts/agy/command-captures.json` (numbers kept, no
-account identifiers appear in the shape).
+`limit` = `1`, `unit` = `"fraction"`, `resets_at` = `reset_time`). No agent turn is ever
+started by this path. Permanent and transient failure are never the same value: the
+permanent case — the 2.5 record unsupported, sub-floor, or the binary absent — is decided
+by the service before the reporter runs, while the reporter returns a snapshot only on a
+successful parse and raises one typed transient refresh failure for timeout, nonzero exit,
+and malformed output. The fixture is the record-1.1.19 `/usage` entries (healthy and
+exhausted) in `tests/fixtures/provider_contracts/agy/command-captures.json` (numbers
+kept, no account identifiers appear in the shape).
+
+Folding #19364 means inheriting its validation contract, not a reduced version of it.
+That contract is a **shared, persisted, multi-consumer** capacity surface: the latest
+snapshot upserted by `(machine_id, provider)` through a shared capacity service, with API
+**and** MCP results normalizing available, exhausted, stale, and unknown. A
+process-local 60 s cache behind one HTTP route satisfies none of those — the snapshot
+would not survive a daemon restart, would not be readable by a second consumer, and would
+carry no machine identity in a project whose rows are machine-scoped everywhere else. The
+service does not exist yet (this deliverable creates it; `gcode search-symbol` finds only
+Postgres connection capacity and watchdog capacity-error handling), so §6.4 defines the
+whole seam and AGY is its first reporter.
+
+**Persistence.** `crates/gcore/assets/schema/migrations/406_provider_capacity_snapshots.sql`
+adds `provider_capacity_snapshots` with primary key `(machine_id, provider)` and columns
+for `state`, `observed_at`, `windows` (JSONB, the serialized `UsageWindow` tuple),
+`reason`, and `source_version` (the 2.5 support record's installed version, so a snapshot
+is attributable to the binary that produced it). It lands through the full embedded-asset
+contract like every other migration in this plan; the sealed baseline is untouched and
+Python carries no DDL. `src/gobby/storage/provider_capacity.py` owns DML only: an upsert
+that replaces the row for its `(machine_id, provider)` key — latest-snapshot semantics,
+never an append-only history — and a read that returns the row with its age.
+
+**Shared service.** `src/gobby/providers/capacity_service.py` holds the
+`ProviderUsageReporter` registry (AGY registers `AgyUsageReporter`; other providers
+register nothing) and is the single entry point both consumers call. `refresh(provider)`
+runs the reporter, upserts through the storage module **only on success**, and returns the
+normalized snapshot; a typed transient refresh failure records its reason without replacing
+the latest-success row, so the windows and `observed_at` that `stale` promises survive
+every failed refresh; `get(provider)` returns the persisted row, refreshing when it is older than the
+60 s freshness window. One in-flight refresh per `(machine_id, provider)` is enforced by a
+shared refresh task rather than a lock: the first caller creates the task, later callers
+await that same task, every joiner receives its outcome — the normalized success snapshot
+or the same typed transient failure — and the task is cleared from the map once the joined
+attempt completes. A lock alone would coalesce only the success path, because a transient
+failure deliberately leaves the prior row stale: each waiter would wake, observe the same
+stale row, and launch its own 15 s reporter subprocess.
+
+**Four-state normalization** is the service's, shared by both consumers, so API and MCP
+can never disagree:
+
+| State | Condition |
+|---|---|
+| `available` | fresh snapshot, every window has `remaining_fraction > 0` |
+| `exhausted` | fresh snapshot, any window has `remaining_fraction == 0` |
+| `stale` | a persisted snapshot exists but is older than the freshness window and refresh failed — the last known windows are returned with their `observed_at` |
+| `unknown` | no reporter for the provider, no persisted snapshot, or the 2.5 record is unsupported — `windows` empty and `reason` truthful |
+
+**Consumers.** `GET /api/providers/{provider}/usage` in `create_providers_router` returns
+the service's normalized snapshot; a provider with no reporter is `unknown` with reason
+`"no usage reporter"` at HTTP 200, never a 404 or a raised exception. The MCP consumer
+lands in the existing metrics tool surface (`src/gobby/mcp_proxy/tools/metrics.py`, which
+already exposes the session token summary) as a provider-capacity tool returning the same
+normalized shape from the same service call — no second normalization path and no direct
+storage read. No web UI work in this plan.
+
+#19364 stays open until this deliverable's manifest leaf lands, and closes against it.
 
 **Acceptance:**
 
 - 6.4.1 - `AgyUsageReporter.report` parses the 1.1.19-recorded `/usage` envelope (healthy and exhausted fixtures) into one `ProviderUsageSnapshot` with one `UsageWindow` per bucket, the argv pinned to `-p "/usage" --output-format json` and no agent-turn flags, and `/credits` is never run. test: `tests/providers/test_usage.py`.
-- 6.4.2 - Sub-floor, absent-binary, nonzero-exit, and timeout outcomes yield `supported=False` with a truthful reason and never raise through the route. test: `tests/providers/test_usage.py`.
+- 6.4.2 - The reporter returns a snapshot only on a successful parse, and nonzero exit, timeout, and malformed output each raise the one typed transient refresh failure with a truthful reason; no outcome raises through the route. test: `tests/providers/test_usage.py`.
 - 6.4.3 - `GET /api/providers/agy/usage` returns the snapshot and a second call within 60 s spawns no process; `GET /api/providers/claude/usage` returns `supported: false`. test: `tests/servers/routes/test_servers_routes_providers.py`.
+- 6.4.4 - Migration `406_provider_capacity_snapshots.sql` adds `provider_capacity_snapshots` keyed by `(machine_id, provider)` with `state`, `observed_at`, `windows`, `reason`, and `source_version`, landing through the embedded-asset contract with an untouched `baseline.sql` and no DDL in Python. file: `crates/gcore/src/schema/assets.rs`.
+- 6.4.5 - `storage/provider_capacity.py` upserts the latest snapshot for its `(machine_id, provider)` key — a second observation replaces the row rather than appending — and reads it back with its age. test: `tests/storage/test_provider_capacity.py`.
+- 6.4.6 - The shared capacity service normalizes to exactly `available`, `exhausted`, `stale`, or `unknown` per the recorded conditions, returning the last known windows with their `observed_at` when stale and empty windows with a truthful reason when unknown. test: `tests/providers/test_capacity_service.py`.
+- 6.4.7 - Concurrent refreshes for one `(machine_id, provider)` join a single shared refresh task and receive identical results — one reporter invocation for the success case and one for the timeout and nonzero-exit cases alike — and a snapshot survives a daemon restart by reload from storage rather than re-probe. test: `tests/providers/test_capacity_service.py`.
+- 6.4.8 - The provider-capacity MCP tool returns the same normalized four-state shape as the HTTP route for the same snapshot, reading through the shared service and never through storage directly. test: `tests/mcp_proxy/tools/test_metrics_tool.py`.
+- 6.4.9 - Daemon bootstrap constructs one database-backed `ProviderCapacityService`; the HTTP provider route and MCP metrics registry receive that identical instance and share its per-key in-flight refresh-task registry, joining the same task and receiving the same normalized success or typed transient failure. test: `tests/test_runner_lifecycle.py`.
+- 6.4.10 - A transient refresh failure never replaces the latest-success row: with a prior observation the service returns `stale` carrying that row's windows and `observed_at`, without one it returns `unknown`, and a 2.5-unsupported, sub-floor, or absent binary is decided before the reporter runs and returns `unknown` with the record's reason. test: `tests/providers/test_capacity_service.py`.
+- 6.4.11 - Every direct `setup_internal_registries` caller supplies the shared `ProviderCapacityService` resolver when available or installs the provider-capacity tool with a documented unavailable result; daemon HTTP and MCP paths share one instance. test: `tests/mcp_proxy/test_registries.py`.
 
 ## P7: Documentation
 `kind: framing`
@@ -3282,11 +3671,16 @@ Seven stale AGY claims in the guides are corrected with exact replacements, each
 here unless noted. `docs/guides/adapter-fidelity.md` carries two AGY rows (one says
 `updatedInput`, the code emits `overwrite`; the other says "no public live hook contract
 1.0.8"): they merge into one row stating the five PascalCase events, context via
-`injectSteps`, `PreToolUse` decision ∈ `allow|deny|ask|force_ask|deny_unless_prior_grant`
-with `overwrite` (never `updatedInput`), `deny_unless_prior_grant`, `terminationBehavior`,
-and `injectSteps` `userMessage`/`ephemeralMessage` as the honored set per record 1.1.24 —
-and `permissionOverrides` and `injectSteps.toolCall` as explicitly **not** honored — web
-chat via custom stream-json, and spawn per 6.1 (interactive dispatch proven).
+`injectSteps`, and — as the honored set per record 1.1.24 and §4.1's mapping —
+`PreToolUse` decision ∈ `allow|deny|ask` with `overwrite` (never `updatedInput`),
+`deny_unless_prior_grant`, `terminationBehavior`, and `injectSteps`
+`userMessage`/`ephemeralMessage`. The row separates three dispositions rather than
+flattening them into one vocabulary: honored (above); **schema-present, unmeasured, and
+never emitted by Gobby** — `force_ask`, which AGY's `PreToolUse` schema accepts but
+headless auto-denies, so no live capture proves its behavior and §4.1 forbids emitting
+it; and explicitly **not honored** — `permissionOverrides` (headless auto-deny wins) and
+`injectSteps.toolCall` (fatal). Web chat via custom stream-json, and spawn per 6.1
+(interactive dispatch proven).
 `docs/guides/ghook-user-guide.md` (`| agy | SessionStart |` and the
 SessionStart/UserPromptSubmit fail-closed claim) and `docs/guides/hook-schemas.md` ("AGY
 SessionStart") list the five events and 2.3's critical set — 2.3 owns the dead-event
@@ -3322,6 +3716,7 @@ or committed.
 - 7.1.5 - `adapter-fidelity.md` has exactly one AGY row stating the five-event contract, `overwrite` (not `updatedInput`), the 1.1.24-recorded honored set (`deny_unless_prior_grant`, `terminationBehavior`, `injectSteps` messages) and not-honored set (`permissionOverrides`, `injectSteps.toolCall`), and the 1.1.18 floor. file: `docs/guides/adapter-fidelity.md`.
 - 7.1.6 - `ghook-user-guide.md` and `hook-schemas.md` no longer claim AGY `SessionStart` or `UserPromptSubmit`; the critical-hook set matches the landed `cli_config.rs`. file: `docs/guides/ghook-user-guide.md`.
 - 7.1.7 - `providers-and-models.md`, `configuration.md`, `telegram.md`, and `sessions.md` state the 6.3 collector/bundled-seed model source, the hooks.json timeout contract, the 1.1.14 plan-control outcome, and the web-chat AGY backend respectively. file: `docs/guides/providers-and-models.md`.
+- 7.1.8 - `adapter-fidelity.md` classifies `force_ask` as schema-present, unmeasured, and never emitted by Gobby, separate from honored and not-honored decisions. file: `docs/guides/adapter-fidelity.md`.
 
 ## V2 End-to-End Verification
 `kind: verification`
@@ -4268,3 +4663,1559 @@ End-to-end acceptance for the epic:
   baseline `plans validate` target errors are resolved; no acceptance ID was renumbered
   or removed. Round 18 stays unfinalized. Adversarial review resumes at Round 19 after
   §1.2's Run-2 table is filled by #19563.
+
+**Round 19** `kind: verification`
+
+- reviewer_run: 8ae9728c-9b8a-4979-a7ed-c5b4b2d665ed
+- reviewer_session: 172851ca-cb68-46d1-a8a5-20d1e7f7e1ea
+- verdict: needs_review
+- findings:
+- agy-r19-criticality-table-row-decomposition / blocking / gobby-format: the six-provider critical-hook matrix in 2.3 has six implementation rows sharing one acceptance item (2.3.4), so no row carries an independently traceable acceptance identity
+- agy-r19-critical-stop-scope-conflict / blocking / traceability: the `diagnose.rs::*` Target scope reason still pins Codex and Qwen Stop as critical after the matrix, narrative, and acceptance made both noncritical
+- agy-r19-session-identity-key-conflict / blocking / traceability: 4.1 rejects provider plus `conversationId` as an insufficient identity key and then keys `handle_session_start` idempotency on exactly that pair
+- agy-r19-receipt-current-envelope-field / blocking / unhandled-edge: released receipts re-prepare onto a new carrying envelope, but the receipt-effects schema and acceptance name only the original envelope id, so no durable field carries current-envelope lineage
+- agy-r19-usage-capacity-task-parity / blocking / missing-requirement: 6.4 claims to fold #19364 while dropping its persisted `(machine_id, provider)` snapshot, shared capacity service, MCP consumer, and four-state normalization contract
+- agy-r19-migration-402-collision / blocking / bad-sequencing: 3.1 claims migration 402, already taken at HEAD by `402_task_close_reviews.sql`, making the fixed 402/403/404 range stale
+- agy-r19-version-refresh-boundary / blocking / traceability: Constraints require the AGY version probe to re-run per session while 2.5 freezes one startup support record for every later consumer
+- agy-r19-webchat-policy-snapshot-race / blocking / unhandled-edge: overlapping session creations share manager-wide sandbox state, so a delayed launch can read a later creation's policy while persisting the earlier policy hash
+- agy-r19-workspace-identity-toctou / blocking / unhandled-edge: ACP close/delete validates workspace identity without serializing against project switch, worktree switch, and deletion writers, so a launch can proceed under stale confinement
+- agy-r19-force-continue-counter-owner / blocking / unhandled-edge: `AGY_FORCE_CONTINUE_LIMIT` has no keyed atomic owner, increment commit point, or reset transitions across per-request adapter instances
+- agy-r19-stream-nonprogress-livelock / blocking / unhandled-edge: the stream-json inactivity clock renews on every line while the parser ignores malformed, repeated-init, bookkeeping, and unknown records, so bounded noise defeats termination under `--print-timeout 2562047h`
+- agy-r19-decision-vocabulary-conflict / blocking / traceability: 7.1 documents `force_ask` as a live honored `PreToolUse` decision after 4.1 classified it unmeasured and forbidden to emit
+- agy-r19-receipt-window-config-without-consumer / nit / over-engineering: `HOOK_RECEIPT_IDEMPOTENCY_WINDOW` is overridable without a named config field, operator, profile, or second required value
+- resolution_notes: All thirteen findings were presented individually and accepted by the user. Two carried explicit design choices: 4.1 adds an explicit `current_envelope_id` field (rather than dropping current-envelope lineage), and 2.5 caches the AGY support record by resolved executable identity with atomic inode/mtime invalidation (rather than re-probing per session). 6.4 takes full #19364 parity: persisted latest-snapshot upsert keyed by `(machine_id, provider)`, the shared capacity service, both API and MCP consumers, and available/exhausted/stale/unknown normalization. The typed `add_acceptance` repair for 2.3 was applied through `apply_plan_review_repairs`; the remaining twelve are prose-only and were hand-applied to the artifact after this checkpoint.
+
+```json plan-review-round
+{"evidence_id":"5fa093ee-dd5c-486f-821e-5a957f7deaae","plan_hash":"17063d0a32f1dfa80719fbc143b40fb3fc70f32821d83e4e33042db87562a682","round_number":19,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"a4619b0ac272647926573aa7645aa8e12e3fe35a10e0c2d9d61109b57f6810a7","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":2,"emitted_findings":13,"total":15},"evidence_id":"5fa093ee-dd5c-486f-821e-5a957f7deaae","lanes":[{"candidate_count":6,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":1,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":8,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":18,"manifest_digest":"d3bec7b8e17a8b9222dcaa4178aeebc2886b2e99de1bcb23806201ad0fd9e426","status":"valid"},"source_digest":"e7e27fb818a325a0916972ca86148ac98ab05979b8aabeef20153ec9faaa9d6b","version":1},"findings":[{"category":"gobby-format","check_key":"table-row-decomposition","description":"The six-provider matrix has six implementation rows but only shared acceptance 2.3.4. This violates the plan-coverage table-row decomposition contract even though total acceptance count exceeds row count.","finding_id":"agy-r19-criticality-table-row-decomposition","fix":"Add six row-specific acceptance items for Claude, Codex, Qwen, Grok, Droid, and AGY while preserving existing acceptance IDs.","location":"§2.3 six-provider critical-hook matrix and Acceptance 2.3.4","prevention":"For every deliverable markdown table, count data rows and map each row to one unique acceptance item before review.","principle":"Every deliverable table row that enumerates work needs its own stable acceptance identity.","repairs":[{"items":[{"artifact":"test: `crates/ghook/tests/contract.rs`","prose":"Claude declares exactly session-start, session-end, and pre-compact as critical, with its daemon-down row pinned"},{"artifact":"test: `crates/ghook/tests/contract.rs`","prose":"Codex declares SessionStart, SessionEnd, and PreCompact as critical while Stop is noncritical, with malformed-input exit behavior pinned"},{"artifact":"test: `crates/ghook/tests/contract.rs`","prose":"Qwen declares SessionStart, SessionEnd, and PreCompact as critical while Stop is noncritical, with malformed-input exit behavior pinned"},{"artifact":"test: `crates/ghook/tests/contract.rs`","prose":"Grok declares session_start, session_end, and pre_compact as critical, with its daemon-down row pinned"},{"artifact":"test: `crates/ghook/tests/contract.rs`","prose":"Droid declares SessionStart, SessionEnd, and PreCompact as critical after removal of the short circuit, with its daemon-down row pinned"},{"artifact":"test: `crates/ghook/tests/contract.rs`","prose":"AGY declares no critical native event, and its five real events fail open with protojson-legal responses"}],"kind":"add_acceptance","section_id":"2.3"}],"root_cause":"Acceptance 2.3.4 bundles all six provider rows, so the typed manifest cannot trace or validate rows independently.","section_id":"2.3","severity":"blocking"},{"category":"traceability","check_key":"critical-hook-contract-consistency","description":"The `diagnose.rs::*` scope reason requires Codex and Qwen Stop to remain critical, while the matrix, narrative, and acceptance require both Stop events to become noncritical.","finding_id":"agy-r19-critical-stop-scope-conflict","fix":"Rewrite the diagnose target scope reason to the noncritical-Stop contract and state whether stale criticality tests are renamed or replaced.","location":"§2.3 diagnose.rs Target scope reason versus final matrix and Acceptance 2.3.4/2.3.6","prevention":"Compare every Target scope reason against the final behavior table and acceptance items after contract revisions.","principle":"A self-contained deliverable must give one consistent contract to its implementer.","root_cause":"The target inventory retained old wording that pins Codex and Qwen Stop as critical after the body changed both to noncritical.","section_id":"2.3","severity":"blocking"},{"category":"traceability","check_key":"canonical-session-identity-consistency","description":"Section 4.1 first rejects provider plus `conversationId` as insufficient and requires full tuple, machine, and workspace validation, then later says `handle_session_start` idempotency is keyed by provider plus `conversationId`.","finding_id":"agy-r19-session-identity-key-conflict","fix":"Key idempotency on the canonical row returned by transactional resolve/adopt/register after full validation; retain `conversationId` only as provider-native external identity.","location":"§4.1 resolve/adopt/register design and later handle_session_start idempotency paragraph","prevention":"Trace each session lookup, adoption, registration, and idempotency statement back to the canonical persisted uniqueness tuple.","principle":"All registration and idempotency steps must use the same canonical identity boundary.","root_cause":"A later paragraph reintroduced provider-plus-conversationId keying after the section proved that key cannot distinguish project, machine, session type, or pre-created rows.","section_id":"4.1","severity":"blocking"},{"category":"unhandled-edge","check_key":"receipt-reprepare-lineage-schema","description":"Released receipts must re-prepare onto a new carrying envelope, yet the planned relational schema omits `current_envelope_id`; generation alone and original-envelope lineage do not implement the stated update.","finding_id":"agy-r19-receipt-current-envelope-field","fix":"Add `current_envelope_id` to the receipt migration, storage transitions, acceptance, and stale/current acknowledgment tests, or remove current-envelope lineage and make generation the sole authoritative attempt identity.","location":"§4.1 receipt-effects schema prose and Acceptance 4.1.15/4.1.19","prevention":"For each recovery CAS, enumerate every key and mutable lineage field in schema, storage API, and tests.","principle":"Every state-transition discriminator required by recovery must have an explicit durable field and acceptance coverage.","root_cause":"Re-prepare updates current-envelope lineage, while the enumerated table and acceptance contract name only the original envelope id.","section_id":"4.1","severity":"blocking"},{"category":"missing-requirement","check_key":"governing-task-capacity-parity","description":"Read-only task #19364 requires latest-snapshot upsert by `(machine_id, provider)`, shared capacity service use, API and MCP consumers, and available/exhausted/stale/unknown states. Section 6.4 covers none of those persistence or MCP obligations.","finding_id":"agy-r19-usage-capacity-task-parity","fix":"Extend §6.4 to implement the shared persisted capacity contract and both consumer surfaces, or explicitly obtain and record an approved scope replacement while leaving #19364 open.","location":"§6.4 claim to fold task #19364","prevention":"Diff every folded task's description and validation criteria against the owning deliverable and acceptance block.","principle":"A deliverable that folds a governing open task must preserve its validation contract or explicitly supersede it.","root_cause":"Section 6.4 substituted a process-local cache and HTTP route for #19364's persisted shared snapshot, machine/provider identity, API-plus-MCP, and four-state normalization requirements.","section_id":"6.4","severity":"blocking"},{"category":"bad-sequencing","check_key":"migration-allocation-current-inventory","description":"Section 3.1 claims `402_sessions_workspace_path.sql`, but HEAD already uses version 402 for `402_task_close_reviews.sql`; the fixed 402/403/404 plan range is stale.","finding_id":"agy-r19-migration-402-collision","fix":"Move §3.1 to 403 and §4.1 to 404/405, or the then-current contiguous free range, updating all Targets, prose, acceptance, embedded-asset expectations, catalog/schema identity pins, grant vectors, and verification references.","location":"§3.1 migration 402 and §4.1 migrations 403/404","prevention":"Immediately before every review snapshot, enumerate the migration directory and embedded registry, then update every planned migration Target and carrier pin.","principle":"Numbered migrations must reserve unused monotonically increasing slots against the current embedded registry.","root_cause":"The re-baseline stopped at migration 401, while current HEAD already registers `402_task_close_reviews.sql`.","section_id":"3.1","severity":"blocking"},{"category":"traceability","check_key":"agy-version-refresh-boundary","description":"AGY upgrades in place. A long-running daemon can therefore advertise, spawn, stream, discover, or report usage against different binary bytes than the startup probe validated.","finding_id":"agy-r19-version-refresh-boundary","fix":"Choose one consistent boundary: re-probe per AGY session/process side effect, or cache by resolved executable identity and invalidate atomically on inode/mtime change; test binary replacement between two creations in one daemon.","location":"Constraints AGY auto-update rule versus §2.5 startup-only support record","prevention":"Map each version-gated side effect to the executable identity and refresh cadence before defining shared cache lifetime.","principle":"A mutable executable's support decision must be refreshed at the same identity boundary the governing requirement names.","root_cause":"Constraints require per-session re-probing, while §2.5 intentionally freezes one startup result for every later consumer.","section_id":"2.5","severity":"blocking"},{"category":"unhandled-edge","check_key":"session-local-sandbox-policy-snapshot","description":"Overlapping session creations can let the first delayed launch read the second creation's sandbox policy while persisting the first policy hash.","finding_id":"agy-r19-webchat-policy-snapshot-race","fix":"Create a session-local launch context carrying the exact `SandboxConfig` and hash returned for that creation, pass it through `_session_launch`, and test interleaving with the first launch delayed.","location":"§3.1 create_session to post-hydration launch handoff","prevention":"For every sync-to-async handoff, identify the immutable input object and test two interleaved operations with a config change.","principle":"Configuration captured for an asynchronous operation must travel in an immutable operation-local carrier.","root_cause":"`_refresh_sandbox_config` mutates manager-wide fields and shared backends, while delayed launch is told to consume that creation's values without a specified carrier.","section_id":"3.1","severity":"blocking"},{"category":"unhandled-edge","check_key":"workspace-identity-validate-launch-race","description":"Close/delete can validate an old workspace generation immediately before a concurrent project switch, worktree switch, or deletion, then launch an ACP client under stale confinement.","finding_id":"agy-r19-workspace-identity-toctou","fix":"Use a session-row lock or monotonic workspace generation, re-check before subprocess launch, abort on change, and add forced races against all three mutation paths.","location":"§3.1 ACP close/delete workspace validation and mutation writers","prevention":"Trace each confinement decision from row read through process creation and force races against every identity mutation writer.","principle":"Security-boundary validation must remain valid through the side effect it authorizes.","root_cause":"Atomic switch/delete writes do not serialize with the separate validate-then-launch close/delete path.","section_id":"3.1","severity":"blocking"},{"category":"unhandled-edge","check_key":"force-continue-counter-state-machine","description":"Adapter-local state cannot count across hook requests; daemon-global state would cross sessions. The plan leaves concurrency, replay, restart, and execution reset behavior undefined.","finding_id":"agy-r19-force-continue-counter-owner","fix":"Define an atomic session-scoped counter keyed by canonical session plus `executionNum`, stage increments at the receipt boundary, reset on new execution or terminal completion, and test interleaving, duplicates, restart, and the exact limit.","location":"§4.1 response mapping and Acceptance 4.1.22","prevention":"For every counter, specify key, storage lifetime, increment commit point, reset events, duplicate handling, and restart behavior.","principle":"Every bounded retry or continuation policy needs a keyed atomic owner and explicit reset transitions.","root_cause":"The plan names `AGY_FORCE_CONTINUE_LIMIT` without defining state ownership across per-request adapter instances.","section_id":"4.1","severity":"blocking"},{"category":"unhandled-edge","check_key":"stream-progress-timeout","description":"With `--print-timeout 2562047h`, periodic ignored lines can retain the turn lock and subprocess indefinitely without producing a terminal result.","finding_id":"agy-r19-stream-nonprogress-livelock","fix":"Renew the inactivity clock only on validated progress events, or impose a bounded consecutive-ignore budget; test endless malformed/unknown input for one terminal error, tree cleanup, lock release, and reconstructability.","location":"§5.1 ignored records and §5.2 renewable inactivity clock","prevention":"Classify each input as progress or noise and test an infinite low-rate sequence of every ignored variant.","principle":"A renewable timeout must renew only on protocol progress, or bounded noise can defeat termination.","root_cause":"The backend resets inactivity on every line while the parser silently ignores malformed, repeated-init, bookkeeping, and unknown records.","section_id":"5.2","severity":"blocking"},{"category":"traceability","check_key":"agy-decision-documentation-parity","description":"The plan would ship code that never emits `force_ask` and documentation that presents it as a live honored AGY `PreToolUse` decision.","finding_id":"agy-r19-decision-vocabulary-conflict","fix":"Remove `force_ask` from the honored vocabulary or label it schema-present, unmeasured, and never emitted by Gobby, matching §4.1 and record 1.1.24.","location":"§4.1 response mapping versus §7.1 adapter-fidelity replacement","prevention":"Diff every documentation claim against the owning implementation acceptance and live-probe outcome table.","principle":"Documentation deliverables must reproduce the implemented live contract exactly.","root_cause":"§7.1 copied schema vocabulary into the honored set after §4.1 classified `force_ask` as unmeasured and forbidden to emit.","section_id":"7.1","severity":"blocking"},{"category":"over-engineering","check_key":"single-value-retention-config","description":"The override adds speculative surface to a requirement satisfied by one fixed bounded window.","finding_id":"agy-r19-receipt-window-config-without-consumer","fix":"Keep a fixed named constant with the tested default; introduce runtime configuration only when a concrete operator or profile requires another bounded value.","location":"§4.1 receipt retention window","prevention":"For every planned knob, name its consumer, carrier, bounds, and two required values; otherwise use a constant.","principle":"Configuration surface needs a concrete consumer and at least one required alternative value.","root_cause":"The plan permits overriding `HOOK_RECEIPT_IDEMPOTENCY_WINDOW` without naming a config field, operator, profile, or second value.","section_id":"4.1","severity":"nit"}],"reviewer_session":"172851ca-cb68-46d1-a8a5-20d1e7f7e1ea","round":19,"verdict":"needs_review"},"session_id":"1990f6b8-71ea-4d13-b631-7e38713e806f"}
+```
+
+**Round 20** `kind: verification`
+
+- reviewer_run: c7a20c52-c15b-4a4c-8e20-fe8d6b456c12
+- reviewer_session: 721916df-adcb-4a51-a896-7c2bd7510267
+- verdict: needs_review
+- findings:
+- agy-r20-version-probe-snapshot-race / blocking / unhandled-edge: 2.5 captures the executable identity before the awaited probe and never re-checks it after, so a replacement mid-probe publishes binary B's version under binary A's identity
+- agy-r20-registry-identity-refresh-freeze / blocking / unhandled-edge: 6.2 freezes AGY bindings from the startup record while 2.5 promises advertisement follows executable-identity replacement in the same daemon
+- agy-r20-launch-context-before-workspace-resolution / blocking / bad-sequencing: 3.1.20 requires `_refresh_sandbox_config` to return the resolved project path, which `create_session` does not have at that call site — the repository/worktree path is resolved later
+- agy-r20-workspace-generation-post-check-race / blocking / unhandled-edge: the final generation read still precedes awaited process creation, so a switch or deletion committing in that window leaves a child launched under stale confinement despite the "window is closed" claim
+- agy-r20-force-continue-budget-boundaries / blocking / unhandled-edge: the identity-less `direct_post_after_enqueue_failure` fallback emits `force_continue` while creating no receipt and no increment, and 4.1.26 claims a prepare-time increment is refunded by a later ghook write failure the daemon cannot observe
+- agy-r20-ack-stop-durable-order / blocking / unhandled-edge: Stop can CAS a prepared receipt to terminal-undelivered after ghook durably enqueues its acknowledgment but before the drain consumes it, losing visibly delivered staged effects despite the claim that a queued acknowledgment wins
+- agy-r20-capacity-refresh-clobbers-stale / blocking / unhandled-edge: 6.4 returns reporter timeout and nonzero exit as `supported=false` snapshots that the refresh upsert writes over the last successful row, destroying the windows and `observed_at` the `stale` state promises
+- agy-r20-droid-noise-renews-timeout / blocking / unhandled-edge: 2.4 renews Droid's inactivity deadline on every received line while `parse_droid_stream_line` discards blank, malformed, and non-object input — the adjacent variant of the AGY livelock repaired in Round 19
+- agy-r20-agy-timeout-acceptance-conflict / blocking / traceability: 5.2.12 still requires reset-on-activity tests after 5.2.20-5.2.21 made ignored lines leave the clock unchanged
+- agy-r20-force-ask-acceptance / blocking / weak-testability: 7.1.5 checks only the honored and not-honored sets, so the `force_ask` middle class Round 19 introduced can be omitted or misclassified and still pass acceptance
+- agy-r20-capacity-service-wiring-targets / blocking / traceability: 6.4 targets the service, route, and metrics tool but omits the composition root, so nothing requires one shared `ProviderCapacityService` instance across the HTTP and MCP consumers
+- resolution_notes: Unattended round. The coordinator judged all eleven findings and accepted all eleven; every fix was held to the least mechanism that fully resolves the defect, and three were narrowed from the reviewer's proposal. Verified first: `create_session` takes no project path (confirming the 3.1.20 sequencing defect), 5.2.12 and 2.4's reset-on-activity wording, 7.1.5's two-class vocabulary, and the four new 6.4 composition symbols (`ServiceContainer`, `init_servers`, `HTTPServer._init_mcp_subsystems`, `setup_internal_registries`) all resolve at HEAD. Narrowed: (1) 6.2 keeps AGY bindings structurally registered and moves the gate from build time to resolution time through the identity-validating 2.5 accessor, adding no registry-rebuild machinery; (2) the 3.1 workspace-generation race is closed by re-reading the generation after process creation and destroying the just-created child on change, rather than holding a database row lock across subprocess creation — a long-held lock across process launch would block the three mutation writers for the duration of every launch; (3) 2.4 renews only on classified Droid progress with one endless-noise termination case, without the wider reconnectability battery the reviewer proposed. The two typed repairs (7.1 `add_acceptance`, 6.4 `add_targets` plus `add_acceptance`) were applied through `apply_plan_review_repairs`; the other nine are prose-only and were hand-applied to the artifact after this checkpoint.
+
+```json plan-review-round
+{"evidence_id":"b81eae40-93c7-49a5-9c54-15fba924610a","plan_hash":"df72cbd378f539514066a36db3f5ed270013edb479b4209386ba5fcae50f6f2e","round_number":20,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"fae207eba39db8ab4a5816b9344b0def3f8f838d3178adcd8ab63204da983aa6","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":2,"emitted_findings":11,"total":13},"evidence_id":"b81eae40-93c7-49a5-9c54-15fba924610a","lanes":[{"candidate_count":4,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":1,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":8,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":18,"manifest_digest":"c74d782aa405c5f591ea7533ae1c1eeaceef2ab8bdc676f965ffef52eba2b184","status":"valid"},"source_digest":"b9be5cce6fbd23c2ea633db2261599c5a6b855c18897e639fc7f779ada215bcb","version":1},"findings":[{"category":"unhandled-edge","causal_finding_id":"agy-r19-version-refresh-boundary","causal_section_ids":["Constraints","2.5"],"check_key":"edge-case-coverage","description":"AGY can replace itself while the async version probe runs. The plan can therefore publish the probed version of binary B under binary A's cached identity and authorize a side effect using mismatched evidence.","finding_id":"agy-r20-version-probe-snapshot-race","fix":"Execute the exact resolved path, stat it before and after the probe under the existing per-path lock, and publish only when both identities match. On drift, publish no supported record and let the next access retry; add a forced replacement-during-probe test.","introduced_in_round":19,"location":"§2.5 executable-identity probe and publication boundary","prevention":"For every mutable executable probe, check resolution, pre-probe identity, exact executed path, and post-probe identity before publication.","principle":"A support record must describe the same executable bytes whose version probe produced it.","root_cause":"The plan records an identity before an awaited probe but never verifies that identity after the probe, while the current helper executes the provider name through PATH.","section_id":"2.5","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"agy-r19-version-refresh-boundary","causal_section_ids":["Constraints","2.5"],"check_key":"edge-case-coverage","description":"After AGY changes in place, the provider routes can observe a refreshed record while the already-built capability registry remains frozen. Tool-chat may stay advertised for an unsupported binary or remain unavailable after a supported upgrade.","finding_id":"agy-r20-registry-identity-refresh-freeze","fix":"Keep AGY bindings structurally registered and make capability availability plus adapter execution consult the identity-validating §2.5 accessor. Add one no-restart binary-replacement test covering registry resolution, tool-chat execution gating, and `/api/providers` parity.","introduced_in_round":19,"location":"Constraints and §2.5 identity refresh versus §6.2 registry construction","prevention":"Trace every cached capability from refresh trigger through advertisement, resolver selection, and execution after an in-process binary replacement.","principle":"A mutable support decision must be re-evaluated at every side-effect boundary named by its governing requirement.","root_cause":"Section 6.2 freezes AGY bindings from the startup support record even though Constraints require registry advertisement and execution to follow executable-identity replacement within the same daemon.","section_id":"6.2","severity":"blocking"},{"category":"bad-sequencing","causal_finding_id":"agy-r19-webchat-policy-snapshot-race","causal_section_ids":["3.1"],"check_key":"post-hydration-launch-context-order","description":"Acceptance 3.1.20 requires `_refresh_sandbox_config` to return a context containing the final project path, but that path is currently resolved later at the post-hydration seam. The plan does not establish the reordering needed to make the context truthful.","finding_id":"agy-r20-launch-context-before-workspace-resolution","fix":"Have `_refresh_sandbox_config` return the immutable policy snapshot only. After `_create_chat_session_inner` resolves the final repository/worktree path, combine it with that snapshot into `SessionLaunchContext` and pass it to `_session_launch`; test a pending worktree override.","introduced_in_round":19,"location":"§3.1 `create_session` to `_session_launch` handoff","prevention":"Write the creation sequence explicitly and verify each launch-context field has its final owner value before context construction.","principle":"All security-relevant launch inputs must be resolved before they are frozen into an immutable operation context.","root_cause":"The current flow calls `WebChatRuntimeManager.create_session` and `_refresh_sandbox_config` before it resolves the repository path and pending worktree override.","section_id":"3.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"agy-r19-workspace-identity-toctou","causal_section_ids":["3.1"],"check_key":"edge-case-coverage","description":"A mutation writer can commit after the final generation read and before the owned ACP child exists, so close/delete can still launch under a stale workspace generation.","finding_id":"agy-r20-workspace-generation-post-check-race","fix":"Use the session row's existing database transaction as the shared serialization point: lock the canonical session row, re-read and validate the generation, and retain that lock through owned-client process creation and binding. Require all three mutation writers to update or tombstone the same locked row, with cleanup-before-release on launch failure.","introduced_in_round":19,"location":"§3.1 Acceptance 3.1.22-3.1.23 final generation check","prevention":"Force each mutation immediately after the final validation read and before process creation returns.","principle":"A confinement authorization must remain serialized through the side effect it authorizes.","root_cause":"The repair adds a final generation read without excluding project switch, worktree switch, or worktree deletion while awaited subprocess creation is in flight.","section_id":"3.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"agy-r19-force-continue-counter-owner","causal_section_ids":["4.1"],"check_key":"edge-case-coverage","description":"Repeated `direct_post_after_enqueue_failure` deliveries can emit `force_continue` without a receipt or counter increment, defeating the limit. On the durable path, the plan also says a prepare-time increment consumes no budget when ghook's later write fails, which the daemon cannot know at prepare time.","finding_id":"agy-r20-force-continue-budget-boundaries","fix":"Define the counter as a conservative budget on durable receipt-prepared attempts: preparation consumes one slot, replay of that receipt consumes none, and later write failure does not refund it. Strip `force_continue` from identity-less fallback and emit only the explanatory ephemeral step; test repeated fallback and durable write failure.","introduced_in_round":19,"location":"§4.1 force-continue counter, receipt prepare, and identity-less fallback","prevention":"Enumerate durable delivery, enqueue-only, direct fallback, write failure, replay, and terminal loss for every bounded provider action.","principle":"Every path that can emit a bounded action must pass through one enforceable budget boundary.","root_cause":"The counter is tied to durable receipt preparation, while identity-less fallback can still emit `force_continue`; the durable text also equates prepare with later successful output.","section_id":"4.1","severity":"blocking"},{"category":"unhandled-edge","check_key":"edge-case-coverage","description":"Stop can change a prepared receipt to `terminal-undelivered` after ghook durably enqueues its acknowledgment but before the daemon drains it. The later exact acknowledgment is specified as a no-op, so visibly delivered staged effects are lost despite the claim that queued acknowledgment wins.","finding_id":"agy-r20-ack-stop-durable-order","fix":"Allow an exact current-generation acknowledgment within the retention window to CAS `terminal-undelivered` to `acknowledged` and commit its staged effects. Keep stale-generation, already-acknowledged, and missing-row acknowledgments as no-ops; add the paused-drain then Stop interleaving.","location":"§4.1 delivery acknowledgment versus Stop/expiry terminalization","prevention":"Test every ordering of response flush, acknowledgment enqueue, acknowledgment consumption, Stop, and expiry for one current delivery generation.","principle":"Durable proof of provider-visible delivery must survive asynchronous transport reordering.","root_cause":"The plan treats acknowledgment enqueue as though the receipt row were already acknowledged, although the inbox consumer performs that state transition later.","section_id":"4.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"agy-r19-usage-capacity-task-parity","causal_section_ids":["6.4"],"check_key":"edge-case-coverage","description":"A transient failure overwrites the prior healthy row and destroys the windows and `observed_at` that the `stale` state promises to return.","finding_id":"agy-r20-capacity-refresh-clobbers-stale","fix":"Check the §2.5 permanent-support gate in the service before reporting. Let `report()` return a snapshot only on success and raise one typed transient refresh failure for timeout, nonzero exit, or malformed output; the service records the reason without replacing the latest-success row and returns `stale` when that row exists, otherwise `unknown`. Add timeout and nonzero-exit preservation tests.","introduced_in_round":19,"location":"§6.4 reporter failure, refresh upsert, and stale normalization","prevention":"For each refresh outcome, state whether it replaces the latest-success row and test with and without a prior observation.","principle":"A failed refresh must preserve the last successful observation used by stale-state recovery.","root_cause":"Reporter timeout and nonzero exit are returned as `supported=false` snapshots while `refresh` is specified to upsert the reporter result.","section_id":"6.4","severity":"blocking"},{"category":"unhandled-edge","check_key":"edge-case-coverage","description":"Low-rate discarded Droid records can keep the turn lock and subprocess alive indefinitely, recreating the adjacent variant of the AGY livelock repaired in Round 19.","finding_id":"agy-r20-droid-noise-renews-timeout","fix":"Parse and classify each Droid line before renewing the deadline. Renew only for translated events and accepted state transitions, and add endless malformed/unknown input coverage for one terminal error, process-tree cleanup, handle removal, and reconnectability.","location":"§2.4 Droid inactivity timeout and discarded NDJSON records","prevention":"Classify every parser outcome as progress or noise and run an endless low-rate sequence of each noise variant.","principle":"A renewable timeout must renew only on protocol progress.","root_cause":"Section 2.4 resets Droid's deadline on every line while `parse_droid_stream_line` intentionally discards blank, malformed, non-object, and malformed-record input.","section_id":"2.4","severity":"blocking"},{"category":"traceability","causal_finding_id":"agy-r19-stream-nonprogress-livelock","causal_section_ids":["5.2"],"check_key":"acceptance-contract-consistency","description":"Acceptance 5.2.12 still requires `reset-on-activity` tests, while the revised body and 5.2.20-5.2.21 require ignored lines to leave the clock unchanged. Both cannot pass under one implementation.","finding_id":"agy-r20-agy-timeout-acceptance-conflict","fix":"Rewrite 5.2.12 to inherit only the shared timeout value and environment-override source from §2.4, require renewal on validated AGY protocol progress, and rename its reset test accordingly.","introduced_in_round":19,"location":"§5.2 Acceptance 5.2.12 versus 5.2.20-5.2.21","prevention":"When a runtime invariant changes, search and rewrite every earlier acceptance item that inherits the old vocabulary.","principle":"Acceptance criteria for one clock must name one renewal event.","root_cause":"Round 19 added protocol-progress semantics without updating the older acceptance item that inherits §2.4's reset-on-activity contract.","section_id":"5.2","severity":"blocking"},{"category":"weak-testability","causal_finding_id":"agy-r19-decision-vocabulary-conflict","causal_section_ids":["7.1"],"check_key":"acceptance-coverage","description":"The deliverable can pass acceptance while omitting or misclassifying `force_ask`, recreating Round 19's documentation conflict.","finding_id":"agy-r20-force-ask-acceptance","fix":"Add one acceptance item requiring `adapter-fidelity.md` to label `force_ask` as schema-present, unmeasured, and never emitted by Gobby.","introduced_in_round":19,"location":"§7.1 `adapter-fidelity.md` decision vocabulary","prevention":"Diff each documentation acceptance item against every vocabulary class in the owning implementation contract.","principle":"Every corrected documentation state must be named by acceptance, especially the distinction that resolved the prior defect.","repairs":[{"items":[{"artifact":"file: `docs/guides/adapter-fidelity.md`","prose":"`adapter-fidelity.md` classifies `force_ask` as schema-present, unmeasured, and never emitted by Gobby, separate from honored and not-honored decisions."}],"kind":"add_acceptance","section_id":"7.1"}],"root_cause":"The revised prose adds a middle `force_ask` class while Acceptance 7.1.5 still checks only honored and not-honored sets.","section_id":"7.1","severity":"blocking"},{"category":"traceability","causal_finding_id":"agy-r19-usage-capacity-task-parity","causal_section_ids":["6.4"],"check_key":"targets-complete","description":"The listed files cannot create one `ProviderCapacityService` instance shared by the HTTP route and MCP tool, so production wiring may be absent or may construct two services with separate per-key locks.","finding_id":"agy-r20-capacity-service-wiring-targets","fix":"Add the four composition targets and their focused tests, then require daemon bootstrap to construct one database-backed instance and pass that identical instance to both consumers.","introduced_in_round":19,"location":"§6.4 shared capacity service construction and HTTP/MCP dependency threading","prevention":"Trace every new shared service from construction through each consumer and include identity tests at the composition root.","principle":"A shared service requires its construction owner and every dependency-threading seam in the target inventory.","repairs":[{"entries":["`src/gobby/app_context.py::ServiceContainer`","`src/gobby/runner_init/servers.py::init_servers`","`src/gobby/servers/http.py::HTTPServer._init_mcp_subsystems`","`src/gobby/mcp_proxy/registries.py::setup_internal_registries`","`tests/mcp_proxy/test_registries.py::*` — scope-reason: internal metrics registry construction gains shared ProviderCapacityService identity coverage","`tests/test_runner_lifecycle.py::*` — scope-reason: daemon bootstrap gains one ProviderCapacityService instance shared by HTTP and MCP consumers"],"kind":"add_targets","section_id":"6.4"},{"items":[{"artifact":"test: `tests/test_runner_lifecycle.py`","prose":"Daemon bootstrap constructs one database-backed `ProviderCapacityService`; the HTTP provider route and MCP metrics registry receive that identical instance and share its per-key refresh lock."}],"kind":"add_acceptance","section_id":"6.4"}],"root_cause":"The plan targets the service, route, and metrics tool but omits the daemon service container, bootstrap constructor, HTTP-to-MCP handoff, and internal registry constructor.","section_id":"6.4","severity":"blocking"}],"reviewer_session":"721916df-adcb-4a51-a896-7c2bd7510267","round":20,"verdict":"needs_review"},"session_id":"1990f6b8-71ea-4d13-b631-7e38713e806f"}
+```
+
+**Round 21** `kind: verification`
+
+- reviewer_run: 302aaac4-6c43-4f56-9e38-ff31a53898b5
+- reviewer_session: 076bc4a5-4a1f-4ab1-a658-e1cbc2466709
+- verdict: needs_review
+- findings:
+- agy-r21-receipt-terminal-ack-contradiction / blocking / traceability: the §4.1 terminal-owner paragraph still calls a late acknowledgment after terminal-undelivered a recorded no-op, contradicting the Round 20 repair in 4.1.15 that restores `acknowledged` for an exact current-generation ack inside retention
+- agy-r21-version-refresh-sync-async-boundary / blocking / unhandled-edge: 2.5's identity-validating accessor requires an async probe on identity change while the consumers 6.2 routes through it — registry availability and binding selection — are synchronous, so the plan names no await owner and no synchronous fail-closed contract
+- agy-r21-tool-chat-runtime-policy-boundary / blocking / missing-requirement: 6.2 makes the globally registered Gobby MCP server plus the fail-open `PreToolUse` deny hook the controlled-tool boundary, so the request's `ToolRuntime` allowed set and `ToolLoopLimits` are never the enforcement point
+- agy-r21-transcript-multicall-correlation / blocking / unhandled-edge: 4.2.6 derives the tool-call ID from conversation id plus `step_index` while `tool_calls` is an array, so two calls in one `PLANNER_RESPONSE` collide
+- agy-r21-capacity-failure-singleflight / blocking / unhandled-edge: 6.4's asyncio lock coalesces only the success path — a transient failure leaves the row stale, so every waiter re-enters and launches its own 15 s reporter subprocess
+- agy-r21-pending-transcript-event-recheck / blocking / unhandled-edge: 2.2 promises a bounded pending-path recheck on later AGY events while classification lives only in the session-start path, leaving the promised retry with no owner
+- resolution_notes: Unattended round. The coordinator judged all six findings and accepted all six; every fix was held to the least mechanism that fully resolves the defect, and three were narrowed or re-grounded. Verified first against the artifact and the repo: the contradictory §4.1 sentence and 4.1.15's restored-ack clause; 2.5.6's "re-stats that path and reads the matching record before acting" against §6.2's "resolve through §2.5's identity-validating accessor on each access" with synchronous availability; `ToolRuntimeMCPServer` (`src/gobby/ai/_tool_chat_mcp_server.py`) as the incumbent request-scoped boundary Droid already uses (`_tool_chat_droid.py:415`); the `tool_calls` array shape in §4.2; 6.4's lock sentence; and `HookManager._handle_after_daemon_ready` (`src/gobby/hooks/hook_manager.py`) as the existing seam that resolves the canonical session before per-event dispatch. Narrowed: (1) 2.5 gains two accessor forms rather than a new preflight subsystem — a synchronous no-I/O peek that fails closed when the stat'd identity does not match the published record, and an async ensure that awaits the single re-probe, which every async version-gated owner awaits before its side effect; the replacement, concurrency and probe-failure batteries the reviewer asked for already exist as 2.5.7-2.5.9 and 6.2.11, so no new test block was added. (2) 6.4 replaces the lock with one shared in-flight refresh task per key whose joiners share its outcome, success or typed transient failure — one sentence and an amended 6.4.7 rather than a new acceptance. (3) F3 was re-grounded on directly verified facts before accepting the reviewer's confinement fix: AGY 1.1.18 configures MCP servers only through the single global `~/.gemini/config/mcp_config.json` (`agy mcp add` has no per-process or per-project scope, and `agy --help` exposes no `--mcp-config`), and record 1.1.15 already disproved foreign-`HOME` isolation, so Droid's temp-HOME confinement is not transferable. §6.2 therefore names the request-scoped `ToolRuntimeMCPServer` plus `ToolLoopController` as the enforcement boundary, new record 1.1.25 decides whether one AGY process can reach a request-correlated MCP server while the globally registered servers stay unreachable to it, and a negative record makes `TOOL_CHAT` unavailable with a documented reason — folding away the AGY tool-chat adapter and the provider-aware factory/cache work with it, exactly as §6.1 already converts on a negative interactive-dispatch record. The remaining three findings were accepted as proposed: the §4.1 paragraph is rewritten to 4.1.15's state machine, the tool-call ID gains the call ordinal with an ordered pending queue persisted across restart, and the pending-path recheck is anchored at the named shared hook seam. No finding carried typed `repairs`; all six fixes are prose-only and were hand-applied to the artifact after this checkpoint.
+
+```json plan-review-round
+{"evidence_id":"965f3bbe-c3fd-4b5d-b3b3-796c88b2c52c","plan_hash":"20e78f9e675a321cab7a1f96fb2a4736dde0dae71678d86088df6249815f50a9","round_number":21,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"18d427fcc7299ec71669586beece685c991171f8f5abd989bb530d2f6bdf46bb","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":6,"emitted_findings":6,"total":12},"evidence_id":"965f3bbe-c3fd-4b5d-b3b3-796c88b2c52c","lanes":[{"candidate_count":4,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":3,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":5,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":18,"manifest_digest":"ee1b32b8e7391ac2b2cdf78f7c1941fd10d820841349d0bb7015844ca50ad293","status":"valid"},"source_digest":"3e319ce4809cecca0781cffc621f82101f54e6be9bdbdcde09ad91c834827cbc","version":1},"findings":[{"category":"traceability","causal_finding_id":"agy-r20-ack-stop-durable-order","causal_section_ids":["4.1"],"check_key":"receipt-terminal-ack-contract-consistency","description":"The body says terminal owners win before acknowledgment consumption and a later acknowledgment after terminal-undelivered is a recorded no-op. Acceptance 4.1.15 instead requires an exact current-generation acknowledgment inside retention to compare-and-set terminal-undelivered back to acknowledged and commit staged effects. Both contracts cannot be implemented.","finding_id":"agy-r21-receipt-terminal-ack-contradiction","fix":"Rewrite the earlier terminal-owner paragraph to match Acceptance 4.1.15: durable enqueue alone does not acknowledge; Stop or expiry may terminalize first; an exact current-generation acknowledgment inside retention restores acknowledged and commits; stale-generation, already-acknowledged, and missing-row acknowledgments remain no-ops.","introduced_in_round":20,"location":"§4.1 receipt handoff body versus Acceptance 4.1.15","prevention":"After changing a state transition, search the whole section for every source-state, destination-state, and no-op rule and rewrite them together.","principle":"One delivery generation must have one authoritative acknowledgment state machine across body text and acceptance.","root_cause":"The Round 20 acceptance repair added terminal-undelivered recovery while the earlier terminal-owner paragraph retained the prior late-acknowledgment no-op rule.","section_id":"4.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"agy-r20-registry-identity-refresh-freeze","causal_section_ids":["6.2"],"check_key":"version-gate-sync-async-boundary","description":"The plan requires an identity change to run the async version probe before capability resolution or any side effect, while it also says synchronous consumers never await or re-probe. Current registry availability and selection are synchronous, and the plan names no fail-closed peek followed by an awaited ensure. Implementers must either use stale support state or block/nest the event loop.","finding_id":"agy-r21-version-refresh-sync-async-boundary","fix":"At existing async entrypoints, await one identity-validating ensure before synchronous selection or launch: ToolChatService before _select_binding, provider routes before health/status serialization, and post-hydration web-chat attach before process creation; apply the same preflight to spawn, model collection, and capacity refresh. Keep synchronous availability as a no-I/O peek that returns unavailable whenever the published record identity does not match. Add upgrade, downgrade, concurrent replacement, and probe-failure tests.","introduced_in_round":20,"location":"§2.5 identity refresh contract; §5.3 synchronous health; §6.2 capability resolution","prevention":"Trace each refreshable record from identity check through every sync and async consumer, naming the await point and the stale-identity result before declaring same-daemon replacement support.","principle":"An async freshness gate consumed by synchronous selection needs an explicit await owner and a fail-closed synchronous read contract.","root_cause":"The Round 20 repair moved AGY availability from registry-build time to resolution time without reconciling async get_cli_version with synchronous CapabilityBinding.available, AICapabilityRegistry.select, ToolChatService._select_binding, and WebChatRuntimeManager health/create_session.","section_id":"6.2","severity":"blocking"},{"category":"missing-requirement","check_key":"tool-runtime-policy-boundary","description":"A global MCP registration can expose tools outside the request, and the hook route loses deny enforcement when the daemon or hook times out. The planned adapter can therefore bypass ToolRuntime execution and ToolLoopLimits while still advertising the full controlled-tool contract. The plan also leaves concurrent requests with different tool policies uncorrelated.","finding_id":"agy-r21-tool-chat-runtime-policy-boundary","fix":"Reuse the existing request-scoped ToolRuntimeMCPServer and ToolLoopController under an isolated AGY process configuration that exposes only that server and correlates it to the request. Prove global MCP tools and built-ins cannot bypass it, including hook failure and concurrent differing policies. If AGY cannot accept that per-process confinement, keep TOOL_CHAT unavailable and document the unsupported reason.","location":"§6.2 AgyToolChatAdapter controlled-tool transport","prevention":"For each tool-chat transport, trace request-local allowed tools, execution, call counts, timeout/cancellation, concurrent-request isolation, and daemon-failure behavior from adapter input to provider call.","principle":"A controlled-tool adapter must execute every call through the request-local ToolRuntime policy, budget, and correlation boundary.","root_cause":"The plan treats the globally registered Gobby MCP server plus AGY's fail-open PreToolUse hook as the controlled-tool boundary, while it names no handoff from the request's ToolRuntime allowed set and loop controller to that separate hook request.","section_id":"6.2","severity":"blocking"},{"category":"unhandled-edge","check_key":"transcript-multicall-correlation","description":"Two calls in one PLANNER_RESPONSE share the same conversation id and step_index, so Acceptance 4.2.6 assigns them the same ID. Pending-call storage can overwrite one call and positional results can attach to the wrong tool or disappear.","finding_id":"agy-r21-transcript-multicall-correlation","fix":"Include the tool-call ordinal in the stable ID, for example conversation id plus step_index plus call index, and persist the ordered pending-call queue including ordinals through snapshot_state/hydrate_state. Add a two-call fixture with positional results and a restart between calls and results.","location":"§4.2 PLANNER_RESPONSE tool_calls pairing and Acceptance 4.2.6","prevention":"For every array-valued call record, test cardinalities zero, one, and multiple with restart at each call/result boundary.","principle":"Every pending call in an array needs a unique stable correlation key across incremental parsing and restart.","root_cause":"The planned key uses conversation id plus record step_index even though one PLANNER_RESPONSE carries tool_calls as an array.","section_id":"4.2","severity":"blocking"},{"category":"unhandled-edge","check_key":"capacity-failure-singleflight","description":"The success path becomes fresh and naturally suppresses later calls. The failure path stays stale, so a lock alone serializes a subprocess storm instead of sharing one result. This violates the stated one-subprocess guarantee and can multiply 15-second waits across concurrent HTTP and MCP requests.","finding_id":"agy-r21-capacity-failure-singleflight","fix":"Coalesce callers on one in-flight refresh task per machine/provider key and let all joiners receive its normalized success, stale, or unknown result. Remove the shared task after the joined attempt completes. Add concurrent timeout and nonzero-exit cases asserting one reporter invocation and identical results for all callers.","location":"§6.4 ProviderCapacityService concurrent refresh contract and Acceptance 6.4.7","prevention":"Test concurrent fan-in for every refresh terminal outcome, including timeout, nonzero exit, malformed output, and success, with and without a prior row.","principle":"Single-flight semantics must coalesce success and failure outcomes for every caller that joined the same attempt.","root_cause":"The plan relies on an asyncio lock, while a transient failure intentionally leaves the prior row stale; each waiting caller can acquire the lock, observe the same stale row, and launch another reporter subprocess.","section_id":"6.4","severity":"blocking"},{"category":"unhandled-edge","check_key":"pending-transcript-event-recheck","description":"PreInvocation can report transcript_full.jsonl before it exists. The plan promises bounded rechecks on later AGY events, yet it names no common route that rechecks and persists the path on those events. A single-invocation turn can finish through PostInvocation and Stop without associating the transcript.","finding_id":"agy-r21-pending-transcript-event-recheck","fix":"Run the bounded idempotent pending-path recheck at an existing common hook-processing seam after canonical session resolution, before per-event dispatch. Add a sequence where PreInvocation sees an absent path, the file appears, and PostInvocation or Stop performs the only successful association.","location":"§2.2 pending transcript path recheck; §4.1 AGY event routing","prevention":"For each deferred or pending value, map every retry trigger through the concrete dispatcher to the mutation owner and test the earliest and latest successful trigger.","principle":"A promised retry must have a reachable owner on every event named as a retry trigger.","root_cause":"Transcript classification is planned in the SESSION_START path, while AGY synthesizes SESSION_START only from PreInvocation and later PreToolUse, PostToolUse, PostInvocation, and Stop events route to distinct handlers.","section_id":"2.2","severity":"blocking"}],"reviewer_session":"076bc4a5-4a1f-4ab1-a658-e1cbc2466709","round":21,"verdict":"needs_review"},"session_id":"1990f6b8-71ea-4d13-b631-7e38713e806f"}
+```
+
+**Round 22** `kind: verification`
+
+- reviewer_run: 6c07571c-5ae4-40f2-b721-19768f72461c
+- reviewer_session: f21b82dc-2e08-4d23-af40-8cc4f433c6ab
+- verdict: needs_review
+- findings:
+- agy-r22-tool-runtime-confinement-open-gate / blocking / missing-requirement / §6.2 — declined: record 1.1.25 is already gated everywhere the fix asks for.
+- agy-r22-receipt-ack-cas-source-state / blocking / traceability / §4.1 — accepted: the acknowledgment CAS predicate contradicts the restored terminal-undelivered transition.
+- agy-r22-capacity-refresh-task-contract / blocking / traceability / §6.4 — accepted: 6.4.9 still requires the refresh lock that 6.4.7 replaced with a shared task.
+- agy-r22-effects-line-budget-target / blocking / gobby-format / §4.1 — accepted with the fix narrowed: line-budget acceptance instead of a speculative new module Target.
+- agy-r22-registry-consumer-closure / blocking / traceability / §6.4 — accepted: two production callers of `setup_internal_registries` were missing from Targets.
+- resolution_notes: Unattended round. The coordinator judged all five findings — four accepted, one declined — and held every accepted fix to the least mechanism that fully resolves the defect. Verified before voting: `src/gobby/workflows/engine/effects.py` is 897 lines; `EmbeddingSwitchRunner._build_tool_collection` (`embedding_switch_runner.py:653`) and `create_stdio_mcp_server` (`stdio_server.py:117`) both call `setup_internal_registries` alongside the already-targeted `servers/http.py` path, and both qualified names resolve exactly as the finding named them. Four of the five findings are defects this campaign's own repairs introduced — three from Round 21, one from Round 20 — which is the shape that ended the campaign here. Applied: 4.1.15's acknowledgment consumer now names one authoritative predicate with two allowed source states (`prepared`, and `terminal-undelivered` for an exact current-generation acknowledgment inside the retention window), committing staged effects atomically on either transition while stale-generation, released, already-acknowledged, missing, and expired acknowledgments stay no-ops; 6.4.9 now requires the shared per-key in-flight refresh-task registry rather than a per-key lock, so the HTTP and MCP consumers coalesce failures the way 6.4.7 specifies; new 4.1.30 holds `effects.py` below the 1,000-line ceiling or decomposes the receipt-staging seam in the same task; §6.4 Targets gain both missing callers with new 6.4.11 defining each caller's capacity-service contract. Declined agy-r22-tool-runtime-confinement-open-gate: its fix is to run and commit the 1.1.25 probe before approval, which is live-binary execution work no plan revision can perform and which the artifact already schedules — pre-approval condition 1 names 1.1.25 as the one open probe answered in the same prerequisite task, the §1.2 Run-2 table records it open with §6.2's dependency, the gate's deliverable table lists it among §6.2's prerequisites, and 6.2.1 and 6.2.12 already type the positive and negative branches as mutually exclusive outcomes. Adding a further gate would duplicate that mechanism without adding information; asserting an outcome would fabricate evidence. Narrowed agy-r22-effects-line-budget-target: the finding's typed repair reserved a new `receipt_effects.py` Target and mandated the move up front. §4.1 already states this constraint for its sibling file in 4.1.13 — stay below 1,000 lines or decompose the seam in the same task — which is exactly what the repository's monolith hook enforces, so 4.1.30 mirrors that form and leaves the carrier's shape to the implementer who sees the real seam. Campaign closed at the user's direction after this round: Rounds 20–22 converged on a fixed set of seams (§4.1 receipt/acknowledgment, §6.4 capacity refresh and composition, §6.2 tool-runtime confinement) with each round's findings tracing to the previous round's repairs, and Round 22's shape — eight candidates, three self-dismissed, five findings, all seam-local — matched Round 21's. Rounds 23–25 were not launched.
+
+```json plan-review-round
+{"evidence_id":"fc59671a-31db-42cc-b1b1-5151abfcbabe","plan_hash":"ab2fbf6711c17c1731707514bd8fe51115f0a154e136e4986605b8f02744a830","round_number":22,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"60e084049f929b8369b9dff0661efac0ab4258bee893e92626e2e99f5213b586","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":3,"emitted_findings":5,"total":8},"evidence_id":"fc59671a-31db-42cc-b1b1-5151abfcbabe","lanes":[{"candidate_count":3,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":2,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":3,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":18,"manifest_digest":"34ec7dba3708043034e33d3029f1e472589e33ac98eb8a64665e6f2ee671a401","status":"valid"},"source_digest":"b099ee3167f44a229892e3f645cef59a3f9b321c785a835e9128efec4c2070c3","version":1},"findings":[{"category":"missing-requirement","causal_finding_id":"agy-r21-tool-chat-runtime-policy-boundary","causal_section_ids":["1.1","1.2","6.2","Dispatch Evidence Gate"],"check_key":"tool-runtime-confinement-preapproval","description":"Record 1.1.25 remains explicitly open and unprobed, while §6.2 would expand either a confined `AgyToolChatAdapter` branch or a negative fold-away branch from that record. The unanswered question is whether one AGY process can reach only the request-correlated MCP runtime while globally registered and built-in tools remain unreachable.","finding_id":"agy-r22-tool-runtime-confinement-open-gate","fix":"Run and commit the 1.1.25 probe before approval, mark the record's observed outcome, and rewrite §6.2 to exactly one branch: confined `TOOL_CHAT`, or documented unavailable with the adapter, provider-aware factory, and provider-keyed cache work removed.","introduced_in_round":21,"location":"§1.1 record 1.1.25 and §6.2 TOOL_CHAT outcome branch","prevention":"Before approval, require every `[open: probed before approval]` record to carry a committed positive or negative outcome and rewrite each consumer to that outcome.","principle":"Every conditional implementation branch must be resolved by its named prerequisite before approval.","root_cause":"The Round 21 confinement repair added a new feasibility record after the completed Gate 0 run, leaving §6.2's only TOOL_CHAT prerequisite unobserved.","section_id":"6.2","severity":"blocking"},{"category":"traceability","causal_finding_id":"agy-r21-receipt-terminal-ack-contradiction","causal_section_ids":["4.1"],"check_key":"receipt-ack-cas-source-state","description":"The repaired contract allows an exact current-generation acknowledgment inside retention to transition `terminal-undelivered` back to `acknowledged`, yet the receipt body and Acceptance 4.1.15 still say the acknowledgment consumer CASes on `receipt_id`, delivery generation, and `prepared` state together. A prepared-only predicate cannot execute the restored terminal-undelivered transition.","finding_id":"agy-r22-receipt-ack-cas-source-state","fix":"Define one authoritative acknowledgment predicate with two allowed source cases: `prepared`, and `terminal-undelivered` only for an exact current-generation acknowledgment inside retention. Commit staged effects atomically on either successful transition; keep stale-generation, released, already-acknowledged, missing, and expired acknowledgments as no-ops.","introduced_in_round":21,"location":"§4.1 receipt consumer contract and Acceptance 4.1.15","prevention":"After changing a state transition, sweep every CAS predicate and source-state list in the section and acceptance block together.","principle":"Every stated recovery transition must be reachable through the authoritative compare-and-set predicate.","root_cause":"The Round 21 repair updated the terminal-owner paragraph while leaving a second clause that restricts acknowledgment consumption to `prepared` rows.","section_id":"4.1","severity":"blocking"},{"category":"traceability","check_key":"capacity-singleflight-contract-consistency","description":"Section 6.4 and Acceptance 6.4.7 require callers to join one shared in-flight refresh task so transient failures coalesce. Acceptance 6.4.9 still requires the HTTP and MCP consumers to share a per-key refresh lock, preserving the failure-path behavior the repair removed.","finding_id":"agy-r22-capacity-refresh-task-contract","fix":"Rewrite 6.4.9 to require the identical `ProviderCapacityService` instance and its shared per-key in-flight refresh-task registry; state that HTTP and MCP callers join the same task and receive the same normalized success or typed transient failure.","location":"§6.4 shared refresh prose, Acceptance 6.4.7, and Acceptance 6.4.9","prevention":"When replacing a concurrency primitive, search the entire deliverable for the old primitive and update every acceptance and composition-root assertion.","principle":"One concurrency boundary must use one primitive and expose the same success and failure outcome to every consumer.","root_cause":"The Round 21 repair replaced the lock in the body and 6.4.7 while leaving 6.4.9's shared-lock requirement unchanged.","section_id":"6.4","severity":"blocking"},{"category":"gobby-format","check_key":"production-size-growth","description":"`src/gobby/workflows/engine/effects.py` is 897 lines and §4.1 adds receipt-staged guard and sibling-variable behavior there. The section names no new `.py` Target or split for that seam, violating the production-size-growth contract and leaving insufficient headroom under the 1,000-line ceiling.","finding_id":"agy-r22-effects-line-budget-target","fix":"Move the receipt-staged one-shot effect grouping and commit-application seam into a new `src/gobby/workflows/engine/receipt_effects.py` target before adding behavior, keeping both production files below 1,000 lines.","location":"§4.1 Targets: `src/gobby/workflows/engine/effects.py::*`","prevention":"Recount every targeted production source before review and add the new split Target plus move acceptance for each file at or above 850 lines.","principle":"A targeted hand-maintained production file at or above 850 lines needs a named same-task split into a new same-extension Target.","repairs":[{"entries":["`src/gobby/workflows/engine/receipt_effects.py`"],"kind":"add_targets","section_id":"4.1"},{"items":[{"artifact":"file: `src/gobby/workflows/engine/receipt_effects.py`","prose":"Move receipt-staged one-shot effect grouping and commit application out of `effects.py` into `receipt_effects.py` before adding new behavior, keeping both production files below 1,000 lines."}],"kind":"add_acceptance","section_id":"4.1"}],"root_cause":"The receipt-staging scope was added to the 897-line `effects.py` without reserving a concrete extraction carrier.","section_id":"4.1","severity":"blocking"},{"category":"traceability","causal_finding_id":"agy-r20-capacity-service-wiring-targets","causal_section_ids":["6.4"],"check_key":"targets-complete","description":"Section 6.4 threads `ProviderCapacityService` through `setup_internal_registries`, but `EmbeddingSwitchRunner._build_tool_collection` and `create_stdio_mcp_server` also call that function and are absent from Targets. Those paths can break on a required argument or construct the metrics registry without a defined capacity-service resolver.","finding_id":"agy-r22-registry-consumer-closure","fix":"Add both production callers to §6.4 Targets and specify the least shared contract: each caller supplies the service resolver when available, or explicitly installs the provider-capacity tool with a documented unavailable result; daemon HTTP and MCP paths continue to share one instance.","introduced_in_round":20,"location":"§6.4 `setup_internal_registries` construction contract","prevention":"Resolve every direct caller of each changed constructor and include all production callers plus one acceptance matrix before review.","principle":"A changed constructor contract must inventory every owned production caller and define each caller's dependency behavior.","repairs":[{"entries":["`src/gobby/ai/embedding_switch_runner.py::EmbeddingSwitchRunner._build_tool_collection`","`src/gobby/mcp_proxy/stdio_server.py::create_stdio_mcp_server`"],"kind":"add_targets","section_id":"6.4"},{"items":[{"artifact":"test: `tests/mcp_proxy/test_registries.py`","prose":"Every direct `setup_internal_registries` caller supplies the shared `ProviderCapacityService` resolver when available or installs the provider-capacity tool with a documented unavailable result; daemon HTTP and MCP paths share one instance."}],"kind":"add_acceptance","section_id":"6.4"}],"root_cause":"The Round 20 composition repair targeted the daemon path and constructor while omitting the embedding-switch and stdio callers of that constructor.","section_id":"6.4","severity":"blocking"}],"reviewer_session":"f21b82dc-2e08-4d23-af40-8cc4f433c6ab","round":22,"verdict":"needs_review"},"session_id":"1990f6b8-71ea-4d13-b631-7e38713e806f"}
+```
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Unify transcript parser dispatch to one registry
+  category: refactor
+  task_type: feature
+  depends_on: []
+  validation_criteria: "2.1.1: `_get_parser` is deleted and its callers \u2014 including\
+    \ the same-module `_parse_lines` \u2014 route through the shared registry. file:\
+    \ `src/gobby/sessions/transcript_parsing.py`.\n2.1.2: The inline parser chain\
+    \ is removed from `_process_session_transcript` and its caller routes through\
+    \ the registry. symbol: `TranscriptProcessingMixin._process_session_transcript`.\
+    \ file: `src/gobby/sessions/transcript_processing.py`.\n2.1.3: An unknown source\
+    \ raises rather than silently returning the Claude parser. symbol: `get_parser`.\
+    \ file: `src/gobby/sessions/transcripts/__init__.py`.\n2.1.4: The inline parser\
+    \ chain is removed from `_build_summary_prompt_context` and an unknown source\
+    \ raises there. symbol: `_build_summary_prompt_context`. file: `src/gobby/sessions/summary_context.py`.\n\
+    2.1.5: The inline parser chain is removed from `_load_session_messages` and an\
+    \ unknown source raises there. symbol: `_load_session_messages`. file: `src/gobby/cli/tokens.py`.\n\
+    2.1.6: The direct `_get_parser` call sites in `transcript_index.py`, `transcript_reader.py`,\
+    \ and `transcript_window.py` migrate to the shared registry, and the droid-path\
+    \ and unknown-source regressions are re-anchored to the registry entry point.\
+    \ test: `tests/sessions/test_transcript_parsers.py`.\n2.1.7: Every test that patches\
+    \ a module-local or module-aliased parser constructor \u2014 Claude, Codex, Droid,\
+    \ or Qwen \u2014 migrates to the shared registry seam, covering transcript processing,\
+    \ summary context, summarization, token attribution, message loading, and token\
+    \ CLI behavior. test: `tests/sessions/test_sessions_lifecycle.py`.\n2.1.8: `TranscriptAnalyzer`\
+    \ no longer defaults to the Claude parser; every constructor call site passes\
+    \ a registry-resolved parser for the session's source, and an unknown source raises.\
+    \ symbol: `TranscriptAnalyzer.__init__`. file: `src/gobby/sessions/analyzer.py`.\n\
+    2.1.9: The hook-manager factory constructs no provider-specific parser: `HookManagerComponents.transcript_processor`\
+    \ is typed as the parser protocol and resolved through the shared registry per\
+    \ session source at its consumers, with a test proving a non-Claude session is\
+    \ not parsed by the Claude parser. symbol: `HookManagerFactory.create`. file:\
+    \ `src/gobby/hooks/factory.py`.\n2.1.10: `HookManager`'s webhook/MCP dispatch\
+    \ and dispatcher-shutdown helpers live in the `hook_manager_dispatch.py` mixin;\
+    \ `hook_manager.py` stays below 1,000 lines with headroom for 4.1's receipt-staged\
+    \ commit adoption, and the existing hook-manager suites pass unchanged. file:\
+    \ `src/gobby/hooks/hook_manager_dispatch.py`."
+  labels:
+  - covers:agy-full-integration:2.1:2.1.1
+  - covers:agy-full-integration:2.1:2.1.2
+  - covers:agy-full-integration:2.1:2.1.3
+  - covers:agy-full-integration:2.1:2.1.4
+  - covers:agy-full-integration:2.1:2.1.5
+  - covers:agy-full-integration:2.1:2.1.6
+  - covers:agy-full-integration:2.1:2.1.7
+  - covers:agy-full-integration:2.1:2.1.8
+  - covers:agy-full-integration:2.1:2.1.9
+  - covers:agy-full-integration:2.1:2.1.10
+  tdd: false
+  source_section: '2.1'
+  assigned_agent: backend-developer
+- title: Normalize transcript discovery to hook-first with disk fallback
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: "2.2.1: Every provider resolves through one hook-first/disk-fallback\
+    \ path. symbol: `derive_transcript_path`. file: `src/gobby/hooks/event_handlers/_session_start/transcripts.py`.\n\
+    2.2.2: Per-provider disk derivation is table-driven rather than an if/elif chain.\
+    \ symbol: `find_transcript_on_disk`. file: `src/gobby/sessions/transcript_paths.py`.\n\
+    2.2.3: Hook-reported paths are classified usable, pending, or invalid; pending\
+    \ paths get a bounded recheck without blocking session start, run at the shared\
+    \ hook seam after canonical session resolution and before per-event dispatch so\
+    \ a later `PreToolUse`, `PostToolUse`, `PostInvocation`, or `Stop` completes the\
+    \ association, and only usable paths are persisted. symbol: `derive_transcript_path`.\
+    \ file: `src/gobby/hooks/event_handlers/_session_start/transcripts.py`.\n2.2.4:\
+    \ Disk fallback derives bounded direct candidates from the per-provider table,\
+    \ with no unbounded traversal on the synchronous hook path. symbol: `find_transcript_on_disk`.\
+    \ file: `src/gobby/sessions/transcript_paths.py`.\n2.2.5: Session-start flow routes\
+    \ every hook-reported path through the classifier before selection or persistence\
+    \ \u2014 a truthy but absent or unreadable path is never persisted directly. symbol:\
+    \ `handle_session_start`. file: `src/gobby/hooks/event_handlers/_session_start/flow.py`.\n\
+    2.2.6: The watchdog, transcript-reader (`TranscriptReader._ensure_transcript_path`),\
+    \ and validation-evidence recovery callers retain discovery through the split\
+    \ contract with explicit caller context, with usable/pending/invalid, bounded-retry,\
+    \ and fallback cases tested. test: `tests/hooks/test_transcript_path_derivation.py`.\n\
+    2.2.7: Watchdog recovery keeps caller-context discovery through the split contract:\
+    \ the resolver-seam suite re-anchors its cache, invalid-path, attempted-path,\
+    \ and fallback cases to the new contract at the real caller. test: `tests/agents/test_idle_check_transcript_paths.py`.\n\
+    2.2.8: Validation-evidence recovery keeps caller-context discovery through the\
+    \ split contract, with its recovery cases re-anchored at the real caller. test:\
+    \ `tests/tasks/test_transcript_evidence.py`.\n2.2.9: The stale-session idle-recovery\
+    \ case re-anchors to the split caller-context contract, preserving the assertion\
+    \ that discovery does not mutate the session row. test: `tests/agents/test_lifecycle_monitor_watchdog_idle_recovery.py`.\n\
+    2.2.10: The per-provider table carries the AGY entry \u2014 the `brain/<external_id>/.system_generated/logs/`\
+    \ direct candidate naming the file record 1.1.22 proves \u2014 and a hook-payload\
+    \ fixture line proves the pending\u2192usable transition across consecutive AGY\
+    \ events, including a single-invocation sequence where `PreInvocation` reports\
+    \ an absent path, the file then appears, and `PostInvocation` or `Stop` performs\
+    \ the only successful association. symbol: `find_transcript_on_disk`. file: `src/gobby/sessions/transcript_paths.py`.\n\
+    2.2.11: `_detect_source_from_path` returns `agy` for the `.gemini/antigravity-cli/brain/`\
+    \ path shape and continues to return `None` for unknown shapes. symbol: `_detect_source_from_path`.\
+    \ file: `src/gobby/sessions/transcript_source.py`.\n2.2.12: Validation-evidence\
+    \ recovery resolves an AGY session's transcript through the table instead of failing\
+    \ at `_resolve_transcript_path`. symbol: `_resolve_transcript_path`. file: `src/gobby/tasks/transcript_evidence.py`."
+  labels:
+  - covers:agy-full-integration:2.2:2.2.1
+  - covers:agy-full-integration:2.2:2.2.2
+  - covers:agy-full-integration:2.2:2.2.3
+  - covers:agy-full-integration:2.2:2.2.4
+  - covers:agy-full-integration:2.2:2.2.5
+  - covers:agy-full-integration:2.2:2.2.6
+  - covers:agy-full-integration:2.2:2.2.7
+  - covers:agy-full-integration:2.2:2.2.8
+  - covers:agy-full-integration:2.2:2.2.9
+  - covers:agy-full-integration:2.2:2.2.10
+  - covers:agy-full-integration:2.2:2.2.11
+  - covers:agy-full-integration:2.2:2.2.12
+  tdd: false
+  source_section: '2.2'
+  assigned_agent: backend-developer
+- title: Reconcile critical_hooks and document the fail-open reality
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: "2.3.1: AGY's unreachable `SessionStart` critical hook is removed.\
+    \ symbol: `CliConfig::for_cli`. file: `crates/ghook/src/cli_config.rs`.\n2.3.2:\
+    \ Droid's short-circuit no longer bypasses the criticality check. symbol: `action_from_failure`.\
+    \ file: `crates/ghook/src/action.rs`.\n2.3.3: The fail-open behavior of `PreToolUse`\
+    \ is documented explicitly. behavior: \"PreToolUse denial degrades to allow when\
+    \ the daemon is unreachable\" in `docs/guides/sandboxing.md`.\n2.3.4: `CliConfig::for_cli`\
+    \ declares exactly the final matrix above for all six CLIs, and a per-provider\
+    \ assertion pins each row \u2014 including the module-local `codex_stop_is_critical`\
+    \ and `qwen_current_critical_hooks` tests, both updated to assert noncritical\
+    \ `Stop` and its noncritical malformed-input exit code. That exit has its own\
+    \ production owner: `CliConfig::malformed_input_exit_code` today special-cases\
+    \ criticality only for Qwen while Codex inherits the provider-wide `json_error_exit_code`\
+    \ 2 for every hook, so editing `for_cli` alone cannot give Codex a noncritical\
+    \ `Stop` exit of 1 while critical lifecycle malformed input keeps exiting 2 \u2014\
+    \ the method becomes criticality-driven for both providers, and the contract-suite\
+    \ malformed-stdin case pins the split end to end through `run_gobby_owned`. symbol:\
+    \ `CliConfig::for_cli`. file: `crates/ghook/src/cli_config.rs`.\n2.3.5: For every\
+    \ provider, a daemon-down contract test proves critical lifecycle hooks block\
+    \ and noncritical events fail open. test: `crates/ghook/tests/contract.rs`.\n\
+    2.3.6: The module-local diagnose criticality matrix matches the policy: `terminal_hook_criticality_matches_supported_cli_contracts`\
+    \ asserts the final six-provider matrix, including noncritical Codex and Qwen\
+    \ `Stop` and the critical lifecycle rows. file: `crates/ghook/src/diagnose.rs`.\n\
+    2.3.7: For agy, the noncritical fail-open tail emits the per-event protojson-legal\
+    \ skip JSON on stdout and the failure message on stderr; a unit case beside `action_from_failure_returns_json_for_noncritical_hooks`\
+    \ pins `PreToolUse` \u2192 `{\"decision\":\"allow\"}` and `Stop` \u2192 `{}`.\
+    \ symbol: `action_from_failure`. file: `crates/ghook/src/action.rs`.\n2.3.8: The\
+    \ daemon-down contract suite's agy rows use real events only: the agy `SessionStart`\
+    \ critical and malformed-stdin rows are removed, the agy `Stop` fail-open row\
+    \ asserts the legal skip JSON, and an agy `PreToolUse` fail-open row asserts `{\"\
+    decision\":\"allow\"}`. test: `crates/ghook/tests/contract.rs`.\n2.3.9: The module-local\
+    \ diagnose case for agy probes exactly `PreInvocation`, `PreToolUse`, `PostToolUse`,\
+    \ `PostInvocation`, `Stop`, all noncritical. symbol: `agy_uses_antigravity_pascal_case_hooks`.\
+    \ file: `crates/ghook/src/diagnose.rs`.\n2.3.10: `EVENT_TYPE_CLI_SUPPORT` declares\
+    \ AGY's five native events and keeps `SESSION_START` unset, and a mapping-matches-contract\
+    \ test mirrors the droid one against `AGY_HOOK_NAMES`. test: `tests/hooks/test_events.py`.\n\
+    2.3.11: The ghook user guide and hook-schemas guide list AGY's five events with\
+    \ no critical hook and no `SessionStart`/`UserPromptSubmit`. behavior: \"AGY:\
+    \ PreInvocation, PreToolUse, PostToolUse, PostInvocation, Stop \u2014 none critical\"\
+    \ in `docs/guides/ghook-user-guide.md`.\n2.3.12: Claude declares exactly session-start,\
+    \ session-end, and pre-compact as critical, with its daemon-down row pinned. test:\
+    \ `crates/ghook/tests/contract.rs`.\n2.3.13: Codex declares SessionStart, SessionEnd,\
+    \ and PreCompact as critical while Stop is noncritical, with malformed-input exit\
+    \ behavior pinned. test: `crates/ghook/tests/contract.rs`.\n2.3.14: Qwen declares\
+    \ SessionStart, SessionEnd, and PreCompact as critical while Stop is noncritical,\
+    \ with malformed-input exit behavior pinned. test: `crates/ghook/tests/contract.rs`.\n\
+    2.3.15: Grok declares session_start, session_end, and pre_compact as critical,\
+    \ with its daemon-down row pinned. test: `crates/ghook/tests/contract.rs`.\n2.3.16:\
+    \ Droid declares SessionStart, SessionEnd, and PreCompact as critical after removal\
+    \ of the short circuit, with its daemon-down row pinned. test: `crates/ghook/tests/contract.rs`.\n\
+    2.3.17: AGY declares no critical native event, and its five real events fail open\
+    \ with protojson-legal responses. test: `crates/ghook/tests/contract.rs`."
+  labels:
+  - covers:agy-full-integration:2.3:2.3.1
+  - covers:agy-full-integration:2.3:2.3.2
+  - covers:agy-full-integration:2.3:2.3.3
+  - covers:agy-full-integration:2.3:2.3.4
+  - covers:agy-full-integration:2.3:2.3.5
+  - covers:agy-full-integration:2.3:2.3.6
+  - covers:agy-full-integration:2.3:2.3.7
+  - covers:agy-full-integration:2.3:2.3.8
+  - covers:agy-full-integration:2.3:2.3.9
+  - covers:agy-full-integration:2.3:2.3.10
+  - covers:agy-full-integration:2.3:2.3.11
+  - covers:agy-full-integration:2.3:2.3.12
+  - covers:agy-full-integration:2.3:2.3.13
+  - covers:agy-full-integration:2.3:2.3.14
+  - covers:agy-full-integration:2.3:2.3.15
+  - covers:agy-full-integration:2.3:2.3.16
+  - covers:agy-full-integration:2.3:2.3.17
+  tdd: true
+  source_section: '2.3'
+  implementation_domain: backend
+- title: Share stream-reader limits and dedupe provider constants
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.4.1: The runtime manager imports `AGY_UNAVAILABLE_REASON`
+    instead of duplicating it. symbol: `WebChatRuntimeManager.health`. file: `src/gobby/servers/websocket/chat/runtime_manager.py`.
+
+    2.4.2: The unreachable agy tool-chat branch is deleted. symbol: `_tool_chat_binding`.
+    file: `src/gobby/ai/registry_builder.py`.
+
+    2.4.3: Droid''s NDJSON reader uses the shared 16 MiB limit and the progress timeout,
+    renewed only by lines that parse to a translated event or an accepted state transition.
+    file: `src/gobby/servers/websocket/chat/backends/droid.py`.
+
+    2.4.4: Timeout expiry emits one terminal error, terminates the owned process tree,
+    removes the handle, and leaves the session reconnectable, with focused tests covering
+    expiry, renewal on parsed progress, an endless low-rate stream of discarded lines
+    still expiring, and cancellation. test: `tests/servers/websocket/chat/test_droid_backend.py`.'
+  labels:
+  - covers:agy-full-integration:2.4:2.4.1
+  - covers:agy-full-integration:2.4:2.4.2
+  - covers:agy-full-integration:2.4:2.4.3
+  - covers:agy-full-integration:2.4:2.4.4
+  tdd: true
+  source_section: '2.4'
+  implementation_domain: backend
+- title: AGY version-gate foundation
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.4'
+  validation_criteria: "2.5.1: An async startup probe resolves the AGY version once\
+    \ and publishes an immutable support record readable from synchronous consumers.\
+    \ file: `src/gobby/providers/version_gate.py`.\n2.5.2: Below the 1.1.18 floor,\
+    \ and when the binary is absent or unparseable, the record is unsupported with\
+    \ a message naming the installed and required versions. file: `src/gobby/providers/version_gate.py`.\n\
+    2.5.3: Focused tests cover supported, sub-floor, absent-binary and unparseable-output\
+    \ records, and prove sync consumers reading the record never await, subprocess,\
+    \ or trigger a re-probe while the executable identity is unchanged. test: `tests/providers/test_version_gate.py`.\n\
+    2.5.4: `run_gobby` resolves PID ownership first, then awaits the probe and publishes\
+    \ the record, then constructs `GobbyRunner` \u2014 publication precedes every\
+    \ support-dependent service the synchronous init seam builds, and the probe never\
+    \ runs in an invocation that loses the daemon lock; the lifespan asserts publication,\
+    \ pre-publication reads return the fail-closed sentinel, a startup-order test\
+    \ in `tests/test_runner_lifecycle.py` proves publication precedes retained registry\
+    \ construction with no nested event-loop execution, the existing `run_gobby` entry-point\
+    \ tests patch the probe so no unit test launches a live version subprocess, and\
+    \ the lock-contention branch in `tests/test_runner_pid_file.py` asserts the probe\
+    \ is not called when acquisition loses. symbol: `run_gobby`. file: `src/gobby/runner.py`.\n\
+    2.5.5: The capability registry's AGY bindings and the `/providers` AGY payload\
+    \ read the published support record and never launch their own AGY version probe;\
+    \ a daemon-construction test proves the installed `ToolChatService` registry sees\
+    \ the record and a `/providers` request triggers no second probe, and `get_cli_version`\
+    \ has no agy caller outside `version_gate`. symbol: `_agy_unavailable_bindings`.\
+    \ file: `src/gobby/ai/registry_builder.py`.\n2.5.6: The support record carries\
+    \ the resolved executable identity (realpath plus `st_dev`, `st_ino`, `st_size`,\
+    \ `st_mtime_ns`) captured with the probe, and every version-gated side effect\
+    \ re-stats that path and reads the matching record before acting \u2014 awaiting\
+    \ the async accessor form, while synchronous availability reads use the no-I/O\
+    \ peek. file: `src/gobby/providers/version_gate.py`.\n2.5.7: Replacing the AGY\
+    \ binary between two spawns in one daemon re-probes exactly once and the second\
+    \ spawn reads the new record, while an unchanged binary across repeated side effects\
+    \ launches no further subprocess. test: `tests/providers/test_version_gate.py`.\n\
+    2.5.8: Concurrent observers of one identity change share a single re-probe under\
+    \ a per-path lock and all read the winner's complete record, never a partially\
+    \ replaced one. test: `tests/providers/test_version_gate.py`.\n2.5.9: The probe\
+    \ executes the resolved path rather than the bare name through `PATH`, and re-stats\
+    \ that path when it returns: matching pre- and post-probe identities publish the\
+    \ record, a mismatch publishes nothing and leaves the next access to re-probe,\
+    \ proven by a forced replacement-during-probe test. test: `tests/providers/test_version_gate.py`.\n\
+    2.5.10: The synchronous peek never awaits, subprocesses, or blocks: on an identity\
+    \ mismatch it reports unsupported with the revalidating reason rather than the\
+    \ stale record, while the async accessor awaits the single re-probe and every\
+    \ version-gated side effect \u2014 tool-chat binding selection, web-chat launch,\
+    \ spawn gating, model collection, and capacity refresh \u2014 awaits it before\
+    \ acting. test: `tests/providers/test_version_gate.py`."
+  labels:
+  - covers:agy-full-integration:2.5:2.5.1
+  - covers:agy-full-integration:2.5:2.5.2
+  - covers:agy-full-integration:2.5:2.5.3
+  - covers:agy-full-integration:2.5:2.5.4
+  - covers:agy-full-integration:2.5:2.5.5
+  - covers:agy-full-integration:2.5:2.5.6
+  - covers:agy-full-integration:2.5:2.5.7
+  - covers:agy-full-integration:2.5:2.5.8
+  - covers:agy-full-integration:2.5:2.5.9
+  - covers:agy-full-integration:2.5:2.5.10
+  tdd: true
+  source_section: '2.5'
+  implementation_domain: backend
+- title: Installer and status truthfulness
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.6.1: `install_agy` accepts `hook_timeout_seconds`, the standard-install
+    dispatcher passes it like every other CLI, and both the flat-list and matcher-group
+    handlers carry the configured timeout. symbol: `install_agy`. file: `src/gobby/cli/installers/agy.py`.
+
+    2.6.2: After writing `hooks.json`, the installer verifies registration through
+    `agy -p "/hooks" --output-format json` (shape per record 1.1.21) and reports verified,
+    rejected-with-reason, or skipped-no-binary, without failing the install on verification.
+    symbol: `install_agy`. file: `src/gobby/cli/installers/agy.py`.
+
+    2.6.3: `get_coding_cli_hooks_status` detects the gobby hook in `~/.gemini/config/hooks.json`
+    instead of hardcoding `False`. symbol: `get_coding_cli_hooks_status`. file: `src/gobby/utils/deps.py`.
+
+    2.6.4: `gobby status` no longer appends "unavailable: no machine transport" for
+    AGY. symbol: `_format_coding_cli_details`. file: `src/gobby/utils/status.py`.
+
+    2.6.5: Installer tests cover timeout propagation, all three verification outcomes
+    with a faked `agy`, and idempotence with verification; template and status tests
+    are re-anchored. test: `tests/cli/installers/test_cli_installers_agy.py`.'
+  labels:
+  - covers:agy-full-integration:2.6:2.6.1
+  - covers:agy-full-integration:2.6:2.6.2
+  - covers:agy-full-integration:2.6:2.6.3
+  - covers:agy-full-integration:2.6:2.6.4
+  - covers:agy-full-integration:2.6:2.6.5
+  tdd: true
+  source_section: '2.6'
+  implementation_domain: backend
+- title: Wrap web-chat backends in SRT
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  - '2.2'
+  - '2.3'
+  - '2.4'
+  - '2.5'
+  - '2.6'
+  validation_criteria: "3.1.1: Web-chat subprocess launches are wrapped by `prepare_sandbox_launch`\
+    \ at the asynchronous post-hydration seam, and no subprocess launch occurs in\
+    \ synchronous `create_session`. symbol: `ChatSessionMixin._create_chat_session_inner`.\
+    \ file: `src/gobby/servers/websocket/chat/_session.py`.\n3.1.2: The `web_chat_sandbox`\
+    \ default is `backend=\"srt\"` with a bounded network policy that SRT preflight\
+    \ accepts. symbol: `DaemonConfig`. file: `src/gobby/config/app.py`.\n3.1.3: Sessions\
+    \ carrying a stale sandbox policy hash surface a mismatch rather than resuming\
+    \ under a changed boundary. symbol: `WebChatRuntimeManager.policy_mismatch_reason`.\
+    \ file: `src/gobby/servers/websocket/chat/runtime_manager.py`.\n3.1.4: A CLI's\
+    \ own sandbox flag is pinned off when SRT is the enforcing boundary. file: `src/gobby/servers/websocket/chat/backends/codex.py`.\n\
+    3.1.5: A parameterized launch-contract matrix over the five incumbent providers\
+    \ pins exactly one SRT wrapper, bounded-network-policy representation, native-sandbox-off,\
+    \ provider-native usability, and stale-hash refusal per provider. test: `tests/servers/websocket/chat/test_launch_contracts.py`.\n\
+    3.1.6: `web_chat_sandbox_policy_hash` covers the complete normalized effective\
+    \ policy with an explicit version, and changing the backend, a domain, a Git/package\
+    \ capability, or a socket allowance each produces a stale-resume refusal in tests.\
+    \ symbol: `web_chat_sandbox_policy_hash`. file: `src/gobby/agents/sandbox.py`.\n\
+    3.1.7: Codex and ACP subprocesses are session-owned: launched at the async post-hydration\
+    \ seam under the session's final project path and policy, torn down with the session,\
+    \ with failed-start cleanup, and tests covering first start, resume, failure,\
+    \ teardown, concurrent sessions, and two projects receiving distinct filesystem\
+    \ confinement under final worktree paths. test: `tests/servers/websocket/chat/test_launch_contracts.py`.\n\
+    3.1.8: The Claude shim execs the SRT-wrapped argv, SDK-appended arguments pass\
+    \ through exactly one wrapper, and the shim is cleaned up on teardown, disconnect,\
+    \ and failed start. test: `tests/servers/websocket/chat/test_launch_contracts.py`.\n\
+    3.1.9: `acp_client.py` remains below 1,000 lines, or its launch seam is decomposed\
+    \ in the same task. file: `src/gobby/adapters/acp_client.py`.\n3.1.10: The post-hydration\
+    \ launch path is extracted from `_create_chat_session_inner` into `_session_launch.py`\
+    \ and `_session.py` remains below 1,000 lines after the seam work. file: `src/gobby/servers/websocket/chat/_session_launch.py`.\n\
+    3.1.11: Runner bootstrap splits Codex client ownership: the daemon-owned synchronization\
+    \ client keeps serving the `HTTPServer` hook/session consumers while web-chat\
+    \ sessions construct per-session clients through the factory; the shared-identity\
+    \ assertion in `tests/test_runner_lifecycle.py` is replaced by daemon-preservation\
+    \ and per-session confinement cases. symbol: `init_servers`. file: `src/gobby/runner_init/servers.py`.\n\
+    3.1.12: ACP `session/close` and `session/delete` for inactive and post-restart\
+    \ sessions obtain an operation-owned client whose confinement root is the persisted\
+    \ session workspace identity \u2014 recorded at first workspace resolution, validated\
+    \ against project/worktree confinement at use, failing closed when absent or invalid,\
+    \ never falling back to the repository root \u2014 under the target session's\
+    \ SRT policy; capability gating and close/expire/delete fallback behavior are\
+    \ preserved, the client is finalized on success and every failure branch, no warm\
+    \ shared ACP subprocess remains, and closed-task, released-task, escalated, deleted-worktree,\
+    \ and post-restart cases plus ACP- and storage-failure finalization are tested.\
+    \ symbol: `ACPSessionLifecycleService`. file: `src/gobby/sessions/acp_lifecycle.py`.\n\
+    3.1.13: The daemon-sandbox config suite asserts the new `backend=\"srt\"` bounded-network\
+    \ default and keeps explicit provider-native override coverage. test: `tests/config/test_daemon_sandbox.py`.\n\
+    3.1.14: The direct lifecycle suites migrate with the ownership change: the ACP\
+    \ lifecycle suite's `acp_backend` fake becomes the operation-owned client contract,\
+    \ the Claude chat-session suite's start/stop and option-cleanup assertions adopt\
+    \ the shim launch contract, and the websocket session suite pins the post-hydration\
+    \ launch order. test: `tests/sessions/test_acp_lifecycle_service.py`.\n3.1.15:\
+    \ The canonical workspace identity persists on the session row through migration\
+    \ `403_sessions_workspace_path.sql` with model, hydration, serialization, and\
+    \ embedded-asset identity coverage, and the production ACP route constructor supplies\
+    \ the lifecycle service's dependencies; every first-resolution writer persists\
+    \ the validated identity \u2014 spawn-time registration (with a persistence case\
+    \ in `tests/agents/test_spawn_executor.py`), hook adoption, and web-chat hydration.\
+    \ file: `crates/gcore/assets/schema/migrations/403_sessions_workspace_path.sql`.\n\
+    3.1.16: Every workspace-identity mutation writer is covered: `handle_set_project`\
+    \ and `handle_set_worktree` atomically update or invalidate the persisted identity\
+    \ before teardown, worktree deletion tombstones referencing identities, and tests\
+    \ cover project switch, worktree switch, deletion before close/delete, and restart\
+    \ before rehydration \u2014 a stale or tombstoned identity always fails closed\
+    \ at use. test: `tests/servers/websocket/test_set_worktree.py`.\n3.1.17: The resolver\
+    \ hierarchy and Claude settings helpers move from `sandbox.py` to `sandbox_resolvers.py`\
+    \ with no re-export shim; `resume_executor.py`, `spawn_executor.py`, `spawn_executor_support.py`,\
+    \ `tmux/spawner.py`, `backends/codex.py`, `srt_runtime.py`, and the agents test\
+    \ suites import from the new module, and `sandbox.py` stays below 1,000 lines\
+    \ after the policy-hash rework with headroom for 3.2. file: `src/gobby/agents/sandbox_resolvers.py`.\n\
+    3.1.18: The post-hydration launch consumes the sandbox config and policy hash\
+    \ produced by `_refresh_sandbox_config` for that `create_session` call \u2014\
+    \ one `DaemonConfig` resolution per session creation \u2014 and the `sensitive_path_enforcement`\
+    \ gate in `create_session` is satisfied by the SRT boundary under `backend=\"\
+    srt\"` while remaining per-provider under explicit provider-native; both are pinned\
+    \ per provider in the launch-contract matrix. symbol: `WebChatRuntimeManager._refresh_sandbox_config`.\
+    \ file: `src/gobby/servers/websocket/chat/runtime_manager.py`.\n3.1.19: Migration\
+    \ 403 lands through the embedded-asset contract: an `EmbeddedMigration` entry\
+    \ in `assets.rs`, regenerated `catalog.manifest.json`, refreshed `schema_expected_identity.json`\
+    \ (`latest_version` 403), the `latest_version` pins in `grant/bundle.rs` and `grant/tests.rs`,\
+    \ the identity assertions in `schema_contract.rs` and `cli_contract.rs`, the `runner_tests.rs`\
+    \ enumeration, the freshness counts, the signed golden grant vectors, an untouched\
+    \ `baseline.sql`, and no DDL in Python. file: `crates/gcore/src/schema/assets.rs`.\n\
+    3.1.20: `_refresh_sandbox_config` returns an immutable per-creation policy snapshot\
+    \ (resolved `SandboxConfig` and policy hash); `_create_chat_session_inner` combines\
+    \ it with the repository path resolved at the post-hydration seam into the `SessionLaunchContext`\
+    \ it threads through `_session_launch`, and the launch path reads policy only\
+    \ from that argument, never from manager fields or backend `set_sandbox_config`\
+    \ state. symbol: `WebChatRuntimeManager._refresh_sandbox_config`. file: `src/gobby/servers/websocket/chat/runtime_manager.py`.\n\
+    3.1.21: Two interleaved session creations with a `DaemonConfig` change between\
+    \ them \u2014 the first launch delayed until the second creation completes \u2014\
+    \ each launch under and persist their own sandbox policy and hash, and a creation\
+    \ carrying a pending worktree override launches under the override's resolved\
+    \ path rather than the pre-resolution project path. test: `tests/servers/websocket/chat/test_servers_websocket_chat_session.py`.\n\
+    3.1.22: The workspace-identity row carries a monotonic generation incremented\
+    \ by `handle_set_project`, `handle_set_worktree`, and `LocalWorktreeManager.delete`\
+    \ in the same transaction as the identity change or tombstone. file: `crates/gcore/assets/schema/migrations/403_sessions_workspace_path.sql`.\n\
+    3.1.23: Close/delete re-reads the workspace generation immediately before process\
+    \ creation and again as soon as the child exists, before binding or first use:\
+    \ an unchanged value binds the client, while a changed value creates no subprocess\
+    \ in the first window and terminates the just-created process tree in the second,\
+    \ both failing closed with the same lifecycle error; forced races against project\
+    \ switch, worktree switch, and worktree deletion each prove both windows. test:\
+    \ `tests/servers/websocket/chat/test_servers_websocket_chat_session.py`."
+  labels:
+  - covers:agy-full-integration:3.1:3.1.1
+  - covers:agy-full-integration:3.1:3.1.2
+  - covers:agy-full-integration:3.1:3.1.3
+  - covers:agy-full-integration:3.1:3.1.4
+  - covers:agy-full-integration:3.1:3.1.5
+  - covers:agy-full-integration:3.1:3.1.6
+  - covers:agy-full-integration:3.1:3.1.7
+  - covers:agy-full-integration:3.1:3.1.8
+  - covers:agy-full-integration:3.1:3.1.9
+  - covers:agy-full-integration:3.1:3.1.10
+  - covers:agy-full-integration:3.1:3.1.11
+  - covers:agy-full-integration:3.1:3.1.12
+  - covers:agy-full-integration:3.1:3.1.13
+  - covers:agy-full-integration:3.1:3.1.14
+  - covers:agy-full-integration:3.1:3.1.15
+  - covers:agy-full-integration:3.1:3.1.16
+  - covers:agy-full-integration:3.1:3.1.17
+  - covers:agy-full-integration:3.1:3.1.18
+  - covers:agy-full-integration:3.1:3.1.19
+  - covers:agy-full-integration:3.1:3.1.20
+  - covers:agy-full-integration:3.1:3.1.21
+  - covers:agy-full-integration:3.1:3.1.22
+  - covers:agy-full-integration:3.1:3.1.23
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: Add the AGY sandbox resolver
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: "3.2.1: `AgySandboxResolver` exists and returns AGY's `--sandbox`\
+    \ for provider-native. file: `src/gobby/agents/sandbox_resolvers.py`.\n3.2.2:\
+    \ `sandbox.py` gains no lines from this deliverable; the resolver lives in `sandbox_resolvers.py`.\
+    \ file: `src/gobby/agents/sandbox_resolvers.py`.\n3.2.3: `get_sandbox_resolver(\"\
+    agy\")` returns `AgySandboxResolver`, and the provider sandbox-capability gate\
+    \ admits agy, using the live-proven flag form. file: `src/gobby/agents/sandbox_resolvers.py`.\n\
+    3.2.4: `sandbox_policy.py` gains agy entries for provider domains, credential/state\
+    \ read and write roots, and credential env masking, using only probe-recorded\
+    \ values \u2014 domains and roots from 1.1.9, credential env from 1.1.15. file:\
+    \ `src/gobby/agents/sandbox_policy.py`.\n3.2.5: The AGY `PROVIDER_CAPABILITIES`\
+    \ row lands in this deliverable, `provider_supports_sandbox(\"agy\")` returns\
+    \ True, and reachability tests pin `get_sandbox_resolver(\"agy\")` through the\
+    \ capability gate. test: `tests/agents/test_sandbox.py`.\n3.2.6: `AgySandboxResolver`\
+    \ emits `--sandbox` for provider-native and `--sandbox=false` when SRT enforces,\
+    \ exactly the boolean form recorded under 1.1.7, and the native-sandbox `.git`\
+    \ read-only caveat from the 1.1.10 changelog is documented on the resolver. file:\
+    \ `src/gobby/agents/sandbox_resolvers.py`.\n3.2.7: The AGY `PROVIDER_CAPABILITIES`\
+    \ row declares `sandbox=True` and sets `sensitive_path_enforcement` only on 1.1.7\
+    \ proof (default False), so `WebChatRuntimeManager.create_session` admits agy\
+    \ under `backend=\"srt\"` and rejects it under provider-native while the flag\
+    \ is False. test: `tests/agents/test_sandbox.py`."
+  labels:
+  - covers:agy-full-integration:3.2:3.2.1
+  - covers:agy-full-integration:3.2:3.2.2
+  - covers:agy-full-integration:3.2:3.2.3
+  - covers:agy-full-integration:3.2:3.2.4
+  - covers:agy-full-integration:3.2:3.2.5
+  - covers:agy-full-integration:3.2:3.2.6
+  - covers:agy-full-integration:3.2:3.2.7
+  tdd: true
+  source_section: '3.2'
+  implementation_domain: backend
+- title: Correct the AGY hook contract to camelCase and synthesize SESSION_START
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  - '2.3'
+  - '3.1'
+  validation_criteria: "4.1.1: camelCase `transcriptPath`, `conversationId` and `workspacePaths`\
+    \ are read from AGY payloads. symbol: `AgyAdapter.translate_to_hook_event`. file:\
+    \ `src/gobby/adapters/agy.py`.\n4.1.2: An `AgyAdapter.handle_native` override\
+    \ dispatches the synthetic `SESSION_START` without process-local first-event state,\
+    \ dispatches the original `PreInvocation` as `BEFORE_AGENT` exactly once, and\
+    \ returns the original event's translated response with the synthetic phase's\
+    \ startup `context`/`system_message` merged into it \u2014 on first and repeated\
+    \ invocations. symbol: `AgyAdapter`. file: `src/gobby/adapters/agy.py`.\n4.1.3:\
+    \ AGY declares a context channel supporting `injectSteps` rather than `NONE`.\
+    \ symbol: `_agy_capabilities`. file: `src/gobby/adapters/capabilities.py`.\n4.1.4:\
+    \ The stale `tool_outcome` provenance stamp `agy.provider_contract_unproven` is\
+    \ replaced with live-proven outcomes. file: `src/gobby/adapters/agy.py`.\n4.1.5:\
+    \ Unified `HookResponse` context translates to `injectSteps` `userMessage`/`ephemeralMessage`\
+    \ on `PreInvocation` and `PostInvocation` responses. symbol: `AgyAdapter.translate_from_hook_response`.\
+    \ file: `src/gobby/adapters/agy.py`.\n4.1.6: An `inject_context` rule's payload\
+    \ reaches the emitted AGY hook response. test: `tests/adapters/test_adapters_agy.py`.\n\
+    4.1.7: Repeated `PreInvocation` events for one conversation yield one canonical\
+    \ session, one startup-context injection, and one transcript association. symbol:\
+    \ `handle_session_start`. file: `src/gobby/hooks/event_handlers/_session_start/flow.py`.\n\
+    4.1.8: A per-turn `BEFORE_AGENT` rule (including `inject_context`) fires on every\
+    \ `PreInvocation`, not only the first, with the synthetic `SESSION_START` phase\
+    \ active. test: `tests/adapters/test_adapters_agy.py`.\n4.1.9: `flow.py` remains\
+    \ below 1,000 lines, or the idempotency keying is decomposed in the same task.\
+    \ file: `src/gobby/hooks/event_handlers/_session_start/flow.py`.\n4.1.10: Startup\
+    \ context commits exactly once through a durable claim generation owned by `SessionVariableManager.claim_startup_context`,\
+    \ allocated in a bounded shielded pre-submission preflight against a canonical\
+    \ session resolved by pre-created Gobby id \u2014 the hint fully validated before\
+    \ it binds anything: the selected row's `project_id`, `source`, `machine_id`,\
+    \ `session_type`, and persisted workspace/tombstone state must all match the envelope,\
+    \ a mismatching hint is rejected with a truthful diagnostic and falls through\
+    \ to ordinary resolution without adopting, rebinding, or mutating the mismatched\
+    \ row, and no claim, `conversationId` binding, transcript classification, or metadata\
+    \ write precedes validation \u2014 adopted by the five-part `(external_id, machine_id,\
+    \ source, project_id, session_type)` identity with `conversationId` bound onto\
+    \ the adopted row and `session_type` preserved, or idempotently registered \u2014\
+    \ and committed only after the delivery receipt confirms emission to the live\
+    \ hook process, with provider-visible presentation at-least-once across the acknowledged\
+    \ crash window; the owning worker's synthetic phase adopts the pre-claim by owner\
+    \ token and delivers full startup context while non-owners observe live: first-event\
+    \ (no pre-existing session), pre-created-child, repeated, concurrent, and terminal-versus-web_chat-collision\
+    \ invocations each commit once, and wrong-project, wrong-source, wrong-machine,\
+    \ wrong-worktree, tombstoned-workspace, pending-transcript, and concurrent-switch\
+    \ hint mismatches each reject without mutation; translation failure, envelope-persistence\
+    \ failure, adapter timeout, queue-timeout-before-worker-start, and request-exit-before-preflight-completion\
+    \ each compare-and-roll-back or invalidate the generation so a later live turn\
+    \ re-delivers, a late-finishing timed-out worker can neither commit nor create\
+    \ a fresh claim, no live claim is ever ownerless, and no private claim or receipt\
+    \ field is emitted to AGY. test: `tests/servers/routes/test_hooks_agy_dispatch.py`.\n\
+    4.1.11: Pending-message delivery moves to the staged receipt commit for all six\
+    \ providers: the provider matrix \u2014 the five incumbents plus AGY \u2014 proves\
+    \ prepare-without-mark, acknowledged commit, transport release, duplicate-ack\
+    \ no-op, daemon restart, and terminal expiry. test: `tests/hooks/test_pending_message_provider_contracts.py`.\n\
+    4.1.12: Adapter timeout is a retryable envelope outcome with worker-exit fencing\
+    \ and a decoupled provider action: the retryable non-2xx carries a stable `retry_kind`\
+    \ discriminator and the 2.3-computed criticality action \u2014 `ingress_backpressure`\
+    \ keeps ghook's unconditional continue with retention, `adapter_timeout` honors\
+    \ the computed action with critical lifecycle hooks failing closed and noncritical\
+    \ hooks including every AGY event continuing \u2014 the envelope-claim disposition\
+    \ is decided at the finalization of the shielded executor future by compare-and-set\
+    \ on the lease token \u2014 a completed worker terminally processes the envelope\
+    \ with no replay, a failed worker releases the claim for daemon replay, and replay\
+    \ before finalization backs off \u2014 replay completes daemon-side effects only\
+    \ and never commits the claim generation or fabricates a provider-visible response,\
+    \ the uncommitted startup context re-delivers on the next live `PreInvocation`,\
+    \ and a forced-overlap test covers session registration, a non-idempotent rule,\
+    \ pending-message consumption, and activity mutation, plus non-AGY response-bearing\
+    \ critical and noncritical timeout cases in both retry classes pinning the same\
+    \ fencing and dispositions. test: `tests/servers/routes/test_hooks_agy_dispatch.py`.\n\
+    4.1.13: `hooks.py` remains below 1,000 lines, or the adapter-execution and envelope-finalization\
+    \ claim-lifecycle seam is decomposed in the same task. file: `src/gobby/servers/routes/mcp/hooks.py`.\n\
+    4.1.14: The claim generation lands as a numbered gcore migration and in the incumbent\
+    \ suites: the migration is registered through the embedded-asset contract (the\
+    \ number is claimed at implementation \u2014 404 as of this revision, after 3.1's\
+    \ workspace-identity migration takes 403 with 376\u2013402 registered in `crates/gcore/src/schema/assets.rs`;\
+    \ the receipt-effects migration takes 405 \u2014 and the range is re-checked against\
+    \ the applied set at implementation time, since parked plans go stale) with schema-identity\
+    \ coverage, and the hook fixtures and session-storage suites that hardcode the\
+    \ eager `context_injected` boolean \u2014 the direct handler case in `tests/hooks/event_handlers/test_session_variable_preservation.py`\
+    \ and the `update_terminal_pickup_metadata` signature pin in `tests/storage/test_sessions_import.py`\
+    \ included \u2014 re-anchor to claim, commit, rollback, and invalidate boundaries.\
+    \ test: `tests/storage/test_schema_contract.py`.\n4.1.15: One-shot response effects\
+    \ are staged behind the versioned delivery receipt, backed by the relational receipt-effects\
+    \ storage authority (`storage/hook_receipts.py`, migration `405_hook_receipt_effects.sql`\
+    \ registered through the embedded-asset contract, with focused storage tests in\
+    \ `tests/storage/test_hook_receipts.py`): the receipt row carries `receipt_id`,\
+    \ the immutable `original_envelope_id`, the mutable `current_envelope_id`, canonical\
+    \ session identity, and the monotonic delivery generation \u2014 re-prepare sets\
+    \ `current_envelope_id` to the new carrying envelope in the same compare-and-set\
+    \ that increments the generation, and storage tests assert both columns after\
+    \ a release-and-re-prepare while the wire acknowledgment echoes `receipt_id`,\
+    \ the original envelope id, and the generation; ghook acknowledges only after\
+    \ emission-plus-flush succeeds \u2014 `output.rs` returns the I/O result and receipt\
+    \ metadata is stripped before action mapping; the original envelope is retained\
+    \ until the acknowledgment is durably enqueued; the identity-less `direct_post_after_enqueue_failure`\
+    \ fallback is explicit at-least-once presentation \u2014 the emitted response\
+    \ carries the one-shot payload while no receipt is created and no effect or dedupe\
+    \ claim commits, repeated presentation across consecutive enqueue failures is\
+    \ the tested mode, a later durable hook creates and commits the receipt, and a\
+    \ fallback-only session ending in Stop or expiry records terminal-undelivered;\
+    \ terminal owners compare-and-set only from prepared or released \u2014 never\
+    \ from acknowledged \u2014 and because a durably enqueued acknowledgment is not\
+    \ yet a state transition, an exact acknowledgment for the current delivery generation\
+    \ arriving within the retention window also compare-and-sets terminal-undelivered\
+    \ back to acknowledged and commits its staged effects, so a Stop or expiry landing\
+    \ between ghook's durable enqueue and the drain cannot discard a delivery the\
+    \ provider already saw, while stale-generation, already-acknowledged, and missing-row\
+    \ acknowledgments stay terminal no-ops; the drain routes acknowledgments to a\
+    \ dedicated idempotent compare-and-set consumer whose one authoritative predicate\
+    \ keys on `receipt_id`, delivery generation, and source state and admits exactly\
+    \ two source cases \u2014 `prepared`, and `terminal-undelivered` only for an exact\
+    \ current-generation acknowledgment inside the retention window \u2014 committing\
+    \ the staged effects atomically with whichever transition succeeds and leaving\
+    \ every other source state, released and expired rows included, a recorded no-op\
+    \ \u2014 a stale-generation ack from an earlier carrying envelope is a recorded\
+    \ terminal no-op \u2014 duplicate direct and replayed acks are no-ops, no acknowledgment\
+    \ generates a receipt of its own, and a consumed acknowledgment terminalizes the\
+    \ original envelope without re-executing its hook; staged effects traverse durable\
+    \ prepared, acknowledged, released, and terminal-undelivered states with the `Stop`\
+    \ handler and both expiry owners recording terminal-undelivered; and write-failure,\
+    \ partial-flush-failure, death-after-write-before-ack, ack-write disk and permission\
+    \ failure, original-versus-ack drain ordering, queued-ack-then-Stop-then-drained-ack-commit,\
+    \ restart recovery, duplicate replay, single-turn timeout, disconnect-after-persistence,\
+    \ acknowledged-delivery, pending-message rollback, repeated-enqueue-failure-with-no-durable-successor,\
+    \ durable-recovery-after-fallback-only-stretch, and stale-generation-ack-after-release-and-re-prepare\
+    \ cases are tested. test: `tests/servers/routes/test_hooks_agy_dispatch.py`.\n\
+    4.1.16: The envelope processing marker is a verifiable ownership lease at the\
+    \ route seam: renewed while the shielded future is live, reclaimable only after\
+    \ lease expiry plus failed owner-liveness validation, finalized by compare-and-set\
+    \ \u2014 with a worker forced past the replay grace period retaining exclusion,\
+    \ daemon-death recovery, and losing-owner finalization each pinned. test: `tests/servers/test_mcp_routes.py`.\n\
+    4.1.17: Every response-visible one-shot producer stages through the receipt authority:\
+    \ rule one-shot guards and sibling `set_variable`/`mcp_call` success variables,\
+    \ staged-memory injected-ID finalization, the discovery-dedupe claims (`dedup_memory_results`/`injected_memory_ids`,\
+    \ `dedup_skill_results`/`suggested_skill_names`, `_filter_and_track_new_review_lessons`/`injected_review_lesson_ids`),\
+    \ and the first-turn agent-preamble guard each commit on acknowledgment, release\
+    \ on transport loss, and terminalize on Stop or expiry \u2014 a write failure\
+    \ before emission suppresses no future delivery, and the rule-persistence, delivery-pipeline,\
+    \ and extracted-helper suites migrate to the staged boundaries \u2014 with the\
+    \ direct owners correctly attributed: the eager `claim_set_variable_values` dedupe\
+    \ contract lives in `TestDedupMemoryResults` and `TestDedupSkillResults` in `tests/hooks/test_hook_manager_extra.py`,\
+    \ which migrate to prepare-without-claim, acknowledged-commit, transport-loss\
+    \ release, duplicate-ack no-op, and terminalization cases while their ID-less\
+    \ and fail-open filtering cases are retained, and the first-turn preamble suite\
+    \ `tests/hooks/test_agent_events_coverage.py` re-anchors its first-prompt, persona-switch,\
+    \ and rehydration cases to staged guard boundaries, with the prior-activity stale-repair\
+    \ branch explicitly classified eager \u2014 it marks the guard from prior-session\
+    \ evidence and delivers no payload, so it pairs with no receipt. The split is\
+    \ producer-declared: `RuleEffect` carries the explicit delivery disposition (`eager`\
+    \ default, `on_receipt` on delivery-suppressing mutations, grouped with the payload\
+    \ they suppress within one fired rule), staged-commit code never infers one-shot\
+    \ status from sibling variable diffs or condition shapes, deliberately per-turn\
+    \ unguarded context and ordinary state stay eager, and the model round-trip and\
+    \ legacy-row deserialization are pinned in `tests/workflows/test_rule_models.py`.\
+    \ Propagation covers every ownership class: the bundled sweep enumerates all one-shot-guard\
+    \ templates \u2014 `guard-plan-memory-writes.yaml`, `memory-capture-nudge.yaml`,\
+    \ `handle-plan-mode-entry.yaml` (both rules), `discover-skill-hubs-on-turn-start.yaml`\
+    \ \u2014 while the sync path's typed data-migration/validation owner writes an\
+    \ explicit disposition onto matching user- and project-owned definitions preserving\
+    \ ownership and enabled toggles, fails ambiguous rows with an actionable diagnostic,\
+    \ and installed-global, user-global, and project-owned rows plus a mixed eager-plus-staged\
+    \ single-evaluation case are each tested. The direct behavioral suites for the\
+    \ edited templates \u2014 `tests/workflows/test_memory_lifecycle_rules.py`, `test_plan_mode_rules.py`\
+    \ (both rules), and `test_skill_discovery_rules.py` \u2014 assert each rule's\
+    \ eager/`on_receipt` payload grouping; `src/gobby/install/bundled_content_manifest.json`\
+    \ is regenerated with the YAML edits and the committed-manifest parity test stays\
+    \ green; and the disposition migration has one ordered production trigger \u2014\
+    \ the narrow rule-disposition entry point invoked unconditionally from `runner_init/storage.py`\
+    \ at daemon startup, completing before receipt-capability activation, while the\
+    \ full `sync_bundled_content_to_db` aggregator stays install/CLI/dev-mode-only\
+    \ \u2014 applying by definition-version compare-and-set with a zero-write second\
+    \ run, every caller (installer, CLI sync, direct CLI `cli/sync.py`, MCP reload\
+    \ `_import.py`) propagating the failure diagnostic, and first-run, repeated-run\
+    \ zero-writes, ambiguous-rollback, partial-failure, and concurrent-edit cases\
+    \ pinned in `tests/workflows/test_rule_yaml_sync.py`; the invariant is write-preserved\
+    \ after activation: one shared write-time disposition classifier gates every post-activation\
+    \ rule ingress \u2014 MCP `create_rule`/`update_rule`, the HTTP create and full-replacement\
+    \ update endpoints, the CLI rule-file import, and `sync_imported_definition` \u2014\
+    \ persisting explicit `on_receipt` grouping for recognizable delivery suppressors\
+    \ and failing ambiguous definitions with the same rule/effect diagnostic, with\
+    \ post-activation create-and-replace cases in `tests/mcp_proxy/tools/test_rule_tools.py`,\
+    \ `tests/servers/routes/test_rules_routes.py`, `tests/cli/test_cli_rules.py`,\
+    \ and `tests/workflows/test_imports.py` proving no eager one-shot guard activates;\
+    \ the startup trigger \u2014 the narrow entry point, unconditional at startup\
+    \ while the full aggregator stays install/CLI/dev-mode-only \u2014 is proven at\
+    \ the daemon-startup seam in `tests/test_runner_lifecycle.py` (ordinary non-dev\
+    \ daemon runs the migration exactly once before hook service, ambiguous or partial\
+    \ diagnostic aborts before hooks are served, clean or zero-write repeat proceeds,\
+    \ and the other bundled domains and user-template import are not invoked), and\
+    \ caller propagation is pinned at each direct seam \u2014 `tests/cli/test_sync_reinstall.py`\
+    \ and `tests/mcp_proxy/tools/workflows/test_import_reload.py` inject ambiguous\
+    \ and partial sync results and assert daemon reload/notification and stale-cache\
+    \ activation suppressed and the rule/effect diagnostic preserved, the CLI failure\
+    \ raising through Click with `CliRunner` exit code 1, and the reinstall path keeping\
+    \ its existing per-domain atomic delete-plus-reinstall transaction so both failure\
+    \ shapes leave the seeded installed row set byte-for-byte intact with safe retry.\
+    \ test: `tests/workflows/test_hooks.py`.\n4.1.18: The hook-response protocol is\
+    \ strict-versioned with request-carried provenance: every envelope carries an\
+    \ immutable producer response-capability field beside `schema_version` (`envelope.rs`),\
+    \ preserved through inbox persistence and replay, and the daemon gates on that\
+    \ request-carried value \u2014 never the mutable machine-global stamp \u2014 before\
+    \ adapter execution or effect preparation; `runtime.rs::write_runtime_stamp` publishes\
+    \ the capability beside `schema_version` and `ghook_version` as installation-health\
+    \ diagnostics joining the `runtime_compat.py` contract; `adapter_timeout` and\
+    \ receipt-bearing responses are never emitted to a request that has not advertised\
+    \ the capability, and the transport-path matrix is pinned \u2014 direct and detached\
+    \ POSTs gate before execution; below-floor enqueue-only envelopes are terminally\
+    \ quarantined at drain per the `_quarantine_or_warn` precedent with no adapter\
+    \ or effect execution, lease release, an actionable protocol diagnostic, startup-barrier\
+    \ settlement, and any prepared receipt terminalized undelivered \u2014 quarantine\
+    \ retention is the named `HOOK_QUARANTINE_RETENTION_WINDOW` constant with a fixed\
+    \ default in `hooks/inbox.py`, wall-clock against the sidecar-persisted quarantine\
+    \ timestamp, prune-eligible strictly after the cutoff (exact-boundary entries\
+    \ retained), pruned in bounded batches that remove payload and `.meta.json` sidecar\
+    \ coherently with orphan-pair recovery, from the same `start_periodic_tasks` loop\
+    \ as receipt retention, registration proven in the `tests/test_runner_maintenance_startup.py`\
+    \ injected-loop harness and shutdown owned end to end \u2014 typed task attribute\
+    \ on `GobbyRunner`, failure tracking, and cancel-and-await exactly once in `runner_lifecycle_shutdown.py::_cancel_periodic_tasks`\
+    \ before hook storage and database teardown, proven in `tests/test_runner_shutdown.py`\
+    \ \u2014 with repeated-drain, restart, inside/exact/outside-cutoff retention,\
+    \ orphan-file, bounded-batch, concurrent quarantine-versus-prune, and zero-effect\
+    \ assertions in `tests/hooks/test_inbox.py`; the v1 envelope schema \u2014 tracked\
+    \ as two byte-identical copies, `crates/ghook/schemas/inbox-envelope.v1.schema.json`\
+    \ and the root public mirror `schemas/inbox-envelope.v1.schema.json`, today `additionalProperties:\
+    \ false` \u2014 admits the optional response-capability property in both copies,\
+    \ kept byte-identical by a focused parity assertion, and an absent field parses\
+    \ cleanly and means legacy/below-floor \u2014 never malformed \u2014 with missing-field\
+    \ parsing tested through the direct, detached, and enqueue-only paths; every exhaustive\
+    \ `Envelope` literal is owned by the field addition \u2014 the diagnostics fixture\
+    \ (`crates/ghook/src/diagnostics.rs::envelope`) populates the response-capability\
+    \ member or migrates to a constructor \u2014 and every success-path raw-envelope\
+    \ test fixture carries the supported capability value: the constructors in `tests/servers/routes/mcp/test_hook_session_metadata.py`,\
+    \ `tests/servers/routes/test_hooks_droid_dispatch.py`, `tests/e2e/conftest.py::CLIEventSimulator._hook_envelope`,\
+    \ `tests/e2e/test_daemon_auth.py`, `tests/servers/routes/mcp_endpoints/test_execution_session_end_cleanup.py`,\
+    \ `tests/servers/routes/test_hold_open_gate.py`, `tests/servers/test_http_endpoints.py`,\
+    \ and `tests/servers/test_http_server.py`, while focused missing-field cases keep\
+    \ asserting pre-execution rejection and enqueue-only terminal quarantine; the\
+    \ identity-less fallback stages nothing at any floor; and statusline is asserted\
+    \ to remain a local daemon-free non-effect path outside envelope construction;\
+    \ both version skews plus the reinstall-boundary provenance races \u2014 an old\
+    \ envelope drained after reinstall and a still-running old ghook posting after\
+    \ reinstall \u2014 are tested, and the V2 reinstall-plus-activation check runs\
+    \ after this deliverable. file: `src/gobby/hooks/runtime_compat.py`.\n4.1.19:\
+    \ Receipt-effects growth is bounded by an implementable per-state retention lifecycle:\
+    \ the recovery/idempotency window is the fixed named `HOOK_RECEIPT_IDEMPOTENCY_WINDOW`\
+    \ constant in `storage/hook_receipts.py`, with no configuration override, measured\
+    \ on wall-clock time against the row's recorded transition timestamp with prune\
+    \ eligibility strictly after `transition_timestamp + window` (a row exactly at\
+    \ the boundary is retained); prepared rows are never pruned; released rows have\
+    \ both exits \u2014 the same receipt row atomically re-prepares by CAS from released\
+    \ to prepared when its payload moves to the next durable envelope, keeping `original_envelope_id`,\
+    \ setting `current_envelope_id` to the new carrying envelope, and incrementing\
+    \ the delivery generation in that one statement so acknowledgments from the earlier\
+    \ carrying envelope can no longer commit, and terminal owners CAS from released\
+    \ to terminal-undelivered exactly as from prepared, so no released row is permanently\
+    \ non-prunable; acknowledged and terminal-undelivered rows become prune-eligible\
+    \ only after the window, a duplicate ack after pruning is a terminal idempotent\
+    \ no-op in the dedicated receipt consumer \u2014 a `receipt_id` resolving to no\
+    \ row executes no adapter or effect and writes no new record, with no dependence\
+    \ on any second durable ledger \u2014 and pruning runs in bounded indexed batches\
+    \ from the periodic receipt-retention loop registered in `start_periodic_tasks`,\
+    \ its registration proven in the `tests/test_runner_maintenance_startup.py` injected-loop\
+    \ harness (both retention owners schedule exactly once with the intended database\
+    \ and shutdown inputs and join the tracked periodic-task set) and its shutdown\
+    \ owned in the typed runner inventory \u2014 declared on `GobbyRunner`, cancelled\
+    \ and awaited exactly once in `_cancel_periodic_tasks` before hook storage and\
+    \ database teardown, with idempotent-shutdown coverage in `tests/test_runner_shutdown.py`\
+    \ \u2014 with just-inside-window, exact-boundary, just-outside-window, released-re-prepare,\
+    \ released-terminalization, stale-generation-ack-after-re-prepare, duplicate-ack-after-pruning,\
+    \ restart-recovery, and concurrent ack/terminal/prune race cases tested. file:\
+    \ `src/gobby/storage/hook_receipts.py`.\n4.1.20: camelCase aliasing is AGY-local:\
+    \ `agy_contract.py` declares `AGY_PAYLOAD_ALIASES` and the `toolCall{name,args}`\u2192\
+    `tool_name`/`tool_input` flatten with `workspacePaths[0]`\u2192`cwd`, `AgyAdapter.translate_to_hook_event`\
+    \ applies it before `ACPHookAdapter` extracts `session_id` and `cwd`, `normalize_tool_fields`\
+    \ and `ACPHookAdapter` gain no AGY keys, and `tool_input` string values decode\
+    \ through `decode_agy_tool_args` iff record 1.1.5 shows encoded-string args. test:\
+    \ `tests/adapters/test_adapters_agy.py`.\n4.1.21: `ContextChannel` gains `INJECT_STEPS`;\
+    \ `_agy_capabilities` declares it on `PreInvocation` and `PostInvocation` only;\
+    \ the hooks route and event enrichment treat it as a live channel; `test_agy_hook_capabilities_have_no_live_transport_claims`\
+    \ is re-anchored to the per-event channels with `transport_capabilities` still\
+    \ empty. symbol: `ContextChannel`. file: `src/gobby/adapters/capabilities.py`.\n\
+    4.1.22: Response fields are mapped per record 1.1.24's honored set: `AFTER_AGENT`\
+    \ deny/block emits `terminationBehavior: force_continue` with the reason as an\
+    \ `ephemeralMessage` step, capped at `AGY_FORCE_CONTINUE_LIMIT` consecutive emissions\
+    \ per execution, allow omits it, `terminate` is never emitted; `deny_unless_prior_grant`\
+    \ is emitted only from an explicit `HookResponse` field added against the recorded\
+    \ shape; `force_ask`, `permissionOverrides` (not honored), and `toolCall` inject\
+    \ steps (fatal on AGY) are never emitted and never inferred from `updated_permissions`;\
+    \ and the first synthetic `SESSION_START` of a live conversation produces the\
+    \ `source=agy` line in `~/.gobby/logs/hooks.log` and an AGY session row \u2014\
+    \ the Dispatch Evidence Gate's condition-2 evidence, proven against the committed\
+    \ `hook-payloads.jsonl` fixtures. symbol: `AgyAdapter.translate_from_hook_response`.\
+    \ file: `src/gobby/adapters/agy.py`.\n4.1.23: `PreInvocation` cardinality follows\
+    \ records 1.1.5/1.1.17/1.1.18: under `--input-format stream-json` one process\
+    \ yields one canonical session; the sequence PreInvocation(turn 1, timeout) \u2192\
+    \ Stop(turn 1) \u2192 PreInvocation(turn 2) commits the generation exactly once\
+    \ on turn 2 with Stop releasing rather than marking delivered; interactive and\
+    \ print dispatch share the payload-driven path; and because `invocationNum` is\
+    \ a per-turn origin, `invocationNum == 0` dispatches `BEFORE_AGENT` while later\
+    \ invocations in the same turn dispatch `BEFORE_MODEL`. test: `tests/servers/routes/test_hooks_agy_dispatch.py`.\n\
+    4.1.24: Migrations 404 and 405 land through the embedded-asset contract (`assets.rs`\
+    \ entries, regenerated `catalog.manifest.json`, `schema_expected_identity.json`,\
+    \ grant bundle pins, the `schema_contract.rs` and `cli_contract.rs` identity assertions,\
+    \ the `runner_tests.rs` enumeration, the freshness counts, the signed golden grant\
+    \ vectors, an untouched `baseline.sql`), `storage/hook_receipts.py` carries DML\
+    \ only, and `delivery-receipt.v1.schema.json` is tracked as two byte-identical\
+    \ copies with a parity assertion. file: `crates/gcore/src/schema/assets.rs`.\n\
+    4.1.25: The `adapter_timeout` provider-visible continue for agy is the protojson-legal\
+    \ per-event body from `action.rs::skip_stdout_json` (the body 2.3.7 establishes),\
+    \ never `{\"continue\":true}` nor `{\"status\":\"error\"}`, pinned per AGY event\
+    \ in `contract.rs`. file: `crates/ghook/src/action.rs`.\n4.1.26: The `force_continue`\
+    \ budget is a durable row keyed by `(canonical_session_id, execution_num)` owned\
+    \ by `storage/hook_receipts.py`, incremented by atomic compare-and-set in the\
+    \ same transaction that prepares the response's receipt: a response discarded\
+    \ before preparation consumes no slot, and a slot consumed by preparation is never\
+    \ refunded by a later ghook write failure the daemon cannot observe at prepare\
+    \ time. file: `src/gobby/storage/hook_receipts.py`.\n4.1.27: The budget resets\
+    \ on a new `executionNum` and is retired on terminal completion by the `Stop`\
+    \ handler and both expiry owners; a duplicate acknowledgment or re-delivered `PostInvocation`\
+    \ for an already-prepared receipt never increments again, and a daemon restart\
+    \ mid-execution resumes at the persisted count. test: `tests/storage/test_hook_receipts.py`.\n\
+    4.1.28: Concurrent `PostInvocation` hooks for one execution serialize on the counter\
+    \ row and the loser reads the incremented value; the limit-th emission is still\
+    \ a `force_continue` and the next deny is downgraded to an `ephemeralMessage`-only\
+    \ response. test: `tests/servers/routes/test_hooks_agy_dispatch.py`.\n4.1.29:\
+    \ The identity-less `direct_post_after_enqueue_failure` fallback never emits `terminationBehavior:\
+    \ force_continue`, emitting only the explanatory `ephemeralMessage` step, so repeated\
+    \ fallback deliveries across consecutive enqueue failures present no continuation\
+    \ without a durable slot behind it, and a durable write failure after preparation\
+    \ still leaves its slot consumed. test: `tests/servers/routes/test_hooks_agy_dispatch.py`.\n\
+    4.1.30: `effects.py` (897 lines at this revision) remains below 1,000 lines, or\
+    \ the receipt-staged one-shot grouping and commit-application seam is decomposed\
+    \ in the same task. file: `src/gobby/workflows/engine/effects.py`."
+  labels:
+  - covers:agy-full-integration:4.1:4.1.1
+  - covers:agy-full-integration:4.1:4.1.2
+  - covers:agy-full-integration:4.1:4.1.3
+  - covers:agy-full-integration:4.1:4.1.4
+  - covers:agy-full-integration:4.1:4.1.5
+  - covers:agy-full-integration:4.1:4.1.6
+  - covers:agy-full-integration:4.1:4.1.7
+  - covers:agy-full-integration:4.1:4.1.8
+  - covers:agy-full-integration:4.1:4.1.9
+  - covers:agy-full-integration:4.1:4.1.10
+  - covers:agy-full-integration:4.1:4.1.11
+  - covers:agy-full-integration:4.1:4.1.12
+  - covers:agy-full-integration:4.1:4.1.13
+  - covers:agy-full-integration:4.1:4.1.14
+  - covers:agy-full-integration:4.1:4.1.15
+  - covers:agy-full-integration:4.1:4.1.16
+  - covers:agy-full-integration:4.1:4.1.17
+  - covers:agy-full-integration:4.1:4.1.18
+  - covers:agy-full-integration:4.1:4.1.19
+  - covers:agy-full-integration:4.1:4.1.20
+  - covers:agy-full-integration:4.1:4.1.21
+  - covers:agy-full-integration:4.1:4.1.22
+  - covers:agy-full-integration:4.1:4.1.23
+  - covers:agy-full-integration:4.1:4.1.24
+  - covers:agy-full-integration:4.1:4.1.25
+  - covers:agy-full-integration:4.1:4.1.26
+  - covers:agy-full-integration:4.1:4.1.27
+  - covers:agy-full-integration:4.1:4.1.28
+  - covers:agy-full-integration:4.1:4.1.29
+  - covers:agy-full-integration:4.1:4.1.30
+  tdd: true
+  source_section: '4.1'
+  implementation_domain: backend
+- title: Add the AGY transcript parser
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  - '4.1'
+  validation_criteria: "4.2.1: `AgyTranscriptParser` is registered in `PARSER_REGISTRY`.\
+    \ symbol: `get_parser`. file: `src/gobby/sessions/transcripts/__init__.py`.\n\
+    4.2.2: Every non-`PLANNER_RESPONSE` `MODEL/*` record parses as a tool result:\
+    \ the live 1.1.18 `GENERIC` form, the seven legacy typed forms, and unknown types;\
+    \ a `run_command` pairing yields the exit code parsed from the `The command exited\
+    \ with code N.` sentence via `parse_agy_command_exit`, and a `GENERIC` result\
+    \ without that sentence is an unstructured outcome. file: `src/gobby/sessions/transcripts/agy.py`.\n\
+    4.2.3: `thinking` on `PLANNER_RESPONSE` is parsed distinctly from `content`. file:\
+    \ `src/gobby/sessions/transcripts/agy.py`.\n4.2.4: Records naming `truncated_fields`\
+    \ parse without raising. file: `src/gobby/sessions/transcripts/agy.py`.\n4.2.5:\
+    \ Malformed lines and unknown record types are tolerated with stable ordering\
+    \ preserved. file: `src/gobby/sessions/transcripts/agy.py`.\n4.2.6: Tool-call\
+    \ IDs are derived stably from conversation id plus `step_index` plus the call's\
+    \ index within `tool_calls`, so two calls in one `PLANNER_RESPONSE` never collide.\
+    \ file: `src/gobby/sessions/transcripts/agy.py`.\n4.2.7: Incremental reads resume\
+    \ correctly on an append-only file. file: `src/gobby/sessions/transcripts/agy.py`.\n\
+    4.2.8: Focused fixture-backed tests cover every record class, unknown `MODEL/*`\
+    \ tools, `truncated_fields`, malformed lines, stable tool-call IDs, interrupted\
+    \ `RUNNING` records, and append-only incremental reads. test: `tests/sessions/test_agy_transcript_parser.py`.\n\
+    4.2.9: Success, failure, nonterminal, contradictory, unstructured, and provenance-free\
+    \ AGY outcomes flow through `ParsedToolEvent`, stored `TranscriptEvidence`, readiness,\
+    \ and close-time context with the same fail-closed behavior as the five incumbent\
+    \ providers. test: `tests/tasks/test_agy_validation_evidence.py`.\n4.2.10: A sequential\
+    \ case proves a definitive AGY failure keeps readiness fail-closed and a later\
+    \ correlated definitive success restores readiness and close-time context, using\
+    \ the record-1.1.10 live-captured `GENERIC` payloads (exit 0 and exit 7) from\
+    \ `transcript-manifest.json`. test: `tests/tasks/test_agy_validation_evidence.py`.\n\
+    4.2.11: Parser state persists and rehydrates across daemon restart: the codex-only\
+    \ persistence gate admits agy, `AgyTranscriptParser.snapshot_state`/`hydrate_state`\
+    \ carry pending tool-call correlation, and a restart test appends the result record\
+    \ after a saved tool-call boundary. test: `tests/sessions/test_agy_transcript_parser.py`.\n\
+    4.2.12: The reconstruction admission gate admits verified append-only AGY growth:\
+    \ `_hydrate_registration_from_sidecar` no longer restricts `allow_append` to codex,\
+    \ and an integration case reconstructs an enlarged AGY sidecar with the result\
+    \ appended beyond the saved boundary. symbol: `ProcessorLifecycleMixin._hydrate_registration_from_sidecar`.\
+    \ file: `src/gobby/sessions/processor_lifecycle.py`.\n4.2.13: The parser consumes\
+    \ exactly the hook-reported `transcriptPath` \u2014 `transcript_full.jsonl` per\
+    \ record 1.1.22 \u2014 whose `tool_calls[].args` are native and never decoded;\
+    \ the basename-keyed branch decodes `transcript.jsonl`'s JSON-string args once\
+    \ with raw fallback only so a fixture test proves both files parse to identical\
+    \ records, and chunk files are never opened. file: `src/gobby/sessions/transcripts/agy.py`.\n\
+    4.2.14: Call/result pairing is positional by `step_index` only; snake_case call\
+    \ names and SCREAMING result types are never compared; `ParsedToolEvent.tool_name`\
+    \ carries the snake_case call name normalized through the shared AGY tool map\
+    \ and the result type is preserved as metadata. file: `src/gobby/sessions/transcripts/agy.py`.\n\
+    4.2.15: All three codex-only gates \u2014 `_parse_incremental_records`, the snapshot\
+    \ gate, and `_hydrate_registration_from_sidecar`'s `allow_append` \u2014 admit\
+    \ agy by parser capability rather than source string, and no sidecar is written\
+    \ under `~/.gemini`. file: `src/gobby/sessions/processor_transcripts.py`.\n4.2.16:\
+    \ AGY transcript records carry no usage: the parser emits `usage=None`, the window-only\
+    \ branch and `ContextUsageSnapshot.from_agy` stay the transcript-side contract,\
+    \ and stream-usage context pressure is owned by 5.2 via `from_token_breakdown`.\
+    \ file: `src/gobby/sessions/transcripts/agy.py`.\n4.2.17: A two-call `PLANNER_RESPONSE`\
+    \ fixture with positional results pairs each result to its own call, and a restart\
+    \ between the call record and the results rehydrates the ordered pending-call\
+    \ queue with its ordinals intact through `snapshot_state`/`hydrate_state`. test:\
+    \ `tests/sessions/test_agy_transcript_parser.py`."
+  labels:
+  - covers:agy-full-integration:4.2:4.2.1
+  - covers:agy-full-integration:4.2:4.2.2
+  - covers:agy-full-integration:4.2:4.2.3
+  - covers:agy-full-integration:4.2:4.2.4
+  - covers:agy-full-integration:4.2:4.2.5
+  - covers:agy-full-integration:4.2:4.2.6
+  - covers:agy-full-integration:4.2:4.2.7
+  - covers:agy-full-integration:4.2:4.2.8
+  - covers:agy-full-integration:4.2:4.2.9
+  - covers:agy-full-integration:4.2:4.2.10
+  - covers:agy-full-integration:4.2:4.2.11
+  - covers:agy-full-integration:4.2:4.2.12
+  - covers:agy-full-integration:4.2:4.2.13
+  - covers:agy-full-integration:4.2:4.2.14
+  - covers:agy-full-integration:4.2:4.2.15
+  - covers:agy-full-integration:4.2:4.2.16
+  - covers:agy-full-integration:4.2:4.2.17
+  tdd: true
+  source_section: '4.2'
+  implementation_domain: backend
+- title: Add the AGY stream normalizer
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.4'
+  - '4.2'
+  validation_criteria: "5.1.1: `init`, `step_update` and `result` records map onto\
+    \ shared `StreamEvent` types, read from the nested `record[record[\"event\"]]`\
+    \ body rather than a flat layout. file: `src/gobby/servers/websocket/chat/backends/agy_stream.py`.\n\
+    5.1.2: Assistant text is not duplicated between `text_delta` and `result.response`.\
+    \ file: `src/gobby/servers/websocket/chat/backends/agy_stream.py`.\n5.1.3: Tool\
+    \ `ACTIVE`/`DONE`/`ERROR` transitions produce correct call and result events.\
+    \ file: `src/gobby/servers/websocket/chat/backends/agy_stream.py`.\n5.1.4: Malformed\
+    \ lines and unknown record types are tolerated without terminating the turn, and\
+    \ the probe-observed bookkeeping `step_type` values `user_input`, `checkpoint`,\
+    \ `system_message`, `error_message`, and `unknown` are skipped without emitting\
+    \ an event and without being classified malformed. file: `src/gobby/servers/websocket/chat/backends/agy_stream.py`.\n\
+    5.1.5: Focused tests cover init, text-delta, result deduplication, tool `ACTIVE`/`DONE`/`ERROR`\
+    \ lifecycle, the bookkeeping `step_type` values, a flat-layout record proving\
+    \ the nested read is required, and malformed-line branches. test: `tests/servers/websocket/chat/test_agy_stream.py`.\n\
+    5.1.6: Per record 1.1.16 (negative): no compaction event is declared, the stream\
+    \ vocabulary is unchanged, and a test pins that a `checkpoint` step emits no event.\
+    \ file: `src/gobby/servers/websocket/chat/backends/agy_stream.py`.\n5.1.7: `agy_tool_name_adapter`\
+    \ maps every stream-level snake_case spelling in the shared `agy_contract.py`\
+    \ table to Gobby's canonical name and then through `normalize_tool_fields`; `run_command`\
+    \ \u2192 `Bash` is pinned, and the record-1.1.12 MCP form `call_mcp_tool{ServerName,ToolName}`\
+    \ resolves to `mcp__<ServerName>__<ToolName>` and canonicalizes via `canonical_gobby_tool_name`.\
+    \ test: `tests/servers/websocket/chat/test_agy_stream.py`.\n5.1.8: The `result`\
+    \ event carries the upstream `usage` object verbatim under `data[\"usage\"]` including\
+    \ `cache_read_tokens`; the parser computes nothing from it. file: `src/gobby/servers/websocket/chat/backends/agy_stream.py`.\n\
+    5.1.9: Turn-boundary contract: `iter_agy_turn` ends a turn exactly at the `result`\
+    \ record, passes a first-record `init` and skips repeated `init`s, and EOF before\
+    \ `result` yields exactly one `error` event with `code=\"eof\"`; a two-turn NDJSON\
+    \ fixture (persistent-mode shape from record 1.1.18) proves two turns with no\
+    \ bleed. test: `tests/servers/websocket/chat/test_agy_stream.py`.\n5.1.10: Non-ASCII\
+    \ `text_delta` content round-trips byte-exact with no replacement-character handling\
+    \ in the module. test: `tests/servers/websocket/chat/test_agy_stream.py`."
+  labels:
+  - covers:agy-full-integration:5.1:5.1.1
+  - covers:agy-full-integration:5.1:5.1.2
+  - covers:agy-full-integration:5.1:5.1.3
+  - covers:agy-full-integration:5.1:5.1.4
+  - covers:agy-full-integration:5.1:5.1.5
+  - covers:agy-full-integration:5.1:5.1.6
+  - covers:agy-full-integration:5.1:5.1.7
+  - covers:agy-full-integration:5.1:5.1.8
+  - covers:agy-full-integration:5.1:5.1.9
+  - covers:agy-full-integration:5.1:5.1.10
+  tdd: true
+  source_section: '5.1'
+  implementation_domain: backend
+- title: Add the AGY web-chat backend
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.1'
+  - '3.1'
+  - '3.2'
+  - '4.1'
+  validation_criteria: "5.2.1: A first turn spawns the documented argv \u2014 no `-p`,\
+    \ with `--input-format stream-json`, `--dangerously-skip-permissions`, `--add-dir\
+    \ <workspace>`, and `--sandbox=false` when SRT enforces \u2014 and streams assistant\
+    \ text. file: `src/gobby/servers/websocket/chat/backends/agy.py`.\n5.2.2: A subsequent\
+    \ turn writes one NDJSON line to the live process, and every reattach after detach/teardown\
+    \ resumes with `--conversation` carrying the upstream id (5.2.16). file: `src/gobby/servers/websocket/chat/backends/agy.py`.\n\
+    5.2.3: The upstream AGY conversation id is persisted in existing chat-session\
+    \ metadata, distinct from Gobby's session identity. file: `src/gobby/servers/websocket/chat/backends/agy.py`.\n\
+    5.2.4: A concurrent turn on a locked session is rejected. file: `src/gobby/servers/websocket/chat/backends/agy.py`.\n\
+    5.2.5: Cancellation terminates the owned process tree (not the CLI pid alone,\
+    \ since records 1.1.8/1.1.18 show shell children outlive the CLI) and releases\
+    \ the lock; no in-process interrupt is attempted. file: `src/gobby/servers/websocket/chat/backends/agy.py`.\n\
+    5.2.6: Model and effort selections reach the argv. file: `src/gobby/servers/websocket/chat/backends/agy.py`.\n\
+    5.2.7: stderr is redacted and a non-zero exit surfaces as an error event. file:\
+    \ `src/gobby/servers/websocket/chat/backends/agy.py`.\n5.2.8: A tool output above\
+    \ 64 KiB is read without `LimitOverrunError`. file: `src/gobby/servers/websocket/chat/backends/agy.py`.\n\
+    5.2.9: After teardown and reconstruction of the managed session, the next turn's\
+    \ argv carries the same `--conversation` id. test: `tests/servers/websocket/chat/test_agy_backend.py`.\n\
+    5.2.10: Cancellation or a failed result preserves the last confirmed usable conversation\
+    \ id, matching the post-interrupt resumability recorded by 1.1.8 and 1.1.18. file:\
+    \ `src/gobby/servers/websocket/chat/backends/agy.py`.\n5.2.11: The AGY row joins\
+    \ the launch-contract matrix: exactly one SRT wrapper, bounded-network-policy\
+    \ representation, native `--sandbox` off in the 1.1.7 form, stale-hash refusal,\
+    \ and the 3.2.4 sandbox-policy entries proven at the launch seam \u2014 credentials\
+    \ readable, state and transcript roots writable, probe-recorded domains granted,\
+    \ everything else refused \u2014 and one real-backend case captures the wrapped\
+    \ argv and the final child environment **together** at the child boundary, proving\
+    \ the canonical identity variables and `launch.provider_env` (TMPDIR included)\
+    \ both survive 3.1's composition algorithm in the production launch. test: `tests/servers/websocket/chat/test_launch_contracts.py`.\n\
+    5.2.12: The read clock inherits only \xA72.4's shared timeout value and environment-override\
+    \ source, renewing on validated AGY protocol progress; expiry follows the same\
+    \ contract \u2014 exactly one terminal error, owned process-tree cleanup, lock\
+    \ release, preserved confirmed conversation id, and a reconstructable session\
+    \ \u2014 with expiry and progress-renewal tests. test: `tests/servers/websocket/chat/test_agy_backend.py`.\n\
+    5.2.13: The turn-limit policy matches the 1.1.13 record: the argv carries `--print-timeout\
+    \ 2562047h` (the accepted effectively-unbounded value; no disable sentinel exists\
+    \ and omission would apply the `5m0s` default), a turn streaming steadily past\
+    \ the former 60-second setting completes under the inactivity clock alone, and\
+    \ a CLI-timeout expiry is asserted as a nonzero exit whose stdout `result{status:ERROR,error:\"\
+    timeout waiting for response\"}` record is routed through the 5.2.7 nonzero-exit\
+    \ path \u2014 one terminal error, process-tree cleanup, lock release, and conversation-id\
+    \ preservation \u2014 with no zero-exit error payload expected anywhere. test:\
+    \ `tests/servers/websocket/chat/test_agy_backend.py`.\n5.2.14: Provider-native\
+    \ identity survives the five-part session contract end to end through the production\
+    \ handoff: the AGY web-chat subprocess spawn environment carries the canonical\
+    \ `db_session_id`, project id, and source through the ghook-recognized `GOBBY_SESSION_ID`/`GOBBY_PROJECT_ID`\
+    \ context \u2014 captured from the real backend launch, not injected by the test\
+    \ \u2014 an AGY web-chat session persists and reconstructs its upstream conversation\
+    \ id, a terminal session sharing the same `conversationId` coexists as a distinct\
+    \ row, hooks driven through the actual adapter/hook route resolve the web_chat\
+    \ row by canonical identity and terminal hooks only the terminal row with no external-id\
+    \ fallback selecting across `session_type`, and neither path mints, rebinds, or\
+    \ resumes the other. test: `tests/servers/websocket/chat/test_agy_backend.py`.\n\
+    5.2.15: Per record 1.1.16 (negative): the backend has no compaction path, never\
+    \ invokes a `PRE_COMPACT` callback, and a test pins that a `checkpoint` step triggers\
+    \ no lifecycle call; `PRE_COMPACT` drops from the AGY parity claim. test: `tests/servers/websocket/chat/test_agy_backend.py`.\n\
+    5.2.16: Transport follows the 1.1.18 record: one subprocess per managed session\
+    \ is attached with the recorded argv, a second turn writes one validated `{\"\
+    event\":\"user\",\"message\":{\"content\":\u2026}}` line to the same process's\
+    \ stdin with no new spawn, an outbound line that would be fatal to AGY (missing\
+    \ `event`, non-text block) is rejected before writing, and `--conversation` appears\
+    \ only on reattach after detach/teardown. test: `tests/servers/websocket/chat/test_agy_backend.py`.\n\
+    5.2.17: The `result` `usage` object reaches persistence: `_translate_event` emits\
+    \ a `DoneEvent` with input, output, and cache-read tokens and the resolved AGY\
+    \ context window, and `persist_done_metadata` is invoked once per turn with those\
+    \ values. test: `tests/servers/websocket/chat/test_agy_backend.py`.\n5.2.18: Persistent-mode\
+    \ process loss (EOF before `result`, nonzero exit, or `_terminate_handle`) yields\
+    \ exactly one terminal error, preserves the last confirmed conversation id, and\
+    \ the next turn reattaches with `--conversation` carrying it; `switch_model` detaches\
+    \ and reattaches with the same id. test: `tests/servers/websocket/chat/test_agy_backend.py`.\n\
+    5.2.19: The AGY child environment never contains `GOBBY_HOOKS_DISABLED`, does\
+    \ contain `GOBBY_WEB_CHAT_CHILD=1`, the argv never carries `--mode`, and plan-mode\
+    \ write blocking is asserted through the native `PreToolUse` deny path (per record\
+    \ 1.1.23). test: `tests/servers/websocket/chat/test_agy_backend.py`.\n5.2.20:\
+    \ The read clock renews only on protocol progress \u2014 a translated event, an\
+    \ accepted `init`, a tool-step transition, or a `result` record \u2014 and never\
+    \ on a line the parser ignores. file: `src/gobby/servers/websocket/chat/backends/agy.py`.\n\
+    5.2.21: An endless low-rate stream of ignored lines (malformed, repeated `init`,\
+    \ unknown record type, and each bookkeeping `step_type`) still expires on the\
+    \ progress clock, yielding exactly one terminal error event, owned process-tree\
+    \ cleanup, turn-lock release, and a session that stays reconstructable. test:\
+    \ `tests/servers/websocket/chat/test_agy_backend.py`."
+  labels:
+  - covers:agy-full-integration:5.2:5.2.1
+  - covers:agy-full-integration:5.2:5.2.2
+  - covers:agy-full-integration:5.2:5.2.3
+  - covers:agy-full-integration:5.2:5.2.4
+  - covers:agy-full-integration:5.2:5.2.5
+  - covers:agy-full-integration:5.2:5.2.6
+  - covers:agy-full-integration:5.2:5.2.7
+  - covers:agy-full-integration:5.2:5.2.8
+  - covers:agy-full-integration:5.2:5.2.9
+  - covers:agy-full-integration:5.2:5.2.10
+  - covers:agy-full-integration:5.2:5.2.11
+  - covers:agy-full-integration:5.2:5.2.12
+  - covers:agy-full-integration:5.2:5.2.13
+  - covers:agy-full-integration:5.2:5.2.14
+  - covers:agy-full-integration:5.2:5.2.15
+  - covers:agy-full-integration:5.2:5.2.16
+  - covers:agy-full-integration:5.2:5.2.17
+  - covers:agy-full-integration:5.2:5.2.18
+  - covers:agy-full-integration:5.2:5.2.19
+  - covers:agy-full-integration:5.2:5.2.20
+  - covers:agy-full-integration:5.2:5.2.21
+  tdd: true
+  source_section: '5.2'
+  implementation_domain: backend
+- title: Integrate AGY into WebChatRuntimeManager
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.2'
+  - '2.5'
+  validation_criteria: "5.3.1: `create_session(provider=\"agy\")` returns a live session\
+    \ instead of raising. symbol: `WebChatRuntimeManager.create_session`. file: `src/gobby/servers/websocket/chat/runtime_manager.py`.\n\
+    5.3.2: `health(\"agy\")` reports real backend health gated on the 2.5 support\
+    \ record. symbol: `WebChatRuntimeManager.health`. file: `src/gobby/servers/websocket/chat/runtime_manager.py`.\n\
+    5.3.3: An AGY session streams text and tool events, resumes, and interrupts over\
+    \ the websocket, with interrupt behavior matching the 1.1.8/1.1.18 records (process-tree\
+    \ termination, preserved conversation id, `--conversation` reattach). test: `tests/servers/websocket/chat/test_agy_backend.py`.\n\
+    5.3.4: `handle_set_provider` admits agy: switching an existing conversation to\
+    \ AGY succeeds through pending-provider state and confirmation, with cancellation\
+    \ and teardown of the old session covered. test: `tests/servers/websocket/test_set_provider.py`.\n\
+    5.3.5: The managed web lifecycle parity matrix gains a behavioral agy row under\
+    \ the single-authority contract: native ghook is the sole workflow-effect authority\
+    \ for AGY `SESSION_START`, `BEFORE_AGENT`, `BEFORE_TOOL`, `AFTER_TOOL`, and `STOP`\
+    \ \u2014 the managed session's creation-time fire-and-forget `SESSION_START` pre-fire\
+    \ in `_session.py` is suppressed for AGY and its stream handling never routes\
+    \ those event types through `_fire_lifecycle`, and the agy row drives them through\
+    \ the actual adapter/hook route with block-decision, injected-context, modified-input,\
+    \ and source assertions plus exactly-once assertions on rule effects, MCP dispatch,\
+    \ handler context, pending-message delivery, webhooks, and broadcasts; an end-to-end\
+    \ first-`PreInvocation` case proves exactly one synthetic `SESSION_START`, exactly\
+    \ one `BEFORE_AGENT`, and startup context committed only through the native receipt\
+    \ path; `_fire_lifecycle` passes the session's parsed provider into compaction\
+    \ context with a focused unit case; `PRE_COMPACT` is marked unsupported in the\
+    \ agy row per record 1.1.16 (negative) and never fires for AGY; and the closed-registry\
+    \ provider guard is retained. symbol: `ChatLifecycleMixin._fire_lifecycle`. file:\
+    \ `src/gobby/servers/websocket/chat/_lifecycle.py`."
+  labels:
+  - covers:agy-full-integration:5.3:5.3.1
+  - covers:agy-full-integration:5.3:5.3.2
+  - covers:agy-full-integration:5.3:5.3.3
+  - covers:agy-full-integration:5.3:5.3.4
+  - covers:agy-full-integration:5.3:5.3.5
+  tdd: true
+  source_section: '5.3'
+  implementation_domain: backend
+- title: Enable AGY terminal spawning
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.1'
+  - '4.2'
+  - '3.2'
+  - '2.5'
+  validation_criteria: "6.1.1: The AGY spawn rejection is removed and `_spawn_agy_terminal`\
+    \ exists. symbol: `execute_spawn`. file: `src/gobby/agents/spawn_executor.py`.\n\
+    6.1.2: `build_cli_command` produces AGY argv. symbol: `build_cli_command`. file:\
+    \ `src/gobby/agents/spawners/command_builder.py`.\n6.1.3: AGY's own `--sandbox`\
+    \ is pinned off when SRT enforces. file: `src/gobby/agents/spawn_executor.py`.\n\
+    6.1.4: A spawned AGY agent receives the intended project cwd through `--add-dir\
+    \ <cwd>` on every launch (record 1.1.3), and a regression test pins the argv and\
+    \ `workspacePaths == [cwd]` on the resulting hook payload. test: `tests/agents/test_spawn_executor.py`.\n\
+    6.1.5: Parent/child linkage and workflow variables are wired. file: `src/gobby/agents/spawn_executor.py`.\n\
+    6.1.6: `spawn_executor.py` remains below 1,000 lines, or is decomposed via the\
+    \ `decompose-monolith` skill in the same task. file: `src/gobby/agents/spawn_executor.py`.\n\
+    6.1.7: `execute_spawn` reads the 2.5 support record before any side effect; sub-floor,\
+    \ absent-binary, unparseable, and pre-publication records refuse the spawn with\
+    \ the actionable upgrade message, across explicit, inherited, agent-configured,\
+    \ and default provider selection. test: `tests/mcp_proxy/tools/spawn_agent/test_provider_resolution.py`.\n\
+    6.1.8: AGY argv construction is pinned in the builder suite, including the 1.1.7-recorded\
+    \ flag forms. test: `tests/agents/spawners/test_command_builder.py`.\n6.1.9: A\
+    \ spawned AGY session is watchdog-covered: `KNOWN_WATCHDOG_PROVIDERS` and the\
+    \ reader map gain the agy entry together, the AGY reader classifies completion\
+    \ from the Gate 0 transcript shapes, and registry parity tests pin the row. test:\
+    \ `tests/agents/watchdog/test_agents_watchdog_registry.py`.\n6.1.10: Daemon-restart\
+    \ recovery follows the 1.1.1 record (resume proven on 1.1.18): a spawned AGY run\
+    \ resumes through `SUPPORTED_RESUME_PROVIDERS` with the recorded argv (`--conversation\
+    \ <id> --add-dir <cwd>` plus the 1.1.7 flags) and preserved conversation id \u2014\
+    \ never a `resume_unsupported_provider` classification. test: `tests/agents/test_resume_executor.py`.\n\
+    6.1.11: Terminal plan control follows the 1.1.14 record (menu proven): the executable\
+    \ `DEFAULT_PLAN_KEYSTROKES` agy row maps approve \u2192 `C-r`,`y` and reject \u2192\
+    \ `C-r`,`n` with the matcher anchored on the `Action required` header, the all-CLIs\
+    \ coverage guard enumerates agy, and both `NativePlanActionService` and `handle_attached_plan_approval`\
+    \ dispatch that same row with end-to-end dispatch tests \u2014 never an invented\
+    \ sequence or an unread registry row. test: `tests/adapters/test_plan_keystrokes.py`.\n\
+    6.1.12: The closed auth inventories gain their AGY classification from the 1.1.15\
+    \ record (Keychain-only auth, no env var accepted): `CLI_ENV_ALLOWLIST` and `CLI_CREDENTIAL_KEYS`\
+    \ carry an explicit empty agy row with a test stripping ambient `GOOGLE_API_KEY`/`GEMINI_API_KEY`/`GOOGLE_APPLICATION_CREDENTIALS`,\
+    \ and `_SUPPORTED_AUTH_CLIS` does not admit agy; terminal stripping and sandbox\
+    \ masking share one normalized provider/key inventory, and a live spawned child\
+    \ under a seeded ambient environment proves denied variables are absent from the\
+    \ process while allowed variables remain. test: `tests/agents/spawners/test_auth_env.py`.\n\
+    6.1.13: Interactive dispatch is proven (record 1.1.17), so a tmux-spawned AGY\
+    \ session driven through the real adapter route produces `source=agy` hook dispatches\
+    \ for all five events and a session row, the spawner's kill path terminates the\
+    \ pane's process group (shell children outlive the CLI and `Stop` never fires\
+    \ on exit), and teardown never waits for a `Stop` event. test: `tests/agents/test_spawn_executor.py`.\n\
+    6.1.14: Plan control follows 1.1.14/1.1.23 in the keystroke-driven form: `build_cli_command`\
+    \ adds no `--mode` flag for agy, pinned by an argv case. test: `tests/agents/spawners/test_command_builder.py`.\n\
+    6.1.15: `agy.toml` `status_bar`/`idle_prompt`/`stalled_input` rules are captured\
+    \ from the live 1.1.18 pane captures of record 1.1.17, `IdleDetector.detect` classifies\
+    \ an AGY idle pane as `idle` and a working pane as `active` with the Claude footer\
+    \ regex removed, the bundled-manifest contract test still passes, and the committed\
+    \ bundled-content manifest matches. test: `tests/agents/test_idle_detector.py`."
+  labels:
+  - covers:agy-full-integration:6.1:6.1.1
+  - covers:agy-full-integration:6.1:6.1.2
+  - covers:agy-full-integration:6.1:6.1.3
+  - covers:agy-full-integration:6.1:6.1.4
+  - covers:agy-full-integration:6.1:6.1.5
+  - covers:agy-full-integration:6.1:6.1.6
+  - covers:agy-full-integration:6.1:6.1.7
+  - covers:agy-full-integration:6.1:6.1.8
+  - covers:agy-full-integration:6.1:6.1.9
+  - covers:agy-full-integration:6.1:6.1.10
+  - covers:agy-full-integration:6.1:6.1.11
+  - covers:agy-full-integration:6.1:6.1.12
+  - covers:agy-full-integration:6.1:6.1.13
+  - covers:agy-full-integration:6.1:6.1.14
+  - covers:agy-full-integration:6.1:6.1.15
+  tdd: true
+  source_section: '6.1'
+  implementation_domain: backend
+- title: Gate AGY capabilities on version 1.1.18
+  category: code
+  task_type: feature
+  depends_on:
+  - '6.1'
+  - '5.3'
+  - '2.5'
+  validation_criteria: "6.2.1: Installed AGY 1.1.18 advertises web chat and agent\
+    \ spawn, and advertises tool chat only on a positive record 1.1.25; controlled-tool\
+    \ execution runs through the request-scoped `ToolRuntimeMCPServer` and `ToolLoopController`,\
+    \ with the record-1.1.12 `PreToolUse` deny transport (matched by `ServerName`/`ToolName`\
+    \ on `call_mcp_tool`, denial observed from the stream) suppressing built-ins \u2014\
+    \ never Droid-routed. symbol: `_agy_unavailable_bindings`. file: `src/gobby/ai/registry_builder.py`.\n\
+    6.2.2: AGY below 1.1.18 stays unavailable with a message naming installed and\
+    \ required versions. symbol: `ProviderMetadata`. file: `src/gobby/providers/registry.py`.\n\
+    6.2.3: `AGY_UNAVAILABLE_REASON` no longer gates a capable installation. file:\
+    \ `src/gobby/providers/registry.py`.\n6.2.4: `VISION_EXTRACT` stays unavailable\
+    \ per the negative 1.1.4 finding, with the narrow no-image-input reason. symbol:\
+    \ `_agy_unavailable_bindings`. file: `src/gobby/ai/registry_builder.py`.\n6.2.5:\
+    \ A registry-to-transport contract test drives the `TOOL_CHAT` binding end-to-end\
+    \ against a fake AGY subprocess, and sub-1.1.18 never advertises it. test: `tests/ai/test_agy_tool_chat_contract.py`.\n\
+    6.2.6: The AGY `TOOL_CHAT` binding resolves to `AgyToolChatAdapter` \u2014 never\
+    \ `DroidSpawnToolChatAdapter` \u2014 with controlled tools, `ToolLoopLimits`,\
+    \ timeouts and cancellation enforced. symbol: `_daemon_tool_chat_adapter_factories`.\
+    \ file: `src/gobby/ai/_tool_chat_builder.py`.\n6.2.7: Adapter selection and caching\
+    \ are provider-aware: the cache is keyed by adapter style plus provider, both\
+    \ first-use orders \u2014 Droid then AGY, and AGY then Droid \u2014 resolve the\
+    \ correct adapter in one service instance, and the incumbent service suite migrates\
+    \ to provider-aware fixtures with its non-CLI cases preserved. symbol: `ToolChatService`.\
+    \ file: `src/gobby/ai/_tool_chat_service.py`.\n6.2.8: `HIDDEN_PROVIDERS` no longer\
+    \ contains `agy`; `isHiddenProvider(\"agy\")` is false; the spawn form, chat model\
+    \ picker, reasoning preferences, Settings providers, sessions filter, and `ProviderPicker`\
+    \ offer AGY when `/api/providers` reports `available: true`, and do not when it\
+    \ reports `available: false`. test: `web/src/lib/__tests__/providerModels.test.ts`.\n\
+    6.2.9: `AgyCLITextGenerateAdapter` failure is decided by nonzero exit plus stderr\
+    \ per record 1.1.13; an `Error:`-prefixed stdout with exit 0 is returned as text,\
+    \ empty stdout still raises, and the renamed test pins the nonzero-exit path.\
+    \ symbol: `_validate_agy_stdout`. file: `src/gobby/ai/_text_generation_adapters.py`.\n\
+    6.2.10: `/api/providers` and `/api/providers/models` report agy `available`/`supports_web_chat`/`supports_agent_spawn`\
+    \ from the 2.5 support record, with the sub-floor case naming installed and required\
+    \ versions. test: `tests/servers/routes/test_servers_routes_providers.py`.\n6.2.11:\
+    \ Replacing the AGY binary in one running daemon flips capability state without\
+    \ a restart: a sub-floor-to-supported replacement makes the `TOOL_CHAT` binding\
+    \ resolvable and executable, a supported-to-sub-floor replacement makes it unavailable,\
+    \ and `/api/providers` reports the same state as the registry in that same daemon.\
+    \ test: `tests/ai/test_agy_tool_chat_contract.py`.\n6.2.12: On a negative record\
+    \ 1.1.25, `TOOL_CHAT` stays unavailable with the reason naming AGY's global-only\
+    \ MCP configuration, no `AgyToolChatAdapter` module is added, and the CLI-style\
+    \ factory and adapter cache keep their current identity while `WEB_CHAT` and `AGENT_SPAWN`\
+    \ remain available. symbol: `_agy_unavailable_bindings`. file: `src/gobby/ai/registry_builder.py`."
+  labels:
+  - covers:agy-full-integration:6.2:6.2.1
+  - covers:agy-full-integration:6.2:6.2.2
+  - covers:agy-full-integration:6.2:6.2.3
+  - covers:agy-full-integration:6.2:6.2.4
+  - covers:agy-full-integration:6.2:6.2.5
+  - covers:agy-full-integration:6.2:6.2.6
+  - covers:agy-full-integration:6.2:6.2.7
+  - covers:agy-full-integration:6.2:6.2.8
+  - covers:agy-full-integration:6.2:6.2.9
+  - covers:agy-full-integration:6.2:6.2.10
+  - covers:agy-full-integration:6.2:6.2.11
+  - covers:agy-full-integration:6.2:6.2.12
+  tdd: true
+  source_section: '6.2'
+  implementation_domain: fullstack
+- title: Move the AGY model catalog to live discovery
+  category: code
+  task_type: feature
+  depends_on:
+  - '6.2'
+  validation_criteria: '6.3.1: `agy --output-format json models` output (flag before
+    subcommand, per record 1.1.20) is parsed by the collector at capability refresh,
+    with the bundled seed as the cold-start fallback. symbol: `AgyCollector.collect`.
+    file: `src/gobby/providers/capabilities/collectors/agy.py`.
+
+    6.3.2: The `agy-1.0.10-static` label is removed from all eight sites across `registry_builder.py`,
+    `provider_model_defaults.py`, and `test_capability_registry.py`, with a repository-wide
+    absence assertion for the retired label. file: `src/gobby/servers/provider_model_defaults.py`.
+
+    6.3.3: The model fixture is the record-1.1.20 `agy --output-format json models`
+    entry captured on 1.1.18, and the collector test parses exactly that entry''s
+    14 `{id,label}` rows. file: `tests/fixtures/provider_contracts/agy/command-captures.json`.
+
+    6.3.4: The drift test exercises the installed binary instead of skipping off-version.
+    test: `tests/providers/capabilities/collectors/test_providers_capabilities_collectors_agy.py`.
+
+    6.3.5: Focused tests cover supported live discovery, sub-floor typed failure,
+    command-failure prior-snapshot retention, and the source/availability transitions
+    through the provider routes. test: `tests/servers/routes/test_servers_routes_providers.py`.
+
+    6.3.6: `GEMINI_FAMILY_MODELS` and `AGY_MODELS` agree on the canonical `gemini-3.5-flash`
+    default effort, with a parity test pinning both consumers to the fixture-recorded
+    value. test: `tests/providers/capabilities/collectors/test_providers_capabilities_collectors_agy.py`.
+
+    6.3.7: A failed live refresh retains the prior (bundled or live) AGY snapshot
+    with the source failure recorded, and a sub-floor support record yields a typed
+    source failure rather than a live snapshot, proven by a test seeding the bundled
+    snapshot before a failed live refresh. test: `tests/providers/capabilities/collectors/test_providers_capabilities_collectors_agy.py`.
+
+    6.3.8: Default-effort normalization through the text-generation consumer matches
+    the fixture-recorded AGY efforts. test: `tests/ai/test_text_generation.py`.
+
+    6.3.9: `AgyCollector` is registered in `_default_collectors`, parses the 1.1.20
+    envelope (`command.data.models[].{id,label}`, effort from the id suffix) from
+    the fixture into a valid `ProviderSnapshot` (passes `validate_snapshot`), and
+    raises a typed source error on absent binary, sub-floor support record, nonzero
+    exit (including the record-1.1.20 unauthenticated form: exit 1, empty stdout,
+    stderr `Please sign in`, no OAuth prompt), or shape mismatch, with the coordinator
+    retaining the prior snapshot and recording the failure. test: `tests/providers/capabilities/collectors/test_providers_capabilities_collectors_agy.py`.
+
+    6.3.10: `_agy_snapshot_payload` and the `name == "agy"` branch are deleted from
+    `list_provider_models`; AGY is served through `_matrix_snapshot_payload` with
+    `refresh.sources[].source_key == "agy_models_cli"` when live and `bundled` when
+    seeded. symbol: `list_provider_models`. file: `src/gobby/servers/routes/providers.py`.
+
+    6.3.11: `_context_window_for_agy_model` resolves a Gemini-family AGY window from
+    the collector-supplied store fact, proven with a seeded store. symbol: `_context_window_for_agy_model`.
+    file: `src/gobby/sessions/context_usage.py`.'
+  labels:
+  - covers:agy-full-integration:6.3:6.3.1
+  - covers:agy-full-integration:6.3:6.3.2
+  - covers:agy-full-integration:6.3:6.3.3
+  - covers:agy-full-integration:6.3:6.3.4
+  - covers:agy-full-integration:6.3:6.3.5
+  - covers:agy-full-integration:6.3:6.3.6
+  - covers:agy-full-integration:6.3:6.3.7
+  - covers:agy-full-integration:6.3:6.3.8
+  - covers:agy-full-integration:6.3:6.3.9
+  - covers:agy-full-integration:6.3:6.3.10
+  - covers:agy-full-integration:6.3:6.3.11
+  tdd: true
+  source_section: '6.3'
+  implementation_domain: backend
+- title: AGY usage-capacity reporting
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.5'
+  - '5.1'
+  - '6.3'
+  validation_criteria: "6.4.1: `AgyUsageReporter.report` parses the 1.1.19-recorded\
+    \ `/usage` envelope (healthy and exhausted fixtures) into one `ProviderUsageSnapshot`\
+    \ with one `UsageWindow` per bucket, the argv pinned to `-p \"/usage\" --output-format\
+    \ json` and no agent-turn flags, and `/credits` is never run. test: `tests/providers/test_usage.py`.\n\
+    6.4.2: The reporter returns a snapshot only on a successful parse, and nonzero\
+    \ exit, timeout, and malformed output each raise the one typed transient refresh\
+    \ failure with a truthful reason; no outcome raises through the route. test: `tests/providers/test_usage.py`.\n\
+    6.4.3: `GET /api/providers/agy/usage` returns the snapshot and a second call within\
+    \ 60 s spawns no process; `GET /api/providers/claude/usage` returns `supported:\
+    \ false`. test: `tests/servers/routes/test_servers_routes_providers.py`.\n6.4.4:\
+    \ Migration `406_provider_capacity_snapshots.sql` adds `provider_capacity_snapshots`\
+    \ keyed by `(machine_id, provider)` with `state`, `observed_at`, `windows`, `reason`,\
+    \ and `source_version`, landing through the embedded-asset contract with an untouched\
+    \ `baseline.sql` and no DDL in Python. file: `crates/gcore/src/schema/assets.rs`.\n\
+    6.4.5: `storage/provider_capacity.py` upserts the latest snapshot for its `(machine_id,\
+    \ provider)` key \u2014 a second observation replaces the row rather than appending\
+    \ \u2014 and reads it back with its age. test: `tests/storage/test_provider_capacity.py`.\n\
+    6.4.6: The shared capacity service normalizes to exactly `available`, `exhausted`,\
+    \ `stale`, or `unknown` per the recorded conditions, returning the last known\
+    \ windows with their `observed_at` when stale and empty windows with a truthful\
+    \ reason when unknown. test: `tests/providers/test_capacity_service.py`.\n6.4.7:\
+    \ Concurrent refreshes for one `(machine_id, provider)` join a single shared refresh\
+    \ task and receive identical results \u2014 one reporter invocation for the success\
+    \ case and one for the timeout and nonzero-exit cases alike \u2014 and a snapshot\
+    \ survives a daemon restart by reload from storage rather than re-probe. test:\
+    \ `tests/providers/test_capacity_service.py`.\n6.4.8: The provider-capacity MCP\
+    \ tool returns the same normalized four-state shape as the HTTP route for the\
+    \ same snapshot, reading through the shared service and never through storage\
+    \ directly. test: `tests/mcp_proxy/tools/test_metrics_tool.py`.\n6.4.9: Daemon\
+    \ bootstrap constructs one database-backed `ProviderCapacityService`; the HTTP\
+    \ provider route and MCP metrics registry receive that identical instance and\
+    \ share its per-key in-flight refresh-task registry, joining the same task and\
+    \ receiving the same normalized success or typed transient failure. test: `tests/test_runner_lifecycle.py`.\n\
+    6.4.10: A transient refresh failure never replaces the latest-success row: with\
+    \ a prior observation the service returns `stale` carrying that row's windows\
+    \ and `observed_at`, without one it returns `unknown`, and a 2.5-unsupported,\
+    \ sub-floor, or absent binary is decided before the reporter runs and returns\
+    \ `unknown` with the record's reason. test: `tests/providers/test_capacity_service.py`.\n\
+    6.4.11: Every direct `setup_internal_registries` caller supplies the shared `ProviderCapacityService`\
+    \ resolver when available or installs the provider-capacity tool with a documented\
+    \ unavailable result; daemon HTTP and MCP paths share one instance. test: `tests/mcp_proxy/test_registries.py`."
+  labels:
+  - covers:agy-full-integration:6.4:6.4.1
+  - covers:agy-full-integration:6.4:6.4.2
+  - covers:agy-full-integration:6.4:6.4.3
+  - covers:agy-full-integration:6.4:6.4.4
+  - covers:agy-full-integration:6.4:6.4.5
+  - covers:agy-full-integration:6.4:6.4.6
+  - covers:agy-full-integration:6.4:6.4.7
+  - covers:agy-full-integration:6.4:6.4.8
+  - covers:agy-full-integration:6.4:6.4.9
+  - covers:agy-full-integration:6.4:6.4.10
+  - covers:agy-full-integration:6.4:6.4.11
+  tdd: true
+  source_section: '6.4'
+  implementation_domain: backend
+- title: Update the CLI integration matrix and AGY docs
+  category: docs
+  task_type: feature
+  depends_on:
+  - '5.1'
+  - '5.2'
+  - '5.3'
+  - '6.1'
+  - '6.2'
+  - '6.3'
+  - '6.4'
+  validation_criteria: "7.1.1: The AGY row reads Hook=Full, Transcript=JSONL, Web-chat=custom\
+    \ stream-json, and Status=FULL \u2014 the three readiness surfaces plus the status\
+    \ column, each cell named. file: `docs/research/cli-integration-matrix.md`.\n\
+    7.1.2: The \"upstream must add transcripts + ACP\" framing is corrected. behavior:\
+    \ \"AGY exposes JSONL transcripts and a stream-json transport\" in `docs/research/cli-integration-matrix.md`.\n\
+    7.1.3: The stale binary-protobuf transcript claim is corrected. file: `docs/research/cli-integration-matrix-claude-code.md`.\n\
+    7.1.4: Both sandbox guides state the web-chat `backend=\"srt\"` bounded-network\
+    \ default, session-owned process lifetimes, the provider-native override, and\
+    \ stale-hash resume invalidation, replacing the provider-native and shared-ACP\
+    \ descriptions. file: `docs/guides/sandbox-compatibility.md`.\n7.1.5: `adapter-fidelity.md`\
+    \ has exactly one AGY row stating the five-event contract, `overwrite` (not `updatedInput`),\
+    \ the 1.1.24-recorded honored set (`deny_unless_prior_grant`, `terminationBehavior`,\
+    \ `injectSteps` messages) and not-honored set (`permissionOverrides`, `injectSteps.toolCall`),\
+    \ and the 1.1.18 floor. file: `docs/guides/adapter-fidelity.md`.\n7.1.6: `ghook-user-guide.md`\
+    \ and `hook-schemas.md` no longer claim AGY `SessionStart` or `UserPromptSubmit`;\
+    \ the critical-hook set matches the landed `cli_config.rs`. file: `docs/guides/ghook-user-guide.md`.\n\
+    7.1.7: `providers-and-models.md`, `configuration.md`, `telegram.md`, and `sessions.md`\
+    \ state the 6.3 collector/bundled-seed model source, the hooks.json timeout contract,\
+    \ the 1.1.14 plan-control outcome, and the web-chat AGY backend respectively.\
+    \ file: `docs/guides/providers-and-models.md`.\n7.1.8: `adapter-fidelity.md` classifies\
+    \ `force_ask` as schema-present, unmeasured, and never emitted by Gobby, separate\
+    \ from honored and not-honored decisions. file: `docs/guides/adapter-fidelity.md`."
+  labels:
+  - covers:agy-full-integration:7.1:7.1.1
+  - covers:agy-full-integration:7.1:7.1.2
+  - covers:agy-full-integration:7.1:7.1.3
+  - covers:agy-full-integration:7.1:7.1.4
+  - covers:agy-full-integration:7.1:7.1.5
+  - covers:agy-full-integration:7.1:7.1.6
+  - covers:agy-full-integration:7.1:7.1.7
+  - covers:agy-full-integration:7.1:7.1.8
+  tdd: false
+  source_section: '7.1'
+  assigned_agent: tech-writer
+```
