@@ -89,29 +89,42 @@ def add_claimed_task(variables: dict[str, Any], task_id: str, ref: str) -> dict[
     return {"task_claimed": True, "claimed_tasks": tasks, "active_task_id": task_id}
 
 
-def remove_claimed_task(variables: dict[str, Any], task_id: str) -> dict[str, Any]:
-    """Return merge dict that removes a task from the claimed set."""
+def release_claimed_task(variables: dict[str, Any], task_id: str) -> dict[str, Any]:
+    """Return merge dict that releases a claim and keeps the task's edit attribution.
+
+    Escalation and claim handoff pause a task rather than finish it, so the files it
+    edited are still its own. Keeping `task_edited_files` preserves what the close
+    checklist reads for gates 7, 9, 10 and 12, and what `commit_guard` reads to name
+    the owner of a dirty path in a shared worktree.
+    """
     tasks = _claimed_tasks(variables)
     tasks.pop(task_id, None)
-    task_files = _task_edited_files(variables)
-    task_files.pop(task_id, None)
-    task_file_checkouts = _task_edited_file_checkouts(variables)
-    task_file_checkouts.pop(task_id, None)
 
     active_task_id = variables.get("active_task_id")
     if active_task_id == task_id or active_task_id not in tasks:
         active_task_id = _active_task_id_after_removal(tasks)
 
-    result = {
+    result: dict[str, Any] = {
         "task_claimed": len(tasks) > 0,
         "claimed_tasks": tasks,
         "active_task_id": active_task_id,
-        "task_edited_files": task_files,
     }
-    if "task_edited_file_checkouts" in variables:
-        result["task_edited_file_checkouts"] = task_file_checkouts
     if not tasks:
         result["task_has_commits"] = False
+    return result
+
+
+def remove_claimed_task(variables: dict[str, Any], task_id: str) -> dict[str, Any]:
+    """Return merge dict that removes a finished task and its edit attribution."""
+    task_files = _task_edited_files(variables)
+    task_files.pop(task_id, None)
+    task_file_checkouts = _task_edited_file_checkouts(variables)
+    task_file_checkouts.pop(task_id, None)
+
+    result = release_claimed_task(variables, task_id)
+    result["task_edited_files"] = task_files
+    if "task_edited_file_checkouts" in variables:
+        result["task_edited_file_checkouts"] = task_file_checkouts
     return result
 
 

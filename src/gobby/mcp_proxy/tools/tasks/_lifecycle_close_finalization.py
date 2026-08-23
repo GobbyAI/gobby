@@ -28,7 +28,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import (
 )
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import determine_close_outcome
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_state_change
-from gobby.mcp_proxy.tools.tasks._task_scope import evaluate_task_scope
+from gobby.mcp_proxy.tools.tasks._task_scope import collect_commit_paths, evaluate_task_scope
 from gobby.storage.tasks import Task, TaskStaleStateError
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
 
@@ -50,6 +50,20 @@ def children_state(
     return children, state
 
 
+def _linked_commit_paths(task: Task, repo_path: str) -> frozenset[str]:
+    """Return the paths this task's linked commits changed, or nothing on failure."""
+    if not task.commits:
+        return frozenset()
+    try:
+        return frozenset(collect_commit_paths(task.commits, repo_path))
+    except RuntimeError as exc:
+        # A sha git cannot inspect here (rebased away, wrong checkout) leaves the
+        # checklist exactly where it was before this fallback existed. Gate 7 and
+        # gate 8 still report the broken commit set on their own terms.
+        logger.debug("Cannot resolve linked commit paths for task %s: %s", task.id, exc)
+        return frozenset()
+
+
 async def capture_attribution(
     ctx: RegistryContext,
     *,
@@ -66,6 +80,14 @@ async def capture_attribution(
 
     attributed = target_task_has_edits(session_vars, task_id)
     raw_paths = frozenset(task_edited_file_set(session_vars, task_id))
+    if not raw_paths:
+        # Session variables are a volatile cache of what the task edited: escalation,
+        # dead-session recovery, and a fresh claiming session all leave them empty for
+        # a task that really did edit files. Linked commits are the durable record, so
+        # fall back to them instead of reading committed work as a no-edit close --
+        # which would skip gate 10 and starve gate 12 of transcript evidence.
+        raw_paths = await asyncio.to_thread(_linked_commit_paths, task, repo_path)
+        attributed = attributed or bool(raw_paths)
     edited_paths = frozenset(
         await asyncio.to_thread(
             _committable_task_paths,

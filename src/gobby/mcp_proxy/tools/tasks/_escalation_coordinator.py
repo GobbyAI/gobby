@@ -28,18 +28,22 @@ def clear_prior_claim_session_variables(
     *,
     action: str,
 ) -> None:
-    """Best-effort removal of a task from the prior owner's claimed task state."""
+    """Best-effort release of a task from the prior owner's claimed task state.
+
+    The claim goes; the edit attribution stays. Escalation pauses a task, so the
+    prior owner is still the session that edited its files.
+    """
     if not prior_owner_session_id:
         return
 
     try:
-        from gobby.workflows.task_claim_state import remove_claimed_task
+        from gobby.workflows.task_claim_state import release_claimed_task
 
         session_vars = ctx.session_var_manager.get_variables(prior_owner_session_id)
-        merge_dict = remove_claimed_task(session_vars, task_id)
+        merge_dict = release_claimed_task(session_vars, task_id)
         ctx.session_var_manager.merge_variables(prior_owner_session_id, merge_dict)
         logger.debug(
-            "Removed task %s from claimed_tasks for session %s on %s",
+            "Released task %s from claimed_tasks for session %s on %s",
             task_id,
             prior_owner_session_id,
             action,

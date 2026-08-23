@@ -118,6 +118,68 @@ def test_coordinator_upserts_session_link_and_attaches_event_id(
     assert row is not None and row["count"] == 1
 
 
+class _RecordingSessionVariables:
+    """Minimal session-variable manager that applies merges in memory."""
+
+    def __init__(self, variables: dict[str, Any]) -> None:
+        self.variables = variables
+
+    def get_variables(self, _session_id: str) -> dict[str, Any]:
+        return self.variables
+
+    def merge_variables(self, _session_id: str, merge: dict[str, Any]) -> None:
+        self.variables.update(merge)
+
+
+def test_escalation_releases_the_claim_but_keeps_edit_attribution(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B.3: escalation is a pause, so the escalating session stays the files' owner.
+
+    Dropping the attribution here blinds close gates 7, 9, 10 and 12 for a task that
+    really did edit files, and leaves uncommitted work in a shared worktree with no
+    resolvable owner.
+    """
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        sample_project["id"],
+        "Escalation keeps attribution",
+        validation_criteria="Test task completion is observable.",
+    )
+    escalated = manager.escalate_task(task.id, reason="blocked on a decision")
+    session_vars = _RecordingSessionVariables(
+        {
+            "active_task_id": task.id,
+            "claimed_tasks": {task.id: f"#{task.seq_num}"},
+            "task_edited_files": {task.id: ["src/gobby/memory/recall.py"]},
+            "task_edited_file_checkouts": {task.id: {"/repo": ["src/gobby/memory/recall.py"]}},
+        }
+    )
+    ctx = _context(temp_db, manager)
+    ctx.session_var_manager = session_vars
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.tasks._escalation_coordinator.notify_parent_on_task_state_change",
+        MagicMock(),
+    )
+
+    coordinate_task_escalation(
+        ctx,
+        escalated,
+        prior_owner_session_id="owner-session",
+        session_id=None,
+    )
+
+    assert session_vars.variables["claimed_tasks"] == {}
+    assert session_vars.variables["task_claimed"] is False
+    assert session_vars.variables["active_task_id"] is None
+    assert session_vars.variables["task_edited_files"] == {task.id: ["src/gobby/memory/recall.py"]}
+    assert session_vars.variables["task_edited_file_checkouts"] == {
+        task.id: {"/repo": ["src/gobby/memory/recall.py"]}
+    }
+
+
 def test_notification_failure_does_not_change_authoritative_escalation(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -144,5 +206,6 @@ def test_notification_failure_does_not_change_authoritative_escalation(
 
     authoritative = manager.get_task(task.id)
     assert authoritative.is_escalated is True
+    assert authoritative.escalated_at is not None
     assert authoritative.escalated_at == escalated.escalated_at
     assert event_id == derive_escalation_event_id(task.id, authoritative.escalated_at)

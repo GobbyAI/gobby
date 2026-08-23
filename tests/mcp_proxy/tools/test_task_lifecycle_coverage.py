@@ -1108,7 +1108,7 @@ class TestReopenTask:
         with (
             patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager") as MockSTM,
             patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSM,
-            patch("gobby.workflows.task_claim_state.remove_claimed_task") as mock_remove,
+            patch("gobby.workflows.task_claim_state.release_claimed_task") as mock_release,
         ):
             mock_sm = MagicMock()
             mock_sm.resolve_session_reference.return_value = "resolved-session"
@@ -1125,11 +1125,10 @@ class TestReopenTask:
                 "task_claimed": True,
                 "claimed_tasks": {task_id: "#42"},
             }
-            mock_remove.return_value = {
+            mock_release.return_value = {
                 "task_claimed": False,
                 "claimed_tasks": {},
                 "active_task_id": None,
-                "task_edited_files": {},
             }
 
             # Patch session_var_manager on the registry context
@@ -1142,7 +1141,7 @@ class TestReopenTask:
 
             assert "error" not in result
             assert result == {}
-            mock_remove.assert_called_once_with(mock_svm.get_variables.return_value, task_id)
+            mock_release.assert_called_once_with(mock_svm.get_variables.return_value, task_id)
 
     @pytest.mark.asyncio
     async def test_reopen_value_error(self, mock_task_manager: MagicMock) -> None:
@@ -1364,7 +1363,7 @@ class TestEscalateTask:
 
         with (
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVM,
-            patch("gobby.workflows.task_claim_state.remove_claimed_task") as mock_remove,
+            patch("gobby.workflows.task_claim_state.release_claimed_task") as mock_release,
         ):
             mock_svm = MagicMock()
             mock_svm.get_variables.return_value = {
@@ -1372,11 +1371,10 @@ class TestEscalateTask:
                 "claimed_tasks": {task_id: "#42"},
             }
             MockSVM.return_value = mock_svm
-            mock_remove.return_value = {
+            mock_release.return_value = {
                 "task_claimed": False,
                 "claimed_tasks": {},
                 "active_task_id": None,
-                "task_edited_files": {},
             }
 
             registry = _create_registry(mock_task_manager)
@@ -1386,14 +1384,13 @@ class TestEscalateTask:
             )
 
         assert "error" not in result
-        mock_remove.assert_called_once_with(mock_svm.get_variables.return_value, task_id)
+        mock_release.assert_called_once_with(mock_svm.get_variables.return_value, task_id)
         mock_svm.merge_variables.assert_called_once_with(
             session_id,
             {
                 "task_claimed": False,
                 "claimed_tasks": {},
                 "active_task_id": None,
-                "task_edited_files": {},
             },
         )
 
@@ -1498,7 +1495,7 @@ class TestMarkTaskReviewApproved:
 
         with (
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVM,
-            patch("gobby.workflows.task_claim_state.remove_claimed_task") as mock_remove,
+            patch("gobby.workflows.task_claim_state.release_claimed_task") as mock_release,
         ):
             mock_svm = MagicMock()
             mock_svm.get_variables.return_value = {
@@ -1506,11 +1503,10 @@ class TestMarkTaskReviewApproved:
                 "claimed_tasks": {task_id: "#42"},
             }
             MockSVM.return_value = mock_svm
-            mock_remove.return_value = {
+            mock_release.return_value = {
                 "task_claimed": False,
                 "claimed_tasks": {},
                 "active_task_id": None,
-                "task_edited_files": {},
             }
 
             registry = _create_stage_ops_registry(mock_task_manager)
@@ -1520,14 +1516,13 @@ class TestMarkTaskReviewApproved:
             )
 
         assert "error" not in result
-        mock_remove.assert_called_once_with(mock_svm.get_variables.return_value, task_id)
+        mock_release.assert_called_once_with(mock_svm.get_variables.return_value, task_id)
         mock_svm.merge_variables.assert_called_once_with(
             session_id,
             {
                 "task_claimed": False,
                 "claimed_tasks": {},
                 "active_task_id": None,
-                "task_edited_files": {},
             },
         )
 
@@ -1697,7 +1692,7 @@ class TestMarkTaskNeedsReview:
 
         with (
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVM,
-            patch("gobby.workflows.task_claim_state.remove_claimed_task") as mock_remove,
+            patch("gobby.workflows.task_claim_state.release_claimed_task") as mock_release,
         ):
             mock_svm = MagicMock()
             mock_svm.get_variables.return_value = {
@@ -1705,11 +1700,10 @@ class TestMarkTaskNeedsReview:
                 "claimed_tasks": {task_id: "#42"},
             }
             MockSVM.return_value = mock_svm
-            mock_remove.return_value = {
+            mock_release.return_value = {
                 "task_claimed": False,
                 "claimed_tasks": {},
                 "active_task_id": None,
-                "task_edited_files": {},
             }
 
             registry = _create_stage_ops_registry(mock_task_manager)
@@ -1719,14 +1713,13 @@ class TestMarkTaskNeedsReview:
             )
 
         assert "error" not in result
-        mock_remove.assert_called_once_with(mock_svm.get_variables.return_value, task_id)
+        mock_release.assert_called_once_with(mock_svm.get_variables.return_value, task_id)
         mock_svm.merge_variables.assert_called_once_with(
             session_id,
             {
                 "task_claimed": False,
                 "claimed_tasks": {},
                 "active_task_id": None,
-                "task_edited_files": {},
             },
         )
 
