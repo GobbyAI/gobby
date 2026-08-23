@@ -250,6 +250,10 @@ class SafeExpressionEvaluator(ast.NodeVisitor):
         # Context variables
         if name in self.context:
             return self.context[name]
+        # Allowed callables referenced by name (e.g. ``dict`` in
+        # ``isinstance(x, dict)``); context bindings above take precedence.
+        if name in self.allowed_funcs:
+            return self.allowed_funcs[name]
         raise ValueError(f"Unknown variable: {name}")
 
     def visit_Constant(self, node: ast.Constant) -> Any:

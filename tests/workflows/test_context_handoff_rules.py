@@ -1679,3 +1679,75 @@ class TestAutoCompactAfterTaskCloseAcrossClis:
         ]
         assert len(compact_calls) == 1, label
         assert compact_calls[0]["arguments"] == {"rule_name": "auto-compact-after-task-close"}
+
+    @pytest.mark.asyncio
+    async def test_non_json_list_output_evaluates_cleanly_to_no_fire(
+        self,
+        db: HubDatabase,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A content-block list with non-JSON text neither fires nor errors.
+
+        Normalization can only unwrap a content-block list whose text parses as
+        JSON; a truncated or plain-text close_task response stays a list. The
+        condition's isinstance guard must evaluate it to False instead of
+        raising list.get inside the evaluator (seen live on 2026-08-23).
+        """
+        _sync_bundled(db)
+        event = _claude_close_event([{"type": "text", "text": "plain text result, not JSON"}])
+        assert event is not None
+        assert isinstance(event.data.get("tool_output"), list)
+
+        with caplog.at_level("ERROR", logger="gobby.workflows.engine.templating"):
+            response = await RuleEngine(db).evaluate(
+                event,
+                session_id=SESSION_ID,
+                variables={
+                    "claimed_tasks": {
+                        "task-a": {"task_type": "task"},
+                        "task-b": {"task_type": "task"},
+                    }
+                },
+            )
+
+        compact_calls = [
+            call
+            for call in response.metadata.get("mcp_calls", [])
+            if call["server"] == "gobby-sessions" and call["tool"] == "compact_self"
+        ]
+        assert compact_calls == []
+        evaluation_errors = [
+            record
+            for record in caplog.records
+            if "Failed to evaluate condition" in record.getMessage()
+        ]
+        assert evaluation_errors == []
+
+    @pytest.mark.asyncio
+    async def test_dedup_guard_suppresses_repeat_close_of_same_task(
+        self,
+        db: HubDatabase,
+    ) -> None:
+        """A native payload for an already-queued task id queues no second compact."""
+        _sync_bundled(db)
+        event = _claude_close_event([{"type": "text", "text": _CLOSE_PAYLOAD_TEXT}])
+        assert event is not None
+
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={
+                "claimed_tasks": {
+                    "task-a": {"task_type": "task"},
+                    "task-b": {"task_type": "task"},
+                },
+                "_auto_compact_after_task_close_queued_for": "#42",
+            },
+        )
+
+        compact_calls = [
+            call
+            for call in response.metadata.get("mcp_calls", [])
+            if call["server"] == "gobby-sessions" and call["tool"] == "compact_self"
+        ]
+        assert compact_calls == []

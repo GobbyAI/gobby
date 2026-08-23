@@ -973,3 +973,27 @@ class TestComprehensions:
         ev = SafeExpressionEvaluator(ctx, {})
         with pytest.raises(ValueError, match="dunder attribute"):
             ev.evaluate_value("obj.__class__.__base__.__subclasses__")
+
+
+class TestAllowedFuncNameResolution:
+    """Names resolve to allowed callables when absent from the context."""
+
+    def test_isinstance_with_dict_type_name(self) -> None:
+        ctx: dict[str, Any] = {"output": {"closed": True}}
+        ev = SafeExpressionEvaluator(ctx, {"isinstance": isinstance, "dict": dict})
+        assert ev.evaluate("isinstance(output, dict)") is True
+
+    def test_isinstance_rejects_list_payload(self) -> None:
+        ctx: dict[str, Any] = {"output": [{"type": "text", "text": "not json"}]}
+        ev = SafeExpressionEvaluator(ctx, {"isinstance": isinstance, "dict": dict})
+        assert ev.evaluate("isinstance(output, dict)") is False
+
+    def test_context_binding_wins_over_allowed_func(self) -> None:
+        ctx: dict[str, Any] = {"dict": "shadowed"}
+        ev = SafeExpressionEvaluator(ctx, {"dict": dict})
+        assert ev.evaluate_value("dict") == "shadowed"
+
+    def test_unknown_name_still_raises(self) -> None:
+        ev = SafeExpressionEvaluator({}, {"isinstance": isinstance})
+        with pytest.raises(ValueError, match="Unknown variable"):
+            ev.evaluate_value("isinstance(missing, dict)")
