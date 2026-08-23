@@ -10,7 +10,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "\\bnpm\\s+(install|i|add)\\b"
+        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?npm\\s+(install|i|add)\\b"
         reason: "Package installation is not allowed for agents. Dependencies should be managed by the user."
 
   no-yarn-add:
@@ -22,7 +22,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "\\byarn\\s+add\\b"
+        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?yarn\\s+add\\b"
         reason: "Package installation is not allowed for agents. Dependencies should be managed by the user."
 
   no-pip-install:
@@ -34,7 +34,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "\\bpip3?\\s+install\\b"
+        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?pip3?\\s+install\\b"
         reason: "Package installation is not allowed for agents. Dependencies should be managed by the user."
 
   no-uv-add:
@@ -46,7 +46,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "\\buv\\s+(add|pip\\s+install)\\b"
+        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?uv\\s+(add|pip\\s+install)\\b"
         reason: "Package installation is not allowed for agents. Dependencies should be managed by the user."
 
   no-cargo-add:
@@ -58,7 +58,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "\\bcargo\\s+add\\b"
+        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?cargo\\s+add\\b"
         reason: "Package installation is not allowed for agents. Dependencies should be managed by the user."
 
   no-gem-install:
@@ -70,7 +70,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "\\bgem\\s+install\\b"
+        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?gem\\s+install\\b"
         reason: "Package installation is not allowed for agents. Dependencies should be managed by the user."
 
   no-brew-install:
@@ -82,5 +82,5 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "\\bbrew\\s+install\\b"
+        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?brew\\s+install\\b"
         reason: "Package installation is not allowed for agents. Dependencies should be managed by the user."

@@ -10,5 +10,5 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "git\\s+(show|log)\\s+.*--no-stat"
+        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?git\\s+(show|log)\\s+.*--no-stat"
         reason: "Run the command without `--no-stat` — stat output is off by default for git show/log; for diffs, use `git diff --no-stat`."

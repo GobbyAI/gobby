@@ -10,5 +10,5 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "git\\s+push\\s+.*(?:--force(?:-with-lease|-if-includes)?|-f)(?:\\s|$)"
+        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?git(?:\\s+(?:-C\\s+\\S+|-c\\s+\\S+|--git-dir(?:=|\\s+)\\S+|--work-tree(?:=|\\s+)\\S+|--namespace(?:=|\\s+)\\S+|--exec-path(?:=|\\s+)\\S+|--no-pager|--paginate|-p|--bare|--literal-pathspecs|--no-optional-locks))*\\s+push\\s+.*(?:--force(?:-with-lease|-if-includes)?|-f)(?:\\s|$)"
         reason: "Force pushing is not allowed. Ask the user for permission to disable this rule if you need to proceed."

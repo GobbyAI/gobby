@@ -9,7 +9,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "\\b(uv\\s+run\\s+)?gobby\\s+tasks\\s+(create|update|close|reopen|delete|de_escalate|claim|sync|compact|import|clean)\\b"
+        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(uv\\s+run\\s+)?gobby\\s+tasks\\s+(create|update|close|reopen|delete|de_escalate|claim|sync|compact|import|clean)\\b"
         reason: |
           Use the MCP equivalents (create_task, claim_task, update_task, close_task)
           so validation gates, discovery, and hook policy remain active. For a

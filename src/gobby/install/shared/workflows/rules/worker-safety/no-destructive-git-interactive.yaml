@@ -10,7 +10,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "git(?:\\s+(?:-C\\s+\\S+|-c\\s+\\S+|--git-dir(?:=|\\s+)\\S+|--work-tree(?:=|\\s+)\\S+|--namespace(?:=|\\s+)\\S+|--no-pager|--paginate|-p|--bare|--literal-pathspecs|--no-optional-locks))*\\s+stash(?!\\s+(?:list|show|--help|-h)(?=\\s|$|&&|;|\\|))(?=\\s|$|&&|;|\\|)"
+        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?git(?:\\s+(?:-C\\s+\\S+|-c\\s+\\S+|--git-dir(?:=|\\s+)\\S+|--work-tree(?:=|\\s+)\\S+|--namespace(?:=|\\s+)\\S+|--no-pager|--paginate|-p|--bare|--literal-pathspecs|--no-optional-locks))*\\s+stash(?!\\s+(?:list|show|--help|-h)(?=\\s|$|&&|;|\\|))(?=\\s|$|&&|;|\\|)"
         reason: "Call gobby-agents.send_message to coordinate with the file owner when shared-worktree changes conflict. Preserve the owning session's changes."
 
   no-destructive-git-interactive:
@@ -22,5 +22,5 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "git(?:\\s+(?:-C\\s+\\S+|-c\\s+\\S+|--git-dir(?:=|\\s+)\\S+|--work-tree(?:=|\\s+)\\S+|--namespace(?:=|\\s+)\\S+|--no-pager|--paginate|-p|--bare|--literal-pathspecs|--no-optional-locks))*\\s+(reset\\s+--hard|clean\\s+-[fdx]+|checkout\\s+(--\\s+)?\\.|restore\\s+\\.|branch\\s+-D)"
+        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?git(?:\\s+(?:-C\\s+\\S+|-c\\s+\\S+|--git-dir(?:=|\\s+)\\S+|--work-tree(?:=|\\s+)\\S+|--namespace(?:=|\\s+)\\S+|--no-pager|--paginate|-p|--bare|--literal-pathspecs|--no-optional-locks))*\\s+(reset\\s+--hard|clean\\s+-[fdx]+|checkout\\s+(--\\s+)?\\.|restore\\s+\\.|branch\\s+-D)"
         reason: "Destructive git operations are not allowed without explicit approval. Ask the user for permission to disable this rule if you need to proceed."

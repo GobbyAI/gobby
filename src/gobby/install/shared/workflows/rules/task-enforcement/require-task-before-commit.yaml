@@ -13,7 +13,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "\\bgit\\s+commit\\b"
+        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?git(?:\\s+(?:-C\\s+\\S+|-c\\s+\\S+|--git-dir(?:=|\\s+)\\S+|--work-tree(?:=|\\s+)\\S+|--namespace(?:=|\\s+)\\S+|--exec-path(?:=|\\s+)\\S+|--no-pager|--paginate|-p|--bare|--literal-pathspecs|--no-optional-locks))*\\s+commit\\b"
         reason: |
           Use create_task(title, category, claim=True) or claim_task(task_id) to
           claim the task that authorizes this repository commit — then retry it.

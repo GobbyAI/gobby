@@ -16,7 +16,7 @@ rules:
       # Match pytest only in command position (shared segment-anchored idiom)
       # so prose mentions in commit messages or echoes don't trip it; env-var
       # prefixes still count as invocations.
-      command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:uv\\s+run\\s+|python3?\\s+-m\\s+)?pytest\\b"
+      command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(?:uv\\s+run\\s+|python3?\\s+-m\\s+)?pytest\\b"
       command_not_pattern: "(?s)(?=.*GOBBY_TEST_PROTECT=1)(?=.*DATABASE_URL=)"
       reason: >-
         Run pytest through the project's guard prefix (verification.custom.guard_tests

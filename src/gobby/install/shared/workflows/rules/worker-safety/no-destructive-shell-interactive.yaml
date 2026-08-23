@@ -10,7 +10,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "\\brm\\s+(-\\w*r|--recursive)"
+        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?rm\\s+(-\\w*r|--recursive)"
         reason: "Recursive delete is not allowed. Ask the user for permission to disable this rule if you need to proceed."
 
   no-secure-delete-interactive:
@@ -22,7 +22,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "\\b(shred|srm)\\b"
+        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(shred|srm)\\b"
         reason: "Secure/permanent delete is not allowed. Ask the user for permission to disable this rule if you need to proceed."
 
   no-truncate-interactive:
@@ -46,7 +46,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "\\bkill\\s+(-\\w*9|-KILL)|\\bkillall\\b"
+        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?kill\\s+(-\\w*9|-KILL)|(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?killall\\b"
         reason: "Force-killing processes is not allowed. Use graceful signals. Ask the user for permission to disable this rule if you need to proceed."
 
   no-recursive-permissions-interactive:
@@ -58,7 +58,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "\\b(chmod|chown)\\s+.*-R\\b"
+        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(chmod|chown)\\s+.*-R\\b"
         reason: "Recursive permission changes are not allowed. Ask the user for permission to disable this rule if you need to proceed."
 
   no-dd-interactive:
@@ -70,7 +70,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "\\bdd\\s+"
+        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?dd\\s+"
         reason: "Low-level disk operations are not allowed. Ask the user for permission to disable this rule if you need to proceed."
 
   no-npm-publish-interactive:

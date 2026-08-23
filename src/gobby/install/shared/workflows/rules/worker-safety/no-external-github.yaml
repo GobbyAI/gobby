@@ -9,7 +9,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "gh\\s+issue\\s+create\\b.*(?:--repo\\b|-R\\b)|gh\\s+(?:--repo\\s+\\S+|-R\\s+\\S+)\\s+issue\\s+create\\b"
+        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?gh\\s+issue\\s+create\\b.*(?:--repo\\b|-R\\b)|(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?gh\\s+(?:--repo\\s+\\S+|-R\\s+\\S+)\\s+issue\\s+create\\b"
         reason: |
           Use create_task(…) to track it as a gobby-task — external GitHub issue
           creation stays with the user:
