@@ -4,9 +4,25 @@
 
 use anyhow::Context;
 use std::path::{Path, PathBuf};
+use uuid::Uuid;
 
 /// Canonical personal-project id. Matches the Python `PERSONAL_PROJECT_ID`.
 pub const PERSONAL_PROJECT_ID: &str = "00000000-0000-0000-0000-000000060887";
+
+/// Stable namespace for deterministic code-index UUIDs (symbols and overlay
+/// project ids). Must match Python `CODE_INDEX_UUID_NAMESPACE` and the SQL
+/// `gobby_agent_auth.code_index_project_id` helper:
+/// `uuid.UUID("c0de1de0-0000-4000-8000-000000000000")`.
+pub const CODE_INDEX_UUID_NAMESPACE: Uuid = Uuid::from_bytes([
+    0xc0, 0xde, 0x1d, 0xe0, 0x00, 0x00, 0x40, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+]);
+
+/// Parent linkage written into a worktree's or clone's `.gobby/project.json`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IsolationMarker {
+    pub parent_project_path: Option<String>,
+    pub parent_project_id: Option<String>,
+}
 
 /// Walk up from `start` looking for a `.gobby` directory containing either
 /// `project.json` or `gcode.json`. Returns the project root (the directory
@@ -48,6 +64,97 @@ pub fn read_project_id(project_root: &Path) -> anyhow::Result<String> {
 
     let gcode_json = project_root.join(".gobby").join("gcode.json");
     read_project_id_from(&gcode_json)
+}
+
+/// Generate a deterministic code-index ID from the canonical project root path.
+/// Uses UUID5 with the same namespace as symbol IDs — key format (bare path)
+/// differs from symbol keys so there's no collision risk.
+pub fn code_index_id_for_root(root: &Path) -> String {
+    let canonical = root
+        .canonicalize()
+        .unwrap_or_else(|_| absolute_fallback(root));
+    Uuid::new_v5(
+        &CODE_INDEX_UUID_NAMESPACE,
+        canonical.to_string_lossy().as_bytes(),
+    )
+    .to_string()
+}
+
+/// Read the isolated-root marker from `.gobby/project.json`, if present.
+pub fn read_isolation_marker(project_root: &Path) -> Option<IsolationMarker> {
+    let path = project_root.join(".gobby").join("project.json");
+    let contents = std::fs::read_to_string(path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&contents).ok()?;
+    let parent_project_path = json
+        .get("parent_project_path")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned);
+    let parent_project_id = json
+        .get("parent_project_id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned);
+
+    if parent_project_path.is_some() || parent_project_id.is_some() {
+        Some(IsolationMarker {
+            parent_project_path,
+            parent_project_id,
+        })
+    } else {
+        None
+    }
+}
+
+/// Resolve a marker's `parent_project_path` relative to the isolated root.
+pub fn resolve_parent_project_root(root: &Path, parent_project_path: &str) -> PathBuf {
+    let parent = PathBuf::from(parent_project_path);
+    let parent = if parent.is_absolute() {
+        parent
+    } else {
+        root.join(parent)
+    };
+    parent.canonicalize().unwrap_or(parent)
+}
+
+/// A marker whose parent resolves to the root itself describes a main checkout
+/// that was once registered as its own parent, not an overlay.
+pub fn is_self_referential_isolation_marker(marker: &IsolationMarker, root: &Path) -> bool {
+    let Some(parent_project_path) = marker.parent_project_path.as_deref() else {
+        return false;
+    };
+    resolve_parent_project_root(root, parent_project_path) == root
+}
+
+/// The code-index overlay id a caller working in `project_root` must bind to.
+///
+/// `Some` only when the root carries a complete, non-self-referential isolation
+/// marker; the main checkout and malformed markers yield `None`, so the caller
+/// falls back to the parent project scope. The value is the same
+/// `code_index_id_for_root` the indexer uses for `ProjectIndexScope::Overlay`.
+pub fn code_overlay_project_id(project_root: &Path) -> Option<String> {
+    let root = project_root
+        .canonicalize()
+        .unwrap_or_else(|_| absolute_fallback(project_root));
+    let marker = read_isolation_marker(&root)?;
+    if marker.parent_project_path.is_none() || marker.parent_project_id.is_none() {
+        return None;
+    }
+    if is_self_referential_isolation_marker(&marker, &root) {
+        return None;
+    }
+    Some(code_index_id_for_root(&root))
+}
+
+/// Absolute form of `path` for identity hashing when canonicalization fails.
+pub fn absolute_fallback(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| std::env::temp_dir())
+            .join(path)
+    }
 }
 
 fn read_project_id_from(path: &Path) -> anyhow::Result<String> {
@@ -110,6 +217,53 @@ mod tests {
             read_project_id(tmp.path()).expect("read gcode project id"),
             "standalone-code-index"
         );
+    }
+
+    #[test]
+    fn overlay_requires_a_complete_foreign_isolation_marker() {
+        let parent = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let gobby = dir.path().join(".gobby");
+        fs::create_dir_all(&gobby).unwrap();
+        let marker = gobby.join("project.json");
+
+        fs::write(&marker, r#"{"id": "parent-id"}"#).unwrap();
+        assert_eq!(code_overlay_project_id(dir.path()), None);
+
+        fs::write(
+            &marker,
+            r#"{"id": "parent-id", "parent_project_id": "parent-id"}"#,
+        )
+        .unwrap();
+        assert_eq!(code_overlay_project_id(dir.path()), None, "half marker");
+
+        fs::write(
+            &marker,
+            format!(
+                r#"{{"id": "parent-id", "parent_project_path": "{}", "parent_project_id": "parent-id"}}"#,
+                dir.path().display()
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            code_overlay_project_id(dir.path()),
+            None,
+            "self-referential marker"
+        );
+
+        fs::write(
+            &marker,
+            format!(
+                r#"{{"id": "parent-id", "parent_project_path": "{}", "parent_project_id": "parent-id"}}"#,
+                parent.path().display()
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            code_overlay_project_id(dir.path()),
+            Some(code_index_id_for_root(dir.path()))
+        );
+        assert_eq!(read_project_id(dir.path()).unwrap(), "parent-id");
     }
 
     #[test]

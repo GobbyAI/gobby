@@ -141,12 +141,16 @@ async def _prepare_managed_code_index(
         if credential is None:
             raise RuntimeError("managed credential unavailable for code index preflight")
         # gcore's effective-config resolution requires the spawned run's
-        # managed-execution identity; the daemon's own env carries none.
+        # managed-execution identity; the daemon's own env carries none. The
+        # machine id signs the probe grant's principal, which gcode checks
+        # against the local machine before using the credential.
         identity_env = {
             name: value
             for name, value in spawn_context.env_vars.items()
             if name in (GOBBY_AGENT_RUN_ID, GOBBY_PROJECT_ID, GOBBY_SESSION_ID) and value
         }
+        if request.machine_id:
+            identity_env["GOBBY_MACHINE_ID"] = request.machine_id
         # Isolation gcode uses the run-scoped managed credential; the operator
         # token is only a tokenless-dev fallback when no run token was minted.
         run_api_token = spawn_context.env_vars.get(GOBBY_AGENT_API_TOKEN)

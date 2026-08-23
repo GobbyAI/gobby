@@ -609,6 +609,8 @@ async def spawn_agent_impl(
                 reasoning_status=reasoning.status,
                 reasoning_message=reasoning.message,
                 resume_metadata_json=resume_metadata,
+                worktree_id=isolation_ctx.worktree_id,
+                clone_id=isolation_ctx.clone_id,
             )
         except Exception as exc:
             task_spawn_lease.release_unattached()

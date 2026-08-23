@@ -37,7 +37,7 @@ use cache::{
     persist_cache,
 };
 use handshake::{
-    challenge_and_handshake, deployment_token as derived_deployment_token,
+    HandshakeIdentity, challenge_and_handshake, deployment_token as derived_deployment_token,
     is_default_local_endpoint, parse_capability_token as parse_envelope,
 };
 
@@ -245,6 +245,9 @@ impl<'a> AcquireRequest<'a> {
 struct AcquireCtx {
     home: PathBuf,
     project_id: String,
+    /// Overlay an interactive caller binds when `project_root` is a registered
+    /// isolation worktree or clone; managed runs derive theirs server-side.
+    code_overlay_project_id: Option<String>,
     machine_id: String,
     daemon_url: String,
     now: i64,
@@ -352,9 +355,11 @@ impl AcquireCtx {
             .map_err(|error| GrantError::Malformed(error.to_string()))?;
         let machine_id = crate::machine::read_machine_id_from_home(&home)
             .map_err(|error| GrantError::Malformed(error.to_string()))?;
+        let code_overlay_project_id = crate::project::code_overlay_project_id(request.project_root);
         Ok(Self {
             home,
             project_id,
+            code_overlay_project_id,
             machine_id,
             daemon_url: match request.daemon_url.clone() {
                 Some(url) => url,
@@ -371,6 +376,24 @@ impl AcquireCtx {
             managed_envelope: request.managed_envelope.clone(),
             expected_execution_id: request.expected_execution_id.clone(),
         })
+    }
+
+    fn interactive_identity<'a>(&'a self, session_id: &'a str) -> HandshakeIdentity<'a> {
+        HandshakeIdentity {
+            machine_id: &self.machine_id,
+            project_id: &self.project_id,
+            session_id: Some(session_id),
+            code_overlay_project_id: self.code_overlay_project_id.as_deref(),
+        }
+    }
+
+    fn managed_identity<'a>(&'a self, session_id: &'a str) -> HandshakeIdentity<'a> {
+        HandshakeIdentity {
+            machine_id: &self.machine_id,
+            project_id: &self.project_id,
+            session_id: Some(session_id),
+            code_overlay_project_id: None,
+        }
     }
 
     fn reachable(&self) -> bool {
@@ -400,6 +423,7 @@ fn acquire_managed(ctx: &AcquireCtx, path: &Path) -> Result<AcquiredGrant, Grant
         &ctx.project_id,
         &ctx.machine_id,
         Some(&grant.deployment.token),
+        None,
         true,
     )?;
     validate_managed_identity(&grant, ctx.expected_execution_id.as_deref())?;
@@ -432,6 +456,7 @@ fn accept_cached_or_rehandshake(
         &ctx.project_id,
         &ctx.machine_id,
         expected_deployment,
+        ctx.code_overlay_project_id.as_deref(),
         false,
     ) {
         Ok(()) => cached(grant),
@@ -445,7 +470,12 @@ fn accept_cached_or_rehandshake(
 fn acquire_interactive(ctx: &AcquireCtx) -> Result<AcquiredGrant, GrantError> {
     let binding = load_binding(&ctx.home, &ctx.daemon_url);
     if let Some(binding) = binding {
-        let path = interactive_cache_path(&ctx.home, &binding.deployment_token, &ctx.project_id);
+        let path = interactive_cache_path(
+            &ctx.home,
+            &binding.deployment_token,
+            &ctx.project_id,
+            ctx.code_overlay_project_id.as_deref(),
+        );
         match inspect_cache_pair(&path).map_err(|error| {
             annotate_source(
                 error,
@@ -538,7 +568,12 @@ pub fn rehandshake(request: &AcquireRequest<'_>) -> Result<AcquiredGrant, GrantE
     let token = load_binding(&ctx.home, &ctx.daemon_url)
         .map(|binding| binding.deployment_token)
         .unwrap_or_else(|| derived_deployment_token(&ctx.home));
-    let destination = interactive_cache_path(&ctx.home, &token, &ctx.project_id);
+    let destination = interactive_cache_path(
+        &ctx.home,
+        &token,
+        &ctx.project_id,
+        ctx.code_overlay_project_id.as_deref(),
+    );
     let lock_path = grant_lock_path(&destination);
     let _lock = lock_with_deadline(&lock_path, ctx.stale_lock_after, ctx.deadline)?;
     handshake_interactive(&ctx, Some(&token), false)
@@ -741,9 +776,7 @@ fn handshake_interactive_once(
     let grant = challenge_and_handshake(
         &ctx.daemon_url,
         &token,
-        &ctx.machine_id,
-        &ctx.project_id,
-        Some(&session_id),
+        ctx.interactive_identity(&session_id),
         None,
         ctx.deadline,
     )?;
@@ -752,6 +785,7 @@ fn handshake_interactive_once(
         &ctx.project_id,
         &ctx.machine_id,
         expected.as_deref(),
+        ctx.code_overlay_project_id.as_deref(),
         false,
     )?;
     persist_interactive(ctx, grant, &token)
@@ -797,9 +831,7 @@ fn handshake_managed_once(
     let grant = challenge_and_handshake(
         &ctx.daemon_url,
         &envelope,
-        &ctx.machine_id,
-        &ctx.project_id,
-        Some(&claims.session_id),
+        ctx.managed_identity(&claims.session_id),
         Some(&claims),
         ctx.deadline,
     )?;
@@ -808,6 +840,7 @@ fn handshake_managed_once(
         &ctx.project_id,
         &ctx.machine_id,
         existing.map(|grant| grant.deployment.token.as_str()),
+        None,
         true,
     )?;
     if !newer_generation(existing, &grant) {
@@ -839,7 +872,12 @@ fn persist_interactive(
     grant: GrantBundle,
     bearer: &str,
 ) -> Result<AcquiredGrant, GrantError> {
-    let path = interactive_cache_path(&ctx.home, &grant.deployment.token, &ctx.project_id);
+    let path = interactive_cache_path(
+        &ctx.home,
+        &grant.deployment.token,
+        &ctx.project_id,
+        ctx.code_overlay_project_id.as_deref(),
+    );
     if let Ok(existing) = load_grant_file(&path)
         && !newer_generation(Some(&existing), &grant)
     {
@@ -898,9 +936,7 @@ fn fetch_settings_coherent(
             challenge_and_handshake(
                 &ctx.daemon_url,
                 &envelope,
-                &ctx.machine_id,
-                &ctx.project_id,
-                Some(&claims.session_id),
+                ctx.managed_identity(&claims.session_id),
                 Some(&claims),
                 ctx.deadline,
             )?,
@@ -913,9 +949,7 @@ fn fetch_settings_coherent(
             challenge_and_handshake(
                 &ctx.daemon_url,
                 &token,
-                &ctx.machine_id,
-                &ctx.project_id,
-                Some(&session_id),
+                ctx.interactive_identity(&session_id),
                 None,
                 ctx.deadline,
             )?,

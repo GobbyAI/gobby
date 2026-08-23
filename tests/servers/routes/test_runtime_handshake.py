@@ -323,6 +323,69 @@ def test_expiry_bounded_and_serialized() -> None:
     assert peak == 1
 
 
+OVERLAY_PROJECT_ID = "eeeeeeee-eeee-5eee-8eee-eeeeeeeeeeee"
+
+
+def test_operator_overlay_flows_into_principal() -> None:
+    seen: list[Any] = []
+
+    def issue_postgres(principal: Any) -> PostgresDirect:
+        seen.append(principal)
+        return _postgres()
+
+    service = HandshakeService(
+        grants=_grant_service(),
+        local_machine_id=LOCAL_MACHINE_ID,
+        operator_token=OPERATOR_TOKEN,
+        issue_postgres=issue_postgres,
+        admitted_projects=frozenset({PROJECT_ID}),
+        clock=lambda: 1_700_000_000,
+    )
+    grant = service.issue_for_operator(
+        machine_id=LOCAL_MACHINE_ID,
+        project_id=PROJECT_ID,
+        session_id=SESSION_ID,
+        code_overlay_project_id=OVERLAY_PROJECT_ID,
+    )
+    assert grant.principal.code_overlay_project_id == OVERLAY_PROJECT_ID
+    assert seen[0].code_overlay_project_id == OVERLAY_PROJECT_ID
+    plain = service.issue_for_operator(
+        machine_id=LOCAL_MACHINE_ID,
+        project_id=PROJECT_ID,
+        session_id=SESSION_ID,
+    )
+    assert plain.principal.code_overlay_project_id is None
+    assert plain.payload_checksum != grant.payload_checksum
+
+    for bad_overlay in ("not-a-uuid", PROJECT_ID):
+        with pytest.raises(HandshakeRejection) as rejected:
+            service.issue_for_operator(
+                machine_id=LOCAL_MACHINE_ID,
+                project_id=PROJECT_ID,
+                session_id=SESSION_ID,
+                code_overlay_project_id=bad_overlay,
+            )
+        assert rejected.value.code == "claims_mismatch"
+    assert len(seen) == 2
+
+
+def test_handshake_endpoint_accepts_overlay(tmp_path: Path) -> None:
+    grants = _grant_service()
+    server = _config_server(grants, tmp_path / "token")
+    client = TestClient(server.app)
+    response = client.post(
+        "/api/runtime/handshake",
+        json={
+            "machine_id": LOCAL_MACHINE_ID,
+            "project_id": PROJECT_ID,
+            "session_id": SESSION_ID,
+            "code_overlay_project_id": OVERLAY_PROJECT_ID,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["grant"]["principal"]["code_overlay_project_id"] == OVERLAY_PROJECT_ID
+
+
 def test_epoch_bump_rejects_prior_grants(tmp_path: Path) -> None:
     grants = _grant_service(epoch=3)
     handshake = _handshake(grants)

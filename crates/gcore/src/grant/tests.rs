@@ -171,12 +171,12 @@ fn fixture_grant(kind: PrincipalKind) -> GrantBundle {
 }
 
 fn write_cache(harness: &Harness, grant: &GrantBundle, settings: Option<&CachedSettings>) {
-    let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT);
+    let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT, None);
     super::cache::persist_cache(&path, grant, settings).expect("write cache");
 }
 
 fn write_torn_two_file_cache(harness: &Harness, grant: &GrantBundle, settings: &CachedSettings) {
-    let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT);
+    let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT, None);
     write_grant_file(&path, grant).expect("write grant");
     fs::write(
         settings_cache_path(&path),
@@ -406,6 +406,7 @@ fn api_contract_gate() {
                 &grant.principal.project_id,
                 &grant.principal.machine_id,
                 None,
+                None,
                 grant.principal.kind.is_managed()
             ),
             Err(GrantError::ApiContractMismatch {
@@ -423,6 +424,7 @@ fn api_contract_gate() {
                 &grant,
                 &grant.principal.project_id,
                 &grant.principal.machine_id,
+                None,
                 None,
                 false
             ),
@@ -578,7 +580,7 @@ fn corrupt_grant_refused_offline() {
     let harness = Harness::new();
     let grant = fixture_grant(PrincipalKind::Interactive);
     write_binding_for(&harness, "http://127.0.0.1:1", &grant.deployment.token);
-    let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT);
+    let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT, None);
     write_grant_file(&path, &grant).expect("write");
     let mut raw = fs::read(&path).expect("read");
     raw[0] ^= 0x01;
@@ -683,7 +685,8 @@ fn managed_grant_never_overwrites_interactive_cache() {
         &interactive.deployment.token,
     );
     write_cache(&harness, &interactive, None);
-    let cache_path = interactive_cache_path(&harness.home, &interactive.deployment.token, PROJECT);
+    let cache_path =
+        interactive_cache_path(&harness.home, &interactive.deployment.token, PROJECT, None);
     let before = fs::read(&cache_path).expect("before");
 
     let mut managed = fixture_grant(PrincipalKind::AgentRun);
@@ -749,7 +752,7 @@ fn acquire_resolves_managed_then_cache_then_handshake() {
     assert_eq!(acquired.source, GrantSource::Handshake);
     write_binding_for(&harness, "http://127.0.0.1:1", &grant.deployment.token);
     let _ = join(scripted);
-    let cache = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT);
+    let cache = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT, None);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -770,6 +773,116 @@ fn acquire_resolves_managed_then_cache_then_handshake() {
     assert_eq!(acquired.source, GrantSource::ManagedFile);
 }
 
+fn mark_as_worktree(harness: &Harness, parent_root: &Path) -> String {
+    fs::write(
+        harness.project_root.join(".gobby").join("project.json"),
+        format!(
+            r#"{{"id":"{PROJECT}","name":"test","parent_project_path":"{}","parent_project_id":"{PROJECT}"}}"#,
+            parent_root.display()
+        ),
+    )
+    .expect("worktree project json");
+    crate::project::code_index_id_for_root(&harness.project_root)
+}
+
+#[test]
+fn worktree_handshake_sends_overlay_and_caches_under_it() {
+    let harness = Harness::new();
+    let parent = tempfile::tempdir().expect("parent");
+    let overlay = mark_as_worktree(&harness, parent.path());
+    let mut grant = fixture_grant(PrincipalKind::Interactive);
+    grant.deployment.token = deployment_token(&harness.home);
+    grant.principal.code_overlay_project_id = Some(overlay.clone());
+    grant = grant.with_checksum();
+    let scripted = spawn_scripted(vec![
+        Step::Challenge {
+            valid: true,
+            token: TOKEN.into(),
+        },
+        Step::Handshake {
+            grant: Box::new(grant.clone()),
+        },
+        Step::Config {
+            revision: grant.config_revision,
+        },
+    ]);
+    let acquired = acquire_with(&harness.request(Some(scripted.url.clone()))).expect("handshake");
+    assert_eq!(acquired.source, GrantSource::Handshake);
+    assert_eq!(
+        acquired.bundle.principal.code_overlay_project_id.as_deref(),
+        Some(overlay.as_str())
+    );
+    let requests = join(scripted);
+    let handshake = requests
+        .iter()
+        .find(|request| request.contains("POST /api/runtime/handshake HTTP"))
+        .expect("handshake request");
+    assert!(
+        handshake.contains(&format!("\"code_overlay_project_id\":\"{overlay}\"")),
+        "handshake body must name the overlay: {handshake}"
+    );
+    let overlay_cache = interactive_cache_path(
+        &harness.home,
+        &grant.deployment.token,
+        PROJECT,
+        Some(&overlay),
+    );
+    assert!(
+        overlay_cache.is_file(),
+        "overlay grant cached under its own name"
+    );
+    assert!(
+        !interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT, None).exists(),
+        "main checkout cache must stay untouched"
+    );
+    write_binding_for(&harness, "http://127.0.0.1:1", &grant.deployment.token);
+    let cached = acquire_with(&harness.request(Some("http://127.0.0.1:1".into()))).expect("cache");
+    assert_eq!(cached.source, GrantSource::Cache);
+}
+
+#[test]
+fn main_checkout_handshake_omits_overlay() {
+    let harness = Harness::new();
+    let mut grant = fixture_grant(PrincipalKind::Interactive);
+    grant.deployment.token = deployment_token(&harness.home);
+    grant = grant.with_checksum();
+    let scripted = spawn_scripted(vec![
+        Step::Challenge {
+            valid: true,
+            token: TOKEN.into(),
+        },
+        Step::Handshake {
+            grant: Box::new(grant.clone()),
+        },
+        Step::Config {
+            revision: grant.config_revision,
+        },
+    ]);
+    acquire_with(&harness.request(Some(scripted.url.clone()))).expect("handshake");
+    let requests = join(scripted);
+    let handshake = requests
+        .iter()
+        .find(|request| request.contains("POST /api/runtime/handshake HTTP"))
+        .expect("handshake request");
+    assert!(!handshake.contains("code_overlay_project_id"));
+}
+
+#[test]
+fn cached_grant_with_foreign_overlay_is_rejected() {
+    let harness = Harness::new();
+    let mut grant = fixture_grant(PrincipalKind::Interactive);
+    grant.principal.code_overlay_project_id = Some("bee23f80-d127-5e8f-9dd1-30670378e19a".into());
+    grant = grant.with_checksum();
+    write_binding_for(&harness, "http://127.0.0.1:1", &grant.deployment.token);
+    write_cache(&harness, &grant, None);
+    let error = acquire_with(&harness.request(Some("http://127.0.0.1:1".into())))
+        .expect_err("overlay grant must not serve the main checkout");
+    assert!(
+        matches!(&error, GrantError::Malformed(reason) if reason.contains("overlay")),
+        "{error:?}"
+    );
+}
+
 #[test]
 fn renewal_is_non_blocking_past_half_ttl() {
     let harness = Harness::new();
@@ -783,6 +896,7 @@ fn renewal_is_non_blocking_past_half_ttl() {
         &harness.home,
         &grant.deployment.token,
         PROJECT,
+        None,
     ));
     let _held = try_lock(&lock).expect("lock").expect("held");
     let started = Instant::now();
@@ -892,7 +1006,7 @@ fn hmac_sha256_rejects_empty_key() {
 
 #[test]
 fn expected_schema_identity_tracks_catalog_head() {
-    assert_eq!(expected_schema_identity().latest_version, 401);
+    assert_eq!(expected_schema_identity().latest_version, 403);
 }
 
 #[test]
@@ -935,7 +1049,7 @@ fn concurrent_renewal_refuses_downgrade() {
     current = current.with_checksum();
     write_binding_for(&harness, "http://127.0.0.1:1", &current.deployment.token);
     write_cache(&harness, &current, None);
-    let path = interactive_cache_path(&harness.home, &current.deployment.token, PROJECT);
+    let path = interactive_cache_path(&harness.home, &current.deployment.token, PROJECT, None);
 
     let mut older = current.clone();
     if let PostgresCapability::Direct {
@@ -976,6 +1090,7 @@ fn bounded_renewal_contention() {
         &harness.home,
         &grant.deployment.token,
         PROJECT,
+        None,
     ));
     let _held = try_lock(&lock_path).expect("lock").expect("held");
     let mut request = harness.request(Some(url));
@@ -1151,6 +1266,7 @@ fn config_revision_second_mismatch_terminal() {
         &harness.home,
         &prior.deployment.token,
         PROJECT,
+        None,
     ))
     .expect("prior preserved");
     assert_eq!(cached.config_revision, 1);
@@ -1239,7 +1355,8 @@ fn refresh_destination_by_source_managed_writes_managed_file() {
         &interactive.deployment.token,
     );
     write_cache(&harness, &interactive, None);
-    let cache_path = interactive_cache_path(&harness.home, &interactive.deployment.token, PROJECT);
+    let cache_path =
+        interactive_cache_path(&harness.home, &interactive.deployment.token, PROJECT, None);
     let cache_before = fs::read(&cache_path).unwrap();
 
     let mut managed = fixture_grant(PrincipalKind::AgentRun);
@@ -1400,7 +1517,7 @@ fn write_coherent_pair_is_single_envelope() {
         config_revision: grant.config_revision,
         settings: Default::default(),
     };
-    let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT);
+    let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT, None);
     write_coherent_pair(&path, &grant, &settings).expect("envelope");
     assert!(!settings_cache_path(&path).exists());
     let loaded = load_grant_file(&path).expect("unwrap grant");
@@ -1422,7 +1539,7 @@ fn write_coherent_pair_rejects_revision_mismatch() {
         config_revision: grant.config_revision + 1,
         settings: Default::default(),
     };
-    let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT);
+    let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT, None);
     let error = write_coherent_pair(&path, &grant, &settings).expect_err("mismatch");
     assert_eq!(error, GrantError::ConfigRevisionMismatch);
     assert!(!path.exists());
@@ -1487,7 +1604,7 @@ fn torn_two_file_cache_rehandshakes_when_reachable() {
             .map(|settings| settings.config_revision),
         Some(2)
     );
-    let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT);
+    let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT, None);
     assert!(!settings_cache_path(&path).exists());
     match super::cache::inspect_cache_pair(&path).expect("pair") {
         Some(super::cache::CachePair::Coherent(loaded_grant, loaded_settings)) => {
@@ -1519,7 +1636,7 @@ fn handshake_persist_does_not_leave_settings_sibling() {
     let acquired = acquire_with(&harness.request(Some(scripted.url.clone()))).expect("handshake");
     let _ = join(scripted);
     assert_eq!(acquired.source, GrantSource::Handshake);
-    let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT);
+    let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT, None);
     assert!(!settings_cache_path(&path).exists());
     assert!(matches!(
         super::cache::inspect_cache_pair(&path).expect("pair"),
@@ -1608,7 +1725,7 @@ fn interactive_cache_parse_failure_names_source() {
     let harness = Harness::new();
     let grant = fixture_grant(PrincipalKind::Interactive);
     write_binding_for(&harness, "http://127.0.0.1:1", &grant.deployment.token);
-    let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT);
+    let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT, None);
     fs::create_dir_all(path.parent().expect("parent")).expect("dirs");
     fs::write(&path, grant_json_with_unknown_field(&grant)).expect("write");
     let error =
@@ -1721,7 +1838,7 @@ fn inspect_cached_grant_reports_malformed_reason() {
     let harness = Harness::new();
     let grant = fixture_grant(PrincipalKind::Interactive);
     write_binding_for(&harness, "http://127.0.0.1:60887", &grant.deployment.token);
-    let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT);
+    let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT, None);
     fs::create_dir_all(path.parent().expect("parent")).expect("dirs");
     fs::write(&path, grant_json_with_unknown_field(&grant)).expect("write");
     let inspected = inspect_cached_grant_at(

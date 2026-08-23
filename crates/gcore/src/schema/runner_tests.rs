@@ -815,6 +815,294 @@ fn worktree_only_lineage_adds_typed_domain_then_copy_migrations() -> anyhow::Res
 }
 
 #[test]
+fn interactive_principal_binds_only_registered_worktree_overlays() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+    install_baseline(&mut client)?;
+
+    let machine_id = Uuid::new_v4();
+    let owner_user_id = Uuid::new_v4();
+    let project_id = Uuid::new_v4();
+    let unrelated_project_id = Uuid::new_v4();
+    let session_id = Uuid::new_v4();
+    let deployment_token = format!("ix-overlay-{}", Uuid::new_v4().simple());
+    let main_password = format!("gobby-ix-main-{}", Uuid::new_v4().simple());
+    let overlay_password = format!("gobby-ix-overlay-{}", Uuid::new_v4().simple());
+
+    client.execute(
+        "INSERT INTO users(id, email, name, password_hash) \
+         VALUES ($1, 'schema-ix@example.invalid', 'Schema Interactive', 'test-only')",
+        &[&owner_user_id],
+    )?;
+    client.execute(
+        "INSERT INTO machines(id, hostname, owner_user_id) VALUES ($1, 'schema-ix', $2)",
+        &[&machine_id, &owner_user_id],
+    )?;
+    client.execute(
+        "INSERT INTO projects(id, name, repo_path) \
+         VALUES ($1, 'parent', '/tmp/gobby-ix-parent'), ($2, 'unrelated', '/tmp/gobby-ix-unrelated')",
+        &[&project_id, &unrelated_project_id],
+    )?;
+    client.execute(
+        "INSERT INTO sessions(id, external_id, machine_id, source, project_id) \
+         VALUES ($1, 'schema-interactive', $2, 'test', $3)",
+        &[&session_id, &machine_id, &project_id],
+    )?;
+    client.execute(
+        "INSERT INTO worktrees(id, project_id, machine_id, branch_name, worktree_path) \
+         VALUES ($1, $2, $3, 'schema-ix', '/tmp/gobby-ix-worktree')",
+        &[&Uuid::new_v4(), &project_id, &machine_id],
+    )?;
+    let overlay_project_id: Uuid = client
+        .query_one(
+            "SELECT gobby_agent_auth.code_index_project_id('/tmp/gobby-ix-worktree')",
+            &[],
+        )?
+        .get(0);
+    let unregistered_overlay_id: Uuid = client
+        .query_one(
+            "SELECT gobby_agent_auth.code_index_project_id('/tmp/gobby-ix-elsewhere')",
+            &[],
+        )?
+        .get(0);
+
+    const ISSUE_SQL: &str = "SELECT role_name::TEXT, credential_generation, reused \
+         FROM gobby_agent_auth.issue_or_reuse_interactive_principal( \
+             $1, $2, $3, $4, clock_timestamp() + INTERVAL '10 minutes', $5, $6 \
+         )";
+    let main_row = client.query_one(
+        ISSUE_SQL,
+        &[
+            &deployment_token,
+            &machine_id,
+            &project_id,
+            &session_id,
+            &main_password,
+            &None::<Uuid>,
+        ],
+    )?;
+    let main_role: String = main_row.get(0);
+    assert!(!main_row.get::<_, bool>(2));
+    let overlay_row = client.query_one(
+        ISSUE_SQL,
+        &[
+            &deployment_token,
+            &machine_id,
+            &project_id,
+            &session_id,
+            &overlay_password,
+            &Some(overlay_project_id),
+        ],
+    )?;
+    let overlay_role: String = overlay_row.get(0);
+    assert!(!overlay_row.get::<_, bool>(2));
+    assert_ne!(
+        main_role, overlay_role,
+        "main and overlay callers must not share a role"
+    );
+    assert_ne!(
+        main_row.get::<_, i32>(1),
+        overlay_row.get::<_, i32>(1),
+        "generations stay unique per project"
+    );
+
+    let reused_overlay = client.query_one(
+        ISSUE_SQL,
+        &[
+            &deployment_token,
+            &machine_id,
+            &project_id,
+            &session_id,
+            &"ignored-on-reuse",
+            &Some(overlay_project_id),
+        ],
+    )?;
+    assert_eq!(reused_overlay.get::<_, String>(0), overlay_role);
+    assert!(
+        reused_overlay.get::<_, bool>(2),
+        "same overlay must reuse its binding"
+    );
+    let reused_main = client.query_one(
+        ISSUE_SQL,
+        &[
+            &deployment_token,
+            &machine_id,
+            &project_id,
+            &session_id,
+            &"ignored-on-reuse",
+            &None::<Uuid>,
+        ],
+    )?;
+    assert_eq!(reused_main.get::<_, String>(0), main_role);
+    assert!(
+        reused_main.get::<_, bool>(2),
+        "main checkout must reuse its own binding"
+    );
+
+    let bound_overlays: Vec<(String, Option<Uuid>)> = client
+        .query(
+            "SELECT role_name::TEXT, code_overlay_project_id \
+             FROM gobby_agent_auth.principal_bindings \
+             WHERE owner_kind = 'interactive' AND deployment_token = $1 \
+             ORDER BY credential_generation",
+            &[&deployment_token],
+        )?
+        .into_iter()
+        .map(|row| (row.get(0), row.get(1)))
+        .collect();
+    assert_eq!(
+        bound_overlays,
+        vec![
+            (main_role.clone(), None),
+            (overlay_role.clone(), Some(overlay_project_id)),
+        ]
+    );
+
+    let error = client
+        .query_one(
+            ISSUE_SQL,
+            &[
+                &deployment_token,
+                &machine_id,
+                &project_id,
+                &session_id,
+                &"unregistered",
+                &Some(unregistered_overlay_id),
+            ],
+        )
+        .expect_err("an unregistered overlay must be refused");
+    assert_eq!(
+        error.as_db_error().map(|db| db.code()),
+        Some(&SqlState::FOREIGN_KEY_VIOLATION)
+    );
+    let error = client
+        .query_one(
+            ISSUE_SQL,
+            &[
+                &deployment_token,
+                &machine_id,
+                &project_id,
+                &session_id,
+                &"self-overlay",
+                &Some(project_id),
+            ],
+        )
+        .expect_err("the parent project is not an overlay");
+    assert_eq!(
+        error.as_db_error().map(|db| db.code()),
+        Some(&SqlState::INVALID_PARAMETER_VALUE)
+    );
+
+    client.execute(
+        "INSERT INTO code_indexed_projects(id) VALUES ($1)",
+        &[&project_id],
+    )?;
+
+    let validation = (|| -> anyhow::Result<()> {
+        let mut scoped = database.connect_as(&overlay_role, &overlay_password)?;
+        let visible_parent: bool = scoped
+            .query_one(
+                "SELECT EXISTS(SELECT 1 FROM code_indexed_projects WHERE id = $1)",
+                &[&project_id],
+            )?
+            .get(0);
+        assert!(
+            visible_parent,
+            "overlay principal must read the parent index"
+        );
+        scoped.execute(
+            "INSERT INTO code_indexed_projects(id) VALUES ($1)",
+            &[&overlay_project_id],
+        )?;
+        scoped.execute(
+            "INSERT INTO code_indexed_project_states( \
+                 machine_id, project_id, root_path, total_files, total_symbols \
+             ) VALUES ($1, $2, '/tmp/gobby-ix-worktree', 1, 0)",
+            &[&machine_id, &overlay_project_id],
+        )?;
+        assert_eq!(
+            scoped.execute(
+                "UPDATE code_indexed_projects SET updated_at = NOW() WHERE id = $1",
+                &[&project_id],
+            )?,
+            0,
+            "overlay principal must not update parent facts",
+        );
+        let error = scoped
+            .execute(
+                "INSERT INTO code_indexed_projects(id) VALUES ($1)",
+                &[&unrelated_project_id],
+            )
+            .expect_err("overlay principal must not write unrelated projects");
+        assert_eq!(error.code(), Some(&SqlState::INSUFFICIENT_PRIVILEGE));
+        drop(scoped);
+
+        let mut main_scoped = database.connect_as(&main_role, &main_password)?;
+        let visible_projects: i64 = main_scoped
+            .query_one("SELECT count(*) FROM code_indexed_projects", &[])?
+            .get(0);
+        assert_eq!(
+            visible_projects, 1,
+            "main checkout must not see the overlay"
+        );
+        let error = main_scoped
+            .execute(
+                "INSERT INTO code_indexed_project_states( \
+                     machine_id, project_id, root_path, total_files, total_symbols \
+                 ) VALUES ($1, $2, '/tmp/gobby-ix-worktree', 1, 0)",
+                &[&machine_id, &overlay_project_id],
+            )
+            .expect_err("main checkout principal must not write the overlay");
+        assert_eq!(error.code(), Some(&SqlState::INSUFFICIENT_PRIVILEGE));
+        Ok(())
+    })();
+
+    let rotated = client.query_one(
+        "SELECT role_name::TEXT, credential_generation \
+         FROM gobby_agent_auth.rotate_interactive_principal( \
+             $1, $2, $3, $4, clock_timestamp() + INTERVAL '10 minutes', $5, \
+             clock_timestamp() + INTERVAL '1 minute', $6 \
+         )",
+        &[
+            &deployment_token,
+            &machine_id,
+            &project_id,
+            &session_id,
+            &"rotated-overlay",
+            &Some(overlay_project_id),
+        ],
+    );
+    validation?;
+    let rotated = rotated?;
+    let rotated_role: String = rotated.get(0);
+    let rotated_overlay: Option<Uuid> = client
+        .query_one(
+            "SELECT code_overlay_project_id FROM gobby_agent_auth.principal_bindings \
+             WHERE role_name = $1",
+            &[&rotated_role],
+        )?
+        .get(0);
+    assert_eq!(rotated_overlay, Some(overlay_project_id));
+    let draining_main: bool = client
+        .query_one(
+            "SELECT predecessor_drain_deadline IS NOT NULL \
+             FROM gobby_agent_auth.principal_bindings WHERE role_name = $1",
+            &[&main_role],
+        )?
+        .get(0);
+    assert!(
+        !draining_main,
+        "rotating the overlay must leave the main binding alone"
+    );
+    assert_gcode_rls_policies(&mut client)?;
+    Ok(())
+}
+
+#[test]
 fn tool_chat_principal_reads_parent_and_writes_only_its_worktree_overlay() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()

@@ -9,6 +9,7 @@ import json
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from uuid import UUID
 
 from gobby.runtime_grants.schema import GrantBundle, GrantPrincipal, PostgresDirect
 from gobby.runtime_grants.service import GrantService
@@ -98,6 +99,7 @@ class HandshakeService:
         machine_id: str,
         project_id: str,
         session_id: str,
+        code_overlay_project_id: str | None = None,
     ) -> GrantBundle:
         if machine_id != self.local_machine_id:
             raise HandshakeRejection(
@@ -106,12 +108,26 @@ class HandshakeService:
             )
         if not self._project_admitted(project_id):
             raise HandshakeRejection("project is not admitted", code="claims_mismatch")
+        if code_overlay_project_id is not None:
+            try:
+                overlay = str(UUID(code_overlay_project_id))
+            except ValueError:
+                raise HandshakeRejection(
+                    "code_overlay_project_id must be a UUID", code="claims_mismatch"
+                ) from None
+            if overlay == project_id:
+                raise HandshakeRejection(
+                    "code_overlay_project_id must differ from project_id",
+                    code="claims_mismatch",
+                )
+            code_overlay_project_id = overlay
         principal = GrantPrincipal(
             kind="interactive",
             machine_id=machine_id,
             project_id=project_id,
             execution_id=None,
             session_id=session_id,
+            code_overlay_project_id=code_overlay_project_id,
         )
         return self._issue(principal)
 

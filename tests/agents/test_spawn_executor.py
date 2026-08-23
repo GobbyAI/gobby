@@ -94,6 +94,7 @@ async def test_managed_code_index_preflight_uses_issued_credential(
         run_id="run",
         parent_session_id="parent",
         project_id="project",
+        machine_id="21000000-0000-4000-8000-000000000001",
         code_index_preflight_mode="required",
         code_index_api_token="probe-token",
         prepared_spawn=prepared_spawn(),
@@ -109,10 +110,13 @@ async def test_managed_code_index_preflight_uses_issued_credential(
         assert cwd == "/isolated"
         assert credential is context.managed_credential
         assert api_token == expected_probe_token
+        # The probe grant is signed for this machine; without it the preflight
+        # grant carries a placeholder machine id that gcode rejects.
         assert identity_env == {
             "GOBBY_AGENT_RUN_ID": "run-id-env",
             "GOBBY_PROJECT_ID": "project-id-env",
             "GOBBY_SESSION_ID": "session-id-env",
+            "GOBBY_MACHINE_ID": "21000000-0000-4000-8000-000000000001",
         }
         return SimpleNamespace(env={"PATH": "/scoped/bin"})
 

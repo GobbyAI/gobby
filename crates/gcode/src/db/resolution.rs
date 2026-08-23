@@ -89,6 +89,7 @@ mod tests {
                 project_id: "project".into(),
                 execution_id: None,
                 session_id: None,
+                code_overlay_project_id: None,
             },
             capabilities: GrantCapabilities {
                 postgres: PostgresCapability::Direct {

@@ -686,6 +686,13 @@ class TestSpawnAgentPreRegistration:
         mock_runner.child_session_manager = child_manager
         mock_runner._child_session_manager = child_manager
         mock_runner.run_storage = run_storage
+        from gobby.storage.worktrees import LocalWorktreeManager
+
+        worktree = LocalWorktreeManager(temp_db).create(
+            project_id=str(sample_project["id"]),
+            branch_name="feature/spawn-exception",
+            worktree_path=str(sample_git_project["repo_path"]) + "-wt",
+        )
         captured: dict[str, str] = {}
 
         async def execute_spawn(request) -> None:
@@ -722,7 +729,7 @@ class TestSpawnAgentPreRegistration:
             mock_handler.prepare_environment = AsyncMock(
                 return_value=IsolationContext(
                     cwd=str(sample_git_project["repo_path"]),
-                    worktree_id="wt-created",
+                    worktree_id=worktree.id,
                     isolation_type="worktree",
                 )
             )

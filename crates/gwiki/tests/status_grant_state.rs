@@ -54,7 +54,7 @@ fn write_cached_grant(home: &Path, daemon_url: &str, expires_at: i64) -> GrantBu
         },
     )
     .expect("write binding");
-    let path = interactive_cache_path(home, DEPLOYMENT_TOKEN, PROJECT_ID);
+    let path = interactive_cache_path(home, DEPLOYMENT_TOKEN, PROJECT_ID, None);
     write_grant_file(&path, &grant).expect("write grant cache");
     grant
 }

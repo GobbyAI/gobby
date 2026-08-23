@@ -108,6 +108,8 @@ class _AgentRunLifecycleMixin:
         task_id: str | None = None,
         timeout_seconds: float | None = None,
         resume_metadata_json: Mapping[str, object] | None = None,
+        worktree_id: str | None = None,
+        clone_id: str | None = None,
     ) -> AgentRun:
         """
         Create a new agent run.
@@ -123,6 +125,10 @@ class _AgentRunLifecycleMixin:
             claimed_session_id: Session that owned the task when the run was created.
             run_id: Optional pre-generated run ID. If not provided, one is generated.
             task_id: Optional task ID this agent is working on.
+            worktree_id: Registered isolation worktree the run executes in, if any.
+                Persisted at creation so the prelaunch credential can bind its
+                code-index overlay.
+            clone_id: Registered isolation clone the run executes in, if any.
 
         Returns:
             Created AgentRun.
@@ -141,9 +147,13 @@ class _AgentRunLifecycleMixin:
                 provider, model, is_local,
                 requested_reasoning_effort, effective_reasoning_effort,
                 reasoning_required, reasoning_status, reasoning_message,
-                status, prompt, task_id, timeout_seconds, resume_metadata_json
+                status, prompt, task_id, timeout_seconds, resume_metadata_json,
+                worktree_id, clone_id
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s, %s, %s)
+            VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                'pending', %s, %s, %s, %s, %s, %s
+            )
             """,
             (
                 run_id,
@@ -165,6 +175,8 @@ class _AgentRunLifecycleMixin:
                 task_id,
                 timeout_seconds,
                 dump_resume_metadata(resume_metadata_json),
+                worktree_id,
+                clone_id,
             ),
         )
 

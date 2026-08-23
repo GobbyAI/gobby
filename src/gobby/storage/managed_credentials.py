@@ -7,137 +7,61 @@ import os
 import secrets
 import tempfile
 import time
-from collections.abc import Mapping, Sequence
-from contextlib import AbstractContextManager
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, Protocol, cast
+from typing import cast
 from uuid import UUID, uuid4
 
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
-from gobby.storage.hub.protocol import HubDatabase, Row, Transaction
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.interactive_credentials import (
+    InteractiveCredentialMixin,
+    InteractiveGrantExpiryKey,
+)
+from gobby.storage.managed_credential_types import (
+    AUTH_SCHEMA,
+    DAEMON_LEASE_DURATION,
+    MANAGED_EXECUTION_BOOTSTRAP_ENV,
+    MAX_ROLE_LIFETIME,
+    REVOCATION_DRAIN_TIMEOUT_SECONDS,
+    REVOCATION_POLL_SECONDS,
+    CredentialAuthorizationError,
+    CredentialIssuanceError,
+    GrantRevocationSink,
+    InteractiveCredential,
+    MaintenanceCredential,
+    ManagedCredential,
+    ManagedToolCredential,
+    OwnerKind,
+    RevocationOutcome,
+    SecretStore,
+    _CredentialDatabase,
+    _row_value,
+)
 
-AUTH_SCHEMA = "gobby_agent_auth"
-MANAGED_EXECUTION_BOOTSTRAP_ENV = "GOBBY_MANAGED_EXECUTION_BOOTSTRAP"
-# Bounds runaway lifetime requests while covering long-running agent spawns,
-# whose credential lifetime derives from the run timeout (spawn timeout + 5min).
-MAX_ROLE_LIFETIME = timedelta(hours=24)
-DAEMON_LEASE_DURATION = timedelta(minutes=2)
-REVOCATION_DRAIN_TIMEOUT_SECONDS = 5.0
-REVOCATION_POLL_SECONDS = 0.05
-
-OwnerKind = Literal["agent_run", "tool_chat", "interactive"]
-
-
-class CredentialIssuanceError(RuntimeError):
-    """A scoped role could not be issued and materialized safely."""
-
-
-class CredentialAuthorizationError(ValueError):
-    """A managed execution request does not match authoritative session scope."""
-
-
-class GrantRevocationSink(Protocol):
-    def revoke_execution(self, execution_id: UUID, generation: int | None) -> None: ...
-
-    def revoke_interactive(
-        self,
-        *,
-        deployment_token: str,
-        project_id: UUID,
-        generation: int | None,
-    ) -> None: ...
-
-
-class SecretStore(Protocol):
-    """Seal and open interactive credential material."""
-
-    def seal(self, plaintext: bytes, *, aad: bytes) -> str: ...
-
-    def open_sealed(self, token: str, *, aad: bytes) -> bytes: ...
-
-
-class _CredentialDatabase(Protocol):
-    @property
-    def conninfo(self) -> str: ...
-
-    def fetchone(
-        self,
-        sql: str,
-        params: Sequence[Any] | Mapping[str, Any] = (),
-    ) -> Row | None: ...
-
-    def fetchall(
-        self,
-        sql: str,
-        params: Sequence[Any] | Mapping[str, Any] = (),
-    ) -> list[Row]: ...
-
-    def transaction(self) -> AbstractContextManager[Transaction]: ...
+__all__ = [
+    "AUTH_SCHEMA",
+    "DAEMON_LEASE_DURATION",
+    "MANAGED_EXECUTION_BOOTSTRAP_ENV",
+    "MAX_ROLE_LIFETIME",
+    "REVOCATION_DRAIN_TIMEOUT_SECONDS",
+    "REVOCATION_POLL_SECONDS",
+    "CredentialAuthorizationError",
+    "CredentialIssuanceError",
+    "GrantRevocationSink",
+    "InteractiveCredential",
+    "MaintenanceCredential",
+    "ManagedCredential",
+    "ManagedCredentialManager",
+    "ManagedToolCredential",
+    "OwnerKind",
+    "RevocationOutcome",
+    "SecretStore",
+]
 
 
-@dataclass(frozen=True)
-class ManagedCredential:
-    """Secret-free identity and lifecycle metadata for a scoped role."""
-
-    managed_execution_id: UUID
-    role_name: str
-    credential_generation: int
-    issued_at: datetime
-    expires_at: datetime
-    bootstrap_path: Path
-
-
-@dataclass(frozen=True)
-class RevocationOutcome:
-    """Result of an idempotent managed-execution revocation request."""
-
-    completed: bool
-    revoked_count: int
-    retry_recorded: bool = False
-    failure_code: str | None = None
-
-
-@dataclass(frozen=True)
-class ManagedToolCredential:
-    """Authoritative project scope and credential metadata for one tool request."""
-
-    credential: ManagedCredential
-    project_id: UUID
-    project_path: str
-
-
-@dataclass(frozen=True)
-class MaintenanceCredential:
-    """Project-scoped maintenance role plus the grant DSN for this execution."""
-
-    credential: ManagedCredential
-    dsn: str
-
-
-@dataclass(frozen=True)
-class InteractiveCredential:
-    """Issued or reused interactive (machine, project) principal."""
-
-    role_name: str
-    credential_generation: int
-    issued_at: datetime
-    expires_at: datetime
-    dsn: str
-    reused: bool
-    deployment_token: str
-    machine_id: UUID
-    project_id: UUID
-    managed_execution_id: UUID
-
-
-def _row_value(row: Row, key: str) -> Any:
-    return row[key]
-
-
-class ManagedCredentialManager:
+class ManagedCredentialManager(InteractiveCredentialMixin):
     """Own scoped role issuance, private bootstrap files, and revocation retries."""
 
     def __init__(
@@ -152,7 +76,7 @@ class ManagedCredentialManager:
         self._machine_id = machine_id
         self._runtime_root = runtime_root
         self._owns_database = owns_database
-        self._interactive_grant_expiry: dict[tuple[str, UUID, int], datetime] = {}
+        self._interactive_grant_expiry: dict[InteractiveGrantExpiryKey, datetime] = {}
         self._grant_revocations: GrantRevocationSink | None = None
 
     def bind_grant_revocations(self, sink: GrantRevocationSink) -> None:
@@ -396,321 +320,6 @@ class ManagedCredentialManager:
             project_id=project_id,
             project_path=str(authoritative_path),
         )
-
-    def issue_interactive(
-        self,
-        *,
-        deployment_token: str,
-        project_id: UUID,
-        session_id: UUID,
-        expires_at: datetime,
-        secret_store: SecretStore,
-    ) -> InteractiveCredential:
-        issued_at = datetime.now(UTC)
-        normalized_expiry = self._validate_expiry(issued_at, expires_at)
-        self.heartbeat()
-        password = secrets.token_urlsafe(32)
-        try:
-            # One transaction: issue_or_reuse_interactive_principal takes an advisory
-            # xact lock, so holding the transaction open until the sealed material is
-            # written means a concurrent issuer can never reuse a binding whose
-            # material does not exist yet.
-            with self._database.transaction() as txn:
-                row = txn.execute(
-                    f"""SELECT * FROM {AUTH_SCHEMA}.issue_or_reuse_interactive_principal(
-                        %s, %s, %s, %s, %s, %s
-                    )""",
-                    (
-                        deployment_token,
-                        self._machine_id,
-                        project_id,
-                        session_id,
-                        normalized_expiry,
-                        password,
-                    ),
-                ).fetchone()
-                if row is None:
-                    raise CredentialIssuanceError("interactive issuance returned no result")
-                role_name = str(_row_value(row, "role_name"))
-                generation = int(_row_value(row, "credential_generation"))
-                reused = bool(_row_value(row, "reused"))
-                execution_id = UUID(str(_row_value(row, "managed_execution_id")))
-                if reused:
-                    password = self._load_interactive_password(
-                        secret_store,
-                        txn,
-                        deployment_token=deployment_token,
-                        project_id=project_id,
-                        generation=generation,
-                    )
-                else:
-                    self._store_interactive_password(
-                        secret_store,
-                        txn,
-                        deployment_token=deployment_token,
-                        project_id=project_id,
-                        generation=generation,
-                        password=password,
-                    )
-            return InteractiveCredential(
-                role_name=role_name,
-                credential_generation=generation,
-                issued_at=issued_at,
-                expires_at=normalized_expiry,
-                dsn=self._interactive_dsn(role_name, password),
-                reused=reused,
-                deployment_token=deployment_token,
-                machine_id=self._machine_id,
-                project_id=project_id,
-                managed_execution_id=execution_id,
-            )
-        except Exception as error:
-            if isinstance(error, CredentialIssuanceError):
-                raise
-            raise CredentialIssuanceError("interactive credential issuance failed") from error
-        finally:
-            password = ""
-
-    def rotate_interactive(
-        self,
-        *,
-        deployment_token: str,
-        project_id: UUID,
-        session_id: UUID,
-        expires_at: datetime,
-        secret_store: SecretStore,
-    ) -> InteractiveCredential:
-        issued_at = datetime.now(UTC)
-        normalized_expiry = self._validate_expiry(issued_at, expires_at)
-        self.heartbeat()
-        password = secrets.token_urlsafe(32)
-        generation: int | None = None
-        try:
-            drain_until = self._interactive_drain_until(deployment_token, project_id)
-            with self._database.transaction() as txn:
-                row = txn.execute(
-                    f"""SELECT * FROM {AUTH_SCHEMA}.rotate_interactive_principal(
-                        %s, %s, %s, %s, %s, %s, %s
-                    )""",
-                    (
-                        deployment_token,
-                        self._machine_id,
-                        project_id,
-                        session_id,
-                        normalized_expiry,
-                        password,
-                        drain_until,
-                    ),
-                ).fetchone()
-                if row is None:
-                    raise CredentialIssuanceError("interactive rotation returned no result")
-                role_name = str(_row_value(row, "role_name"))
-                generation = int(_row_value(row, "credential_generation"))
-                execution_id = UUID(str(_row_value(row, "managed_execution_id")))
-                self._store_interactive_password(
-                    secret_store,
-                    txn,
-                    deployment_token=deployment_token,
-                    project_id=project_id,
-                    generation=generation,
-                    password=password,
-                )
-            credential = InteractiveCredential(
-                role_name=role_name,
-                credential_generation=generation,
-                issued_at=issued_at,
-                expires_at=normalized_expiry,
-                dsn=self._interactive_dsn(role_name, password),
-                reused=False,
-                deployment_token=deployment_token,
-                machine_id=self._machine_id,
-                project_id=project_id,
-                managed_execution_id=execution_id,
-            )
-            self._prune_interactive_grant_expiry(
-                drop_before=(deployment_token, project_id, generation),
-            )
-            return credential
-        except Exception as error:
-            if generation is not None:
-                self.revoke_interactive(
-                    deployment_token=deployment_token,
-                    project_id=project_id,
-                    generation=generation,
-                    reason="rotation-rollback",
-                )
-            if isinstance(error, CredentialIssuanceError):
-                raise
-            raise CredentialIssuanceError("interactive credential rotation failed") from error
-        finally:
-            password = ""
-
-    def revoke_interactive(
-        self,
-        *,
-        deployment_token: str,
-        project_id: UUID,
-        reason: str,
-        generation: int | None = None,
-    ) -> RevocationOutcome:
-        row = self._database.fetchone(
-            f"""SELECT * FROM {AUTH_SCHEMA}.lookup_interactive_principal(
-                %s::text, %s::uuid, %s::uuid, %s::integer
-            )""",
-            (deployment_token, self._machine_id, project_id, generation),
-        )
-        if row is None:
-            return RevocationOutcome(completed=True, revoked_count=0)
-        execution_id = UUID(str(_row_value(row, "managed_execution_id")))
-        outcome = self.revoke(execution_id, generation=generation, reason=reason)
-        if outcome.completed and self._grant_revocations is not None:
-            self._grant_revocations.revoke_interactive(
-                deployment_token=deployment_token,
-                project_id=project_id,
-                generation=generation,
-            )
-        return outcome
-
-    def remember_interactive_grant_expiry(
-        self,
-        *,
-        deployment_token: str,
-        project_id: UUID,
-        generation: int,
-        expires_at: datetime,
-    ) -> None:
-        self._prune_interactive_grant_expiry()
-        key = (deployment_token, project_id, generation)
-        current = self._interactive_grant_expiry.get(key)
-        if current is None or expires_at > current:
-            self._interactive_grant_expiry[key] = expires_at
-
-    def interactive_generation_revoked(
-        self,
-        *,
-        deployment_token: str,
-        project_id: UUID,
-        generation: int,
-    ) -> bool:
-        row = self._database.fetchone(
-            f"""SELECT * FROM {AUTH_SCHEMA}.lookup_interactive_principal(
-                %s::text, %s::uuid, %s::uuid, %s::integer
-            )""",
-            (deployment_token, self._machine_id, project_id, generation),
-        )
-        if row is None:
-            return True
-        revoked_at = _row_value(row, "revoked_at")
-        return revoked_at is not None
-
-    def _prune_interactive_grant_expiry(
-        self,
-        *,
-        drop_before: tuple[str, UUID, int] | None = None,
-    ) -> None:
-        now = datetime.now(UTC)
-        stale = [
-            key
-            for key, expiry in self._interactive_grant_expiry.items()
-            if expiry <= now
-            or (
-                drop_before is not None
-                and key[0] == drop_before[0]
-                and key[1] == drop_before[1]
-                and key[2] < drop_before[2]
-            )
-        ]
-        for key in stale:
-            del self._interactive_grant_expiry[key]
-
-    def _interactive_drain_until(self, deployment_token: str, project_id: UUID) -> datetime:
-        self._prune_interactive_grant_expiry()
-        matching = [
-            expiry
-            for (
-                token,
-                stored_project,
-                _generation,
-            ), expiry in self._interactive_grant_expiry.items()
-            if token == deployment_token and stored_project == project_id
-        ]
-        if matching:
-            return max(matching)
-        return datetime.now(UTC) + timedelta(minutes=5)
-
-    def _interactive_aad(
-        self,
-        *,
-        deployment_token: str,
-        project_id: UUID,
-        generation: int,
-    ) -> str:
-        return f"{deployment_token}:{self._machine_id}:{project_id}:{generation}"
-
-    def _store_interactive_password(
-        self,
-        secret_store: SecretStore,
-        txn: Transaction,
-        *,
-        deployment_token: str,
-        project_id: UUID,
-        generation: int,
-        password: str,
-    ) -> None:
-        aad = self._interactive_aad(
-            deployment_token=deployment_token,
-            project_id=project_id,
-            generation=generation,
-        )
-        ciphertext = secret_store.seal(password.encode("utf-8"), aad=aad.encode("utf-8"))
-        stored = txn.execute(
-            f"""SELECT {AUTH_SCHEMA}.replace_interactive_credential_material(
-                %s, %s, %s, %s, %s, %s
-            )""",
-            (
-                deployment_token,
-                self._machine_id,
-                project_id,
-                generation,
-                ciphertext,
-                aad,
-            ),
-        ).fetchone()
-        if stored is None or not bool(
-            _row_value(stored, "replace_interactive_credential_material")
-        ):
-            raise CredentialIssuanceError(
-                "interactive credential material was not stored for a live binding"
-            )
-
-    def _load_interactive_password(
-        self,
-        secret_store: SecretStore,
-        txn: Transaction,
-        *,
-        deployment_token: str,
-        project_id: UUID,
-        generation: int,
-    ) -> str:
-        row = txn.execute(
-            f"""SELECT * FROM {AUTH_SCHEMA}.load_interactive_credential_material(
-                %s, %s, %s, %s
-            )""",
-            (deployment_token, self._machine_id, project_id, generation),
-        ).fetchone()
-        if row is None:
-            raise CredentialIssuanceError("interactive credential material is missing")
-        ciphertext = str(_row_value(row, "ciphertext"))
-        aad = str(_row_value(row, "aad_identity"))
-        plaintext = secret_store.open_sealed(ciphertext, aad=aad.encode("utf-8"))
-        if not isinstance(plaintext, bytes):
-            raise CredentialIssuanceError("interactive credential material is malformed")
-        return plaintext.decode("utf-8")
-
-    def _interactive_dsn(self, role_name: str, password: str) -> str:
-        parsed = conninfo_to_dict(self._database.conninfo)
-        parsed.update(user=role_name, password=password)
-        return make_conninfo("", **parsed)
 
     def rotate_due(self) -> list[ManagedCredential]:
         self.heartbeat()

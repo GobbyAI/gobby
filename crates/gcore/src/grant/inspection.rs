@@ -75,7 +75,13 @@ pub fn inspect_cached_grant_at(
     let Some(token) = token else {
         return CachedGrantInspection::Absent;
     };
-    let path = interactive_cache_path(&home, &token, &project_id);
+    let code_overlay_project_id = crate::project::code_overlay_project_id(project_root);
+    let path = interactive_cache_path(
+        &home,
+        &token,
+        &project_id,
+        code_overlay_project_id.as_deref(),
+    );
     let grant = match load_grant_file(&path) {
         Ok(grant) => grant,
         Err(error) if is_missing_grant_file(&error) => {

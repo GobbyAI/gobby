@@ -42,6 +42,7 @@ class HandshakeRequest(BaseModel):
     machine_id: str
     project_id: str
     session_id: str | None = None
+    code_overlay_project_id: str | None = None
 
 
 def _authorization_present(request: Request) -> bool:
@@ -163,6 +164,7 @@ def create_runtime_handshake_router(server: Any) -> APIRouter:
                     machine_id=body.machine_id,
                     project_id=body.project_id,
                     session_id=session_id,
+                    code_overlay_project_id=body.code_overlay_project_id,
                 )
         except HandshakeRejection as error:
             logger.warning(

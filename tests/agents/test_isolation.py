@@ -159,7 +159,11 @@ class TestEnsureIsolationCodeIndex:
         assert result.env == {}
         assert create_proc.await_count == 3
         calls = create_proc.await_args_list
-        assert calls[0].args[:4] == ("/tmp/gcode", "projects", "--quiet", "--format")
+        # The config probe must exercise the run-scoped grant path (status reads
+        # through the scoped role and /api/runtime/config), never an
+        # operator-only listing route the run token cannot call.
+        assert calls[0].args[:4] == ("/tmp/gcode", "status", "--quiet", "--format")
+        assert calls[0].args[4:8] == ("json", "--allow-stale", "--project", str(tmp_path))
         assert calls[1].args[:4] == ("/tmp/gcode", "index", "--quiet", "--project")
         assert calls[1].args[4] == str(tmp_path)
         assert calls[2].args[:3] == ("/tmp/gcode", "search-content", "__gobby_code_index_smoke__")

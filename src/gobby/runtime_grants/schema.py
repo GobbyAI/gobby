@@ -115,6 +115,9 @@ class GrantPrincipal(BaseModel):
     project_id: str
     execution_id: str | None
     session_id: str | None
+    # Interactive callers working inside a registered isolation worktree or clone
+    # bind their code-index overlay; managed kinds derive it server-side from the run.
+    code_overlay_project_id: str | None = None
 
 
 class GrantCapabilities(BaseModel):

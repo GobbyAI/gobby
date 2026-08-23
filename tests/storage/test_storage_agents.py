@@ -391,6 +391,32 @@ class TestLocalAgentRunManager:
 
         assert agent_run.claimed_session_id == sample_session["id"]
 
+    def test_create_agent_run_persists_isolation_workspace(
+        self,
+        agent_manager: LocalAgentRunManager,
+        temp_db: HubDatabase,
+        sample_session: dict[str, Any],
+        sample_project: dict[str, Any],
+    ) -> None:
+        """The worktree is written at creation so prelaunch credentials can bind it."""
+        from gobby.storage.worktrees import LocalWorktreeManager
+
+        worktree = LocalWorktreeManager(temp_db).create(
+            project_id=sample_project["id"],
+            branch_name="feature/isolated-run",
+            worktree_path="/tmp/gobby-isolated-run",
+        )
+
+        agent_run = agent_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="Task in worktree",
+            worktree_id=worktree.id,
+        )
+
+        assert agent_run.worktree_id == worktree.id
+        assert agent_run.clone_id is None
+
     def test_create_logs_debug(
         self,
         agent_manager: LocalAgentRunManager,

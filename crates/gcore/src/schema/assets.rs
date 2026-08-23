@@ -199,6 +199,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "10593cb9a01e8cf411e55993bc6cd679a211a3685c2a74f8d89c5f23db02b82f",
         sql: include_str!("../../assets/schema/migrations/402_task_close_reviews.sql"),
     },
+    EmbeddedMigration {
+        version: 403,
+        filename: "403_interactive_overlay_principal.sql",
+        checksum: "5970bfeb313dbd58545c3d4ebe824f2de8d6e140ecec4fc6e02f0078856f6231",
+        sql: include_str!("../../assets/schema/migrations/403_interactive_overlay_principal.sql"),
+    },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 

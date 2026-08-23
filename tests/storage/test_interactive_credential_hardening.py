@@ -95,14 +95,14 @@ def test_drain_until_discards_expired_grant_entries(tmp_path: Path) -> None:
     project_id = uuid4()
     past = datetime.now(UTC) - timedelta(minutes=1)
     future = datetime.now(UTC) + timedelta(minutes=10)
-    manager._interactive_grant_expiry[(token, project_id, 1)] = past
-    manager._interactive_grant_expiry[(token, project_id, 2)] = future
+    manager._interactive_grant_expiry[(token, project_id, None, 1)] = past
+    manager._interactive_grant_expiry[(token, project_id, None, 2)] = future
 
-    until = manager._interactive_drain_until(token, project_id)
+    until = manager._interactive_drain_until(token, project_id, None)
 
     assert until == future
-    assert (token, project_id, 1) not in manager._interactive_grant_expiry
-    assert manager._interactive_grant_expiry[(token, project_id, 2)] == future
+    assert (token, project_id, None, 1) not in manager._interactive_grant_expiry
+    assert manager._interactive_grant_expiry[(token, project_id, None, 2)] == future
 
 
 def test_remember_interactive_grant_expiry_drops_past_entries(tmp_path: Path) -> None:
@@ -115,7 +115,7 @@ def test_remember_interactive_grant_expiry_drops_past_entries(tmp_path: Path) ->
     project_id = uuid4()
     past = datetime.now(UTC) - timedelta(seconds=5)
     future = datetime.now(UTC) + timedelta(minutes=5)
-    manager._interactive_grant_expiry[(token, project_id, 1)] = past
+    manager._interactive_grant_expiry[(token, project_id, None, 1)] = past
 
     manager.remember_interactive_grant_expiry(
         deployment_token=token,
@@ -124,8 +124,8 @@ def test_remember_interactive_grant_expiry_drops_past_entries(tmp_path: Path) ->
         expires_at=future,
     )
 
-    assert (token, project_id, 1) not in manager._interactive_grant_expiry
-    assert manager._interactive_grant_expiry[(token, project_id, 2)] == future
+    assert (token, project_id, None, 1) not in manager._interactive_grant_expiry
+    assert manager._interactive_grant_expiry[(token, project_id, None, 2)] == future
 
 
 def test_rotate_interactive_rolls_back_successor_when_seal_fails(tmp_path: Path) -> None:
@@ -155,6 +155,40 @@ def test_rotate_interactive_rolls_back_successor_when_seal_fails(tmp_path: Path)
 
 
 def test_interactive_secret_store_is_a_protocol() -> None:
-    source = Path("src/gobby/storage/managed_credentials.py").read_text(encoding="utf-8")
-    assert "class SecretStore(Protocol)" in source
-    assert "secret_store: Any" not in source
+    types_source = Path("src/gobby/storage/managed_credential_types.py").read_text(encoding="utf-8")
+    assert "class SecretStore(Protocol)" in types_source
+    for module in ("managed_credentials", "interactive_credentials"):
+        source = Path(f"src/gobby/storage/{module}.py").read_text(encoding="utf-8")
+        assert "secret_store: Any" not in source
+
+
+def test_grant_expiry_memory_is_scoped_per_overlay(tmp_path: Path) -> None:
+    manager = ManagedCredentialManager(
+        database=_FakeDatabase({}),
+        machine_id=uuid4(),
+        runtime_root=tmp_path,
+    )
+    token = "tokentokentoken"
+    project_id = uuid4()
+    overlay_id = uuid4()
+    main_expiry = datetime.now(UTC) + timedelta(minutes=30)
+    overlay_expiry = datetime.now(UTC) + timedelta(minutes=10)
+    manager.remember_interactive_grant_expiry(
+        deployment_token=token,
+        project_id=project_id,
+        generation=1,
+        expires_at=main_expiry,
+    )
+    manager.remember_interactive_grant_expiry(
+        deployment_token=token,
+        project_id=project_id,
+        generation=2,
+        expires_at=overlay_expiry,
+        code_overlay_project_id=overlay_id,
+    )
+
+    assert manager._interactive_drain_until(token, project_id, overlay_id) == overlay_expiry
+    assert manager._interactive_drain_until(token, project_id, None) == main_expiry
+    manager._prune_interactive_grant_expiry(drop_before=(token, project_id, overlay_id, 3))
+    assert (token, project_id, overlay_id, 2) not in manager._interactive_grant_expiry
+    assert manager._interactive_grant_expiry[(token, project_id, None, 1)] == main_expiry

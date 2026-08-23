@@ -566,25 +566,7 @@ fn resolve_non_isolated_project_identity(
     }
 }
 
-fn is_self_referential_isolation_marker(
-    marker: &crate::project::IsolationMarker,
-    root: &Path,
-) -> bool {
-    let Some(parent_project_path) = marker.parent_project_path.as_deref() else {
-        return false;
-    };
-    resolve_parent_project_root(root, parent_project_path) == root
-}
-
-fn resolve_parent_project_root(root: &Path, parent_project_path: &str) -> PathBuf {
-    let parent = PathBuf::from(parent_project_path);
-    let parent = if parent.is_absolute() {
-        parent
-    } else {
-        root.join(parent)
-    };
-    parent.canonicalize().unwrap_or(parent)
-}
+use gobby_core::project::{is_self_referential_isolation_marker, resolve_parent_project_root};
 
 fn normalize_project_id(project_id: &str) -> anyhow::Result<String> {
     let project_id = project_id.trim();

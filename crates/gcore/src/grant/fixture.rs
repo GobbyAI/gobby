@@ -91,6 +91,7 @@ pub fn managed_direct_grant(
             project_id: project_id.to_string(),
             execution_id: Some("grant-fixture".to_string()),
             session_id: Some("grant-fixture".to_string()),
+            code_overlay_project_id: None,
         },
         capabilities: GrantCapabilities {
             postgres: PostgresCapability::Direct {

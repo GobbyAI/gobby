@@ -179,6 +179,60 @@ class TestPrepareTerminalSpawnMetadata:
         )
         assert result.managed_credential is credential_manager.issue.return_value
 
+    def test_persists_isolation_workspace_on_run_before_issuing_credential(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The run row carries its worktree before the managed credential binds it."""
+        session_id = str(uuid.uuid4())
+        run_id = str(uuid.uuid4())
+        sm = _make_session_manager(child_session_id=session_id)
+        sm._storage.get.return_value.machine_id = "21000000-0000-4000-8000-000000000001"
+        credential_manager = MagicMock()
+        credential = MagicMock()
+        credential.bootstrap_path = Path("/private/runtime/bootstrap.json")
+        credential.expires_at = datetime(2026, 8, 12, tzinfo=UTC) + timedelta(hours=1)
+        sm._storage.db.managed_credential_manager = credential_manager
+        run_manager_cls = MagicMock()
+        monkeypatch.setattr("gobby.storage.agents.LocalAgentRunManager", run_manager_cls)
+        order: list[str] = []
+
+        def record_create(**_: object) -> None:
+            order.append("create")
+
+        def record_issue(**_: object) -> MagicMock:
+            order.append("issue")
+            return credential
+
+        run_manager_cls.return_value.create.side_effect = record_create
+        credential_manager.issue.side_effect = record_issue
+        launch = MagicMock()
+        launch.grant_path = Path("/private/runtime/grant.json")
+
+        with (
+            patch("gobby.agents.spawn.read_local_api_token", return_value="op-token"),
+            patch("gobby.agents.code_index._active_deployment_grant_context"),
+            patch("gobby.agents.code_index._signed_grant_from_credential"),
+            patch(
+                "gobby.runtime_grants.launch.materialize_managed_launch",
+                return_value=launch,
+            ),
+        ):
+            prepare_terminal_spawn(
+                session_manager=sm,
+                parent_session_id=str(uuid.uuid4()),
+                project_id=str(uuid.uuid4()),
+                machine_id=str(uuid.uuid4()),
+                agent_run_id=run_id,
+                worktree_id="wt-1",
+                clone_id=None,
+            )
+
+        assert order == ["create", "issue"]
+        create_kwargs = run_manager_cls.return_value.create.call_args.kwargs
+        assert create_kwargs["run_id"] == run_id
+        assert create_kwargs["worktree_id"] == "wt-1"
+        assert create_kwargs["clone_id"] is None
+
     def test_env_includes_spawned_agent_uv_cache_dir(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -346,6 +400,8 @@ class TestPrepareRunForSessionPromptCleanup:
                 reasoning_message=None,
                 resume_metadata_json=None,
                 bind_run=MagicMock(),
+                worktree_id=None,
+                clone_id=None,
             )
 
         assert not prompt_path.exists()

@@ -314,8 +314,21 @@ async def ensure_isolation_code_index(
         merged_probe_env[GOBBY_AGENT_API_TOKEN_ENV] = api_token
     probe_env = merged_probe_env or None
 
+    # `status` proves the path the spawned agent will actually use: grant
+    # acquisition, /api/runtime/config (an agent-capability route), and a
+    # scoped-role read. `projects` lists every indexed project through an
+    # operator-only route, which the run-scoped token cannot call.
     await _run_gcode(
-        [gcode_command, "projects", "--quiet", "--format", "json"],
+        [
+            gcode_command,
+            "status",
+            "--quiet",
+            "--format",
+            "json",
+            "--allow-stale",
+            "--project",
+            str(workspace),
+        ],
         cwd=workspace,
         timeout=config_probe_timeout,
         timeout_code="gcode_index_unavailable_timeout",

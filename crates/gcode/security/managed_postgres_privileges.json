@@ -8,7 +8,8 @@
     "overlay_function": "gobby_agent_auth.current_code_overlay_project_id()",
     "machine_function": "gobby_agent_auth.current_machine_id()",
     "read_scope": "bound project plus bound isolation overlay",
-    "write_scope": "bound isolation overlay, or bound project when no overlay exists"
+    "write_scope": "bound isolation overlay, or bound project when no overlay exists",
+    "overlay_binding": "managed agent_run and tool_chat principals derive the overlay from the run's registered worktree or clone; interactive principals bind the overlay the handshake names only when it is a registered worktree or clone of the project on the issuing machine, and reuse is keyed per (deployment token, machine, project, overlay)"
   },
   "relations": [
     {"relation": "projects", "operations": ["SELECT"], "columns": ["id", "name", "repo_path"], "scope_column": "id"},
@@ -53,6 +54,7 @@
 {"path": "crates/gcode/src/bm25_health.rs", "calls": {"query": 1, "query_one": 1}, "classification": "project-read"},
 {"path": "crates/gcode/src/codewiki_facts/graph.rs", "calls": {"query": 1}, "classification": "external-non-postgresql"},
 {"path": "crates/gcode/src/codewiki_facts/text.rs", "calls": {"query": 1}, "classification": "project-read"},
+    {"path": "crates/gcode/src/commands/graph/view/class_hierarchy/fetch.rs", "calls": {"query": 1}, "classification": "external-non-postgresql"},
     {"path": "crates/gcode/src/commands/scope.rs", "calls": {"query": 1, "query_opt": 1}, "classification": "operator-only"},
     {"path": "crates/gcode/src/commands/status/content_gc.rs", "calls": {"execute": 2, "query": 1, "query_one": 1}, "classification": "operator-only"},
     {"path": "crates/gcode/src/commands/status/current.rs", "calls": {"query_opt": 1}, "classification": "project-read"},

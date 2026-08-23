@@ -17,15 +17,18 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     assert_eq!(identity.runner_protocol_version, RUNNER_PROTOCOL_VERSION);
     assert_eq!(identity.baseline.version, BASELINE_VERSION);
     assert_eq!(identity.baseline.checksum, BASELINE_CHECKSUM);
-    assert_eq!(identity.latest_asset.version, 402);
-    assert_eq!(identity.latest_asset.filename, "402_task_close_reviews.sql");
+    assert_eq!(identity.latest_asset.version, 403);
+    assert_eq!(
+        identity.latest_asset.filename,
+        "403_interactive_overlay_principal.sql"
+    );
     assert_eq!(
         identity.latest_asset.checksum,
-        "10593cb9a01e8cf411e55993bc6cd679a211a3685c2a74f8d89c5f23db02b82f"
+        "5970bfeb313dbd58545c3d4ebe824f2de8d6e140ecec4fc6e02f0078856f6231"
     );
     assert_eq!(
         identity.root_hash,
-        "194abb2b7a8a8d57f6975dc983ab1481e740e446c86d4682cda39a91ea8a5831"
+        "b96a8557afb286964394a9187f3c84356f3cd84b30a5c14e874e0c0759f2e62b"
     );
 
     let _public_runner_type = std::any::type_name::<SchemaRunner<'static>>();

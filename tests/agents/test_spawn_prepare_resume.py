@@ -94,6 +94,8 @@ def test_prepare_terminal_resume_merges_variables_inside_preflight(
             "resumed_from_run_id": original.id,
             "daemon_stop_resume_phase": "prepared",
         },
+        worktree_id=None,
+        clone_id=None,
     )
 
     assert prepared.session_id == child.id
@@ -172,4 +174,6 @@ def test_prepare_terminal_resume_refuses_foreign_owner(
             reasoning_status="not_requested",
             reasoning_message=None,
             resume_metadata_json={"resumed_from_run_id": original.id},
+            worktree_id=None,
+            clone_id=None,
         )

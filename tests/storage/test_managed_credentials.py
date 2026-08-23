@@ -13,7 +13,7 @@ from contextlib import AbstractContextManager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import psycopg
 import pytest
@@ -556,6 +556,97 @@ def _secret_store(fixture: AuthorizationFixture) -> SecretStore:
     return SecretStore(database)
 
 
+def test_interactive_overlay_binds_registered_worktree_only(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    fixture = authorization_fixture
+    manager = _manager(fixture, tmp_path / "managed")
+    store = _secret_store(fixture)
+    token = "0ver1ay0ver1ay00"
+    worktree_path = f"/tmp/{fixture.project_id}-overlay"
+    with psycopg.connect(fixture.database_url, autocommit=True) as conn:
+        conn.execute(
+            "INSERT INTO public.worktrees (id, project_id, machine_id, branch_name, worktree_path) "
+            "VALUES (%s, %s, %s, 'overlay', %s)",
+            (uuid4(), fixture.project_id, fixture.machine_id, worktree_path),
+        )
+        overlay_row = conn.execute(
+            "SELECT gobby_agent_auth.code_index_project_id(%s)", (worktree_path,)
+        ).fetchone()
+        assert overlay_row is not None
+        overlay_id = UUID(str(overlay_row[0]))
+    try:
+        main = manager.issue_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            session_id=fixture.session_id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            secret_store=store,
+        )
+        overlay = manager.issue_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            session_id=fixture.session_id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            secret_store=store,
+            code_overlay_project_id=overlay_id,
+        )
+        reused = manager.issue_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            session_id=fixture.session_id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            secret_store=store,
+            code_overlay_project_id=overlay_id,
+        )
+        assert main.code_overlay_project_id is None
+        assert overlay.code_overlay_project_id == overlay_id
+        assert overlay.role_name != main.role_name
+        assert reused.reused is True
+        assert reused.role_name == overlay.role_name
+        with psycopg.connect(overlay.dsn) as conn:
+            conn.execute("INSERT INTO code_indexed_projects(id) VALUES (%s)", (overlay_id,))
+            conn.commit()
+        rotated = manager.rotate_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            session_id=fixture.session_id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            secret_store=store,
+            code_overlay_project_id=overlay_id,
+        )
+        assert rotated.code_overlay_project_id == overlay_id
+        assert rotated.role_name not in {main.role_name, overlay.role_name}
+        with pytest.raises(CredentialAuthorizationError):
+            manager.issue_interactive(
+                deployment_token=token,
+                project_id=fixture.project_id,
+                session_id=fixture.session_id,
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+                secret_store=store,
+                code_overlay_project_id=uuid4(),
+            )
+    finally:
+        manager.revoke_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            reason="test-cleanup",
+        )
+        for generation in (overlay.credential_generation, rotated.credential_generation):
+            manager.revoke_interactive(
+                deployment_token=token,
+                project_id=fixture.project_id,
+                generation=generation,
+                reason="test-cleanup",
+            )
+        manager.close()
+        store.db.close()
+        with psycopg.connect(fixture.database_url, autocommit=True) as conn:
+            conn.execute("DELETE FROM public.code_indexed_projects WHERE id = %s", (overlay_id,))
+            conn.execute("DELETE FROM public.worktrees WHERE worktree_path = %s", (worktree_path,))
+
+
 def test_interactive_binding_uniqueness(
     authorization_fixture: AuthorizationFixture,
     tmp_path: Path,
@@ -822,6 +913,7 @@ def test_rotation_drains_predecessor_generations(
         assert (
             token,
             fixture.project_id,
+            None,
             first.credential_generation,
         ) not in manager._interactive_grant_expiry
         with psycopg.connect(first.dsn) as conn:

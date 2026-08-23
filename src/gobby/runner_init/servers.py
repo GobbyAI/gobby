@@ -358,6 +358,7 @@ def issue_grant_postgres(
     """
     from gobby.runtime_grants.handshake import HandshakeRejection
     from gobby.runtime_grants.schema import GrantPrincipal, PostgresDirect
+    from gobby.storage.managed_credential_types import CredentialAuthorizationError
 
     typed = principal if isinstance(principal, GrantPrincipal) else None
     if typed is None:
@@ -370,12 +371,14 @@ def issue_grant_postgres(
                     "interactive grant requires session_id",
                     code="claims_mismatch",
                 )
+            overlay = typed.code_overlay_project_id
             issued = credentials.issue_interactive(  # type: ignore[attr-defined]
                 deployment_token=deployment_token,
                 project_id=UUID(typed.project_id),
                 session_id=UUID(typed.session_id),
                 expires_at=expires_at,
                 secret_store=secrets,
+                code_overlay_project_id=UUID(overlay) if overlay is not None else None,
             )
             return PostgresDirect(
                 dsn=issued.dsn,
@@ -420,6 +423,8 @@ def issue_grant_postgres(
         )
     except HandshakeRejection:
         raise
+    except CredentialAuthorizationError as error:
+        raise HandshakeRejection(str(error), code="claims_mismatch") from None
     except Exception:
         logger.exception("grant credential issuance failed", extra={"kind": typed.kind})
         raise HandshakeRejection(

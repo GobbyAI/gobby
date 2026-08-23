@@ -124,7 +124,8 @@ fn load_cached_grant_bundle(
     let token = load_binding(&home, daemon_url)
         .map(|binding| binding.deployment_token)
         .unwrap_or_else(|| deployment_token(&home));
-    let path = interactive_cache_path(&home, &token, &project_id);
+    let overlay = gobby_core::project::code_overlay_project_id(project_root);
+    let path = interactive_cache_path(&home, &token, &project_id, overlay.as_deref());
     load_grant_file(&path).ok()
 }
 

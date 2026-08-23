@@ -15,10 +15,10 @@ const GOLDEN_BASELINE_CHECKSUM: &str =
     "ec222a7f8b3c486abfff05eda4ed02995d272a132ad2fdadb1dd90edbccb2ce1";
 #[cfg(not(feature = "postgres"))]
 const GOLDEN_LATEST_CHECKSUM: &str =
-    "10593cb9a01e8cf411e55993bc6cd679a211a3685c2a74f8d89c5f23db02b82f";
+    "5970bfeb313dbd58545c3d4ebe824f2de8d6e140ecec4fc6e02f0078856f6231";
 #[cfg(not(feature = "postgres"))]
 const GOLDEN_ASSETS_ROOT_HASH: &str =
-    "194abb2b7a8a8d57f6975dc983ab1481e740e446c86d4682cda39a91ea8a5831";
+    "b96a8557afb286964394a9187f3c84356f3cd84b30a5c14e874e0c0759f2e62b";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -115,6 +115,11 @@ pub struct GrantPrincipal {
     pub execution_id: Option<String>,
     #[serde(default)]
     pub session_id: Option<String>,
+    /// Code-index overlay an interactive caller is bound to when it works inside a
+    /// registered isolation worktree or clone; `None` for the main checkout and for
+    /// managed kinds, whose overlay the daemon derives server-side from the run.
+    #[serde(default)]
+    pub code_overlay_project_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -210,7 +215,7 @@ pub fn expected_schema_identity() -> GrantSchemaIdentity {
             runner_protocol: 1,
             baseline_version: 375,
             baseline_checksum: GOLDEN_BASELINE_CHECKSUM.to_string(),
-            latest_version: 402,
+            latest_version: 403,
             latest_checksum: GOLDEN_LATEST_CHECKSUM.to_string(),
             assets_root_hash: GOLDEN_ASSETS_ROOT_HASH.to_string(),
         }
@@ -281,6 +286,7 @@ pub fn validate_for_construction(
     expected_project: &str,
     expected_machine: &str,
     expected_deployment: Option<&str>,
+    expected_overlay: Option<&str>,
     require_managed: bool,
 ) -> Result<(), GrantError> {
     if grant.version != GRANT_VERSION {
@@ -323,6 +329,11 @@ pub fn validate_for_construction(
     if !require_managed && grant.principal.kind != PrincipalKind::Interactive {
         return Err(GrantError::Malformed(
             "interactive cache requires an interactive principal".to_string(),
+        ));
+    }
+    if !require_managed && grant.principal.code_overlay_project_id.as_deref() != expected_overlay {
+        return Err(GrantError::Malformed(
+            "grant code overlay does not match the local isolation workspace".to_string(),
         ));
     }
     Ok(())

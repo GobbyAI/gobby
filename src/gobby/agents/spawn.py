@@ -187,6 +187,8 @@ def prepare_terminal_spawn(
     reasoning_status: str = "not_requested",
     reasoning_message: str | None = None,
     resume_metadata_json: dict[str, Any] | None = None,
+    worktree_id: str | None = None,
+    clone_id: str | None = None,
 ) -> PreparedSpawn:
     """
     Prepare a terminal spawn by creating the child session.
@@ -223,6 +225,10 @@ def prepare_terminal_spawn(
             on the created agent run. Must be a JSON-safe object with string keys
             and JSON scalar/list/dict values. Defaults to None. When present, it is
             stored as-is for later resume and is not used to build terminal env vars.
+        worktree_id: Registered isolation worktree the run executes in, persisted on
+            the run before its managed credential is issued so the credential binds
+            the worktree's code-index overlay.
+        clone_id: Registered isolation clone the run executes in.
 
     Returns:
         PreparedSpawn with all necessary spawn configuration
@@ -291,6 +297,8 @@ def prepare_terminal_spawn(
             reasoning_message=reasoning_message,
             resume_metadata_json=resume_metadata_json,
             bind_run=bind_fresh_run,
+            worktree_id=worktree_id,
+            clone_id=clone_id,
         )
         prompt_file = prepared.prompt_file
         return _issue_prelaunch_credential(
@@ -336,6 +344,8 @@ def prepare_terminal_resume(
     reasoning_status: str,
     reasoning_message: str | None,
     resume_metadata_json: dict[str, Any],
+    worktree_id: str | None,
+    clone_id: str | None,
 ) -> PreparedSpawn:
     """Prepare a successor run against an existing durable child session."""
     child_session = session_manager._storage.get(existing_session_id)
@@ -403,6 +413,8 @@ def prepare_terminal_resume(
             reasoning_message=reasoning_message,
             resume_metadata_json=resume_metadata_json,
             bind_run=bind_successor_run,
+            worktree_id=worktree_id,
+            clone_id=clone_id,
         )
     return _issue_prelaunch_credential(
         session_manager,
@@ -497,6 +509,8 @@ def _prepare_run_for_session(
     reasoning_message: str | None,
     resume_metadata_json: dict[str, Any] | None,
     bind_run: Callable[[str], None],
+    worktree_id: str | None,
+    clone_id: str | None,
 ) -> PreparedSpawn:
     """Create and bind a run, then construct its terminal identity."""
     from gobby.storage.agents import LocalAgentRunManager
@@ -526,6 +540,8 @@ def _prepare_run_for_session(
         reasoning_status=reasoning_status,
         reasoning_message=reasoning_message,
         resume_metadata_json=resume_metadata_json,
+        worktree_id=worktree_id,
+        clone_id=clone_id,
     )
     bind_run(agent_run_id)
 

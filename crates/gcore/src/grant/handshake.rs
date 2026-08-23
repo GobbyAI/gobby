@@ -156,12 +156,21 @@ pub fn parse_capability_token(token: &str) -> Result<CapabilityClaims, GrantErro
     })
 }
 
+/// Identity a caller presents in the handshake body.
+#[derive(Clone, Copy, Debug)]
+pub struct HandshakeIdentity<'a> {
+    pub machine_id: &'a str,
+    pub project_id: &'a str,
+    pub session_id: Option<&'a str>,
+    /// Overlay an interactive caller binds; managed callers leave it `None`
+    /// because the daemon derives theirs from the run.
+    pub code_overlay_project_id: Option<&'a str>,
+}
+
 pub fn challenge_and_handshake(
     daemon_url: &str,
     bearer: &str,
-    machine_id: &str,
-    project_id: &str,
-    session_id: Option<&str>,
+    identity: HandshakeIdentity<'_>,
     managed: Option<&CapabilityClaims>,
     deadline: Instant,
 ) -> Result<GrantBundle, GrantError> {
@@ -224,11 +233,14 @@ pub fn challenge_and_handshake(
     }
 
     let remaining = remaining_timeout(deadline)?;
-    let handshake_body = json!({
-        "machine_id": machine_id,
-        "project_id": project_id,
-        "session_id": session_id,
+    let mut handshake_body = json!({
+        "machine_id": identity.machine_id,
+        "project_id": identity.project_id,
+        "session_id": identity.session_id,
     });
+    if let Some(overlay) = identity.code_overlay_project_id {
+        handshake_body["code_overlay_project_id"] = json!(overlay);
+    }
     let handshake = http_json(
         "POST",
         &format!("{}{HANDSHAKE_PATH}", trim_url(daemon_url)),

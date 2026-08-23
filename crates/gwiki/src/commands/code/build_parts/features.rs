@@ -138,6 +138,10 @@ fn resolve_gcode_handler(command: &str) -> (&'static str, &'static str) {
             "crates/gcode/src/commands/graph/reads.rs",
             "commands::graph::callers",
         ),
+        "callees" => (
+            "crates/gcode/src/commands/graph/reads.rs",
+            "commands::graph::callees",
+        ),
         "usages" => (
             "crates/gcode/src/commands/graph/reads.rs",
             "commands::graph::usages",
@@ -173,6 +177,10 @@ fn resolve_gcode_handler(command: &str) -> (&'static str, &'static str) {
         "graph blast-radius" => (
             "crates/gcode/src/commands/graph/payload.rs",
             "commands::graph::graph_blast_radius",
+        ),
+        "graph view" => (
+            "crates/gcode/src/commands/graph/view/mod.rs",
+            "commands::graph::view",
         ),
         "graph clear" => (
             "crates/gcode/src/commands/graph/lifecycle.rs",
@@ -221,6 +229,10 @@ fn resolve_gcode_handler(command: &str) -> (&'static str, &'static str) {
         "prune" => (
             "crates/gcode/src/commands/status/prune.rs",
             "commands::status::prune",
+        ),
+        "repair" => (
+            "crates/gcode/src/commands/repair.rs",
+            "commands::repair::run",
         ),
         _ => ("", ""),
     }

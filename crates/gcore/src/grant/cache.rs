@@ -43,10 +43,20 @@ pub enum CachePair {
     Incoherent(GrantBundle),
 }
 
-pub fn interactive_cache_path(home: &Path, deployment_token: &str, project_id: &str) -> PathBuf {
-    home.join(GRANTS_DIR)
-        .join(deployment_token)
-        .join(format!("{project_id}.json"))
+/// Cache file for one interactive grant. A worktree or clone caches under its own
+/// overlay-qualified name so the main checkout and its isolation workspaces never
+/// share (or clobber) a grant bound to a different overlay.
+pub fn interactive_cache_path(
+    home: &Path,
+    deployment_token: &str,
+    project_id: &str,
+    code_overlay_project_id: Option<&str>,
+) -> PathBuf {
+    let file_name = match code_overlay_project_id {
+        Some(overlay) => format!("{project_id}--{overlay}.json"),
+        None => format!("{project_id}.json"),
+    };
+    home.join(GRANTS_DIR).join(deployment_token).join(file_name)
 }
 
 pub fn settings_cache_path(grant_path: &Path) -> PathBuf {
