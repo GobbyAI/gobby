@@ -13,21 +13,22 @@ import logging
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
+from gobby.config.tmux import ATTACH_HISTORY_LINES
+
 if TYPE_CHECKING:
     from gobby.agents.tmux.session_manager import TmuxSessionManager
 
 logger = logging.getLogger(__name__)
 
-# Default only: TmuxConfig.attach_history_lines governs, set through the
-# config store, and the activation path always passes it. The cost model is a
-# renderer budget, not a wire budget -- the client writes the whole window in
-# one call, and the Ghostty VT core ingests it linearly at ~0.9 ms/line under
-# the pinned protocol (4x CPU throttle, 1 warm-up, 5 samples, median, frame
-# send to settled scrollback render; web/tests/history-perf.spec.ts) and
-# ~0.26 ms/line unthrottled. 500 matches herdr's default bound; the config
-# ceiling of 2000 is where the fallback core's ~1000-row ring makes a larger
-# window undeliverable regardless of speed.
-ATTACH_HISTORY_LINES = 500
+# TmuxConfig.attach_history_lines governs the window, set through the config
+# store; the imported schema default serves only direct callers. The bound is
+# a renderer budget, not a wire budget -- the client writes the whole window
+# in one call, and the Ghostty VT core ingests it linearly at ~0.9 ms/line
+# under the pinned protocol (4x CPU throttle, 1 warm-up, 5 samples, median,
+# frame send to settled scrollback render; web/tests/history-perf.spec.ts)
+# and ~0.26 ms/line unthrottled. The config ceiling of 2000 is where the
+# fallback core's 1000-row ring makes a larger window undeliverable
+# regardless of speed.
 # Backstop only, sized so the line count decides and bytes catch just the
 # pathological per-cell-color case.
 ATTACH_HISTORY_MAX_BYTES = 1024 * 1024

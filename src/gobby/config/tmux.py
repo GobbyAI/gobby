@@ -6,6 +6,12 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+# The one source of the attach-history default; gobby.agents.tmux.history
+# imports it for direct callers of capture_history. 500 matches herdr's
+# default bound. The cost model behind it is measured by
+# web/tests/history-perf.spec.ts and recorded on the field below.
+ATTACH_HISTORY_LINES = 500
+
 
 class TmuxConfig(BaseModel):
     """Configuration for tmux-based agent spawning.
@@ -51,7 +57,7 @@ class TmuxConfig(BaseModel):
         ),
     )
     attach_history_lines: int = Field(
-        default=500,
+        default=ATTACH_HISTORY_LINES,
         ge=0,
         le=2000,
         description=(
