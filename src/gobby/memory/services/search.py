@@ -133,7 +133,8 @@ class SearchService:
         The vector and graph legs run on the embedding; the BM25 leg runs on
         ``query``. ``embed_text`` splits those representations: when supplied it
         is embedded verbatim (YAKE is skipped) while ``query`` stays the term
-        bag the keyword leg needs. Omitting it keeps the YAKE-derived embedding.
+        bag the keyword leg needs. Omitting it — or passing ``None`` or an empty
+        string — keeps the YAKE-derived embedding.
         """
         if memory_type is not None:
             memory_type = validate_memory_type(memory_type)
@@ -145,12 +146,15 @@ class SearchService:
                 else MemoryScope.project_only(project_id)
             )
         if query and self._vector_store and self._embed_fn:
-            if embed_text is None:
+            if embed_text:
+                embed_query = embed_text
+            else:
+                # An empty `embed_text` means the caller had nothing to supply, so
+                # fall back rather than embed "" and hand the vector leg a
+                # meaningless vector while discarding the query we do have.
                 from gobby.search.keywords import extract_keywords
 
                 embed_query = extract_keywords(query) or query
-            else:
-                embed_query = embed_text
             query_embedding = await self._embed_fn(embed_query, is_query=True)
             half_life = self._recall_constants.half_life_days
             effective_min_score = min_score if min_score is not None else 0.0

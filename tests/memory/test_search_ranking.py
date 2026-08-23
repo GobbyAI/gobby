@@ -759,10 +759,13 @@ def _recorded_search_service(
 
 @pytest.mark.asyncio
 async def test_embed_text_absent_preserves_yake_path() -> None:
-    """2.1.2: omitting `embed_text` leaves the YAKE-derived embedding untouched.
+    """2.1.2: no supplied `embed_text` leaves the YAKE-derived embedding untouched.
 
-    Passing the new keyword explicitly as ``None`` is the same contract as omitting
-    it, so both spellings must keep the pre-2.1 behavior for every existing caller.
+    Three spellings mean "nothing supplied" and must all keep the pre-2.1 behavior:
+    omitting the keyword, passing it as ``None``, and passing an empty string. The
+    empty string matters because 2.2's query builder can legitimately produce one,
+    and embedding it verbatim would hand the vector leg a meaningless vector while
+    silently discarding the query the caller actually had.
     """
     from gobby.search.keywords import extract_keywords
 
@@ -775,10 +778,11 @@ async def test_embed_text_absent_preserves_yake_path() -> None:
 
     await service.search(_NOISY_PROMPT, limit=1)
     await service.search(_NOISY_PROMPT, limit=1, embed_text=None)
+    await service.search(_NOISY_PROMPT, limit=1, embed_text="")
 
-    assert [text for text, _ in embedded] == [expected, expected]
+    assert [text for text, _ in embedded] == [expected, expected, expected]
     assert all(is_query for _, is_query in embedded)
-    assert keyword_queries == [_NOISY_PROMPT, _NOISY_PROMPT]
+    assert keyword_queries == [_NOISY_PROMPT] * 3
 
 
 @pytest.mark.asyncio
