@@ -29,10 +29,13 @@ from gobby.agents.tmux.session_manager import (
 )
 from gobby.agents.tmux.spawner import TmuxSpawner
 from gobby.agents.tmux.text_injection import (
+    TMUX_BUFFER_CHUNK_BYTES,
     TmuxPaneModeUnavailableError,
     TmuxTargetUnavailableError,
     TmuxTextInjectionTimeout,
+    _split_for_tmux_buffer,
     classify_tmux_text_injection_error,
+    paste_literal_text_to_tmux_target,
     send_literal_text_to_tmux_target,
     submit_literal_text_to_tmux_target,
 )
@@ -477,6 +480,98 @@ class TestTmuxTextInjection:
         assert isinstance(error, expected_type)
         assert error.expected is True
         assert error.error_code == error_code
+
+    def test_short_text_is_one_chunk(self) -> None:
+        assert _split_for_tmux_buffer("hello") == ["hello"]
+        assert _split_for_tmux_buffer("") == [""]
+
+    def test_oversized_text_splits_under_the_limit(self) -> None:
+        text = "A" * (TMUX_BUFFER_CHUNK_BYTES * 2 + 17)
+
+        chunks = _split_for_tmux_buffer(text)
+
+        assert len(chunks) == 3
+        assert all(len(chunk.encode()) <= TMUX_BUFFER_CHUNK_BYTES for chunk in chunks)
+        assert "".join(chunks) == text
+
+    def test_split_never_breaks_a_multibyte_code_point(self) -> None:
+        # Land a 4-byte code point across the boundary: 8190 ASCII bytes leaves
+        # only two bytes of room before the cut at 8192.
+        text = "A" * (TMUX_BUFFER_CHUNK_BYTES - 2) + "😀" + "B" * 32
+
+        chunks = _split_for_tmux_buffer(text)
+
+        assert "".join(chunks) == text
+        assert all(len(chunk.encode()) <= TMUX_BUFFER_CHUNK_BYTES for chunk in chunks)
+        # The emoji moved wholly into the second chunk rather than being torn.
+        assert chunks[0] == "A" * (TMUX_BUFFER_CHUNK_BYTES - 2)
+        assert chunks[1].startswith("😀")
+
+    @pytest.mark.asyncio
+    async def test_large_payload_is_appended_in_chunks(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        commands: list[list[str]] = []
+
+        async def fake_exec(*args: str, **_kwargs: object) -> MagicMock:
+            commands.append(list(args))
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.communicate = AsyncMock(return_value=(b"", b""))
+            return proc
+
+        monkeypatch.setattr(
+            "gobby.agents.tmux.text_injection.asyncio.create_subprocess_exec",
+            fake_exec,
+        )
+
+        text = "A" * (TMUX_BUFFER_CHUNK_BYTES * 2 + 5)
+        await paste_literal_text_to_tmux_target("%12", text)
+
+        writes = [command for command in commands if command[1] == "set-buffer"]
+        assert len(writes) == 3
+        buffer_name = writes[0][3]
+        assert writes[0] == ["tmux", "set-buffer", "-b", buffer_name, "--", writes[0][5]]
+        for append in writes[1:]:
+            assert append[:5] == ["tmux", "set-buffer", "-a", "-b", buffer_name]
+            assert append[5] == "--"
+        assert "".join(write[-1] for write in writes) == text
+        assert all(len(write[-1].encode()) <= TMUX_BUFFER_CHUNK_BYTES for write in writes)
+        # The buffer is still pasted once and cleaned up once.
+        assert [command[1] for command in commands[3:]] == ["paste-buffer", "delete-buffer"]
+
+    @pytest.mark.asyncio
+    async def test_failed_append_still_deletes_the_buffer(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        commands: list[list[str]] = []
+
+        async def fake_exec(*args: str, **_kwargs: object) -> MagicMock:
+            commands.append(list(args))
+            proc = MagicMock()
+            # Fail the first append (the second set-buffer call).
+            failed = args[1] == "set-buffer" and "-a" in args
+            proc.returncode = 1 if failed else 0
+            proc.communicate = AsyncMock(
+                return_value=(b"", b"no server running" if failed else b"")
+            )
+            return proc
+
+        monkeypatch.setattr(
+            "gobby.agents.tmux.text_injection.asyncio.create_subprocess_exec",
+            fake_exec,
+        )
+
+        with pytest.raises(TmuxTargetUnavailableError):
+            await paste_literal_text_to_tmux_target("%12", "A" * (TMUX_BUFFER_CHUNK_BYTES * 2))
+
+        assert [command[1] for command in commands] == [
+            "set-buffer",
+            "set-buffer",
+            "delete-buffer",
+        ]
 
 
 # =============================================================================

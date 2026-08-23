@@ -13,6 +13,11 @@ from uuid import uuid4
 TMUX_TEXT_INJECTION_TIMEOUT_SECONDS = 10.0
 TMUX_TEXT_ENTER_DELAY_SECONDS = 1.0
 
+# tmux rejects any command whose imsg exceeds MAX_IMSGSIZE with "command too long".
+# Measured against tmux 3.x: a 16000-byte set-buffer payload succeeds, 20000 fails.
+# 8192 leaves room for the argv around the payload and for a long tmux_cmd prefix.
+TMUX_BUFFER_CHUNK_BYTES = 8192
+
 _MISSING_OR_DEAD_TARGET_FRAGMENTS = (
     "can't find pane",
     "can't find session",
@@ -167,11 +172,17 @@ async def paste_literal_text_to_tmux_target(
         return
     base_cmd = tuple(tmux_cmd)
     buffer_name = f"gobby-{os.getpid()}-{uuid4().hex}"
+    head, *tail = _split_for_tmux_buffer(text)
     await _run_tmux_command(
-        (*base_cmd, "set-buffer", "-b", buffer_name, "--", text),
+        (*base_cmd, "set-buffer", "-b", buffer_name, "--", head),
         timeout=timeout,
     )
     try:
+        for chunk in tail:
+            await _run_tmux_command(
+                (*base_cmd, "set-buffer", "-a", "-b", buffer_name, "--", chunk),
+                timeout=timeout,
+            )
         await _run_tmux_command(
             (
                 *base_cmd,
@@ -331,6 +342,34 @@ async def send_enter_key_to_tmux_target(
         (*tuple(tmux_cmd), "send-keys", "-t", target, "Enter"),
         timeout=timeout,
     )
+
+
+def _split_for_tmux_buffer(
+    text: str,
+    *,
+    limit: int = TMUX_BUFFER_CHUNK_BYTES,
+) -> list[str]:
+    """Split text so each chunk's UTF-8 encoding fits one tmux command.
+
+    Chunks are cut on code-point boundaries, so every chunk is independently
+    encodable and the concatenation is byte-identical to the input.
+    """
+    encoded = text.encode()
+    if len(encoded) <= limit:
+        return [text]
+
+    chunks: list[str] = []
+    start = 0
+    while start < len(encoded):
+        end = min(start + limit, len(encoded))
+        # Back off any UTF-8 continuation byte so a code point is never split.
+        # A sequence is at most 4 bytes, so this moves `end` by at most 3 and
+        # cannot reach `start` for any sane limit.
+        while end < len(encoded) and encoded[end] & 0xC0 == 0x80:
+            end -= 1
+        chunks.append(encoded[start:end].decode())
+        start = end
+    return chunks
 
 
 async def _run_tmux_command(command: Sequence[str], *, timeout: float) -> None:
