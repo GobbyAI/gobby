@@ -506,6 +506,40 @@ test("clicks land", async ({ page }) => {
     assert report.issues == ()
 
 
+def test_script_sleep_separates_a_runner_timeout_from_a_bare_timer(tmp_path: Path) -> None:
+    tests_dir = tmp_path / "web" / "tests"
+    tests_dir.mkdir(parents=True)
+    path = tests_dir / "sample.spec.ts"
+    path.write_text(
+        """
+import { expect, test } from '@playwright/test'
+
+test("budgets a slow render", async ({ page }) => {
+  test.setTimeout(900_000)
+  await page.setDefaultTimeout(60_000)
+  await expect(page.locator('.term')).toBeVisible()
+})
+
+test("waits by sleeping", async ({ page }) => {
+  await new Promise((resolve) => setTimeout(resolve, 250))
+  await expect(page.locator('.term')).toBeVisible()
+})
+
+test("polls on an interval", async ({ page }) => {
+  setInterval(() => page.reload(), 100)
+  await expect(page.locator('.term')).toBeVisible()
+})
+""",
+        encoding="utf-8",
+    )
+
+    report = audit_paths([path], root=tmp_path)
+
+    assert report.tests_scanned == 3
+    sleepers = {issue.test_name for issue in report.issues if issue.issue_code == "SLEEP_IN_TEST"}
+    assert sleepers == {"waits by sleeping", "polls on an interval"}
+
+
 def test_script_delimiter_scanner_ignores_apostrophes_in_comments(tmp_path: Path) -> None:
     tests_dir = tmp_path / "web" / "src" / "__tests__"
     tests_dir.mkdir(parents=True)

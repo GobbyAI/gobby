@@ -20,7 +20,10 @@ from gobby.test_quality.models import AuditIssue
 # `foo.test.tsx (...)` in comments — test declarations are never dot-prefixed.
 _SCRIPT_TEST_CALL_RE = re.compile(r"(?<![.\w$])(?P<name>it|test)(?P<modifiers>(?:\.\w+)*)\s*\(")
 _SCRIPT_ASSERTION_RE = re.compile(r"\b(?:expect|assert(?:\.\w+)?)\s*\(")
-_SCRIPT_SLEEP_RE = re.compile(r"\b(?:setTimeout|setInterval)\s*\(")
+# The same lookbehind, for the same reason: `.` is a word boundary, so a bare
+# \b would read `test.setTimeout(90_000)` -- the runner's own timeout budget for
+# a slow test -- as sleep-based timing. A sleep is the bare call.
+_SCRIPT_SLEEP_RE = re.compile(r"(?<![.\w$])(?:setTimeout|setInterval)\s*\(")
 
 # Members of the `test` object that configure a suite or register lifecycle
 # hooks (Playwright/vitest/jest) — calls, not test declarations. `skip`,
