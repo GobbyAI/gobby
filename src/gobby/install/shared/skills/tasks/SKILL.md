@@ -1,7 +1,7 @@
 ---
 name: tasks
 description: Use when creating, claiming, implementing, reviewing, transitioning, or closing Gobby tasks.
-version: "1.1.0"
+version: "1.2.0"
 category: core
 triggers: create task, claim task, close task, submit for review, task transition, validation evidence
 metadata:
@@ -72,17 +72,38 @@ labels, or writing expanded validation criteria.
 - Preserve unrelated worktree changes.
 - Run focused tests for behavior changes.
 - Fix every error, warning, test failure, lint failure, and type error encountered.
-- A defect outside the claimed task's scope: `create_task` with `claim=true`
-  and fix it in this session. Asking the user whether to fix is prohibited;
-  deferral is only by explicit user order, when the surface belongs to an
-  unlanded epic or another session (file the task naming that owner), or when
-  the fix would touch another session's uncommitted files (message the owner
-  instead — see the shared-worktree exclusion).
+- A defect outside the claimed task's scope follows the Found Work ladder
+  below.
 - Never run the full test suite unless the user explicitly requests it.
 - Check current and projected line counts before touching applicable production
   source. Exactly 1,000 lines violates the ceiling. Load `decompose-monolith`
   for threshold-crossing work and finish the decomposition inside the current
   claimed task and session. Deferred refactor tasks are prohibited.
+
+## Found Work
+
+A defect you find during any task — broken behavior, a failing check, an
+error in committed code — follows this ladder, in order:
+
+1. Fix it now: `create_task` with `claim=true`, fix, close. Finding it is
+   the authorization; an out-of-scope bug is never a scope change that
+   needs user approval.
+2. Surface owned by an active session — their uncommitted files, their
+   in-flight work: hand it off. Send the failing command, diagnostics, and
+   paths via `gobby-agents:send_message`; never touch their uncommitted
+   files. Handoff is a fix path, and a passing scoped rerun against owned
+   or clean paths clears your close gates.
+3. File for the user — last resort, edge cases only: the fix needs a
+   genuine architecture or product decision, or has a blast radius that
+   needs a clean window. Label the task `needs-decision` or `clean-window`
+   and state why in the description.
+
+Operational friction — restarting a shared service, rebuilding a tool,
+waiting for a quiet window — is coordination inside step 1, never a reason
+to drop to step 3. An explicit user instruction to defer always stands.
+Never end a turn asking "should I fix this?", and never go silent about a
+finding; silence is worse than asking. Enhancement ideas with nothing
+broken are not found work — note or file them normally.
 
 ## Completion Gates
 

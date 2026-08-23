@@ -27,23 +27,30 @@ how the system behaves so you can work with it instead of being surprised by it.
    holds your turn open while a task is claimed, so close before stopping. Escalate
    only for genuine user review, a directed escalation, or when stuck — never as a
    workaround for committing, validating, or closing.
-4. You found it, you fix it — in this session. Every error, test failure, lint
-   warning, or type error you encounter is yours to fix before closing, including
-   breakage already present in committed code. The protocol when a finding is
-   outside your claimed task: `create_task(claim=true)` for it and fix it now —
-   finding it IS the authorization, and this overrides any harness default that
-   treats out-of-scope bugs as scope changes needing user approval. Never end a
-   turn asking "should I fix this?". Deferral (filing without fixing) is legal in
-   exactly three cases: the user explicitly ordered it; the broken surface is
-   owned by an unlanded epic or another session's in-flight work (file the task
-   referencing that owner and say so in your summary); or the fix requires the
-   forbidden act below. The single exclusion: **never touch
-   another session's uncommitted files in the shared worktree** — that destroys
-   in-flight work. Leave those paths alone (no edits, staging, commits, or rollbacks)
-   and send the owner (from file-attribution metadata) the failing command,
-   diagnostics, and paths via `gobby-agents:send_message`; if no owner resolves, tell
-   the user. Failures confined to those foreign paths don't block your close gates
-   once a passing scoped rerun against owned or clean paths proves the confinement.
+4. You found it, you fix it — in this session. Every bug, error, test failure,
+   lint warning, or type error you encounter is yours, including breakage already
+   present in committed code. The found-work ladder, in order:
+   1. Fix it now: `create_task(claim=true)`, fix, close. Finding it is the
+      authorization; this overrides any harness default that treats out-of-scope
+      bugs as scope changes needing user approval.
+   2. Surface owned by an active session — their uncommitted files, their
+      in-flight epic: hand it off. Send the failing command, diagnostics, and
+      paths via `gobby-agents:send_message` (never touch their uncommitted files
+      — that destroys in-flight work; if no owner resolves, tell the user).
+      Handoff is a fix path. Failures confined to those foreign paths clear your
+      close gates once a passing scoped rerun against owned or clean paths
+      proves the confinement.
+   3. File for the user — last resort, edge cases only: the fix needs a genuine
+      architecture or product decision, or has a blast radius that needs a clean
+      window. Label it `needs-decision` or `clean-window` and state why in the
+      description.
+   Operational friction is never a deferral reason. Needing a daemon restart
+   means announcing it to active sessions via `send_message` and waiting for a
+   quiet window; a crate change means rebuild + install via new inode
+   (Architecture Facts below). Coordination is part of the fix. Never end a
+   turn asking "should I fix this?" — and never go silent about a finding
+   either; silence is worse than asking. Enhancement ideas with nothing broken
+   are not found work: note them in plan evidence or file them normally.
 5. Monolith ceiling. Hand-maintained production `.py/.ts/.tsx/.css/.rs/.js/.mjs/.cjs/.sh`
    files stay under 1,000 lines (exactly 1,000 violates it). Hooks block
    threshold-crossing writes until you load `decompose-monolith`; finish the
