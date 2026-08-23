@@ -64,6 +64,81 @@ def resolve_compose_runtime(
     return ComposeRuntime(environment=environment, profiles=profiles)
 
 
+def resolve_predecessor_service_runtime(
+    gobby_home: Path,
+    postgres_runtime: ComposeRuntime,
+) -> ComposeRuntime:
+    """Resolve only managed-service fields needed before retired auth rows are removed.
+
+    A maintenance-epoch cutover brings services up while the predecessor auth rows are
+    still present, so this reads the four `databases.*` keys straight out of
+    `config_store` instead of going through `ConfigRepository` the way
+    `_service_environment` does. Values already carried by `postgres_runtime` win.
+    """
+    from gobby.storage.config_repository import decode_config_value
+    from gobby.storage.hub.runtime import runtime_hub_database
+    from gobby.storage.secrets import SecretStore
+
+    with runtime_hub_database(
+        str(gobby_home / "bootstrap.yaml"),
+        apply_migrations=False,
+    ) as database:
+        rows = database.fetchall(
+            """
+            SELECT key, value
+            FROM config_store
+            WHERE key IN (
+                'databases.falkordb.host',
+                'databases.falkordb.password',
+                'databases.falkordb.port',
+                'databases.qdrant.port'
+            )
+            ORDER BY key
+            """
+        )
+        values = {
+            str(row["key"]): decode_config_value(str(row["key"]), str(row["value"])) for row in rows
+        }
+        qdrant_port = _positive_port(values.get("databases.qdrant.port"), "databases.qdrant.port")
+        if qdrant_port == 65535:
+            raise ComposeEnvironmentError("databases.qdrant.port must leave room for gRPC")
+        falkordb_port = _positive_port(
+            values.get("databases.falkordb.port"), "databases.falkordb.port"
+        )
+        falkordb_host = values.get("databases.falkordb.host")
+        if not isinstance(falkordb_host, str) or not falkordb_host.strip():
+            raise ComposeEnvironmentError("databases.falkordb.host must be a non-empty string")
+
+        service_environment = {
+            "GOBBY_QDRANT_HTTP_PORT": str(qdrant_port),
+            "GOBBY_QDRANT_GRPC_PORT": str(qdrant_port + 1),
+            "GOBBY_FALKORDB_HOST": falkordb_host.strip(),
+            "GOBBY_FALKORDB_PORT": str(falkordb_port),
+        }
+        environment = service_environment | postgres_runtime.environment
+        password = environment.get("GOBBY_FALKORDB_PASSWORD")
+        if not password:
+            password_ref = values.get("databases.falkordb.password")
+            if not isinstance(password_ref, str) or not password_ref.startswith("$secret:"):
+                raise ComposeEnvironmentError(
+                    "databases.falkordb.password must be a SecretStore reference"
+                )
+            secret_name = password_ref.removeprefix("$secret:")
+            if not secret_name:
+                raise ComposeEnvironmentError(
+                    "databases.falkordb.password references an empty secret name"
+                )
+            password = SecretStore(database, gobby_home=gobby_home).get(secret_name)
+            if not password:
+                raise ComposeEnvironmentError("FalkorDB SecretStore entry is missing or empty")
+            environment["GOBBY_FALKORDB_PASSWORD"] = password
+
+    _positive_port(environment.get("GOBBY_QDRANT_HTTP_PORT"), "GOBBY_QDRANT_HTTP_PORT")
+    _positive_port(environment.get("GOBBY_QDRANT_GRPC_PORT"), "GOBBY_QDRANT_GRPC_PORT")
+    _positive_port(environment.get("GOBBY_FALKORDB_PORT"), "GOBBY_FALKORDB_PORT")
+    return ComposeRuntime(environment=environment, profiles=MANAGED_SERVICE_PROFILES)
+
+
 def _require_local_datastore_mode(gobby_home: Path) -> tuple[str, str]:
     from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
 

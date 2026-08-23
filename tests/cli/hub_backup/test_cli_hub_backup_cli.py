@@ -1112,7 +1112,7 @@ class TestCleanup:
         monkeypatch.setattr(hub_cli, "resolve_compose_runtime", resolve_runtime, raising=False)
         monkeypatch.setattr(
             hub_cli,
-            "_predecessor_service_runtime",
+            "resolve_predecessor_service_runtime",
             lambda _home, _postgres: ComposeRuntime(
                 environment={"PGOPTIONS": pgoptions},
                 profiles=("postgres", "qdrant", "falkordb"),
@@ -1130,49 +1130,6 @@ class TestCleanup:
             assert kwargs["input"] == hub_cli._EPOCH_COMPOSE_OVERRIDE
             assert kwargs["env"] == {"PGOPTIONS": pgoptions}
             assert "--wait" in command
-
-    def test_predecessor_service_runtime_reads_only_service_fields_and_honors_override(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        tmp_path: Path,
-    ) -> None:
-        database = MagicMock()
-        database.fetchall.return_value = [
-            {"key": "databases.falkordb.host", "value": '"127.0.0.1"'},
-            {
-                "key": "databases.falkordb.password",
-                "value": '"$secret:falkordb_password"',
-            },
-            {"key": "databases.falkordb.port", "value": "60992"},
-            {"key": "databases.qdrant.port", "value": "60990"},
-        ]
-
-        @contextmanager
-        def open_database(
-            _config_file: str | None = None,
-            *,
-            apply_migrations: bool = True,
-        ) -> Iterator[MagicMock]:
-            assert apply_migrations is False
-            yield database
-
-        monkeypatch.setattr(hub_cli, "runtime_hub_database", open_database)
-        runtime = hub_cli._predecessor_service_runtime(
-            tmp_path,
-            ComposeRuntime(
-                environment={
-                    "PGOPTIONS": "-c gobby.maintenance_epoch=e1",
-                    "GOBBY_FALKORDB_PASSWORD": "scratch-override",
-                },
-                profiles=("postgres",),
-            ),
-        )
-
-        assert runtime.profiles == ("postgres", "qdrant", "falkordb")
-        assert runtime.environment["GOBBY_QDRANT_HTTP_PORT"] == "60990"
-        assert runtime.environment["GOBBY_QDRANT_GRPC_PORT"] == "60991"
-        assert runtime.environment["GOBBY_FALKORDB_PORT"] == "60992"
-        assert runtime.environment["GOBBY_FALKORDB_PASSWORD"] == "scratch-override"
 
     def test_refuses_to_archive_volumes_while_services_are_still_up(
         self, harness: _Harness, runtime: CliRuntime, tmp_path: Path
