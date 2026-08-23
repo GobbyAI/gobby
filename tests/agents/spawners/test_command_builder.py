@@ -66,7 +66,7 @@ class TestBuildCliCommand:
 
     def test_codex_basic(self) -> None:
         cmd, _env = build_cli_command("codex", prompt="hello")
-        assert cmd == ["codex", "hello"]
+        assert cmd == ["codex", "-c", "check_for_update_on_startup=false", "hello"]
 
     def test_codex_auto_approve(self) -> None:
         cmd, _env = build_cli_command("codex", auto_approve=True, prompt="hello")
@@ -76,6 +76,8 @@ class TestBuildCliCommand:
             "never",
             "--disable",
             "guardian_approval",
+            "-c",
+            "check_for_update_on_startup=false",
             "hello",
         ]
         assert "--approval-policy" not in cmd
@@ -100,11 +102,25 @@ class TestBuildCliCommand:
 
     def test_codex_working_directory(self) -> None:
         cmd, _env = build_cli_command("codex", working_directory="/tmp", prompt="hello")
-        assert cmd == ["codex", "-C", "/tmp", "hello"]
+        assert cmd == [
+            "codex",
+            "-C",
+            "/tmp",
+            "-c",
+            "check_for_update_on_startup=false",
+            "hello",
+        ]
 
     def test_codex_with_model(self) -> None:
         cmd, _env = build_cli_command("codex", model="gpt-4", prompt="hello")
-        assert cmd == ["codex", "--model", "gpt-4", "hello"]
+        assert cmd == [
+            "codex",
+            "--model",
+            "gpt-4",
+            "-c",
+            "check_for_update_on_startup=false",
+            "hello",
+        ]
 
     def test_codex_with_oss_local_provider(self) -> None:
         cmd, _env = build_cli_command(
@@ -120,12 +136,21 @@ class TestBuildCliCommand:
             "ollama",
             "-m",
             "ollama/qwen3-coder",
+            "-c",
+            "check_for_update_on_startup=false",
             "hello",
         ]
 
     def test_codex_with_reasoning_effort(self) -> None:
         cmd, _env = build_cli_command("codex", reasoning_effort="xhigh", prompt="hello")
-        assert cmd == ["codex", "-c", 'model_reasoning_effort="xhigh"', "hello"]
+        assert cmd == [
+            "codex",
+            "-c",
+            'model_reasoning_effort="xhigh"',
+            "-c",
+            "check_for_update_on_startup=false",
+            "hello",
+        ]
 
     def test_codex_config_overrides_precede_prompt(self) -> None:
         cmd, _env = build_cli_command(
@@ -145,6 +170,26 @@ class TestBuildCliCommand:
             'mcp_servers.gobby.args=["run","--project","/repo","gobby","mcp-server"]',
             "-c",
             "mcp_servers.gobby.startup_timeout_sec=120",
+            "-c",
+            "check_for_update_on_startup=false",
+            "hello",
+        ]
+
+    def test_codex_forces_startup_update_check_off_after_caller_overrides(self) -> None:
+        cmd, _env = build_cli_command(
+            "codex",
+            prompt="hello",
+            config_overrides=["check_for_update_on_startup=true"],
+            sandbox_args=["--sandbox"],
+        )
+
+        caller_override = cmd.index("check_for_update_on_startup=true")
+        safety_override = cmd.index("check_for_update_on_startup=false")
+        assert safety_override > caller_override
+        assert cmd[safety_override - 1 : safety_override + 3] == [
+            "-c",
+            "check_for_update_on_startup=false",
+            "--sandbox",
             "hello",
         ]
 
@@ -314,6 +359,8 @@ class TestBuildCliCommand:
                     "/tmp/wt",
                     "-c",
                     'mcp_servers.gobby.command="uv"',
+                    "-c",
+                    "check_for_update_on_startup=false",
                     "--sandbox",
                     "native-123",
                     "continue",

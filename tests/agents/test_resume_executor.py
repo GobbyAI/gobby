@@ -152,6 +152,7 @@ async def test_codex_resume_delivers_prompt_via_composer_not_argv(
         "gobby-resume-successor",
         "Continue",
         str(_SUCCESSOR_ID),
+        runner.run_storage,
     )
 
 

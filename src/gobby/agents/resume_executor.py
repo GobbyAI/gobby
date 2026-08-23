@@ -445,6 +445,7 @@ async def resume_agent_run(
             tmux_session_name,
             prompt,
             run_id,
+            runner.run_storage,
         )
     runner.run_storage.merge_resume_metadata(
         run_id,

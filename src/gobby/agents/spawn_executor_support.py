@@ -31,10 +31,12 @@ from gobby.agents.spawn_models import SpawnRequest, SpawnResult
 from gobby.agents.spawners.base import SpawnResult as TerminalSpawnResult
 from gobby.agents.srt_runtime import SandboxLaunch
 from gobby.config.tmux import TmuxConfig
+from gobby.sessions.session_wiki_file import redact_session_markdown
 
 if TYPE_CHECKING:
     from gobby.agents.tmux.session_manager import TmuxSessionManager
     from gobby.agents.tmux.spawner import TmuxSpawner
+    from gobby.storage.agents import LocalAgentRunManager
 
 logger = logging.getLogger(__name__)
 _RESERVED_EXTRA_ENV_KEYS = frozenset(
@@ -269,6 +271,21 @@ _CODEX_COMPOSER_READY_TIMEOUT_SECONDS = 60.0
 _CODEX_COMPOSER_SETTLE_SECONDS = 1.0
 _CODEX_PROMPT_SUBMIT_RETRY_DELAY_SECONDS = 3.0
 _CODEX_PROMPT_DELIVERY_TASKS: set[asyncio.Task[None]] = set()
+_CODEX_PROMPT_FAILURE_PANE_MAX_CHARS = 1024
+_CODEX_PROMPT_FAILURE_TRUNCATION_MARKER = "[truncated]\n"
+
+
+def _codex_prompt_failure_reason(pane: str | None) -> str:
+    redacted = redact_session_markdown((pane or "").strip()) or "<unavailable>"
+    if len(redacted) > _CODEX_PROMPT_FAILURE_PANE_MAX_CHARS:
+        tail_chars = _CODEX_PROMPT_FAILURE_PANE_MAX_CHARS - len(
+            _CODEX_PROMPT_FAILURE_TRUNCATION_MARKER
+        )
+        redacted = f"{_CODEX_PROMPT_FAILURE_TRUNCATION_MARKER}{redacted[-tail_chars:]}"
+    return (
+        "codex_composer_not_ready: Codex composer did not render before "
+        f"prompt-delivery timeout\nPane output:\n{redacted}"
+    )
 
 
 def schedule_codex_prompt_delivery(
@@ -276,6 +293,7 @@ def schedule_codex_prompt_delivery(
     session_name: str,
     prompt: str,
     run_id: str,
+    run_manager: "LocalAgentRunManager | None",
 ) -> bool:
     """Schedule a typed-paste prompt delivery to a spawned Codex terminal.
 
@@ -284,7 +302,7 @@ def schedule_codex_prompt_delivery(
     if not prompt:
         return False
     task = asyncio.get_running_loop().create_task(
-        _deliver_codex_prompt(tmux, session_name, prompt, run_id)
+        _deliver_codex_prompt(tmux, session_name, prompt, run_id, run_manager)
     )
     _CODEX_PROMPT_DELIVERY_TASKS.add(task)
     task.add_done_callback(_CODEX_PROMPT_DELIVERY_TASKS.discard)
@@ -296,16 +314,20 @@ async def _deliver_codex_prompt(
     session_name: str,
     prompt: str,
     run_id: str,
+    run_manager: "LocalAgentRunManager | None",
 ) -> None:
     try:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + _CODEX_COMPOSER_READY_TIMEOUT_SECONDS
+        last_pane: str | None = None
         while True:
             try:
                 pane = await tmux.capture_pane(
                     session_name,
                     lines=_CODEX_COMPOSER_CAPTURE_LINES,
                 )
+                if pane:
+                    last_pane = pane
             except Exception:
                 logger.debug(
                     "Failed to inspect Codex composer readiness for run %s",
@@ -316,13 +338,22 @@ async def _deliver_codex_prompt(
             if pane and _CODEX_COMPOSER_MARKER in pane:
                 break
             if loop.time() >= deadline:
-                # Never type into a pane that is not showing the composer: if
-                # the CLI died the pane may be gone or a shell, and the
-                # session-init watchdog already owns that failure path.
-                logger.error(
-                    "Codex composer never rendered for run %s; prompt not delivered",
-                    run_id,
-                )
+                error = _codex_prompt_failure_reason(last_pane)
+                logger.error("Codex prompt delivery failed for run %s: %s", run_id, error)
+                try:
+                    if run_manager is None:
+                        logger.error(
+                            "Cannot persist Codex prompt delivery failure for run %s", run_id
+                        )
+                    else:
+                        run_manager.fail(
+                            run_id,
+                            error=error,
+                            tool_calls_count=0,
+                            turns_used=0,
+                        )
+                finally:
+                    await tmux.kill_session(session_name, missing_ok=True)
                 return
             await asyncio.sleep(_CODEX_COMPOSER_POLL_SECONDS)
         await asyncio.sleep(_CODEX_COMPOSER_SETTLE_SECONDS)

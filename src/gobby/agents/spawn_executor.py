@@ -681,6 +681,7 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
             terminal_result.tmux_session_name,
             prompt_text,
             spawn_context.agent_run_id,
+            request.run_manager,
         )
 
     return SpawnResult(

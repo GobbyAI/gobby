@@ -40,7 +40,8 @@ def build_cli_command(
     - claude --session-id <uuid> --dangerously-skip-permissions -p [prompt]
 
     Codex CLI:
-    - codex --ask-for-approval never --disable guardian_approval -C <dir> [PROMPT]
+    - codex --ask-for-approval never --disable guardian_approval
+      -c check_for_update_on_startup=false -C <dir> [PROMPT]
 
     Droid CLI:
     - droid exec --input-format stream-json --cwd <dir> [--model <id>]
@@ -160,6 +161,9 @@ def build_cli_command(
             command.extend(["-C", working_directory])
         for override in config_overrides or []:
             command.extend(["-c", override])
+        # Spawned runs must never stop at Codex's interactive upgrade menu.
+        # Keep this last so user- or endpoint-provided overrides cannot re-enable it.
+        command.extend(["-c", "check_for_update_on_startup=false"])
 
     elif cli == "droid":
         # Droid exec flags, verified against `droid exec --help` on v0.106.0.

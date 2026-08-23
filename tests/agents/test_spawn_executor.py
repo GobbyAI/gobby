@@ -737,6 +737,7 @@ class TestExecuteSpawn:
     async def test_codex_terminal_direct_spawn(self, mock_codex_prompt_delivery):
         """Codex spawns directly (no preflight); command is `codex ...`, never `codex resume ...`."""
         mock_session_manager = MagicMock()
+        run_manager = MagicMock()
         request = SpawnRequest(
             prompt="Test",
             cwd="/path",
@@ -748,6 +749,7 @@ class TestExecuteSpawn:
             project_path="/main/repo",
             agent_run_id="run-abc123def456",
             session_manager=mock_session_manager,
+            run_manager=run_manager,
             prepared_spawn=prepared_spawn(),
         )
 
@@ -840,6 +842,7 @@ class TestExecuteSpawn:
                 "agent-run-abc123def456",
                 "Test",
                 "run-abc123def456",
+                run_manager,
             )
 
             # SpawnResult.run_id is the caller-minted id (no fabricated
@@ -2198,69 +2201,167 @@ class TestCodexPromptDelivery:
         tmux = MagicMock()
         tmux.capture_pane = AsyncMock(side_effect=[None, "› Ask Codex anything"])
         tmux.send_keys = AsyncMock(return_value=True)
+        run_manager = MagicMock()
 
         with (
             patch.object(spawn_executor_support, "_CODEX_COMPOSER_POLL_SECONDS", 0.0),
             patch.object(spawn_executor_support, "_CODEX_COMPOSER_SETTLE_SECONDS", 0.0),
             patch.object(spawn_executor_support, "_CODEX_PROMPT_SUBMIT_RETRY_DELAY_SECONDS", 0.0),
         ):
-            await _deliver_codex_prompt(tmux, "sess", "Do the task", "run-1")
+            await _deliver_codex_prompt(
+                tmux,
+                "sess",
+                "Do the task",
+                "run-1",
+                run_manager,
+            )
 
         assert tmux.capture_pane.await_count == 2
         assert tmux.send_keys.await_args_list == [
             call("sess", "Do the task\n", literal=True),
             call("sess", "Enter", literal=False),
         ]
+        run_manager.fail.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_never_types_into_a_pane_without_a_composer(self) -> None:
-        """A dead CLI can leave a shell pane; the watchdog owns that failure."""
+    async def test_timeout_fails_run_with_redacted_pane_and_kills_session(self) -> None:
         tmux = MagicMock()
-        tmux.capture_pane = AsyncMock(return_value="zsh: command not found: codex")
+        secret = "sk-abcdefghijklmnopqrstuvwxyz123456"
+        tmux.capture_pane = AsyncMock(return_value=f"Update available!\n{secret}")
         tmux.send_keys = AsyncMock()
+        tmux.kill_session = AsyncMock(return_value=True)
+        run_manager = MagicMock()
 
         with patch.object(spawn_executor_support, "_CODEX_COMPOSER_READY_TIMEOUT_SECONDS", 0.0):
-            await _deliver_codex_prompt(tmux, "sess", "Do the task", "run-1")
+            await _deliver_codex_prompt(
+                tmux,
+                "sess",
+                "Do the task",
+                "run-1",
+                run_manager,
+            )
 
         assert tmux.send_keys.await_count == 0
         assert tmux.capture_pane.await_count >= 1
+        error = run_manager.fail.call_args.kwargs["error"]
+        assert error.startswith("codex_composer_not_ready:")
+        assert "Update available!" in error
+        assert "sk-<redacted>" in error
+        assert secret not in error
+        assert len(error.rsplit("Pane output:\n", 1)[1]) <= 1024
+        run_manager.fail.assert_called_once_with(
+            "run-1",
+            error=error,
+            tool_calls_count=0,
+            turns_used=0,
+        )
+        tmux.kill_session.assert_awaited_once_with("sess", missing_ok=True)
+
+    @pytest.mark.asyncio
+    async def test_timeout_uses_last_capture_when_later_reads_fail(self) -> None:
+        captures = 0
+
+        async def capture_pane(*_args: object, **_kwargs: object) -> str:
+            nonlocal captures
+            captures += 1
+            if captures == 1:
+                return "Update available! 0.148.0 -> 0.149.0"
+            raise RuntimeError("pane disappeared")
+
+        tmux = MagicMock()
+        tmux.capture_pane = AsyncMock(side_effect=capture_pane)
+        tmux.send_keys = AsyncMock()
+        tmux.kill_session = AsyncMock(return_value=True)
+        run_manager = MagicMock()
+
+        with (
+            patch.object(spawn_executor_support, "_CODEX_COMPOSER_READY_TIMEOUT_SECONDS", 0.001),
+            patch.object(spawn_executor_support, "_CODEX_COMPOSER_POLL_SECONDS", 0.0),
+        ):
+            await _deliver_codex_prompt(
+                tmux,
+                "sess",
+                "Do the task",
+                "run-1",
+                run_manager,
+            )
+
+        assert captures >= 2
+        assert "Update available! 0.148.0 -> 0.149.0" in run_manager.fail.call_args.kwargs["error"]
+        tmux.send_keys.assert_not_awaited()
+        tmux.kill_session.assert_awaited_once_with("sess", missing_ok=True)
+
+    @pytest.mark.asyncio
+    async def test_timeout_kills_session_when_failure_persistence_raises(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        tmux = MagicMock()
+        tmux.capture_pane = AsyncMock(return_value="Update available!")
+        tmux.send_keys = AsyncMock()
+        tmux.kill_session = AsyncMock(return_value=True)
+        run_manager = MagicMock()
+        run_manager.fail.side_effect = RuntimeError("database unavailable")
+
+        with patch.object(spawn_executor_support, "_CODEX_COMPOSER_READY_TIMEOUT_SECONDS", 0.0):
+            await _deliver_codex_prompt(
+                tmux,
+                "sess",
+                "Do the task",
+                "run-1",
+                run_manager,
+            )
+
+        tmux.send_keys.assert_not_awaited()
+        tmux.kill_session.assert_awaited_once_with("sess", missing_ok=True)
+        assert "Codex prompt delivery failed for run run-1" in caplog.text
+        assert "codex_composer_not_ready:" in caplog.text
 
     @pytest.mark.asyncio
     async def test_failed_paste_skips_follow_up_enter(self) -> None:
         tmux = MagicMock()
         tmux.capture_pane = AsyncMock(return_value="› ")
         tmux.send_keys = AsyncMock(return_value=False)
+        run_manager = MagicMock()
 
         with (
             patch.object(spawn_executor_support, "_CODEX_COMPOSER_SETTLE_SECONDS", 0.0),
             patch.object(spawn_executor_support, "_CODEX_PROMPT_SUBMIT_RETRY_DELAY_SECONDS", 0.0),
         ):
-            await _deliver_codex_prompt(tmux, "sess", "Do the task", "run-1")
+            await _deliver_codex_prompt(
+                tmux,
+                "sess",
+                "Do the task",
+                "run-1",
+                run_manager,
+            )
 
         assert tmux.send_keys.await_count == 1
         assert tmux.send_keys.await_args_list == [
             call("sess", "Do the task\n", literal=True),
         ]
+        run_manager.fail.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_schedule_skips_empty_prompt(self) -> None:
         tmux = MagicMock()
 
-        assert schedule_codex_prompt_delivery(tmux, "sess", "", "run-1") is False
+        assert schedule_codex_prompt_delivery(tmux, "sess", "", "run-1", None) is False
 
         assert not spawn_executor_support._CODEX_PROMPT_DELIVERY_TASKS
 
     @pytest.mark.asyncio
     async def test_schedule_tracks_and_releases_the_delivery_task(self) -> None:
         tmux = MagicMock()
+        run_manager = MagicMock()
 
         with patch.object(
             spawn_executor_support, "_deliver_codex_prompt", new=AsyncMock()
         ) as deliver:
-            assert schedule_codex_prompt_delivery(tmux, "sess", "Go", "run-1") is True
+            assert schedule_codex_prompt_delivery(tmux, "sess", "Go", "run-1", run_manager) is True
             pending = list(spawn_executor_support._CODEX_PROMPT_DELIVERY_TASKS)
             assert pending
             await asyncio.gather(*pending)
 
-        deliver.assert_awaited_once_with(tmux, "sess", "Go", "run-1")
+        deliver.assert_awaited_once_with(tmux, "sess", "Go", "run-1", run_manager)
         assert not spawn_executor_support._CODEX_PROMPT_DELIVERY_TASKS
