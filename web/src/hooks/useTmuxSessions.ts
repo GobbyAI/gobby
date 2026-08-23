@@ -152,7 +152,11 @@ export function useTmuxSessions(): TmuxSessionsResult {
         pendingRequestRef.current = null;
         setRequestPending(false);
         setIsLoading(false);
-        setAttachError(`${request.kind} request timed out`);
+        // Rendered after a full stop ("Couldn't attach to this terminal. "),
+        // so it has to stand on its own as a sentence.
+        setAttachError(
+          `${request.kind[0].toUpperCase()}${request.kind.slice(1)} request timed out.`,
+        );
       }, TMUX_REQUEST_TIMEOUT_MS);
     },
     [],

@@ -450,7 +450,7 @@ describe("useTmuxSessions", () => {
     act(() => vi.advanceTimersByTime(TMUX_REQUEST_TIMEOUT_MS));
     expect(result.current.requestPending).toBe(false);
     expect(result.current.isLoading).toBe(false);
-    expect(result.current.attachError).toBe("attach request timed out");
+    expect(result.current.attachError).toBe("Attach request timed out.");
 
     act(() => {
       result.current.clearAttachError();
@@ -467,7 +467,7 @@ describe("useTmuxSessions", () => {
     act(() => vi.advanceTimersByTime(TMUX_REQUEST_TIMEOUT_MS));
     expect(result.current.requestPending).toBe(false);
     expect(result.current.isLoading).toBe(false);
-    expect(result.current.attachError).toBe("detach request timed out");
+    expect(result.current.attachError).toBe("Detach request timed out.");
     expect(result.current.streamingId).toBe("stream-timeout");
 
     act(() => {
@@ -477,7 +477,7 @@ describe("useTmuxSessions", () => {
     act(() => vi.advanceTimersByTime(TMUX_REQUEST_TIMEOUT_MS));
     expect(result.current.requestPending).toBe(false);
     expect(result.current.isLoading).toBe(false);
-    expect(result.current.attachError).toBe("create request timed out");
+    expect(result.current.attachError).toBe("Create request timed out.");
     unmount();
   });
 
