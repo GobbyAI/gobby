@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shlex
 import subprocess
 from collections.abc import Callable
@@ -39,6 +40,32 @@ _GIT_GLOBAL_OPTIONS_WITH_VALUE = {
 }
 _SHELL_CONTROL_TOKENS = frozenset({"&&", "||", ";", "|", "&"})
 
+# A heredoc body is unquoted shell text, so `shlex.split` turns every word in it
+# into a token. A commit message delivered that way therefore reaches the
+# invocation parser as argv: one bare `--` line reads as git's pathspec
+# delimiter and the prose after it becomes pathspecs. Strip bodies before
+# tokenizing. `-m "..."` needs no such handling because shlex keeps a quoted
+# argument whole.
+_HEREDOC_BODY_RE = re.compile(
+    r"""<<-?\s*(?P<quote>['"]?)(?P<tag>[A-Za-z_][A-Za-z0-9_]*)(?P=quote)"""
+    r".*?^[ \t]*(?P=tag)[ \t]*$",
+    re.DOTALL | re.MULTILINE,
+)
+
+# `shlex.split` discards newlines, so newline-separated commands run together
+# into one token stream and the segment scan never terminates. Two chained
+# commits then parse as one invocation carrying the *later* command's
+# pathspecs, dropping the earlier unscoped commit's full-staged-set check.
+# Fold real separators into `;` so the scan ends where the command does; a
+# newline inside a quoted argument survives as ordinary token content.
+_LINE_CONTINUATION_RE = re.compile(r"\\\r?\n")
+
+
+def _normalize_shell_command(command: str) -> str:
+    command = _HEREDOC_BODY_RE.sub(" ", command)
+    command = _LINE_CONTINUATION_RE.sub(" ", command)
+    return command.replace("\n", " ; ")
+
 
 @dataclass(frozen=True)
 class GitCommitInvocation:
@@ -68,6 +95,7 @@ def parse_git_commit_invocations(command: str) -> tuple[GitCommitInvocation, ...
     """Parse Git commit invocations from one shell command."""
     if not command.strip():
         return ()
+    command = _normalize_shell_command(command)
     try:
         tokens = shlex.split(command)
     except ValueError:

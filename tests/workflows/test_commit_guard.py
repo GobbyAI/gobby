@@ -13,14 +13,18 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.tools.tasks import create_task_registry
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager, Project
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.utils.session_context import session_context_for_test
-from gobby.workflows.commit_guard import DirtyEditOwnershipInspectionError, _format_ref
+from gobby.workflows.commit_guard import (
+    DirtyEditOwnershipInspectionError,
+    _format_ref,
+    parse_git_commit_invocations,
+)
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
@@ -234,9 +238,7 @@ def guard_harness(temp_db: HubDatabase, repo: Path) -> GuardHarness:
 
     result = sync_bundled_rules(temp_db, get_bundled_rules_path())
     assert result["errors"] == []
-    temp_db.execute(
-        "UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'"
-    )
+    temp_db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
     temp_db.execute(
         "UPDATE rule_definitions SET enabled = (name IN (%s, %s)) ",
         (RULE_NAME, DIRTY_EDIT_RULE_NAME),
@@ -673,9 +675,7 @@ async def test_completed_foreign_session_does_not_block_commit(
 def test_commit_guard_rule_syncs_and_validates(temp_db: HubDatabase) -> None:
     result = sync_bundled_rules(temp_db, get_bundled_rules_path())
     assert result["errors"] == []
-    temp_db.execute(
-        "UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'"
-    )
+    temp_db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
 
     row = RuleDefinitionManager(temp_db).get_by_name(RULE_NAME)
 
@@ -685,3 +685,60 @@ def test_commit_guard_rule_syncs_and_validates(temp_db: HubDatabase) -> None:
     assert body.group == "task-enforcement"
     assert body.when == "foreign_staged_commit_conflict"
     assert [effect.type for effect in body.resolved_effects] == ["block"]
+
+
+@pytest.mark.parametrize(
+    ("case", "command", "expected"),
+    [
+        (
+            "heredoc-quoted-tag",
+            "git commit -F - <<'MSG'\nfix: thing\n\nthe row -- abandonment alike\n"
+            "audit / quality audit\nMSG\n",
+            [()],
+        ),
+        (
+            "heredoc-unquoted-tag",
+            "cat > f <<EOF\nbody -- src/a.py\nEOF\ngit commit -F f\n",
+            [()],
+        ),
+        ("heredoc-dash-variant", "git commit -F - <<-MSG\n\tbody -- src/a.py\n\tMSG\n", [()]),
+        (
+            "heredoc-then-path-scoped-commit",
+            "git commit -F - <<'MSG'\nbody -- x/y\nMSG\ngit commit -- src/a.py",
+            [(), ("src/a.py",)],
+        ),
+    ],
+    ids=["quoted-tag", "unquoted-tag", "dash-variant", "chained"],
+)
+def test_parse_ignores_heredoc_bodies(
+    case: str, command: str, expected: list[tuple[str, ...]]
+) -> None:
+    """A heredoc body is unquoted text; `--` in a commit message is not a pathspec delimiter."""
+    assert [i.pathspecs for i in parse_git_commit_invocations(command)] == expected
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("git commit -m x\ngit commit -- src/a.py", [(), ("src/a.py",)]),
+        ("git commit -m x ; git commit -- src/a.py", [(), ("src/a.py",)]),
+        ("git commit -m x && git commit -- src/a.py", [(), ("src/a.py",)]),
+        ("git commit -m x\ngit commit -m y", [(), ()]),
+        ("git commit \\\n  -- src/a.py", [("src/a.py",)]),
+    ],
+    ids=["newline", "semicolon", "andand", "two-unscoped", "line-continuation"],
+)
+def test_parse_separates_newline_chained_commits(
+    command: str, expected: list[tuple[str, ...]]
+) -> None:
+    """A merged parse would inherit the later pathspecs and skip the unscoped commit's check."""
+    assert [i.pathspecs for i in parse_git_commit_invocations(command)] == expected
+
+
+def test_parse_keeps_explicit_pathspecs_and_quoted_messages() -> None:
+    assert [
+        i.pathspecs for i in parse_git_commit_invocations("git commit -- src/a.py tests/b.py")
+    ] == [("src/a.py", "tests/b.py")]
+    assert [
+        i.pathspecs for i in parse_git_commit_invocations("git commit -m 'row -- a/b and c/d'")
+    ] == [()]
