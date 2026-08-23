@@ -79,14 +79,17 @@ def write_shutdown_intent(
     sender_pid: int | None = None,
     *,
     home: Path | None = None,
+    details: Mapping[str, object] | None = None,
 ) -> None:
     """Write a fresh shutdown marker with explicit intent and source."""
-    data = {
+    data: dict[str, object] = {
         "source": source,
         "intent": coerce_shutdown_intent(intent).value,
         "sender_pid": sender_pid or os.getpid(),
         "timestamp": time.time(),
     }
+    if details:
+        data["details"] = dict(details)
     for marker in (get_shutdown_source_path(home), get_shutdown_marker_path(home)):
         try:
             _write_marker_atomically(marker, data)

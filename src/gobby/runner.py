@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
 
-from gobby.shutdown_intent import ShutdownIntent
+from gobby.shutdown_intent import ShutdownIntent, write_shutdown_intent
 
 if TYPE_CHECKING:
     from gobby.adapters.codex_impl.client import CodexAppServerClient
@@ -306,6 +306,7 @@ async def run_gobby(
     from gobby.config.bootstrap import load_bootstrap
     from gobby.daemon_lease import ActiveDaemonLease
     from gobby.daemon_lease_control import (
+        LeaseLoss,
         StandbyLeaseControl,
         monitor_active_lease,
         serve_standby_until_promotion,
@@ -391,9 +392,16 @@ async def run_gobby(
 
         _bind_runtime_grants(active.http_server, active)
 
-        def _on_lease_loss() -> None:
+        def _on_lease_invalidation() -> None:
             drain_effect_fence(getattr(active.http_server, "effect_fence", None))
-            active.request_shutdown()
+
+        def _on_lease_loss(loss: LeaseLoss) -> None:
+            write_shutdown_intent(
+                loss.reason,
+                ShutdownIntent.STOP,
+                details=loss.shutdown_details(),
+            )
+            active.request_shutdown(ShutdownIntent.STOP)
 
         lease_monitor_stop = asyncio.Event()
         async with asyncio.TaskGroup() as tasks:
@@ -402,6 +410,7 @@ async def run_gobby(
                     lease,
                     stop=lease_monitor_stop,
                     on_loss=_on_lease_loss,
+                    on_invalidation=_on_lease_invalidation,
                 ),
                 name="active-daemon-lease-monitor",
             )

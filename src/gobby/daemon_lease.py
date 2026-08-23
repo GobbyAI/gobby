@@ -6,8 +6,9 @@ import secrets
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import psycopg
 
@@ -73,6 +74,22 @@ class RecoveredLeaseOwner:
     owner_pid: int
     owner_application_name: str
     heartbeat_age_seconds: float
+
+
+HeartbeatCancellationOutcome = Literal[
+    "cancel_requested",
+    "cancel_failed",
+    "connection_unavailable",
+]
+
+
+@dataclass(frozen=True)
+class LeaseHeartbeatAbort:
+    """Detached lease connection and bounded cancellation result."""
+
+    connection: psycopg.Connection[Any] | None
+    cancellation_outcome: HeartbeatCancellationOutcome
+    cancellation_error: str | None = None
 
 
 def _advisory_lock_parts(key: int) -> tuple[int, int]:
@@ -176,13 +193,13 @@ class ActiveDaemonLease:
         """Refresh holder liveness or fail closed when the lease session is lost."""
         with self._mutex:
             connection = self._connection
-            if connection is None:
-                raise LeaseConnectionLostError("active-daemon lease is not held")
-            try:
-                connection.execute("SELECT 1").fetchone()
-            except (psycopg.Error, OSError) as exc:
-                self._forget_connection(connection)
-                raise LeaseConnectionLostError("active-daemon lease connection was lost") from exc
+        if connection is None:
+            raise LeaseConnectionLostError("active-daemon lease is not held")
+        try:
+            connection.execute("SELECT 1").fetchone()
+        except (psycopg.Error, OSError) as exc:
+            self._forget_connection(connection)
+            raise LeaseConnectionLostError("active-daemon lease connection was lost") from exc
 
     def is_live(self) -> bool:
         """Return whether the lease session is alive and the cached epoch is current."""
@@ -207,18 +224,59 @@ class ActiveDaemonLease:
         return row is not None and int(row[0]) == owned_epoch
 
     def owns_live_lease(self) -> bool:
-        """In-memory ownership: the lease connection is alive and the cached epoch is set.
+        """Return cached ownership maintained by the dedicated lease monitor.
 
-        The advisory lock dies with the session, so this check is authoritative
-        without a per-request ``deployment_runtime`` roundtrip. In-transaction
-        epoch fencing still validates the owned epoch at commit.
+        In-transaction epoch fencing still validates the owned epoch at commit.
         """
         with self._mutex:
-            try:
-                self.heartbeat()
-            except LeaseConnectionLostError:
-                return False
-            return self._fencing_epoch is not None
+            return self._connection is not None and self._fencing_epoch is not None
+
+    def abort_heartbeat(
+        self,
+        *,
+        on_invalidated: Callable[[], None],
+        cancel_timeout_seconds: float = 1.0,
+    ) -> LeaseHeartbeatAbort:
+        """Invalidate ownership, drain effects, and request bounded query cancellation."""
+        if cancel_timeout_seconds <= 0:
+            raise ValueError("cancel_timeout_seconds must be positive")
+        with self._mutex:
+            connection = self._connection
+            self._connection = None
+            self._key = None
+            self._fencing_epoch = None
+            self._grant_signing_secret = None
+            _clear_current_lease(self)
+
+        on_invalidated()
+        if connection is None or connection.closed:
+            return LeaseHeartbeatAbort(
+                connection=connection,
+                cancellation_outcome="connection_unavailable",
+            )
+        try:
+            connection.cancel_safe(timeout=cancel_timeout_seconds)
+        except (psycopg.Error, OSError) as exc:
+            return LeaseHeartbeatAbort(
+                connection=connection,
+                cancellation_outcome="cancel_failed",
+                cancellation_error=f"{type(exc).__name__}: {exc}",
+            )
+        return LeaseHeartbeatAbort(
+            connection=connection,
+            cancellation_outcome="cancel_requested",
+        )
+
+    @staticmethod
+    def close_aborted_heartbeat(abort: LeaseHeartbeatAbort) -> None:
+        """Close a detached lease connection after its heartbeat worker settles."""
+        connection = abort.connection
+        if connection is None:
+            return
+        try:
+            connection.close()
+        except (psycopg.Error, OSError):
+            pass
 
     def release(self) -> None:
         """Release the lease and close its dedicated PostgreSQL session."""
@@ -351,11 +409,14 @@ class ActiveDaemonLease:
         return int(row[0]), str(row[1]), float(row[2])
 
     def _forget_connection(self, connection: psycopg.Connection[Any]) -> None:
-        self._connection = None
-        self._key = None
-        self._fencing_epoch = None
-        self._grant_signing_secret = None
-        _clear_current_lease(self)
+        with self._mutex:
+            if self._connection is not connection:
+                return
+            self._connection = None
+            self._key = None
+            self._fencing_epoch = None
+            self._grant_signing_secret = None
+            _clear_current_lease(self)
         try:
             connection.close()
         except (psycopg.Error, OSError):

@@ -16,6 +16,12 @@ from gobby.agents.terminal_delivery import (
     reset_terminal_delivery_offload,
 )
 from gobby.mcp_proxy.tools.spawn_agent._health import cancel_and_await_health_checks
+from gobby.runner_http_shutdown import (
+    begin_uvicorn_http_shutdown,
+    force_terminate_uvicorn_http_server,
+    force_terminate_uvicorn_http_server_under_cancellation,
+    settle_uvicorn_http_server,
+)
 from gobby.shutdown_intent import ShutdownIntent, coerce_shutdown_intent, get_shutdown_marker_path
 
 if TYPE_CHECKING:
@@ -36,7 +42,6 @@ _HEALTH_CHECK_SETTLE_SECONDS = 2.0
 _TERMINAL_DELIVERY_SETTLE_SECONDS = 6.0
 _DATABASE_EXECUTOR_JOIN_SECONDS = 6.0
 _FINALIZER_SETTLE_SECONDS = 10.0
-_GOBBY_SHUTDOWN_DRAIN_MESSAGE = "Gobby shutdown drain"
 
 # Set on the finalizer-deadline expiry branch: an abandoned settlement scope
 # can leave a wedged non-daemon executor worker that blocks interpreter exit
@@ -53,6 +58,12 @@ def finalizer_expiry_backstop_required() -> bool:
 def _reset_finalizer_expiry_backstop() -> None:
     global _expiry_exit_backstop_required
     _expiry_exit_backstop_required = False
+
+
+def _close_http_admission(runner: GobbyRunner) -> None:
+    services = getattr(getattr(runner, "http_server", None), "services", None)
+    if services is not None:
+        services.http_admission_closed = True
 
 
 class ReapChildProcesses(Protocol):
@@ -142,98 +153,6 @@ async def _shutdown_websocket_server(runner: GobbyRunner, timeout: float = 5.0) 
 
     if websocket_task is not None:
         runner._websocket_task = None
-
-
-async def _drain_uvicorn_http_connections(server: uvicorn.Server) -> None:
-    """Ask uvicorn HTTP connections to close and cancel remaining request tasks."""
-    state = getattr(server, "server_state", None)
-    connections = getattr(state, "connections", None)
-    tasks = getattr(state, "tasks", None)
-    if connections is None and tasks is None:
-        return
-
-    if connections:
-        for connection in list(connections):
-            shutdown = getattr(connection, "shutdown", None)
-            if callable(shutdown):
-                shutdown()
-
-    if await _wait_for_uvicorn_http_drain(
-        connections,
-        tasks,
-        timeout=_HTTP_CONNECTION_GRACE_SECONDS,
-    ):
-        return
-
-    if connections:
-        for connection in list(connections):
-            transport = getattr(connection, "transport", None)
-            close = getattr(transport, "close", None)
-            is_closing = getattr(transport, "is_closing", None)
-            if callable(close) and not (callable(is_closing) and is_closing()):
-                close()
-
-    drained = await _wait_for_uvicorn_http_drain(
-        connections,
-        tasks,
-        timeout=_HTTP_CONNECTION_DRAIN_SECONDS,
-    )
-
-    if drained:
-        return
-
-    remaining_connections = len(connections or ())
-    remaining_tasks = len(_live_uvicorn_http_tasks(tasks))
-
-    if remaining_tasks:
-        await _cancel_remaining_request_tasks(tasks)
-        remaining_connections = len(connections or ())
-        remaining_tasks = len(_live_uvicorn_http_tasks(tasks))
-
-    logger.debug(
-        "HTTP request drain left %d connection(s) and %d live task(s) after cancellation",
-        remaining_connections,
-        remaining_tasks,
-    )
-
-
-async def _wait_for_uvicorn_http_drain(
-    connections: Any,
-    tasks: Any,
-    *,
-    timeout: float,
-) -> bool:
-    deadline = asyncio.get_running_loop().time() + timeout
-    while True:
-        if not connections and not tasks:
-            return True
-        if asyncio.get_running_loop().time() >= deadline:
-            return False
-        await asyncio.sleep(0.05)
-
-
-async def _cancel_remaining_request_tasks(tasks: Any) -> None:
-    """Cancel any remaining HTTP/MCP request tasks during shutdown."""
-    task_list = _live_uvicorn_http_tasks(tasks)
-    if not task_list:
-        return
-
-    for task in task_list:
-        task.cancel(_GOBBY_SHUTDOWN_DRAIN_MESSAGE)
-
-    deadline = asyncio.get_running_loop().time() + _HTTP_REQUEST_TASK_CANCEL_TIMEOUT_SECONDS
-    while True:
-        if not _live_uvicorn_http_tasks(tasks):
-            return
-        if asyncio.get_running_loop().time() >= deadline:
-            return
-        await asyncio.sleep(0.05)
-
-
-def _live_uvicorn_http_tasks(tasks: Any) -> list[asyncio.Task[Any]]:
-    if not tasks:
-        return []
-    return [task for task in list(tasks) if isinstance(task, asyncio.Task) and not task.done()]
 
 
 async def _cancel_runner_task(runner: GobbyRunner, attr: str, timeout: float = 2.0) -> None:
@@ -535,6 +454,27 @@ async def _shutdown_database_concurrency(runner: GobbyRunner) -> None:
         await _shutdown_database_executor(db_executor)
 
 
+async def _shutdown_database_concurrency_under_cancellation(
+    runner: GobbyRunner,
+    cancellation: asyncio.CancelledError | None,
+) -> asyncio.CancelledError | None:
+    """Defer caller cancellation until database executors are revoked and joined."""
+    owned = asyncio.create_task(
+        _shutdown_database_concurrency(runner),
+        name="database-concurrency-final-shutdown",
+    )
+    while not owned.done():
+        try:
+            await asyncio.shield(owned)
+        except asyncio.CancelledError as exc:
+            cancellation = cancellation or exc
+    try:
+        owned.result()
+    except Exception:
+        logger.warning("Final database concurrency shutdown failed", exc_info=True)
+    return cancellation
+
+
 async def _settle_terminal_delivery_barrier() -> None:
     """Close delivery admission and settle all health and delivery producers."""
     close_terminal_delivery_admission()
@@ -568,6 +508,7 @@ async def _run_terminal_delivery_finalizers(runner: GobbyRunner) -> None:
 
 async def _settle_finalizers_under_cancellation(
     runner: GobbyRunner,
+    cancellation: asyncio.CancelledError | None = None,
 ) -> asyncio.CancelledError | None:
     """Defer caller cancellation until the bounded finalizer has settled."""
     loop = asyncio.get_running_loop()
@@ -576,7 +517,6 @@ async def _settle_finalizers_under_cancellation(
         _run_terminal_delivery_finalizers(runner),
         name="terminal-delivery-finalizer",
     )
-    cancellation: asyncio.CancelledError | None = None
     while not owned.done() and loop.time() < deadline:
         try:
             await asyncio.wait_for(
@@ -687,6 +627,8 @@ async def _run_graceful_shutdown_sequence(
         logger.debug("Skipping critical Stop-hook grace during daemon restart")
     logger.debug("Shutdown requested; beginning graceful shutdown")
 
+    _close_http_admission(runner)
+
     cleanup_pending_interactions = getattr(
         getattr(runner, "http_server", None),
         "_cleanup_pending_interactions",
@@ -711,7 +653,12 @@ async def _run_graceful_shutdown_sequence(
         )
 
     await _best_effort(
-        lambda: _drain_uvicorn_http_connections(server),
+        lambda: begin_uvicorn_http_shutdown(
+            server,
+            connection_grace_seconds=_HTTP_CONNECTION_GRACE_SECONDS,
+            connection_drain_seconds=_HTTP_CONNECTION_DRAIN_SECONDS,
+            request_cancel_timeout_seconds=_HTTP_REQUEST_TASK_CANCEL_TIMEOUT_SECONDS,
+        ),
         "HTTP connection drain",
     )
 
@@ -719,8 +666,6 @@ async def _run_graceful_shutdown_sequence(
         lambda: shutdown_websocket_server(runner),
         "WebSocket server shutdown",
     )
-
-    server.should_exit = True
 
     await _best_effort(
         runner.lifecycle_manager.stop,
@@ -732,15 +677,12 @@ async def _run_graceful_shutdown_sequence(
         ),
     )
 
-    async def wait_for_http_server_shutdown() -> None:
-        logger.debug("Waiting for HTTP server lifespan shutdown")
-        await server_task
-        logger.debug("HTTP server lifespan shutdown complete")
-
     await _best_effort(
-        wait_for_http_server_shutdown,
+        lambda: settle_uvicorn_http_server(
+            server_task,
+            timeout_seconds=uvicorn_drain_timeout + 5,
+        ),
         "HTTP server shutdown",
-        timeout=uvicorn_drain_timeout + 5,
     )
     await _best_effort(
         lambda: _stop_started_services(
@@ -775,6 +717,8 @@ async def _run_graceful_shutdown_sequence(
 
 async def _run_async_shutdown_cleanup(
     runner: GobbyRunner,
+    server: uvicorn.Server | None = None,
+    server_task: asyncio.Task[Any] | None = None,
     *,
     shutdown_intent: ShutdownIntent,
     reap_remaining_child_processes: ReapChildProcesses,
@@ -783,6 +727,13 @@ async def _run_async_shutdown_cleanup(
     """Run bounded asynchronous cleanup before the synchronous finalizers."""
     from gobby.telemetry.rule_allow_audit import shutdown_rule_allow_audit
 
+    if server is not None and server_task is not None:
+        _close_http_admission(runner)
+        await force_terminate_uvicorn_http_server(
+            server,
+            server_task,
+            request_cancel_timeout_seconds=_HTTP_REQUEST_TASK_CANCEL_TIMEOUT_SECONDS,
+        )
     await _settle_terminal_delivery_barrier()
     await _best_effort(shutdown_rule_allow_audit, "Rule allow audit drain")
     config_runtime = getattr(runner, "config_runtime", None)
@@ -876,6 +827,8 @@ async def shutdown_daemon_services(
 
                 await _run_async_shutdown_cleanup(
                     runner,
+                    server,
+                    server_task,
                     shutdown_intent=shutdown_intent,
                     reap_remaining_child_processes=reap_remaining_child_processes,
                     shutdown_telemetry=shutdown_telemetry,
@@ -888,8 +841,21 @@ async def shutdown_daemon_services(
                 _OVERALL_SHUTDOWN_DEADLINE_SECONDS,
             )
     finally:
-        deferred_cancellation = await _settle_finalizers_under_cancellation(runner)
+        _close_http_admission(runner)
+        deferred_cancellation = await force_terminate_uvicorn_http_server_under_cancellation(
+            server,
+            server_task,
+            request_cancel_timeout_seconds=_HTTP_REQUEST_TASK_CANCEL_TIMEOUT_SECONDS,
+        )
+        deferred_cancellation = await _settle_finalizers_under_cancellation(
+            runner,
+            deferred_cancellation,
+        )
         deferred_cancellation = await _drain_worktree_deletes_under_cancellation(
+            runner,
+            deferred_cancellation,
+        )
+        deferred_cancellation = await _shutdown_database_concurrency_under_cancellation(
             runner,
             deferred_cancellation,
         )

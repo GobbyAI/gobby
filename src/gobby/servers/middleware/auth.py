@@ -93,6 +93,18 @@ class AuthMiddleware(BaseHTTPMiddleware):
         ):
             return await call_next(request)
 
+        services = getattr(self.server, "services", None)
+        if path.startswith(_PROTECTED_PREFIXES) and bool(
+            getattr(services, "http_admission_closed", False)
+        ):
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": "Daemon is shutting down",
+                    "code": "shutdown_in_progress",
+                },
+            )
+
         auth_service = self.server.auth_service
         decision = await self.server.run_db(auth_service.authenticate, request)
         if decision.allowed:

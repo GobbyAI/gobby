@@ -6,7 +6,12 @@ from gobby.ai import AIAdapterStyle, AICapability, AICapabilityRegistry, Capabil
 from gobby.ai._tool_chat_contracts import ToolChatRequest, ToolChatResult, ToolPolicy
 from gobby.ai._tool_chat_service import ToolChatService
 from gobby.providers.capabilities.models import ActivationDescriptor, SpeedMode
-from gobby.providers.capabilities.resolve import SpeedResolution, SpeedStatus
+from gobby.providers.capabilities.resolve import (
+    ReasoningResolution,
+    ReasoningStatus,
+    SpeedResolution,
+    SpeedStatus,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -37,6 +42,16 @@ class _Resolver:
             ),
             reason=None,
         )
+
+    def resolve_reasoning(
+        self,
+        provider: str,
+        model: str,
+        effort: str | None,
+        *,
+        transport_supports_effort: bool,
+    ) -> ReasoningResolution:
+        return ReasoningResolution(effort, effort, ReasoningStatus.VERIFIED, None)
 
 
 class _Adapter:

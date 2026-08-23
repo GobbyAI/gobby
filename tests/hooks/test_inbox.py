@@ -476,7 +476,11 @@ async def test_drain_hook_inbox_clears_stale_processing_marker_and_replays(
 
 
 @pytest.mark.asyncio
-async def test_drain_hook_inbox_keeps_failed_replay_files(tmp_path: Path) -> None:
+@pytest.mark.parametrize("status_code", [500, 503])
+async def test_drain_hook_inbox_keeps_failed_replay_files(
+    tmp_path: Path,
+    status_code: int,
+) -> None:
     inbox_dir = tmp_path / "hooks" / "inbox"
     inbox_dir.mkdir(parents=True)
     envelope = {
@@ -492,7 +496,7 @@ async def test_drain_hook_inbox_keeps_failed_replay_files(tmp_path: Path) -> Non
     envelope_path.write_text(json.dumps(envelope))
 
     mock_response = MagicMock()
-    mock_response.status_code = 500
+    mock_response.status_code = status_code
     mock_client = AsyncMock()
     mock_client.post = AsyncMock(return_value=mock_response)
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)

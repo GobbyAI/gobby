@@ -7,6 +7,8 @@ import hmac
 import os
 import uuid
 from pathlib import Path
+from typing import Any, cast
+from unittest.mock import MagicMock
 
 import psycopg
 import pytest
@@ -105,6 +107,53 @@ def test_only_one_daemon_holds_the_runtime_lease() -> None:
     finally:
         first.release()
         second.release()
+
+
+def test_owns_live_lease_uses_only_cached_ownership() -> None:
+    lease = ActiveDaemonLease("postgresql://unused.invalid/gobby", machine_id="machine-a")
+    connection = MagicMock()
+    connection.closed = False
+    lease._connection = cast(Any, connection)
+    lease._fencing_epoch = 7
+
+    assert lease.owns_live_lease() is True
+    connection.execute.assert_not_called()
+
+    abort = lease.abort_heartbeat(on_invalidated=lambda: None, cancel_timeout_seconds=0.01)
+
+    assert lease.owns_live_lease() is False
+    connection.execute.assert_not_called()
+    connection.cancel_safe.assert_called_once_with(timeout=0.01)
+    lease.close_aborted_heartbeat(abort)
+
+
+def test_aborted_owner_releases_advisory_lock_for_successor() -> None:
+    database_url = _test_database_url()
+    _ensure_deployment_runtime(database_url)
+    token = uuid.uuid4().hex
+    owner = ActiveDaemonLease(
+        database_url,
+        machine_id=str(uuid.uuid4()),
+        deployment_token=token,
+    )
+    successor = ActiveDaemonLease(
+        database_url,
+        machine_id=str(uuid.uuid4()),
+        deployment_token=token,
+    )
+
+    try:
+        assert owner.try_acquire() is True
+        assert current_lease() is owner
+        abort = owner.abort_heartbeat(on_invalidated=lambda: None)
+        owner.close_aborted_heartbeat(abort)
+
+        assert owner.owns_live_lease() is False
+        assert current_lease() is None
+        assert successor.try_acquire() is True
+    finally:
+        owner.release()
+        successor.release()
 
 
 @pytest.mark.integration

@@ -120,6 +120,73 @@ def test_public_routes_bypass_required_auth(
     auth_service.authenticate.assert_not_called()
 
 
+def test_stop_grace_keeps_protected_hook_admission_open() -> None:
+    app = FastAPI()
+    auth_service = MagicMock()
+    auth_service.authenticate.return_value = AuthDecision(allowed=True, status_code=200)
+    server = cast(
+        "HTTPServer",
+        SimpleNamespace(
+            auth_service=auth_service,
+            run_db=_run_db,
+            services=SimpleNamespace(
+                shutdown_in_progress=True,
+                http_admission_closed=False,
+            ),
+        ),
+    )
+    app.add_middleware(AuthMiddleware, server=server)
+
+    @app.post("/api/hooks/execute")
+    async def protected() -> dict[str, bool]:
+        return {"accepted": True}
+
+    response = TestClient(app).post("/api/hooks/execute")
+
+    assert response.status_code == 200
+    assert response.json() == {"accepted": True}
+    auth_service.authenticate.assert_called_once()
+
+
+def test_closed_http_admission_rejects_hook_before_database_submission() -> None:
+    app = FastAPI()
+    auth_service = MagicMock()
+    run_db = MagicMock(side_effect=AssertionError("database executor must not be used"))
+    server = cast(
+        "HTTPServer",
+        SimpleNamespace(
+            auth_service=auth_service,
+            run_db=run_db,
+            services=SimpleNamespace(
+                shutdown_in_progress=True,
+                http_admission_closed=True,
+            ),
+        ),
+    )
+    app.add_middleware(AuthMiddleware, server=server)
+
+    @app.post("/api/hooks/execute")
+    async def protected() -> dict[str, bool]:
+        raise AssertionError("protected handler must not run after admission closes")
+
+    @app.get("/api/health")
+    async def health() -> dict[str, bool]:
+        return {"healthy": True}
+
+    client = TestClient(app)
+    response = client.post("/api/hooks/execute")
+    health_response = client.get("/api/health")
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": "Daemon is shutting down",
+        "code": "shutdown_in_progress",
+    }
+    assert health_response.status_code == 200
+    run_db.assert_not_called()
+    auth_service.authenticate.assert_not_called()
+
+
 @pytest.mark.parametrize("path", PROTECTED_PATHS)
 def test_protected_routes_require_auth_when_enabled(
     auth_client: tuple[TestClient, MagicMock], path: str

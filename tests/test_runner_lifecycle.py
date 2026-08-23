@@ -1868,6 +1868,107 @@ class TestShutdownDaemonServices:
         assert request_task.cancelled()
         assert tasks == set()
 
+    @pytest.mark.parametrize("force_cleanup", [False, True])
+    async def test_http_tasks_settle_before_database_executor_shutdown(
+        self,
+        force_cleanup: bool,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        events: list[str] = []
+        request_tasks: set[asyncio.Task[None]] = set()
+        request_started = asyncio.Event()
+        server_exit = asyncio.Event()
+
+        async def request() -> None:
+            request_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                events.append("request-cancel")
+                raise
+
+        request_task = asyncio.create_task(request())
+        request_tasks.add(request_task)
+        request_task.add_done_callback(request_tasks.discard)
+        await request_started.wait()
+
+        class FakeServer:
+            def __init__(self) -> None:
+                self._should_exit = False
+                self.server_state = SimpleNamespace(connections=set(), tasks=request_tasks)
+
+            @property
+            def should_exit(self) -> bool:
+                return self._should_exit
+
+            @should_exit.setter
+            def should_exit(self, value: bool) -> None:
+                self._should_exit = value
+                if value:
+                    server_exit.set()
+
+        async def serve() -> None:
+            await server_exit.wait()
+            events.append("uvicorn-settle")
+
+        executor_state = {"joined": False}
+
+        def shutdown_executor(*, cancel_futures: bool = True) -> None:
+            assert cancel_futures is True
+            events.append("db-executor")
+
+        def join_executor() -> None:
+            executor_state["joined"] = True
+
+        runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
+        runner.db_executor = SimpleNamespace(
+            shutdown=shutdown_executor,
+            join=join_executor,
+            is_joined=lambda: executor_state["joined"],
+        )
+        server = FakeServer()
+        server_task = asyncio.create_task(serve())
+
+        async def grace_window() -> None:
+            if force_cleanup:
+                await asyncio.Event().wait()
+
+        monkeypatch.setattr(runner_lifecycle_shutdown, "_HTTP_CONNECTION_GRACE_SECONDS", 0.0)
+        monkeypatch.setattr(runner_lifecycle_shutdown, "_HTTP_CONNECTION_DRAIN_SECONDS", 0.0)
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "_HTTP_REQUEST_TASK_CANCEL_TIMEOUT_SECONDS",
+            0.05,
+        )
+        if force_cleanup:
+            monkeypatch.setattr(
+                runner_lifecycle_shutdown,
+                "_GRACEFUL_SHUTDOWN_BUDGET_SECONDS",
+                0.01,
+            )
+            monkeypatch.setattr(
+                runner_lifecycle_shutdown,
+                "_OVERALL_SHUTDOWN_DEADLINE_SECONDS",
+                0.2,
+            )
+
+        await runner_lifecycle_shutdown.shutdown_daemon_services(
+            runner,
+            cast(Any, server),
+            server_task,
+            0,
+            await_critical_stop_hook_grace_window=grace_window,
+            shutdown_websocket_server=AsyncMock(),
+            reap_remaining_child_processes=AsyncMock(),
+            shutdown_telemetry=MagicMock(),
+            cleanup_pid_file=MagicMock(),
+        )
+
+        assert events.index("request-cancel") < events.index("db-executor")
+        assert events.index("uvicorn-settle") < events.index("db-executor")
+        assert server_task.done()
+        assert request_task.cancelled()
+
     @pytest.mark.asyncio
     async def test_restart_lifecycle_manager_timeout_logs_info(
         self,
@@ -3997,7 +4098,9 @@ class TestAgentRestartRecoveryHelpers:
             ),
         )
 
-        recovered = await runner_lifecycle._recover_agent_runs_after_restart(runner)
+        recovered = await runner_lifecycle._recover_agent_runs_after_restart(
+            cast(GobbyRunner, runner)
+        )
 
         assert recovered == 1
         assert runner.completion_registry.register.call_count == 1
@@ -4023,7 +4126,9 @@ class TestAgentRestartRecoveryHelpers:
             completion_registry=None,
         )
 
-        recovered = await runner_lifecycle._recover_agent_runs_after_restart(runner)
+        recovered = await runner_lifecycle._recover_agent_runs_after_restart(
+            cast(GobbyRunner, runner)
+        )
 
         assert recovered == 0
         runner.pipeline_execution_manager.remove_completion_subscribers_for_terminal_agent_runs.assert_not_called()
