@@ -698,7 +698,8 @@ def test_commit_guard_rule_syncs_and_validates(temp_db: HubDatabase) -> None:
         ),
         (
             "heredoc-unquoted-tag",
-            "cat > f <<EOF\nbody -- src/a.py\nEOF\ngit commit -F f\n",
+            "git commit -F - <<MSG\nfix: thing\n\nthe row -- abandonment alike\n"
+            "audit / quality audit\nMSG\n",
             [()],
         ),
         ("heredoc-dash-variant", "git commit -F - <<-MSG\n\tbody -- src/a.py\n\tMSG\n", [()]),
