@@ -28,6 +28,18 @@ export interface CreatedTmuxSession {
   socket: string;
 }
 
+/** A bounded scrollback window delivered once, just before streaming starts. */
+export interface TerminalAttachHistory {
+  streamingId: string;
+  text: string;
+  /** Older history existed and was cut, by the line bound or the byte bound. */
+  truncated: boolean;
+  /** Capture failed while the stream itself stayed healthy. */
+  unavailable: boolean;
+  droppedBytes: number;
+  totalBytes: number;
+}
+
 type PendingRequest =
   | {
       kind: "attach";
@@ -70,6 +82,7 @@ interface TmuxSessionsResult {
   sendInput: (data: string) => void;
   resizeTerminal: (rows: number, cols: number) => void;
   onOutput: (callback: (runId: string, data: string) => void) => void;
+  onAttachHistory: (callback: (history: TerminalAttachHistory) => void) => void;
 }
 
 export function useTmuxSessions(): TmuxSessionsResult {
@@ -89,6 +102,9 @@ export function useTmuxSessions(): TmuxSessionsResult {
   const reconnectTimeoutRef = useRef<number | null>(null);
   const outputCallbackRef = useRef<
     ((runId: string, data: string) => void) | null
+  >(null);
+  const attachHistoryCallbackRef = useRef<
+    ((history: TerminalAttachHistory) => void) | null
   >(null);
   const attachedTargetRef = useRef<TmuxTarget | null>(null);
   const streamingIdRef = useRef<string | null>(null);
@@ -357,6 +373,35 @@ export function useTmuxSessions(): TmuxSessionsResult {
           }
           break;
 
+        case "terminal_attach_history": {
+          const callback = attachHistoryCallbackRef.current;
+          if (!callback || typeof data.streaming_id !== "string") break;
+          callback({
+            streamingId: data.streaming_id,
+            text: typeof data.text === "string" ? data.text : "",
+            truncated: data.truncated === true,
+            unavailable: data.unavailable === true,
+            droppedBytes:
+              typeof data.dropped_bytes === "number" ? data.dropped_bytes : 0,
+            totalBytes:
+              typeof data.total_bytes === "number" ? data.total_bytes : 0,
+          });
+          break;
+        }
+
+        // Keyed on streaming_id rather than a request id: the attach ack has
+        // already cleared the pending request by the time activation can fail.
+        case "tmux_activation_failed": {
+          if (data.streaming_id !== streamingIdRef.current) break;
+          updateAttachment(null, null);
+          setAttachError(
+            typeof data.message === "string"
+              ? data.message
+              : "Terminal activation failed",
+          );
+          break;
+        }
+
         case "terminal_output":
           if (outputCallbackRef.current) {
             outputCallbackRef.current(
@@ -580,6 +625,13 @@ export function useTmuxSessions(): TmuxSessionsResult {
     [],
   );
 
+  const onAttachHistory = useCallback(
+    (callback: (history: TerminalAttachHistory) => void) => {
+      attachHistoryCallbackRef.current = callback;
+    },
+    [],
+  );
+
   useEffect(() => {
     connect();
     return () => {
@@ -634,5 +686,6 @@ export function useTmuxSessions(): TmuxSessionsResult {
     sendInput,
     resizeTerminal,
     onOutput,
+    onAttachHistory,
   };
 }

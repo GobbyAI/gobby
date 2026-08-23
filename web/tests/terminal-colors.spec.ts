@@ -82,67 +82,72 @@ async function installApiMocks(page: Page): Promise<void> {
     );
   });
 
-  await page.route("**/api/**", async (route) => {
-    const path = new URL(route.request().url()).pathname;
-    const json = (body: unknown) =>
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(body),
-      });
+  // Predicate, not a glob: "**/api/**" also matches vite's own module
+  // requests for src/api/*, which stubs them as JSON and the app never boots.
+  await page.route(
+    (url) => url.pathname.startsWith("/api/"),
+    async (route) => {
+      const path = new URL(route.request().url()).pathname;
+      const json = (body: unknown) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(body),
+        });
 
-    if (path === "/api/auth/status") {
-      return json({ authenticated: true });
-    }
-    if (path === "/api/config/ui-settings") {
-      return json({
-        selectedProjectId: "project-terminal-test",
-        model: "opus",
-        theme: "dark",
-        defaultChatMode: "plan",
-        fontSize: 16,
-      });
-    }
-    if (path === "/api/providers") {
-      return json({ providers: [{ name: "claude", available: true }] });
-    }
-    if (path === "/api/providers/models") {
-      return json({ providers: [] });
-    }
-    if (path === "/api/voice/status") {
-      return json({ enabled: false, stt_available: false });
-    }
-    if (path === "/api/projects" || path === "/api/files/projects") {
-      return json([
-        {
-          id: "project-terminal-test",
-          name: "terminal-test",
-          display_name: "Terminal Test",
-          repo_path: "/tmp/terminal-test",
-          github_url: null,
-          github_repo: null,
-          linear_team_id: null,
-          approval_rules: [],
-          created_at: "2026-07-22T00:00:00Z",
-          updated_at: "2026-07-22T00:00:00Z",
-          session_count: 0,
-          open_task_count: 0,
-          last_activity_at: null,
-        },
-      ]);
-    }
-    if (path === "/api/agents/running") {
-      return json({ agents: [] });
-    }
-    if (path === "/api/sessions") {
-      return json({ sessions: [], total: 0 });
-    }
-    if (path === "/api/tasks") {
-      return json({ tasks: [], total: 0, stats: {}, limit: 200, offset: 0 });
-    }
+      if (path === "/api/auth/status") {
+        return json({ authenticated: true });
+      }
+      if (path === "/api/config/ui-settings") {
+        return json({
+          selectedProjectId: "project-terminal-test",
+          model: "opus",
+          theme: "dark",
+          defaultChatMode: "plan",
+          fontSize: 16,
+        });
+      }
+      if (path === "/api/providers") {
+        return json({ providers: [{ name: "claude", available: true }] });
+      }
+      if (path === "/api/providers/models") {
+        return json({ providers: [] });
+      }
+      if (path === "/api/voice/status") {
+        return json({ enabled: false, stt_available: false });
+      }
+      if (path === "/api/projects" || path === "/api/files/projects") {
+        return json([
+          {
+            id: "project-terminal-test",
+            name: "terminal-test",
+            display_name: "Terminal Test",
+            repo_path: "/tmp/terminal-test",
+            github_url: null,
+            github_repo: null,
+            linear_team_id: null,
+            approval_rules: [],
+            created_at: "2026-07-22T00:00:00Z",
+            updated_at: "2026-07-22T00:00:00Z",
+            session_count: 0,
+            open_task_count: 0,
+            last_activity_at: null,
+          },
+        ]);
+      }
+      if (path === "/api/agents/running") {
+        return json({ agents: [] });
+      }
+      if (path === "/api/sessions") {
+        return json({ sessions: [], total: 0 });
+      }
+      if (path === "/api/tasks") {
+        return json({ tasks: [], total: 0, stats: {}, limit: 200, offset: 0 });
+      }
 
-    return json({});
-  });
+      return json({});
+    },
+  );
 }
 
 async function installTerminalSocket(page: Page): Promise<TerminalHarness> {
@@ -244,17 +249,16 @@ async function openTerminalTab(page: Page): Promise<void> {
 
   await expect(tabTrigger).toContainText("Terminal");
   await expect(
-    page.getByRole("combobox", { name: "Terminal session" }),
-  ).toBeVisible({
-    timeout: 15_000,
-  });
+    page.getByRole("list", { name: "Terminal sessions" }),
+  ).toBeVisible({ timeout: 15_000 });
 }
 
 async function chooseTerminalSession(page: Page, name: string): Promise<void> {
-  const picker = page.getByRole("combobox", { name: "Terminal session" });
-  await picker.click();
-  await page.getByRole("option", { name, exact: true }).click();
-  await expect(picker).toContainText(name);
+  // Rows, not a select: TerminalSessionList renders a role="list" of
+  // aria-pressed attach buttons.
+  const row = page.getByRole("button", { name: `Attach ${name}`, exact: true });
+  await row.click();
+  await expect(row).toHaveAttribute("aria-pressed", "true");
 }
 
 function messagesOfType(
@@ -307,14 +311,25 @@ test("renders ANSI output and row-grid styling in the activity terminal", async 
     };
   });
 
+  // Resolve the token rather than hard-coding its current value: the palette
+  // is allowed to move, the ANSI-red -> --color-error mapping is not.
+  const expectedRed = await page.evaluate(() => {
+    const probe = document.createElement("span");
+    probe.style.color = "var(--color-error)";
+    document.body.appendChild(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  });
+
   expect(renderedStyle.rowHeightToken).toMatch(/^\d+px$/);
   expect(renderedStyle.rowHeight).toBe(renderedStyle.rowHeightToken);
   expect(renderedStyle.rowLineHeight).toBe(renderedStyle.rowHeightToken);
-  expect(renderedStyle.redColor).toBe("rgb(204, 102, 102)");
+  expect(renderedStyle.redColor).toBe(expectedRed);
   expect(renderedStyle.redColor).not.toBe(renderedStyle.defaultColor);
 });
 
-test("forwards composer input and detaches before switching terminal sessions", async ({
+test("forwards terminal input and detaches before switching terminal sessions", async ({
   page,
 }) => {
   const harness = await installTerminalSocket(page);
@@ -333,25 +348,28 @@ test("forwards composer input and detaches before switching terminal sessions", 
       }),
     );
 
-  await page.getByRole("button", { name: "Open terminal composer" }).click();
-  await page.getByRole("textbox", { name: "Terminal input" }).fill("status");
-  await page.getByRole("button", { name: "Send", exact: true }).click();
+  // Typing goes straight into the focused terminal; the quick-keys bar covers
+  // only the keys an on-screen keyboard cannot produce.
+  await terminal.locator(".wterm").click();
+  await page.keyboard.type("status");
+  await page.keyboard.press("Enter");
   await page.getByRole("button", { name: "Esc", exact: true }).click();
   await page.getByRole("button", { name: "Ctrl+C", exact: true }).click();
 
   await expect
     .poll(() =>
       messagesOfType(harness, "terminal_input")
-        .filter((message) =>
-          ["status\r", "\x1b", "\x03"].includes(String(message.data)),
-        )
-        .map(({ run_id, data }) => ({ run_id, data })),
+        .map((message) => String(message.data))
+        .join(""),
     )
-    .toEqual([
-      { run_id: STREAM_IDS["test-session"], data: "status\r" },
-      { run_id: STREAM_IDS["test-session"], data: "\x1b" },
-      { run_id: STREAM_IDS["test-session"], data: "\x03" },
-    ]);
+    .toBe("status\r\x1b\x03");
+  expect([
+    ...new Set(
+      messagesOfType(harness, "terminal_input").map(
+        (message) => message.run_id,
+      ),
+    ),
+  ]).toEqual([STREAM_IDS["test-session"]]);
 
   await chooseTerminalSession(page, "second-session");
   await expect(terminal).toContainText("Second session output");

@@ -140,13 +140,13 @@ export function TerminalTab({
     attachSession,
     detachSession,
     clearAttachError,
-    refreshTerminal,
     createSession,
     dismissEndedSession,
     sendInput,
     resizeTerminal,
     killSession,
     onOutput,
+    onAttachHistory,
   } = useTmuxSessions();
   const [selectedKey, setSelectedKey] = useState<string | null>(
     loadStoredTerminalTargetKey,
@@ -188,6 +188,20 @@ export function TerminalTab({
     });
     return () => onOutput(() => undefined);
   }, [onOutput]);
+
+  useEffect(() => {
+    onAttachHistory((history) => {
+      // Same stale-attachment filter the output stream uses: a superseded
+      // streaming id must not paint into the replacement's terminal.
+      if (history.streamingId !== streamingIdRef.current) return;
+      viewRef.current?.applyAttachHistory(
+        history.text,
+        history.truncated,
+        history.unavailable,
+      );
+    });
+    return () => onAttachHistory(() => undefined);
+  }, [onAttachHistory]);
 
   useEffect(() => () => detachSession(), [detachSession]);
 
@@ -368,25 +382,16 @@ export function TerminalTab({
       }
       const reportedSize =
         rows > 0 && cols > 0 ? { rows, cols } : viewRef.current?.getSize();
+      // This resize is the activation signal: it carries the first real
+      // geometry, and the daemon builds the tmux client, captures history, and
+      // repaints off the back of it. A client-driven refresh here would only
+      // race the repaint the server already owns.
       if (reportedSize) {
         resizeTerminal(reportedSize.rows, reportedSize.cols);
       }
-      // Always force a full tmux repaint once the terminal can accept writes.
-      // Output that streamed while the renderer was still initializing was
-      // dropped, and tmux only sends deltas afterward — a partial first paint
-      // (or SGR state carried from a truncated escape sequence) never
-      // self-heals without this redraw.
-      refreshTerminal(selected.tmux.name, selected.tmux.socket);
       setReadyContext(terminalContext);
     },
-    [
-      attachedKey,
-      refreshTerminal,
-      resizeTerminal,
-      selected,
-      selectedKey,
-      terminalContext,
-    ],
+    [attachedKey, resizeTerminal, selected, selectedKey, terminalContext],
   );
 
   const dismissVanishedSession = useCallback(() => {

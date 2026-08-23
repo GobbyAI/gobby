@@ -605,4 +605,95 @@ describe("useTmuxSessions", () => {
     expect(result.current.streamingId).toBe("final-stream");
     unmount();
   });
+  it("routes attach history to the registered consumer", () => {
+    const mount = renderHook(() => useTmuxSessions());
+    const [ws] = mockWs.instances;
+    open(ws);
+
+    const received: unknown[] = [];
+    act(() =>
+      mount.result.current.onAttachHistory((history) => received.push(history)),
+    );
+
+    act(() => {
+      ws.simulateMessage({
+        type: "terminal_attach_history",
+        streaming_id: "stream-1",
+        text: "older\r\nlines",
+        truncated: true,
+        unavailable: false,
+        dropped_bytes: 128,
+        total_bytes: 4096,
+      });
+    });
+
+    expect(received).toEqual([
+      {
+        streamingId: "stream-1",
+        text: "older\r\nlines",
+        truncated: true,
+        unavailable: false,
+        droppedBytes: 128,
+        totalBytes: 4096,
+      },
+    ]);
+
+    // Missing optional fields degrade to safe defaults rather than undefined.
+    act(() => {
+      ws.simulateMessage({
+        type: "terminal_attach_history",
+        streaming_id: "stream-1",
+      });
+    });
+    expect(received[1]).toEqual({
+      streamingId: "stream-1",
+      text: "",
+      truncated: false,
+      unavailable: false,
+      droppedBytes: 0,
+      totalBytes: 0,
+    });
+  });
+
+  it("surfaces a post-ack activation failure and clears the attachment", () => {
+    const mount = renderHook(() => useTmuxSessions());
+    const [ws] = mockWs.instances;
+    open(ws);
+
+    act(() => mount.result.current.attachSession("worker", "default"));
+    respondToAttach(
+      ws,
+      requestId(ws, "tmux_attach"),
+      "worker",
+      "default",
+      "stream-1",
+    );
+    expect(mount.result.current.streamingId).toBe("stream-1");
+
+    // A failure naming a superseded stream must not disturb the live one.
+    act(() => {
+      ws.simulateMessage({
+        type: "tmux_activation_failed",
+        streaming_id: "stream-old",
+        code: "bridge_failed",
+        message: "stale",
+      });
+    });
+    expect(mount.result.current.streamingId).toBe("stream-1");
+    expect(mount.result.current.attachError).toBeNull();
+
+    act(() => {
+      ws.simulateMessage({
+        type: "tmux_activation_failed",
+        streaming_id: "stream-1",
+        code: "client_registration_failed",
+        message: "tmux client never registered",
+      });
+    });
+    expect(mount.result.current.streamingId).toBeNull();
+    expect(mount.result.current.attachedTarget).toBeNull();
+    expect(mount.result.current.attachError).toBe(
+      "tmux client never registered",
+    );
+  });
 });

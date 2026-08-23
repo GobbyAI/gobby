@@ -120,6 +120,27 @@ function latestInstance(): MockWTermInstance {
   return instance;
 }
 
+function setScrollMetrics(
+  element: HTMLElement,
+  metrics: { scrollTop: number; clientHeight: number; scrollHeight: number },
+): void {
+  // jsdom reports zero for every scroll metric, so the follow-live-edge maths
+  // needs real numbers stubbed in.
+  Object.defineProperty(element, "clientHeight", {
+    value: metrics.clientHeight,
+    configurable: true,
+  });
+  Object.defineProperty(element, "scrollHeight", {
+    value: metrics.scrollHeight,
+    configurable: true,
+  });
+  Object.defineProperty(element, "scrollTop", {
+    value: metrics.scrollTop,
+    writable: true,
+    configurable: true,
+  });
+}
+
 function TerminalFocusHarness({ children }: { children: ReactNode }) {
   return (
     <>
@@ -486,5 +507,108 @@ describe("lifecycle destroy", () => {
 
     act(() => vi.advanceTimersByTime(200));
     expect(onSizeChange).not.toHaveBeenCalled();
+  });
+  it("applies attach history as one write with a marker and a screen pad", async () => {
+    const terminalRef = createRef<TerminalViewHandle>();
+    const onReady = vi.fn();
+    render(<TerminalView ref={terminalRef} onReady={onReady} />);
+    await waitFor(() => expect(onReady).toHaveBeenCalledWith(57, 211));
+
+    const instance = latestInstance();
+    act(() =>
+      terminalRef.current?.applyAttachHistory("one\r\ntwo", true, false),
+    );
+
+    // One write keeps wterm to a single syncScrollback pass.
+    expect(instance.write).toHaveBeenCalledTimes(1);
+    const payload = vi.mocked(instance.write).mock.calls[0]?.[0] ?? "";
+    const [marker, ...rest] = payload.split("\r\n");
+    expect(marker).toContain("earlier output not shown");
+    expect(marker).toMatch(/^─+ earlier output not shown ─+$/u);
+    // Plain text, never a faint SGR whose contrast is unproven.
+    expect(marker).not.toContain("\u001b[2m");
+    expect(payload).toContain("one\r\ntwo");
+    // Marker line + two history lines, then exactly `rows` pad newlines.
+    expect(rest).toHaveLength(2 + 57);
+    expect(rest.slice(2).every((line) => line === "")).toBe(true);
+  });
+
+  it("omits the marker when nothing was truncated", async () => {
+    const terminalRef = createRef<TerminalViewHandle>();
+    const onReady = vi.fn();
+    render(<TerminalView ref={terminalRef} onReady={onReady} />);
+    await waitFor(() => expect(onReady).toHaveBeenCalledWith(57, 211));
+
+    const instance = latestInstance();
+    act(() => terminalRef.current?.applyAttachHistory("only", false, false));
+
+    const payload = vi.mocked(instance.write).mock.calls[0]?.[0] ?? "";
+    expect(payload.startsWith("only\r\n")).toBe(true);
+    expect(payload).not.toContain("earlier output not shown");
+  });
+
+  it("renders its own marker when history is unavailable", async () => {
+    const terminalRef = createRef<TerminalViewHandle>();
+    const onReady = vi.fn();
+    render(<TerminalView ref={terminalRef} onReady={onReady} />);
+    await waitFor(() => expect(onReady).toHaveBeenCalledWith(57, 211));
+
+    const instance = latestInstance();
+    act(() => terminalRef.current?.applyAttachHistory("", false, true));
+
+    const payload = vi.mocked(instance.write).mock.calls[0]?.[0] ?? "";
+    expect(payload).toContain("history unavailable");
+    expect(payload).not.toContain("earlier output not shown");
+  });
+
+  it("reveals an accessible jump-to-bottom control only when scrolled away", async () => {
+    const user = userEvent.setup();
+    const onReady = vi.fn();
+    render(<TerminalView onReady={onReady} />);
+    await waitFor(() => expect(onReady).toHaveBeenCalledWith(57, 211));
+
+    const scrollElement = latestInstance().element;
+    expect(
+      screen.queryByRole("button", { name: "Jump to newest terminal output" }),
+    ).not.toBeInTheDocument();
+
+    setScrollMetrics(scrollElement, {
+      scrollTop: 0,
+      clientHeight: 100,
+      scrollHeight: 900,
+    });
+    act(() => {
+      scrollElement.dispatchEvent(new Event("scroll"));
+    });
+
+    const jump = await screen.findByRole("button", {
+      name: "Jump to newest terminal output",
+    });
+    // The control is a sibling of the live region, never a child of it.
+    expect(screen.getByTestId("terminal-view")).not.toContainElement(jump);
+    expect(jump).toHaveClass("focus-visible:ring-2");
+    expect(jump).toHaveClass("bg-[var(--bg-secondary)]");
+
+    act(() => latestInstance().textarea.focus());
+    await user.tab();
+    expect(jump).toHaveFocus();
+
+    setScrollMetrics(scrollElement, {
+      scrollTop: 800,
+      clientHeight: 100,
+      scrollHeight: 900,
+    });
+    await user.keyboard("{Enter}");
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", {
+          name: "Jump to newest terminal output",
+        }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(scrollElement.scrollTop).toBe(900);
+    // Focus returns to the terminal so typing keeps flowing to the PTY.
+    expect(latestInstance().textarea).toHaveFocus();
   });
 });

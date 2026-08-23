@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from collections.abc import Iterator
+from dataclasses import dataclass
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from websockets.exceptions import ConnectionClosedOK
 from websockets.frames import Close
 
+from gobby.agents.tmux.history import HistoryCapture, HistoryCaptureError
 from gobby.servers.websocket.server import WebSocketServer
 
 pytestmark = pytest.mark.unit
@@ -44,6 +51,27 @@ class DisconnectingWebSocket(MockWebSocket):
         raise ConnectionClosedOK(Close(1001, "going away"), Close(1001, "going away"), True)
 
 
+class TracingWebSocket(MockWebSocket):
+    """Records each frame type into a shared call trace."""
+
+    def __init__(self, calls: list[str]) -> None:
+        super().__init__()
+        self._calls = calls
+
+    async def send(self, message: str) -> None:
+        await super().send(message)
+        self._calls.append(f"send:{json.loads(message)['type']}")
+
+
+class HistorySendFailureWebSocket(MockWebSocket):
+    """Accepts the attach ack, then dies before the history frame lands."""
+
+    async def send(self, message: str) -> None:
+        if json.loads(message).get("type") == "terminal_attach_history":
+            raise ConnectionClosedOK(Close(1001, "going away"), Close(1001, "going away"), True)
+        await super().send(message)
+
+
 @pytest.fixture
 def mock_config() -> MagicMock:
     config = MagicMock()
@@ -63,6 +91,171 @@ def mock_mcp_manager() -> MagicMock:
 @pytest.fixture
 def server(mock_config: MagicMock, mock_mcp_manager: MagicMock) -> WebSocketServer:
     return WebSocketServer(mock_config, mock_mcp_manager, AsyncMock(return_value="test-user"))
+
+
+def make_bridge(
+    session_name: str = "demo",
+    socket_name: str = "",
+    pid: int = 9001,
+    returncode: int | None = None,
+) -> Any:
+    """A BridgeInfo stand-in with a controllable client process."""
+    return SimpleNamespace(
+        session_name=session_name,
+        socket_name=socket_name,
+        master_fd=42,
+        proc=SimpleNamespace(pid=pid, returncode=returncode),
+    )
+
+
+@dataclass
+class ActivationHarness:
+    """Every boundary the attach state machine reaches, mocked."""
+
+    attach: AsyncMock
+    get_bridge: AsyncMock
+    list_bridges: AsyncMock
+    detach: AsyncMock
+    reader: MagicMock
+    wait_for_client: AsyncMock
+    capture: AsyncMock
+    set_option: AsyncMock
+    refresh_client: AsyncMock
+    has_session: AsyncMock
+    bridge: Any
+    calls: list[str]
+
+
+@contextlib.contextmanager
+def activation_harness(
+    server: WebSocketServer,
+    *,
+    socket: str = "default",
+    session_name: str = "demo",
+    bridge: Any | None = None,
+    bridges: dict[str, Any] | None = None,
+    calls: list[str] | None = None,
+) -> Iterator[ActivationHarness]:
+    manager = server._tmux_mgr_gobby if socket == "gobby" else server._tmux_mgr_default
+    live_bridge = bridge or make_bridge(
+        session_name=session_name, socket_name="gobby" if socket == "gobby" else ""
+    )
+    if calls is None:
+        calls = []
+
+    reader = MagicMock()
+    reader.start_reader = AsyncMock(return_value=True)
+    reader.stop_reader = AsyncMock(return_value=True)
+
+    async def record_attach(**_kwargs: Any) -> int:
+        calls.append("attach")
+        return 42
+
+    async def record_capture(*_args: Any, **_kwargs: Any) -> HistoryCapture:
+        calls.append("capture")
+        return HistoryCapture(text="hist", truncated=False, dropped_bytes=0, total_bytes=4)
+
+    async def record_start_reader(*_args: Any, **_kwargs: Any) -> bool:
+        calls.append("start_reader")
+        return True
+
+    async def record_refresh(*_args: Any, **_kwargs: Any) -> None:
+        calls.append("refresh_client")
+
+    async def record_list_bridges() -> dict[str, Any]:
+        calls.append("list_bridges")
+        return dict(bridges or {})
+
+    reader.start_reader.side_effect = record_start_reader
+
+    with contextlib.ExitStack() as stack:
+        harness = ActivationHarness(
+            attach=stack.enter_context(
+                patch.object(
+                    server._tmux_bridge, "attach", new_callable=AsyncMock, side_effect=record_attach
+                )
+            ),
+            get_bridge=stack.enter_context(
+                patch.object(
+                    server._tmux_bridge,
+                    "get_bridge",
+                    new_callable=AsyncMock,
+                    return_value=live_bridge,
+                )
+            ),
+            list_bridges=stack.enter_context(
+                patch.object(
+                    server._tmux_bridge,
+                    "list_bridges",
+                    new_callable=AsyncMock,
+                    side_effect=record_list_bridges,
+                )
+            ),
+            detach=stack.enter_context(
+                patch.object(server._tmux_bridge, "detach", new_callable=AsyncMock)
+            ),
+            reader=reader,
+            wait_for_client=stack.enter_context(
+                patch(
+                    "gobby.servers.websocket.tmux_activation._wait_for_client",
+                    new_callable=AsyncMock,
+                    return_value=True,
+                )
+            ),
+            capture=stack.enter_context(
+                patch(
+                    "gobby.servers.websocket.tmux_activation.capture_history",
+                    new_callable=AsyncMock,
+                    side_effect=record_capture,
+                )
+            ),
+            set_option=stack.enter_context(
+                patch.object(manager, "set_option", new_callable=AsyncMock)
+            ),
+            refresh_client=stack.enter_context(
+                patch.object(
+                    manager, "refresh_client", new_callable=AsyncMock, side_effect=record_refresh
+                )
+            ),
+            has_session=stack.enter_context(
+                patch.object(manager, "has_session", new_callable=AsyncMock, return_value=True)
+            ),
+            bridge=live_bridge,
+            calls=calls,
+        )
+        stack.enter_context(
+            patch("gobby.agents.pty_reader.get_pty_reader_manager", return_value=reader)
+        )
+        yield harness
+
+
+async def reserve(
+    server: WebSocketServer,
+    websocket: Any,
+    *,
+    session_name: str = "demo",
+    socket: str = "default",
+) -> str:
+    """Run the attach half and return the reserved streaming id."""
+    manager = server._tmux_mgr_gobby if socket == "gobby" else server._tmux_mgr_default
+    with patch.object(manager, "has_session", new_callable=AsyncMock, return_value=True):
+        await server._handle_tmux_attach(
+            websocket, {"session_name": session_name, "socket": socket}
+        )
+    result = websocket.messages_of_type("tmux_attach_result")[-1]
+    return str(result["streaming_id"])
+
+
+async def resize(
+    server: WebSocketServer,
+    websocket: Any,
+    streaming_id: str,
+    rows: int = 40,
+    cols: int = 120,
+) -> None:
+    await server._handle_tmux_resize(
+        websocket, {"streaming_id": streaming_id, "rows": rows, "cols": cols}
+    )
 
 
 class TestTmuxMixinInit:
@@ -189,30 +382,61 @@ class TestTmuxAttach:
         assert "not found" in errors[0]["message"].lower()
 
     @pytest.mark.asyncio
-    async def test_attach_configures_session_through_manager(self, server: WebSocketServer) -> None:
+    async def test_attach_reserves_without_building_anything(self, server: WebSocketServer) -> None:
         ws = MockWebSocket()
-        reader = MagicMock(start_reader=AsyncMock())
+        reader = MagicMock(start_reader=AsyncMock(), stop_reader=AsyncMock())
         manager = server._tmux_mgr_default
 
         with (
             patch.object(manager, "has_session", new_callable=AsyncMock, return_value=True),
             patch.object(manager, "set_option", new_callable=AsyncMock) as set_option,
             patch.object(manager, "refresh_client", new_callable=AsyncMock) as refresh_client,
-            patch.object(server._tmux_bridge, "attach", new_callable=AsyncMock, return_value=42),
+            patch.object(server._tmux_bridge, "attach", new_callable=AsyncMock) as attach,
             patch("gobby.agents.pty_reader.get_pty_reader_manager", return_value=reader),
         ):
             await server._handle_tmux_attach(ws, {"session_name": "demo"})
 
-        set_option.assert_has_awaits([call("demo", "status", "off"), call("demo", "mouse", "on")])
-        refresh_client.assert_awaited_once_with("demo")
-        reader.start_reader.assert_awaited_once()
+        # Nothing is built until the client's first resize reports geometry.
+        attach.assert_not_awaited()
+        set_option.assert_not_awaited()
+        refresh_client.assert_not_awaited()
+        reader.start_reader.assert_not_awaited()
+
         response = ws.last_message()
         assert response["success"] is True
         assert response["session_name"] == "demo"
         assert response["socket"] == "default"
         streaming_id = response["streaming_id"]
         assert streaming_id.startswith("tmux-")
-        assert streaming_id in server._tmux_client_bridges[ws]
+        assert streaming_id in server._tmux_pending
+        assert server._tmux_client_bridges.get(ws) is None
+
+    @pytest.mark.asyncio
+    async def test_attach_result_is_the_only_frame_sent(self, server: WebSocketServer) -> None:
+        ws = MockWebSocket()
+        await reserve(server, ws)
+
+        assert [message["type"] for message in ws.all_messages()] == ["tmux_attach_result"]
+
+    @pytest.mark.asyncio
+    async def test_duplicate_attach_cancels_the_prior_reservation(
+        self, server: WebSocketServer
+    ) -> None:
+        ws = MockWebSocket()
+        first = await reserve(server, ws)
+        second = await reserve(server, ws)
+
+        assert first not in server._tmux_pending
+        assert list(server._tmux_pending) == [second]
+
+    @pytest.mark.asyncio
+    async def test_a_second_client_keeps_its_own_reservation(self, server: WebSocketServer) -> None:
+        first_ws = MockWebSocket()
+        second_ws = MockWebSocket()
+        first = await reserve(server, first_ws)
+        second = await reserve(server, second_ws)
+
+        assert set(server._tmux_pending) == {first, second}
 
 
 class TestTmuxDetach:
@@ -605,3 +829,521 @@ class TestTerminalInputBridgeRouting:
                 mock_arm.get.assert_called_once_with("some-agent")
                 assert mock_arm.get.call_count == 1
                 assert mock_arm.get.call_args is not None
+
+
+class TestTmuxActivation:
+    """Test the reserve-then-activate state machine driven by the first resize."""
+
+    @pytest.mark.asyncio
+    async def test_first_resize_activates_in_order(self, server: WebSocketServer) -> None:
+        calls: list[str] = []
+        ws = TracingWebSocket(calls)
+        streaming_id = await reserve(server, ws)
+
+        with activation_harness(server, calls=calls) as harness:
+            await resize(server, ws, streaming_id, rows=40, cols=120)
+
+        assert calls == [
+            "send:tmux_attach_result",
+            "list_bridges",
+            "attach",
+            "capture",
+            "send:terminal_attach_history",
+            "start_reader",
+            "refresh_client",
+        ]
+        assert harness.attach.await_args is not None
+        assert harness.attach.await_args.kwargs["rows"] == 40
+        assert harness.attach.await_args.kwargs["cols"] == 120
+        harness.set_option.assert_any_await("demo", "status", "off")
+        harness.set_option.assert_any_await("demo", "mouse", "on")
+
+        history = ws.messages_of_type("terminal_attach_history")[0]
+        assert history["streaming_id"] == streaming_id
+        assert history["text"] == "hist"
+        assert history["truncated"] is False
+        assert history["unavailable"] is False
+        assert history["total_bytes"] == 4
+
+        assert streaming_id not in server._tmux_pending
+        assert streaming_id in server._tmux_client_bridges[ws]
+
+    @pytest.mark.asyncio
+    async def test_history_is_serialized_without_ascii_escaping(
+        self, server: WebSocketServer
+    ) -> None:
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws)
+
+        with activation_harness(server) as harness:
+            harness.capture.side_effect = None
+            harness.capture.return_value = HistoryCapture(
+                text="│ ok", truncated=True, dropped_bytes=7, total_bytes=99
+            )
+            await resize(server, ws, streaming_id)
+
+        raw = ws.sent_messages[-1]
+        assert "│" in raw
+        assert "\\u2502" not in raw
+        history = ws.messages_of_type("terminal_attach_history")[0]
+        assert history["truncated"] is True
+        assert history["dropped_bytes"] == 7
+        assert history["total_bytes"] == 99
+
+    @pytest.mark.asyncio
+    async def test_second_resize_starts_no_second_reader_or_history(
+        self, server: WebSocketServer
+    ) -> None:
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws)
+
+        with activation_harness(server) as harness:
+            await resize(server, ws, streaming_id)
+            await resize(server, ws, streaming_id, rows=41, cols=121)
+
+        harness.attach.assert_awaited_once()
+        assert harness.reader.start_reader.await_count == 1
+        assert len(ws.messages_of_type("terminal_attach_history")) == 1
+
+    @pytest.mark.asyncio
+    async def test_resize_from_a_foreign_socket_is_rejected(self, server: WebSocketServer) -> None:
+        owner = MockWebSocket()
+        intruder = MockWebSocket()
+        streaming_id = await reserve(server, owner)
+
+        with activation_harness(server) as harness:
+            await resize(server, intruder, streaming_id)
+
+        harness.attach.assert_not_awaited()
+        assert streaming_id in server._tmux_pending
+
+    @pytest.mark.parametrize(
+        ("rows", "cols"),
+        [(0, 80), (24, 0), (-1, 80), (1001, 80), (24, 2001), (24, 10**9)],
+    )
+    @pytest.mark.asyncio
+    async def test_out_of_bound_dimensions_build_nothing(
+        self, server: WebSocketServer, rows: int, cols: int
+    ) -> None:
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws)
+
+        with activation_harness(server) as harness:
+            await resize(server, ws, streaming_id, rows=rows, cols=cols)
+
+        harness.attach.assert_not_awaited()
+        assert streaming_id in server._tmux_pending
+
+    @pytest.mark.asyncio
+    async def test_capture_failure_with_a_live_stream_degrades(
+        self, server: WebSocketServer
+    ) -> None:
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws)
+
+        with activation_harness(server) as harness:
+            harness.capture.side_effect = HistoryCaptureError("capture-pane timed out")
+            await resize(server, ws, streaming_id)
+
+        history = ws.messages_of_type("terminal_attach_history")[0]
+        assert history["unavailable"] is True
+        assert history["text"] == ""
+        assert history["truncated"] is False
+        # Losing scrollback must not cost the user a working terminal.
+        assert harness.reader.start_reader.await_count == 1
+        assert ws.messages_of_type("tmux_activation_failed") == []
+
+    @pytest.mark.asyncio
+    async def test_capture_failure_with_a_missing_session_fails_activation(
+        self, server: WebSocketServer
+    ) -> None:
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws)
+
+        with activation_harness(server) as harness:
+            harness.capture.side_effect = HistoryCaptureError("no such session")
+            harness.has_session.return_value = False
+            await resize(server, ws, streaming_id)
+
+        failures = ws.messages_of_type("tmux_activation_failed")
+        assert [failure["code"] for failure in failures] == ["session_missing"]
+        assert failures[0]["streaming_id"] == streaming_id
+        assert ws.messages_of_type("terminal_attach_history") == []
+        harness.reader.start_reader.assert_not_awaited()
+        harness.detach.assert_any_await(streaming_id)
+        assert streaming_id not in server._tmux_pending
+
+    @pytest.mark.asyncio
+    async def test_bridge_process_exiting_during_capture_fails_activation(
+        self, server: WebSocketServer
+    ) -> None:
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws)
+
+        with activation_harness(server) as harness:
+
+            async def capture_then_die(*_args: Any, **_kwargs: Any) -> HistoryCapture:
+                harness.bridge.proc.returncode = 1
+                return HistoryCapture(text="hist", truncated=False, dropped_bytes=0, total_bytes=4)
+
+            harness.capture.side_effect = capture_then_die
+            await resize(server, ws, streaming_id)
+
+        failures = ws.messages_of_type("tmux_activation_failed")
+        assert [failure["code"] for failure in failures] == ["bridge_exited"]
+        assert ws.messages_of_type("terminal_attach_history") == []
+        harness.reader.start_reader.assert_not_awaited()
+        harness.detach.assert_any_await(streaming_id)
+
+    @pytest.mark.asyncio
+    async def test_bridge_creation_failure_fails_activation(self, server: WebSocketServer) -> None:
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws)
+
+        with activation_harness(server) as harness:
+            harness.attach.side_effect = RuntimeError("no pty available")
+            await resize(server, ws, streaming_id)
+
+        failures = ws.messages_of_type("tmux_activation_failed")
+        assert [failure["code"] for failure in failures] == ["bridge_failed"]
+        assert "no pty available" in failures[0]["message"]
+        assert streaming_id not in server._tmux_pending
+        assert streaming_id not in server._tmux_client_bridges.get(ws, set())
+
+    @pytest.mark.asyncio
+    async def test_reader_refusing_to_start_fails_activation(self, server: WebSocketServer) -> None:
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws)
+
+        with activation_harness(server) as harness:
+            harness.reader.start_reader = AsyncMock(return_value=False)
+            await resize(server, ws, streaming_id)
+
+        failures = ws.messages_of_type("tmux_activation_failed")
+        assert [failure["code"] for failure in failures] == ["reader_failed"]
+        # History still went out before the reader was asked to start.
+        assert len(ws.messages_of_type("terminal_attach_history")) == 1
+        harness.detach.assert_any_await(streaming_id)
+        assert streaming_id not in server._tmux_pending
+
+    @pytest.mark.asyncio
+    async def test_client_registration_timeout_fails_activation(
+        self, server: WebSocketServer
+    ) -> None:
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws)
+
+        with activation_harness(server) as harness:
+            harness.wait_for_client.return_value = False
+            await resize(server, ws, streaming_id)
+
+        failures = ws.messages_of_type("tmux_activation_failed")
+        assert [failure["code"] for failure in failures] == ["client_registration_failed"]
+        harness.capture.assert_not_awaited()
+        harness.detach.assert_any_await(streaming_id)
+        assert streaming_id not in server._tmux_pending
+
+    @pytest.mark.asyncio
+    async def test_history_send_failure_cleans_up_without_a_second_frame(
+        self, server: WebSocketServer
+    ) -> None:
+        ws = HistorySendFailureWebSocket()
+        streaming_id = await reserve(server, ws)
+
+        with activation_harness(server) as harness:
+            await resize(server, ws, streaming_id)
+
+        assert [message["type"] for message in ws.all_messages()] == ["tmux_attach_result"]
+        harness.reader.start_reader.assert_not_awaited()
+        harness.detach.assert_any_await(streaming_id)
+        assert streaming_id not in server._tmux_pending
+
+    @pytest.mark.asyncio
+    async def test_server_stop_during_capture_aborts_activation(
+        self, server: WebSocketServer
+    ) -> None:
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws)
+        gate = asyncio.Event()
+        reached = asyncio.Event()
+
+        with activation_harness(server) as harness:
+
+            async def blocking_capture(*_args: Any, **_kwargs: Any) -> HistoryCapture:
+                reached.set()
+                await gate.wait()
+                return HistoryCapture(text="hist", truncated=False, dropped_bytes=0, total_bytes=4)
+
+            harness.capture.side_effect = blocking_capture
+            task = asyncio.create_task(resize(server, ws, streaming_id))
+            await asyncio.wait_for(reached.wait(), timeout=5)
+            await server._cleanup_tmux()
+            gate.set()
+            await task
+
+        assert ws.messages_of_type("terminal_attach_history") == []
+        assert ws.messages_of_type("tmux_activation_failed") == []
+        harness.reader.start_reader.assert_not_awaited()
+        harness.detach.assert_any_await(streaming_id)
+        assert streaming_id not in server._tmux_pending
+
+    @pytest.mark.asyncio
+    async def test_cross_socket_kill_during_capture_aborts_activation(
+        self, server: WebSocketServer
+    ) -> None:
+        ws = MockWebSocket()
+        killer = MockWebSocket()
+        server.session_manager = None
+        streaming_id = await reserve(server, ws)
+        gate = asyncio.Event()
+        reached = asyncio.Event()
+
+        with activation_harness(server) as harness:
+
+            async def blocking_capture(*_args: Any, **_kwargs: Any) -> HistoryCapture:
+                reached.set()
+                await gate.wait()
+                return HistoryCapture(text="hist", truncated=False, dropped_bytes=0, total_bytes=4)
+
+            harness.capture.side_effect = blocking_capture
+            task = asyncio.create_task(resize(server, ws, streaming_id))
+            await asyncio.wait_for(reached.wait(), timeout=5)
+            with patch.object(
+                server._tmux_mgr_default, "kill_session", new_callable=AsyncMock, return_value=True
+            ):
+                await server._handle_tmux_kill_session(
+                    killer, {"session_name": "demo", "socket": "default"}
+                )
+            gate.set()
+            await task
+
+        assert ws.messages_of_type("terminal_attach_history") == []
+        harness.reader.start_reader.assert_not_awaited()
+        harness.detach.assert_any_await(streaming_id)
+        assert streaming_id not in server._tmux_pending
+
+    @pytest.mark.asyncio
+    async def test_same_socket_detach_queues_behind_activation(
+        self, server: WebSocketServer
+    ) -> None:
+        # Connections are handled one message at a time, so a same-socket
+        # detach cannot interrupt a suspended capture -- it tears down whatever
+        # activation produced.
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws)
+
+        with activation_harness(server) as harness:
+            await resize(server, ws, streaming_id)
+            assert len(ws.messages_of_type("terminal_attach_history")) == 1
+            await server._handle_tmux_detach(ws, {"streaming_id": streaming_id})
+
+        harness.detach.assert_any_await(streaming_id)
+        harness.reader.stop_reader.assert_any_await(streaming_id)
+        assert streaming_id not in server._tmux_client_bridges[ws]
+        assert ws.messages_of_type("tmux_detach_result")[0]["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_client_disconnect_drops_an_unactivated_reservation(
+        self, server: WebSocketServer
+    ) -> None:
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws)
+
+        await server._cleanup_tmux_client(ws)
+
+        assert streaming_id not in server._tmux_pending
+
+
+class TestTmuxAttachmentReap:
+    """Test that a re-attach never leaves two tmux clients on one session."""
+
+    @pytest.mark.asyncio
+    async def test_activation_excludes_itself_from_the_reap(self, server: WebSocketServer) -> None:
+        from gobby.servers.websocket.tmux_activation import PendingAttachment
+
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws)
+        server._tmux_pending["stale-reservation"] = PendingAttachment(
+            session_name="demo", socket="default", owner=ws
+        )
+        server._tmux_client_bridges[ws] = {"stale-bridge"}
+
+        with activation_harness(server, bridges={"stale-bridge": make_bridge()}) as harness:
+            await resize(server, ws, streaming_id)
+
+        harness.detach.assert_any_await("stale-bridge")
+        assert "stale-reservation" not in server._tmux_pending
+        # The activating attachment survived the reap and ran to completion.
+        assert len(ws.messages_of_type("terminal_attach_history")) == 1
+        assert streaming_id not in server._tmux_pending
+        assert server._tmux_client_bridges[ws] == {streaming_id}
+
+    @pytest.mark.asyncio
+    async def test_a_live_second_viewers_bridge_survives(self, server: WebSocketServer) -> None:
+        owner = MockWebSocket()
+        other = MockWebSocket()
+        streaming_id = await reserve(server, owner)
+        server._tmux_client_bridges[other] = {"other-bridge"}
+
+        with activation_harness(server, bridges={"other-bridge": make_bridge()}) as harness:
+            await resize(server, owner, streaming_id)
+
+        detached = [await_call.args[0] for await_call in harness.detach.await_args_list]
+        assert "other-bridge" not in detached
+        assert server._tmux_client_bridges[other] == {"other-bridge"}
+
+    @pytest.mark.asyncio
+    async def test_a_closed_owners_bridge_is_reaped(self, server: WebSocketServer) -> None:
+        owner = MockWebSocket()
+        gone = MockWebSocket()
+        gone.closed = True
+        streaming_id = await reserve(server, owner)
+        server._tmux_client_bridges[gone] = {"orphaned-bridge"}
+
+        with activation_harness(server, bridges={"orphaned-bridge": make_bridge()}) as harness:
+            await resize(server, owner, streaming_id)
+
+        harness.detach.assert_any_await("orphaned-bridge")
+        assert server._tmux_client_bridges[gone] == set()
+
+    @pytest.mark.asyncio
+    async def test_an_unowned_bridge_is_reaped(self, server: WebSocketServer) -> None:
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws)
+
+        with activation_harness(server, bridges={"orphan": make_bridge()}) as harness:
+            await resize(server, ws, streaming_id)
+
+        harness.detach.assert_any_await("orphan")
+        assert all(
+            "orphan" not in bridge_ids for bridge_ids in server._tmux_client_bridges.values()
+        )
+        assert len(ws.messages_of_type("terminal_attach_history")) == 1
+
+    @pytest.mark.asyncio
+    async def test_default_socket_bridges_match_despite_empty_socket_name(
+        self, server: WebSocketServer
+    ) -> None:
+        # BridgeInfo.socket_name carries the config value ("" for the user's
+        # default server) while the wire says "default".
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws, socket="default")
+        server._tmux_client_bridges[ws] = {"stale-default"}
+
+        with activation_harness(
+            server, bridges={"stale-default": make_bridge(socket_name="")}
+        ) as harness:
+            await resize(server, ws, streaming_id)
+
+        harness.detach.assert_any_await("stale-default")
+        assert server._tmux_client_bridges[ws] == {streaming_id}
+        assert len(ws.messages_of_type("terminal_attach_history")) == 1
+
+    @pytest.mark.asyncio
+    async def test_a_bridge_on_the_other_socket_is_left_alone(
+        self, server: WebSocketServer
+    ) -> None:
+        ws = MockWebSocket()
+        streaming_id = await reserve(server, ws, socket="default")
+        server._tmux_client_bridges[ws] = {"gobby-bridge"}
+
+        with activation_harness(
+            server, bridges={"gobby-bridge": make_bridge(socket_name="gobby")}
+        ) as harness:
+            await resize(server, ws, streaming_id)
+
+        detached = [await_call.args[0] for await_call in harness.detach.await_args_list]
+        assert "gobby-bridge" not in detached
+
+    @pytest.mark.asyncio
+    async def test_a_stale_reservation_cannot_build_a_second_client(
+        self, server: WebSocketServer
+    ) -> None:
+        ws = MockWebSocket()
+        stale = await reserve(server, ws)
+        fresh = await reserve(server, ws)
+
+        with activation_harness(server) as harness:
+            # The duplicate attach already cancelled the older reservation, so
+            # a resize naming it finds nothing to activate.
+            await resize(server, ws, stale)
+            harness.attach.assert_not_awaited()
+            assert stale not in server._tmux_pending
+            assert ws.messages_of_type("terminal_attach_history") == []
+            await resize(server, ws, fresh)
+
+        harness.attach.assert_awaited_once()
+        assert len(ws.messages_of_type("terminal_attach_history")) == 1
+        assert server._tmux_client_bridges[ws] == {fresh}
+
+
+class TestTmuxClientRegistration:
+    """Test the poll that proves tmux applied our client's geometry."""
+
+    @pytest.mark.asyncio
+    async def test_matches_our_attach_process_pid(self, server: WebSocketServer) -> None:
+        from gobby.servers.websocket.tmux_activation import _wait_for_client
+
+        proc = SimpleNamespace(
+            returncode=0,
+            communicate=AsyncMock(return_value=(b"4242\n9001\n", b"")),
+            kill=MagicMock(),
+            wait=AsyncMock(return_value=0),
+        )
+        with patch(
+            "asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)
+        ) as create_proc:
+            assert await _wait_for_client(server._tmux_mgr_default, "demo", 9001) is True
+
+        assert create_proc.await_args is not None
+        args = create_proc.await_args.args
+        assert "list-clients" in args
+        assert "#{client_pid}" in args
+        assert args[args.index("-t") + 1] == "=demo:"
+
+    @pytest.mark.asyncio
+    async def test_gives_up_when_our_pid_never_appears(self, server: WebSocketServer) -> None:
+        from gobby.servers.websocket.tmux_activation import _wait_for_client
+
+        proc = SimpleNamespace(
+            returncode=0,
+            communicate=AsyncMock(return_value=(b"4242\n", b"")),
+            kill=MagicMock(),
+            wait=AsyncMock(return_value=0),
+        )
+        with patch(
+            "asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)
+        ) as create_proc:
+            assert (
+                await _wait_for_client(server._tmux_mgr_default, "demo", 9001, timeout=0.05)
+                is False
+            )
+
+        # It kept polling to the deadline rather than giving up on one miss.
+        assert create_proc.await_count >= 2
+        assert proc.communicate.await_count == create_proc.await_count
+
+    @pytest.mark.asyncio
+    async def test_a_failing_list_clients_never_reports_registration(
+        self, server: WebSocketServer
+    ) -> None:
+        from gobby.servers.websocket.tmux_activation import _wait_for_client
+
+        proc = SimpleNamespace(
+            returncode=1,
+            communicate=AsyncMock(return_value=(b"9001\n", b"no server running")),
+            kill=MagicMock(),
+            wait=AsyncMock(return_value=1),
+        )
+        with patch(
+            "asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)
+        ) as create_proc:
+            assert (
+                await _wait_for_client(server._tmux_mgr_default, "demo", 9001, timeout=0.05)
+                is False
+            )
+
+        # A nonzero list-clients is never read as "registered", even though the
+        # matching pid is present on stdout.
+        assert create_proc.await_count >= 1
+        assert proc.kill.call_count == 0

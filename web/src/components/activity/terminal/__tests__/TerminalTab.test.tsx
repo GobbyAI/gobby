@@ -4,6 +4,7 @@ import { forwardRef, useImperativeHandle, useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
+  TerminalAttachHistory,
   TmuxSession,
   useTmuxSessions,
 } from "../../../../hooks/useTmuxSessions";
@@ -70,6 +71,15 @@ vi.mock("../TerminalView", () => ({
       useImperativeHandle(ref, () => ({
         write: (data: string) => setWrites((current) => [...current, data]),
         getSize: () => ({ rows: 24, cols: 80 }),
+        applyAttachHistory: (
+          text: string,
+          truncated: boolean,
+          unavailable: boolean,
+        ) =>
+          setWrites((current) => [
+            ...current,
+            `history(${String(truncated)},${String(unavailable)}):${text}`,
+          ]),
       }));
       return (
         <div
@@ -170,20 +180,26 @@ function makeHookState(overrides: Partial<HookResult> = {}): HookResult {
     sendInput: vi.fn(),
     resizeTerminal: vi.fn(),
     onOutput: vi.fn(),
+    onAttachHistory: vi.fn(),
     ...overrides,
   };
 }
 
 let hookState: HookResult;
 let outputListener: ((runId: string, data: string) => void) | null;
+let historyListener: ((history: TerminalAttachHistory) => void) | null;
 
 beforeEach(() => {
   window.sessionStorage.clear();
   outputListener = null;
+  historyListener = null;
   terminalViewState.mounts = 0;
   hookState = makeHookState({
     onOutput: vi.fn((listener) => {
       outputListener = listener;
+    }),
+    onAttachHistory: vi.fn((listener) => {
+      historyListener = listener;
     }),
   });
   mockUseTmuxSessions.mockReset();
@@ -320,6 +336,56 @@ describe("attach lifecycle", () => {
     await waitFor(() => {
       expect(hookState.attachSession).toHaveBeenCalledWith("two", "gobby");
     });
+  });
+
+  it("applies attach history before the first streamed output and drops stale windows", async () => {
+    const tmux = makeTmuxSession({ name: "one" });
+    hookState = makeHookState({
+      sessionsLoaded: true,
+      sessions: [tmux],
+      attachedTarget: { name: "one", socket: "default" },
+      streamingId: "run-one",
+      onOutput: vi.fn((listener) => {
+        outputListener = listener;
+      }),
+      onAttachHistory: vi.fn((listener) => {
+        historyListener = listener;
+      }),
+    });
+    render(<TerminalTab />);
+
+    await waitFor(() => expect(historyListener).not.toBeNull());
+
+    // A superseded attachment must not paint into the replacement's terminal.
+    act(() =>
+      historyListener?.({
+        streamingId: "run-stale",
+        text: "stale",
+        truncated: false,
+        unavailable: false,
+        droppedBytes: 0,
+        totalBytes: 5,
+      }),
+    );
+    expect(
+      screen.getByRole("status", { name: "Terminal writes" }),
+    ).toHaveTextContent("");
+
+    act(() =>
+      historyListener?.({
+        streamingId: "run-one",
+        text: "older",
+        truncated: true,
+        unavailable: false,
+        droppedBytes: 12,
+        totalBytes: 40,
+      }),
+    );
+    act(() => outputListener?.("run-one", "live"));
+
+    expect(
+      screen.getByRole("status", { name: "Terminal writes" }),
+    ).toHaveTextContent("history(true,false):olderlive");
   });
 
   it("defers focus consumption until a gobby-socket agent row can be joined", async () => {
@@ -481,13 +547,9 @@ describe("ready handshake repaint", () => {
     await user.click(screen.getByRole("button", { name: "Renderer ready" }));
     expect(hookState.resizeTerminal).toHaveBeenCalledTimes(1);
     expect(hookState.resizeTerminal).toHaveBeenLastCalledWith(31, 97);
-    // Output streamed before readiness was dropped, so every ready handshake
-    // must force a full tmux repaint even when the size is already known.
-    expect(hookState.refreshTerminal).toHaveBeenCalledTimes(1);
-    expect(hookState.refreshTerminal).toHaveBeenLastCalledWith(
-      "wide",
-      "default",
-    );
+    // The resize is the activation signal; the daemon owns the repaint that
+    // follows history, so the client never issues one of its own.
+    expect(hookState.refreshTerminal).not.toHaveBeenCalled();
     await waitFor(() => {
       expect(screen.queryByText("Attaching terminal…")).not.toBeInTheDocument();
     });
@@ -505,11 +567,7 @@ describe("ready handshake repaint", () => {
     await user.click(screen.getByRole("button", { name: "Renderer ready" }));
     expect(hookState.resizeTerminal).toHaveBeenCalledTimes(2);
     expect(hookState.resizeTerminal).toHaveBeenLastCalledWith(31, 97);
-    expect(hookState.refreshTerminal).toHaveBeenCalledTimes(2);
-    expect(hookState.refreshTerminal).toHaveBeenLastCalledWith(
-      "wide",
-      "default",
-    );
+    expect(hookState.refreshTerminal).not.toHaveBeenCalled();
   });
 
   it("requires fresh readiness when a reconnect reuses a stream id", async () => {

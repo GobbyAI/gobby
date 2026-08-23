@@ -98,6 +98,7 @@ const terminalHook = {
   sendInput: vi.fn(),
   resizeTerminal: vi.fn(),
   onOutput: vi.fn(),
+  onAttachHistory: vi.fn(),
 };
 
 vi.mock("../../../hooks/useTmuxSessions", () => ({
@@ -139,6 +140,7 @@ vi.mock("../terminal/TerminalView", async () => {
         ReactModule.useImperativeHandle(ref, () => ({
           write: vi.fn(),
           getSize: () => ({ rows: 24, cols: 80 }),
+          applyAttachHistory: vi.fn(),
         }));
         return <div role="log" aria-label="Terminal output (read-only)" />;
       },
