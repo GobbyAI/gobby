@@ -101,6 +101,11 @@ def test_postgres_install_fails_closed_before_compose_up(
     tmp_path: Path,
 ) -> None:
     _protect(monkeypatch)
+    # _install_docker refuses compose work before its guard until a local files_home
+    # exists, and that early return is not a DockerTestProtectError -- so the guard is
+    # only covered when the preflight is satisfied.
+    files_home = tmp_path / "files"
+    files_home.mkdir()
     monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/docker")
     monkeypatch.setattr(postgres_installer, "_sync_postgres_pgsearch_assets", lambda **_kw: None)
     runtime = ComposeRuntime(environment={}, profiles=("postgres",))
@@ -111,7 +116,11 @@ def test_postgres_install_fails_closed_before_compose_up(
     )
 
     with pytest.raises(DockerTestProtectError):
-        postgres_installer._install_docker(gobby_home=tmp_path, port=60891)
+        postgres_installer._install_docker(
+            gobby_home=tmp_path,
+            port=60891,
+            files_home=files_home,
+        )
 
 
 def test_managed_services_compose_up_fails_closed(
