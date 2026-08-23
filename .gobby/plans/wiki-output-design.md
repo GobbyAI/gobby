@@ -242,6 +242,8 @@ Targets:
 - `src/gobby/install/shared/templates/codewiki/manifest.yaml`
 - `src/gobby/install/bundled_content_manifest.json::*` — scope-reason: generated inventory regenerated whole by the manifest generator
 - `src/gobby/cli/installers/shared.py::sync_bundled_content_to_db`
+- `tests/cli/installers/test_shared.py::*` — scope-reason: consumer of `sync_bundled_content_to_db`; re-anchored when that contract changes
+- `tests/e2e/test_stateless_ambient_session.py::*` — scope-reason: consumer of `sync_bundled_content_to_db`; re-anchored when that contract changes
 - `src/gobby/sync/integrity.py::*` — scope-reason: registering the protected `templates` content type spans the module constants and `_content_type_for_shared_relative_path`
 - `tests/sync/test_integrity.py::*` — scope-reason: clean/modified/untracked template states extend the existing integrity suite
 
@@ -1282,6 +1284,7 @@ Targets:
 - `crates/gwiki/src/commands/read.rs::*` — scope-reason: the read entrypoint takes the shared generation lock across path resolution and file read
 - `crates/gwiki/tests/code_wiki_reader_generation.rs`
 - `src/gobby/hooks/event_handlers/_session_start/agents.py::load_wiki_overview`
+- `tests/hooks/event_handlers/test_wiki_overview_seed.py::*` — scope-reason: consumer of `load_wiki_overview`; re-anchored when that contract changes
 - `crates/gwiki/tests/code_wiki_summaries.rs`
 - `tests/hooks/test_wiki_overview_injection.py`
 

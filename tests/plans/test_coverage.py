@@ -156,6 +156,45 @@ def test_closed_serialized_task_record_rejects_deferral(tmp_path: Path) -> None:
     assert report.rows[0].status is CoverageStatus.invalid
 
 
+@pytest.mark.parametrize(
+    ("closed_reason", "expected"),
+    [
+        ("completed", CoverageStatus.deferred),
+        ("already_implemented", CoverageStatus.deferred),
+        ("wont_fix", CoverageStatus.invalid),
+        ("duplicate", CoverageStatus.invalid),
+    ],
+    ids=["completed", "already-implemented", "wont-fix", "duplicate"],
+)
+def test_task_record_carries_close_reason_into_deferral_validation(
+    tmp_path: Path, closed_reason: str, expected: CoverageStatus
+) -> None:
+    """The store must forward `closed_reason`; state alone serializes both cases as "closed"."""
+    plan_path, plan_hash = _deferred_plan(tmp_path)
+
+    report = evaluate(
+        plan=plan_path,
+        plan_id="plan",
+        plan_hash=plan_hash,
+        task_tree=TaskTreeSource.db,
+        root_task_ref="#1",
+        project_id="project",
+        task_records=[
+            {"ref": "#1", "path_cache": "1", "dependencies": ["#999"]},
+            {
+                "ref": "#999",
+                "path_cache": "2.999",
+                "state": {"is_closed": True, "is_escalated": False},
+                "closed_reason": closed_reason,
+                "labels": ["deferred-from:plan:A1"],
+                "validation_criteria": "Follow-up owns A1.1.",
+            },
+        ],
+    )
+
+    assert report.rows[0].status is expected
+
+
 def test_evaluate_reports_covered_missing_invalid_and_deferred() -> None:
     covered = _item("A1.1", "src/covered.py")
     invalid = _item("A1.2", "src/invalid.py")

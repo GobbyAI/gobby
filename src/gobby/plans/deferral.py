@@ -23,6 +23,17 @@ _ACTIVE_TASK_STATES = frozenset(
     {"ready", "in_progress", "needs_review", "review_approved", "escalated"}
 )
 
+# Closure reasons under which the deferral target delivered the obligation it
+# was pointed at. A deferral names work another task owns, so the target
+# finishing is the success case, not a dangling reference: the plan's claim
+# ("this section is covered by #N") became verified rather than stale.
+#
+# Every other closure leaves the obligation unowned and still fails the gate --
+# `wont_fix`, `obsolete`, and `out_of_repo` abandon it, and `duplicate` moves it
+# to a task this plan does not name, so the deferral must be re-pointed. A
+# closed target with no recorded reason fails closed for the same reason.
+_SATISFIED_CLOSE_REASONS = frozenset({"completed", "already_implemented"})
+
 
 @dataclass(frozen=True)
 class DeferralValidationResult:
@@ -54,13 +65,13 @@ def validate_deferral(
         return _result(deferral, section_id, plan_id, "task_missing", "task is missing")
 
     state = _task_state(task)
-    if state not in _ACTIVE_TASK_STATES:
+    if state not in _ACTIVE_TASK_STATES and not _delivered_its_obligation(task):
         return _result(
             deferral,
             section_id,
             plan_id,
             "task_closed",
-            f"task has non-active state {state!r}",
+            f"task has non-active state {state!r} with close reason {_task_closed_reason(task)!r}",
         )
 
     labels = task_store.get_task_labels(task_ref)
@@ -130,6 +141,15 @@ def _result(
 
 def _task_state(task: dict[str, Any]) -> str:
     return str(task.get("state", "")).strip()
+
+
+def _task_closed_reason(task: dict[str, Any]) -> str:
+    value = task.get("closed_reason")
+    return str(value).strip() if value is not None else ""
+
+
+def _delivered_its_obligation(task: dict[str, Any]) -> bool:
+    return _task_closed_reason(task) in _SATISFIED_CLOSE_REASONS
 
 
 def _task_validation_criteria(task: dict[str, Any]) -> str:

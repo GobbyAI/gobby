@@ -68,8 +68,17 @@ def _deferral(
     )
 
 
-def _task(*, state: str = "ready", criteria: str = "Validate src/deferred.py") -> dict[str, Any]:
-    return {"state": state, "validation_criteria": criteria}
+def _task(
+    *,
+    state: str = "ready",
+    criteria: str = "Validate src/deferred.py",
+    closed_reason: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "state": state,
+        "closed_reason": closed_reason,
+        "validation_criteria": criteria,
+    }
 
 
 def _validate(deferral: Deferral, store: TaskStoreProtocol) -> DeferralValidationResult:
@@ -108,6 +117,61 @@ def test_validate_task_closed() -> None:
     assert result.status == "task_closed"
     assert store.label_calls == []
     assert store.dependency_calls == []
+
+
+@pytest.mark.parametrize("closed_reason", ["completed", "already_implemented"])
+def test_validate_closed_target_that_delivered_its_obligation(closed_reason: str) -> None:
+    """A deferral names work another task owns, so that task finishing is the success case."""
+    store = FakeStore(
+        tasks={DEFERRED_TASK_REF: _task(state="closed", closed_reason=closed_reason)},
+        labels={DEFERRED_TASK_REF: [PROVENANCE_LABEL]},
+        dependencies={RECOVERY_EPIC_REF: [DEFERRED_TASK_REF]},
+    )
+
+    result = _validate(_deferral(), store)
+
+    assert result.status == "valid"
+
+
+@pytest.mark.parametrize("closed_reason", ["wont_fix", "obsolete", "out_of_repo", "duplicate"])
+def test_validate_closed_target_that_abandoned_its_obligation(closed_reason: str) -> None:
+    """Abandonment leaves the obligation unowned; `duplicate` moves it to an unnamed task."""
+    store = FakeStore(
+        tasks={DEFERRED_TASK_REF: _task(state="closed", closed_reason=closed_reason)},
+        labels={DEFERRED_TASK_REF: [PROVENANCE_LABEL]},
+        dependencies={RECOVERY_EPIC_REF: [DEFERRED_TASK_REF]},
+    )
+
+    result = _validate(_deferral(), store)
+
+    assert result.status == "task_closed"
+    assert closed_reason in result.detail
+    assert store.label_calls == []
+
+
+def test_validate_closed_target_without_a_recorded_reason_fails_closed() -> None:
+    store = FakeStore(
+        tasks={DEFERRED_TASK_REF: _task(state="closed", closed_reason=None)},
+        labels={DEFERRED_TASK_REF: [PROVENANCE_LABEL]},
+        dependencies={RECOVERY_EPIC_REF: [DEFERRED_TASK_REF]},
+    )
+
+    result = _validate(_deferral(), store)
+
+    assert result.status == "task_closed"
+
+
+def test_validate_delivered_target_still_runs_the_remaining_gates() -> None:
+    """Delivery waives only the open-state gate: provenance and criteria still apply."""
+    store = FakeStore(
+        tasks={DEFERRED_TASK_REF: _task(state="closed", closed_reason="completed")},
+        labels={DEFERRED_TASK_REF: []},
+        dependencies={RECOVERY_EPIC_REF: [DEFERRED_TASK_REF]},
+    )
+
+    result = _validate(_deferral(), store)
+
+    assert result.status == "missing_provenance_label"
 
 
 def test_validate_missing_provenance_label() -> None:

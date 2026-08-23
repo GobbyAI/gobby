@@ -220,8 +220,15 @@ deferral:
     - A7.3
 ```
 
-The referenced task must be open and carry
-`deferred-from:<plan-id>:<section-id>` provenance. A closed task fails the gate.
+The referenced task must carry `deferred-from:<plan-id>:<section-id>` provenance
+and must either be open or have closed with its obligation delivered — closure
+reason `completed` or `already_implemented`. A deferral names work another task
+owns, so that target finishing is the success case: the row stays `deferred` and
+the plan's claim is verified rather than stale. Every other closure leaves the
+obligation unowned and fails the gate — `wont_fix`, `obsolete`, and
+`out_of_repo` abandon it, and `duplicate` moves it to a task this plan does not
+name, so the deferral must be re-pointed at the surviving owner. A closed task
+with no recorded closure reason fails closed.
 
 External prerequisites — work gated on another epic, plan, or task — are never
 expressed as prose blockers or manifest `depends_on` edges; `depends_on` resolves

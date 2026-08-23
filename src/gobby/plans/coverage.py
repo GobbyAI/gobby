@@ -133,6 +133,9 @@ class _TaskRecord:
     parent_ref: str | None = None
     path_cache: str | None = None
     dependencies: tuple[str, ...] = ()
+    # Deferral validation reads this to tell a target that delivered its
+    # obligation from one that was abandoned; both serialize as state "closed".
+    closed_reason: str | None = None
 
 
 class _TaskRecordStore:
@@ -145,6 +148,7 @@ class _TaskRecordStore:
             return None
         return {
             "state": record.state,
+            "closed_reason": record.closed_reason,
             "validation_criteria": record.validation_criteria,
             "labels": list(record.labels),
             "dependencies": list(record.dependencies),
@@ -787,6 +791,7 @@ def _live_task_record(task: Any, task_ref_by_id: Mapping[str, str]) -> _TaskReco
         parent_ref=parent_ref,
         path_cache=task.path_cache,
         dependencies=dependencies,
+        closed_reason=_optional_string(task.closed_reason),
     )
 
 
@@ -813,6 +818,7 @@ def _coerce_task_record(raw: Mapping[str, object]) -> _TaskRecord:
         ),
         path_cache=_optional_string(raw.get("path_cache")),
         dependencies=_dependency_refs(raw.get("dependencies")),
+        closed_reason=_optional_string(raw.get("closed_reason")),
     )
 
 
