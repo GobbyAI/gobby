@@ -158,7 +158,7 @@ def test_transport_without_reasoning_flag_is_rejected(
     assert result.effective_effort is None
 
 
-def test_auto_without_metadata_is_preserved_as_unverified() -> None:
+def test_auto_without_metadata_omits_effort() -> None:
     result = resolve_spawn_reasoning(
         provider="droid",
         model="gpt-5.4",
@@ -167,12 +167,12 @@ def test_auto_without_metadata_is_preserved_as_unverified() -> None:
     )
 
     assert result.requested_effort == "auto"
-    assert result.status == "unverified"
+    assert result.status == "applied"
     assert result.effective_effort is None
     assert result.reasoning_required is True
 
 
-def test_spawn_auto_persists_concrete_native_default(
+def test_spawn_auto_omits_effort_despite_native_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -189,8 +189,29 @@ def test_spawn_auto_persists_concrete_native_default(
     )
 
     assert result.requested_effort == "auto"
-    assert result.effective_effort == "medium"
+    assert result.effective_effort is None
     assert result.status == "applied"
+
+
+def test_spawn_auto_is_applied_on_provider_without_reasoning_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        reasoning,
+        "_get_capability_resolver",
+        lambda: _resolver("qwen", "qwen3-coder"),
+    )
+
+    result = resolve_spawn_reasoning(
+        provider="qwen",
+        model="qwen3-coder",
+        requested_effort="auto",
+        reasoning_required=False,
+    )
+
+    assert result.status == "applied"
+    assert result.effective_effort is None
+    assert result.message is None
 
 
 def test_none_reasoning_request_skips_resolution() -> None:

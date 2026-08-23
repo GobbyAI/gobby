@@ -171,36 +171,24 @@ class CapabilityResolver:
         *,
         transport_supports_effort: bool,
     ) -> ReasoningResolution:
-        """Resolve unset, automatic, and explicitly pinned reasoning efforts."""
+        """Resolve unset, automatic (omitted), and explicitly pinned reasoning efforts."""
         if effort is None:
             return ReasoningResolution(None, None, ReasoningStatus.VERIFIED, None)
 
         requested = effort.strip().lower()
         if not requested:
             return ReasoningResolution(None, None, ReasoningStatus.VERIFIED, None)
+        if requested == "auto":
+            # ``auto`` omits the effort entirely so the provider's own default
+            # applies. Every transport and model accepts an omitted effort, so
+            # there is nothing to look up or verify.
+            return ReasoningResolution(requested, None, ReasoningStatus.VERIFIED, None)
 
         capability = self._find_model(provider, model)
         if capability is not None and capability.reasoning is ReasoningSupport.UNSUPPORTED:
-            if requested == "auto":
-                return ReasoningResolution(requested, None, ReasoningStatus.VERIFIED, None)
             return self._reject_reasoning(requested, "model does not support reasoning effort")
         if not transport_supports_effort:
             return self._reject_reasoning(requested, "transport does not support reasoning effort")
-
-        if requested == "auto":
-            if (
-                capability is not None
-                and capability.reasoning is ReasoningSupport.KNOWN
-                and capability.default_effort is not None
-            ):
-                default_effort = capability.default_effort.strip().lower()
-                return ReasoningResolution(
-                    requested,
-                    None if default_effort == "none" else default_effort,
-                    ReasoningStatus.VERIFIED,
-                    None,
-                )
-            return self._resolve_openrouter_auto(provider, model)
 
         if capability is not None and capability.reasoning is ReasoningSupport.KNOWN:
             supported_efforts = capability.supported_efforts
@@ -211,26 +199,6 @@ class CapabilityResolver:
                     )
                 return ReasoningResolution(requested, requested, ReasoningStatus.VERIFIED, None)
         return self._resolve_openrouter_pin(provider, model, requested)
-
-    def _resolve_openrouter_auto(self, provider: str, model: str) -> ReasoningResolution:
-        metadata = self._find_reasoning_metadata(provider, model)
-        if metadata is None or metadata.reasoning_present is None:
-            return ReasoningResolution("auto", None, ReasoningStatus.UNVERIFIED, None)
-        if metadata.reasoning_present is False:
-            return ReasoningResolution("auto", None, ReasoningStatus.VERIFIED, None)
-
-        default_effort = metadata.reasoning_default_effort
-        if default_effort is not None:
-            default_effort = default_effort.strip().lower()
-        if metadata.reasoning_mandatory is True:
-            if default_effort and default_effort != "none":
-                return ReasoningResolution("auto", default_effort, ReasoningStatus.VERIFIED, None)
-            return ReasoningResolution("auto", None, ReasoningStatus.UNVERIFIED, None)
-        if metadata.reasoning_default_enabled is False or default_effort == "none":
-            return ReasoningResolution("auto", None, ReasoningStatus.VERIFIED, None)
-        if default_effort:
-            return ReasoningResolution("auto", default_effort, ReasoningStatus.VERIFIED, None)
-        return ReasoningResolution("auto", None, ReasoningStatus.UNVERIFIED, None)
 
     def _resolve_openrouter_pin(
         self, provider: str, model: str, requested: str

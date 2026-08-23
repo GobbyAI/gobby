@@ -64,10 +64,10 @@ def resolve_binding_reasoning(
         }
         or provider_reasoning_flag(reasoning_provider) is not None
     )
-    if not transport_supports_effort and normalized == AUTO_REASONING_EFFORT:
-        return ReasoningResolution(normalized, None, ReasoningStatus.UNVERIFIED, None)
     effective_resolver = resolver or _app_resolver()
     if effective_resolver is None:
+        if normalized == AUTO_REASONING_EFFORT:
+            return ReasoningResolution(normalized, None, ReasoningStatus.VERIFIED, None)
         if not transport_supports_effort:
             return ReasoningResolution(
                 normalized,
@@ -75,12 +75,7 @@ def resolve_binding_reasoning(
                 ReasoningStatus.REJECTED,
                 "transport does not support reasoning effort",
             )
-        return ReasoningResolution(
-            normalized,
-            None if normalized == AUTO_REASONING_EFFORT else normalized,
-            ReasoningStatus.UNVERIFIED,
-            None,
-        )
+        return ReasoningResolution(normalized, normalized, ReasoningStatus.UNVERIFIED, None)
     return effective_resolver.resolve_reasoning(
         reasoning_provider,
         model,

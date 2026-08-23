@@ -18,6 +18,7 @@ from gobby.providers.capabilities.models import (
 from gobby.providers.capabilities.resolve import (
     CapabilityResolver,
     ContextSource,
+    ReasoningResolution,
     ReasoningStatus,
     SpeedStatus,
 )
@@ -267,7 +268,7 @@ def test_unset_reasoning_returns_without_capability_or_metadata_lookup() -> None
     assert result.status is ReasoningStatus.VERIFIED
 
 
-def test_auto_prefers_native_default_and_accepts_native_alias() -> None:
+def test_auto_omits_effort_despite_native_default() -> None:
     metadata = ModelMetadata(
         reasoning_present=True,
         reasoning_supported_efforts=("low", "medium", "high"),
@@ -284,17 +285,16 @@ def test_auto_prefers_native_default_and_accepts_native_alias() -> None:
         "provider", "model-latest", "auto", transport_supports_effort=True
     )
 
-    assert result.effective_effort == "high"
-    assert result.status is ReasoningStatus.VERIFIED
+    assert result == ReasoningResolution("auto", None, ReasoningStatus.VERIFIED, None)
 
 
-def test_auto_falls_back_to_openrouter_default_through_provider_alias() -> None:
+def test_auto_omits_effort_despite_openrouter_default_through_provider_alias() -> None:
     metadata = ModelMetadata(
         reasoning_present=True,
         reasoning_supported_efforts=("low", "medium", "high"),
         reasoning_default_effort="medium",
         reasoning_default_enabled=True,
-        reasoning_mandatory=False,
+        reasoning_mandatory=True,
     )
     resolver = CapabilityResolver(
         _CapabilityStore(_snapshot(reasoning=ReasoningSupport.UNKNOWN, default_effort=None)),
@@ -310,42 +310,36 @@ def test_auto_falls_back_to_openrouter_default_through_provider_alias() -> None:
 
     result = resolver.resolve_reasoning("provider", "model", "auto", transport_supports_effort=True)
 
-    assert result.effective_effort == "medium"
-    assert result.status is ReasoningStatus.VERIFIED
+    assert result == ReasoningResolution("auto", None, ReasoningStatus.VERIFIED, None)
 
 
-def test_auto_missing_metadata_is_unverified_and_omits_override() -> None:
+def test_auto_is_verified_without_capability_or_metadata_lookup() -> None:
+    class _NoLookupCapabilityStore:
+        def get_provider_snapshot(self, provider: str) -> ProviderSnapshot | None:
+            raise AssertionError("auto reasoning must not inspect provider defaults")
+
+    class _NoLookupMetadataStore:
+        def get_context_window(self, model: str) -> int | None:
+            raise AssertionError("unused")
+
+        def get_model_metadata(self, model: str) -> ModelMetadata | None:
+            raise AssertionError("auto reasoning must not inspect OpenRouter metadata")
+
     result = CapabilityResolver(
-        _CapabilityStore(None),
+        _NoLookupCapabilityStore(),
+        _NoLookupMetadataStore(),
+    ).resolve_reasoning("provider", "model", " Auto ", transport_supports_effort=True)
+
+    assert result == ReasoningResolution("auto", None, ReasoningStatus.VERIFIED, None)
+
+
+def test_auto_is_accepted_when_transport_has_no_effort_flag() -> None:
+    result = CapabilityResolver(
+        _CapabilityStore(_snapshot()),
         _ModelMetadataStore(None),
-    ).resolve_reasoning("provider", "model", "auto", transport_supports_effort=True)
+    ).resolve_reasoning("provider", "model", "auto", transport_supports_effort=False)
 
-    assert result.requested_effort == "auto"
-    assert result.effective_effort is None
-    assert result.status is ReasoningStatus.UNVERIFIED
-
-
-def test_auto_disabled_defaults_are_verified_without_override() -> None:
-    for metadata in (
-        ModelMetadata(reasoning_present=False),
-        ModelMetadata(
-            reasoning_present=True,
-            reasoning_default_effort="none",
-            reasoning_default_enabled=True,
-        ),
-        ModelMetadata(
-            reasoning_present=True,
-            reasoning_default_effort="medium",
-            reasoning_default_enabled=False,
-        ),
-    ):
-        result = CapabilityResolver(
-            _CapabilityStore(None),
-            _ModelMetadataStore(None, {"model": metadata}),
-        ).resolve_reasoning("provider", "model", "auto", transport_supports_effort=True)
-
-        assert result.effective_effort is None
-        assert result.status is ReasoningStatus.VERIFIED
+    assert result == ReasoningResolution("auto", None, ReasoningStatus.VERIFIED, None)
 
 
 def test_native_unsupported_reasoning_is_authoritative() -> None:

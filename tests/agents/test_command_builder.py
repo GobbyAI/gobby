@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from gobby.agents.reasoning import resolve_spawn_reasoning
 from gobby.agents.spawners.command_builder import build_cli_command
 from gobby.ai.codex_endpoint import CODEX_ENDPOINT_API_KEY_ENV
 from gobby.config.app import DaemonConfig
@@ -159,3 +160,27 @@ async def test_vllm_spawn_env_key_transport() -> None:
     assert studio.codex_oss_provider == "lmstudio"
     assert studio.codex_config_overrides == ()
     assert studio_cmd[:4] == ["codex", "--oss", "--local-provider", "lmstudio"]
+
+
+def test_spawn_auto_reasoning_emits_no_effort_flag() -> None:
+    resolution = resolve_spawn_reasoning(
+        provider="codex",
+        model="gpt-5.6-luna",
+        requested_effort="auto",
+        reasoning_required=False,
+    )
+    assert resolution.effective_effort is None
+
+    cmd, _env = build_cli_command(
+        "codex",
+        prompt="hello",
+        reasoning_effort=resolution.effective_effort,
+    )
+    assert "model_reasoning_effort" not in " ".join(cmd)
+
+    pinned_cmd, _pinned_env = build_cli_command(
+        "codex",
+        prompt="hello",
+        reasoning_effort="high",
+    )
+    assert 'model_reasoning_effort="high"' in " ".join(pinned_cmd)

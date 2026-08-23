@@ -1446,7 +1446,7 @@ async def test_text_generation_service_profile_only_expands_profile_defaults() -
 
 
 @pytest.mark.asyncio
-async def test_feature_low_auto_resolves_luna_to_medium(
+async def test_feature_low_auto_reaches_adapter_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class _Resolver:
@@ -1464,7 +1464,7 @@ async def test_feature_low_auto_resolves_luna_to_medium(
                 "auto",
                 True,
             )
-            return ReasoningResolution("auto", "medium", ReasoningStatus.VERIFIED, None)
+            return ReasoningResolution("auto", None, ReasoningStatus.VERIFIED, None)
 
     monkeypatch.setattr(
         "gobby.app_context.get_app_context",
@@ -1488,8 +1488,8 @@ async def test_feature_low_auto_resolves_luna_to_medium(
         TextGenerationRequest(prompt="summarize", profile=FeatureProfile.LOW.value)
     )
 
-    assert result.applied_reasoning_effort == "medium"
-    assert codex.requests[0].reasoning_effort == "medium"
+    assert result.applied_reasoning_effort is None
+    assert codex.requests[0].reasoning_effort is None
 
 
 @pytest.mark.asyncio

@@ -56,18 +56,18 @@ class TestResolveWebChatReasoning:
         ):
             assert _resolve_web_chat_reasoning("codex", "gpt-5.6-luna", None) is None
 
-    def test_auto_returns_concrete_effort(self) -> None:
+    def test_auto_omits_effort(self) -> None:
         resolver = MagicMock(spec=CapabilityResolver)
         resolver.resolve_reasoning.return_value = ReasoningResolution(
             "auto",
-            "medium",
+            None,
             ReasoningStatus.VERIFIED,
             None,
         )
         with patch("gobby.agents.reasoning._get_capability_resolver", return_value=resolver):
             result = _resolve_web_chat_reasoning("codex", "gpt-5.6-luna", "auto")
 
-        assert result == "medium"
+        assert result is None
         resolver.resolve_reasoning.assert_called_once_with(
             "codex",
             "gpt-5.6-luna",
@@ -283,7 +283,20 @@ class TestCreateChatSessionInner:
             mock_session.start.assert_awaited_once_with(model="opus")
 
     @pytest.mark.asyncio
-    async def test_resolves_reasoning_before_runtime_backend(self, mixin: DummyMixin) -> None:
+    @pytest.mark.parametrize(
+        ("requested", "backend_effort", "session_effort"),
+        [
+            ("auto", None, "unset"),
+            ("high", "high", "high"),
+        ],
+    )
+    async def test_resolves_reasoning_before_runtime_backend(
+        self,
+        mixin: DummyMixin,
+        requested: str,
+        backend_effort: str | None,
+        session_effort: str,
+    ) -> None:
         mock_session = AsyncMock()
         mock_session.provider = "codex"
         mock_session.chat_mode = "code"
@@ -293,28 +306,26 @@ class TestCreateChatSessionInner:
         mock_session.project_id = None
         mock_session.system_prompt_override = None
         mock_session.model = "gpt-5.6-luna"
+        mock_session.reasoning_effort = "unset"
         mixin.web_chat_runtime_manager = MagicMock()
         mixin.web_chat_runtime_manager.create_session.return_value = mock_session
         mixin._fire_lifecycle = AsyncMock()
 
-        with patch(
-            "gobby.servers.websocket.chat._session._resolve_web_chat_reasoning",
-            return_value="medium",
-        ) as resolve:
-            await mixin._create_chat_session_inner(
-                "conv-auto",
-                model="gpt-5.6-luna",
-                provider="codex",
-                reasoning_effort="auto",
-            )
-
-        resolve.assert_called_once_with("codex", "gpt-5.6-luna", "auto")
-        mixin.web_chat_runtime_manager.create_session.assert_called_once_with(
-            provider="codex",
-            conversation_id="conv-auto",
+        session = await mixin._create_chat_session_inner(
+            "conv-auto",
             model="gpt-5.6-luna",
-            reasoning_effort="medium",
+            provider="codex",
+            reasoning_effort=requested,
         )
+
+        assert session is mock_session
+        assert session.reasoning_effort == session_effort
+        assert mixin.web_chat_runtime_manager.create_session.call_args.kwargs == {
+            "provider": "codex",
+            "conversation_id": "conv-auto",
+            "model": "gpt-5.6-luna",
+            "reasoning_effort": backend_effort,
+        }
 
     @pytest.mark.asyncio
     async def test_create_chat_session_registers_in_shared_registry(

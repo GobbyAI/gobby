@@ -172,7 +172,7 @@ class _ReasoningResolver:
             "auto",
             True,
         )
-        return ReasoningResolution("auto", "medium", ReasoningStatus.VERIFIED, None)
+        return ReasoningResolution("auto", None, ReasoningStatus.VERIFIED, None)
 
     def resolve_route(
         self,
@@ -213,7 +213,7 @@ async def test_llm_provider_candidate_dispatches_to_llm_provider_adapter() -> No
 
 
 @pytest.mark.asyncio
-async def test_tool_chat_resolves_auto_before_adapter() -> None:
+async def test_tool_chat_auto_reasoning_reaches_adapter_unset() -> None:
     llm = _RecordingAdapter("llm_provider")
     service = ToolChatService(
         _registry(),
@@ -227,7 +227,7 @@ async def test_tool_chat_resolves_auto_before_adapter() -> None:
         )
     )
 
-    assert llm.requests[0].reasoning_effort == "medium"
+    assert llm.requests[0].reasoning_effort is None
 
 
 @pytest.mark.asyncio
