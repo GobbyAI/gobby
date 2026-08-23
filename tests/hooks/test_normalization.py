@@ -480,6 +480,27 @@ class TestToolOutputNormalization:
         result = normalize_mcp_fields(data)
         assert result["tool_output"] == "[1, 2, 3]"
 
+    def test_bare_content_block_list_parsed_to_payload(self) -> None:
+        """Native MCP hooks can send tool_response as a bare content-block list."""
+        data = {
+            "tool_response": [
+                {
+                    "type": "text",
+                    "text": '{"success": true, "result": {"closed": true, "ref": "#42"}}',
+                }
+            ],
+        }
+        result = normalize_mcp_fields(data)
+        assert result["tool_output"] == {
+            "success": True,
+            "result": {"closed": True, "ref": "#42"},
+        }
+
+    def test_bare_content_block_list_without_json_text_left_as_list(self) -> None:
+        data = {"tool_response": [{"type": "text", "text": "plain text, not JSON"}]}
+        result = normalize_mcp_fields(data)
+        assert result["tool_output"] == [{"type": "text", "text": "plain text, not JSON"}]
+
 
 class TestCombinedNormalization:
     """Tests verifying all normalizations work together."""

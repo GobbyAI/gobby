@@ -74,8 +74,10 @@ labels, or writing expanded validation criteria.
 - Fix every error, warning, test failure, lint failure, and type error encountered.
 - A defect outside the claimed task's scope: `create_task` with `claim=true`
   and fix it in this session. Asking the user whether to fix is prohibited;
-  deferral is only by explicit user order or when the surface belongs to an
-  unlanded epic or another session (file the task naming that owner).
+  deferral is only by explicit user order, when the surface belongs to an
+  unlanded epic or another session (file the task naming that owner), or when
+  the fix would touch another session's uncommitted files (message the owner
+  instead — see the shared-worktree exclusion).
 - Never run the full test suite unless the user explicitly requests it.
 - Check current and projected line counts before touching applicable production
   source. Exactly 1,000 lines violates the ceiling. Load `decompose-monolith`

@@ -66,6 +66,18 @@ def _unwrap_mcp_tool_output(
 ) -> Any:
     if _depth >= _max_depth:
         return tool_output
+    if isinstance(tool_output, list):
+        # Native MCP hooks can deliver tool_response as a bare content-block
+        # list; parse it so rules never see a raw list where they expect the
+        # semantic payload.
+        parsed_blocks = _extract_mcp_content_object(tool_output)
+        if parsed_blocks is not None:
+            return _unwrap_mcp_tool_output(
+                parsed_blocks,
+                _depth=_depth + 1,
+                _max_depth=_max_depth,
+            )
+        return tool_output
     if not isinstance(tool_output, dict):
         return tool_output
 
