@@ -12,6 +12,7 @@ import pytest
 
 from gobby.config.validation_detection import default_validation_detection_config
 from gobby.storage.session_models import Session
+from gobby.tasks import transcript_evidence
 from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.transcript_evidence import (
     TranscriptEdit,
@@ -901,3 +902,163 @@ def test_merge_orders_cross_session_evidence() -> None:
     ]
     assert merged.sessions == ("session-2", "session-1")
     assert merged.attempted_paths == ("/two", "/one")
+
+
+# ---------------------------------------------------------------------------
+# A shell reports the status of the LAST element of a list or pipeline, so
+# `pytest ... | tail`, `pytest ... ; echo`, and `pytest ... && other` record a
+# zero status for a genuinely failing run. For those compound segments the
+# runner's own terminal summary decides the outcome instead.
+# ---------------------------------------------------------------------------
+
+# Verbatim tail of a real red pytest run whose exit code a trailing `echo` zeroed.
+_RED_PYTEST_OUTPUT = (
+    "tests/memory/test_search_ranking.py ................FFFFF                [100%]\n"
+    "=========================== short test summary info ============================\n"
+    "FAILED tests/memory/test_search_ranking.py::test_embed_text_absent_preserves_yake_path\n"
+    "========================= 5 failed, 16 passed in 0.30s =========================\n"
+    "EXIT=0\n"
+)
+
+_RUNNER_FAILURE_OUTPUTS = [
+    pytest.param(_RED_PYTEST_OUTPUT, id="pytest-counted-summary"),
+    pytest.param("===== 178 errors in 4.90s =====", id="pytest-collection-errors"),
+    pytest.param("ERROR tests/x.py::test_y\nFAILED tests/x.py::test_z", id="pytest-summary-lines"),
+    pytest.param("test result: FAILED. 1 passed; 1 failed; 0 ignored", id="cargo"),
+    pytest.param("--- FAIL: TestThing (0.00s)\nFAIL\tgithub.com/a/b\t0.1s", id="go"),
+    pytest.param("Found 2 errors in 1 file (checked 3 source files)", id="mypy"),
+    pytest.param("Tests  3 failed | 5 passed (8)", id="vitest"),
+]
+
+_CLEAN_OUTPUTS = [
+    pytest.param("21 passed in 0.13s", id="passing"),
+    pytest.param("1208 passed, 64 deselected in 32.47s", id="passing-with-deselect"),
+    pytest.param("0 failed, 5 passed in 0.10s", id="zero-failed"),
+    pytest.param("3 passed, 1 xfailed, 2 warnings in 0.20s", id="xfailed"),
+    pytest.param("Success: no issues found in 1830 source files", id="mypy-clean"),
+    pytest.param("New errors: 0\nFailing new errors >= high: 0", id="ratchet-clean"),
+    pytest.param("All checks passed!", id="ruff-clean"),
+]
+
+
+@pytest.mark.parametrize("output", _RUNNER_FAILURE_OUTPUTS)
+def test_compound_zero_exit_yields_failure_when_the_runner_reported_failures(
+    output: str,
+) -> None:
+    """A.1: aggregate shell status cannot prove a compound segment passed."""
+    outcome, exit_code, unknown_reason = transcript_evidence._extract_outcome(
+        {"exit_code": 0, "stdout": output},
+        output,
+        aggregate_status_is_trustworthy=False,
+    )
+
+    assert outcome == "failure"
+    assert exit_code == 0
+    assert unknown_reason is None
+
+
+@pytest.mark.parametrize("output", _RUNNER_FAILURE_OUTPUTS)
+def test_compound_provider_success_is_also_overridden(output: str) -> None:
+    """A.1: the provider `success`/`is_error` fallbacks lie the same way as `$?`."""
+    outcome, _exit_code, _reason = transcript_evidence._extract_outcome(
+        {"success": True, "stdout": output},
+        output,
+        aggregate_status_is_trustworthy=False,
+    )
+
+    assert outcome == "failure"
+
+
+@pytest.mark.parametrize("output", _CLEAN_OUTPUTS)
+def test_clean_run_output_is_not_misread_as_failure(output: str) -> None:
+    """A.2: nothing else changes.
+
+    Clean output stays a success even for a compound segment, and a non-compound
+    run's recorded exit code stays authoritative whatever the output says.
+    """
+    compound, _code, _reason = transcript_evidence._extract_outcome(
+        {"exit_code": 0, "stdout": output},
+        output,
+        aggregate_status_is_trustworthy=False,
+    )
+    assert compound == "success"
+
+    plain, _code, _reason = transcript_evidence._extract_outcome(
+        {"exit_code": 0, "stdout": _RED_PYTEST_OUTPUT},
+        _RED_PYTEST_OUTPUT,
+        aggregate_status_is_trustworthy=True,
+    )
+    assert plain == "success"
+
+
+def test_nonzero_exit_stays_a_failure_however_clean_the_output() -> None:
+    """A.4: the new rule only ever adds failures, never removes one."""
+    for trustworthy in (True, False):
+        outcome, exit_code, _reason = transcript_evidence._extract_outcome(
+            {"exit_code": 1, "stdout": "21 passed in 0.13s"},
+            "21 passed in 0.13s",
+            aggregate_status_is_trustworthy=trustworthy,
+        )
+        assert (outcome, exit_code) == ("failure", 1)
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        pytest.param(' 2>&1; echo "EXIT=$?"', id="trailing-echo"),
+        pytest.param(" 2>&1 | tail -20", id="pipe-to-tail"),
+        pytest.param(" && echo done", id="and-then"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_wrapper_zeroed_exit_code_still_yields_a_failure_run(
+    tmp_path: Path,
+    suffix: str,
+) -> None:
+    """A.3: the end-to-end derivation stops filing wrapper-zeroed reds as passes."""
+    transcript = tmp_path / "zeroed.jsonl"
+    _write_jsonl(
+        transcript,
+        _claude_tool_pair(
+            command=f"GOBBY_TEST_PROTECT=1 uv run pytest tests/memory/test_search_ranking.py -q{suffix}",
+            call_id="red-1",
+            start=BASE_TIME,
+            result={"exit_code": 0, "stdout": _RED_PYTEST_OUTPUT},
+        ),
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [(run.outcome, run.exit_code) for run in evidence.validation_runs] == [("failure", 0)]
+    assert evidence.degraded_capabilities == ()
+
+
+@pytest.mark.asyncio
+async def test_uncompounded_passing_run_is_still_a_success(tmp_path: Path) -> None:
+    """The overwhelmingly common shape keeps its byte-for-byte previous behavior."""
+    transcript = tmp_path / "plain.jsonl"
+    _write_jsonl(
+        transcript,
+        _claude_tool_pair(
+            command="GOBBY_TEST_PROTECT=1 uv run pytest tests/memory/test_search_ranking.py -q",
+            call_id="green-1",
+            start=BASE_TIME,
+            result={"exit_code": 0, "stdout": "21 passed in 0.13s"},
+        ),
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [(run.outcome, run.exit_code) for run in evidence.validation_runs] == [("success", 0)]

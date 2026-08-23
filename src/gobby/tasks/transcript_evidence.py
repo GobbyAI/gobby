@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -48,6 +49,22 @@ _EXIT_CODE_KEYS = ("exit_code", "exitCode")
 _SUCCESS_STATUSES = {"completed", "ok", "passed", "success", "succeeded"}
 _FAILURE_STATUSES = {"error", "failed", "failure"}
 _OUTPUT_CHAR_LIMIT = 16_000
+
+# Terminal summaries that prove the runner itself reported failures. Consulted only
+# when the shell's aggregate status cannot speak for the matched segment; see
+# `_extract_outcome`.
+_RUNNER_FAILURE_PATTERNS = (
+    # Counted summaries: pytest's "5 failed, 16 passed" and "178 errors in 4.90s",
+    # vitest/jest's "Tests  3 failed | 5 passed", mypy's "Found 2 errors in 1 file",
+    # ruff's "Found 3 errors.". The [1-9] guard keeps "0 failed" and "0 errors" out,
+    # and requiring the word immediately after the count keeps "1 xfailed" out.
+    re.compile(r"\b[1-9]\d*\s+(?:failed|failures?|errors?)\b", re.IGNORECASE),
+    # Per-test failure lines: pytest's "FAILED path::test" and "ERROR path::test",
+    # go's "--- FAIL: TestX" and "FAIL\tpkg\t0.1s", cargo's "test result: FAILED.".
+    re.compile(
+        r"(?m)^\s*(?:FAILED\s+\S|ERROR\s+\S+::|---\s+FAIL:|FAIL\s+\S|test result:\s*FAILED\b)"
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -411,8 +428,12 @@ def _record_validation_run(
     match = classify_validation_command(command, state.detection_config)
     if match is None:
         return
-    outcome, exit_code, unknown_reason = _extract_outcome(result)
     output, output_truncated = _extract_output(result)
+    outcome, exit_code, unknown_reason = _extract_outcome(
+        result,
+        output,
+        aggregate_status_is_trustworthy=not match.is_compound,
+    )
     if outcome == "unknown":
         state.degraded.append(
             f"{source_label} lacks a definitive exit outcome for {match.label}; "
@@ -520,7 +541,25 @@ def _extract_command(arguments: dict[str, Any]) -> str:
     return ""
 
 
-def _extract_outcome(result: Any) -> tuple[EvidenceOutcome, int | None, str | None]:
+def _extract_outcome(
+    result: Any,
+    output: str | None = None,
+    *,
+    aggregate_status_is_trustworthy: bool = True,
+) -> tuple[EvidenceOutcome, int | None, str | None]:
+    """Classify one shell result as a validation pass, failure, or unknown.
+
+    A shell reports the status of the LAST element of a list or pipeline, so
+    ``pytest ... | tail``, ``pytest ... ; echo``, and ``pytest ... && other`` all
+    record a zero status for a genuinely failing run — which is how a real red
+    gets filed as a pass. Pass ``aggregate_status_is_trustworthy=False`` for a
+    compound match (``ValidationCommandMatch.is_compound``); the runner's own
+    terminal summary then decides, because the aggregate status cannot prove the
+    matched segment passed. A non-compound run keeps its recorded status verbatim.
+    """
+    if not aggregate_status_is_trustworthy and _runner_reported_failures(output):
+        return "failure", _find_exit_code(result), None
+
     exit_code = _find_exit_code(result)
     if exit_code is not None:
         return ("success" if exit_code == 0 else "failure"), exit_code, None
@@ -554,6 +593,13 @@ def _extract_outcome(result: Any) -> tuple[EvidenceOutcome, int | None, str | No
                 unknown_reason = reason
                 break
     return "unknown", None, unknown_reason or "missing definitive provider outcome"
+
+
+def _runner_reported_failures(output: str | None) -> bool:
+    """Return whether command output carries a runner's own failure summary."""
+    if not output:
+        return False
+    return any(pattern.search(output) for pattern in _RUNNER_FAILURE_PATTERNS)
 
 
 def _find_exit_code(result: Any) -> int | None:

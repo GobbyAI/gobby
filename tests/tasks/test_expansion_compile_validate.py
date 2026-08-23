@@ -249,7 +249,9 @@ def test_validate_plan_file_accepts_canonical_phase_form(
     assert result["phase_count"] >= 1
     assert result["deliverable_count"] >= 1
     assert 1 in result["phases"]
-    assert result["warnings"] == []
+    # No project_context, so #20706's production-size-growth lint reports itself
+    # skipped. That one warning is expected here; anything else is not.
+    assert result["warnings"] == ["production-size-growth skipped: no project root"]
 
 
 @pytest.mark.parametrize(
