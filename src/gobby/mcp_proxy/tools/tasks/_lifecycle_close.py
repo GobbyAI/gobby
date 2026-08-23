@@ -51,7 +51,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
 )
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.mcp_proxy.tools.tasks._task_scope import evaluate_task_scope
-from gobby.storage.tasks import TaskNotFoundError
+from gobby.storage.tasks import Task, TaskNotFoundError
 from gobby.tasks.acceptance_artifacts import (
     evaluate_acceptance_artifacts,
     render_acceptance_test_bodies,
@@ -67,6 +67,13 @@ from gobby.tasks.transcript_evidence import (
     TranscriptEvidenceUnavailable,
 )
 from gobby.tasks.validation import NO_WORK_CLOSE_REASONS
+
+_DELIBERATE_CLOSE_SKIP = "Skipped for a justified deliberate close of an escalated task."
+
+
+def _is_deliberate_close(task: Task, override_justification: str | None) -> bool:
+    """Whether a human has explicitly decided this escalated task closes."""
+    return task.is_escalated and bool((override_justification or "").strip())
 
 
 def _apply_escalated_close_gate(
@@ -88,12 +95,7 @@ def _apply_escalated_close_gate(
         )
         return
     evaluation.validation_reset_reason = "escalated_deliberate_close"
-    evaluation.pass_gate(
-        14,
-        "criteria_review",
-        "Skipped for a justified deliberate close of an escalated task.",
-        skipped=True,
-    )
+    evaluation.pass_gate(14, "criteria_review", _DELIBERATE_CLOSE_SKIP, skipped=True)
 
 
 async def _evaluate_close(
@@ -498,7 +500,12 @@ async def _evaluate_close(
 
         tdd = evaluate_tdd_evidence(artifacts.tests, transcript)
         tdd_details = tdd.details()
-        if not tdd.passed:
+        # Gate 12 and gate 14 both ask whether the loop was followed rather than
+        # whether the deliverable is sound, so a justified deliberate close waives
+        # them together. The delivery gates above stay hard: a waived close still
+        # proves the work is committed, in scope, clean, and validated.
+        waive_tdd = not tdd.passed and _is_deliberate_close(task, override_justification)
+        if not tdd.passed and not waive_tdd:
             return evaluation.fail(
                 12,
                 "tdd_evidence",
@@ -510,9 +517,11 @@ async def _evaluate_close(
         evaluation.pass_gate(
             12,
             "tdd_evidence",
-            "Every named acceptance test has assertion-backed red and later green evidence.",
+            _DELIBERATE_CLOSE_SKIP
+            if waive_tdd
+            else "Every named acceptance test has assertion-backed red and later green evidence.",
             details=tdd_details,
-            skipped=tdd.skipped,
+            skipped=tdd.skipped or waive_tdd,
         )
 
         guards = await evaluate_epic_guards(
