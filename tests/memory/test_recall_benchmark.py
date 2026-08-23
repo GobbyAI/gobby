@@ -65,12 +65,9 @@ from gobby.memory.recall_fit import (
     replay_row_from_signal_row,
     split_request_ids_per_project,
 )
-from gobby.memory.recall_refit import (
-    GateCohort,
-    build_ship_audit_sample,
-    run_ship_gate_from_store,
-    static_replay_params,
-)
+from gobby.memory.recall_refit import static_replay_params
+from gobby.memory.recall_ship_gate import GateCohort, build_ship_audit_sample
+from gobby.memory.recall_ship_gate_run import run_ship_gate_from_store
 from gobby.memory.services.knowledge_graph import writer as writer_mod
 from gobby.memory.services.knowledge_graph.service import KnowledgeGraphService
 from gobby.memory.shadow_relevance import SHADOW_PROTOCOL_VERSION
@@ -351,6 +348,7 @@ def _seed_shadow_gate_rows(store: RecallSignalStore) -> GateCohort:
             request_id,
             label_source=_SHADOW_LABEL_SOURCE,
             judge_protocol_version=SHADOW_PROTOCOL_VERSION,
+            query_construction_version=None,
         )
         assert claim_token is not None
         presented = [
@@ -415,6 +413,7 @@ def _seed_shadow_gate_rows(store: RecallSignalStore) -> GateCohort:
         "fitting",
         label_source=cohort.label_source,
         judge_protocol_version=cohort.judge_protocol_version,
+        query_construction_version=cohort.query_construction_version,
         judge_model_key=cohort.judge_model_key,
         judge_config_fingerprint=cohort.judge_config_fingerprint,
         weighting_regime_key=cohort.weighting_regime_key,
@@ -435,6 +434,7 @@ def _seed_shadow_gate_rows(store: RecallSignalStore) -> GateCohort:
         label_source=cohort.label_source,
         candidate_scope=cohort.candidate_scope,
         judge_protocol_version=cohort.judge_protocol_version,
+        query_construction_version=cohort.query_construction_version,
         weighting_regime_key=cohort.weighting_regime_key,
         judge_model_key=cohort.judge_model_key,
         judge_config_fingerprint=cohort.judge_config_fingerprint,
@@ -734,6 +734,7 @@ def test_recall_benchmark_labeled_fit(temp_db: HubDatabase) -> None:
         "label_source": cohort.label_source,
         "candidate_scope": cohort.candidate_scope,
         "judge_protocol_version": cohort.judge_protocol_version,
+        "query_construction_version": cohort.query_construction_version,
         "weighting_regime_key": cohort.weighting_regime_key,
         "judge_model_key": cohort.judge_model_key,
         "judge_config_fingerprint": cohort.judge_config_fingerprint,

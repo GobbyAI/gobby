@@ -16,22 +16,24 @@ from typing import Any
 
 import pytest
 
+from gobby.memory.recall_constants import RECALL_QUERY_CONSTRUCTION_VERSION
 from gobby.memory.recall_fit import ReplayParams, ReplayRow, split_requests_per_project
 from gobby.memory.recall_refit import (
-    AUDIT_SAMPLE_REQUESTS,
     MIN_EVAL_PAIRS,
     MIN_TRAIN_PAIRS,
-    GateCohort,
     GateDecision,
-    build_ship_audit_sample,
     default_candidate_scope,
     guard_accuracy,
     judge_independent_guard_rows,
     refit_grid,
-    run_ship_gate,
-    run_ship_gate_from_store,
     static_replay_params,
 )
+from gobby.memory.recall_ship_gate import (
+    AUDIT_SAMPLE_REQUESTS,
+    GateCohort,
+    build_ship_audit_sample,
+)
+from gobby.memory.recall_ship_gate_run import run_ship_gate, run_ship_gate_from_store
 from gobby.memory.services._search_constants import _GRAPH_SYNTHETIC_SIM_DISCOUNT
 from gobby.memory.services.knowledge_graph.writer import COOCCUR_ALPHA, COOCCUR_SUPPORT_CAP
 
@@ -50,6 +52,7 @@ def _gate_cohort() -> GateCohort:
         completion_cutoff=datetime(2026, 7, 17, 13, tzinfo=UTC),
         project_id=None,
         weighting_mode="full",
+        query_construction_version=RECALL_QUERY_CONSTRUCTION_VERSION,
     )
 
 
@@ -87,6 +90,7 @@ def _ship_gate_kwargs(rows: list[ReplayRow]) -> dict[str, object]:
         "label_source": cohort.label_source,
         "candidate_scope": cohort.candidate_scope,
         "judge_protocol_version": cohort.judge_protocol_version,
+        "query_construction_version": cohort.query_construction_version,
         "weighting_regime_key": cohort.weighting_regime_key,
         "judge_model_key": cohort.judge_model_key,
         "judge_config_fingerprint": cohort.judge_config_fingerprint,
@@ -240,6 +244,7 @@ def _run_recording_store_gate(store: Any) -> GateDecision:
         label_source=cohort.label_source,
         candidate_scope=cohort.candidate_scope,
         judge_protocol_version=cohort.judge_protocol_version,
+        query_construction_version=cohort.query_construction_version,
         weighting_regime_key=cohort.weighting_regime_key,
         judge_model_key=cohort.judge_model_key,
         judge_config_fingerprint=cohort.judge_config_fingerprint,
@@ -299,6 +304,28 @@ def _planted_requests(
             _semantic(request_id, "mem-irr", raw=irr_raw, decay=irr_decay, useful=False, position=1)
         )
     return rows
+
+
+class TestGateCohortIdentity:
+    def test_identity_carries_the_query_construction_version(self) -> None:
+        """4.1.2: the era is part of what the cohort digest freezes.
+
+        Two cohorts that differ only in which query built their retrievals are
+        different populations, so they must not hash to one holdout key.
+        """
+        cohort = _gate_cohort()
+        legacy = replace(cohort, query_construction_version=None)
+
+        assert cohort.identity()["query_construction_version"] == (
+            RECALL_QUERY_CONSTRUCTION_VERSION
+        )
+        assert legacy.identity()["query_construction_version"] is None
+        assert cohort.digest != legacy.digest
+
+    def test_a_blank_construction_version_is_rejected(self) -> None:
+        """An empty string is neither a legacy cohort nor a named era."""
+        with pytest.raises(ValueError, match="query_construction_version"):
+            replace(_gate_cohort(), query_construction_version="   ")
 
 
 class TestShipAuditSample:

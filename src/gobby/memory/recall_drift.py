@@ -83,6 +83,8 @@ class DriftCohort:
     weighting_mode: WeightingMode
     evaluator_version: str
     decision_digest: str
+    # Absent or null is the legacy query-construction era, a real cohort value.
+    query_construction_version: str | None = None
 
     @classmethod
     def from_record(cls, record: Mapping[str, Any]) -> DriftCohort:
@@ -117,6 +119,9 @@ class DriftCohort:
         project_value = identity.get("project_id")
         if project_value is not None and not isinstance(project_value, str):
             raise ValueError("shipped decision has invalid project_id")
+        construction_value = identity.get("query_construction_version")
+        if construction_value is not None and not isinstance(construction_value, str):
+            raise ValueError("shipped decision has invalid query_construction_version")
         return cls(
             label_source=label_source,
             candidate_scope=candidate_scope,
@@ -128,6 +133,7 @@ class DriftCohort:
             weighting_mode=cast("WeightingMode", weighting_mode),
             evaluator_version=evaluator_version,
             decision_digest=required_text(record, "decision_digest"),
+            query_construction_version=construction_value,
         )
 
     def identity(self) -> dict[str, Any]:
@@ -136,6 +142,7 @@ class DriftCohort:
             "label_source": self.label_source,
             "candidate_scope": self.candidate_scope,
             "judge_protocol_version": self.judge_protocol_version,
+            "query_construction_version": self.query_construction_version,
             "weighting_regime_key": self.weighting_regime_key,
             "judge_model_key": self.judge_model_key,
             "judge_config_fingerprint": self.judge_config_fingerprint,
@@ -413,6 +420,7 @@ def run_drift_check_from_store(
             label_source=cohort.label_source,
             candidate_scope=cohort.candidate_scope,
             judge_protocol_version=cohort.judge_protocol_version,
+            query_construction_version=cohort.query_construction_version,
             weighting_regime_key=cohort.weighting_regime_key,
             judge_model_key=cohort.judge_model_key,
             judge_config_fingerprint=cohort.judge_config_fingerprint,

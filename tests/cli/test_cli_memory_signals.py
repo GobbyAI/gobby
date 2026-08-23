@@ -12,6 +12,7 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli.memory.signals import recall_signals
+from gobby.memory.recall_constants import RECALL_QUERY_CONSTRUCTION_VERSION
 from gobby.memory.recall_fit import split_request_ids_per_project
 from gobby.memory.shadow_relevance import SHADOW_PROTOCOL_VERSION
 from gobby.storage.recall_shadow_signals import ShadowCohortAmbiguityError
@@ -142,6 +143,7 @@ def test_gate_forwards_exact_fences_and_writes_decision(tmp_path: Path) -> None:
     assert json.loads(output_path.read_text())["decision_digest"] == "d1"
     kwargs = run.call_args.kwargs
     assert kwargs["judge_protocol_version"] == SHADOW_PROTOCOL_VERSION
+    assert kwargs["query_construction_version"] == RECALL_QUERY_CONSTRUCTION_VERSION
     assert kwargs["data_cutoff"] == datetime(2026, 7, 17, 12, tzinfo=UTC)
     assert kwargs["completion_cutoff"] == datetime(2026, 7, 17, 13, tzinfo=UTC)
     assert kwargs["candidate_scope"] == "full"
@@ -203,7 +205,43 @@ def test_audit_labels_uses_deterministic_training_partition_sample() -> None:
     assert sampled_ids <= train_ids
     assert sampled_ids.isdisjoint(holdout_ids)
     assert all(row["presentation"]["presented"] for row in sample)
-    assert store.fetch_shadow_replay_rows.call_args.kwargs["phase"] == "audit_scored"
+    replay_kwargs = store.fetch_shadow_replay_rows.call_args.kwargs
+    assert replay_kwargs["phase"] == "audit_scored"
+    assert replay_kwargs["query_construction_version"] == RECALL_QUERY_CONSTRUCTION_VERSION
+    cohort_kwargs = store.shadow_cohort_query.call_args.kwargs
+    assert cohort_kwargs["query_construction_version"] == RECALL_QUERY_CONSTRUCTION_VERSION
+
+
+def test_supersede_legacy_cohort_reports_the_swept_row_count() -> None:
+    """The pending pre-cutover backlog retires through a named idempotent command."""
+    store = MagicMock()
+    store.supersede_legacy_cohort.return_value = 7
+
+    with (
+        patch("gobby.cli.memory.signals.require_cli_database"),
+        patch("gobby.cli.memory.signals.RecallSignalStore", return_value=store),
+    ):
+        result = CliRunner().invoke(
+            recall_signals,
+            [
+                "supersede-legacy-cohort",
+                "--label-source",
+                "digest_shadow",
+                "--protocol-version",
+                SHADOW_PROTOCOL_VERSION,
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == {
+        "label_source": "digest_shadow",
+        "judge_protocol_version": SHADOW_PROTOCOL_VERSION,
+        "superseded": 7,
+    }
+    assert store.supersede_legacy_cohort.call_args.kwargs == {
+        "label_source": "digest_shadow",
+        "judge_protocol_version": SHADOW_PROTOCOL_VERSION,
+    }
 
 
 def test_audit_labels_records_prompt_bound_agreement() -> None:

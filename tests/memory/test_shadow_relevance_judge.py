@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from gobby.memory.generation_schemas import SHADOW_RELEVANCE_SCHEMA
+from gobby.memory.recall_constants import RECALL_QUERY_CONSTRUCTION_VERSION
 from gobby.memory.shadow_relevance import (
     SHADOW_PROTOCOL_VERSION,
     SHADOW_RELEVANCE_RUBRIC,
@@ -47,18 +48,22 @@ class FakeShadowStore:
         self.label_batches: list[tuple[list[dict[str, Any]], dict[str, Any], str]] = []
         self.retryable: list[tuple[str, str]] = []
         self.terminal: list[tuple[str, str]] = []
+        self.poll_kwargs: list[dict[str, Any]] = []
+        self.claim_kwargs: list[dict[str, Any]] = []
 
     def fetch_unshadowed_requests(self, *_: Any, **kwargs: Any) -> list[dict[str, Any]]:
         self.fetch_calls += 1
+        self.poll_kwargs.append(dict(kwargs))
         return self.requests[: int(kwargs["limit"])]
 
     def claim_shadow_request(
         self,
         session_id: str,
         recall_request_id: str,
-        **_: Any,
+        **kwargs: Any,
     ) -> str:
         del session_id
+        self.claim_kwargs.append(dict(kwargs))
         self.events.append(("claim", recall_request_id))
         return f"token-{recall_request_id}"
 
@@ -251,6 +256,33 @@ async def test_shadow_poll_claims_each_request_immediately_before_its_call() -> 
     assert all(call["json_schema"] == SHADOW_RELEVANCE_SCHEMA for call in llm.calls)
     assert all(call["system_prompt"] == SHADOW_RELEVANCE_RUBRIC for call in llm.calls)
     assert all(call["caller"] == "memory.shadow_relevance" for call in llm.calls)
+
+
+@pytest.mark.asyncio
+async def test_shadow_poll_is_fenced_to_the_v2_query_construction_era() -> None:
+    """4.1.9: the v2 judge polls and claims only requests built by the v2 query.
+
+    Without the explicit fence the poller would inherit the legacy filter and
+    stamp v2 protocol labels onto pre-cutover retrievals.
+    """
+    contents = {"memory-a": "Dispatch uses a staged pipeline"}
+    events: list[tuple[str, str]] = []
+    store = FakeShadowStore([_request("request-1", ["memory-a"], contents)], events)
+
+    await judge_shadow_candidate_relevance(
+        memory_manager=FakeMemoryManager(contents),
+        llm_service=FakeJudgeLLM(events),
+        config=_config(),
+        session_id="session-1",
+        store=store,
+    )
+
+    assert SHADOW_PROTOCOL_VERSION == "digest-shadow-query-relevance-v2"
+    for calls in (store.poll_kwargs, store.claim_kwargs):
+        assert [call["judge_protocol_version"] for call in calls] == [SHADOW_PROTOCOL_VERSION]
+        assert [call["query_construction_version"] for call in calls] == [
+            RECALL_QUERY_CONSTRUCTION_VERSION
+        ]
 
 
 @pytest.mark.asyncio

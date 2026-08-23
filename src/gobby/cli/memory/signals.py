@@ -12,8 +12,8 @@ from typing import Any, cast
 import click
 
 from gobby.cli.runtime import get_cli_runtime, require_cli_database
+from gobby.memory.recall_constants import RECALL_QUERY_CONSTRUCTION_VERSION
 from gobby.memory.recall_fit import WeightingMode, split_request_ids_per_project
-from gobby.memory.recall_refit import run_ship_gate_from_store
 from gobby.memory.recall_ship_gate import (
     AUDIT_SAMPLE_REQUESTS,
     GateCohort,
@@ -22,6 +22,7 @@ from gobby.memory.recall_ship_gate import (
     canonical_digest,
     evaluate_ship_audit,
 )
+from gobby.memory.recall_ship_gate_run import run_ship_gate_from_store
 from gobby.memory.recall_signal_log import (
     resolve_recall_signal_path,
     rotated_recall_signal_paths,
@@ -209,6 +210,12 @@ def _diagnostic_sample(
     required=True,
     help=f"Judge protocol fence (current: {SHADOW_PROTOCOL_VERSION}).",
 )
+@click.option(
+    "--query-construction-version",
+    default=RECALL_QUERY_CONSTRUCTION_VERSION,
+    show_default=True,
+    help="Query-construction era fence. Legacy cohorts are frozen and superseded.",
+)
 @click.option("--regime-key", required=True)
 @click.option("--judge-model-key", required=True)
 @click.option("--judge-config-fingerprint", required=True)
@@ -224,6 +231,7 @@ def _diagnostic_sample(
 def gate(
     label_source: str,
     protocol_version: str,
+    query_construction_version: str,
     regime_key: str,
     judge_model_key: str,
     judge_config_fingerprint: str,
@@ -239,6 +247,7 @@ def gate(
             store,
             label_source=label_source,
             judge_protocol_version=protocol_version,
+            query_construction_version=query_construction_version,
             weighting_regime_key=regime_key,
             judge_model_key=judge_model_key,
             judge_config_fingerprint=judge_config_fingerprint,
@@ -265,6 +274,12 @@ def gate(
     required=True,
     help=f"Judge protocol fence (current: {SHADOW_PROTOCOL_VERSION}).",
 )
+@click.option(
+    "--query-construction-version",
+    default=RECALL_QUERY_CONSTRUCTION_VERSION,
+    show_default=True,
+    help="Query-construction era fence. Must match the gate's for the audit to bind.",
+)
 @click.option("--regime-key", required=True)
 @click.option("--judge-model-key", required=True)
 @click.option("--judge-config-fingerprint", required=True)
@@ -283,6 +298,7 @@ def gate(
 def audit_labels(
     label_source: str,
     protocol_version: str,
+    query_construction_version: str,
     regime_key: str,
     judge_model_key: str,
     judge_config_fingerprint: str,
@@ -304,6 +320,7 @@ def audit_labels(
         label_source=label_source,
         candidate_scope=candidate_scope,
         judge_protocol_version=protocol_version,
+        query_construction_version=query_construction_version,
         weighting_regime_key=regime_key,
         judge_model_key=judge_model_key,
         judge_config_fingerprint=judge_config_fingerprint,
@@ -317,6 +334,7 @@ def audit_labels(
             "audit_scored",
             label_source=label_source,
             judge_protocol_version=protocol_version,
+            query_construction_version=query_construction_version,
             judge_model_key=judge_model_key,
             judge_config_fingerprint=judge_config_fingerprint,
             weighting_regime_key=regime_key,
@@ -338,6 +356,7 @@ def audit_labels(
             label_source=label_source,
             candidate_scope=candidate_scope,
             judge_protocol_version=protocol_version,
+            query_construction_version=query_construction_version,
             weighting_regime_key=regime_key,
             judge_model_key=judge_model_key,
             judge_config_fingerprint=judge_config_fingerprint,
@@ -419,6 +438,38 @@ def audit_labels(
             "wilson_lower_bound": agreement.wilson_lower_bound,
         }
     click.echo(json.dumps(ship_payload, indent=2, sort_keys=True))
+
+
+@recall_signals.command("supersede-legacy-cohort")
+@click.option("--label-source", required=True)
+@click.option(
+    "--protocol-version",
+    required=True,
+    help=f"Judge protocol fence (current: {SHADOW_PROTOCOL_VERSION}).",
+)
+def supersede_legacy_cohort(label_source: str, protocol_version: str) -> None:
+    """Retire the unjudged pre-cutover backlog for one label stream.
+
+    Run it after the v1 poller has drained and the protocol version has been
+    flipped. It is idempotent and never touches a completed label, so a repeat
+    run — or a run before the flip — is safe.
+    """
+    store = RecallSignalStore(require_cli_database())
+    superseded = store.supersede_legacy_cohort(
+        label_source=label_source,
+        judge_protocol_version=protocol_version,
+    )
+    click.echo(
+        json.dumps(
+            {
+                "label_source": label_source,
+                "judge_protocol_version": protocol_version,
+                "superseded": superseded,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
 
 
 @recall_signals.command("drift")

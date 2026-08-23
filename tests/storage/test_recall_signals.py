@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Barrier
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -92,11 +92,16 @@ def _shadow_event(
     query: str = "how does dispatch work",
     schema_version: int = 4,
     complete_hashes: bool = True,
+    query_construction_version: str | None = None,
 ) -> dict[str, object]:
     event = _event(request_id=request_id, session_id=session_id)
     event["schema_version"] = schema_version
     event["query"] = query
     event["constants_provenance"] = "static"
+    if query_construction_version is not None:
+        weighting = event["weighting"]
+        assert isinstance(weighting, dict)
+        weighting["query_construction_version"] = query_construction_version
     hits = event["hits"]
     assert isinstance(hits, list)
     for hit in hits:
@@ -164,13 +169,20 @@ def _complete_shadow_request(
     judge_model: str = "judge-model",
     judge_config_fingerprint: str = "judge-fingerprint",
     snapshot_created_at: str = "2026-07-17T12:30:00+00:00",
+    query_construction_version: str | None = None,
 ) -> None:
-    assert store.insert_signal_event(_shadow_event(request_id)) is True
+    assert (
+        store.insert_signal_event(
+            _shadow_event(request_id, query_construction_version=query_construction_version)
+        )
+        is True
+    )
     token = store.claim_shadow_request(
         "sess-shadow",
         request_id,
         label_source="digest_shadow",
         judge_protocol_version=protocol_version,
+        query_construction_version=query_construction_version,
     )
     assert token is not None
     labels = _shadow_labels(request_id)
@@ -422,6 +434,7 @@ class TestShadowCohort:
             "sess-shadow",
             label_source="digest_shadow",
             judge_protocol_version="shadow-v1",
+            query_construction_version=None,
             limit=10,
         )
 
@@ -438,11 +451,13 @@ class TestShadowCohort:
             "req-incomplete",
             label_source="digest_shadow",
             judge_protocol_version="shadow-v1",
+            query_construction_version=None,
         )
         assert incomplete_token is not None
         cohort_args = {
             "label_source": "digest_shadow",
             "judge_protocol_version": "shadow-v1",
+            "query_construction_version": None,
             "judge_model_key": "judge-model",
             "judge_config_fingerprint": "judge-fingerprint",
             "weighting_regime_key": "[true,false,false,false]",
@@ -464,6 +479,7 @@ class TestShadowCohort:
             "audit_status",
             label_source="digest_shadow",
             judge_protocol_version="shadow-v1",
+            query_construction_version=None,
             session_id="sess-shadow",
             limit=10,
         )
@@ -480,6 +496,7 @@ class TestShadowCohort:
                 "fitting",
                 label_source="digest_shadow",
                 judge_protocol_version="shadow-v1",
+                query_construction_version=None,
                 judge_config_fingerprint="judge-fingerprint",
                 weighting_regime_key="[true,false,false,false]",
                 data_cutoff=datetime(2026, 7, 17, 12, 10, tzinfo=UTC),
@@ -504,6 +521,7 @@ class TestShadowCohort:
                 "fitting",
                 label_source="digest_shadow",
                 judge_protocol_version="shadow-v1",
+                query_construction_version=None,
                 judge_model_key="judge-model",
                 weighting_regime_key="[true,false,false,false]",
                 data_cutoff=datetime(2026, 7, 17, 12, 10, tzinfo=UTC),
@@ -526,6 +544,7 @@ class TestShadowCohort:
                 "fitting",
                 label_source="digest_shadow",
                 judge_protocol_version="shadow-v1",
+                query_construction_version=None,
                 judge_model_key="judge-model",
                 judge_config_fingerprint="judge-fingerprint",
                 data_cutoff=datetime(2026, 7, 17, 12, 10, tzinfo=UTC),
@@ -543,6 +562,7 @@ class TestShadowCohort:
         args = {
             "label_source": "digest_shadow",
             "judge_protocol_version": "shadow-v1",
+            "query_construction_version": None,
             "judge_model_key": "judge-model",
             "judge_config_fingerprint": "judge-fingerprint",
             "weighting_regime_key": "[true,false,false,false]",
@@ -555,6 +575,136 @@ class TestShadowCohort:
         )
         rows = store.shadow_cohort_query("drift", **args, constants_provenance="static")
         assert [row["recall_request_id"] for row in rows] == ["req-provenance"]
+
+
+class TestQueryConstructionFence:
+    """The cutover fence: one cohort never spans two query-construction eras."""
+
+    def test_v2_poller_does_not_claim_legacy_requests(self, store: RecallSignalStore) -> None:
+        """4.1.5: a v2 protocol label on a legacy-query retrieval is contamination.
+
+        The poller's construction version is required rather than defaulted
+        precisely so this filter cannot be skipped by omission.
+        """
+        assert store.insert_signal_event(_shadow_event("req-legacy")) is True
+        assert (
+            store.insert_signal_event(
+                _shadow_event("req-v2", query_construction_version="nl-embed-v1")
+            )
+            is True
+        )
+
+        polled = store.fetch_unshadowed_requests(
+            "sess-shadow",
+            label_source="digest_shadow",
+            judge_protocol_version="shadow-v2",
+            query_construction_version="nl-embed-v1",
+            limit=10,
+        )
+
+        assert [row["recall_request_id"] for row in polled] == ["req-v2"]
+        assert (
+            store.claim_shadow_request(
+                "sess-shadow",
+                "req-legacy",
+                label_source="digest_shadow",
+                judge_protocol_version="shadow-v2",
+                query_construction_version="nl-embed-v1",
+            )
+            is None
+        )
+
+    def test_supersede_legacy_cohort_inserts_and_is_idempotent(
+        self, store: RecallSignalStore
+    ) -> None:
+        """4.1.6: an unclaimed backlog request has no state row, so the sweep inserts.
+
+        A plain UPDATE would no-op on exactly the rows that matter, and the second
+        run has to rewrite the same terminal rows rather than find new ones.
+        """
+        assert store.insert_signal_event(_shadow_event("req-backlog")) is True
+        assert (
+            store.insert_signal_event(
+                _shadow_event("req-v2", query_construction_version="nl-embed-v1")
+            )
+            is True
+        )
+
+        first = store.supersede_legacy_cohort(
+            label_source="digest_shadow",
+            judge_protocol_version="shadow-v1",
+        )
+        second = store.supersede_legacy_cohort(
+            label_source="digest_shadow",
+            judge_protocol_version="shadow-v1",
+        )
+
+        assert (first, second) == (1, 1)
+        rows = store.db.fetchall(
+            "SELECT recall_request_id, status, claim_token, next_attempt_at, "
+            "lease_expires_at, last_error FROM recall_shadow_judge_state "
+            "ORDER BY recall_request_id"
+        )
+        assert [dict(row) for row in rows] == [
+            {
+                "recall_request_id": "req-backlog",
+                "status": "terminal",
+                "claim_token": None,
+                "next_attempt_at": None,
+                "lease_expires_at": None,
+                "last_error": "query_construction_version_superseded",
+            }
+        ]
+
+    def test_supersede_legacy_cohort_preserves_complete_rows(
+        self, store: RecallSignalStore
+    ) -> None:
+        """4.1.7: a committed v1 label is valid evidence, so the sweep leaves it alone."""
+        _complete_shadow_request(store, "req-labeled")
+        assert store.insert_signal_event(_shadow_event("req-backlog")) is True
+        before = store.db.fetchone(
+            "SELECT * FROM recall_shadow_judge_state WHERE recall_request_id = %s",
+            ("req-labeled",),
+        )
+        assert before is not None
+
+        superseded = store.supersede_legacy_cohort(
+            label_source="digest_shadow",
+            judge_protocol_version="shadow-v1",
+        )
+
+        assert superseded == 1
+        after = store.db.fetchone(
+            "SELECT * FROM recall_shadow_judge_state WHERE recall_request_id = %s",
+            ("req-labeled",),
+        )
+        assert after is not None
+        assert dict(after) == dict(before)
+
+    def test_cohort_cannot_mix_query_construction_versions(self, store: RecallSignalStore) -> None:
+        """4.1.8: a replay spanning the cutover still resolves to exactly one era."""
+        _complete_shadow_request(store, "req-legacy-scored")
+        _complete_shadow_request(store, "req-v2-scored", query_construction_version="nl-embed-v1")
+        replay_args = {
+            "label_source": "digest_shadow",
+            "candidate_scope": "full",
+            "judge_protocol_version": "shadow-v1",
+            "weighting_regime_key": "[true,false,false,false]",
+            "judge_model_key": "judge-model",
+            "judge_config_fingerprint": "judge-fingerprint",
+            "data_cutoff": datetime(2026, 7, 17, 12, 10, tzinfo=UTC),
+            "completion_cutoff": datetime(2026, 7, 17, 12, 40, tzinfo=UTC),
+            "project_id": None,
+            "limit": 10,
+        }
+
+        legacy = store.fetch_shadow_replay_rows(**replay_args, query_construction_version=None)
+        current = store.fetch_shadow_replay_rows(
+            **replay_args, query_construction_version="nl-embed-v1"
+        )
+
+        assert {row["recall_request_id"] for row in legacy} == {"req-legacy-scored"}
+        assert {row["recall_request_id"] for row in current} == {"req-v2-scored"}
 
 
 class TestShadowReplay:
@@ -586,6 +736,7 @@ class TestShadowReplay:
             label_source="digest_shadow",
             candidate_scope="full",
             judge_protocol_version="shadow-v1",
+            query_construction_version=None,
             weighting_regime_key="[true,false,false,false]",
             judge_model_key="judge-model",
             judge_config_fingerprint="judge-fingerprint",
@@ -611,6 +762,7 @@ class TestShadowReplay:
             label_source="digest_shadow",
             candidate_scope="full",
             judge_protocol_version="shadow-v1",
+            query_construction_version=None,
             weighting_regime_key="[true,false,false,false]",
             judge_model_key="judge-model",
             judge_config_fingerprint="judge-fingerprint",
@@ -630,9 +782,10 @@ class TestShadowSampling:
     ) -> None:
         for request_id in ("req-sample-a", "req-sample-b", "req-sample-c"):
             _complete_shadow_request(store, request_id)
-        args = {
+        args: dict[str, Any] = {
             "label_source": "digest_shadow",
             "protocol_version": "shadow-v1",
+            "query_construction_version": None,
             "judge_model_key": "judge-model",
             "judge_config_fingerprint": "judge-fingerprint",
             "regime_key": "[true,false,false,false]",
@@ -670,6 +823,7 @@ class TestShadowSampling:
             label_source="digest_shadow",
             candidate_scope="full",
             judge_protocol_version="shadow-v1",
+            query_construction_version=None,
             weighting_regime_key="[true,false,false,false]",
             judge_model_key="judge-model",
             judge_config_fingerprint="judge-fingerprint",
@@ -830,6 +984,7 @@ class TestShadowClaims:
             "req-claim",
             label_source="digest_shadow",
             judge_protocol_version="shadow-v1",
+            query_construction_version=None,
             now=now,
         )
         blocked = store.claim_shadow_request(
@@ -837,6 +992,7 @@ class TestShadowClaims:
             "req-claim",
             label_source="digest_shadow",
             judge_protocol_version="shadow-v1",
+            query_construction_version=None,
             now=now + timedelta(minutes=9),
         )
         reclaimed_token = store.claim_shadow_request(
@@ -844,6 +1000,7 @@ class TestShadowClaims:
             "req-claim",
             label_source="digest_shadow",
             judge_protocol_version="shadow-v1",
+            query_construction_version=None,
             now=now + timedelta(minutes=11),
         )
 
@@ -867,6 +1024,7 @@ class TestShadowClaims:
             "req-atomic",
             label_source="digest_shadow",
             judge_protocol_version="shadow-v1",
+            query_construction_version=None,
         )
         assert token is not None
 
@@ -911,6 +1069,7 @@ class TestShadowClaims:
             "req-conflict",
             label_source="digest_shadow",
             judge_protocol_version="shadow-v1",
+            query_construction_version=None,
         )
         assert token is not None
 
@@ -966,6 +1125,7 @@ class TestShadowClaims:
             "req-snapshot-conflict",
             label_source="digest_shadow",
             judge_protocol_version="shadow-v1",
+            query_construction_version=None,
         )
         assert token is not None
 
@@ -993,6 +1153,7 @@ class TestShadowClaims:
             "req-zombie",
             label_source="digest_shadow",
             judge_protocol_version="shadow-v1",
+            query_construction_version=None,
             now=now,
         )
         current_token = store.claim_shadow_request(
@@ -1000,6 +1161,7 @@ class TestShadowClaims:
             "req-zombie",
             label_source="digest_shadow",
             judge_protocol_version="shadow-v1",
+            query_construction_version=None,
             now=now + timedelta(minutes=11),
         )
         assert stale_token is not None
@@ -1030,6 +1192,7 @@ class TestShadowClaims:
             "req-state",
             label_source="digest_shadow",
             judge_protocol_version="shadow-v1",
+            query_construction_version=None,
             now=now,
         )
         assert token is not None
@@ -1047,6 +1210,7 @@ class TestShadowClaims:
                 "sess-shadow",
                 label_source="digest_shadow",
                 judge_protocol_version="shadow-v1",
+                query_construction_version=None,
                 limit=10,
                 now=now + timedelta(hours=1),
             )
@@ -1058,6 +1222,7 @@ class TestShadowClaims:
                 "sess-shadow",
                 label_source="digest_shadow",
                 judge_protocol_version="shadow-v1",
+                query_construction_version=None,
                 limit=10,
                 now=now + timedelta(hours=2),
             )
@@ -1068,6 +1233,7 @@ class TestShadowClaims:
             "req-state",
             label_source="digest_shadow",
             judge_protocol_version="shadow-v1",
+            query_construction_version=None,
             now=now + timedelta(hours=2),
         )
         assert terminal_token is not None
@@ -1084,6 +1250,7 @@ class TestShadowClaims:
                 "sess-shadow",
                 label_source="digest_shadow",
                 judge_protocol_version="shadow-v1",
+                query_construction_version=None,
                 limit=10,
                 now=now + timedelta(days=30),
             )

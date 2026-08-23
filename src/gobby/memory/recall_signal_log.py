@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.memory.recall_constants import RECALL_QUERY_CONSTRUCTION_VERSION
 from gobby.paths import get_gobby_home
 
 if TYPE_CHECKING:
@@ -214,6 +215,9 @@ def _weighting_snapshot(
     else:
         half_life = _finite_or_none(getattr(config, "temporal_decay_half_life_days", None))
     snapshot: dict[str, object] = {
+        # The era this request's query was built in. Rows written before the key
+        # existed carry none, which is exactly how the legacy cohort is selected.
+        "query_construction_version": RECALL_QUERY_CONSTRUCTION_VERSION,
         "graph_edge_weighting": getattr(config, "graph_edge_weighting", False),
         "graph_edge_decay": getattr(config, "graph_edge_decay", False),
         "edge_half_life_days": _finite_or_none(getattr(config, "edge_half_life_days", None)),

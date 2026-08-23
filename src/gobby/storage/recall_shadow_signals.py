@@ -106,6 +106,7 @@ class RecallShadowSignalStoreMixin:
         *,
         label_source: str,
         judge_protocol_version: str,
+        query_construction_version: str | None,
         session_id: str | None = None,
         recall_request_id: str | None = None,
         project_id: str | None = None,
@@ -138,6 +139,10 @@ class RecallShadowSignalStoreMixin:
             for value in (session_id, recall_request_id, project_id, constants_provenance)
             if value is not None
         ]
+        # A NULL cohort is the legacy era, so this fence is always applied: the
+        # comparison has to be NULL-aware, never a plain `=` that drops the era.
+        conditions.append("r.weighting->>'query_construction_version' IS NOT DISTINCT FROM %s")
+        identity_params.append(query_construction_version)
 
         if phase == "polling":
             current_time = now or utc_now()
@@ -232,6 +237,7 @@ class RecallShadowSignalStoreMixin:
         resolved = self._resolve_scored_fences(
             label_source=label_source,
             judge_protocol_version=judge_protocol_version,
+            query_construction_version=query_construction_version,
             session_id=session_id,
             recall_request_id=recall_request_id,
             project_id=project_id,
@@ -309,6 +315,7 @@ class RecallShadowSignalStoreMixin:
         label_source: str,
         candidate_scope: str,
         judge_protocol_version: str,
+        query_construction_version: str | None,
         weighting_regime_key: str,
         judge_model_key: str,
         judge_config_fingerprint: str,
@@ -330,6 +337,7 @@ class RecallShadowSignalStoreMixin:
             phase,
             label_source=label_source,
             judge_protocol_version=judge_protocol_version,
+            query_construction_version=query_construction_version,
             project_id=project_id,
             constants_provenance=constants_provenance,
             judge_model_key=judge_model_key,
@@ -517,6 +525,7 @@ class RecallShadowSignalStoreMixin:
         *,
         label_source: str,
         judge_protocol_version: str,
+        query_construction_version: str | None,
         session_id: str | None,
         recall_request_id: str | None,
         project_id: str | None,
@@ -546,6 +555,7 @@ class RecallShadowSignalStoreMixin:
                 "state.status = 'complete'",
                 "r.created_at <= %s",
                 "snapshot.created_at <= %s",
+                "r.weighting->>'query_construction_version' IS NOT DISTINCT FROM %s",
             ]
             params: list[Any] = [
                 label_source,
@@ -556,6 +566,7 @@ class RecallShadowSignalStoreMixin:
                 judge_protocol_version,
                 data_cutoff,
                 completion_cutoff,
+                query_construction_version,
             ]
             if session_id is not None:
                 conditions.append("r.session_id = %s")
@@ -624,15 +635,22 @@ class RecallShadowSignalStoreMixin:
         *,
         label_source: str,
         judge_protocol_version: str,
+        query_construction_version: str | None,
         limit: int,
         now: datetime | None = None,
     ) -> list[dict[str, Any]]:
-        """Return due, eligible requests and their ordered top-eight hits."""
+        """Return due, eligible requests and their ordered top-eight hits.
+
+        ``query_construction_version`` is required rather than defaulted: a
+        defaulted ``None`` would silently poll the legacy era and stamp the
+        current protocol's labels onto pre-cutover retrievals.
+        """
         requests = self.shadow_cohort_query(
             "polling",
             session_id=session_id,
             label_source=label_source,
             judge_protocol_version=judge_protocol_version,
+            query_construction_version=query_construction_version,
             limit=limit,
             now=now,
         )
@@ -660,9 +678,15 @@ class RecallShadowSignalStoreMixin:
         *,
         label_source: str,
         judge_protocol_version: str,
+        query_construction_version: str | None,
         now: datetime | None = None,
     ) -> str | None:
-        """Claim one due request under a short per-session lock."""
+        """Claim one due request under a short per-session lock.
+
+        The construction version is required for the same reason it is on
+        :meth:`fetch_unshadowed_requests`: the claim is what binds a protocol
+        version to a request, so it must never straddle the cutover.
+        """
         current_time = now or utc_now()
         with self.db.transaction_immediate(ShadowJudgePoll(session_id)) as transaction:
             due = self.shadow_cohort_query(
@@ -671,6 +695,7 @@ class RecallShadowSignalStoreMixin:
                 recall_request_id=recall_request_id,
                 label_source=label_source,
                 judge_protocol_version=judge_protocol_version,
+                query_construction_version=query_construction_version,
                 limit=1,
                 now=current_time,
             )
@@ -704,216 +729,3 @@ class RecallShadowSignalStoreMixin:
                 ),
             )
             return claim_token
-
-    def insert_usefulness_labels_atomic(
-        self,
-        rows: Sequence[Mapping[str, Any]],
-        snapshot: Mapping[str, Any],
-        claim_token: str,
-    ) -> bool:
-        """Atomically persist an exact label mapping, prompt snapshot, and completion."""
-        if not rows or not claim_token:
-            return False
-        request_id = str(snapshot.get("recall_request_id") or "")
-        label_source = str(snapshot.get("label_source") or "")
-        protocol_version = str(snapshot.get("judge_protocol_version") or "")
-        if not request_id or label_source != "digest_shadow" or not protocol_version:
-            return False
-        required_snapshot_fields = (
-            "system_prompt",
-            "query_text",
-            "prompt_hash",
-            "judge_model",
-            "judge_config_fingerprint",
-        )
-        if any(snapshot.get(field) is None for field in required_snapshot_fields):
-            return False
-
-        expected: dict[str, bool] = {}
-        session_id = str(rows[0].get("session_id") or "")
-        for row in rows:
-            memory_id = str(row.get("memory_id") or "")
-            useful = row.get("judge_useful")
-            if (
-                not memory_id
-                or memory_id in expected
-                or not isinstance(useful, bool)
-                or row.get("recall_request_id") != request_id
-                or row.get("label_source") != label_source
-                or row.get("judge_protocol_version") != protocol_version
-                or row.get("judge_model") != snapshot.get("judge_model")
-                or row.get("session_id") != session_id
-            ):
-                return False
-            expected[memory_id] = useful
-
-        presented = snapshot.get("presented")
-        if not isinstance(presented, list):
-            return False
-        presented_ids = {
-            str(item.get("memory_id"))
-            for item in presented
-            if isinstance(item, dict) and item.get("memory_id")
-        }
-        if presented_ids != set(expected):
-            return False
-
-        if not session_id:
-            return False
-        current_time = utc_now()
-        with self.db.transaction_immediate(ShadowJudgePoll(session_id)) as transaction:
-            claim = transaction.execute(
-                """
-                SELECT attempts FROM recall_shadow_judge_state
-                WHERE recall_request_id = %s
-                  AND label_source = %s
-                  AND judge_protocol_version = %s
-                  AND status = 'claimed'
-                  AND claim_token = %s
-                """,
-                (request_id, label_source, protocol_version, claim_token),
-            ).fetchone()
-            if claim is None:
-                return False
-
-            savepoint = transaction.savepoint("shadow_label_batch")
-            transaction.executemany(
-                """
-                INSERT INTO recall_usefulness
-                    (project_id, session_id, recall_request_id, memory_id, label_source,
-                     judge_useful, judge_confidence, judge_model, judge_protocol_version,
-                     position_randomized, length_controlled, ablation_delta,
-                     ablation_method, rationale, feature_extractor_version, labeled_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (recall_request_id, memory_id, label_source,
-                             judge_protocol_version) DO NOTHING
-                """,
-                [
-                    (
-                        row.get("project_id"),
-                        row["session_id"],
-                        request_id,
-                        str(row["memory_id"]),
-                        label_source,
-                        row["judge_useful"],
-                        row.get("judge_confidence"),
-                        row.get("judge_model"),
-                        protocol_version,
-                        bool(row.get("position_randomized")),
-                        bool(row.get("length_controlled")),
-                        row.get("ablation_delta"),
-                        row.get("ablation_method"),
-                        row.get("rationale"),
-                        row.get("feature_extractor_version"),
-                        _parse_datetime(row.get("labeled_at") or row.get("timestamp")),
-                    )
-                    for row in rows
-                ],
-            )
-            transaction.execute(
-                """
-                INSERT INTO recall_shadow_prompt_snapshot
-                    (recall_request_id, label_source, judge_protocol_version,
-                     system_prompt, query_text, presented, prompt_hash, judge_model,
-                     judge_config_fingerprint)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (recall_request_id, label_source, judge_protocol_version)
-                DO NOTHING
-                """,
-                (
-                    request_id,
-                    label_source,
-                    protocol_version,
-                    snapshot["system_prompt"],
-                    snapshot["query_text"],
-                    json.dumps(presented),
-                    snapshot["prompt_hash"],
-                    snapshot["judge_model"],
-                    snapshot["judge_config_fingerprint"],
-                ),
-            )
-            stored_rows = transaction.execute(
-                """
-                SELECT memory_id, judge_useful FROM recall_usefulness
-                WHERE recall_request_id = %s
-                  AND label_source = %s
-                  AND judge_protocol_version = %s
-                """,
-                (request_id, label_source, protocol_version),
-            ).fetchall()
-            stored = {str(row["memory_id"]): bool(row["judge_useful"]) for row in stored_rows}
-            stored_snapshot = transaction.execute(
-                """
-                SELECT system_prompt, query_text, presented, prompt_hash, judge_model,
-                       judge_config_fingerprint
-                FROM recall_shadow_prompt_snapshot
-                WHERE recall_request_id = %s
-                  AND label_source = %s
-                  AND judge_protocol_version = %s
-                """,
-                (request_id, label_source, protocol_version),
-            ).fetchone()
-            expected_snapshot = {
-                "system_prompt": snapshot["system_prompt"],
-                "query_text": snapshot["query_text"],
-                "presented": presented,
-                "prompt_hash": snapshot["prompt_hash"],
-                "judge_model": snapshot["judge_model"],
-                "judge_config_fingerprint": snapshot["judge_config_fingerprint"],
-            }
-            actual_snapshot = dict(stored_snapshot) if stored_snapshot is not None else {}
-            if "presented" in actual_snapshot:
-                actual_snapshot["presented"] = _json_value(actual_snapshot["presented"])
-            mapping_mismatch = stored != expected
-            snapshot_mismatch = actual_snapshot != expected_snapshot
-            if mapping_mismatch or snapshot_mismatch:
-                savepoint.rollback()
-                mismatch_error = (
-                    "label_mapping_mismatch" if mapping_mismatch else "snapshot_mismatch"
-                )
-                retry = transaction.execute(
-                    """
-                    UPDATE recall_shadow_judge_state
-                    SET status = 'retryable',
-                        next_attempt_at = %s,
-                        lease_expires_at = NULL,
-                        claim_token = NULL,
-                        last_error = %s,
-                        updated_at = %s
-                    WHERE recall_request_id = %s
-                      AND label_source = %s
-                      AND judge_protocol_version = %s
-                      AND claim_token = %s
-                    """,
-                    (
-                        current_time + timedelta(hours=min(2 ** int(claim["attempts"]), 24)),
-                        mismatch_error,
-                        current_time,
-                        request_id,
-                        label_source,
-                        protocol_version,
-                        claim_token,
-                    ),
-                )
-                if retry.rowcount != 1:
-                    raise RuntimeError("shadow claim changed while marking label mismatch")
-                return False
-
-            savepoint.release()
-            completed = transaction.execute(
-                """
-                UPDATE recall_shadow_judge_state
-                SET status = 'complete', next_attempt_at = NULL,
-                    lease_expires_at = NULL, claim_token = NULL,
-                    last_error = NULL, updated_at = %s
-                WHERE recall_request_id = %s
-                  AND label_source = %s
-                  AND judge_protocol_version = %s
-                  AND claim_token = %s
-                """,
-                (current_time, request_id, label_source, protocol_version, claim_token),
-            )
-            if completed.rowcount != 1:
-                raise RuntimeError("shadow claim changed while completing labels")
-            return True

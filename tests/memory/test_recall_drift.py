@@ -129,6 +129,7 @@ def gate_record(
             "label_source": "digest_shadow",
             "candidate_scope": "full",
             "judge_protocol_version": "shadow-protocol-v1",
+            "query_construction_version": "nl-embed-v1",
             "weighting_regime_key": "rrf:1|graph:1",
             "judge_model_key": "judge/model-v1",
             "judge_config_fingerprint": "judge-config-v1",
@@ -388,6 +389,8 @@ class TestRunFromStore:
         alarm_logs = [r for r in caplog.records if "drift alarm" in r.getMessage()]
         assert alarm_logs
         assert "use_fitted_recall_constants=false" in alarm_logs[0].getMessage()
+        # Drift replays the shipped cohort, so it reads the shipped query era.
+        assert store.calls[0]["query_construction_version"] == "nl-embed-v1"
 
     def test_cohort_and_provenance_come_from_shipped_record(self, tmp_path: Any) -> None:
         store = FakeStore([])

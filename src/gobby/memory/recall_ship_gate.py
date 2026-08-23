@@ -50,6 +50,10 @@ class GateCohort:
     project_id: str | None = None
     weighting_mode: WeightingMode = "full"
     split_version: str = REQUEST_SPLIT_VERSION
+    # The query-construction era this cohort is fenced to. ``None`` is the legacy
+    # era — requests logged before the version was persisted at all — so absence
+    # is a real value here and blankness is not.
+    query_construction_version: str | None = None
 
     def __post_init__(self) -> None:
         required = {
@@ -63,6 +67,10 @@ class GateCohort:
         missing = [name for name, value in required.items() if not value.strip()]
         if missing:
             raise ValueError(f"cohort fields must be nonblank: {', '.join(missing)}")
+        if self.query_construction_version is not None and not (
+            self.query_construction_version.strip()
+        ):
+            raise ValueError("query_construction_version must be nonblank or None")
         if self.candidate_scope not in {"full", "injected"}:
             raise ValueError("candidate_scope must be 'full' or 'injected'")
         if self.weighting_mode not in {"full", "injected"}:
@@ -76,6 +84,7 @@ class GateCohort:
             "label_source": self.label_source,
             "candidate_scope": self.candidate_scope,
             "judge_protocol_version": self.judge_protocol_version,
+            "query_construction_version": self.query_construction_version,
             "weighting_regime_key": self.weighting_regime_key,
             "judge_model_key": self.judge_model_key,
             "judge_config_fingerprint": self.judge_config_fingerprint,

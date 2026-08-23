@@ -266,6 +266,17 @@ class TestSignalLogProvenance:
         assert snapshot["temporal_decay_half_life_days"] == 60.0
         assert "recall_constants_source" not in snapshot
 
+    def test_weighting_snapshot_stamps_the_query_construction_version(self) -> None:
+        """4.1.1: every logged request records the era its query was built in.
+
+        The fence is the presence of the key, not its value: rows written before
+        this change carry no such key, so `query_construction_version IS NULL`
+        selects the pre-v2 era exactly.
+        """
+        snapshot = _weighting_snapshot(MemoryConfig())
+
+        assert snapshot["query_construction_version"] == RECALL_QUERY_CONSTRUCTION_VERSION
+
 
 def test_query_construction_version_is_shared_without_an_import_cycle() -> None:
     """2.2.2: neither recall module owns the version, so 4.1 can read it from here."""

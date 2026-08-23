@@ -13,9 +13,10 @@ from typing import Any
 
 from gobby.config.feature_base import candidate_labels
 from gobby.memory.generation_schemas import SHADOW_RELEVANCE_SCHEMA
+from gobby.memory.recall_constants import RECALL_QUERY_CONSTRUCTION_VERSION
 from gobby.utils.datetime import utc_now
 
-SHADOW_PROTOCOL_VERSION = "digest-shadow-query-relevance-v1"
+SHADOW_PROTOCOL_VERSION = "digest-shadow-query-relevance-v2"
 SHADOW_RELEVANCE_RUBRIC = """You judge whether each candidate memory would help answer the stored user query.
 
 Score only relevance to the query. A relevant memory supplies specific facts, paths, commands,
@@ -335,6 +336,7 @@ async def judge_shadow_candidate_relevance(
             session_id,
             label_source="digest_shadow",
             judge_protocol_version=SHADOW_PROTOCOL_VERSION,
+            query_construction_version=RECALL_QUERY_CONSTRUCTION_VERSION,
             limit=_MAX_REQUESTS_PER_PASS,
         )
         completed = 0
@@ -347,6 +349,7 @@ async def judge_shadow_candidate_relevance(
                 request_id,
                 label_source="digest_shadow",
                 judge_protocol_version=SHADOW_PROTOCOL_VERSION,
+                query_construction_version=RECALL_QUERY_CONSTRUCTION_VERSION,
             )
             if claim_token is None:
                 continue

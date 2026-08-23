@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from gobby.storage.recall_shadow_claim_transitions import RecallShadowClaimTransitionMixin
 from gobby.storage.recall_shadow_gate import RecallShadowGateStoreMixin
+from gobby.storage.recall_shadow_labels import RecallShadowLabelStoreMixin
 from gobby.storage.recall_shadow_sampling import RecallShadowSamplingMixin
 from gobby.storage.recall_shadow_signals import (
     RecallShadowSignalStoreMixin,
@@ -89,6 +90,7 @@ def _json_value(value: Any) -> Any:
 
 class RecallSignalStore(
     RecallShadowSignalStoreMixin,
+    RecallShadowLabelStoreMixin,
     RecallShadowSamplingMixin,
     RecallShadowClaimTransitionMixin,
     RecallShadowGateStoreMixin,
@@ -397,6 +399,7 @@ class RecallSignalStore(
         since: datetime | None = None,
         candidate_scope: str | None = None,
         judge_protocol_version: str | None = None,
+        query_construction_version: str | None = None,
         weighting_regime_key: str | None = None,
         judge_model_key: str | None = None,
         judge_config_fingerprint: str | None = None,
@@ -417,6 +420,11 @@ class RecallSignalStore(
 
         ``since`` bounds the window by request ``created_at`` — the drift
         monitor (#17201) replays only the recent live window.
+
+        ``query_construction_version`` fences a ``digest_shadow`` cohort to one
+        query era and is forwarded verbatim, ``None`` included: absence of the
+        key *is* the legacy era, so it cannot be rejected as a missing fence.
+        Non-shadow label streams predate the fence and their query is unchanged.
         """
         if label_source == "digest_shadow":
             required = {
@@ -437,6 +445,7 @@ class RecallSignalStore(
                 label_source=label_source,
                 candidate_scope=cast(str, candidate_scope),
                 judge_protocol_version=cast(str, judge_protocol_version),
+                query_construction_version=query_construction_version,
                 weighting_regime_key=cast(str, weighting_regime_key),
                 judge_model_key=cast(str, judge_model_key),
                 judge_config_fingerprint=cast(str, judge_config_fingerprint),
