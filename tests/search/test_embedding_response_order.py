@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -28,10 +29,16 @@ def _response(*items: object) -> SimpleNamespace:
     return SimpleNamespace(data=list(items))
 
 
+def _raw_response(*items: object) -> SimpleNamespace:
+    """Wrap a response the way with_raw_response does: parse() yields the model."""
+    response = _response(*items)
+    return SimpleNamespace(parse=lambda: response)
+
+
 @pytest.mark.asyncio
 async def test_fetch_embeddings_associates_out_of_order_vectors_by_index() -> None:
     client = AsyncMock()
-    client.embeddings.create.return_value = _response(
+    client.embeddings.with_raw_response.create.return_value = _raw_response(
         _EmbeddingItem(index=1, embedding=[0.0, 1.0]),
         _EmbeddingItem(index=0, embedding=[1.0, 0.0]),
     )
@@ -52,9 +59,43 @@ async def test_fetch_embeddings_associates_out_of_order_vectors_by_index() -> No
 
 
 @pytest.mark.asyncio
+async def test_fetch_embeddings_parses_batch_off_the_event_loop() -> None:
+    """Response deserialization must run in a worker thread, not on the loop."""
+    loop_thread = threading.get_ident()
+    parse_threads: list[int] = []
+    response = _response(
+        _EmbeddingItem(index=0, embedding=[1.0, 0.0]),
+        _EmbeddingItem(index=1, embedding=[0.0, 1.0]),
+        _EmbeddingItem(index=2, embedding=[0.5, 0.5]),
+    )
+
+    def _parse() -> SimpleNamespace:
+        parse_threads.append(threading.get_ident())
+        return response
+
+    client = AsyncMock()
+    client.embeddings.with_raw_response.create.return_value = SimpleNamespace(parse=_parse)
+
+    with patch("openai.AsyncOpenAI", return_value=client):
+        embeddings = await _fetch_embeddings(
+            ["first", "second", "third"],
+            model="test-model",
+            api_base=LOCAL_API_BASE,
+            api_key=None,
+            max_retries=0,
+            base_delay=0.01,
+            expected_dim=2,
+        )
+
+    assert embeddings == [[1.0, 0.0], [0.0, 1.0], [0.5, 0.5]]
+    assert len(parse_threads) == 1
+    assert parse_threads[0] != loop_thread
+
+
+@pytest.mark.asyncio
 async def test_reload_retry_associates_out_of_order_vectors_by_index() -> None:
     client = AsyncMock()
-    client.embeddings.create.return_value = _response(
+    client.embeddings.with_raw_response.create.return_value = _raw_response(
         _EmbeddingItem(index=1, embedding=[0.0, 1.0]),
         _EmbeddingItem(index=0, embedding=[1.0, 0.0]),
     )
@@ -68,6 +109,36 @@ async def test_reload_retry_associates_out_of_order_vectors_by_index() -> None:
     )
 
     assert embeddings == [[1.0, 0.0], [0.0, 1.0]]
+
+
+@pytest.mark.asyncio
+async def test_reload_retry_parses_off_the_event_loop() -> None:
+    """The post-reload retry must also deserialize in a worker thread."""
+    loop_thread = threading.get_ident()
+    parse_threads: list[int] = []
+    response = _response(
+        _EmbeddingItem(index=0, embedding=[1.0, 0.0]),
+        _EmbeddingItem(index=1, embedding=[0.0, 1.0]),
+    )
+
+    def _parse() -> SimpleNamespace:
+        parse_threads.append(threading.get_ident())
+        return response
+
+    client = AsyncMock()
+    client.embeddings.with_raw_response.create.return_value = SimpleNamespace(parse=_parse)
+
+    embeddings = await _retry_embeddings_after_reload(
+        client,
+        ["first", "second"],
+        "test-model",
+        2,
+        LOCAL_API_BASE,
+    )
+
+    assert embeddings == [[1.0, 0.0], [0.0, 1.0]]
+    assert len(parse_threads) == 1
+    assert parse_threads[0] != loop_thread
 
 
 @pytest.mark.parametrize(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -100,9 +101,10 @@ def _make_mock_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]]:
                 self.data = items
 
         items = [FakeItem([0.1] * dim, index) for index, _ in enumerate(input)]
-        return FakeResponse(items)
+        response = FakeResponse(items)
+        return SimpleNamespace(parse=lambda: response)
 
-    mock_client.embeddings.create = fake_create
+    mock_client.embeddings.with_raw_response.create = fake_create
     return mock_client, captured
 
 
@@ -192,9 +194,10 @@ def _make_evicting_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]]:
                 self.data = items
 
         items = [FakeItem([0.1] * dim, index) for index, _ in enumerate(input)]
-        return FakeResponse(items)
+        response = FakeResponse(items)
+        return SimpleNamespace(parse=lambda: response)
 
-    mock_client.embeddings.create = fake_create
+    mock_client.embeddings.with_raw_response.create = fake_create
     return mock_client, captured
 
 
@@ -233,9 +236,10 @@ def _make_missing_model_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]
                 self.data = items
 
         items = [FakeItem([0.1] * dim, index) for index, _ in enumerate(input)]
-        return FakeResponse(items)
+        response = FakeResponse(items)
+        return SimpleNamespace(parse=lambda: response)
 
-    mock_client.embeddings.create = fake_create
+    mock_client.embeddings.with_raw_response.create = fake_create
     return mock_client, captured
 
 
@@ -263,9 +267,10 @@ def _make_connect_error_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]
                 self.data = items
 
         items = [FakeItem([0.1] * dim, index) for index, _ in enumerate(input)]
-        return FakeResponse(items)
+        response = FakeResponse(items)
+        return SimpleNamespace(parse=lambda: response)
 
-    mock_client.embeddings.create = fake_create
+    mock_client.embeddings.with_raw_response.create = fake_create
     return mock_client, captured
 
 
@@ -329,7 +334,7 @@ async def test_reload_skipped_during_cooldown() -> None:
             body=None,
         )
 
-    mock_client.embeddings.create = always_fail
+    mock_client.embeddings.with_raw_response.create = always_fail
 
     # Simulate a recent reload attempt
     embeddings_mod._last_reload_attempt = embeddings_mod.time.monotonic()
@@ -362,7 +367,7 @@ async def test_reload_failure_raises() -> None:
             body=None,
         )
 
-    mock_client.embeddings.create = always_fail
+    mock_client.embeddings.with_raw_response.create = always_fail
 
     with (
         patch("openai.AsyncOpenAI", return_value=mock_client),
@@ -418,7 +423,9 @@ async def test_connection_failures_do_not_trigger_lmstudio_recovery_for_remote_o
 ) -> None:
     """Remote/OpenAI endpoints should fail fast without LM Studio recovery."""
     mock_client = AsyncMock()
-    mock_client.embeddings.create = AsyncMock(side_effect=httpx.ConnectError("refused"))
+    mock_client.embeddings.with_raw_response.create = AsyncMock(
+        side_effect=httpx.ConnectError("refused")
+    )
 
     with (
         patch("openai.AsyncOpenAI", return_value=mock_client),
@@ -438,6 +445,6 @@ async def test_connection_failures_do_not_trigger_lmstudio_recovery_for_remote_o
     assert mock_ready.await_count == 0
     assert mock_ready.await_args is None
     if sdk_called:
-        mock_client.embeddings.create.assert_awaited_once()
+        mock_client.embeddings.with_raw_response.create.assert_awaited_once()
     else:
-        mock_client.embeddings.create.assert_not_awaited()
+        mock_client.embeddings.with_raw_response.create.assert_not_awaited()

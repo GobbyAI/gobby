@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -51,9 +52,10 @@ def _make_mock_client(dim: int) -> AsyncMock:
             vec = [0.0] * dim
             vec[0] = hash(text) % 1000 / 1000.0
             items.append(FakeItem(vec, index))
-        return FakeResponse(items)
+        response = FakeResponse(items)
+        return SimpleNamespace(parse=lambda: response)
 
-    mock_client.embeddings.create = fake_create
+    mock_client.embeddings.with_raw_response.create = fake_create
     return mock_client
 
 
@@ -83,9 +85,10 @@ def _make_evicting_client(dim: int) -> AsyncMock:
             def __init__(self, items: list[FakeItem]):
                 self.data = items
 
-        return FakeResponse([FakeItem([0.1] * dim, index) for index, _ in enumerate(input)])
+        response = FakeResponse([FakeItem([0.1] * dim, index) for index, _ in enumerate(input)])
+        return SimpleNamespace(parse=lambda: response)
 
-    mock_client.embeddings.create = fake_create
+    mock_client.embeddings.with_raw_response.create = fake_create
     return mock_client
 
 
@@ -157,14 +160,14 @@ async def test_stale_cache_entry_is_refetched_for_new_expected_dim() -> None:
         )
 
     replacement_calls = 0
-    original_create = replacement_client.embeddings.create
+    original_create = replacement_client.embeddings.with_raw_response.create
 
     async def tracking_create(model: str, input: list[str]):
         nonlocal replacement_calls
         replacement_calls += 1
         return await original_create(model=model, input=input)
 
-    replacement_client.embeddings.create = tracking_create
+    replacement_client.embeddings.with_raw_response.create = tracking_create
 
     with patch("openai.AsyncOpenAI", return_value=replacement_client):
         refreshed = await generate_embedding(
