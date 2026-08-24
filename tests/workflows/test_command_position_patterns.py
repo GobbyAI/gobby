@@ -291,7 +291,7 @@ RULE_CASES = (
     ),
     RuleCase(
         "no-invalid-git-flags",
-        blocked=("git log --no-stat",),
+        blocked=("git log --no-stat", "git -C /repo log --no-stat"),
         allowed=('echo "git log --no-stat"', "git log --stat"),
     ),
     RuleCase(
@@ -353,6 +353,7 @@ GIT_OPTION_CASES = (
     ("no-push", "push origin main"),
     ("no-push-for-workers", "push"),
     ("no-force-push", "push --force origin main"),
+    ("no-invalid-git-flags", "log --no-stat"),
     ("require-task-before-commit", 'commit -m "[gobby-#20825] chore: x"'),
     ("require-monolith-resolution-before-commit", "commit"),
 )
