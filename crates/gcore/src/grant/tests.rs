@@ -607,6 +607,70 @@ fn corrupt_grant_refused_offline() {
 }
 
 #[test]
+fn checksum_mismatched_cache_rehandshakes_and_rewrites_valid_cache() {
+    let harness = Harness::new();
+    let mut grant = fixture_grant(PrincipalKind::Interactive);
+    grant.deployment.token = deployment_token(&harness.home);
+    grant.config_revision = 2;
+    grant = grant.with_checksum();
+    let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT, None);
+    write_grant_file(&path, &grant).expect("write");
+    let mut parsed: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    parsed["payload_checksum"] = json!("ff".repeat(32));
+    fs::write(&path, serde_json::to_vec(&parsed).unwrap()).unwrap();
+
+    let scripted = spawn_scripted(vec![
+        Step::Challenge {
+            valid: true,
+            token: TOKEN.into(),
+        },
+        Step::Handshake {
+            grant: Box::new(grant.clone()),
+        },
+        Step::Config { revision: 2 },
+    ]);
+    write_binding_for(&harness, &scripted.url, &grant.deployment.token);
+    let acquired = acquire_with(&harness.request(Some(scripted.url.clone()))).expect("rehandshake");
+    let _ = join(scripted);
+    assert_eq!(acquired.source, GrantSource::Handshake);
+    match super::cache::inspect_cache_pair(&path).expect("rewritten cache must parse") {
+        Some(_) => {}
+        None => panic!("handshake must rewrite a valid cache"),
+    }
+}
+
+#[test]
+fn undeserializable_cache_rehandshakes_and_rewrites_valid_cache() {
+    let harness = Harness::new();
+    let mut grant = fixture_grant(PrincipalKind::Interactive);
+    grant.deployment.token = deployment_token(&harness.home);
+    grant.config_revision = 2;
+    grant = grant.with_checksum();
+    let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT, None);
+    fs::create_dir_all(path.parent().expect("parent")).expect("dirs");
+    fs::write(&path, b"{ not json ").expect("write");
+
+    let scripted = spawn_scripted(vec![
+        Step::Challenge {
+            valid: true,
+            token: TOKEN.into(),
+        },
+        Step::Handshake {
+            grant: Box::new(grant.clone()),
+        },
+        Step::Config { revision: 2 },
+    ]);
+    write_binding_for(&harness, &scripted.url, &grant.deployment.token);
+    let acquired = acquire_with(&harness.request(Some(scripted.url.clone()))).expect("rehandshake");
+    let _ = join(scripted);
+    assert_eq!(acquired.source, GrantSource::Handshake);
+    match super::cache::inspect_cache_pair(&path).expect("rewritten cache must parse") {
+        Some(_) => {}
+        None => panic!("handshake must rewrite a valid cache"),
+    }
+}
+
+#[test]
 fn inspect_is_non_authorizing() {
     let harness = Harness::new();
     assert!(matches!(
