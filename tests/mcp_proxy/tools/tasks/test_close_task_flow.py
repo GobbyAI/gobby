@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -29,8 +30,8 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close import (
 )
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
+from gobby.mcp_proxy.tools.tasks._notifications import _notification_tasks as notifications
 from gobby.mcp_proxy.tools.tasks._task_scope import TaskScopeEvaluation
-from gobby.mcp_proxy.tools._background_task_lifecycle import resolve_background_loop
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import Task, TaskHasOpenChildrenError
 from gobby.tasks.close_verdict import CloseCriterionVerdict, CloseVerdict
@@ -1402,7 +1403,15 @@ def _epic_close_evaluation(task: Task) -> CloseEvaluation:
 
 
 @pytest.mark.asyncio
-async def test_close_notifications_reach_a_usable_background_loop() -> None:
+async def test_closing_schedules_the_parent_and_ancestor_broadcasts() -> None:
+    """The real notifier must reach a loop it can schedule the broadcast on.
+
+    Off the loop, resolve_background_loop returns None, schedule_background_task
+    raises RuntimeError, and the notifier swallows it -- so stubbing the
+    notifier would hide exactly the defect (#20871). It runs for real here, and
+    the loop's own task factory records what it scheduled: the registry is no
+    good for this, because a finished notification pops itself out of it.
+    """
     task = replace(_task(), task_type="epic", seq_num=4242)
     ancestor = replace(task, id="00000000-0000-4000-8000-000000000414", seq_num=4241)
     ctx = _ctx(task)
@@ -1411,40 +1420,53 @@ async def test_close_notifications_reach_a_usable_background_loop() -> None:
         ancestor if task_id == ancestor.id else task
     )
     manager.list_tasks.return_value = []
-    reachable: list[bool] = []
 
     def record_close(*_args: object, **kwargs: object) -> None:
         closed = kwargs.get("closed_ancestors")
         if isinstance(closed, list):
             closed.append(ancestor.id)
 
-    def record_notify(*_args: object, **_kwargs: object) -> None:
-        # The notifier only schedules; schedule_background_task needs a running
-        # loop or the propagated one, so this is the property that decides
-        # whether the broadcast happens at all.
-        reachable.append(resolve_background_loop() is not None)
-
     manager.close_task.side_effect = record_close
 
-    with (
-        patch.object(close_finalization, "resolve_close_commit_shas", return_value=([], None)),
-        patch.object(close_finalization, "link_close_commit_shas", return_value=(task, None)),
-        patch.object(close_finalization, "notify_parent_on_task_state_change", record_notify),
-        patch.object(close_finalization, "_cleanup_closed_claim", lambda *a, **k: None),
-        patch("gobby.hooks.event_handlers._plan.on_epic_terminal", lambda *a, **k: None),
-    ):
-        result = await _commit_close(
-            ctx,
-            _epic_close_evaluation(task),
-            reason="completed",
-            skip_validation=False,
-            override_justification=None,
-            commit_sha=None,
-        )
+    scheduled: list[str] = []
+    loop = asyncio.get_running_loop()
+    previous_factory = loop.get_task_factory()
+
+    def factory(target_loop: Any, coro: Any, **kwargs: Any) -> asyncio.Task[None]:
+        created: asyncio.Task[None] = asyncio.Task(coro, loop=target_loop, **kwargs)
+        if created.get_name().startswith("gobby-parent-notification-"):
+            scheduled.append(created.get_name())
+        return created
+
+    loop.set_task_factory(cast(Any, factory))
+    try:
+        with (
+            patch.object(close_finalization, "resolve_close_commit_shas", return_value=([], None)),
+            patch.object(close_finalization, "link_close_commit_shas", return_value=(task, None)),
+            patch.object(close_finalization, "_cleanup_closed_claim", lambda *a, **k: None),
+            patch("gobby.hooks.event_handlers._plan.on_epic_terminal", lambda *a, **k: None),
+        ):
+            result = await _commit_close(
+                ctx,
+                _epic_close_evaluation(task),
+                reason="completed",
+                skip_validation=False,
+                override_justification=None,
+                commit_sha=None,
+            )
+    finally:
+        loop.set_task_factory(cast(Any, previous_factory))
+        for pending in list(notifications.values()):
+            pending.cancel()
+        await asyncio.gather(*notifications.values(), return_exceptions=True)
+        notifications.clear()
 
     assert result["closed"] is True
-    # One for the task, one for the ancestor the transition closed.
-    assert reachable == [True, True]
+    # Ancestors are described and notified before the task's own broadcast.
+    assert scheduled == [
+        f"gobby-parent-notification-{ancestor.id}-closed",
+        f"gobby-parent-notification-{task.id}-closed",
+    ]
 
 
 @pytest.mark.asyncio
