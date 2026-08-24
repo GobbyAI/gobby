@@ -15,6 +15,7 @@ import logging
 import os
 import threading
 from collections.abc import Callable, Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -23,9 +24,13 @@ import pytest
 
 import gobby.sessions.processor_stats as processor_stats
 import gobby.sessions.transcript_index as transcript_index
+from gobby.sessions.message_stats import empty_message_stats
 from gobby.sessions.processor import SessionMessageProcessor
 from gobby.sessions.transcript_index import (
     INDEX_CACHE_MAX_ENTRIES,
+    GroupBoundary,
+    ParsedBoundary,
+    TranscriptIndex,
     TranscriptIndexAppender,
     build_index_from_file,
     build_index_from_raw_lines,
@@ -36,6 +41,7 @@ from gobby.sessions.transcript_index import (
     load_index_sidecar,
     persist_index_sidecar,
 )
+from gobby.sessions.transcript_index_resume import hydrate_appender_from_index
 from gobby.sessions.transcript_io import _count_nonempty_lines
 from gobby.sessions.transcript_renderer import RenderedMessage, RenderState, render_transcript
 from gobby.sessions.transcripts.base import ParsedMessage, RawLine
@@ -1149,3 +1155,127 @@ async def test_appender_snapshot_persists_off_the_event_loop(tmp_path: Path) -> 
 
     assert persist_threads, "the sidecar was never persisted"
     assert loop_thread not in persist_threads
+
+
+def _session_scale_index(groups: int = 400) -> TranscriptIndex:
+    """An index shaped like a long-lived session: one entry per rendered group."""
+    timestamp = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+    return TranscriptIndex(
+        boundaries=[
+            GroupBoundary(
+                group_index=i,
+                raw_line_start=i,
+                byte_start=i * 100,
+                parsed_index_start=i,
+                resume_safe=True,
+                role="user" if i % 2 == 0 else "assistant",
+                timestamp=timestamp,
+            )
+            for i in range(groups)
+        ],
+        total_groups=groups,
+        parsed_message_count=groups,
+        raw_record_count=groups,
+        source="claude",
+        session_id=SESSION,
+        seek_mode="byte",
+        mtime_ns=1,
+        size=groups * 100,
+        tool_first_open={f"toolu_{i}": i for i in range(groups)},
+        parsed_boundaries=[
+            ParsedBoundary(
+                raw_line_start=i,
+                byte_start=i * 100,
+                parsed_index_start=i,
+                message_index_start=i,
+                role_counts_start={"user": i // 2},
+            )
+            for i in range(0, groups, 128)
+        ],
+        role_message_counts={"user": groups - groups // 2, "assistant": groups // 2},
+        session_stats=empty_message_stats(),
+        next_parser_index=groups,
+        next_raw_line_no=groups,
+        safe_to_start_event=True,
+    )
+
+
+class TestAppenderCloneSharing:
+    """The per-batch speculative clone must not cost O(session) (#20875).
+
+    The processor clones the appender on its event loop once per transcript
+    batch to have something to discard on failure. Deep-copying the index made
+    every clone pay for the whole session's boundaries, parsed boundaries, and
+    tool-call ids; instead the clone shares those grow-only containers, and
+    whichever appender appends next spine-copies them first, off the loop.
+    """
+
+    def test_the_clone_shares_the_per_session_containers(self) -> None:
+        appender = TranscriptIndexAppender("claude", SESSION, None)
+        hydrate_appender_from_index(appender, _session_scale_index())
+
+        cloned = appender.clone()
+
+        assert cloned.index is not appender.index
+        assert cloned.index.boundaries is appender.index.boundaries
+        assert cloned.index.parsed_boundaries is appender.index.parsed_boundaries
+        assert cloned.index.tool_first_open is appender.index.tool_first_open
+        # Post-resume there are no pending stubs left to deep-copy, and the
+        # resolved-id record rides along shared, exactly as in RenderState.
+        assert cloned._state.pending_tool_calls == {}
+        assert cloned._state.resolved_tool_call_ids is appender._state.resolved_tool_call_ids
+
+    def test_appending_on_the_clone_never_reaches_the_survivor(self) -> None:
+        appender = TranscriptIndexAppender("claude", SESSION, None)
+        index = _session_scale_index()
+        hydrate_appender_from_index(appender, index)
+        groups_before = len(appender.index.boundaries)
+        tools_before = dict(appender.index.tool_first_open)
+
+        cloned = appender.clone()
+        line = json.dumps(
+            {
+                "type": "user",
+                "message": {"content": "one more prompt"},
+                "timestamp": "2024-01-01T12:30:00Z",
+            }
+        )
+        cloned.append_raw_lines(
+            [RawLine(byte_offset=index.size, raw_line_no=groups_before, text=f"{line}\n")],
+            mtime_ns=2,
+            size=index.size + len(line) + 1,
+        )
+
+        # The clone made its own spines before mutating...
+        assert cloned.index.boundaries is not appender.index.boundaries
+        assert len(cloned.index.boundaries) == groups_before + 1
+        # ...the entries themselves stayed shared objects rather than copies...
+        assert cloned.index.boundaries[0] is appender.index.boundaries[0]
+        # ...and the rollback survivor never saw the discarded batch's entries.
+        assert len(appender.index.boundaries) == groups_before
+        assert appender.index.tool_first_open == tools_before
+
+    def test_both_sides_of_a_clone_unshare_before_appending(self) -> None:
+        """The survivor is re-fed the batch after a rollback; it must unshare too."""
+        appender = TranscriptIndexAppender("claude", SESSION, None)
+        index = _session_scale_index()
+        hydrate_appender_from_index(appender, index)
+        discarded = appender.clone()
+        groups_before = len(discarded.index.boundaries)
+
+        line = json.dumps(
+            {
+                "type": "user",
+                "message": {"content": "the re-fed prompt"},
+                "timestamp": "2024-01-01T12:31:00Z",
+            }
+        )
+        appender.append_raw_lines(
+            [RawLine(byte_offset=index.size, raw_line_no=groups_before, text=f"{line}\n")],
+            mtime_ns=2,
+            size=index.size + len(line) + 1,
+        )
+
+        assert appender.index.boundaries is not discarded.index.boundaries
+        assert len(appender.index.boundaries) == groups_before + 1
+        assert len(discarded.index.boundaries) == groups_before

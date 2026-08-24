@@ -345,6 +345,11 @@ class TranscriptIndexAppender:
         self._next_start_index = 0
         self._next_raw_line_no = 0
         self._safe_to_start_event = True
+        # Whether this appender's grow-only index containers (boundaries,
+        # parsed_boundaries, tool_first_open) are aliased by a clone()
+        # counterpart. While True, append_raw_lines spine-copies them before
+        # mutating so the other appender never sees this one's entries.
+        self._shares_index_containers = False
         self.index = TranscriptIndex(
             boundaries=[],
             total_groups=0,
@@ -362,18 +367,56 @@ class TranscriptIndexAppender:
         )
 
     def clone(self) -> TranscriptIndexAppender:
-        """Copy mutable indexing state while sharing the observation sink."""
+        """Copy mutable indexing state while sharing the observation sink.
+
+        The processor calls this on its event loop once per transcript batch to
+        have a speculative appender it can discard on failure, so nothing here
+        may cost O(session) (#20875). The index is shallow-copied: scalars live
+        on the new ``TranscriptIndex`` object, while the grow-only containers
+        (``boundaries``, ``parsed_boundaries``, ``tool_first_open``) stay shared
+        between both appenders until whichever of them appends next spine-copies
+        them first -- see ``_unshare_index_containers``, which runs inside
+        ``append_raw_lines``, off the loop. Entries are never mutated after
+        being appended, so sharing them is safe; the rebind-only fields
+        (``session_stats``, ``role_message_counts``, ``post_pass_adjustments``,
+        ``parser_state``) are replaced wholesale on update and never mutated in
+        place, so the shallow copy covers them too. The parser and render state
+        hold no per-session growth -- ``RenderState.__deepcopy__`` shares its
+        one grow-only record.
+        """
         cloned = copy(self)
         cloned._parser = deepcopy(self._parser)
         cloned._state = deepcopy(self._state)
         cloned._role_counts = dict(self._role_counts)
-        cloned.index = deepcopy(self.index)
+        cloned.index = copy(self.index)
+        self._shares_index_containers = True
+        cloned._shares_index_containers = True
         return cloned
+
+    def _unshare_index_containers(self) -> None:
+        """Give this appender its own spines for the containers a clone shares.
+
+        ``clone()`` leaves both appenders referencing the same grow-only
+        containers so the on-loop clone stays O(1); the first one to append
+        copies the list/dict spines here -- element objects stay shared, they
+        are never mutated after being appended -- so the rollback survivor
+        never sees a discarded batch's entries. The processor drives
+        ``append_positioned_lines`` off the event loop, so the O(session)
+        spine copy this performs is not a loop cost.
+        """
+        if not self._shares_index_containers:
+            return
+        index = self.index
+        index.boundaries = list(index.boundaries)
+        index.parsed_boundaries = list(index.parsed_boundaries)
+        index.tool_first_open = dict(index.tool_first_open)
+        self._shares_index_containers = False
 
     def append_raw_lines(
         self, raw_lines: Iterable[RawLine], *, mtime_ns: int, size: int
     ) -> TranscriptIndex:
         """Append complete positioned raw lines and update snapshot metadata."""
+        self._unshare_index_containers()
         raw_counter = [0]
         next_raw_line_no = [self._next_raw_line_no]
         stats_messages: list[ParsedMessage] = []
@@ -489,6 +532,10 @@ class TranscriptIndexAppender:
         next_raw_line_no: int,
     ) -> TranscriptIndexAppender:
         self.index, self._state = index, state
+        # Ownership of ``index`` transfers to this appender: later appends grow
+        # its containers in place. Only clone() introduces the aliasing that
+        # _unshare_index_containers guards against.
+        self._shares_index_containers = False
         self._role_counts = dict(index.role_message_counts)
         self._prev_current_id = current_id
         self._next_start_index, self._next_raw_line_no = next_parser_index, next_raw_line_no

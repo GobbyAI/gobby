@@ -272,7 +272,11 @@ class TestSessionRegistration:
         assert appender._safe_to_start_event == index.safe_to_start_event
         assert appender._state.current_message is not None
         assert appender._state.current_message.role == "assistant"
-        assert "call_1" in appender._state.pending_tool_calls
+        # Pre-resume calls are remembered as resolved ids -- shared on every
+        # per-batch clone -- rather than as pending stubs that would be
+        # deep-copied forever (#20875).
+        assert appender._state.pending_tool_calls == {}
+        assert "call_1" in appender._state.resolved_tool_call_ids
         assert processor._parsers["sid"].snapshot_state()["pending_tool_search_use_ids"] == [
             "call_resume"
         ]

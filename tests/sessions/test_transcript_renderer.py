@@ -1,4 +1,5 @@
 from copy import deepcopy
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -716,6 +717,40 @@ class TestResolvedToolCallRetention:
         assert state.current_message is not None
         assert len(state.current_message.content_blocks) == blocks_before
 
+    def test_a_changed_duplicate_result_is_dropped_not_overwritten(self) -> None:
+        """A second result with different content is deliberately discarded.
+
+        A streaming partial followed by the final would need the resolved
+        call's owner message to overwrite, and retaining every owner for the
+        life of the session is the growth #20859 removed. The first result
+        wins (#20875); this pins that choice.
+        """
+        call, result = call_and_result()
+        state = RenderState()
+        _completed, state = render_incremental([call, result], state, session_id="s1")
+        assert state.current_message is not None
+        blocks_before = len(state.current_message.content_blocks)
+        first_content = only_tool_call(state.current_message).result
+        assert first_content is not None
+
+        changed = make_msg(
+            2,
+            "user",
+            "",
+            content_type="tool_result",
+            tool_use_id="call-1",
+            tool_result={"exit_code": 1, "stdout": "the final, different payload", "stderr": ""},
+        )
+        completed, state = render_incremental([changed], state, session_id="s1")
+
+        assert completed == []
+        assert state.current_message is not None
+        assert len(state.current_message.content_blocks) == blocks_before
+        kept = only_tool_call(state.current_message).result
+        assert kept is not None
+        assert kept.content == first_content.content
+        assert kept.metadata == first_content.metadata
+
 
 class TestRenderStateCopySemantics:
     """What a rollback snapshot copies is what the event loop pays for.
@@ -765,3 +800,55 @@ class TestRenderStateCopySemantics:
         # would give a message whose tool call no longer receives its result.
         assert snapshot.tool_call_messages["call-1"] is snapshot.current_message
         assert only_tool_call(snapshot.current_message) is snapshot.pending_tool_calls["call-1"]
+
+    def test_a_refed_batch_repairs_despite_the_stale_shared_resolved_id(self) -> None:
+        """Pin the ordering that makes sharing the resolved-id set safe.
+
+        The rollback snapshot shares resolved_tool_call_ids with the live
+        state, so a failed batch's resolutions survive in the snapshot the
+        processor restores. That is safe only because the pairing checks in
+        transcript_render_blocks consult pending_tool_calls before
+        resolved_tool_call_ids: re-feeding the batch puts its call back in
+        pending, and pending winning is what lets the re-fed result pair
+        instead of being suppressed as a duplicate (#20875).
+        """
+        state = RenderState()
+        snapshot = deepcopy(state)  # what the processor would restore on failure
+        batch = call_and_result()
+        _completed, state = render_incremental(batch, state, session_id="s1")
+
+        # The batch "fails": the survivor is the snapshot, and because the set
+        # is shared, the rolled-back resolution is already visible in it.
+        assert "call-1" in snapshot.resolved_tool_call_ids
+
+        _completed, survivor = render_incremental(batch, snapshot, session_id="s1")
+
+        assert survivor.current_message is not None
+        tool_call = only_tool_call(survivor.current_message)
+        assert tool_call.status == "completed"
+        assert tool_call.result is not None
+        assert tool_call.result.metadata is not None
+        assert tool_call.result.metadata["exit_code"] == 0
+
+    def test_a_field_added_later_is_copied_rather_than_silently_reset(self) -> None:
+        """__deepcopy__ derives its field list from the dataclass (#20875).
+
+        A hand enumeration meant a sixth field added later silently reset on
+        rollback. Extending the dataclass stands in for adding that field: the
+        copy must carry it, deep-copied, while still sharing the resolved-id
+        record.
+        """
+
+        @dataclass
+        class ExtendedRenderState(RenderState):
+            added_later: list[str] = field(default_factory=list)
+
+        state = ExtendedRenderState(added_later=["kept"])
+        state.remember_resolved_tool_call("call-1")
+
+        snapshot = deepcopy(state)
+
+        assert isinstance(snapshot, ExtendedRenderState)
+        assert snapshot.added_later == ["kept"]
+        assert snapshot.added_later is not state.added_later
+        assert snapshot.resolved_tool_call_ids is state.resolved_tool_call_ids

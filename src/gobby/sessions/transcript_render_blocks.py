@@ -159,7 +159,15 @@ def _process_message_block(
 ) -> None:
     """Integrate a ParsedMessage into the current RenderedMessage or pair as tool result."""
 
-    # Tool Result Pairing
+    # Tool Result Pairing.
+    #
+    # ORDER IS LOAD-BEARING: pending_tool_calls must be consulted before
+    # resolved_tool_call_ids. RenderState.__deepcopy__ shares the resolved-id
+    # set between a rollback snapshot and the live state (it only ever grows),
+    # so a rolled-back batch's resolutions survive in the snapshot the
+    # processor restores. Re-feeding that batch puts its calls back in
+    # pending_tool_calls, and checking pending first is what keeps the stale
+    # resolved id from shadowing the genuine re-pairing (#20875).
     if msg.content_type in ["tool_result", "mcp_tool_result"]:
         if msg.tool_use_id and msg.tool_use_id in state.pending_tool_calls:
             tool_call = state.pending_tool_calls.pop(msg.tool_use_id)
@@ -181,6 +189,11 @@ def _process_message_block(
         if msg.tool_use_id and msg.tool_use_id in state.resolved_tool_call_ids:
             # A second result for a call already paired. Suppressed rather than
             # appended, exactly as it was while resolved calls stayed pending.
+            # Deliberately dropped even when its content differs from the first
+            # (a streaming partial followed by the final): overwriting would
+            # need the resolved call's owner message, and retaining every owner
+            # for the life of the session is the growth #20859 removed. The
+            # first result wins (#20875).
             return
 
     if not state.current_message:
