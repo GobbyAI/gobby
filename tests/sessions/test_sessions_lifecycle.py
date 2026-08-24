@@ -1,6 +1,7 @@
 # mypy: disable-error-code="no-untyped-def,no-untyped-call,assignment,attr-defined,union-attr"
 import asyncio
 import os
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -257,6 +258,29 @@ class TestSessionLifecycleManager:
 
         assert processed == 0
         manager.session_manager.mark_transcript_processed.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_pending_transcript_query_runs_off_the_event_loop_thread(
+        self, manager: SessionLifecycleManager
+    ) -> None:
+        """The query is synchronous psycopg, and a pool checkout also runs its
+        runtime-role round trip inline. The sampler caught this chain at 40% of
+        a 2.44s loop stall (#20845)."""
+        query_threads: list[int] = []
+
+        def _record(**_kwargs: object) -> list[object]:
+            query_threads.append(threading.get_ident())
+            return []
+
+        manager.session_manager.get_pending_transcript_sessions.side_effect = _record
+        loop_thread = threading.get_ident()
+
+        await manager._process_pending_transcripts(manager._capture_active())
+
+        assert query_threads, "the pending-transcript query never ran"
+        assert loop_thread not in query_threads, (
+            "the pending-transcript query ran on the event loop thread"
+        )
 
     @pytest.mark.asyncio
     async def test_process_pending_transcripts_success(

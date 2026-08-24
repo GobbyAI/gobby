@@ -100,8 +100,12 @@ class TranscriptProcessingMixin:
         LLM is unavailable).
         """
         config = active.session_lifecycle
-        sessions = self.session_manager.get_pending_transcript_sessions(
-            limit=config.transcript_processing_batch_size
+        # Synchronous psycopg: a pool checkout runs its runtime-role check and
+        # the query itself inline, and this loop is on the event loop thread.
+        # The sampler caught this exact chain at 40% of a 2.44s stall (#20845).
+        sessions = await asyncio.to_thread(
+            self.session_manager.get_pending_transcript_sessions,
+            limit=config.transcript_processing_batch_size,
         )
 
         if not sessions:
