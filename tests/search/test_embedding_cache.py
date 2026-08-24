@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -59,9 +60,10 @@ def _make_mock_client(dim: int = 4) -> AsyncMock:
             vec = [0.0] * dim
             vec[0] = hash(text) % 1000 / 1000.0
             items.append(FakeItem(vec, index))
-        return FakeResponse(items)
+        response = FakeResponse(items)
+        return SimpleNamespace(parse=lambda: response)
 
-    mock_client.embeddings.create = fake_create
+    mock_client.embeddings.with_raw_response.create = fake_create
     return mock_client
 
 
@@ -70,14 +72,14 @@ async def test_cache_hit_avoids_api_call() -> None:
     """Second call for same text should hit cache, not the API."""
     mock_client = _make_mock_client()
     call_count = 0
-    original_create = mock_client.embeddings.create
+    original_create = mock_client.embeddings.with_raw_response.create
 
     async def tracking_create(model: str, input: list[str]):
         nonlocal call_count
         call_count += 1
         return await original_create(model=model, input=input)
 
-    mock_client.embeddings.create = tracking_create
+    mock_client.embeddings.with_raw_response.create = tracking_create
 
     with patch("openai.AsyncOpenAI", return_value=mock_client):
         result1 = await generate_embedding("hello", model="test-model", api_base=LOCAL_API_BASE)
@@ -110,7 +112,7 @@ async def test_openai_client_closed_after_success() -> None:
 async def test_openai_client_closed_after_failure() -> None:
     """Client cleanup should run when an unexpected fetch error propagates."""
     mock_client = AsyncMock()
-    mock_client.embeddings.create.side_effect = ValueError("boom")
+    mock_client.embeddings.with_raw_response.create.side_effect = ValueError("boom")
 
     with (
         patch("openai.AsyncOpenAI", return_value=mock_client),
@@ -133,7 +135,9 @@ async def test_empty_provider_response_raises_embedding_generation_error() -> No
     class FakeResponse:
         data: list[object] = []
 
-    mock_client.embeddings.create.return_value = FakeResponse()
+    mock_client.embeddings.with_raw_response.create.return_value = SimpleNamespace(
+        parse=lambda: FakeResponse()
+    )
 
     with (
         patch("openai.AsyncOpenAI", return_value=mock_client),
@@ -149,14 +153,14 @@ async def test_cache_miss_on_different_text() -> None:
     """Different texts should both call the API."""
     mock_client = _make_mock_client()
     call_count = 0
-    original_create = mock_client.embeddings.create
+    original_create = mock_client.embeddings.with_raw_response.create
 
     async def tracking_create(model: str, input: list[str]):
         nonlocal call_count
         call_count += 1
         return await original_create(model=model, input=input)
 
-    mock_client.embeddings.create = tracking_create
+    mock_client.embeddings.with_raw_response.create = tracking_create
 
     with patch("openai.AsyncOpenAI", return_value=mock_client):
         r1 = await generate_embedding("hello", model="test-model", api_base=LOCAL_API_BASE)
@@ -171,14 +175,14 @@ async def test_ttl_expiry() -> None:
     """Cache entries should expire after TTL."""
     mock_client = _make_mock_client()
     call_count = 0
-    original_create = mock_client.embeddings.create
+    original_create = mock_client.embeddings.with_raw_response.create
 
     async def tracking_create(model: str, input: list[str]):
         nonlocal call_count
         call_count += 1
         return await original_create(model=model, input=input)
 
-    mock_client.embeddings.create = tracking_create
+    mock_client.embeddings.with_raw_response.create = tracking_create
 
     with (
         patch("openai.AsyncOpenAI", return_value=mock_client),
@@ -199,13 +203,13 @@ async def test_batch_dedup_within_request() -> None:
     """Duplicate texts in a single batch should only be sent once to the API."""
     mock_client = _make_mock_client()
     captured_inputs: list[list[str]] = []
-    original_create = mock_client.embeddings.create
+    original_create = mock_client.embeddings.with_raw_response.create
 
     async def tracking_create(model: str, input: list[str]):
         captured_inputs.append(input)
         return await original_create(model=model, input=input)
 
-    mock_client.embeddings.create = tracking_create
+    mock_client.embeddings.with_raw_response.create = tracking_create
 
     with patch("openai.AsyncOpenAI", return_value=mock_client):
         results = await generate_embeddings(
@@ -232,7 +236,7 @@ async def test_concurrent_identical_misses_share_inflight_fetch() -> None:
     started = asyncio.Event()
     second_lookup = asyncio.Event()
     release = asyncio.Event()
-    original_create = mock_client.embeddings.create
+    original_create = mock_client.embeddings.with_raw_response.create
     lookup_count = 0
 
     def tracking_cache_key(text: str, model: str, api_base: str | None) -> str:
@@ -249,7 +253,7 @@ async def test_concurrent_identical_misses_share_inflight_fetch() -> None:
         await release.wait()
         return await original_create(model=model, input=input)
 
-    mock_client.embeddings.create = tracking_create
+    mock_client.embeddings.with_raw_response.create = tracking_create
 
     with (
         patch("openai.AsyncOpenAI", return_value=mock_client),
@@ -275,13 +279,13 @@ async def test_cross_call_dedup() -> None:
     """A cached embedding from one call should be reused in a later batch."""
     mock_client = _make_mock_client()
     captured_inputs: list[list[str]] = []
-    original_create = mock_client.embeddings.create
+    original_create = mock_client.embeddings.with_raw_response.create
 
     async def tracking_create(model: str, input: list[str]):
         captured_inputs.append(input)
         return await original_create(model=model, input=input)
 
-    mock_client.embeddings.create = tracking_create
+    mock_client.embeddings.with_raw_response.create = tracking_create
 
     with patch("openai.AsyncOpenAI", return_value=mock_client):
         # First call caches "x"
@@ -305,14 +309,14 @@ async def test_different_model_is_cache_miss() -> None:
     """Same text with different model should not hit cache."""
     mock_client = _make_mock_client()
     call_count = 0
-    original_create = mock_client.embeddings.create
+    original_create = mock_client.embeddings.with_raw_response.create
 
     async def tracking_create(model: str, input: list[str]):
         nonlocal call_count
         call_count += 1
         return await original_create(model=model, input=input)
 
-    mock_client.embeddings.create = tracking_create
+    mock_client.embeddings.with_raw_response.create = tracking_create
 
     with patch("openai.AsyncOpenAI", return_value=mock_client):
         await generate_embedding("hello", model="model-a", api_base=LOCAL_API_BASE)
@@ -326,14 +330,14 @@ async def test_different_api_base_is_cache_miss() -> None:
     """Same text with different api_base should not hit cache."""
     mock_client = _make_mock_client()
     call_count = 0
-    original_create = mock_client.embeddings.create
+    original_create = mock_client.embeddings.with_raw_response.create
 
     async def tracking_create(model: str, input: list[str]):
         nonlocal call_count
         call_count += 1
         return await original_create(model=model, input=input)
 
-    mock_client.embeddings.create = tracking_create
+    mock_client.embeddings.with_raw_response.create = tracking_create
 
     with patch("openai.AsyncOpenAI", return_value=mock_client):
         await generate_embedding("hello", model="test-model", api_base="http://localhost:1234/v1")

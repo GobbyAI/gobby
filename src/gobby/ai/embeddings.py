@@ -474,18 +474,14 @@ async def _retry_embeddings_after_reload(
     api_base: str | None,
 ) -> list[list[float]]:
     """Retry a single embeddings request after the local model is reloaded."""
-    response = await client.embeddings.create(model=model, input=texts)
-    embeddings = _extract_ordered_embeddings(
-        response.data,
+    raw_response = await client.embeddings.with_raw_response.create(model=model, input=texts)
+    embeddings = await asyncio.to_thread(
+        _parse_embeddings_response,
+        raw_response,
         requested_count=len(texts),
         model=model,
         api_base=api_base,
-    )
-    _validate_embeddings_dim(
-        embeddings,
         expected_dim=expected_dim,
-        model=model,
-        api_base=api_base,
     )
     logger.debug("Generated %s embeddings (%s) after reload", len(embeddings), model)
     return embeddings
@@ -512,6 +508,37 @@ def _validate_embeddings_dim(
             f"model={model}, api_base={api_base}, expected_dim={expected_dim}, "
             f"index={index}, actual_dim={actual_dim}"
         )
+
+
+def _parse_embeddings_response(
+    raw_response: Any,
+    *,
+    requested_count: int,
+    model: str,
+    api_base: str | None,
+    expected_dim: int | None,
+) -> list[list[float]]:
+    """Deserialize and validate a raw embeddings response.
+
+    CPU-bound: ``raw_response.parse()`` decodes the body and constructs a
+    pydantic model per embedding (tens of thousands of floats for a batch),
+    and the ordering/dimension checks walk every vector again. Callers must
+    run this via ``asyncio.to_thread`` so it stays off the event loop.
+    """
+    response = raw_response.parse()
+    embeddings = _extract_ordered_embeddings(
+        response.data,
+        requested_count=requested_count,
+        model=model,
+        api_base=api_base,
+    )
+    _validate_embeddings_dim(
+        embeddings,
+        expected_dim=expected_dim,
+        model=model,
+        api_base=api_base,
+    )
+    return embeddings
 
 
 async def _fetch_embeddings(
@@ -546,18 +573,16 @@ async def _fetch_embeddings(
         last_error: Exception | None = None
         for attempt in range(max_retries + 1):
             try:
-                response = await client.embeddings.create(model=provider.model, input=texts)
-                embeddings = _extract_ordered_embeddings(
-                    response.data,
+                raw_response = await client.embeddings.with_raw_response.create(
+                    model=provider.model, input=texts
+                )
+                embeddings = await asyncio.to_thread(
+                    _parse_embeddings_response,
+                    raw_response,
                     requested_count=len(texts),
                     model=model,
                     api_base=provider.api_base,
-                )
-                _validate_embeddings_dim(
-                    embeddings,
                     expected_dim=expected_dim,
-                    model=model,
-                    api_base=provider.api_base,
                 )
                 logger.debug("Generated %s embeddings (%s)", len(embeddings), model)
                 return embeddings

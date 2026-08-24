@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -43,10 +44,11 @@ def _make_openai_client(dim: int = 1536) -> AsyncMock:
     class FakeResponse:
         data: list[FakeItem]
 
-    async def fake_create(model: str, input: list[str]) -> FakeResponse:
-        return FakeResponse([FakeItem([0.1] * dim, index) for index, _ in enumerate(input)])
+    async def fake_create(model: str, input: list[str]) -> SimpleNamespace:
+        response = FakeResponse([FakeItem([0.1] * dim, index) for index, _ in enumerate(input)])
+        return SimpleNamespace(parse=lambda: response)
 
-    mock_client.embeddings.create = AsyncMock(side_effect=fake_create)
+    mock_client.embeddings.with_raw_response.create = AsyncMock(side_effect=fake_create)
     return mock_client
 
 
@@ -98,8 +100,11 @@ async def test_explicit_openai_embedding_config_allows_cloud_call() -> None:
 
     assert len(result) == 1536
     mock_openai.assert_called_once_with(base_url=None, api_key="sk-test")
-    mock_client.embeddings.create.assert_awaited_once()
-    assert mock_client.embeddings.create.await_args.kwargs["model"] == "text-embedding-3-small"
+    mock_client.embeddings.with_raw_response.create.assert_awaited_once()
+    assert (
+        mock_client.embeddings.with_raw_response.create.await_args.kwargs["model"]
+        == "text-embedding-3-small"
+    )
 
 
 @pytest.mark.asyncio
@@ -115,7 +120,10 @@ async def test_explicit_openai_prefix_is_stripped_for_cloud_api() -> None:
             expected_dim=1536,
         )
 
-    assert mock_client.embeddings.create.await_args.kwargs["model"] == "text-embedding-3-small"
+    assert (
+        mock_client.embeddings.with_raw_response.create.await_args.kwargs["model"]
+        == "text-embedding-3-small"
+    )
 
 
 @pytest.mark.asyncio
@@ -142,7 +150,7 @@ async def test_local_endpoint_with_configured_key_uses_it_as_bearer_credential()
     mock_openai.assert_called_once_with(
         base_url="http://localhost:1234/v1", api_key="lm-studio-token"
     )
-    mock_client.embeddings.create.assert_awaited_once()
+    mock_client.embeddings.with_raw_response.create.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -180,7 +188,10 @@ async def test_local_provider_prefixed_model_is_stripped_for_local_endpoint() ->
             expected_dim=768,
         )
 
-    assert mock_client.embeddings.create.await_args.kwargs["model"] == "nomic-embed-text"
+    assert (
+        mock_client.embeddings.with_raw_response.create.await_args.kwargs["model"]
+        == "nomic-embed-text"
+    )
 
 
 def test_embedding_configured_requires_api_base_for_local_even_with_env(

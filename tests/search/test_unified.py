@@ -62,11 +62,12 @@ def _make_openai_client(dim: int) -> AsyncMock:
     class FakeResponse:
         data: list[FakeItem]
 
-    async def fake_create(model: str, input: list[str]) -> FakeResponse:
-        return FakeResponse([FakeItem([0.1] * dim, index) for index, _ in enumerate(input)])
+    async def fake_create(model: str, input: list[str]) -> SimpleNamespace:
+        response = FakeResponse([FakeItem([0.1] * dim, index) for index, _ in enumerate(input)])
+        return SimpleNamespace(parse=lambda: response)
 
     create_mock: AsyncMock = AsyncMock(side_effect=fake_create)
-    mock_client.embeddings.create = create_mock
+    mock_client.embeddings.with_raw_response.create = create_mock
     return mock_client
 
 
