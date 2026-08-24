@@ -9,5 +9,5 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(curl|wget)\\s+.*\\|\\s*(ba)?sh|\\$\\(\\s*(curl|wget)|<\\(\\s*(curl|wget)"
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(curl|wget)\\s+.*\\|\\s*(ba)?sh|\\$\\(\\s*(curl|wget)|<\\(\\s*(curl|wget)"
         reason: "Piping remote scripts to shell is never allowed."

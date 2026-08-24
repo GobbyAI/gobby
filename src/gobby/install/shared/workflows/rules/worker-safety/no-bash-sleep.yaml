@@ -9,5 +9,5 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?sleep\\s+"
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?sleep\\s+"
         reason: "Use wait steps or completion events — Gobby resumes you when the condition is met."

@@ -10,7 +10,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(?:uv\\s+run\\s+)?gobby\\s+(start|stop|restart)\\b"
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(?:uv\\s+run\\s+)?gobby\\s+(start|stop|restart)\\b"
         reason: "Spawned agents cannot manage the daemon. This would restart the production daemon or start a new instance in the clone."
 
   no-daemon-management-http:
@@ -22,5 +22,5 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?curl\\b.*(/api/admin/restart|/api/admin/shutdown)"
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?curl\\b.*(/api/admin/restart|/api/admin/shutdown)"
         reason: "Spawned agents cannot manage the daemon via HTTP endpoints."

@@ -16,7 +16,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?curl\\b[^|;&]*\\s(?:-[A-Za-z]*[dTF]\\b|--(?:data(?:-[a-z]+)?|form(?:-string)?|upload-file|json)\\b)"
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?curl\\b[^|;&]*\\s(?:-[A-Za-z]*[dTF]\\b|--(?:data(?:-[a-z]+)?|form(?:-string)?|upload-file|json)\\b)"
         command_not_pattern: &local_url_exemption "(?i)^(?!.*https?://(?!(?:localhost|127\\.0\\.0\\.1|\\[::1\\]|0\\.0\\.0\\.0)(?::\\d+)?(?:[/\\s'\"]|$))).*\\bhttps?://(?:localhost|127\\.0\\.0\\.1|\\[::1\\]|0\\.0\\.0\\.0)(?::\\d+)?(?:[/\\s'\"]|$)"
         reason: "Uploading data to external hosts is not allowed. Plain GET downloads and requests to localhost are permitted."
 
@@ -29,7 +29,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?wget\\b[^|;&]*\\s--(?:post-(?:data|file)|body-(?:data|file))\\b"
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?wget\\b[^|;&]*\\s--(?:post-(?:data|file)|body-(?:data|file))\\b"
         command_not_pattern: *local_url_exemption
         reason: "Uploading data to external hosts is not allowed. Plain GET downloads and requests to localhost are permitted."
 
@@ -42,7 +42,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(?:scp|sftp)\\s"
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(?:scp|sftp)\\s"
         reason: "Remote file copy (scp/sftp) is not allowed."
 
   no-secret-read:

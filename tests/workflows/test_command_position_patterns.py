@@ -31,7 +31,7 @@ pytestmark = pytest.mark.unit
 SESSION_ID = "22222222-2222-4222-8222-222222222222"
 GOBBY_PROJECT_ID = "d45545c5-ded5-4335-b115-0245752edacf"
 
-SEGMENT_ANCHOR_PREFIX = "(^|(?<=[;&|\\n]))"
+SEGMENT_ANCHOR_PREFIX = "(^|(?<=[;&|(`\\n]))"
 
 GIT_GLOBAL_OPTION_PREFIXES = (
     "git -C /repo",
@@ -316,6 +316,20 @@ RULE_CASES = (
     ),
 )
 
+# Command substitution ($(...) / backticks) and subshell parens are real
+# invocation positions: the segment class treats ( and ` as delimiters.
+SUBSTITUTION_CASES = (
+    ("no-push", "echo $(git push)"),
+    ("no-push", "echo `git push`"),
+    ("no-push", "(git push)"),
+    ("no-full-pytest-suite", "OUT=$(uv run pytest)"),
+    ("no-recursive-rm", "echo $(rm -rf /tmp/x)"),
+    ("no-daemon-management", "echo `gobby restart`"),
+    ("block-gobby-tasks-cli", "echo $(gobby tasks close 42)"),
+    ("require-pytest-guard-env", "OUT=$(uv run pytest tests/tasks/test_validation.py)"),
+    ("no-remote-copy", "(scp dump.sql user@host:/tmp/ )"),
+)
+
 GIT_OPTION_CASES = (
     ("no-push", "push origin main"),
     ("no-push-for-workers", "push"),
@@ -351,6 +365,18 @@ def test_git_global_options_do_not_bypass(
     for prefix in GIT_GLOBAL_OPTION_PREFIXES:
         command = f"{prefix} {suffix}"
         assert _blocks(body, command), f"{rule_name} should block: {command}"
+
+
+@pytest.mark.parametrize(("rule_name", "command"), SUBSTITUTION_CASES)
+def test_substitution_and_subshell_positions_block(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    rule_name: str,
+    command: str,
+) -> None:
+    _sync_bundled(db)
+    body = _get_rule(manager, rule_name)
+    assert _blocks(body, command), f"{rule_name} should block: {command}"
 
 
 def test_patterns_are_segment_anchored(db: HubDatabase, manager: RuleDefinitionManager) -> None:

@@ -10,7 +10,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?rm\\s+(-\\w*r|--recursive)"
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?rm\\s+(-\\w*r|--recursive)"
         reason: "Recursive delete is not allowed. Ask the user for permission to disable this rule if you need to proceed."
 
   no-secure-delete-interactive:
@@ -22,7 +22,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(shred|srm)\\b"
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(shred|srm)\\b"
         reason: "Secure/permanent delete is not allowed. Ask the user for permission to disable this rule if you need to proceed."
 
   no-truncate-interactive:
@@ -46,7 +46,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?kill\\s+(-\\w*9|-KILL)|(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?killall\\b"
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?kill\\s+(-\\w*9|-KILL)|(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?killall\\b"
         reason: "Force-killing processes is not allowed. Use graceful signals. Ask the user for permission to disable this rule if you need to proceed."
 
   no-recursive-permissions-interactive:
@@ -58,7 +58,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(chmod|chown)\\s+.*-R\\b"
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(chmod|chown)\\s+.*-R\\b"
         reason: "Recursive permission changes are not allowed. Ask the user for permission to disable this rule if you need to proceed."
 
   no-dd-interactive:
@@ -70,7 +70,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?dd\\s+"
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?dd\\s+"
         reason: "Low-level disk operations are not allowed. Ask the user for permission to disable this rule if you need to proceed."
 
   no-npm-publish-interactive:
@@ -82,7 +82,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*npm\\s+publish\\b"
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*npm\\s+publish\\b"
         reason: "Package publishing is not allowed. Ask the user for permission to disable this rule if you need to proceed."
 
   no-twine-upload-interactive:
@@ -94,7 +94,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*twine\\s+upload\\b"
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*twine\\s+upload\\b"
         reason: "Package publishing is not allowed. Ask the user for permission to disable this rule if you need to proceed."
 
   no-cargo-publish-interactive:
@@ -106,7 +106,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*cargo\\s+(?:\\+\\S+\\s+)?publish\\b"
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*cargo\\s+(?:\\+\\S+\\s+)?publish\\b"
         reason: "Package publishing is not allowed; cargo publish --dry-run is also blocked (fail closed). Ask the user for permission to disable this rule if you need to proceed."
 
   no-gem-push-interactive:
@@ -118,5 +118,5 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*gem\\s+push\\b"
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*gem\\s+push\\b"
         reason: "Package publishing is not allowed. Ask the user for permission to disable this rule if you need to proceed."
