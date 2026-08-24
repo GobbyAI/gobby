@@ -81,12 +81,20 @@ _RUNNER_FAILURE_PATTERNS = (
     # vitest/jest's "Tests  3 failed | 5 passed", mypy's "Found 2 errors in 1 file",
     # ruff's "Found 3 errors.". The [1-9] guard keeps "0 failed" and "0 errors" out,
     # and requiring the word immediately after the count keeps "1 xfailed" out.
-    re.compile(r"\b[1-9]\d*\s+(?:failed|failures?|errors?)\b", re.IGNORECASE),
+    # Count and word must share a line ([^\S\n], not \s): every counted summary
+    # puts them on one, and letting the gap span a newline misread a PASSING
+    # `gobby test-types audit` ratchet — "Files scanned: 2\nErrors: 10" (ten
+    # baselined errors, zero new) — as "2 errors" (#20880).
+    re.compile(r"\b[1-9]\d*[^\S\n]+(?:failed|failures?|errors?)\b", re.IGNORECASE),
     # Per-test failure lines: pytest's "FAILED path::test" and "ERROR path::test",
     # go's "--- FAIL: TestX" and "FAIL\tpkg\t0.1s", cargo's "test result: FAILED.".
     re.compile(
         r"(?m)^\s*(?:FAILED\s+\S|ERROR\s+\S+::|---\s+FAIL:|FAIL\s+\S|test result:\s*FAILED\b)"
     ),
+    # Gobby audit ratchets (`gobby test-types audit`, `gobby test-quality audit`):
+    # a passing run still headlines the TOTAL count of baselined findings
+    # ("Errors: 10"), so only the ratchet's own failing tally proves failure.
+    re.compile(r"(?m)^\s*Failing new (?:errors|issues) >= \w+: [1-9]\d*\b"),
 )
 
 
