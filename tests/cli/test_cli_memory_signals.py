@@ -364,6 +364,9 @@ def _replay_rows() -> list[dict[str, object]]:
                     "memory_id": memory_id,
                     "rank": rank,
                     "similarity": similarity,
+                    # Undecayed, so the score the static arm thresholds on is
+                    # the same number it orders by.
+                    "temporal_decay_factor": 1.0,
                     "judge_useful": useful,
                     "query_text": query,
                     "presented": presented,

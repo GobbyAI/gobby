@@ -166,18 +166,25 @@ class MemoryRecallConfig(FeatureDefaultConfig):
         ),
     )
     selection_min_score: float = Field(
-        default=0.65,
+        default=0.70,
         ge=0.0,
         le=1.0,
         description=(
-            "Minimum similarity a candidate must carry to be injected. Unlike "
-            "min_score the backfill loop does not chase this floor, so it is the "
-            "only control that can make a turn inject less than the rank limit. "
-            "A candidate with no finite similarity is dropped rather than admitted. "
-            "Default 0.65 is the calibration knee across both judge cohorts: it "
-            "keeps roughly a fifth of labeled hits, adds about 20 points of "
-            "precision to each cohort (haiku 31.9 -> 52.3, luna 46.3 -> 67.2), and "
-            "lands the mean per-turn injection at one memory (#20771)."
+            "Minimum UNDECAYED similarity a candidate must carry to be injected, "
+            "recovered as similarity / temporal_decay_factor. Unlike min_score, "
+            "which reads the decayed value, this is the last gate before the "
+            "model, so it asks only whether a memory is on topic and leaves "
+            "temporal decay to order candidates (#20831); on the decayed axis a "
+            "30-day half-life demanded score * boost >= 1.30 to inject at all. "
+            "The backfill loop does not chase this floor, so it is the only "
+            "control that can make a turn inject less than the rank limit. A "
+            "candidate with no similarity at all -- every keyword-only hit -- is "
+            "dropped rather than admitted. "
+            "Default 0.70 re-seats #20771's calibration knee on the undecayed "
+            "axis: 0.65 was fitted against decayed recall_signal_hits.similarity, "
+            "whose live p82 is 0.649, so carrying it over unchanged would have "
+            "loosened selection roughly threefold (zero-inject turns 46.7% -> "
+            "18.8%, haiku precision 52.3 -> 42.3)."
         ),
     )
 

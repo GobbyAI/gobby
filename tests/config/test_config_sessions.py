@@ -34,8 +34,11 @@ def test_memory_recall_config_defaults() -> None:
     assert cfg.min_score == 0.55
     # The selection floor sits above the search floor on purpose: the backfill
     # loop chases min_score until the candidate pool fills, so only a floor it
-    # does not chase can make a turn inject less than the rank limit.
-    assert cfg.selection_min_score == 0.65
+    # does not chase can make a turn inject less than the rank limit. The two
+    # also read different axes -- min_score the decayed score, the selection
+    # floor the undecayed one (#20831) -- which is why 0.65 could not carry
+    # over: it was fitted against decayed similarity, whose live p82 is 0.649.
+    assert cfg.selection_min_score == 0.70
     assert cfg.selection_min_score > cfg.min_score
     assert DaemonConfig().memory_recall.enabled is True
 

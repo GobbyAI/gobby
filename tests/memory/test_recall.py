@@ -143,9 +143,17 @@ def _memory(
     content: str = "Useful project convention.",
     *,
     similarity: float | None = 0.91,
+    temporal_decay_factor: float | None = 1.0,
+    search_via: str = "hybrid",
     tags: list[str] | None = None,
     rationale: str | None = None,
 ) -> Memory:
+    """A search hit: `similarity` is the decayed score, undecayed by its decay factor.
+
+    Decay defaults to 1.0, which makes the two axes the same number; pass a
+    factor below 1 to age a candidate and put it on one side of the selection
+    floor and the other side of the ranking order.
+    """
     return Memory(
         id=memory_id,
         memory_type="fact",
@@ -155,7 +163,8 @@ def _memory(
         project_id=PROJECT_ID,
         tags=tags or ["test"],
         similarity=similarity,
-        search_via="hybrid",
+        temporal_decay_factor=temporal_decay_factor,
+        search_via=search_via,
         rationale=rationale,
     )
 
@@ -439,6 +448,165 @@ async def test_null_similarity_candidates_are_dropped(
         "drop_reason": "other",
         "drop_detail": "null_similarity",
     }
+
+
+@pytest.mark.asyncio
+async def test_the_selection_floor_tests_the_undecayed_score(
+    temp_db: HubDatabase,
+    persisted_session: None,
+) -> None:
+    """#20831: the last gate before the model is a relevance test, not an age test.
+
+    `similarity` is `score * user_boost * temporal_decay`, so thresholding it
+    made the floor a recency test wearing a relevance test's name -- at a 30-day
+    half-life the decay factor is exactly 0.5, which demanded `score * boost >=
+    1.30` to inject at all. The floor divides the decay back out; decay keeps
+    ordering candidates. Both candidates here sit on the opposite side of each
+    axis, so putting the decay back into the comparison inverts the result.
+    """
+    floor = MemoryRecallConfig().selection_min_score
+    assert floor == 0.70, "the numbers below are chosen around this floor"
+    manager = FakeMemoryManager(
+        # 0.60 / 0.8 = 0.75 clears the floor; 0.60 alone does not.
+        # 0.69 is under the floor on both axes, undecayed included.
+        [
+            _memory("aged-but-on-topic", similarity=0.60, temporal_decay_factor=0.8),
+            _memory("fresh-but-off-topic", similarity=0.69, temporal_decay_factor=1.0),
+        ],
+        record_outcomes=True,
+    )
+
+    result = await _runner(temp_db, manager).run(_event(), SESSION_ID, _variables())
+
+    assert result is not None
+    assert [memory["id"] for memory in result.memories] == ["aged-but-on-topic"]
+    assert _drop_row(temp_db, "fresh-but-off-topic") == {
+        "drop_reason": "other",
+        "drop_detail": "selection_min_score",
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_graph_only_candidate_stays_eligible(
+    temp_db: HubDatabase,
+    persisted_session: None,
+) -> None:
+    """#20831: the floor divides decay out rather than reading the raw cosine.
+
+    Graph-synthetic hits are 27.8% of scored hits and carry no raw cosine at
+    all, so a floor that read `raw_semantic_score` would have permanently
+    disabled the recall expander (#17104) as a side effect of this fix. Their
+    synthetic score is a real score on the undecayed axis and is admitted.
+    """
+    manager = FakeMemoryManager(
+        # 0.65 / 0.9 = 0.72 clears the 0.70 floor; 0.65 alone does not.
+        [
+            _memory(
+                "graph-synthetic",
+                similarity=0.65,
+                temporal_decay_factor=0.9,
+                search_via="graph",
+            )
+        ],
+        record_outcomes=True,
+    )
+
+    result = await _runner(temp_db, manager).run(_event(), SESSION_ID, _variables())
+
+    assert result is not None
+    assert [memory["id"] for memory in result.memories] == ["graph-synthetic"]
+
+
+@pytest.mark.asyncio
+async def test_a_keyword_only_candidate_is_never_injected(
+    temp_db: HubDatabase,
+    persisted_session: None,
+) -> None:
+    """#20831, intended: no score at all, no injection, on any query.
+
+    A keyword-only hit carries no similarity, so there is nothing to divide the
+    decay out of and nothing to compare against the floor. It stays permanently
+    injection-ineligible; BM25 does produce a number, but it is unbounded and on
+    no shared axis, so admitting it would need a defined score path this change
+    deliberately does not invent.
+    """
+    floor = MemoryRecallConfig().selection_min_score
+    manager = FakeMemoryManager(
+        [
+            _memory("semantic", similarity=floor + 0.01),
+            _memory("keyword-only", similarity=None, search_via="keyword"),
+        ],
+        record_outcomes=True,
+    )
+
+    result = await _runner(temp_db, manager).run(_event(), SESSION_ID, _variables())
+
+    assert result is not None
+    assert [memory["id"] for memory in result.memories] == ["semantic"]
+    assert _drop_row(temp_db, "keyword-only") == {
+        "drop_reason": "other",
+        "drop_detail": "null_similarity",
+    }
+
+
+# The candidate set session d404a7c9-8f8c-4f4a-9f9a-... recorded for the query
+# "What environment prefix do agent pytest runs need in this repo, and where
+# does that value come from?", read back from recall_signal_hits and
+# recall_injection_outcomes: (id, decayed similarity, decay factor). Under the
+# decayed floor exactly one was injected, and it was the AgentDefinitionManager
+# memory -- the one memory of the eight that had nothing to do with the query.
+_SMOKE_CANDIDATES = [
+    ("agent-definition-manager", 0.6663, 0.9381, "semantic"),
+    ("database-url-test-protect", 0.5922, 0.8357, "semantic"),
+    ("highest-raw-cosine", 0.5721, 0.7997, "semantic"),
+    ("graph-keyword-synthetic", 0.5582, 0.9893, "graph|keyword"),
+    ("keyword-only-1", None, None, "keyword"),
+    ("keyword-only-2", None, None, "keyword"),
+    ("keyword-only-3", None, None, "keyword"),
+    ("keyword-only-4", None, None, "keyword"),
+]
+
+
+@pytest.mark.asyncio
+async def test_the_recorded_smoke_candidates_now_inject_the_answer(
+    temp_db: HubDatabase,
+    persisted_session: None,
+) -> None:
+    """#20831 criterion 3: replay the candidate set that exposed the bug.
+
+    The memory that actually answered the question ranked second and was
+    dropped, while a memory about `AgentDefinitionManager` with a *lower*
+    undecayed score was injected -- the only thing separating them was age.
+    Undecayed, the three semantic hits are 0.7103, 0.7086 and 0.7154; all clear
+    0.70 and the rank cap admits all three, so the answer ships. The
+    graph-synthetic hit undecays to 0.5643 and is dropped on relevance, which is
+    the floor doing its actual job.
+    """
+    manager = FakeMemoryManager(
+        [
+            _memory(
+                memory_id,
+                similarity=similarity,
+                temporal_decay_factor=decay,
+                search_via=search_via,
+            )
+            for memory_id, similarity, decay, search_via in _SMOKE_CANDIDATES
+        ],
+        record_outcomes=True,
+    )
+
+    result = await _runner(temp_db, manager).run(_event(), SESSION_ID, _variables())
+
+    assert result is not None
+    injected = [memory["id"] for memory in result.memories]
+    assert "database-url-test-protect" in injected
+    assert injected == [
+        "agent-definition-manager",
+        "database-url-test-protect",
+        "highest-raw-cosine",
+    ]
+    assert _drop_row(temp_db, "graph-keyword-synthetic")["drop_detail"] == "selection_min_score"
+    assert _drop_row(temp_db, "keyword-only-1")["drop_detail"] == "null_similarity"
 
 
 @pytest.mark.asyncio

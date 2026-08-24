@@ -491,8 +491,9 @@ class CandidateReplayRow:
 
     ``query_text`` and ``excerpt`` are the *only* textual inputs a replayed
     candidate filter may read — they are exactly the two things the shadow
-    judge saw. ``similarity`` is the logged blended score the shipped
-    static-constant selection ranks and thresholds on.
+    judge saw. ``similarity`` is the logged decayed score the shipped
+    static-constant selection ranks on; dividing ``temporal_decay_factor`` back
+    out of it gives the undecayed score that selection thresholds on (#20831).
     """
 
     recall_request_id: str
@@ -503,6 +504,17 @@ class CandidateReplayRow:
     excerpt: str
     similarity: float | None
     judge_useful: bool | None
+    temporal_decay_factor: float | None = None
+
+    @property
+    def undecayed_similarity(self) -> float | None:
+        """``similarity`` with the age penalty divided back out, if it has one."""
+        if self.similarity is None:
+            return None
+        decay = self.temporal_decay_factor
+        if decay is None or decay <= 0.0:
+            return self.similarity
+        return self.similarity / decay
 
 
 @dataclass(frozen=True)
@@ -569,6 +581,7 @@ def candidate_replay_rows_from_signal_rows(
                 excerpt=excerpt,
                 similarity=_float_or_none(row.get("similarity")),
                 judge_useful=judge_useful if isinstance(judge_useful, bool) else None,
+                temporal_decay_factor=_float_or_none(row.get("temporal_decay_factor")),
             )
         )
     return adapted
@@ -603,16 +616,20 @@ def select_by_candidate_filter(
 def select_by_static_constants(
     rows: Sequence[CandidateReplayRow], *, min_similarity: float, max_selected: int
 ) -> Selection:
-    """Replay the shipped selection: similarity floor, then the rank cap.
+    """Replay the shipped selection: undecayed floor, then the rank cap.
 
-    A candidate with no finite similarity is dropped rather than admitted,
-    matching ``selection_min_score`` semantics on the live path.
+    The floor reads the undecayed score and the order reads the decayed one,
+    matching ``selection_min_score`` semantics on the live path since #20831 --
+    the arm exists to model what actually ships, so an arm left on the old axis
+    would have phase-4 fitting ratify a selection nothing performs. A candidate
+    with no similarity is dropped rather than admitted.
     """
-    admitted = [
-        (row, row.similarity)
-        for row in rows
-        if row.similarity is not None and row.similarity >= min_similarity
-    ]
+    admitted: Selection = []
+    for row in rows:
+        undecayed = row.undecayed_similarity
+        if undecayed is None or row.similarity is None or undecayed < min_similarity:
+            continue
+        admitted.append((row, row.similarity))
     admitted.sort(key=lambda item: (-item[1], item[0].rank, item[0].memory_id))
     return admitted[:max_selected]
 

@@ -403,6 +403,41 @@ class MemoryRecallRunner:
             self.logger.warning("Memory recall hybrid search failed: %s", exc)
             return []
 
+    @staticmethod
+    def _undecayed_score(memory: Memory) -> float | None:
+        """The candidate's score with the age penalty divided back out.
+
+        `similarity` is `score * user_boost * temporal_decay`, so thresholding
+        it made the selection floor a recency test wearing a relevance test's
+        name: at a 30-day half-life the decay factor is exactly 0.5, which
+        demanded `score * boost >= 1.30` at the old floor -- unreachable at any
+        cosine, so every memory aged out of injection on a schedule (#20831).
+
+        Recovered by division rather than read from `raw_semantic_score`,
+        because 27.8% of scored hits are graph-synthetic and carry no raw
+        cosine; reading it would permanently disable the recall expander
+        (#17104). Returns None for a candidate that carries no usable score,
+        which is every keyword-only hit.
+        """
+        similarity = getattr(memory, "similarity", None)
+        if (
+            not isinstance(similarity, int | float)
+            or isinstance(similarity, bool)
+            or not math.isfinite(float(similarity))
+        ):
+            return None
+        decay = getattr(memory, "temporal_decay_factor", None)
+        if (
+            not isinstance(decay, int | float)
+            or isinstance(decay, bool)
+            or not math.isfinite(float(decay))
+            or float(decay) <= 0.0
+        ):
+            # No decay was applied that this can divide back out, so the score
+            # already is the undecayed one.
+            return float(similarity)
+        return float(similarity) / float(decay)
+
     def _filter_ranked(
         self,
         candidates: list[Memory],
@@ -419,17 +454,15 @@ class MemoryRecallRunner:
             if memory_id in injected:
                 drops.append((memory_id, "already_injected", None))
                 continue
-            similarity = getattr(memory, "similarity", None)
-            if (
-                not isinstance(similarity, int | float)
-                or isinstance(similarity, bool)
-                or not math.isfinite(float(similarity))
-            ):
+            similarity = self._undecayed_score(memory)
+            if similarity is None:
                 # An unscored candidate cannot be shown to clear the floor, so it
                 # is dropped rather than admitted on the strength of its rank.
+                # Keyword-only hits carry no score at all and so are permanently
+                # injection-ineligible, which is intended (#20831).
                 drops.append((memory_id, "other", "null_similarity"))
                 continue
-            if float(similarity) < self.config.selection_min_score:
+            if similarity < self.config.selection_min_score:
                 drops.append((memory_id, "other", "selection_min_score"))
                 continue
             if len(selected) < MAX_RECALL_MEMORIES:

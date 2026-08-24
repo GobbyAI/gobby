@@ -772,17 +772,24 @@ def _signal_row(
     query_text: str = "postgres connection pool exhaustion during migration",
     excerpt: str = "The migration exhausts the postgres connection pool.",
     similarity: float | None = 0.8,
+    temporal_decay_factor: float | None = 1.0,
     judge_useful: bool | None = True,
     presented: list[dict[str, Any]] | None = None,
     project_id: str | None = "proj-a",
 ) -> dict[str, Any]:
-    """One `fetch_shadow_replay_rows` row as the candidate replay consumes it."""
+    """One `fetch_shadow_replay_rows` row as the candidate replay consumes it.
+
+    `similarity` is the decayed score the replay orders on; dividing
+    `temporal_decay_factor` back out gives the score it thresholds on. Decay
+    defaults to 1.0, which makes the two axes the same number.
+    """
     return {
         "recall_request_id": request_id,
         "memory_id": memory_id,
         "project_id": project_id,
         "rank": rank,
         "similarity": similarity,
+        "temporal_decay_factor": temporal_decay_factor,
         "judge_useful": judge_useful,
         "query_text": query_text,
         "presented": (
@@ -952,6 +959,39 @@ class TestSelection:
         selection = select_by_static_constants(rows, min_similarity=0.65, max_selected=3)
 
         assert [row.memory_id for row, _score in selection] == ["mem-2"]
+
+    def test_static_constants_threshold_undecayed_and_order_decayed(self) -> None:
+        """#20831: the replayed arm has to move with the live floor's axis.
+
+        `select_by_static_constants` exists to model what the shipped selection
+        does, so once the live floor started dividing decay back out this arm
+        had to as well -- otherwise phase-4 fitting ratifies a selection nothing
+        performs. `aged` clears 0.70 only undecayed (0.60 / 0.8 = 0.75);
+        `fresh` clears it on neither.
+        """
+        rows = candidate_replay_rows_from_signal_rows(
+            [
+                _signal_row(
+                    request_id="req-1",
+                    memory_id="aged",
+                    rank=0,
+                    similarity=0.60,
+                    temporal_decay_factor=0.8,
+                ),
+                _signal_row(
+                    request_id="req-1",
+                    memory_id="fresh",
+                    rank=1,
+                    similarity=0.69,
+                    temporal_decay_factor=1.0,
+                ),
+            ]
+        )
+
+        selection = select_by_static_constants(rows, min_similarity=0.70, max_selected=3)
+
+        assert [row.memory_id for row, _score in selection] == ["aged"]
+        assert [score for _row, score in selection] == [0.60], "ordering still reads the decayed"
 
 
 class TestCandidateFilterReplay:
