@@ -1,9 +1,9 @@
+from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 
-from gobby.sessions.transcript_render_models import MAX_REMEMBERED_RESOLVED_CALLS
 from gobby.sessions.transcript_renderer import (
     RenderedMessage,
     RenderedToolCall,
@@ -16,6 +16,29 @@ from gobby.sessions.transcript_renderer import (
 from gobby.sessions.transcripts.base import ParsedMessage
 
 pytestmark = pytest.mark.unit
+
+
+def call_and_result() -> list[ParsedMessage]:
+    """A tool call and the result that resolves it, as two parsed records."""
+    return [
+        make_msg(
+            0,
+            "assistant",
+            "",
+            content_type="tool_use",
+            tool_use_id="call-1",
+            tool_name="Bash",
+            tool_input={"command": "ls"},
+        ),
+        make_msg(
+            1,
+            "user",
+            "",
+            content_type="tool_result",
+            tool_use_id="call-1",
+            tool_result={"exit_code": 0, "stdout": "a", "stderr": ""},
+        ),
+    ]
 
 
 def only_tool_call(message: RenderedMessage) -> RenderedToolCall:
@@ -597,29 +620,8 @@ class TestResolvedToolCallRetention:
     thing -- suppressing a duplicate tool_result -- and that survives as an id.
     """
 
-    def _call_and_result(self) -> list[ParsedMessage]:
-        return [
-            make_msg(
-                0,
-                "assistant",
-                "",
-                content_type="tool_use",
-                tool_use_id="call-1",
-                tool_name="Bash",
-                tool_input={"command": "ls"},
-            ),
-            make_msg(
-                1,
-                "user",
-                "",
-                content_type="tool_result",
-                tool_use_id="call-1",
-                tool_result={"exit_code": 0, "stdout": "a", "stderr": ""},
-            ),
-        ]
-
     def test_a_resolved_call_is_released_from_the_pending_maps(self) -> None:
-        call, result = self._call_and_result()
+        call, result = call_and_result()
         state = RenderState()
         _completed, state = render_incremental([call], state, session_id="s1")
         assert "call-1" in state.pending_tool_calls
@@ -632,7 +634,7 @@ class TestResolvedToolCallRetention:
         assert "call-1" in state.resolved_tool_call_ids
 
     def test_releasing_the_call_leaves_the_rendered_result_intact(self) -> None:
-        call, result = self._call_and_result()
+        call, result = call_and_result()
         state = RenderState()
         _completed, state = render_incremental([call], state, session_id="s1")
         _completed, state = render_incremental([result], state, session_id="s1")
@@ -646,7 +648,7 @@ class TestResolvedToolCallRetention:
         assert tool_call.result.metadata["exit_code"] == 0
 
     def test_a_late_result_still_rebroadcasts_its_owner(self) -> None:
-        call, result = self._call_and_result()
+        call, result = call_and_result()
         state = RenderState()
         _completed, state = render_incremental(
             [call, make_msg(2, "user", "next turn")], state, session_id="s1"
@@ -659,7 +661,7 @@ class TestResolvedToolCallRetention:
         assert only_tool_call(owner).result is not None
 
     def test_a_duplicate_result_is_suppressed_not_orphaned(self) -> None:
-        call, result = self._call_and_result()
+        call, result = call_and_result()
         state = RenderState()
         _completed, state = render_incremental([call, result], state, session_id="s1")
         assert state.current_message is not None
@@ -697,27 +699,69 @@ class TestResolvedToolCallRetention:
         assert state.tool_call_messages == {}
         assert len(state.resolved_tool_call_ids) == 40
 
-    def test_the_remembered_ids_stop_at_the_bound(self) -> None:
+    def test_a_duplicate_is_suppressed_however_late_it_arrives(self) -> None:
+        call, result = call_and_result()
         state = RenderState()
-        for index in range(MAX_REMEMBERED_RESOLVED_CALLS + 25):
-            state.remember_resolved_tool_call(f"call-{index}")
+        _completed, state = render_incremental([call, result], state, session_id="s1")
+        for index in range(2000):
+            _completed, state = render_incremental(
+                [make_msg(index + 2, "user", f"turn {index}")], state, session_id="s1"
+            )
+        assert state.current_message is not None
+        blocks_before = len(state.current_message.content_blocks)
 
-        assert len(state.resolved_tool_call_ids) == MAX_REMEMBERED_RESOLVED_CALLS
-        # The oldest are what fall out, so a duplicate of a recent call is still
-        # recognised; only one older than the whole window is not.
-        assert not state.knows_tool_call("call-0")
-        assert not state.knows_tool_call("call-24")
-        assert state.knows_tool_call("call-25")
-        assert state.knows_tool_call(f"call-{MAX_REMEMBERED_RESOLVED_CALLS + 24}")
+        completed, state = render_incremental([result], state, session_id="s1")
 
-    def test_re_resolving_an_id_refreshes_its_place_in_the_window(self) -> None:
+        assert completed == []
+        assert state.current_message is not None
+        assert len(state.current_message.content_blocks) == blocks_before
+
+
+class TestRenderStateCopySemantics:
+    """What a rollback snapshot copies is what the event loop pays for.
+
+    The processor deep-copies this state once per transcript batch so it has
+    something to restore if the batch raises (#20859).
+    """
+
+    def test_the_snapshot_shares_the_resolved_ids_rather_than_copying_them(self) -> None:
         state = RenderState()
-        state.remember_resolved_tool_call("call-old")
-        for index in range(MAX_REMEMBERED_RESOLVED_CALLS - 1):
-            state.remember_resolved_tool_call(f"call-{index}")
-        state.remember_resolved_tool_call("call-old")
+        state.remember_resolved_tool_call("call-1")
 
-        state.remember_resolved_tool_call("call-new")
+        snapshot = deepcopy(state)
 
-        assert state.knows_tool_call("call-old")
-        assert not state.knows_tool_call("call-0")
+        assert snapshot.resolved_tool_call_ids is state.resolved_tool_call_ids
+        state.remember_resolved_tool_call("call-2")
+        assert snapshot.knows_tool_call("call-2")
+
+    def test_the_snapshot_copies_everything_a_rollback_undoes(self) -> None:
+        call, _result = call_and_result()
+        state = RenderState()
+        _completed, state = render_incremental([call], state, session_id="s1")
+
+        snapshot = deepcopy(state)
+        state.pending_tool_calls["call-1"].status = "completed"
+        state.pending_tool_calls.pop("call-1")
+        state.tool_call_messages.pop("call-1")
+        assert state.current_message is not None
+        state.current_message.content = "mutated"
+        state.seen_content.add(1234)
+
+        assert "call-1" in snapshot.pending_tool_calls
+        assert snapshot.pending_tool_calls["call-1"].status == "pending"
+        assert "call-1" in snapshot.tool_call_messages
+        assert snapshot.current_message is not None
+        assert snapshot.current_message.content != "mutated"
+        assert 1234 not in snapshot.seen_content
+
+    def test_the_snapshot_keeps_the_call_and_its_message_the_same_object(self) -> None:
+        call, _result = call_and_result()
+        state = RenderState()
+        _completed, state = render_incremental([call], state, session_id="s1")
+
+        snapshot = deepcopy(state)
+
+        # The copy has to preserve the aliasing the live state has, or restoring it
+        # would give a message whose tool call no longer receives its result.
+        assert snapshot.tool_call_messages["call-1"] is snapshot.current_message
+        assert only_tool_call(snapshot.current_message) is snapshot.pending_tool_calls["call-1"]

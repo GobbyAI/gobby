@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any, Literal, TypeGuard
@@ -7,15 +8,6 @@ from typing import Any, Literal, TypeGuard
 from gobby.sessions.transcripts.base import TokenUsage
 
 ToolResultKind = Literal["text", "json", "image", "error"]
-
-# How many resolved tool calls a RenderState remembers so it can still recognise a
-# duplicate tool_result. A duplicate is a streaming re-emit and arrives within a
-# turn or two of the record it repeats, so a few hundred covers every one that
-# happens while keeping this state a fixed size whatever the session's length --
-# which is the whole point, since the daemon deep-copies it on the event loop once
-# per transcript batch (#20859). Remembering them all is what put a copy growing to
-# 47ms and beyond on that loop.
-MAX_REMEMBERED_RESOLVED_CALLS = 512
 
 
 @dataclass
@@ -101,22 +93,42 @@ class RenderState:
     # Map of tool_use_id -> message containing the call, for late result
     # re-broadcasts. Released with its call for the same reason.
     tool_call_messages: dict[str, RenderedMessage] = field(default_factory=dict)
-    # Ids of recently resolved calls -- all a resolved call leaves behind. Its only
-    # remaining job is to make a duplicate tool_result be suppressed rather than
-    # rendered as an orphan block. The payload it was carrying is not lost: the
-    # same RenderedToolCall object is reachable through its message's content
-    # blocks, which is where it belongs. A dict rather than a set because the
-    # insertion order is what makes the bound below evictable.
-    resolved_tool_call_ids: dict[str, None] = field(default_factory=dict)
+    # Ids of resolved calls -- all a resolved call leaves behind. Its only remaining
+    # job is to make a duplicate tool_result be suppressed rather than rendered as
+    # an orphan block, so it keeps that unconditionally, for any distance between
+    # the record and its repeat. The payload it was carrying is not lost: the same
+    # RenderedToolCall object is reachable through its message's content blocks,
+    # which is where it belongs. Shared rather than copied on deepcopy -- see
+    # __deepcopy__ -- so remembering every id costs the event loop nothing.
+    resolved_tool_call_ids: set[str] = field(default_factory=set)
     # Track seen content hashes to deduplicate Claude Code streaming duplicates
     seen_content: set[int] = field(default_factory=set)
 
+    def __deepcopy__(self, memo: dict[int, Any]) -> RenderState:
+        """Copy everything a rollback can undo, and share what it cannot.
+
+        The daemon deep-copies this state on its event loop once per transcript
+        batch to have something to roll back to, so every field it copies is a
+        per-batch cost (#20859). ``resolved_tool_call_ids`` is the one field a
+        rollback has no reason to undo: it only ever grows, and an id in it can
+        only suppress a duplicate tool_result, never change how a record renders.
+        Re-feeding a rolled-back batch puts its calls back in
+        ``pending_tool_calls``, which is checked first, so a stale id cannot
+        shadow a genuine pairing either. Sharing it is what lets the suppression
+        be unconditional -- remembering every id for the life of the session --
+        without the copy growing with the session.
+        """
+        clone = RenderState(resolved_tool_call_ids=self.resolved_tool_call_ids)
+        memo[id(self)] = clone
+        clone.current_message = deepcopy(self.current_message, memo)
+        clone.pending_tool_calls = deepcopy(self.pending_tool_calls, memo)
+        clone.tool_call_messages = deepcopy(self.tool_call_messages, memo)
+        clone.seen_content = set(self.seen_content)
+        return clone
+
     def remember_resolved_tool_call(self, tool_use_id: str) -> None:
-        """Record a resolved call's id, dropping the oldest once past the bound."""
-        self.resolved_tool_call_ids.pop(tool_use_id, None)
-        self.resolved_tool_call_ids[tool_use_id] = None
-        while len(self.resolved_tool_call_ids) > MAX_REMEMBERED_RESOLVED_CALLS:
-            del self.resolved_tool_call_ids[next(iter(self.resolved_tool_call_ids))]
+        """Record that this call has been paired, so a repeat is not an orphan."""
+        self.resolved_tool_call_ids.add(tool_use_id)
 
     def knows_tool_call(self, tool_use_id: str | None) -> TypeGuard[str]:
         """Whether a result for this id belongs to a call rather than to nothing.
