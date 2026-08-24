@@ -129,12 +129,40 @@ impl Drop for TempFileGuard<'_> {
     }
 }
 
+/// The tmp file [`atomic_write`] fills before the rename.
+///
+/// `File::sync_all` is an inherent method, so the fsync step needs a name of
+/// its own for the write to be generic over its temp file. Production always
+/// uses a real `File`; tests substitute one that fails a chosen step.
+trait TempWrite: Write {
+    fn sync(&self) -> std::io::Result<()>;
+}
+
+impl TempWrite for File {
+    fn sync(&self) -> std::io::Result<()> {
+        self.sync_all()
+    }
+}
+
 /// Atomically write `bytes` to `final_path` via tmp + fsync + rename.
 ///
 /// Creates the parent directory if missing. The tmp file lives next to
 /// the final path with a `.tmp` suffix — the drain ignores `*.tmp` — and is
 /// removed again if any step after its creation fails.
 pub fn atomic_write(final_path: &Path, bytes: &[u8]) -> Result<()> {
+    atomic_write_with(final_path, bytes, |tmp: &Path| File::create(tmp))
+}
+
+/// [`atomic_write`] over a caller-supplied temp file.
+///
+/// The seam exists for the failure modes: a write or an fsync to a local file
+/// fails on a full disk, a signal, or a device error, none of which a test can
+/// arrange, and #20854 needs the cleanup proven at each of them.
+fn atomic_write_with<F: TempWrite>(
+    final_path: &Path,
+    bytes: &[u8],
+    open_tmp: impl FnOnce(&Path) -> std::io::Result<F>,
+) -> Result<()> {
     if let Some(parent) = final_path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("create_dir_all {}", parent.display()))?;
@@ -147,11 +175,11 @@ pub fn atomic_write(final_path: &Path, bytes: &[u8]) -> Result<()> {
     name.push(".tmp");
     tmp.set_file_name(name);
 
-    let mut file = File::create(&tmp).with_context(|| format!("create tmp {}", tmp.display()))?;
+    let mut file = open_tmp(&tmp).with_context(|| format!("create tmp {}", tmp.display()))?;
     let mut guard = TempFileGuard::arm(&tmp);
     file.write_all(bytes)
         .with_context(|| format!("write tmp {}", tmp.display()))?;
-    file.sync_all()
+    file.sync()
         .with_context(|| format!("fsync tmp {}", tmp.display()))?;
     drop(file);
     fs::rename(&tmp, final_path)
@@ -445,6 +473,99 @@ mod tests {
             !dir.path().join("taken.json.tmp").exists(),
             "a failed write left its temp file behind"
         );
+    }
+
+    /// Which step of the tmp write this fake fails at.
+    #[derive(Clone, Copy)]
+    enum FailAt {
+        Write,
+        Sync,
+    }
+
+    /// A real on-disk tmp file that fails one step of the write.
+    ///
+    /// Neither failure is reachable from the filesystem -- a write to a local
+    /// file fails on a full disk or a signal, an fsync on a device error -- so
+    /// the guard is proven at those two steps by substituting the tmp file
+    /// rather than by breaking the filesystem under it. Creation still goes
+    /// through `File::create`, so the entry the guard has to remove is a real
+    /// one on the real path.
+    struct FailingTempFile {
+        file: File,
+        fail_at: FailAt,
+    }
+
+    impl FailingTempFile {
+        fn open(path: &Path, fail_at: FailAt) -> std::io::Result<Self> {
+            Ok(Self {
+                file: File::create(path)?,
+                fail_at,
+            })
+        }
+    }
+
+    impl Write for FailingTempFile {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            match self.fail_at {
+                FailAt::Write => Err(std::io::Error::other("simulated write failure")),
+                FailAt::Sync => self.file.write(buf),
+            }
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.file.flush()
+        }
+    }
+
+    impl TempWrite for FailingTempFile {
+        fn sync(&self) -> std::io::Result<()> {
+            match self.fail_at {
+                FailAt::Sync => Err(std::io::Error::other("simulated fsync failure")),
+                FailAt::Write => self.file.sync_all(),
+            }
+        }
+    }
+
+    #[test]
+    fn atomic_write_removes_its_tmp_when_the_write_fails() {
+        let dir = tempdir().unwrap();
+        let final_path = dir.path().join("half-written.json");
+
+        let err = atomic_write_with(&final_path, b"{}", |tmp| {
+            FailingTempFile::open(tmp, FailAt::Write)
+        })
+        .unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("write tmp"),
+            "unexpected failure: {err:#}"
+        );
+        assert!(
+            !dir.path().join("half-written.json.tmp").exists(),
+            "a failed write left its temp file behind"
+        );
+        assert!(!final_path.exists());
+    }
+
+    #[test]
+    fn atomic_write_removes_its_tmp_when_the_fsync_fails() {
+        let dir = tempdir().unwrap();
+        let final_path = dir.path().join("unsynced.json");
+
+        let err = atomic_write_with(&final_path, b"{}", |tmp| {
+            FailingTempFile::open(tmp, FailAt::Sync)
+        })
+        .unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("fsync tmp"),
+            "unexpected failure: {err:#}"
+        );
+        assert!(
+            !dir.path().join("unsynced.json.tmp").exists(),
+            "a failed write left its temp file behind"
+        );
+        assert!(!final_path.exists());
     }
 
     #[test]
