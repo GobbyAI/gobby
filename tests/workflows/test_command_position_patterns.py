@@ -24,6 +24,7 @@ from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.engine.effects import mask_quoted_spans
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
 pytestmark = pytest.mark.unit
@@ -82,9 +83,10 @@ def _blocks(body: RuleDefinitionBody, command: str) -> bool:
     for effect in body.resolved_effects:
         if effect.type != "block" or effect.command_pattern is None:
             continue
-        if not re.search(effect.command_pattern, command):
+        target = mask_quoted_spans(command) if effect.mask_quoted else command
+        if not re.search(effect.command_pattern, target):
             continue
-        if effect.command_not_pattern and re.search(effect.command_not_pattern, command):
+        if effect.command_not_pattern and re.search(effect.command_not_pattern, target):
             continue
         return True
     return False
@@ -351,6 +353,11 @@ RULE_CASES = (
             'DATABASE_URL="${DATABASE_URL:-postgresql://gobby_test:gobby_test@127.0.0.1:60892'
             '/gobby_test}" GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_validation.py',
             'git commit -m "test: add pytest guard rule"',
+            # A multi-line -m message line starting with an invocation is
+            # quoted prose: mask_quoted keeps it out of command position, the
+            # misfire that forced #20880's agent onto `git commit -F` (#20887).
+            'git commit -m "[gobby-#20880] fix: x\n\nuv run pytest tests/tasks ran clean"',
+            "git commit -m '[gobby-#20880] fix: x\n\npython -m pytest tests ran clean'",
         ),
     ),
 )
@@ -539,3 +546,52 @@ async def test_engine_blocks_bare_pytest_and_allows_guarded_run(db: HubDatabase)
         variables={},
     )
     assert prose.decision != "block"
+
+    multiline_prose = await engine.evaluate(
+        _bash_event('git commit -m "[gobby-#20880] fix: x\n\nuv run pytest tests ran clean"'),
+        session_id=SESSION_ID,
+        variables={},
+    )
+    assert multiline_prose.decision != "block"
+
+    quoted_substitution = await engine.evaluate(
+        _bash_event('echo "$(uv run pytest tests/tasks/test_validation.py)"'),
+        session_id=SESSION_ID,
+        variables={},
+    )
+    assert quoted_substitution.decision == "block"
+
+
+def test_mask_quoted_spans_blanks_data_and_keeps_substitution() -> None:
+    masked = mask_quoted_spans("echo 'uv run pytest x'")
+    assert "pytest" not in masked
+    assert masked.startswith("echo '") and masked.endswith("'")
+
+    masked = mask_quoted_spans('git commit -m "fix: x\n\nuv run pytest tests"')
+    assert "pytest" not in masked
+    assert "\n" not in masked  # quoted newlines stop being segment boundaries
+
+    # Executable content inside double quotes stays visible.
+    assert mask_quoted_spans('echo "$(pytest x)"') == 'echo "$(pytest x)"'
+    assert mask_quoted_spans('echo "`pytest x`"') == 'echo "`pytest x`"'
+
+    # Escaped quotes outside a span do not open one; the escaped-quote text
+    # stays, and the code after an unterminated span is still masked safely.
+    assert "pytest" in mask_quoted_spans('echo \\"pytest\\"')
+    assert "pytest" not in mask_quoted_spans("echo 'pytest")
+
+
+def test_mask_quoted_is_opt_in(db: HubDatabase, manager: RuleDefinitionManager) -> None:
+    """Without mask_quoted the same patterns still see quoted prose as code."""
+    _sync_bundled(db)
+    body = _get_rule(manager, "require-pytest-guard-env")
+    effect = next(e for e in body.resolved_effects if e.type == "block")
+    assert effect.mask_quoted is True
+    assert effect.command_pattern is not None
+
+    command = 'git commit -m "[gobby-#20880] fix: x\n\nuv run pytest tests ran clean"'
+    assert re.search(effect.command_pattern, command), (
+        "raw-string matching should still trip on the quoted line; if this "
+        "stops matching, mask_quoted may no longer be needed"
+    )
+    assert not _blocks(body, command)

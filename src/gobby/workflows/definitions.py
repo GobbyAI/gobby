@@ -195,6 +195,11 @@ class RuleEffect(BaseModel):
     mcp_tools: list[str] | None = None
     command_pattern: str | None = None
     command_not_pattern: str | None = None
+    # Blank quoted-string data before matching command_pattern and
+    # command_not_pattern, so prose inside commit messages or echo arguments
+    # cannot sit in command position. Double-quoted spans containing `$(` or a
+    # backtick stay visible: command substitution in them still executes.
+    mask_quoted: bool = False
 
     # set_variable — update session/workflow state
     variable: str | None = None

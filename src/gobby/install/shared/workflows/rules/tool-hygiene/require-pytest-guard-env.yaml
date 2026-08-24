@@ -15,7 +15,11 @@ rules:
       tools: [Bash]
       # Match pytest only in command position (shared segment-anchored idiom)
       # so prose mentions in commit messages or echoes don't trip it; env-var
-      # prefixes still count as invocations.
+      # prefixes still count as invocations. mask_quoted blanks quoted string
+      # data first: a multi-line `git commit -m` message line starting with a
+      # pytest invocation is prose, not a command (#20887). Command
+      # substitution inside double quotes stays visible and still blocks.
+      mask_quoted: true
       command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(?:uv\\s+run\\s+|python3?\\s+-m\\s+)?pytest\\b"
       command_not_pattern: "(?s)(?=.*GOBBY_TEST_PROTECT=1)(?=.*DATABASE_URL=)"
       reason: >-
