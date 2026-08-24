@@ -284,7 +284,9 @@ def _sync_single_rule(
     Creates an installed row if none exists. Existing sync-managed rows are
     refreshed when the YAML changes, applying enabled defaults until the user
     edits them.
-    Soft-deleted sync-managed rows are restored; user/custom rows stay protected.
+    Soft-deleted sync-managed rows are restored. Live user/custom rows stay
+    protected, but a soft-deleted user/custom row expresses no continuing
+    intent for the name: it is hard-deleted so the template can adopt it.
     """
     # Build the RuleDefinitionBody dict
     body_dict: dict[str, Any] = {
@@ -332,26 +334,31 @@ def _sync_single_rule(
     # Check if rule already exists (any source, including soft-deleted)
     existing = manager.get_by_name(rule_name, include_deleted=True)
 
-    if existing is not None:
-        if existing.deleted_at is not None:
-            if _is_sync_managed_rule(existing, sync_tag):
-                manager.restore(existing.id)
-                update_fields = _build_rule_update_fields(
-                    existing=existing,
-                    definition_json=definition_json,
-                    description=description,
-                    enabled=enabled,
-                    priority=priority,
-                    sources=file_sources,
-                    tags=tags,
-                )
-                if update_fields:
-                    manager.update_from_sync(existing.id, **update_fields)
-                result["updated"] += 1
-                return
-            result["skipped"] += 1
+    if existing is not None and existing.deleted_at is not None:
+        if _is_sync_managed_rule(existing, sync_tag):
+            manager.restore(existing.id)
+            update_fields = _build_rule_update_fields(
+                existing=existing,
+                definition_json=definition_json,
+                description=description,
+                enabled=enabled,
+                priority=priority,
+                sources=file_sources,
+                tags=tags,
+            )
+            if update_fields:
+                manager.update_from_sync(existing.id, **update_fields)
+            result["updated"] += 1
             return
+        logger.info(
+            "Replacing soft-deleted %s rule %r so the bundled template can adopt the name",
+            existing.source,
+            rule_name,
+        )
+        manager.hard_delete(existing.id)
+        existing = None
 
+    if existing is not None:
         if _is_sync_managed_rule(existing, sync_tag):
             update_fields = _build_rule_update_fields(
                 existing=existing,

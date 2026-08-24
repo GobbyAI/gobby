@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from gobby.mcp_proxy.tools.workflows._rules import update_rule
+from gobby.storage.definitions import DefinitionNotFoundError
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.sync_rules import sync_bundled_rules
@@ -531,6 +532,69 @@ rules:
         restored = manager.get_by_name("delete-me", include_deleted=True)
         assert restored is not None
         assert restored.deleted_at is None
+
+    def test_soft_deleted_user_and_custom_rows_adopted_on_sync(
+        self, db: HubDatabase, manager: RuleDefinitionManager, rules_dir: Path
+    ) -> None:
+        """A soft-deleted user/custom row no longer blocks bundled adoption."""
+        user_row = manager.create(
+            name="dead-user-rule",
+            definition_json=json.dumps(
+                {
+                    "event": "stop",
+                    "effects": [{"type": "block", "reason": "old user rule"}],
+                }
+            ),
+            source="installed",
+            tags=["user"],
+        )
+        custom_row = manager.create(
+            name="dead-custom-rule",
+            definition_json=json.dumps(
+                {
+                    "event": "stop",
+                    "effects": [{"type": "block", "reason": "old custom rule"}],
+                }
+            ),
+            source="custom",
+            tags=["gobby"],
+        )
+        manager.delete(user_row.id)
+        manager.delete(custom_row.id)
+
+        (rules_dir / "adopted.yaml").write_text(
+            """
+rules:
+  dead-user-rule:
+    event: turn_end
+    effect:
+      type: block
+      reason: "bundled adoption"
+  dead-custom-rule:
+    event: turn_end
+    effect:
+      type: block
+      reason: "bundled adoption"
+"""
+        )
+
+        result = sync_bundled_rules(db, rules_dir)
+
+        assert result["synced"] == 2
+        assert result["skipped"] == 0
+        for name, old_id in (
+            ("dead-user-rule", user_row.id),
+            ("dead-custom-rule", custom_row.id),
+        ):
+            adopted = manager.get_by_name(name, include_deleted=True)
+            assert adopted is not None
+            assert adopted.deleted_at is None
+            assert adopted.id != old_id
+            assert adopted.source == "installed"
+            assert "gobby" in (adopted.tags or [])
+            assert adopted.definition_json["event"] == "turn_end"
+            with pytest.raises(DefinitionNotFoundError):
+                manager.get(old_id, include_deleted=True)
 
 
 class TestInvalidRuleYaml:
