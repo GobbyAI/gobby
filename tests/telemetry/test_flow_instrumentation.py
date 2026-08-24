@@ -133,16 +133,25 @@ async def test_hook_manager_instrumentation(tracer_provider):
     """Test Hook Manager instrumentation."""
     _, exporter = tracer_provider
 
+    from gobby.config.app import DaemonConfig
     from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
     from gobby.hooks.hook_manager import HookManager
 
     db = MagicMock()
     session_manager = MagicMock()
     session_manager.db = db
+    # Inject the config. Without it HookManager falls through to
+    # load_bootstrap(), and the isolated GOBBY_HOME that
+    # protect_production_resources hands every test is an empty temp
+    # directory with no bootstrap.yaml -- so the call raises. Provisioning that
+    # home instead would defeat the tests that assert the production guard
+    # raises on a missing database_url, and reading the operator's real
+    # bootstrap is what the isolation exists to prevent (#20843).
     with patch.object(HookManager, "_start_health_check_monitoring"):
         manager = HookManager(
             daemon_host="localhost",
             daemon_port=1234,
+            config=DaemonConfig(),
             database=db,
             session_manager=session_manager,
         )
