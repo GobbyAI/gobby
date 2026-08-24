@@ -219,3 +219,65 @@ async def test_measure_loop_lag_excludes_the_sleep_it_asked_for() -> None:
     lag = await measure_loop_lag(0.05)
     assert lag >= 0.0
     assert lag < 0.5
+
+
+async def test_the_report_follows_the_await_chain_past_the_outer_task() -> None:
+    """A task's own frame is not where the work is; the chain has to be walked.
+
+    ``Task.get_stack`` returns only the task's own coroutine frame -- for a
+    daemon request that is the outermost middleware, which names the framework
+    instead of the code. The real caller chain lives behind ``cr_await``, and
+    a report that stops at the task frame cannot locate a blocking call.
+    """
+    reports: list[LoopLagReport] = []
+    stop = asyncio.Event()
+    reported = asyncio.Event()
+    released = asyncio.Event()
+    start_burning = asyncio.Event()
+
+    def record(report: LoopLagReport) -> None:
+        reports.append(report)
+        reported.set()
+
+    async def innermost_handler() -> None:
+        burn(0.5)
+        await released.wait()
+
+    async def middle_dispatch() -> None:
+        await innermost_handler()
+
+    async def outer_middleware() -> None:
+        await start_burning.wait()
+        await middle_dispatch()
+
+    cycles = 0
+
+    async def pace(_seconds: float) -> None:
+        nonlocal cycles
+        cycles += 1
+        if cycles == 2:
+            start_burning.set()
+        await yield_to_loop()
+
+    watchdog = asyncio.create_task(
+        loop_lag_watchdog(
+            stop.is_set,
+            threshold_seconds=0.2,
+            poll_seconds=0.01,
+            on_lag=record,
+            sleep=pace,
+        )
+    )
+    request = asyncio.create_task(outer_middleware(), name="request")
+    try:
+        await asyncio.wait_for(reported.wait(), timeout=WATCHDOG_TIMEOUT_SECONDS)
+    finally:
+        stop.set()
+        released.set()
+        await asyncio.gather(watchdog, request)
+
+    rendered = reports[0].render()
+    assert "innermost_handler" in rendered, (
+        f"the report must reach the frame doing the work; got {rendered!r}"
+    )
+    assert "outer_middleware" in rendered, "and keep the chain that led there"

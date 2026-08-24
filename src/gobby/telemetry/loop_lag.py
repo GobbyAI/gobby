@@ -29,6 +29,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from types import FrameType
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,12 @@ DEFAULT_POLL_SECONDS = 0.05
 # pathological loop can fill the log.
 DEFAULT_REARM_SECONDS = 15.0
 MAX_REPORTED_TASKS = 12
+# A guard against a pathological or self-referential await chain, not a budget.
+MAX_CHAIN_FRAMES = 60
+# The blocking work sits close to the await the task reached right after it.
+MAX_TRACE_FRAMES = 10
+# A task can finish between the diff and the trace scan a moment later.
+GONE = "<no longer live>"
 
 
 @dataclass(frozen=True)
@@ -98,16 +105,58 @@ def _task_key(task: asyncio.Task[object]) -> str:
     return f"{name} {qualname}" if qualname else name
 
 
-def _task_position(task: asyncio.Task[object]) -> str:
-    """Locate where a task is suspended, without raising."""
+def _await_frames(task: asyncio.Task[object]) -> list[FrameType]:
+    """Walk a task's await chain, outermost frame first.
+
+    ``Task.get_stack`` returns only the task's own coroutine frame. For a
+    request that is the outermost middleware, which names the framework rather
+    than the handler underneath it. The chain the task is actually blocked on
+    hangs off ``cr_await``, so follow it by hand.
+    """
     try:
-        stack = task.get_stack(limit=1)
+        coro: object | None = task.get_coro()
     except Exception:  # pragma: no cover - defensive
-        return "<unknown>"
-    if not stack:
+        return []
+    frames: list[FrameType] = []
+    seen: set[int] = set()
+    while coro is not None and id(coro) not in seen and len(frames) < MAX_CHAIN_FRAMES:
+        seen.add(id(coro))
+        frame = getattr(coro, "cr_frame", None) or getattr(coro, "gi_frame", None)
+        if isinstance(frame, FrameType):
+            frames.append(frame)
+        coro = (
+            getattr(coro, "cr_await", None)
+            or getattr(coro, "gi_yieldfrom", None)
+            or getattr(coro, "ag_await", None)
+        )
+    return frames
+
+
+def _format_frame(frame: FrameType) -> str:
+    return f"{frame.f_code.co_qualname}@{frame.f_code.co_filename}:{frame.f_lineno}"
+
+
+def _task_position(task: asyncio.Task[object]) -> str:
+    """Fingerprint where a task is suspended, across its whole await chain.
+
+    The innermost frame alone is not enough to tell movement: two unrelated
+    awaits in the same task both bottom out at ``Event.wait`` on one line, so a
+    leaf-only position reads as "did not move" when the chain above it changed
+    entirely. Signing every frame makes any step visible.
+    """
+    frames = _await_frames(task)
+    if not frames:
         return "<no frame>"
-    frame = stack[-1]
-    return f"{frame.f_code.co_filename}:{frame.f_lineno}"
+    signature = tuple((frame.f_code.co_filename, frame.f_lineno) for frame in frames)
+    return f"{len(frames)}:{hash(signature):x}"
+
+
+def _task_trace(task: asyncio.Task[object]) -> str:
+    """Render a task's await chain, so the caller path is visible."""
+    frames = _await_frames(task)
+    if not frames:
+        return "<no frame>"
+    return " -> ".join(_format_frame(frame) for frame in frames[-MAX_TRACE_FRAMES:])
 
 
 def _snapshot_positions(exclude: asyncio.Task[object] | None) -> dict[str, str]:
@@ -141,20 +190,33 @@ def _diff_positions(before: dict[str, str], after: dict[str, str]) -> LoopLagRep
     afterwards is a weaker one -- something ran to create it, but a single
     spawn creates many, so they are kept apart from the suspects.
     """
-    advanced = [
-        (key, position)
-        for key, position in after.items()
-        if key in before and before[key] != position
-    ]
-    started = [(key, position) for key, position in after.items() if key not in before]
+    advanced = [key for key, position in after.items() if key in before and before[key] != position]
+    started = [key for key in after if key not in before]
     ended = [key for key in before if key not in after]
     bystanders = [key for key, position in after.items() if before.get(key) == position]
+    traces = _traces_for(set(advanced) | set(started))
     return LoopLagReportParts(
-        advanced=sorted(advanced)[:MAX_REPORTED_TASKS],
-        started=sorted(started)[:MAX_REPORTED_TASKS],
+        advanced=[(key, traces.get(key, GONE)) for key in sorted(advanced)][:MAX_REPORTED_TASKS],
+        started=[(key, traces.get(key, GONE)) for key in sorted(started)][:MAX_REPORTED_TASKS],
         ended=sorted(ended)[:MAX_REPORTED_TASKS],
         bystanders=bystanders,
     )
+
+
+def _traces_for(keys: set[str]) -> dict[str, str]:
+    """Capture full await chains, but only for the tasks worth reading."""
+    if not keys:
+        return {}
+    try:
+        live = asyncio.all_tasks()
+    except RuntimeError:  # pragma: no cover - loop shutting down
+        return {}
+    traces = {}
+    for task in live:
+        key = _task_key(task)
+        if key in keys and key not in traces:
+            traces[key] = _task_trace(task)
+    return traces
 
 
 async def loop_lag_watchdog(
