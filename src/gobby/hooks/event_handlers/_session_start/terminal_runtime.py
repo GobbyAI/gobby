@@ -150,7 +150,10 @@ def expire_stale_terminal_sessions_for_context(
             )
             continue
         try:
-            expired = handler._session_manager.mark_session_expired(candidate_id)
+            expired = handler._session_manager.mark_session_expired(
+                candidate_id,
+                cause="context_reuse",
+            )
         except Exception as e:  # noqa: BLE001 - stale expiry should fail open
             handler.logger.warning(
                 "Failed to expire stale terminal session",

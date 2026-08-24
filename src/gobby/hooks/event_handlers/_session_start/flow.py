@@ -533,7 +533,10 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     elif parent_session_id and session_id and handler._session_manager:
         if parent_session_id != session_id:
             try:
-                handler._session_manager.mark_session_expired(parent_session_id)
+                handler._session_manager.mark_session_expired(
+                    parent_session_id,
+                    cause="parent_registration",
+                )
                 handler.logger.debug("Marked parent session %s as expired", parent_session_id)
             except Exception as e:
                 handler.logger.warning("Failed to mark parent session as expired: %s", e)

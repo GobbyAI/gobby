@@ -103,7 +103,9 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "list_summary_revisions": "(self, session_id: 'str', *, limit: 'int' = 20) -> "
     "'list[dict[str, Any]]'",
     "mark_had_edits": "(self, session_id: 'str') -> 'Session | None'",
-    "mark_session_expired": "(self, session_id: 'str') -> 'bool'",
+    "mark_session_expired": (
+        "(self, session_id: 'str', *, cause: 'ContestedExpiryCause') -> 'bool'"
+    ),
     "mark_transcript_processed": "(self, session_id: 'str') -> 'Session | None'",
     "move_to_project": "(self, session_id: 'str', project_id: 'str') -> 'Session | None'",
     "pause_inactive_active_sessions": "(self, timeout_minutes: 'int' = 30) -> 'int'",

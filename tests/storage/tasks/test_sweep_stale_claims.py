@@ -19,9 +19,17 @@ from gobby.sessions.compact_markers import (
     COMPACT_SELF_CONTINUE_FRESH_SECONDS,
     COMPACT_SELF_CONTINUE_VARIABLE,
 )
+from gobby.sessions.contested_expiry import CONTESTED_TERMINAL_EXPIRY_VARIABLE
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.storage.sessions._constants import SESSION_REVIVAL_HORIZON_HOURS
+from gobby.storage.sessions._constants import (
+    SESSION_REVIVAL_HORIZON_HOURS,
+    is_contestable_terminal_expiry,
+)
+from gobby.storage.sessions._contested_expiry import (
+    read_session_variables,
+    record_contested_terminal_expiry,
+)
 from gobby.storage.tasks._automation import list_automation_candidates, sweep_stale_claims
 from gobby.storage.tasks._manager import LocalTaskManager
 from gobby.storage.tasks._models import Isolation, Task
@@ -242,6 +250,30 @@ def _backdate_compact_marker(temp_db: HubDatabase, session_id: str, seconds: int
     )
 
 
+def _backdate_contested_marker(
+    temp_db: HubDatabase,
+    session_id: str,
+    age: timedelta,
+) -> None:
+    stale = datetime.now(UTC) - age
+    temp_db.execute(
+        """
+        UPDATE session_variables
+           SET variables = jsonb_set(
+               variables,
+               %s::text[],
+               to_jsonb(%s::text)
+           )
+         WHERE session_id = %s
+        """,
+        (
+            [CONTESTED_TERMINAL_EXPIRY_VARIABLE, "created_at"],
+            stale.isoformat(),
+            session_id,
+        ),
+    )
+
+
 def test_sweep_preserves_claim_while_compact_marker_is_fresh(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -329,19 +361,72 @@ def test_sweep_keeps_a_claim_held_by_a_freshly_expired_terminal_session(
     """A speculative expiry must not cost a live session its work.
 
     SessionStart expires every terminal session sharing a reused terminal
-    context before anything validates who actually owns the pane; the
+    context before anything validates who actually owns the terminal; the
     authoritative resolver, revive_expired_terminal_session, runs later and
     routinely reverses it. Releasing the claim in between destroys the claim
     of a session that is still working.
     """
     session_id = str(uuid.uuid4())
     _make_session(temp_db, sample_project, session_id, "expired", tmux_pane="%20")
+    record_contested_terminal_expiry(temp_db, session_id, "context_reuse")
     task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
 
     reclaimed = sweep_stale_claims(temp_db, project_id=sample_project["id"])
 
     assert reclaimed == 0
     assert _claim(temp_db, task.id) == session_id
+
+
+@pytest.mark.parametrize("tmux_pane", [None, "%20"])
+def test_sweep_reclaims_a_final_expiry_without_waiting_out_the_revival_horizon(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmux_pane: str | None,
+) -> None:
+    """An expiry nobody is contesting releases its claim on the ordinary schedule.
+
+    expire_stale_sessions after a day of inactivity, and the tmux-kill sweep
+    after a tmux server dies, both know the session is finished, so neither
+    records a contested-expiry marker. Making the grace conditional on that
+    marker is what keeps a genuinely dead owner from parking its claim for the
+    full revival horizon -- including the pane-carrying case a pane test alone
+    would have shielded (#20837).
+    """
+    session_id = str(uuid.uuid4())
+    _make_session(temp_db, sample_project, session_id, "expired", tmux_pane=tmux_pane)
+    task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
+
+    reclaimed = sweep_stale_claims(temp_db, project_id=sample_project["id"])
+
+    assert reclaimed >= 1
+    assert _claim(temp_db, task.id) is None
+
+
+def test_sweep_reclaims_a_claim_whose_contested_marker_predates_the_horizon(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """The marker's own age bounds the grace, so a stale one shields nothing.
+
+    A session contested once and revived carries its marker forward. Bounding
+    the grace by when the contest happened -- rather than by the session's
+    current updated_at -- stops that marker from shielding a later, final
+    expiry of the same session.
+    """
+    session_id = str(uuid.uuid4())
+    _make_session(temp_db, sample_project, session_id, "expired", tmux_pane="%20")
+    record_contested_terminal_expiry(temp_db, session_id, "context_reuse")
+    _backdate_contested_marker(
+        temp_db,
+        session_id,
+        timedelta(hours=SESSION_REVIVAL_HORIZON_HOURS, minutes=1),
+    )
+    task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
+
+    reclaimed = sweep_stale_claims(temp_db, project_id=sample_project["id"])
+
+    assert reclaimed >= 1
+    assert _claim(temp_db, task.id) is None
 
 
 def test_a_nested_cli_start_leaves_the_outer_sessions_claim_intact(
@@ -403,6 +488,114 @@ def test_a_nested_cli_start_leaves_the_outer_sessions_claim_intact(
     assert revived is not None
     assert revived.status == "active"
     assert _claim(temp_db, task.id) == outer.id
+
+
+def test_a_nested_cli_start_in_a_plain_terminal_leaves_the_outer_claim_intact(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    _local_machine_identity: None,
+) -> None:
+    """The same cascade without tmux, where the contest is settled by tty.
+
+    terminal_contexts_match names four fields, and a session with no tmux pane
+    at all is expired by a tty or parent_pid match -- exactly a nested CLI in a
+    plain terminal. revive_expired_terminal_session reverses that expiry for
+    any paneless session inside the revival horizon, so the outer session is
+    working, not dead, and its claim has to survive the sweep in between
+    (#20837).
+    """
+    manager = SessionManager(temp_db)
+    outer_context = {
+        "tty": "/dev/ttys004",
+        "parent_pid": _OUTER_PID,
+        "parent_create_time": _PROCESS_CREATE_TIME,
+    }
+    outer = manager.register(
+        external_id="outer-plain-cli",
+        machine_id=MACHINE_ID,
+        source="claude",
+        project_id=sample_project["id"],
+        terminal_context=outer_context,
+    )
+    task = _claimed_task(temp_db, sample_project, claimed_by=outer.id)
+
+    inner_context = {**outer_context, "parent_pid": _INNER_PID}
+    inner = manager.register(
+        external_id="inner-plain-cli",
+        machine_id=MACHINE_ID,
+        source="claude",
+        project_id=sample_project["id"],
+        terminal_context=inner_context,
+    )
+    expire_stale_terminal_sessions_for_context(
+        SimpleNamespace(_session_manager=manager, logger=logging.getLogger(__name__)),
+        session_id=inner.id,
+        project_id=sample_project["id"],
+        terminal_context=inner_context,
+    )
+    expired = manager.get(outer.id)
+    assert expired is not None
+    assert expired.status == "expired"
+
+    reclaimed = sweep_stale_claims(temp_db, project_id=sample_project["id"])
+    revived = manager.revive_expired_terminal_session(outer.id)
+
+    assert reclaimed == 0
+    assert revived is not None
+    assert revived.status == "active"
+    assert _claim(temp_db, task.id) == outer.id
+
+
+@pytest.mark.parametrize(
+    ("tmux_pane", "marker_age"),
+    [
+        ("%20", None),
+        (None, None),
+        ("%20", timedelta(minutes=1)),
+        (None, timedelta(minutes=1)),
+        ("%20", timedelta(hours=SESSION_REVIVAL_HORIZON_HOURS, minutes=1)),
+        (None, timedelta(hours=SESSION_REVIVAL_HORIZON_HOURS, minutes=1)),
+    ],
+    ids=[
+        "pane-final",
+        "paneless-final",
+        "pane-fresh",
+        "paneless-fresh",
+        "pane-stale",
+        "paneless-stale",
+    ],
+)
+def test_the_python_shield_and_the_sql_guard_state_the_same_rule(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmux_pane: str | None,
+    marker_age: timedelta | None,
+) -> None:
+    """One rule, two enforcement points, and no way for them to drift apart.
+
+    is_contestable_terminal_expiry decides recovery in Python; release_task_claim
+    decides the sweep in SQL, where it has to stay a single compare-and-set. The
+    matrix covers both terminal shapes against no marker, a fresh one and one
+    past the revival horizon (#20837).
+    """
+    session_id = str(uuid.uuid4())
+    _make_session(temp_db, sample_project, session_id, "expired", tmux_pane=tmux_pane)
+    if marker_age is not None:
+        record_contested_terminal_expiry(temp_db, session_id, "context_reuse")
+        _backdate_contested_marker(temp_db, session_id, marker_age)
+    task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
+
+    session = SessionManager(temp_db).get(session_id)
+    assert session is not None
+    python_shields = is_contestable_terminal_expiry(
+        session,
+        read_session_variables(temp_db, session_id),
+    )
+
+    sweep_stale_claims(temp_db, project_id=sample_project["id"])
+    sql_shields = _claim(temp_db, task.id) == session_id
+
+    assert python_shields == sql_shields
 
 
 def test_sweep_reclaims_a_claim_held_by_an_expired_non_terminal_session(

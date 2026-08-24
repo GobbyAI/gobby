@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol
 
+from gobby.sessions.contested_expiry import ContestedExpiryCause
 from gobby.storage.session_models import Session
 from gobby.storage.sessions._update_sentinel import UNSET, UnsetType
 
@@ -123,7 +124,7 @@ class HookSessionManager(Protocol):
         session_type: str = "terminal",
     ) -> None: ...
 
-    def mark_session_expired(self, session_id: str) -> bool: ...
+    def mark_session_expired(self, session_id: str, *, cause: ContestedExpiryCause) -> bool: ...
 
     def backfill_terminal_context(
         self,

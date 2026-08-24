@@ -7,10 +7,12 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, Protocol
 
+from gobby.sessions.contested_expiry import ContestedExpiryCause
 from gobby.storage.session_models import Session
 from gobby.terminal_context import terminal_context_has_tmux_target
 from gobby.utils.datetime import utc_now
 
+from ._contested_expiry import record_contested_terminal_expiry
 from ._registration_recovery import _RegistrationRecoveryMixin
 
 if TYPE_CHECKING:
@@ -216,12 +218,23 @@ def _validated_session_mapping(
 
 
 class _RegistrationCacheMixin(_RegistrationRecoveryMixin):
-    def mark_session_expired(self: _ManagerState, session_id: str) -> bool:
+    def mark_session_expired(
+        self: _ManagerState,
+        session_id: str,
+        *,
+        cause: ContestedExpiryCause,
+    ) -> bool:
         """
-        Mark a session as 'expired' after successful handoff.
+        Expire a session that SessionStart believes a newcomer has replaced.
+
+        Both callers are guessing: neither has validated who owns the terminal,
+        and ``revive_expired_terminal_session`` reverses the guess routinely.
+        The cause is recorded on the session so the claim shields can tell this
+        expiry from a final one and leave the owner's work alone (#20837).
 
         Args:
             session_id: Session ID to mark as expired
+            cause: Which speculative SessionStart path expired it
 
         Returns:
             True if updated successfully, False otherwise
@@ -229,6 +242,8 @@ class _RegistrationCacheMixin(_RegistrationRecoveryMixin):
         try:
             session = self.update_status(session_id, "expired")
             if session:
+                if session.session_type == "terminal":
+                    record_contested_terminal_expiry(self.db, session_id, cause)
                 self.logger.debug("Session status updated: %s -> expired", session_id)
                 return True
 

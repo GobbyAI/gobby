@@ -6,8 +6,9 @@ import logging
 import uuid
 from collections.abc import Mapping
 from datetime import timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from gobby.sessions.contested_expiry import contested_expiry_recorded_at
 from gobby.storage.hub.protocol import HubDatabase, SystemSessionBootstrap
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
@@ -80,29 +81,32 @@ def past_terminal_revival_horizon(session: Session) -> bool:
     )
 
 
-def is_contestable_terminal_expiry(session: Session) -> bool:
-    """Report whether this session's expiry may still be reversed by pane ownership.
+def is_contestable_terminal_expiry(
+    session: Session,
+    variables: Mapping[str, Any] | None,
+) -> bool:
+    """Report whether this session's expiry may still be reversed by ownership.
 
     SessionStart expires every terminal session sharing a reused terminal context
-    before anything validates who owns the pane, so an expired status here can
+    before anything validates who owns the terminal, so an expired status here can
     simply be wrong. ``revive_expired_terminal_session`` settles the contest
     afterwards and routinely reverses it. Until it does, treat the owner as live:
     a session in this state is working, not dead.
 
-    Only a session carrying a tmux pane can be in that contest, and only until the
-    revival horizon passes -- which is what keeps an ordinary expiry sweepable.
-    ``release_task_claim`` enforces the same rule in SQL so its release stays a
-    single compare-and-set.
+    A speculative expiry says so on the way out, and only that marker earns the
+    grace -- an expiry from inactivity, a killed tmux server or an explicit close
+    leaves none and stays sweepable on the ordinary schedule. The marker's own age
+    bounds the grace, so a session contested once and revived does not carry the
+    grace into a later, final expiry. ``release_task_claim`` enforces the same rule
+    in SQL so its release stays a single compare-and-set.
     """
-    terminal_context = session.terminal_context
-    pane = terminal_context.get("tmux_pane") if isinstance(terminal_context, Mapping) else None
-    return (
-        session.session_type == "terminal"
-        and session.status == "expired"
-        and isinstance(pane, str)
-        and bool(pane.strip())
-        and not past_terminal_revival_horizon(session)
-    )
+    if session.session_type != "terminal" or session.status != "expired":
+        return False
+    recorded_at = contested_expiry_recorded_at(variables)
+    if recorded_at is None:
+        return False
+    now = utc_now()
+    return now - timedelta(hours=SESSION_REVIVAL_HORIZON_HOURS) <= recorded_at <= now
 
 
 def ensure_system_session(db: HubDatabase) -> None:

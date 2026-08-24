@@ -472,7 +472,7 @@ def test_expired_session_recovery_reports_status_through_the_real_path(
             project_id=project_id,
             terminal_context=terminal_context,
         )
-        assert storage_sessions.mark_session_expired(registered.id)
+        assert storage_sessions.mark_session_expired(registered.id, cause="context_reuse")
 
         logger = logging.getLogger("tests.session_lookup.integration")
         service = SessionLookupService(

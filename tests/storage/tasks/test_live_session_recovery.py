@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.sessions.contested_expiry import CONTESTED_TERMINAL_EXPIRY_VARIABLE
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
@@ -48,12 +49,16 @@ def _session(
     *,
     status: str = "expired",
     tmux_pane: str | None = None,
+    tty: str | None = None,
+    contested: bool = False,
 ) -> Session:
     manager = SessionManager(temp_db)
     terminal_context: dict[str, str] = {"cwd": str(repo_path)}
     if tmux_pane is not None:
         terminal_context["tmux_pane"] = tmux_pane
         terminal_context["tmux_socket_path"] = "/tmp/tmux-501/default"
+    if tty is not None:
+        terminal_context["tty"] = tty
     session = manager.register(
         external_id=f"ext-{uuid.uuid4()}",
         machine_id="21000000-0000-4000-8000-00000000000f",
@@ -61,7 +66,9 @@ def _session(
         project_id=project_id,
         terminal_context=terminal_context,
     )
-    if status != "active":
+    if contested:
+        manager.mark_session_expired(session.id, cause="context_reuse")
+    elif status != "active":
         manager.update_status(session.id, status)
     refreshed = manager.get(session.id)
     assert refreshed is not None
@@ -235,23 +242,33 @@ def test_escalates_when_owner_session_lookup_fails(
     assert "indeterminate dirty state" in (recovered.escalation_reason or "")
 
 
+@pytest.mark.parametrize(
+    "terminal",
+    [{"tmux_pane": "%20"}, {"tty": "/dev/ttys004"}],
+    ids=["tmux-pane", "plain-tty"],
+)
 def test_preserves_a_dirty_claim_and_its_attribution_through_a_contestable_expiry(
     temp_db: HubDatabase,
     tmp_path: Path,
+    terminal: dict[str, str],
 ) -> None:
-    """A pane-contest expiry is not a dead owner, so nothing here is recovered.
+    """A contested expiry is not a dead owner, so nothing here is recovered.
 
     SessionStart expires every terminal session sharing a reused terminal
-    context before anything validates who owns the pane. Escalating on that and
-    popping `task_edited_files` is the partial rollback #20789 removed from the
-    escalate path, and `revive_expired_terminal_session` reverses neither.
+    context before anything validates who owns the terminal. Escalating on that
+    and popping `task_edited_files` is the partial rollback #20789 removed from
+    the escalate path, and `revive_expired_terminal_session` reverses neither.
+
+    Parameterized over the terminal shape because the contest is not a tmux
+    one: terminal_contexts_match settles it on tty or parent_pid for a session
+    with no pane at all, which is a nested CLI in a plain terminal (#20837).
     """
     repo_path = tmp_path / "repo"
     repo_path.mkdir()
     subprocess.run(["git", "init"], cwd=repo_path, check=True, capture_output=True, text=True)
     (repo_path / "dirty.txt").write_text("uncommitted\n", encoding="utf-8")
     project_id = _project_id(temp_db, repo_path)
-    session = _session(temp_db, project_id, repo_path, tmux_pane="%20")
+    session = _session(temp_db, project_id, repo_path, contested=True, **terminal)
     task = _live_task(temp_db, project_id, session.id, title="Contested live task")
     _set_claim_variables(
         temp_db,
@@ -270,21 +287,44 @@ def test_preserves_a_dirty_claim_and_its_attribution_through_a_contestable_expir
     assert variables["task_edited_files"] == {task.id: ["dirty.txt"]}
 
 
-def test_recovers_a_pane_claim_once_the_revival_horizon_passes(
+def test_recovers_a_contested_claim_once_the_revival_horizon_passes(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     """Past the horizon the expiry can no longer be reversed, so recovery runs."""
     project_id = _project_id(temp_db, tmp_path)
-    session = _session(temp_db, project_id, tmp_path, tmux_pane="%20")
+    session = _session(temp_db, project_id, tmp_path, tmux_pane="%20", contested=True)
+    stale = datetime.now(UTC) - timedelta(hours=SESSION_REVIVAL_HORIZON_HOURS, minutes=1)
     temp_db.execute(
-        "UPDATE sessions SET updated_at = %s WHERE id = %s",
-        (
-            datetime.now(UTC) - timedelta(hours=SESSION_REVIVAL_HORIZON_HOURS, minutes=1),
-            session.id,
-        ),
+        """
+        UPDATE session_variables
+           SET variables = jsonb_set(variables, %s::text[], to_jsonb(%s::text))
+         WHERE session_id = %s
+        """,
+        ([CONTESTED_TERMINAL_EXPIRY_VARIABLE, "created_at"], stale.isoformat(), session.id),
     )
     task = _live_task(temp_db, project_id, session.id, title="Unrevivable live task")
+    _set_claim_variables(temp_db, session.id, [task])
+
+    result = recover_expired_live_session_claims(temp_db, project_id=project_id)
+
+    assert result.released == 1
+    assert LocalTaskManager(temp_db).get_task(task.id).claimed_by_session_id is None
+
+
+def test_recovers_a_claim_whose_owner_expired_for_a_final_reason(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    """An expiry nobody contested is final, whatever terminal the owner held.
+
+    Inactivity and a killed tmux server both leave the session finished and
+    leave no contested-expiry marker, so recovery runs at once rather than
+    parking the claim for the revival horizon (#20837).
+    """
+    project_id = _project_id(temp_db, tmp_path)
+    session = _session(temp_db, project_id, tmp_path, tmux_pane="%20")
+    task = _live_task(temp_db, project_id, session.id, title="Finished owner's live task")
     _set_claim_variables(temp_db, session.id, [task])
 
     result = recover_expired_live_session_claims(temp_db, project_id=project_id)

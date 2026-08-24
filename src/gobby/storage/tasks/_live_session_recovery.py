@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
@@ -73,8 +74,10 @@ def recover_expired_live_session_claims(
             )
             session = None
             session_lookup_failed = True
+        variables = _session_variables(db, variable_manager, owner)
         if session is not None and (
-            session.status in _LIVE_OWNER_STATUSES or is_contestable_terminal_expiry(session)
+            session.status in _LIVE_OWNER_STATUSES
+            or is_contestable_terminal_expiry(session, variables)
         ):
             # Recovery costs more here than a claim release does: a dirty task is
             # escalated and _clear_claim_variables pops the attribution #20789
@@ -82,15 +85,9 @@ def recover_expired_live_session_claims(
             # an expiry that pane ownership can still reverse is not a dead owner.
             continue
 
-        try:
-            attributed_paths = _load_attributed_paths(db, variable_manager, owner, task.id)
-        except Exception:
-            logger.warning(
-                "Could not load attributed files for expired live-session task %s",
-                task.id,
-                exc_info=True,
-            )
-            attributed_paths = None
+        attributed_paths = (
+            task_edited_file_set(variables, task.id) if variables is not None else None
+        )
 
         dirty_paths: set[str] | None
         if session_lookup_failed:
@@ -128,15 +125,28 @@ def recover_expired_live_session_claims(
     return LiveSessionRecoveryResult(released=released, escalated=escalated, raced=raced)
 
 
-def _load_attributed_paths(
+def _session_variables(
     db: HubDatabase,
     variable_manager: SessionVariableManager,
     owner: str,
-    task_id: str,
-) -> set[str] | None:
-    if not _session_variables_exist(db, owner):
+) -> dict[str, Any] | None:
+    """Load an owner's variables once, for both the expiry shield and attribution.
+
+    None means the variables could not be read at all -- no row, or a failed
+    read. Both leave attribution indeterminate, which escalates rather than
+    releases, and neither can produce a contested-expiry marker.
+    """
+    try:
+        if not _session_variables_exist(db, owner):
+            return None
+        return variable_manager.get_variables(owner)
+    except Exception:
+        logger.warning(
+            "Could not load session variables for live-session owner %s",
+            owner,
+            exc_info=True,
+        )
         return None
-    return task_edited_file_set(variable_manager.get_variables(owner), task_id)
 
 
 def _session_variables_exist(db: HubDatabase, session_id: str) -> bool:

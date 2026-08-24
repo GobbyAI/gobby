@@ -421,7 +421,7 @@ class TestSessionManagerStatus:
             project_id=test_project["id"],
         )
 
-        result = session_mgr.mark_session_expired(session_id)
+        result = session_mgr.mark_session_expired(session_id, cause="context_reuse")
         assert result is True
 
         session = session_mgr.get(session_id)

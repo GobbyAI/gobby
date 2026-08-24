@@ -131,7 +131,10 @@ def test_expire_stale_terminal_sessions_for_reused_tmux_context() -> None:
         "current-session",
         200,
     )
-    session_manager.mark_session_expired.assert_called_once_with("stale-same-pane")
+    session_manager.mark_session_expired.assert_called_once_with(
+        "stale-same-pane",
+        cause="context_reuse",
+    )
 
 
 def test_expire_stale_terminal_sessions_fail_open_when_expiry_fails() -> None:
@@ -166,8 +169,8 @@ def test_expire_stale_terminal_sessions_fail_open_when_expiry_fails() -> None:
     )
 
     assert session_manager.mark_session_expired.call_args_list == [
-        call("stale-same-pane"),
-        call("stale-second"),
+        call("stale-same-pane", cause="context_reuse"),
+        call("stale-second", cause="context_reuse"),
     ]
     handler.logger.warning.assert_called_once()
 

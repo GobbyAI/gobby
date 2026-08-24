@@ -400,7 +400,7 @@ def test_expired_row_is_invisible_to_lookup_but_visible_to_recovery(
         == session.id
     )
 
-    assert session_mgr.mark_session_expired(session.id)
+    assert session_mgr.mark_session_expired(session.id, cause="context_reuse")
 
     assert (
         session_mgr.lookup_session_id(
