@@ -124,7 +124,7 @@ class ProcessorHost(Protocol):
 
     async def _reset_transcript_state(self, session_id: str, transcript_path: str) -> None: ...
 
-    def _persist_appender_snapshot(
+    async def _persist_appender_snapshot(
         self,
         session_id: str,
         transcript_path: str,

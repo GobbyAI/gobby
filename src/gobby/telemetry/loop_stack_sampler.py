@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import sysconfig
 import threading
 from collections import Counter
 from pathlib import Path
@@ -30,12 +31,30 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 DEFAULT_INTERVAL_SECONDS = 0.01
-# Deep enough to cross asyncio's internals into application frames, bounded so
-# one pathological recursion cannot produce an unbounded key.
-MAX_STACK_DEPTH = 40
+# Deep enough to cross asyncio's internals and starlette's middleware chain into
+# application frames, bounded so one pathological recursion cannot walk forever.
+MAX_STACK_DEPTH = 80
 # Aggregating on the innermost frames keeps distinct callers separable while
 # collapsing the identical outer scaffolding every request carries.
 STACK_SIGNATURE_FRAMES = 12
+# The innermost frames alone name the blocking primitive and hide who called it:
+# a four-second stall reported as a psycopg pool checkout with the route, the
+# handler and the query all cut off left nothing to fix. The literal outermost
+# frames are no help either -- every stack starts with the same interpreter,
+# uvicorn and asyncio scaffolding -- so keep the nearest frames that are ours
+# (#20845).
+STACK_CALLER_FRAMES = 8
+_ELIDED = "..."
+_STDLIB_PREFIX = sysconfig.get_paths()["stdlib"]
+
+
+def _is_our_frame(filename: str) -> bool:
+    """Tell repository code apart from interpreter and dependency scaffolding."""
+    return (
+        not filename.startswith("<")
+        and "/site-packages/" not in filename
+        and not filename.startswith(_STDLIB_PREFIX)
+    )
 
 
 class LoopStackSampler:
@@ -100,17 +119,35 @@ class LoopStackSampler:
             return None
         if frame is None:
             return None
-        frames = []
+        frames: list[str] = []
+        ours: list[bool] = []
         depth = 0
         while frame is not None and depth < MAX_STACK_DEPTH:
-            frames.append(f"{frame.f_code.co_qualname}@{Path(frame.f_code.co_filename).name}")
+            code = frame.f_code
+            frames.append(f"{code.co_qualname}@{Path(code.co_filename).name}")
+            ours.append(_is_our_frame(code.co_filename))
             frame = frame.f_back
             depth += 1
         if not frames:
             return None
         # frames[0] is innermost; present outermost-first so a stack reads as a
-        # call chain, keeping the innermost frames that distinguish callers.
-        return " -> ".join(reversed(frames[:STACK_SIGNATURE_FRAMES]))
+        # call chain.
+        if len(frames) <= STACK_SIGNATURE_FRAMES:
+            return " -> ".join(reversed(frames))
+        inner = frames[:STACK_SIGNATURE_FRAMES]
+        callers = [
+            label
+            for label, is_ours in zip(
+                frames[STACK_SIGNATURE_FRAMES:],
+                ours[STACK_SIGNATURE_FRAMES:],
+                strict=True,
+            )
+            if is_ours
+        ][:STACK_CALLER_FRAMES]
+        parts = (
+            [*reversed(callers), _ELIDED, *reversed(inner)] if callers else list(reversed(inner))
+        )
+        return " -> ".join(parts)
 
 
 __all__ = [

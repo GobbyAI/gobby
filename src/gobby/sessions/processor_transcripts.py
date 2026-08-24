@@ -273,7 +273,7 @@ class ProcessorTranscriptMixin:
                 and appender_stat is not None
                 and should_persist_appender
             ):
-                self._persist_appender_snapshot(
+                await self._persist_appender_snapshot(
                     session_id,
                     transcript_path,
                     pending_appender,
@@ -292,7 +292,7 @@ class ProcessorTranscriptMixin:
             pending_appender.index.session_stats = stats
             self._index_appenders[session_id] = pending_appender
             if appender_stat is not None and should_persist_appender:
-                self._persist_appender_snapshot(
+                await self._persist_appender_snapshot(
                     session_id,
                     transcript_path,
                     pending_appender,

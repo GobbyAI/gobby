@@ -13,13 +13,15 @@ import hashlib
 import json
 import logging
 import os
+import threading
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+import gobby.sessions.processor_stats as processor_stats
 import gobby.sessions.transcript_index as transcript_index
 from gobby.sessions.processor import SessionMessageProcessor
 from gobby.sessions.transcript_index import (
@@ -1120,3 +1122,30 @@ def test_grok_boundary_records_feed_sidecar_stats(tmp_path: Path) -> None:
         tool_call_count=0,
         last_assistant_content="Done.",
     )
+
+
+async def test_appender_snapshot_persists_off_the_event_loop(tmp_path: Path) -> None:
+    """Persisting a sidecar re-hashes the whole indexed prefix, so it needs a thread.
+
+    ``persist_index_sidecar`` reads and SHA-256s every indexed byte of the
+    transcript. On a large transcript that held the daemon's loop for two
+    seconds at a time, at 74% of the sampled loop-thread stacks (#20845).
+    """
+    processor = SessionMessageProcessor(MagicMock(), session_manager=MagicMock())
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text("{}\n", encoding="utf-8")
+    st = os.stat(transcript)
+
+    appender = MagicMock()
+    appender.snapshot.return_value = object()
+    persist_threads: list[int] = []
+
+    def recording_persist(path: str, index: object) -> None:
+        persist_threads.append(threading.get_ident())
+
+    loop_thread = threading.get_ident()
+    with patch.object(processor_stats, "persist_index_sidecar", recording_persist):
+        await processor._persist_appender_snapshot(SESSION, str(transcript), appender, st)
+
+    assert persist_threads, "the sidecar was never persisted"
+    assert loop_thread not in persist_threads

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 import os
@@ -111,18 +112,19 @@ class ProcessorStatsMixin:
             stats["last_assistant_content"] = last_assistant
         return stats
 
-    def _persist_appender_snapshot(
+    async def _persist_appender_snapshot(
         self: ProcessorHost,
         session_id: str,
         transcript_path: str,
         appender: TranscriptIndexAppender,
         st: os.stat_result,
     ) -> None:
+        # Writing the sidecar re-reads and SHA-256s every indexed byte of the
+        # transcript. On a large transcript that held the loop for two seconds
+        # at a time, at three quarters of the sampled stacks (#20845).
         try:
-            persist_index_sidecar(
-                transcript_path,
-                appender.snapshot(mtime_ns=st.st_mtime_ns, size=st.st_size),
-            )
+            snapshot = appender.snapshot(mtime_ns=st.st_mtime_ns, size=st.st_size)
+            await asyncio.to_thread(persist_index_sidecar, transcript_path, snapshot)
         except Exception as exc:
             logger.debug("Failed to persist transcript index for %s: %s", session_id, exc)
 

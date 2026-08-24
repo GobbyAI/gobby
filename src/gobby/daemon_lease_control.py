@@ -300,7 +300,9 @@ async def monitor_active_lease(
         loop = asyncio.get_running_loop()
         heartbeat_started = loop.time()
         worker = _DaemonHeartbeatWorker(lease)
-        worker.start()
+        # Thread.start blocks on a condition until the new thread reports that
+        # it is running, which is a blocking wait on the loop (#20845).
+        await asyncio.to_thread(worker.start)
         heartbeat = asyncio.wrap_future(worker.future)
 
         def consume_heartbeat_result(future: asyncio.Future[None]) -> None:

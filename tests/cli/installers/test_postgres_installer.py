@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -498,3 +499,47 @@ def test_render_postgres_status_omits_legacy_preflight_sections() -> None:
 
     assert "Migration:" not in rendered
     assert "pgcrypto:    yes" in rendered
+
+
+@pytest.mark.asyncio
+async def test_get_postgres_status_runs_its_blocking_work_off_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Every step of the status payload blocks, so none of it may run on the loop.
+
+    The /health dashboard route awaits this function. Its body forks
+    ``pg_isready``, parses bootstrap.yaml with ``realpath`` checks, opens a
+    fresh psycopg connection, and runs five round trips -- all synchronous. On
+    the loop it stalled the daemon for seconds at a time (#20845).
+    """
+    installer = _import_installer()
+    statements: list[str] = []
+    worker_threads: list[int] = []
+
+    def record_connect(*_args: Any, **_kwargs: Any) -> Any:
+        worker_threads.append(threading.get_ident())
+        return _FakeConnection(statements)
+
+    def record_run(*_args: Any, **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        worker_threads.append(threading.get_ident())
+        return _completed_process()
+
+    def record_bootstrap_read(_home: Path) -> str:
+        worker_threads.append(threading.get_ident())
+        return "postgresql://gobby:secret@example.com/gobby"
+
+    monkeypatch.setattr(installer.psycopg, "connect", record_connect)
+    monkeypatch.setattr(installer.subprocess, "run", record_run)
+    monkeypatch.setattr(
+        installer,
+        "_read_bootstrap_database_url",
+        record_bootstrap_read,
+        raising=False,
+    )
+
+    loop_thread = threading.get_ident()
+    await installer.get_postgres_status(gobby_home=tmp_path)
+
+    assert worker_threads, "no blocking step ran"
+    assert loop_thread not in worker_threads

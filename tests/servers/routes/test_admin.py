@@ -187,8 +187,7 @@ class TestAdminRoutes:
         assert response.json()["generation_endpoints"] == []
 
     @patch("gobby.servers.routes.admin._health.psutil")
-    @patch("gobby.servers.routes.admin._health.asyncio.to_thread")
-    def test_status_endpoint(self, mock_to_thread, mock_psutil, client, mock_server) -> None:
+    def test_status_endpoint(self, mock_psutil, client, mock_server) -> None:
         # Mock psutil
         mock_process = MagicMock()
         mock_process.memory_info.return_value = MagicMock(
@@ -197,8 +196,7 @@ class TestAdminRoutes:
         mock_process.num_threads.return_value = 10
         mock_psutil.Process.return_value = mock_process
 
-        # Mock asyncio.to_thread for cpu_percent (awaitable)
-        mock_to_thread.return_value = 1.5
+        mock_process.cpu_percent.return_value = 1.5
 
         # Mock MCP servers config
         mock_config = MagicMock()
@@ -259,10 +257,8 @@ class TestAdminRoutes:
         )
 
     @patch("gobby.servers.routes.admin._health.psutil")
-    @patch("gobby.servers.routes.admin._health.asyncio.to_thread")
     def test_status_endpoint_surfaces_hook_runtime_schema_mismatch(
         self,
-        mock_to_thread: MagicMock,
         mock_psutil: MagicMock,
         client: TestClient,
     ) -> None:
@@ -270,7 +266,7 @@ class TestAdminRoutes:
         mock_process.memory_info.return_value = MagicMock(rss=0, vms=0)
         mock_process.num_threads.return_value = 1
         mock_psutil.Process.return_value = mock_process
-        mock_to_thread.return_value = 0.0
+        mock_process.cpu_percent.return_value = 0.0
         diagnostic = _hook_runtime_diagnostic(GhookRuntimeState.SCHEMA_MISMATCH)
 
         with patch(
@@ -286,10 +282,8 @@ class TestAdminRoutes:
         assert data["hook_runtime"]["compatible"] is False
 
     @patch("gobby.servers.routes.admin._health.psutil")
-    @patch("gobby.servers.routes.admin._health.asyncio.to_thread")
     def test_status_endpoint_reads_persistent_shutdown_source(
         self,
-        mock_to_thread: MagicMock,
         mock_psutil: MagicMock,
         client: TestClient,
         tmp_path: Path,
@@ -298,7 +292,7 @@ class TestAdminRoutes:
         mock_process.memory_info.return_value = MagicMock(rss=0, vms=0)
         mock_process.num_threads.return_value = 1
         mock_psutil.Process.return_value = mock_process
-        mock_to_thread.return_value = 0.0
+        mock_process.cpu_percent.return_value = 0.0
         write_shutdown_intent("cli_restart", ShutdownIntent.RESTART, sender_pid=123, home=tmp_path)
         # Consume the active marker so status must fall back to the persisted source file.
         read_shutdown_intent(home=tmp_path)
@@ -400,10 +394,8 @@ class TestAdminRoutes:
 
     @patch("gobby.servers.routes.admin._health.is_qdrant_healthy", new_callable=AsyncMock)
     @patch("gobby.servers.routes.admin._health.psutil")
-    @patch("gobby.servers.routes.admin._health.asyncio.to_thread")
     def test_status_endpoint_uses_qdrant_service_health_when_url_configured(
         self,
-        mock_to_thread,
         mock_psutil,
         mock_is_qdrant_healthy,
         client,
@@ -415,7 +407,7 @@ class TestAdminRoutes:
         )
         mock_process.num_threads.return_value = 10
         mock_psutil.Process.return_value = mock_process
-        mock_to_thread.return_value = 0.5
+        mock_process.cpu_percent.return_value = 0.5
         mock_is_qdrant_healthy.return_value = True
 
         vector_store = MagicMock()
@@ -432,10 +424,8 @@ class TestAdminRoutes:
 
     @patch("gobby.servers.routes.admin._health.is_qdrant_healthy", new_callable=AsyncMock)
     @patch("gobby.servers.routes.admin._health.psutil")
-    @patch("gobby.servers.routes.admin._health.asyncio.to_thread")
     def test_status_endpoint_reports_qdrant_dimension_rebuild_state(
         self,
-        mock_to_thread,
         mock_psutil,
         mock_is_qdrant_healthy,
         client,
@@ -445,7 +435,7 @@ class TestAdminRoutes:
         mock_process.memory_info.return_value = MagicMock(rss=0, vms=0)
         mock_process.num_threads.return_value = 1
         mock_psutil.Process.return_value = mock_process
-        mock_to_thread.return_value = 0.0
+        mock_process.cpu_percent.return_value = 0.0
         mock_is_qdrant_healthy.return_value = True
 
         vector_store = MagicMock()
@@ -475,10 +465,8 @@ class TestAdminRoutes:
 
     @patch("gobby.cli.services.get_falkordb_status", new_callable=AsyncMock)
     @patch("gobby.servers.routes.admin._health.psutil")
-    @patch("gobby.servers.routes.admin._health.asyncio.to_thread")
     def test_status_endpoint_reports_falkordb_not_neo4j(
         self,
-        mock_to_thread,
         mock_psutil,
         mock_get_falkordb_status,
         client,
@@ -490,7 +478,7 @@ class TestAdminRoutes:
         )
         mock_process.num_threads.return_value = 10
         mock_psutil.Process.return_value = mock_process
-        mock_to_thread.return_value = 0.5
+        mock_process.cpu_percent.return_value = 0.5
         mock_get_falkordb_status.return_value = {
             "installed": True,
             "healthy": False,
@@ -522,10 +510,8 @@ class TestAdminRoutes:
 
     @patch("gobby.cli.services.get_falkordb_status", new_callable=AsyncMock)
     @patch("gobby.servers.routes.admin._health.psutil")
-    @patch("gobby.servers.routes.admin._health.asyncio.to_thread")
     def test_status_endpoint_always_includes_falkordb_payload(
         self,
-        mock_to_thread,
         mock_psutil,
         mock_get_falkordb_status,
         client,
@@ -537,7 +523,7 @@ class TestAdminRoutes:
         )
         mock_process.num_threads.return_value = 10
         mock_psutil.Process.return_value = mock_process
-        mock_to_thread.return_value = 0.5
+        mock_process.cpu_percent.return_value = 0.5
         mock_get_falkordb_status.return_value = {
             "installed": False,
             "healthy": False,
@@ -557,10 +543,8 @@ class TestAdminRoutes:
 
     @patch("gobby.cli.installers.postgres.get_postgres_status", new_callable=AsyncMock)
     @patch("gobby.servers.routes.admin._health.psutil")
-    @patch("gobby.servers.routes.admin._health.asyncio.to_thread")
     def test_status_endpoint_includes_postgres_hub_status(
         self,
-        mock_to_thread,
         mock_psutil,
         mock_get_postgres_status,
         client,
@@ -572,7 +556,7 @@ class TestAdminRoutes:
         )
         mock_process.num_threads.return_value = 10
         mock_psutil.Process.return_value = mock_process
-        mock_to_thread.return_value = 0.5
+        mock_process.cpu_percent.return_value = 0.5
         mock_server.services.database.dialect = "postgres"
         mock_server.services.database.connection_count = 2
         mock_server.services.config.hub_backend = "postgres"
@@ -596,10 +580,8 @@ class TestAdminRoutes:
 
     @patch("gobby.cli.installers.postgres.get_postgres_status", new_callable=AsyncMock)
     @patch("gobby.servers.routes.admin._health.psutil")
-    @patch("gobby.servers.routes.admin._health.asyncio.to_thread")
     def test_status_endpoint_degrades_for_damaged_bm25_index(
         self,
-        mock_to_thread,
         mock_psutil,
         mock_get_postgres_status,
         client,
@@ -611,7 +593,7 @@ class TestAdminRoutes:
         )
         mock_process.num_threads.return_value = 10
         mock_psutil.Process.return_value = mock_process
-        mock_to_thread.return_value = 0.5
+        mock_process.cpu_percent.return_value = 0.5
         mock_server.services.database.dialect = "postgres"
         mock_server.services.config.hub_backend = "postgres"
         mock_get_postgres_status.return_value = {

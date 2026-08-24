@@ -103,3 +103,39 @@ def test_watching_a_thread_that_does_not_exist_is_harmless() -> None:
     finally:
         sampler.stop()
     assert sampler.drain() == []
+
+
+def recurse_then_burn(depth: int, deadline: float) -> int:
+    """Bury the burning frame under enough scaffolding to push a caller out."""
+    if depth > 0:
+        return recurse_then_burn(depth - 1, deadline)
+    return burn_inside_a_named_helper(deadline)
+
+
+def test_a_deep_stack_still_names_the_call_that_entered_it() -> None:
+    """A stack deeper than the signature window must keep both of its ends.
+
+    Keeping only the innermost frames named the blocking primitive but hid the
+    caller: a real report attributed a four-second stall to a psycopg pool
+    checkout with every frame above it -- the route, the handler, the query --
+    cut off, so there was nothing to fix (#20845).
+    """
+    sampler = LoopStackSampler(
+        threading.get_ident(),
+        interval_seconds=SAMPLE_INTERVAL_SECONDS,
+    )
+    sampler.start()
+    try:
+        recurse_then_burn(14, time.monotonic() + BURN_SECONDS)
+    finally:
+        sampler.stop()
+
+    hottest = sampler.drain()
+    assert hottest, "a sampler that collects nothing cannot name anything"
+    top_stack, _count = hottest[0]
+    assert "burn_inside_a_named_helper" in top_stack, (
+        f"the innermost end must still name the burning function; got {top_stack!r}"
+    )
+    assert "test_a_deep_stack_still_names_the_call_that_entered_it" in top_stack, (
+        f"the outermost end must still name the entry point; got {top_stack!r}"
+    )

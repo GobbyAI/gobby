@@ -6,6 +6,7 @@ import asyncio
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -233,3 +234,36 @@ async def test_lease_monitor_stop_returns_before_heartbeat() -> None:
     )
 
     assert not shutdown_requested.is_set()
+
+
+async def test_heartbeat_thread_starts_off_the_event_loop() -> None:
+    """``Thread.start`` waits for the new thread to signal, so it needs a thread.
+
+    The lease heartbeat spawns a fresh daemon thread every interval.
+    ``Thread.start`` blocks on a condition until the OS thread reports it is
+    running; on the loop that is a blocking wait (#20845).
+    """
+    lease = LostLease()
+    stop = asyncio.Event()
+    start_threads: list[int] = []
+    real_start = threading.Thread.start
+
+    def recording_start(self: threading.Thread) -> None:
+        if self.name == "gobby-lease-heartbeat":
+            start_threads.append(threading.get_ident())
+        real_start(self)
+
+    loop_thread = threading.get_ident()
+    with patch.object(threading.Thread, "start", recording_start):
+        await asyncio.wait_for(
+            monitor_active_lease(
+                lease,
+                stop=stop,
+                on_loss=lambda _loss: None,
+                heartbeat_interval_seconds=0.001,
+            ),
+            timeout=1.0,
+        )
+
+    assert start_threads, "the heartbeat thread never started"
+    assert loop_thread not in start_threads

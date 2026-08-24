@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -273,7 +274,30 @@ async def get_postgres_status(
     readiness_timeout: float = 10.0,
     connect_timeout: int = 5,
 ) -> dict[str, Any]:
-    """Return the stable PostgreSQL status payload used by runbooks."""
+    """Return the stable PostgreSQL status payload used by runbooks.
+
+    Every step of the payload blocks: bootstrap.yaml parsing with ``realpath``
+    checks, a ``pg_isready`` fork, a fresh psycopg connection, and five round
+    trips. The /health dashboard route awaits this, so on the loop it stalled
+    the whole daemon for seconds at a time (#20845).
+    """
+    return await asyncio.to_thread(
+        _postgres_status_payload,
+        gobby_home=gobby_home,
+        dsn=dsn,
+        readiness_timeout=readiness_timeout,
+        connect_timeout=connect_timeout,
+    )
+
+
+def _postgres_status_payload(
+    *,
+    gobby_home: Path | None,
+    dsn: str | None,
+    readiness_timeout: float,
+    connect_timeout: int,
+) -> dict[str, Any]:
+    """Build the PostgreSQL status payload with blocking calls."""
     home = gobby_home or get_gobby_home()
     bootstrap_error: str | None = None
     try:
