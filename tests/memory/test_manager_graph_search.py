@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -377,7 +377,7 @@ class TestSearchMemoriesGraphIntegration:
         )
 
         # Mock storage
-        manager.storage.get_memory = MagicMock(
+        cast(Any, manager.storage).get_memory = MagicMock(
             side_effect=lambda mid, scope=None: _mock_memory(mid, f"content of {mid}")
         )
 
@@ -411,7 +411,7 @@ class TestSearchMemoriesGraphIntegration:
             side_effect=Exception("FalkorDB down")
         )
 
-        manager.storage.get_memory = MagicMock(
+        cast(Any, manager.storage).get_memory = MagicMock(
             side_effect=lambda mid, scope=None: _mock_memory(mid, f"content of {mid}")
         )
 
@@ -437,7 +437,7 @@ class TestSearchMemoriesGraphIntegration:
         )
 
         vs.search = AsyncMock(return_value=[("mem-1", 0.9)])
-        manager.storage.get_memory = MagicMock(
+        cast(Any, manager.storage).get_memory = MagicMock(
             side_effect=lambda mid, scope=None: _mock_memory(mid, f"content of {mid}")
         )
 
@@ -466,7 +466,7 @@ class TestSearchMemoriesGraphIntegration:
         )
 
         vs.search = AsyncMock(return_value=[("mem-1", 0.8)])
-        manager.storage.get_memory = MagicMock(
+        cast(Any, manager.storage).get_memory = MagicMock(
             side_effect=lambda mid, scope=None: _mock_memory(mid, f"content of {mid}")
         )
 
@@ -501,7 +501,7 @@ class TestSearchMemoriesGraphIntegration:
         system_mem = _mock_memory("mem-1", "system content")
         system_mem.source_type = "agent"
 
-        manager.storage.get_memory = MagicMock(
+        cast(Any, manager.storage).get_memory = MagicMock(
             side_effect=lambda mid, scope=None: user_mem if mid == "mem-2" else system_mem
         )
 
@@ -600,7 +600,7 @@ class TestGraphSearchProjectIdScoping:
                     continue
             return out
 
-        manager.storage.get_memory = MagicMock(side_effect=_scoped_get_memory)
+        cast(Any, manager.storage).get_memory = MagicMock(side_effect=_scoped_get_memory)
         manager.storage.get_memories = MagicMock(side_effect=_scoped_get_memories)
 
         result = await manager.search_memories(query="test", project_id="proj-A", limit=10)
@@ -635,7 +635,7 @@ class TestGraphSearchProjectIdScoping:
         mem_global.project_id = PERSONAL_PROJECT_ID
         mem_global.is_global = True
 
-        manager.storage.get_memory = MagicMock(
+        cast(Any, manager.storage).get_memory = MagicMock(
             side_effect=lambda mid, scope=None: mem_a if mid == "mem-1" else mem_global
         )
 
@@ -721,7 +721,7 @@ class TestTemporalDecayIntegration:
 
         mem = _mock_memory("mem-1", "content")
         mem.source_type = "agent"
-        manager.storage.get_memory = MagicMock(return_value=mem)
+        cast(Any, manager.storage).get_memory = MagicMock(return_value=mem)
 
         result = await manager.search_memories(query="test", limit=10)
 
@@ -762,7 +762,7 @@ class TestTemporalDecayIntegration:
         mem_recent = _mock_memory("mem-recent", "recent content", updated_at=recent.isoformat())
         mem_old = _mock_memory("mem-old", "old content", updated_at=old.isoformat())
 
-        manager.storage.get_memory = MagicMock(
+        cast(Any, manager.storage).get_memory = MagicMock(
             side_effect=lambda mid, scope=None: mem_recent if mid == "mem-recent" else mem_old
         )
 
@@ -773,8 +773,15 @@ class TestTemporalDecayIntegration:
         assert result_ids[1] == "mem-old"
 
     @pytest.mark.asyncio
-    async def test_min_score_applies_after_temporal_decay(self) -> None:
-        """min_score filters on final semantic similarity after temporal decay."""
+    async def test_min_score_filters_on_relevance_not_age(self) -> None:
+        """min_score gates the undecayed score; decay only orders what survives.
+
+        This asserted the opposite until #20858. Filtering the decayed similarity
+        made the floor unsatisfiable as memories aged -- at the live corpus median
+        age of 25.9 days the decay factor is 0.549, so the 0.55 search floor
+        demanded a cosine of 1.002 -- and the slots it emptied were taken by
+        keyword-only hits carrying no cosine at all.
+        """
         vs = AsyncMock()
         embed_fn = AsyncMock(return_value=[0.1])
 
@@ -786,16 +793,51 @@ class TestTemporalDecayIntegration:
 
         now = datetime.now(UTC)
         old = now - timedelta(days=90)
+        # Three half-lives old: decay 0.125, so the decayed score is 0.1125.
         vs.search = AsyncMock(return_value=[("mem-old", 0.9)])
 
         mem_old = _mock_memory("mem-old", "old content", updated_at=old.isoformat())
         mem_old.source_type = "agent"
-        manager.storage.get_memory = MagicMock(return_value=mem_old)
+        cast(Any, manager.storage).get_memory = MagicMock(return_value=mem_old)
 
         result = await manager.search_memories(query="test", limit=10, min_score=0.3)
 
-        assert result == []
-        assert manager.storage.get_memory.call_count == 1
+        # Admitted on its 0.9 cosine, and it still carries the decayed score for
+        # ranking -- age keeps ordering results, it just no longer evicts them.
+        assert [mem.id for mem in result] == ["mem-old"]
+        assert result[0].similarity == pytest.approx(0.1125)
+        assert result[0].raw_semantic_score == pytest.approx(0.9)
+
+    @pytest.mark.asyncio
+    async def test_min_score_still_drops_a_fresh_weak_match(self) -> None:
+        """The corrected axis is not a blanket loosening: weak is still weak.
+
+        Undecayed >= decayed always, so moving the axis can only ever admit more at
+        a fixed value. What proves it is still a relevance test is that the SAME
+        undecayed memory falls on either side of the floor as the floor crosses its
+        cosine -- age never enters, at either setting.
+        """
+        vs = AsyncMock()
+        embed_fn = AsyncMock(return_value=[0.1])
+
+        manager = _make_manager(vector_store=vs, embed_fn=embed_fn)
+        object.__setattr__(manager.config, "temporal_decay_half_life_days", 30.0)
+
+        now = datetime.now(UTC)
+        vs.search = AsyncMock(return_value=[("mem-fresh", 0.2)])
+
+        mem_fresh = _mock_memory("mem-fresh", "fresh content", updated_at=now.isoformat())
+        mem_fresh.source_type = "agent"
+        cast(Any, manager.storage).get_memory = MagicMock(return_value=mem_fresh)
+
+        assert await manager.search_memories(query="test", limit=10, min_score=0.3) == []
+
+        admitted = await manager.search_memories(query="test", limit=10, min_score=0.15)
+
+        assert [mem.id for mem in admitted] == ["mem-fresh"]
+        assert admitted[0].raw_semantic_score == pytest.approx(0.2)
+        # Fresh, so decay is ~1.0 and the two axes agree here by construction.
+        assert admitted[0].similarity == pytest.approx(0.2, abs=1e-3)
 
     @pytest.mark.asyncio
     async def test_older_memory_ranks_lower_qdrant_only(self) -> None:
@@ -819,7 +861,7 @@ class TestTemporalDecayIntegration:
         mem_recent = _mock_memory("mem-recent", "recent content", updated_at=recent.isoformat())
         mem_old = _mock_memory("mem-old", "old content", updated_at=old.isoformat())
 
-        manager.storage.get_memory = MagicMock(
+        cast(Any, manager.storage).get_memory = MagicMock(
             side_effect=lambda mid, scope=None: mem_recent if mid == "mem-recent" else mem_old
         )
 
@@ -852,7 +894,7 @@ class TestTemporalDecayIntegration:
         mem_recent = _mock_memory("mem-recent", "recent", updated_at=now.isoformat())
         mem_old = _mock_memory("mem-old", "old", updated_at=old.isoformat())
 
-        manager.storage.get_memory = MagicMock(
+        cast(Any, manager.storage).get_memory = MagicMock(
             side_effect=lambda mid, scope=None: mem_recent if mid == "mem-recent" else mem_old
         )
 

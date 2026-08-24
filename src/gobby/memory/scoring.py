@@ -39,3 +39,22 @@ def temporal_decay(
         return math.pow(0.5, age_days / half_life_days)
     except (ValueError, TypeError):
         return 1.0
+
+
+def undecay(similarity: float, decay_factor: float | None) -> float:
+    """Return ``similarity`` with the age penalty divided back out.
+
+    A scored candidate's ``similarity`` is ``cosine * user_boost * temporal_decay``,
+    so any threshold applied to it is a recency test wearing a relevance test's
+    name. Both floors that gate memory -- the search floor in ``build_results``
+    (#20858) and the selection floor in recall (#20831) -- read the value this
+    returns instead.
+
+    Recovered by division rather than read from a stored raw cosine, because a
+    graph-synthetic hit has no raw cosine at all; reading one would delete the
+    recall expander (#17104). A candidate that carries no decay factor was never
+    decayed, so its score already is the undecayed one.
+    """
+    if decay_factor is None or decay_factor <= 0.0:
+        return similarity
+    return similarity / decay_factor

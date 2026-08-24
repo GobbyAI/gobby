@@ -5,7 +5,14 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-from qdrant_client.models import Filter, FilterSelector, PointIdsList, PointStruct, QueryRequest
+from qdrant_client.models import (
+    Filter,
+    FilterSelector,
+    HasIdCondition,
+    PointIdsList,
+    PointStruct,
+    QueryRequest,
+)
 
 from gobby.memory.vectorstore_client import (
     QDRANT_CLIENT_TIMEOUT_SECONDS,
@@ -72,6 +79,41 @@ class VectorStoreQueries:
             store._raise_if_recoverable(exc)
             raise
         return [(str(point.id), point.score) for point in results.points]
+
+    async def score_ids(
+        self,
+        query_embedding: list[float],
+        ids: list[str],
+        collection_name: str | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, float]:
+        """Score exactly ``ids`` against ``query_embedding``, in one round trip.
+
+        `search` answers "the top N by cosine", which is a different question from
+        "what is this memory's cosine". A candidate another retrieval leg surfaced
+        can rank far below the semantic leg's window and still be scoreable, so
+        asking that second question keeps a knowable cosine from being erased and
+        replaced by a fabricated one (#20858). Ids the collection holds no vector
+        for are simply absent from the result.
+        """
+        if not ids:
+            return {}
+        store = self._store
+        client = await store._ensure_initialized()
+        try:
+            results = await store._call_client(
+                client,
+                "query_points",
+                collection_name=collection_name or store._collection_name,
+                query=query_embedding,
+                query_filter=Filter(must=[HasIdCondition(has_id=list(ids))]),
+                limit=len(ids),
+                timeout=timeout,
+            )
+        except Exception as exc:
+            store._raise_if_recoverable(exc)
+            raise
+        return {str(point.id): point.score for point in results.points}
 
     async def search_with_payload(
         self,

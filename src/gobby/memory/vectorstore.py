@@ -218,6 +218,24 @@ class VectorStore:
             timeout=timeout,
         )
 
+    async def score_ids(
+        self,
+        query_embedding: list[float],
+        ids: list[str],
+        collection_name: str | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, float]:
+        """Return the cosine of each of ``ids`` against ``query_embedding``.
+
+        Ids with no stored vector are absent from the result rather than zero.
+        """
+        return await self._queries.score_ids(
+            query_embedding,
+            ids,
+            collection_name,
+            timeout=timeout,
+        )
+
     async def search_with_payload(
         self,
         query_embedding: list[float],

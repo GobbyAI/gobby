@@ -64,6 +64,61 @@ def _qdrant_hits_or_empty(
     return []
 
 
+async def _score_unwindowed_candidates(
+    *,
+    vector_store: VectorStore,
+    query_embedding: list[float],
+    qdrant_score_map: dict[str, float],
+    other_ranked: list[list[str]],
+    caller: str,
+    project_id: str | None,
+    path: str,
+) -> None:
+    """Give every merged candidate the collection can score its real cosine.
+
+    The semantic leg fetches the top `candidate_limit` by raw cosine, so a memory
+    another leg surfaced from further down the ranking arrives unscored -- and
+    `build_results` then fabricates a graph-synthetic similarity for it that is
+    systematically lower than the cosine Qdrant would have returned. Measured on
+    one live query, the answering memory ranked in (100, 150] of 2803 against a
+    semantic reach of 16, and its invented 0.5258 stood in for a real 0.6002
+    (#20858). Filling the gap here keeps the fetch width where it is and leaves
+    `graph_synthetic` meaning what it says: no vector to score.
+
+    Best-effort. A failure here returns the search to its previous behavior rather
+    than failing a search that already has its ranked candidates.
+    """
+    unscored = [
+        memory_id
+        for memory_id in dict.fromkeys(memory_id for ranked in other_ranked for memory_id in ranked)
+        if memory_id not in qdrant_score_map
+    ]
+    if not unscored:
+        return
+    try:
+        qdrant_score_map.update(
+            await vector_store.score_ids(
+                query_embedding,
+                unscored,
+                timeout=_HYBRID_QDRANT_TIMEOUT_SECONDS,
+            )
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.warning(
+            "Scoring merged candidates failed; unscored hits keep synthetic similarity",
+            extra={
+                "caller": caller,
+                "project_id": project_id,
+                "unscored": len(unscored),
+                "path": path,
+                "error": str(exc),
+            },
+            exc_info=exc,
+        )
+
+
 class SearchPathHost(Protocol):
     """SearchService surface used by extracted search-path helpers."""
 
@@ -237,6 +292,15 @@ async def search_with_graph(
 
         qdrant_score_map = dict(qdrant_results)
         qdrant_ranked = [memory_id for memory_id, _ in qdrant_results]
+        await _score_unwindowed_candidates(
+            vector_store=vector_store,
+            query_embedding=query_embedding,
+            qdrant_score_map=qdrant_score_map,
+            other_ranked=[graph_ranked, keyword_ranked],
+            caller=caller,
+            project_id=project_id,
+            path="qdrant_graph_keyword",
+        )
 
         rrf_lists = [ranked for ranked in (qdrant_ranked, graph_ranked, keyword_ranked) if ranked]
         if len(rrf_lists) > 1:
@@ -387,6 +451,15 @@ async def search_qdrant_keyword(
 
         qdrant_ranked = [memory_id for memory_id, _ in qdrant_results]
         qdrant_score_map = dict(qdrant_results)
+        await _score_unwindowed_candidates(
+            vector_store=vector_store,
+            query_embedding=query_embedding,
+            qdrant_score_map=qdrant_score_map,
+            other_ranked=[keyword_ranked],
+            caller=caller,
+            project_id=project_id,
+            path="qdrant_keyword",
+        )
 
         if qdrant_ranked and keyword_ranked:
             ranking_score_map = rrf_scores(qdrant_ranked, keyword_ranked, k=rrf_k)

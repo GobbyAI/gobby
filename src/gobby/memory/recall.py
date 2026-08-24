@@ -14,6 +14,7 @@ from uuid import uuid4
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.memory.recall_constants import RECALL_QUERY_CONSTRUCTION_VERSION
 from gobby.memory.recall_signal_log import make_injection_outcome_recorder
+from gobby.memory.scoring import undecay
 from gobby.memory.synthetic_prompts import synthetic_prompt_reason
 from gobby.utils.datetime import datetime_to_required_iso
 from gobby.utils.injected_context import strip_injected_context
@@ -431,12 +432,12 @@ class MemoryRecallRunner:
             not isinstance(decay, int | float)
             or isinstance(decay, bool)
             or not math.isfinite(float(decay))
-            or float(decay) <= 0.0
         ):
             # No decay was applied that this can divide back out, so the score
             # already is the undecayed one.
-            return float(similarity)
-        return float(similarity) / float(decay)
+            decay = None
+        # Shared with the search floor, which reads the same axis (#20858).
+        return undecay(float(similarity), None if decay is None else float(decay))
 
     def _filter_ranked(
         self,

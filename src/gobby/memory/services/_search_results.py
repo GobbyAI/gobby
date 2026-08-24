@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from gobby.memory.scoring import temporal_decay
+from gobby.memory.scoring import temporal_decay, undecay
 from gobby.memory.services._search_constants import (
     _GRAPH_SYNTHETIC_SIM_DISCOUNT,
     _USER_SOURCE_BOOST,
@@ -74,7 +74,17 @@ def build_results(
                 similarity = graph_confidence * graph_synthetic_discount * decay_factor
                 synthetic_similarity = True
 
-        if effective_min_score > 0 and similarity is not None and similarity < effective_min_score:
+        # The floor reads the undecayed score (#20858). Gating `similarity` gated
+        # `cosine * boost * decay`, which at the live corpus median age of 25.9 days
+        # demanded `cosine >= 1.002` to clear 0.55 -- unreachable, so every candidate
+        # aged past the median was cut before the selection gate saw it while
+        # null-similarity keyword hits, exempt below, kept their slots. Ranking still
+        # uses the decayed value: age orders results, it no longer decides eligibility.
+        if (
+            effective_min_score > 0
+            and similarity is not None
+            and undecay(similarity, decay_factor) < effective_min_score
+        ):
             continue
 
         sources = []

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 import pytest
@@ -16,6 +16,7 @@ from gobby.memory.services._search_graph import GraphScoredResult
 from gobby.memory.services._search_keyword import KeywordSearch
 from gobby.memory.services.search import SearchDebugHit, SearchDebugSnapshot, SearchService
 from gobby.storage.memories import Memory
+from gobby.storage.memories_models import MemoryType
 
 pytestmark = pytest.mark.unit
 
@@ -117,6 +118,15 @@ class _CountingVectorStore:
     ) -> list[tuple[str, float]]:
         self.calls.append(limit)
         return self._results[:limit]
+
+    async def score_ids(
+        self,
+        query_embedding: list[float],
+        ids: list[str],
+        timeout: float | None = None,
+    ) -> dict[str, float]:
+        """This double holds vectors only for what its window returns."""
+        return {}
 
 
 def _service(
@@ -936,3 +946,237 @@ async def test_embed_text_matching_the_query_records_no_second_leg() -> None:
 
     assert [snapshot.query for snapshot in snapshots] == ["webhook handler"]
     assert [snapshot.bm25_query for snapshot in snapshots] == [None]
+
+
+class _AgedStorage:
+    """Storage whose memories carry the ages the decay axis is measured against."""
+
+    def __init__(self, ages_in_days: dict[str, float]) -> None:
+        self._ages = ages_in_days
+
+    def _memory(self, memory_id: str) -> Memory:
+        if memory_id not in self._ages:
+            raise ValueError(memory_id)
+        updated = datetime.now(UTC) - timedelta(days=self._ages[memory_id])
+        return Memory(
+            id=memory_id,
+            memory_type=MemoryType.FACT,
+            content=memory_id,
+            created_at=updated,
+            updated_at=updated,
+            source_type="agent",
+            tags=[],
+        )
+
+    def get_memories(self, memory_ids: list[str], scope: Any = None) -> list[Memory]:
+        return [self._memory(memory_id) for memory_id in memory_ids]
+
+    def get_memory(self, memory_id: str, scope: Any = None) -> Memory:
+        return self._memory(memory_id)
+
+    def update_access_stats(self, memory_id: str, accessed_at: str) -> None:
+        return None
+
+
+def test_the_search_floor_tests_the_undecayed_score() -> None:
+    """#20858 Defect A: `min_score` gated the decayed score, so it read as recency.
+
+    `similarity` is `cosine * user_boost * temporal_decay`, so thresholding it made
+    the search floor unsatisfiable for an ordinary memory: at the live corpus median
+    age of 25.9 days the decay factor is 0.549, which demanded `cosine >= 1.002` at
+    the 0.55 floor. Everything aged past the median was cut before the selection gate
+    could judge it, and null-similarity keyword hits -- exempt because the guard reads
+    `similarity is not None` -- filled the slots it vacated.
+    """
+    service = _service([], storage=_AgedStorage({"aged-strong": 30.0, "fresh-weak": 0.0}))
+
+    results = service._build_results(
+        merged_ids=["aged-strong", "fresh-weak"],
+        ranking_score_map={"aged-strong": 0.01, "fresh-weak": 0.01},
+        # One half-life old, so decay is exactly 0.5 and the decayed score is 0.45 --
+        # under the floor on the old axis, over it on the axis that means relevance.
+        qdrant_score_map={"aged-strong": 0.90, "fresh-weak": 0.50},
+        qdrant_set={"aged-strong", "fresh-weak"},
+        keyword_set=set(),
+        graph_set=set(),
+        rrf_applied=True,
+        project_id=None,
+        memory_type=None,
+        tags_all=None,
+        tags_any=None,
+        tags_none=None,
+        half_life=30.0,
+        effective_min_score=0.55,
+        limit=5,
+    )
+
+    # The aged hit is admitted on its 0.90 cosine; the fresh 0.50 hit is still cut,
+    # so this is a change of axis and not a blanket loosening.
+    assert [mem.id for mem in results] == ["aged-strong"]
+    # Ranking keeps the decayed value: age still orders results, it just no longer
+    # decides eligibility.
+    admitted = results[0]
+    assert admitted.similarity is not None
+    assert abs(admitted.similarity - 0.45) < 1e-6
+    assert admitted.raw_semantic_score == 0.90
+
+
+def test_the_search_floor_keeps_an_aged_graph_only_hit_eligible() -> None:
+    """The recall expander (#17104) has to survive the same axis correction.
+
+    A graph-only hit carries a synthetic cosine and no raw score, so reading the raw
+    score at the floor would have deleted the expander outright -- the same trap
+    #20831 avoided at the selection gate. Dividing the decay back out keeps it.
+    """
+    service = _service([], storage=_AgedStorage({"graph-only": 60.0}))
+
+    results = service._build_results(
+        merged_ids=["graph-only"],
+        ranking_score_map={"graph-only": 0.5},
+        qdrant_score_map={},
+        qdrant_set=set(),
+        keyword_set=set(),
+        graph_set={"graph-only"},
+        # Entity cosine 0.70 discounted to 0.63; two half-lives old, so the decayed
+        # value is 0.1575 and only the undecayed axis can admit it.
+        graph_score_map={"graph-only": 0.70},
+        rrf_applied=False,
+        project_id=None,
+        memory_type=None,
+        tags_all=None,
+        tags_any=None,
+        tags_none=None,
+        half_life=30.0,
+        effective_min_score=0.55,
+        limit=5,
+    )
+
+    assert [mem.id for mem in results] == ["graph-only"]
+    assert results[0].ranking_mode == "graph_synthetic"
+    assert results[0].raw_semantic_score is None
+    assert results[0].similarity is not None
+    assert abs(results[0].similarity - 0.1575) < 1e-6
+
+
+class _ScoringVectorStore:
+    """A vector store that can score any stored id, not only its own top-N.
+
+    The narrow `search` window is the point: it returns the top hits the semantic
+    leg would fetch, while `score_ids` answers for anything else the collection
+    holds -- which is what Qdrant can actually do.
+    """
+
+    def __init__(
+        self,
+        results: list[tuple[str, float]],
+        stored: dict[str, float],
+    ) -> None:
+        self._results = results
+        self._stored = stored
+        self.scored_ids: list[list[str]] = []
+
+    async def search(
+        self,
+        query_embedding: list[float],
+        limit: int = 10,
+        filters: dict[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> list[tuple[str, float]]:
+        return self._results[:limit]
+
+    async def score_ids(
+        self,
+        query_embedding: list[float],
+        ids: list[str],
+        timeout: float | None = None,
+    ) -> dict[str, float]:
+        self.scored_ids.append(list(ids))
+        return {
+            memory_id: self._stored[memory_id] for memory_id in ids if memory_id in self._stored
+        }
+
+
+async def test_a_graph_hit_the_semantic_window_missed_keeps_its_real_cosine(
+    monkeypatch: Any,
+) -> None:
+    """#20858 Defect B: a knowable cosine was replaced by a fabricated, lower one.
+
+    The semantic leg asks Qdrant for `limit * _OVERFETCH_FACTOR` by raw cosine, so a
+    memory ranked below that window arrives with `raw_semantic_score` erased even
+    though the collection holds its vector. `build_results` then invented a
+    graph-synthetic similarity for it. Measured on the reproduction memory, the
+    invention (0.5258) was lower than its real decayed similarity (0.6002), and the
+    erased cosine is what made it permanently injection-ineligible under #20831.
+    """
+    store = _ScoringVectorStore(
+        results=[("in-window", 0.90)],
+        # Outside the semantic window, but the collection can still score it.
+        stored={"in-window": 0.90, "below-window": 0.64},
+    )
+    service = _service(
+        ["in-window", "below-window"],
+        vector_store=store,
+        falkordb_graph_search=True,
+    )
+
+    async def graph_search(**_kwargs: Any) -> GraphScoredResult:
+        return GraphScoredResult(scored=[("below-window", 0.70)])
+
+    monkeypatch.setattr(service, "_search_graph_scored", graph_search)
+    results = await service._search_with_graph(
+        query="query",
+        query_embedding=[1.0, 0.0],
+        limit=2,
+        filters={},
+        project_id=None,
+        memory_type=None,
+        tags_all=None,
+        tags_any=None,
+        tags_none=None,
+        half_life=0.0,
+        effective_min_score=0.0,
+    )
+
+    by_id = {mem.id: mem for mem in results}
+    recovered = by_id["below-window"]
+    assert recovered.raw_semantic_score == 0.64
+    assert recovered.similarity == 0.64
+    # `graph_synthetic` now means what it says -- no vector to score -- so a memory
+    # Qdrant can score is never labelled with it.
+    assert recovered.ranking_mode == "rrf"
+    # Provenance is unchanged: the semantic leg did not surface it, and saying it did
+    # would misreport which leg found the memory.
+    assert recovered.search_via == "graph"
+    # Only the ids the semantic leg missed are rescored.
+    assert store.scored_ids == [["below-window"]]
+
+
+async def test_a_graph_hit_with_no_vector_stays_graph_synthetic(monkeypatch: Any) -> None:
+    """The recall expander (#17104) still owns memories the vector index has not seen."""
+    store = _ScoringVectorStore(results=[("in-window", 0.90)], stored={"in-window": 0.90})
+    service = _service(["in-window", "unembedded"], vector_store=store, falkordb_graph_search=True)
+
+    async def graph_search(**_kwargs: Any) -> GraphScoredResult:
+        return GraphScoredResult(scored=[("unembedded", 0.80)])
+
+    monkeypatch.setattr(service, "_search_graph_scored", graph_search)
+    results = await service._search_with_graph(
+        query="query",
+        query_embedding=[1.0, 0.0],
+        limit=2,
+        filters={},
+        project_id=None,
+        memory_type=None,
+        tags_all=None,
+        tags_any=None,
+        tags_none=None,
+        half_life=0.0,
+        effective_min_score=0.0,
+    )
+
+    by_id = {mem.id: mem for mem in results}
+    unembedded = by_id["unembedded"]
+    assert unembedded.raw_semantic_score is None
+    assert unembedded.ranking_mode == "graph_synthetic"
+    assert unembedded.similarity is not None
+    assert abs(unembedded.similarity - 0.72) < 1e-9
