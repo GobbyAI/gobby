@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.mcp_proxy.tools.tasks._expansion_runtime import ScheduledRun
 from gobby.storage.expansion_runs import ExpansionRun, LocalExpansionRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task
@@ -143,12 +144,14 @@ def test_start_expansion_replaces_stale_crashed_run(
         (utc_now() - timedelta(minutes=31), crashed.id),
     )
 
-    def finish_immediately(coro: Coroutine[Any, Any, Any], run_id: str) -> ExpansionRun | None:
+    def finish_immediately(
+        coro: Coroutine[Any, Any, Any], run_id: str, *, name: str | None = None
+    ) -> ScheduledRun:
         coro.close()
-        return run_manager.get_latest_for_task(task.id)
+        return ScheduledRun(scheduled=False, result=run_manager.get_latest_for_task(task.id))
 
     with patch(
-        "gobby.mcp_proxy.tools.tasks._expansion_runtime._start_expansion_coroutine",
+        "gobby.mcp_proxy.tools.tasks._expansion_runtime.schedule_expansion_run",
         side_effect=finish_immediately,
     ):
         result = start_expansion_run_impl(

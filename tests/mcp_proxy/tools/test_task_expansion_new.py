@@ -2,8 +2,10 @@
 
 import asyncio
 import textwrap
+import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -194,6 +196,38 @@ class TestExpansionRuns:
         assert result["semantic_lint"]["valid"] is False
 
     @pytest.mark.asyncio
+    async def test_an_expansion_tool_body_runs_off_the_event_loop_thread(
+        self,
+        expansion_registry: Any,
+        tmp_path: Path,
+    ) -> None:
+        """What the synchronous declaration buys these nine tools.
+
+        Every one of them reaches synchronous psycopg, and a tool declared
+        `async def` that never awaits runs its whole body on the loop thread
+        (#20855). Plan validation is the cheapest of the nine to drive end to
+        end, and the registry's dispatch is the same for all of them.
+        """
+        ran_on: list[int] = []
+
+        def record_thread(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            ran_on.append(threading.get_ident())
+            return {"valid": True, "errors": []}
+
+        loop_thread = threading.get_ident()
+        with patch(
+            "gobby.tasks.expansion_service.ExpansionService.validate_plan_file",
+            side_effect=record_thread,
+        ):
+            await expansion_registry.call(
+                "validate_plan_file",
+                {"plan_file": _write_plan_missing_target(tmp_path)},
+            )
+
+        assert len(ran_on) == 1
+        assert ran_on[0] != loop_thread, "an expansion tool body ran on the event loop thread"
+
+    @pytest.mark.asyncio
     async def test_start_expansion_run_creates_run(
         self,
         expansion_registry,
@@ -204,7 +238,7 @@ class TestExpansionRuns:
         run_manager = LocalExpansionRunManager(task_manager.db)
 
         with patch(
-            "gobby.mcp_proxy.tools.tasks._expansion._execute_run_background",
+            "gobby.mcp_proxy.tools.tasks._expansion_runtime._execute_run_impl",
             new=AsyncMock(return_value=None),
         ):
             with session_context_for_test(test_session):
@@ -234,7 +268,7 @@ class TestExpansionRuns:
         run_manager = LocalExpansionRunManager(task_manager.db)
 
         with patch(
-            "gobby.mcp_proxy.tools.tasks._expansion._execute_run_background",
+            "gobby.mcp_proxy.tools.tasks._expansion_runtime._execute_run_impl",
             new=AsyncMock(return_value=None),
         ):
             with session_context_for_test(test_session):
@@ -290,7 +324,7 @@ class TestExpansionRuns:
         run_manager = LocalExpansionRunManager(task_manager.db)
 
         with patch(
-            "gobby.mcp_proxy.tools.tasks._expansion._execute_run_background",
+            "gobby.mcp_proxy.tools.tasks._expansion_runtime._execute_run_impl",
             new=AsyncMock(return_value=None),
         ):
             with session_context_for_test(test_session):
@@ -355,7 +389,7 @@ class TestExpansionRuns:
         run_manager = LocalExpansionRunManager(task_manager.db)
 
         with patch(
-            "gobby.mcp_proxy.tools.tasks._expansion._execute_run_background",
+            "gobby.mcp_proxy.tools.tasks._expansion_runtime._execute_run_impl",
             new=AsyncMock(return_value=None),
         ):
             with session_context_for_test(test_session):
@@ -436,7 +470,7 @@ class TestExpansionRuns:
         )
 
         with patch(
-            "gobby.mcp_proxy.tools.tasks._expansion._execute_run_background",
+            "gobby.mcp_proxy.tools.tasks._expansion_runtime._execute_run_impl",
             new=AsyncMock(return_value=None),
         ):
             with session_context_for_test(test_session):
@@ -479,7 +513,7 @@ class TestExpansionRuns:
                 autospec=True,
             ) as reset,
             patch(
-                "gobby.mcp_proxy.tools.tasks._expansion._execute_run_background",
+                "gobby.mcp_proxy.tools.tasks._expansion_runtime._execute_run_impl",
                 new=AsyncMock(return_value=None),
             ),
         ):

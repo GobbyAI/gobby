@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from pathlib import Path
 from typing import Any
@@ -13,8 +12,8 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._expansion_runtime import (
     _background_run_tasks,
     _build_expansion_service,
-    _register_background_task,
     _summarize_run,
+    schedule_expansion_run,
     start_expansion_run_impl,
 )
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
@@ -221,7 +220,7 @@ def create_expansion_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
 
 def _register_start_tool(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
-    async def start_expansion_run(
+    def start_expansion_run(
         task_id: str,
         plan_file: str | None = None,
         auto_apply: bool = True,
@@ -337,7 +336,7 @@ def _register_start_tool(registry: InternalToolRegistry, ctx: RegistryContext) -
 
 
 def _register_reset_tool(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
-    async def reset_expansion_output(
+    def reset_expansion_output(
         task_id: str,
         run_id: str | None = None,
         project: str | None = None,
@@ -393,7 +392,7 @@ def _register_reset_tool(registry: InternalToolRegistry, ctx: RegistryContext) -
 
 
 def _register_read_tools(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
-    async def get_expansion_run(run_id: str) -> dict[str, Any]:
+    def get_expansion_run(run_id: str) -> dict[str, Any]:
         run_manager = LocalExpansionRunManager(ctx.task_manager.db)
         run = run_manager.get(run_id)
         if run is None:
@@ -413,7 +412,7 @@ def _register_read_tools(registry: InternalToolRegistry, ctx: RegistryContext) -
         func=get_expansion_run,
     )
 
-    async def get_latest_expansion_run(
+    def get_latest_expansion_run(
         task_id: str,
         project: str | None = None,
     ) -> dict[str, Any]:
@@ -453,7 +452,7 @@ def _register_read_tools(registry: InternalToolRegistry, ctx: RegistryContext) -
 
 
 def _register_lifecycle_tools(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
-    async def resume_expansion_run(run_id: str) -> dict[str, Any]:
+    def resume_expansion_run(run_id: str) -> dict[str, Any]:
         session_result = _resolve_current_session(ctx)
         if isinstance(session_result, dict):
             return session_result
@@ -485,17 +484,26 @@ def _register_lifecycle_tools(registry: InternalToolRegistry, ctx: RegistryConte
 
         _subscribe_completion(ctx, run_id, resolved_session_id)
         execute_run_background = _get_execute_run_background()
-        background_task = asyncio.create_task(
+        outcome = schedule_expansion_run(
             execute_run_background(
                 ctx,
                 run_id,
                 session_id=resolved_session_id,
                 auto_apply=auto_apply,
             ),
+            run_id,
             name=f"expansion-run-resume-{run_id}",
         )
-        _register_background_task(run_id, background_task)
-        return {"success": True, "run_id": run_id, "status": "running"}
+        if outcome.scheduled:
+            return {"success": True, "run_id": run_id, "status": "running"}
+        # Nothing to background onto, so the run already finished; report what
+        # it actually settled on rather than claiming it is still going.
+        finished = run_manager.get(run_id)
+        return {
+            "success": True,
+            "run_id": run_id,
+            "status": finished.status if finished is not None else "running",
+        }
 
     registry.register(
         name="resume_expansion_run",
@@ -549,7 +557,7 @@ def _register_lifecycle_tools(registry: InternalToolRegistry, ctx: RegistryConte
 
 
 def _register_validation_tools(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
-    async def validate_expansion_run(run_id: str) -> dict[str, Any]:
+    def validate_expansion_run(run_id: str) -> dict[str, Any]:
         service = _build_expansion_service(ctx)
         run_manager = LocalExpansionRunManager(ctx.task_manager.db)
         run = run_manager.get(run_id)
@@ -584,7 +592,7 @@ def _register_validation_tools(registry: InternalToolRegistry, ctx: RegistryCont
 
 
 def _register_qa_tools(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
-    async def save_expansion_qa_result(run_id: str, qa_result: dict[str, Any]) -> dict[str, Any]:
+    def save_expansion_qa_result(run_id: str, qa_result: dict[str, Any]) -> dict[str, Any]:
         run_manager = LocalExpansionRunManager(ctx.task_manager.db)
         run = run_manager.save_qa_result(run_id, qa_result)
         if run is None:
@@ -675,7 +683,7 @@ def _register_qa_tools(registry: InternalToolRegistry, ctx: RegistryContext) -> 
         func=run_expansion_qa_coverage,
     )
 
-    async def check_expansion_qa_result(run_id: str) -> dict[str, Any]:
+    def check_expansion_qa_result(run_id: str) -> dict[str, Any]:
         run_manager = LocalExpansionRunManager(ctx.task_manager.db)
         run = run_manager.get(run_id)
         if run is None:
@@ -709,7 +717,7 @@ def _register_qa_tools(registry: InternalToolRegistry, ctx: RegistryContext) -> 
 
 
 def _register_plan_validation_tool(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
-    async def validate_plan_file(plan_file: str) -> dict[str, Any]:
+    def validate_plan_file(plan_file: str) -> dict[str, Any]:
         service = _build_expansion_service(ctx)
         expected_project_id = ctx.get_current_project_id()
         project_context = get_project_context()

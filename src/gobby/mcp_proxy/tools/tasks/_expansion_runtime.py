@@ -20,11 +20,13 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "ExpansionRunResult",
+    "ScheduledRun",
     "_background_run_tasks",
     "_build_expansion_service",
     "_execute_run_background",
     "_register_background_task",
     "_summarize_run",
+    "schedule_expansion_run",
     "start_expansion_run_impl",
 ]
 
@@ -136,25 +138,35 @@ async def _notify_completion_registry(
         logger.debug("Failed to notify expansion completion for %s", run_id, exc_info=True)
 
 
-def _start_expansion_coroutine(coro: Any, run_id: str) -> Any:
+@dataclass(frozen=True)
+class ScheduledRun:
+    """Where a run's coroutine ended up, and what it produced if it finished."""
+
+    scheduled: bool
+    """True once the coroutine is on a loop, False when it had to run inline."""
+
+    result: Any = None
+    """The coroutine's return value, only meaningful for an inline run."""
+
+
+def schedule_expansion_run(coro: Any, run_id: str, *, name: str | None = None) -> ScheduledRun:
     """Background the run on whichever loop is reachable, else run it inline.
 
-    Returns the completed run when it had to run inline, and None once the run
-    is scheduled. An internal MCP tool that awaits nothing is registered sync so
-    the registry offloads it, which leaves no running loop here even though the
-    daemon has one; resolve_background_loop recovers it from the context the
-    registry set. Without that recovery this reported a finished run where the
-    caller expects a started one (#20845).
+    An internal MCP tool that awaits nothing is registered sync so the registry
+    offloads it, which leaves no running loop here even though the daemon has
+    one; resolve_background_loop recovers it from the context the registry set.
+    Without that recovery this reported a finished run where the caller expects
+    a started one (#20845). Nothing is reachable only outside the daemon -- a
+    CLI, a test -- and there the coroutine runs to completion inline.
     """
     loop = resolve_background_loop()
     if loop is None:
-        return asyncio.run(coro)
+        return ScheduledRun(scheduled=False, result=asyncio.run(coro))
+
+    task_name = name or f"expansion-run-{run_id}"
 
     def _schedule() -> None:
-        _register_background_task(
-            run_id,
-            loop.create_task(coro, name=f"expansion-run-{run_id}"),
-        )
+        _register_background_task(run_id, loop.create_task(coro, name=task_name))
 
     try:
         on_target_loop = asyncio.get_running_loop() is loop
@@ -164,7 +176,7 @@ def _start_expansion_coroutine(coro: Any, run_id: str) -> Any:
         _schedule()
     else:
         loop.call_soon_threadsafe(_schedule)
-    return None
+    return ScheduledRun(scheduled=True)
 
 
 async def _execute_run_impl(
@@ -347,8 +359,9 @@ def start_expansion_run_impl(
         auto_apply=auto_apply,
         stage_pipeline_mode=resolved_stage_pipeline_mode,
     )
-    completed_run = _start_expansion_coroutine(coro, run.id)
-    if completed_run is not None:
+    outcome = schedule_expansion_run(coro, run.id)
+    if not outcome.scheduled and outcome.result is not None:
+        completed_run = outcome.result
         return ExpansionRunResult(
             True,
             completed_run.id,

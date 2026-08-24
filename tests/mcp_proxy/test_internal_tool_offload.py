@@ -23,14 +23,6 @@ pytestmark = pytest.mark.unit
 
 _TOOLS_ROOT = Path(__file__).resolve().parents[2] / "src" / "gobby" / "mcp_proxy" / "tools"
 
-# Tools here coordinate a loop-scheduled background run rather than only doing
-# blocking work: the reuse path checks whether a run's asyncio.Task already
-# exists, and a tool offloaded to a worker thread can create that task only
-# through call_soon_threadsafe, so it is not there yet when the next call looks.
-# Moving them off the loop means reworking when a run becomes observable, which
-# is #20855's change, not this guard's.
-_LOOP_COORDINATING_MODULES = frozenset({Path("tasks/_expansion_registry.py")})
-
 
 def _awaits_something(node: ast.AsyncFunctionDef) -> bool:
     return any(
@@ -75,8 +67,6 @@ def _fake_async_tools() -> list[str]:
     """Registered tools declared `async def` whose body never awaits."""
     found: list[str] = []
     for path in sorted(_TOOLS_ROOT.rglob("*.py")):
-        if path.relative_to(_TOOLS_ROOT) in _LOOP_COORDINATING_MODULES:
-            continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
         registered = _registered_by_call(tree)
         for node in ast.walk(tree):
