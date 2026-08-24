@@ -104,7 +104,10 @@ def build_results(
             mem.ranking_mode = "graph_synthetic"
         elif rrf_applied:
             mem.ranking_mode = "rrf"
-        elif raw_semantic_score is not None:
+        elif memory_id in qdrant_set:
+            # Provenance, not the presence of a score: since #20858 a candidate
+            # another leg surfaced also carries a cosine, and calling that
+            # `semantic_only` would name the wrong leg as its finder.
             mem.ranking_mode = "semantic_only"
         else:
             mem.ranking_mode = "nonsemantic_fallback"

@@ -1180,3 +1180,40 @@ async def test_a_graph_hit_with_no_vector_stays_graph_synthetic(monkeypatch: Any
     assert unembedded.ranking_mode == "graph_synthetic"
     assert unembedded.similarity is not None
     assert abs(unembedded.similarity - 0.72) < 1e-9
+
+
+async def test_a_rescored_single_leg_hit_is_not_labelled_semantic_only(
+    monkeypatch: Any,
+) -> None:
+    """`semantic_only` names the leg that found the memory, not the score it has.
+
+    Rescoring merged candidates (#20858) broke the old shorthand where carrying a
+    cosine implied the semantic leg surfaced it, so the label reads `qdrant_set`.
+    """
+    store = _ScoringVectorStore(results=[], stored={"graph-found": 0.64})
+    service = _service(["graph-found"], vector_store=store, falkordb_graph_search=True)
+
+    async def graph_search(**_kwargs: Any) -> GraphScoredResult:
+        return GraphScoredResult(scored=[("graph-found", 0.70)])
+
+    monkeypatch.setattr(service, "_search_graph_scored", graph_search)
+    results = await service._search_with_graph(
+        query="query",
+        query_embedding=[1.0, 0.0],
+        limit=2,
+        filters={},
+        project_id=None,
+        memory_type=None,
+        tags_all=None,
+        tags_any=None,
+        tags_none=None,
+        half_life=0.0,
+        effective_min_score=0.0,
+    )
+
+    # Only the graph leg returned anything, so RRF never ran and the old branch
+    # would have called this hit `semantic_only` on the strength of its new cosine.
+    assert [mem.id for mem in results] == ["graph-found"]
+    assert results[0].raw_semantic_score == 0.64
+    assert results[0].search_via == "graph"
+    assert results[0].ranking_mode == "nonsemantic_fallback"
