@@ -404,3 +404,28 @@ async def test_a_stall_report_carries_the_hot_python_stack_when_sampling() -> No
         f"the report must name the frame the loop thread burned in; got {rendered!r}"
     )
     assert "hot loop-thread stacks" in rendered
+
+
+def test_a_report_discloses_how_little_of_the_stall_it_actually_sampled() -> None:
+    """A percentage over a handful of samples reads as authority it has not earned.
+
+    Real reports carried 5 to 14 samples for stalls of 1.7 to 4 seconds, against
+    a nominal 10ms interval that should have produced hundreds: the loop thread
+    holds the GIL through long C calls, so the sampler is starved during exactly
+    the events it exists to explain. Two chains that each held a large share of
+    such a report measured 14 and 6 microseconds per call when timed directly --
+    they were frequently executed, never expensive. The report has to show its
+    own coverage so a share is read as a hypothesis (#20845).
+    """
+    report = LoopLagReport(
+        lag_seconds=4.0,
+        threshold_seconds=1.0,
+        hot_stacks=[("a -> b", 9), ("c -> d", 5)],
+        sample_interval_seconds=0.01,
+    )
+
+    rendered = report.render()
+    assert "14 samples" in rendered
+    assert "400" in rendered, (
+        f"the report must say how many samples the interval should have produced; got {rendered}"
+    )

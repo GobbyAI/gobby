@@ -62,6 +62,7 @@ class LoopLagReport:
     ended: list[str] = field(default_factory=list)
     bystanders: list[str] = field(default_factory=list)
     hot_stacks: list[tuple[str, int]] = field(default_factory=list)
+    sample_interval_seconds: float = 0.0
 
     def render(self) -> str:
         head = (
@@ -72,7 +73,7 @@ class LoopLagReport:
         if self.hot_stacks:
             total = sum(count for _, count in self.hot_stacks)
             parts.append(
-                f"hot loop-thread stacks ({total} samples): "
+                f"hot loop-thread stacks ({total} samples{self._coverage()}): "
                 + "; ".join(
                     f"[{count} samples, {100 * count / total:.0f}%] {stack}"
                     for stack, count in self.hot_stacks[:MAX_REPORTED_STACKS]
@@ -92,6 +93,22 @@ class LoopLagReport:
         if self.bystanders:
             parts.append(f"{len(self.bystanders)} other tasks suspended, unchanged")
         return head + " | " + " | ".join(parts)
+
+    def _coverage(self) -> str:
+        """Say how much of the stall the samples actually cover.
+
+        The loop thread holds the GIL through long C calls, so the sampler is
+        starved during exactly the stalls it exists to explain -- real reports
+        carried 5 to 14 samples where the interval predicted hundreds. Without
+        the expected count, a "62% of samples" share reads as a diagnosis; two
+        chains that each held a large share of such a report measured 14 and 6
+        microseconds per call when timed directly. A share is a hypothesis to
+        time, not a defect (#20845).
+        """
+        if self.sample_interval_seconds <= 0:
+            return ""
+        expected = int(self.lag_seconds / self.sample_interval_seconds)
+        return f" of ~{expected} expected"
 
 
 def _render_positions(entries: list[tuple[str, str]]) -> str:
@@ -285,6 +302,9 @@ async def loop_lag_watchdog(
                 ended=moved.ended[:MAX_REPORTED_TASKS],
                 bystanders=moved.bystanders,
                 hot_stacks=hot_stacks,
+                sample_interval_seconds=(
+                    stack_sampler.interval_seconds if stack_sampler is not None else 0.0
+                ),
             )
             if on_lag is not None:
                 on_lag(report)

@@ -97,6 +97,11 @@ class LoopStackSampler:
         thread = self._thread
         return thread is not None and thread.is_alive()
 
+    @property
+    def interval_seconds(self) -> float:
+        """The nominal sampling period, so a report can state its own coverage."""
+        return self._interval_seconds
+
     def drain(self) -> list[tuple[str, int]]:
         """Return the stacks collected since the last drain, hottest first."""
         with self._lock:
