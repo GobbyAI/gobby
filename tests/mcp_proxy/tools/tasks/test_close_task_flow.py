@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -1058,3 +1059,74 @@ def test_closed_task_cleanup_removes_only_its_edit_entry() -> None:
     updates = session_var_manager.merge_variables.call_args.args[1]
     assert updates["task_edited_files"] == {"task-2": ["src/remaining.py"]}
     session_manager.clear_had_edits.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_close_resolves_commits_and_validates_them_off_the_event_loop() -> None:
+    """Both helpers shell out to git, so neither may run on the loop.
+
+    resolve_close_commit_shas and validate_commit_requirements both reach
+    normalize_commit_sha -> run_git_command -> subprocess.run, which forks git
+    and then blocks waiting for it, up to a 5s timeout. The loop-lag watchdog
+    caught all three entry points doing it on the loop thread (#20861).
+    """
+    task = _task()
+    ctx = _ctx(task, validator=object())
+    # Both helpers run before the scope gate, so a scope mismatch stops the
+    # evaluation right after them and keeps this test off the later gates.
+    scope = TaskScopeEvaluation(
+        declared_paths=("tests/",),
+        actual_paths=("src/gobby/service.py",),
+        out_of_scope_paths=("src/gobby/service.py",),
+        justification_error="A scope_justification is required for out-of-scope paths.",
+    )
+    resolved_on: list[int] = []
+    validated_on: list[int] = []
+
+    def record_resolve(*_args: object, **_kwargs: object) -> tuple[list[str], None]:
+        resolved_on.append(threading.get_ident())
+        return (["abc123"], None)
+
+    def record_validate(*_args: object, **_kwargs: object) -> ValidationResult:
+        validated_on.append(threading.get_ident())
+        return ValidationResult(can_close=True)
+
+    with (
+        patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
+        patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
+        patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
+        patch.object(
+            close_finalization,
+            "_committable_task_paths",
+            return_value={"src/gobby/service.py"},
+        ),
+        patch.object(lifecycle, "resolve_close_commit_shas", record_resolve),
+        patch.object(lifecycle, "validate_commit_requirements", record_validate),
+        patch.object(lifecycle, "evaluate_task_scope", return_value=scope),
+        patch.object(lifecycle, "_derive_close_transcript_evidence", AsyncMock()),
+        patch.object(lifecycle, "evaluate_criteria_review", AsyncMock()),
+        patch(
+            "gobby.workflows.task_claim_state.target_task_has_edits",
+            return_value=True,
+        ),
+        patch(
+            "gobby.workflows.task_claim_state.task_edited_file_set",
+            return_value={"src/gobby/service.py"},
+        ),
+    ):
+        evaluation = await _evaluate_close(
+            ctx,
+            task_id=task.id,
+            reason="completed",
+            changes_summary="Implemented and tested.",
+            commit_sha="abc123",
+            project_path=None,
+            response_detail="diagnostic",
+        )
+
+    assert evaluation.error == "task_scope_mismatch"
+    loop_thread = threading.get_ident()
+    assert resolved_on, "resolve_close_commit_shas must run"
+    assert validated_on, "validate_commit_requirements must run"
+    assert loop_thread not in resolved_on
+    assert loop_thread not in validated_on

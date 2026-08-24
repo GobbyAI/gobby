@@ -158,7 +158,10 @@ async def commit_close(
         return stale_close_response(
             evaluation, "Task gate inputs changed after evaluation; retry close_task."
         )
-    commit_shas, error = resolve_close_commit_shas(
+    # Off the loop: the re-resolve forks git per sha, same as the evaluation's
+    # own call did before #20861.
+    commit_shas, error = await asyncio.to_thread(
+        resolve_close_commit_shas,
         ctx.task_manager,
         task=fresh,
         task_id=task.id,

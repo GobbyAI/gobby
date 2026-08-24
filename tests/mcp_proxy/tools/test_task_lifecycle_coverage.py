@@ -1859,10 +1859,28 @@ def _call_line_numbers(function: ast.AST) -> dict[str, int]:
     for node in ast.walk(function):
         if not isinstance(node, ast.Call):
             continue
-        call_name = _call_name(node)
-        if call_name and call_name not in lines:
-            lines[call_name] = node.lineno
+        for call_name in _called_names(node):
+            if call_name not in lines:
+                lines[call_name] = node.lineno
     return lines
+
+
+def _called_names(call: ast.Call) -> list[str]:
+    """Names this call invokes, counting one handed to asyncio.to_thread.
+
+    A helper moved off the event loop is passed to to_thread rather than called,
+    so reading only call.func would stop seeing it and quietly drop whatever
+    ordering contract was asserted about it (#20861).
+    """
+    name = _call_name(call)
+    names = [name] if name else []
+    if name in {"asyncio.to_thread", "to_thread"} and call.args:
+        target = call.args[0]
+        if isinstance(target, ast.Name):
+            names.append(target.id)
+        elif isinstance(target, ast.Attribute):
+            names.append(target.attr)
+    return names
 
 
 def _call_name(call: ast.Call) -> str | None:

@@ -189,7 +189,10 @@ async def _evaluate_close(
             children_state=children_state,
             attribution=None,
         )
-        evaluation.commit_shas, _commit_error = resolve_close_commit_shas(
+        # Off the loop: this reaches normalize_commit_sha -> run_git_command ->
+        # subprocess.run, which forks git and then blocks waiting for it (#20861).
+        evaluation.commit_shas, _commit_error = await asyncio.to_thread(
+            resolve_close_commit_shas,
             ctx.task_manager,
             task=task,
             task_id=resolved_id,
@@ -274,7 +277,10 @@ async def _evaluate_close(
         children_state=children_state,
         attribution=attribution,
     )
-    commit_shas, commit_error = resolve_close_commit_shas(
+    # Off the loop, for the same reason as the skip_leaf_checks branch above: a
+    # close resolves several shas and each one forks git and waits for it (#20861).
+    commit_shas, commit_error = await asyncio.to_thread(
+        resolve_close_commit_shas,
         ctx.task_manager,
         task=task,
         task_id=resolved_id,
@@ -293,7 +299,10 @@ async def _evaluate_close(
         )
     evaluation_task = replace(task, commits=commit_shas or None)
     if evaluation.had_attributed_edits:
-        commit_result = validate_commit_requirements(evaluation_task, reason, repo_path)
+        # Off the loop: normalize_commit_sha again, once per already-linked commit.
+        commit_result = await asyncio.to_thread(
+            validate_commit_requirements, evaluation_task, reason, repo_path
+        )
         if not commit_result.can_close:
             commit_extra = dict(commit_result.extra)
             if evaluation.response_detail == "diagnostic":
