@@ -1,5 +1,6 @@
 """Tests for hook session lookup metadata preservation."""
 
+import logging
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, cast
@@ -8,12 +9,20 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.session_coordinator import SessionCoordinator
 from gobby.hooks.session_lookup import SessionLookupService
+from gobby.hooks.session_types import HookSessionManager
 from gobby.sessions.compact_identity import CompactIdentityResolution
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_activity import SessionActivityResolution
 from gobby.storage.session_models import Session
+from gobby.storage.session_tasks import SessionTaskManager
+from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
+
+_REAL_MACHINE_ID = "21000000-0000-4000-8000-000000000009"
 
 
 def _event(metadata: dict[str, Any] | None = None) -> HookEvent:
@@ -429,3 +438,67 @@ def test_same_source_recovery_of_a_live_row_does_not_claim_a_mismatch() -> None:
     assert len(infos) == 1
     template, _ = infos[0]
     assert "source mismatch" not in template
+
+
+def test_expired_session_recovery_reports_status_through_the_real_path(
+    temp_db: HubDatabase,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """End to end: a real expired row, the real service, the emitted record.
+
+    The mocked tests above show what gets reported once the fallback is taken.
+    This one proves what takes it, through real storage: the exact lookup skips
+    the retired row, recovery returns it with the source matching exactly, and
+    the service reports status at INFO instead of inventing a source mismatch.
+    """
+    with patch("gobby.utils.machine_id._cached_machine_id", _REAL_MACHINE_ID):
+        project_id = (
+            LocalProjectManager(temp_db)
+            .create(
+                name="lookup-project",
+                repo_path="/tmp/lookup-project",
+            )
+            .id
+        )
+        storage_sessions = SessionManager(temp_db)
+        # hook_manager.py casts at this same boundary: SessionManager serves the
+        # HookSessionManager protocol at runtime without nominally declaring it.
+        session_manager = cast(HookSessionManager, storage_sessions)
+        terminal_context = {"tmux_pane": "%11", "tmux_socket_path": "/tmp/tmux-501/gobby"}
+        registered = storage_sessions.register(
+            external_id="retired-claude-session",
+            machine_id=_REAL_MACHINE_ID,
+            source="claude",
+            project_id=project_id,
+            terminal_context=terminal_context,
+        )
+        assert storage_sessions.mark_session_expired(registered.id)
+
+        logger = logging.getLogger("tests.session_lookup.integration")
+        service = SessionLookupService(
+            session_manager=session_manager,
+            session_coordinator=SessionCoordinator(session_storage=session_manager),
+            session_task_manager=SessionTaskManager(temp_db),
+            get_machine_id=lambda: _REAL_MACHINE_ID,
+            resolve_project_id=lambda *_: project_id,
+            logger=logger,
+        )
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id="retired-claude-session",
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"terminal_context": dict(terminal_context)},
+            metadata={},
+        )
+
+        with caplog.at_level(logging.INFO, logger=logger.name):
+            resolved = service.resolve(event)
+
+    assert resolved == registered.id
+    recovery_records = [record for record in caplog.records if "ecovered" in record.getMessage()]
+    assert len(recovery_records) == 1
+    record = recovery_records[0]
+    assert record.levelno == logging.INFO
+    assert "source mismatch" not in record.getMessage()
+    assert "expired" in record.getMessage()
