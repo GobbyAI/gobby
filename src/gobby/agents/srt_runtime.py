@@ -501,7 +501,13 @@ async def prepare_sandbox_launch(
     settings = render_srt_settings(paths)
     policy_bytes = json.dumps(settings, sort_keys=True, separators=(",", ":")).encode()
     policy_hash = hashlib.sha256(policy_bytes).hexdigest()
-    installation = verify_srt_installation(
+    # Off the loop: verification rehashes the whole managed tree -- rglob over
+    # node_modules, SHA-256 of every file, then a stat of each one again, 826 files
+    # and 44ms here warm and at rest -- and takes a blocking file lock first. Inline
+    # it made every spawn a multi-hundred-millisecond stall, which is what the
+    # loop-lag watchdog caught as _verify_srt_content -> Path.stat (#20841).
+    installation = await asyncio.to_thread(
+        verify_srt_installation,
         run_id=run_id,
         provider=provider,
         policy_hash=policy_hash,

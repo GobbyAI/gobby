@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import shutil
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -714,3 +715,76 @@ def test_verify_srt_installation_rejects_corruption(
 
     with pytest.raises(SrtRuntimeError, match=expected_error):
         verify_srt_installation()
+
+
+@pytest.mark.asyncio
+async def test_srt_verification_does_not_run_on_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verifying the pinned install rehashes node_modules; that cannot hold the loop.
+
+    build_srt_content_manifest walks the whole managed tree, SHA-256s every file
+    and then stats each one again -- 826 files and 44ms on this machine, warm, at
+    rest. Running it inline made every spawn a multi-hundred-millisecond stall
+    under load, which is what the loop-lag watchdog caught as
+    _verify_srt_content -> Path.stat on the loop thread (#20841).
+    """
+    gobby_home = tmp_path / "gobby-home"
+    workspace = tmp_path / "workspace"
+    runtime = tmp_path / "runtime"
+    workspace.mkdir()
+    runtime.mkdir()
+    node = runtime / "node"
+    runner = runtime / "runner.mjs"
+    package_json = runtime / "package.json"
+    for path in (node, runner, package_json):
+        path.write_text("test", encoding="utf-8")
+    provider_target = tmp_path / "claude-bin" / "claude"
+    provider_target.parent.mkdir(parents=True)
+    provider_target.write_text("#!/bin/sh\n", encoding="utf-8")
+    provider_target.chmod(0o755)
+    shim_dir = tmp_path / "bin"
+    shim_dir.mkdir()
+    (shim_dir / "claude").symlink_to(provider_target)
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+
+    verified_on: list[int] = []
+
+    def verified_installation(**_context: str | None) -> SrtInstallation:
+        verified_on.append(threading.get_ident())
+        return SrtInstallation(runtime, node, runner, package_json)
+
+    async def fake_preflight(launch: SandboxLaunch, cwd: str, env: dict[str, str]) -> None:
+        return None
+
+    monkeypatch.setattr(srt_runtime, "verify_srt_installation", verified_installation)
+    monkeypatch.setattr(srt_runtime, "_preflight_srt", fake_preflight)
+    original_which = shutil.which
+
+    def fake_which(
+        command: str,
+        mode: int = os.F_OK | os.X_OK,
+        path: str | None = None,
+    ) -> str | None:
+        if command == "claude":
+            return str(shim_dir / "claude")
+        result = original_which(command, mode=mode, path=path)
+        return None if result is None else str(result)
+
+    monkeypatch.setattr(shutil, "which", fake_which)
+
+    await prepare_sandbox_launch(
+        config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+        provider="claude",
+        workspace_path=str(workspace),
+        run_id="offloop",
+        resolver=None,
+        daemon_port=60887,
+        websocket_port=60888,
+        api_base=None,
+        env={"PATH": str(shim_dir)},
+    )
+
+    assert len(verified_on) == 1
+    assert verified_on[0] != threading.get_ident()
