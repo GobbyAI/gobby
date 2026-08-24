@@ -33,6 +33,9 @@ from gobby.storage.tasks._creation import (
     create_task as _create_task,
 )
 from gobby.storage.tasks._decomposition import TaskDecompositionMixin
+from gobby.storage.tasks._guard_scope import (
+    list_epic_guard_scope as _list_epic_guard_scope,
+)
 from gobby.storage.tasks._id import generate_task_id, resolve_task_reference
 from gobby.storage.tasks._lifecycle import (
     add_label as _add_label,
@@ -565,6 +568,15 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
             sort_by=sort_by,
             sort_order=sort_order,
         )
+
+    def list_epic_guard_scope(self, task_id: str) -> list[Task]:
+        """Return the task's ancestors plus its nearest epic ancestor's subtree.
+
+        Cumulative epic guards read only this scope. Serving them from
+        `list_tasks` meant paging the whole project and hydrating stage and
+        blocking state for every row of it (#20847).
+        """
+        return _list_epic_guard_scope(self.db, task_id)
 
     def list_ready_tasks(
         self,

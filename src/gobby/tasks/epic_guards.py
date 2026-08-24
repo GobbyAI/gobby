@@ -169,7 +169,9 @@ def collect_epic_guard_paths(
     repo_path: str,
 ) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     """Collect test refs and added test-convention files from prior closed leaves."""
-    tasks = _all_project_tasks(task_manager, task.project_id)
+    # The task's ancestors and its nearest epic's subtree, nothing else. Paging
+    # the whole project here cost ~105s per close_task preview (#20847).
+    tasks = task_manager.list_epic_guard_scope(task.id)
     by_id = {item.id: item for item in tasks}
     epic = _nearest_epic(task, by_id)
     if epic is None:
@@ -221,17 +223,6 @@ def collect_epic_guard_paths(
         if contributed:
             source_ids.append(leaf.id)
     return tuple(sorted(paths)), tuple(source_ids), tuple(errors)
-
-
-def _all_project_tasks(task_manager: LocalTaskManager, project_id: str) -> list[Task]:
-    tasks: list[Task] = []
-    offset = 0
-    while True:
-        page = task_manager.list_tasks(project_id=project_id, limit=500, offset=offset)
-        tasks.extend(page)
-        if len(page) < 500:
-            return tasks
-        offset += len(page)
 
 
 def _nearest_epic(task: Task, by_id: dict[str, Task]) -> Task | None:

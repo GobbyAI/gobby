@@ -19,6 +19,16 @@ class _TaskManager:
     def __init__(self, tasks: list[Task]) -> None:
         self.tasks = tasks
 
+    def list_epic_guard_scope(self, task_id: str) -> list[Task]:
+        """Stand in for the scoped query by handing back the whole fixture.
+
+        The real query narrows to the task's ancestors plus its nearest epic
+        ancestor's subtree. A superset is a valid answer for these fixtures --
+        they hold nothing outside that scope -- and keeps the nearest-epic,
+        descendant and leaf logic under test rather than reimplemented here.
+        """
+        return list(self.tasks)
+
     def list_tasks(self, **kwargs: object) -> list[Task]:
         raw_offset = kwargs.get("offset", 0)
         raw_limit = kwargs.get("limit", 500)
@@ -189,6 +199,38 @@ def test_guard_collection_includes_test_convention_files_added_by_commit(
     assert errors == ()
 
 
+def test_guard_collection_never_lists_the_whole_project(tmp_path: Path) -> None:
+    """Guard collection must ask for its epic's scope, not for every task.
+
+    It used to page `list_tasks` 500 at a time until the entire project was in
+    memory -- 14,878 rows on this one, each with stage and blocking state
+    hydrated -- and then keep only the nearest epic's subtree. That walk was
+    the hottest stack in a 66-second event-loop stall, and still cost ~105
+    seconds per close_task preview after #20841 moved it to a worker thread.
+    Nothing it computes needs a row from outside the epic (#20847).
+    """
+    epic, prior, current = _task_tree(criteria="test: tests/test_guard.py::test_guard")
+
+    class _ScopeOnlyTaskManager(_TaskManager):
+        def list_tasks(self, **kwargs: object) -> list[Task]:
+            raise AssertionError("guard collection listed the project instead of the epic scope")
+
+    Path(tmp_path, "tests").mkdir()
+    Path(tmp_path, "tests", "test_guard.py").write_text(
+        "def test_guard(): pass\n", encoding="utf-8"
+    )
+
+    paths, sources, errors = collect_epic_guard_paths(
+        task_manager=cast(LocalTaskManager, _ScopeOnlyTaskManager([epic, prior, current])),
+        task=current,
+        repo_path=str(tmp_path),
+    )
+
+    assert paths == ("tests/test_guard.py",)
+    assert sources == (prior.id,)
+    assert errors == ()
+
+
 def _task_tree(*, criteria: str) -> tuple[Task, Task, Task]:
     now = datetime(2026, 8, 21, tzinfo=UTC)
     epic = _task("epic", task_type="epic", parent=None, now=now)
@@ -245,11 +287,12 @@ def _git(repo: Path, *args: str) -> str:
 async def test_guard_collection_runs_off_the_event_loop(tmp_path: Path) -> None:
     """Collecting guard paths must not run its database work on the loop.
 
-    Collection walks every task in the project through synchronous psycopg. On
-    a project with ~15k tasks an in-process sampler caught that chain holding
-    the daemon's event loop for 66 seconds -- close_task -> evaluate_epic_guards
-    -> collect_epic_guard_paths -> list_tasks -> _normalize_row -- while every
-    route, liveness included, stopped answering (#20841).
+    Collection walks its epic scope through synchronous psycopg. On
+    a project with ~15k tasks it walked the whole project, and an in-process
+    sampler caught that chain holding the loop for 66 seconds -- close_task ->
+    evaluate_epic_guards -> collect_epic_guard_paths -> list_tasks ->
+    _normalize_row -- while every route, liveness included, stopped answering
+    (#20841). The scope is bounded now (#20847); the offload still matters.
     """
     test_path = "tests/test_guard.py"
     Path(tmp_path, test_path).parent.mkdir(parents=True, exist_ok=True)
@@ -260,9 +303,9 @@ async def test_guard_collection_runs_off_the_event_loop(tmp_path: Path) -> None:
     listing_threads: list[int] = []
 
     class _ThreadRecordingTaskManager(_TaskManager):
-        def list_tasks(self, **kwargs: object) -> list[Task]:
+        def list_epic_guard_scope(self, task_id: str) -> list[Task]:
             listing_threads.append(threading.get_ident())
-            return super().list_tasks(**kwargs)
+            return super().list_epic_guard_scope(task_id)
 
     loop_thread = threading.get_ident()
     result = await evaluate_epic_guards(
