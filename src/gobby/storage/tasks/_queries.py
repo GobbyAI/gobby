@@ -13,7 +13,11 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import json_array_contains_condition
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._models import Task, task_type_filter_values
-from gobby.storage.tasks._ordering import order_tasks_hierarchically
+from gobby.storage.tasks._ordering import (
+    TaskOrderKey,
+    order_task_keys,
+    order_tasks_hierarchically,
+)
 from gobby.storage.tasks._read import _escape_like_pattern
 from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
 
@@ -162,58 +166,63 @@ def list_tasks(
             sorts by task priority (lower value = higher priority).
         sort_order: "asc" or "desc" for non-hierarchical sorts.
 
-    Results are ordered hierarchically: parents appear before their children,
-    with siblings sorted by priority ASC, then created_at ASC.
+    Results are ordered hierarchically: parents appear before their children;
+    roots and siblings are ordered by priority ASC then created_at ASC; and
+    siblings that block one another are ordered topologically first, so a
+    blocker precedes what it blocks even when its own key sorts it later. That
+    contract is unchanged -- #20840 made the ordering read a four-column
+    projection instead of whole task rows, which is why a page no longer costs
+    the whole project.
     """
-    query = "SELECT * FROM tasks WHERE 1=1"
+    where = "1=1"
     params: list[Any] = []
 
     if project_id:
-        query += " AND project_id = %s"
+        where += " AND project_id = %s"
         params.append(project_id)
     if current_stage_state:
         clause, clause_params = _current_stage_state_filter_sql(current_stage_state)
         if clause:
-            query += f" AND {clause}"
+            where += f" AND {clause}"
             params.extend(clause_params)
             if closed is None:
-                query += " AND closed_at IS NULL"
+                where += " AND closed_at IS NULL"
     if priority is not None:
-        query += " AND priority = %s"
+        where += " AND priority = %s"
         params.append(priority)
     if claimed_by_session_id:
-        query += " AND claimed_by_session_id = %s"
+        where += " AND claimed_by_session_id = %s"
         params.append(claimed_by_session_id)
     if claimed is True:
-        query += " AND claimed_by_session_id IS NOT NULL"
+        where += " AND claimed_by_session_id IS NOT NULL"
     elif claimed is False:
-        query += " AND claimed_by_session_id IS NULL"
+        where += " AND claimed_by_session_id IS NULL"
     if closed is True:
-        query += " AND closed_at IS NOT NULL"
+        where += " AND closed_at IS NOT NULL"
     elif closed is False:
-        query += " AND closed_at IS NULL"
+        where += " AND closed_at IS NULL"
     if escalated is True:
-        query += " AND COALESCE(is_escalated, FALSE) IS TRUE"
+        where += " AND COALESCE(is_escalated, FALSE) IS TRUE"
     elif escalated is False:
-        query += " AND COALESCE(is_escalated, FALSE) IS FALSE"
+        where += " AND COALESCE(is_escalated, FALSE) IS FALSE"
     if task_type:
         task_type_values = task_type_filter_values(task_type)
         placeholders = ", ".join("%s" for _ in task_type_values)
-        query += f" AND task_type IN ({placeholders})"
+        where += f" AND task_type IN ({placeholders})"
         params.extend(task_type_values)
     if label:
         label_clause, label_params = json_array_contains_condition(db, "tasks.labels", label)
-        query += f" AND {label_clause}"
+        where += f" AND {label_clause}"
         params.extend(label_params)
     if parent_task_id:
-        query += " AND parent_task_id = %s"
+        where += " AND parent_task_id = %s"
         params.append(parent_task_id)
     if title_like:
-        query += " AND title LIKE %s ESCAPE '\\'"
+        where += " AND title LIKE %s ESCAPE '\\'"
         params.append(f"%{_escape_like_pattern(title_like)}%")
     if stages:
         placeholders = ", ".join("%s" for _ in stages)
-        query += f"""
+        where += f"""
         AND EXISTS (
             SELECT 1
               FROM task_stage_states stage_filter
@@ -222,35 +231,97 @@ def list_tasks(
         """
         params.extend(stages)
         if stage_state is not None:
-            query += " AND stage_filter.state = %s"
+            where += " AND stage_filter.state = %s"
             params.append(stage_state)
-        query += ")"
+        where += ")"
+
+    if sort_by == "hierarchy":
+        return _hierarchy_page(db, where, params, limit=limit, offset=offset)
 
     valid_sorts = {
-        "hierarchy": "priority ASC, created_at ASC, id ASC",
         "updated_at": "updated_at",
         "created_at": "created_at",
         "priority": "priority",
     }
-    order_clause = valid_sorts.get(sort_by, valid_sorts["hierarchy"])
+    order_clause = valid_sorts[sort_by]
     direction = "DESC" if sort_order.lower() == "desc" else "ASC"
-    if sort_by == "hierarchy":
-        query += f" ORDER BY {order_clause}"
-    else:
-        query += (
-            f" ORDER BY {order_clause} {direction}, priority ASC, created_at DESC, id ASC "
-            "LIMIT %s OFFSET %s"
-        )
-        params.extend([limit, offset])
+    query = (
+        f"SELECT * FROM tasks WHERE {where}"
+        f" ORDER BY {order_clause} {direction}, priority ASC, created_at DESC, id ASC "
+        "LIMIT %s OFFSET %s"
+    )
+    params.extend([limit, offset])
 
     rows = db.fetchall(query, tuple(params))
     tasks = [Task.from_row(row) for row in rows]
     hydrate_task_stage_state(db, tasks)
     hydrate_task_blocking_state(db, tasks)
+    return tasks
 
-    if sort_by == "hierarchy":
-        ordered = order_tasks_hierarchically(tasks)
-        return ordered[offset : offset + limit] if limit else ordered[offset:]
+
+def _hierarchy_page(
+    db: HubDatabase,
+    where: str,
+    params: list[Any],
+    *,
+    limit: int,
+    offset: int,
+) -> list[Task]:
+    """Order the whole filtered set, then hydrate only the requested page.
+
+    Hierarchy order is global: which tasks land on a page of 20 cannot be known
+    without ordering everything the filter matches, so there is no SQL LIMIT to
+    push down. What can be avoided is paying for the rows the page discards.
+    Ordering reads four columns and the local blocking edges; fetching whole
+    task rows, converting them, and hydrating their stage and blocking state
+    for a project-sized set is work thrown away for all but ``limit`` of them.
+
+    Measured on a 14,904-task project: SELECT * of every row cost 331.8 ms plus
+    89.5 ms of Task.from_row and 145.1 ms of hydration, against 48.9 ms for the
+    projection and 15.3 ms for the edges. The per-row Python is what mattered
+    most -- under four concurrent listings the loop thread spent 95.5% of its
+    samples in take_gil, because that conversion runs on the shared db executor
+    (#20840, #20846).
+    """
+    key_rows = db.fetchall(
+        f"SELECT id, parent_task_id, priority, created_at FROM tasks WHERE {where}",
+        tuple(params),
+    )
+    if not key_rows:
+        return []
+
+    # Only edges whose blocked end is in the filtered set can reorder it, and
+    # order_task_keys ignores blockers outside a task's own sibling group.
+    edge_rows = db.fetchall(
+        "SELECT task_id, depends_on FROM task_dependencies"
+        f" WHERE dep_type = 'blocks' AND task_id IN (SELECT id FROM tasks WHERE {where})",
+        tuple(params),
+    )
+    blockers: dict[str, list[str]] = {}
+    for edge in edge_rows:
+        blockers.setdefault(str(edge["task_id"]), []).append(str(edge["depends_on"]))
+
+    keys = [
+        TaskOrderKey(
+            id=str(row["id"]),
+            parent_task_id=str(row["parent_task_id"]) if row["parent_task_id"] else None,
+            priority=row["priority"],
+            created_at=row["created_at"],
+            blocked_by=tuple(blockers.get(str(row["id"]), ())),
+        )
+        for row in key_rows
+    ]
+    ordered_ids = order_task_keys(keys)
+    page_ids = ordered_ids[offset : offset + limit] if limit else ordered_ids[offset:]
+    if not page_ids:
+        return []
+
+    rows = db.fetchall("SELECT * FROM tasks WHERE id = ANY(%s)", (page_ids,))
+    by_id = {str(row["id"]): Task.from_row(row) for row in rows}
+    # ANY() does not preserve argument order, so re-impose the page's own.
+    tasks = [by_id[task_id] for task_id in page_ids if task_id in by_id]
+    hydrate_task_stage_state(db, tasks)
+    hydrate_task_blocking_state(db, tasks)
     return tasks
 
 
