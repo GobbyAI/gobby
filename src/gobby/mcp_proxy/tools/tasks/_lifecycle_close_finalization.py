@@ -122,12 +122,16 @@ async def commit_close(
     task = evaluation.task
     if task is None or evaluation.task_id is None:
         return evaluation.response(preview=False)
-    fresh = ctx.task_manager.get_task(task.id)
+    # Off the loop, here and at every storage call below: each one reaches
+    # psycopg synchronously, and leaving them inline made whether commit_close
+    # blocks the loop depend on which of its calls you looked at (#20864).
+    fresh = await asyncio.to_thread(ctx.task_manager.get_task, task.id)
     if fresh is None:
         return stale_close_response(
             evaluation, "Task state changed after evaluation; retry close_task."
         )
-    fresh_children, fresh_children_state = children_state(ctx, task.id)
+    # Paginated: this walks every child, so its cost grows with the sibling set.
+    fresh_children, fresh_children_state = await asyncio.to_thread(children_state, ctx, task.id)
     fresh_skip_leaf_checks = bool(fresh_children) or fresh.task_type == "epic"
     fresh_attribution: CloseAttributionSnapshot | None = None
     if not fresh_skip_leaf_checks:
@@ -269,14 +273,17 @@ async def commit_close(
     except TaskStaleStateError as exc:
         return stale_close_response(evaluation, str(exc))
 
-    ancestor_summaries = _record_closed_ancestors(ctx, closed_ancestors)
+    # A get_task and a notify per ancestor the transition closed, so this one
+    # scales with how far up the tree the close reached.
+    ancestor_summaries = await asyncio.to_thread(_record_closed_ancestors, ctx, closed_ancestors)
     if ancestor_summaries:
         evaluation.extra["closed_ancestors"] = ancestor_summaries
 
     if evaluation.is_epic and reason.casefold() in {"completed", "obsolete"}:
         from gobby.hooks.event_handlers._plan import on_epic_terminal
 
-        on_epic_terminal(
+        await asyncio.to_thread(
+            on_epic_terminal,
             {
                 "task_ref": f"#{task.seq_num}" if task.seq_num else task.id,
                 "project_id": task.project_id,
@@ -285,13 +292,14 @@ async def commit_close(
             },
             db=ctx.task_manager.db,
         )
-    notify_parent_on_task_state_change(
+    await asyncio.to_thread(
+        notify_parent_on_task_state_change,
         ctx.task_manager.db,
         task.id,
         "closed",
         task_ref=f"#{task.seq_num}" if task.seq_num else None,
     )
-    _cleanup_closed_claim(ctx, evaluation, commit_shas)
+    await asyncio.to_thread(_cleanup_closed_claim, ctx, evaluation, commit_shas)
     return evaluation.response(preview=False, closed=True)
 
 

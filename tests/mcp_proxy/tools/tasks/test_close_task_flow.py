@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -1179,3 +1180,114 @@ async def test_commit_close_links_and_closes_off_the_event_loop() -> None:
     assert closed_on, "the storage close_task transition must run"
     assert loop_thread not in linked_on
     assert loop_thread not in closed_on
+
+
+@pytest.mark.asyncio
+async def test_commit_close_runs_every_storage_call_off_the_event_loop() -> None:
+    """No synchronous storage call in commit_close may sit on the loop thread.
+
+    #20861 and #20862 offloaded the pieces the 0.2s loop-lag watchdog named --
+    the ones that fork git or hold a transaction open while walking ancestors.
+    The rest of commit_close still reached psycopg synchronously, which left
+    whether the function blocks the loop depending on which of its calls you
+    looked at. Each of these is reached from an async function and awaited to
+    completion exactly where it ran before (#20864).
+    """
+    task = replace(_task(), task_type="epic", seq_num=4242)
+    ancestor = replace(
+        _task(),
+        id="00000000-0000-4000-8000-000000000103",
+        title="Ancestor epic",
+        task_type="epic",
+        seq_num=4241,
+    )
+    ctx = _ctx(task)
+    threads: dict[str, list[int]] = {
+        name: []
+        for name in (
+            "get_task",
+            "list_tasks",
+            "close_task",
+            "on_epic_terminal",
+            "notify_parent",
+            "cleanup_claim",
+        )
+    }
+
+    def record_get_task(task_id: str, *_args: object, **_kwargs: object) -> Task:
+        threads["get_task"].append(threading.get_ident())
+        return ancestor if task_id == ancestor.id else task
+
+    def record_list_tasks(*_args: object, **_kwargs: object) -> list[Task]:
+        threads["list_tasks"].append(threading.get_ident())
+        return []
+
+    def record_close(
+        *_args: object,
+        closed_ancestors: list[str] | None = None,
+        **_kwargs: object,
+    ) -> None:
+        threads["close_task"].append(threading.get_ident())
+        # The transition reports what it auto-closed by filling this list, which
+        # is what puts _record_closed_ancestors on the path below.
+        if closed_ancestors is not None:
+            closed_ancestors.append(ancestor.id)
+
+    def recorder(name: str) -> Callable[..., None]:
+        def record(*_args: object, **_kwargs: object) -> None:
+            threads[name].append(threading.get_ident())
+
+        return record
+
+    manager = cast(MagicMock, ctx.task_manager)
+    manager.get_task.side_effect = record_get_task
+    manager.list_tasks.side_effect = record_list_tasks
+    manager.close_task.side_effect = record_close
+
+    evaluation = CloseEvaluation(task.id)
+    evaluation.task = task
+    evaluation.task_id = task.id
+    evaluation.repo_path = "/repo"
+    evaluation.resolved_session_id = task.claimed_by_session_id
+    evaluation.edit_session_id = task.claimed_by_session_id
+    evaluation.is_epic = True
+    evaluation.skip_leaf_checks = True
+    evaluation.fingerprint = CloseEvaluationFingerprint.capture(
+        task,
+        children_state=(),
+        attribution=None,
+    )
+    evaluation.scope_snapshot = ((), (), ())
+    evaluation.pass_gate(11, "criteria_review", "Passed.")
+
+    with (
+        patch.object(close_finalization, "resolve_close_commit_shas", return_value=([], None)),
+        patch.object(close_finalization, "link_close_commit_shas", return_value=(task, None)),
+        patch.object(
+            close_finalization,
+            "notify_parent_on_task_state_change",
+            recorder("notify_parent"),
+        ),
+        patch.object(close_finalization, "_cleanup_closed_claim", recorder("cleanup_claim")),
+        patch(
+            "gobby.hooks.event_handlers._plan.on_epic_terminal",
+            recorder("on_epic_terminal"),
+        ),
+    ):
+        result = await _commit_close(
+            ctx,
+            evaluation,
+            reason="completed",
+            skip_validation=False,
+            override_justification=None,
+            commit_sha=None,
+        )
+
+    assert result["closed"] is True
+    assert result["closed_ancestors"] == [
+        {"id": ancestor.id, "ref": "#4241", "title": "Ancestor epic"}
+    ]
+    loop_thread = threading.get_ident()
+    for name, idents in threads.items():
+        assert idents, f"{name} must run"
+        assert loop_thread not in idents, f"{name} ran on the event loop thread"
