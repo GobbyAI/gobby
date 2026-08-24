@@ -205,6 +205,11 @@ def test_completion_emits_terminal_event(
             run_id="dddddddd-dddd-4ddd-8ddd-dddddddd4006",
         )
 
+    run = run_manager.get("dddddddd-dddd-4ddd-8ddd-dddddddd4006")
+    assert run is not None
+    assert run.status == "completed"
+    assert run.error is None
+    assert run.parent_task_id == task.id
     registry.emit.assert_any_call(
         "expansion_run_completed", task_id=task.id, run_id="dddddddd-dddd-4ddd-8ddd-dddddddd4006"
     )
@@ -215,6 +220,7 @@ def test_failure_emits_terminal_event(temp_db: HubDatabase, sample_project: dict
 
     task_manager = LocalTaskManager(temp_db)
     task = _task(task_manager, sample_project)
+    run_manager = LocalExpansionRunManager(temp_db)
     registry = MagicMock()
 
     async def fail_run(
@@ -242,6 +248,10 @@ def test_failure_emits_terminal_event(temp_db: HubDatabase, sample_project: dict
             run_id="dddddddd-dddd-4ddd-8ddd-dddddddd4004",
         )
 
+    run = run_manager.get("dddddddd-dddd-4ddd-8ddd-dddddddd4004")
+    assert run is not None
+    assert run.status == "failed"
+    assert run.error == "boom"
     registry.emit.assert_any_call(
         "expansion_run_failed",
         task_id=task.id,
@@ -257,6 +267,7 @@ def test_cancellation_emits_terminal_event(
 
     task_manager = LocalTaskManager(temp_db)
     task = _task(task_manager, sample_project)
+    run_manager = LocalExpansionRunManager(temp_db)
     registry = MagicMock()
 
     async def cancel_run(
@@ -284,6 +295,10 @@ def test_cancellation_emits_terminal_event(
             run_id="dddddddd-dddd-4ddd-8ddd-dddddddd4007",
         )
 
+    run = run_manager.get("dddddddd-dddd-4ddd-8ddd-dddddddd4007")
+    assert run is not None
+    assert run.status == "cancelled"
+    assert not run_manager.is_active_status(run.status)
     registry.emit.assert_any_call(
         "expansion_run_cancelled", task_id=task.id, run_id="dddddddd-dddd-4ddd-8ddd-dddddddd4007"
     )
@@ -371,6 +386,13 @@ def test_start_expansion_reset_output_calls_reset(
 
     assert result.run_id == "dddddddd-dddd-4ddd-8ddd-dddddddd400a"
     reset.assert_called_once()
+    # The reset has to happen against the task being expanded, and the run it
+    # guards has to be the one that came back.
+    assert reset.call_args.args[1] == task.id
+    run = run_manager.get("dddddddd-dddd-4ddd-8ddd-dddddddd400a")
+    assert run is not None
+    assert run.status == "completed"
+    assert run.parent_task_id == task.id
 
 
 def test_synchronous_terminal_emits_event(
@@ -413,6 +435,10 @@ def test_synchronous_terminal_emits_event(
     registry.emit.assert_any_call(
         "expansion_run_completed", task_id=task.id, run_id="dddddddd-dddd-4ddd-8ddd-dddddddd4001"
     )
+    run = run_manager.get("dddddddd-dddd-4ddd-8ddd-dddddddd4001")
+    assert run is not None
+    assert run.status == "completed"
+    assert run.id == result.run_id
 
 
 def test_stage_pipeline_mutex_suppresses_expansion_terminal_event(
@@ -528,6 +554,11 @@ async def test_async_start_returns_running_and_emits_later(
         await drain_asyncio_tasks(cycles=2)
 
     assert result.status == "running"
+    # "running" is what the caller is told while the run is still on the loop;
+    # the row it names has to have settled by the time the drain returns.
+    run = run_manager.get("dddddddd-dddd-4ddd-8ddd-dddddddd4008")
+    assert run is not None
+    assert run.status == "completed"
     registry.emit.assert_any_call(
         "expansion_run_completed", task_id=task.id, run_id="dddddddd-dddd-4ddd-8ddd-dddddddd4008"
     )
