@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import threading
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -551,3 +552,38 @@ async def test_editing_an_untracked_file_in_place_earns_a_fresh_run(tmp_path: Pa
     await evaluate_epic_guards(task_manager=manager, task=current, repo_path=str(tmp_path))
 
     assert _run_count(tmp_path) == 2, "an in-place edit to an untracked file served a stale pass"
+
+
+@pytest.mark.asyncio
+async def test_a_newly_closed_leaf_earns_a_fresh_guard_run(tmp_path: Path) -> None:
+    """A leaf closing can add a guard, so the scope's identity is in the key.
+
+    The key names the scope rows rather than the guard paths they resolve to,
+    because resolving costs a `git show` per closed leaf and a cache hit must
+    not pay it. That only holds if every task change that can add or drop a
+    guard moves the digest, which is what updated_at is for.
+    """
+    test_path = "tests/test_guard.py"
+    other_path = "tests/test_other_guard.py"
+    for path in (test_path, other_path):
+        Path(tmp_path, path).parent.mkdir(exist_ok=True)
+        Path(tmp_path, path).write_text("def test_guard(): pass\n", encoding="utf-8")
+    _write_project(tmp_path, _counting_template())
+    _init_repo(tmp_path)
+    epic, prior, current = _task_tree(criteria=f"test: {test_path}::test_guard")
+    later = _task(
+        "later",
+        parent=epic.id,
+        now=datetime(2026, 8, 21, tzinfo=UTC),
+        criteria=f"test: {other_path}::test_guard",
+    )
+    tasks = [epic, prior, current]
+    manager = cast(LocalTaskManager, _TaskManager(tasks))
+
+    first = await evaluate_epic_guards(task_manager=manager, task=current, repo_path=str(tmp_path))
+    tasks.append(replace(later, closed_at=datetime(2026, 8, 22, tzinfo=UTC)))
+    second = await evaluate_epic_guards(task_manager=manager, task=current, repo_path=str(tmp_path))
+
+    assert first.paths == (test_path,)
+    assert sorted(second.paths) == sorted((other_path, test_path))
+    assert _run_count(tmp_path) == 2, "the new leaf's guard was never run"

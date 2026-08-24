@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import shlex
 import subprocess
 from collections import OrderedDict
@@ -14,6 +15,8 @@ from pathlib import Path, PurePosixPath
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.acceptance_artifacts import extract_artifact_references
 from gobby.utils.git import run_git_command
+
+logger = logging.getLogger(__name__)
 
 _GUARD_OUTPUT_LIMIT = 32_000
 _GUARD_TIMEOUT_SECONDS = 600.0
@@ -71,6 +74,24 @@ async def evaluate_epic_guards(
     timeout_seconds: float = _GUARD_TIMEOUT_SECONDS,
 ) -> EpicGuardResult:
     """Collect and run every earlier closed leaf's guard test."""
+    # The cached answer is reached before collection, because the key needs the
+    # scope's identity rather than its resolved guard paths. Collection costs
+    # one `git show` per closed leaf carrying commits -- 53 subprocess spawns on
+    # this project, 1.1 s out of process and 7 s inside the daemon -- and a hit
+    # needs none of them (#20866). A miss falls through to the original order.
+    template, template_error = _load_guard_template(repo_path)
+    cache_key = (
+        None
+        if template_error
+        else await asyncio.to_thread(
+            _guard_run_cache_key, task_manager, task, template or "", repo_path
+        )
+    )
+    if cache_key is not None:
+        cached = _passed_guard_runs.get(cache_key)
+        if cached is not None:
+            return cached
+
     # Collection is one scoped query for the epic's subtree since #20847, but it
     # is still synchronous psycopg plus git and filesystem work per guard path,
     # so it stays off the loop. Left on it, the project-wide walk this replaced
@@ -99,7 +120,6 @@ async def evaluate_epic_guards(
             message="No earlier closed epic leaves contribute guard tests.",
         )
 
-    template, template_error = _load_guard_template(repo_path)
     if template_error:
         return _result(
             passed=False,
@@ -124,16 +144,6 @@ async def evaluate_epic_guards(
     quoted_paths = " ".join(shlex.quote(path) for path in paths)
     command = template.replace("{test_files}", quoted_paths)
     fingerprint = _fingerprint(paths, source_task_ids, template)
-    # The guard set on this project is 25 test files and the run costs 29 s of
-    # every close attempt against any leaf in the epic -- more than the criteria
-    # review once its verdict is memoized, and paid again by each blocked retry
-    # (#20866). The answer only depends on the guard set and what those tests
-    # read, so an unchanged repository yields an unchanged answer.
-    cache_key = await asyncio.to_thread(_guard_run_cache_key, fingerprint, repo_path)
-    if cache_key is not None:
-        cached = _passed_guard_runs.get(cache_key)
-        if cached is not None:
-            return cached
     try:
         process = await asyncio.create_subprocess_shell(
             command,
@@ -199,8 +209,19 @@ async def evaluate_epic_guards(
     return passed
 
 
-def _guard_run_cache_key(fingerprint: str, repo_path: str) -> str | None:
-    """Key one guard run by its guard set and everything git can see.
+def _guard_run_cache_key(
+    task_manager: LocalTaskManager,
+    task: Task,
+    template: str,
+    repo_path: str,
+) -> str | None:
+    """Key one guard run by its epic scope and everything git can see.
+
+    The scope is keyed by identity rather than by the guard paths it resolves
+    to: the paths are a pure function of these rows and the repository, and
+    resolving them costs a `git show` per closed leaf. Every task field that
+    can add or drop a guard -- criteria, commits, closure -- moves
+    ``updated_at``, so the digest moves with it.
 
     Returns ``None`` when git cannot describe the tree -- no repository, no
     commit yet, a broken checkout -- because a key that cannot notice a change
@@ -215,6 +236,9 @@ def _guard_run_cache_key(fingerprint: str, repo_path: str) -> str | None:
     reads are committed, so a change that matters shows up in one of the three
     commands or in an untracked file's stat.
     """
+    scope_digest = _epic_scope_digest(task_manager, task)
+    if scope_digest is None:
+        return None
     head = run_git_command(
         ["git", "rev-parse", "HEAD"], cwd=repo_path, timeout=_REPO_STATE_TIMEOUT_SECONDS
     )
@@ -231,9 +255,32 @@ def _guard_run_cache_key(fingerprint: str, repo_path: str) -> str | None:
     )
     if head is None or status is None or diff is None:
         return None
-    parts = [repo_path, head, status, diff, *_untracked_stats(status, repo_path)]
-    digest = hashlib.sha256("\0".join(parts).encode()).hexdigest()
-    return f"{fingerprint}:{digest}"
+    parts = [
+        repo_path,
+        scope_digest,
+        template,
+        head,
+        status,
+        diff,
+        *_untracked_stats(status, repo_path),
+    ]
+    return hashlib.sha256("\0".join(parts).encode()).hexdigest()
+
+
+def _epic_scope_digest(task_manager: LocalTaskManager, task: Task) -> str | None:
+    """Digest the epic scope's identity, or None when it cannot be read.
+
+    One query, no git. A task that cannot be listed leaves no key, so the guard
+    runs -- the behaviour before any of this existed.
+    """
+    try:
+        scope = task_manager.list_epic_guard_scope(task.id)
+    except Exception:
+        logger.debug("Epic guard scope digest unavailable for task %s", task.id, exc_info=True)
+        return None
+    rows = sorted((str(row.id), str(row.updated_at), str(row.closed_at)) for row in scope)
+    payload = json.dumps([str(task.id), rows], separators=(",", ":"))
+    return hashlib.sha256(payload.encode()).hexdigest()
 
 
 def _untracked_stats(status: str, repo_path: str) -> list[str]:
