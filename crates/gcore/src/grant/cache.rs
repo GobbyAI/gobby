@@ -145,6 +145,12 @@ pub fn persist_cache(
     }
 }
 
+/// Best-effort removal of a cache pair that can no longer be trusted.
+pub fn discard_cache_pair(grant_path: &Path) {
+    let _ = fs::remove_file(grant_path);
+    let _ = fs::remove_file(settings_cache_path(grant_path));
+}
+
 pub fn matching_settings(path: &Path, grant: &GrantBundle) -> Option<CachedSettings> {
     match inspect_cache_pair(path) {
         Ok(Some(CachePair::Coherent(cached, settings)))

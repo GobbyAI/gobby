@@ -577,6 +577,9 @@ fn stale_cached_schema_stays_mismatch_offline() {
 
 #[test]
 fn corrupt_grant_refused_offline() {
+    // A corrupt interactive cache is never a credential source: it degrades
+    // to a cache miss (discarding the file), which offline means the daemon
+    // is required for a fresh handshake.
     let harness = Harness::new();
     let grant = fixture_grant(PrincipalKind::Interactive);
     write_binding_for(&harness, "http://127.0.0.1:1", &grant.deployment.token);
@@ -587,7 +590,8 @@ fn corrupt_grant_refused_offline() {
     fs::write(&path, raw).expect("corrupt payload");
     let error =
         acquire_with(&harness.request(Some("http://127.0.0.1:1".into()))).expect_err("payload");
-    assert!(matches!(error, GrantError::Malformed(_)));
+    assert_eq!(error, GrantError::DaemonRequired);
+    assert!(!path.exists(), "undeserializable cache must be discarded");
 
     write_grant_file(&path, &grant).expect("rewrite");
     let mut parsed: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
@@ -595,7 +599,11 @@ fn corrupt_grant_refused_offline() {
     fs::write(&path, serde_json::to_vec(&parsed).unwrap()).unwrap();
     let error =
         acquire_with(&harness.request(Some("http://127.0.0.1:1".into()))).expect_err("checksum");
-    assert!(matches!(error, GrantError::Malformed(_)));
+    assert_eq!(error, GrantError::DaemonRequired);
+    assert!(
+        !path.exists(),
+        "checksum-mismatched cache must be discarded"
+    );
 }
 
 #[test]

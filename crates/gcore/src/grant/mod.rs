@@ -33,8 +33,8 @@ pub use inspection::{CachedGrantInspection, inspect_cached_grant, inspect_cached
 
 use bundle::validate_for_construction as validate_grant;
 use cache::{
-    CachePair, inspect_cache_pair, lock_with_deadline, matching_settings, newer_generation,
-    persist_cache,
+    CachePair, discard_cache_pair, inspect_cache_pair, lock_with_deadline, matching_settings,
+    newer_generation, persist_cache,
 };
 use handshake::{
     HandshakeIdentity, challenge_and_handshake, deployment_token as derived_deployment_token,
@@ -476,12 +476,24 @@ fn acquire_interactive(ctx: &AcquireCtx) -> Result<AcquiredGrant, GrantError> {
             &ctx.project_id,
             ctx.code_overlay_project_id.as_deref(),
         );
-        match inspect_cache_pair(&path).map_err(|error| {
-            annotate_source(
-                error,
-                &format!("interactive grant cache {}", path.display()),
-            )
-        })? {
+        let inspected = match inspect_cache_pair(&path) {
+            Ok(inspected) => inspected,
+            // A cache entry that fails its checksum or no longer
+            // deserializes is not a credential source: drop it and fall
+            // through to the fresh-handshake path, the same as no cache.
+            // Contract-level errors (payload skew, API mismatch) stay loud.
+            Err(GrantError::Malformed(_)) => {
+                discard_cache_pair(&path);
+                None
+            }
+            Err(error) => {
+                return Err(annotate_source(
+                    error,
+                    &format!("interactive grant cache {}", path.display()),
+                ));
+            }
+        };
+        match inspected {
             Some(CachePair::Coherent(grant, settings)) => {
                 return accept_cached_or_rehandshake(
                     ctx,
