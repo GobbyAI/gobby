@@ -450,9 +450,27 @@ def assert_runtime_role(
     connection: psycopg.Connection[Any],
     runtime_role: str,
 ) -> None:
-    """Reject a checked-out connection whose effective identity changed."""
+    """Reject a checked-out connection whose effective identity changed.
+
+    This runs on every checkout, so its cost is charged to every database
+    operation in the process. The query itself is unavoidable -- PostgreSQL
+    does not push the role: on server 18, parameter_status('role') is None
+    before and after SET ROLE, and session_authorization stays at the login
+    user. The transaction around it was avoidable, and was two thirds of the
+    cost: the pool's connections are not autocommit, so the SELECT opened a
+    transaction and the commit existed only to close it, verifying nothing.
+    Checking out and running one statement measured 0.620 ms with that commit
+    and 0.420 ms without, against 0.320 ms for no check at all (#20853).
+    """
     validate_identifier(runtime_role)
-    row = connection.execute("SELECT current_user").fetchone()
+    previous_autocommit = connection.autocommit
+    connection.autocommit = True
+    try:
+        row = connection.execute("SELECT current_user").fetchone()
+    finally:
+        # Restored before any raise below, so the caller and the pool always
+        # get the connection back in the mode they handed over.
+        connection.autocommit = previous_autocommit
     if isinstance(row, Mapping):
         observed = row.get("current_user")
     else:
@@ -462,7 +480,6 @@ def assert_runtime_role(
         raise RuntimeRoleMismatchError(
             f"PostgreSQL runtime role mismatch: expected {runtime_role!r}, observed {observed!r}"
         )
-    connection.commit()
 
 
 def validate_identifier(identifier: str) -> None:
