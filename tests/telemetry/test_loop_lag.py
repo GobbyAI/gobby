@@ -17,7 +17,12 @@ import time
 
 import pytest
 
-from gobby.telemetry.loop_lag import LoopLagReport, loop_lag_watchdog, measure_loop_lag
+from gobby.telemetry import loop_lag
+from gobby.telemetry.loop_lag import (
+    LoopLagReport,
+    loop_lag_watchdog,
+    measure_loop_lag,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -281,3 +286,56 @@ async def test_the_report_follows_the_await_chain_past_the_outer_task() -> None:
         f"the report must reach the frame doing the work; got {rendered!r}"
     )
     assert "outer_middleware" in rendered, "and keep the chain that led there"
+
+
+async def test_quiet_polls_cost_nothing_beyond_the_position_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A diagnostic that formats traces every cycle inflates the lag it measures.
+
+    Building await-chain strings for every task that moved is affordable once
+    per stall and not twenty times a second, so the per-poll path must stay out
+    of it entirely.
+    """
+    calls = 0
+    real_traces_for = loop_lag._traces_for
+
+    def counting_traces_for(keys: set[str]) -> dict[str, str]:
+        nonlocal calls
+        calls += 1
+        return real_traces_for(keys)
+
+    monkeypatch.setattr(loop_lag, "_traces_for", counting_traces_for)
+
+    stop = asyncio.Event()
+    reports: list[LoopLagReport] = []
+    cycles = 0
+
+    async def pace(_seconds: float) -> None:
+        nonlocal cycles
+        cycles += 1
+        if cycles >= 10:
+            stop.set()
+        await yield_to_loop()
+
+    # A task that steps every cycle, so tasks really are moving between polls.
+    async def busy() -> None:
+        while not stop.is_set():
+            await yield_to_loop()
+
+    worker = asyncio.create_task(busy(), name="busy")
+    await asyncio.wait_for(
+        loop_lag_watchdog(
+            stop.is_set,
+            threshold_seconds=5.0,
+            poll_seconds=0.01,
+            on_lag=reports.append,
+            sleep=pace,
+        ),
+        timeout=WATCHDOG_TIMEOUT_SECONDS,
+    )
+    await worker
+
+    assert cycles == 10
+    assert reports == [], "no stall was created"
+    assert calls == 0, f"quiet polls must not build traces; built them {calls} times"

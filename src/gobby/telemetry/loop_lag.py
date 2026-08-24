@@ -174,10 +174,15 @@ def _snapshot_positions(exclude: asyncio.Task[object] | None) -> dict[str, str]:
 
 @dataclass(frozen=True)
 class LoopLagReportParts:
-    """The three groups a stall splits the task set into."""
+    """The three groups a stall splits the task set into, as keys only.
 
-    advanced: list[tuple[str, str]]
-    started: list[tuple[str, str]]
+    Keys are cheap; await-chain traces are not. This runs on every poll, so it
+    stays free of formatting -- a diagnostic that costs the loop real time on
+    every cycle inflates the very lag it is trying to measure.
+    """
+
+    advanced: list[str]
+    started: list[str]
     ended: list[str]
     bystanders: list[str]
 
@@ -194,11 +199,10 @@ def _diff_positions(before: dict[str, str], after: dict[str, str]) -> LoopLagRep
     started = [key for key in after if key not in before]
     ended = [key for key in before if key not in after]
     bystanders = [key for key, position in after.items() if before.get(key) == position]
-    traces = _traces_for(set(advanced) | set(started))
     return LoopLagReportParts(
-        advanced=[(key, traces.get(key, GONE)) for key in sorted(advanced)][:MAX_REPORTED_TASKS],
-        started=[(key, traces.get(key, GONE)) for key in sorted(started)][:MAX_REPORTED_TASKS],
-        ended=sorted(ended)[:MAX_REPORTED_TASKS],
+        advanced=sorted(advanced),
+        started=sorted(started),
+        ended=sorted(ended),
         bystanders=bystanders,
     )
 
@@ -250,12 +254,17 @@ async def loop_lag_watchdog(
                 continue
             last_report_at = loop.time()
 
+            traces = _traces_for(set(moved.advanced) | set(moved.started))
             report = LoopLagReport(
                 lag_seconds=lag,
                 threshold_seconds=threshold_seconds,
-                advanced=moved.advanced,
-                started=moved.started,
-                ended=moved.ended,
+                advanced=[(key, traces.get(key, GONE)) for key in moved.advanced][
+                    :MAX_REPORTED_TASKS
+                ],
+                started=[(key, traces.get(key, GONE)) for key in moved.started][
+                    :MAX_REPORTED_TASKS
+                ],
+                ended=moved.ended[:MAX_REPORTED_TASKS],
                 bystanders=moved.bystanders,
             )
             if on_lag is not None:
