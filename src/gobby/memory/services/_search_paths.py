@@ -292,15 +292,19 @@ async def search_with_graph(
 
         qdrant_score_map = dict(qdrant_results)
         qdrant_ranked = [memory_id for memory_id, _ in qdrant_results]
-        await _score_unwindowed_candidates(
-            vector_store=vector_store,
-            query_embedding=query_embedding,
-            qdrant_score_map=qdrant_score_map,
-            other_ranked=[graph_ranked, keyword_ranked],
-            caller=caller,
-            project_id=project_id,
-            path="qdrant_graph_keyword",
-        )
+        if not isinstance(qdrant_result, BaseException):
+            # Only when the semantic leg itself came back. A vector store that just
+            # timed out would otherwise be given a second full timeout to fail in,
+            # doubling the worst case of a search that already has its candidates.
+            await _score_unwindowed_candidates(
+                vector_store=vector_store,
+                query_embedding=query_embedding,
+                qdrant_score_map=qdrant_score_map,
+                other_ranked=[graph_ranked, keyword_ranked],
+                caller=caller,
+                project_id=project_id,
+                path="qdrant_graph_keyword",
+            )
 
         rrf_lists = [ranked for ranked in (qdrant_ranked, graph_ranked, keyword_ranked) if ranked]
         if len(rrf_lists) > 1:
@@ -451,15 +455,17 @@ async def search_qdrant_keyword(
 
         qdrant_ranked = [memory_id for memory_id, _ in qdrant_results]
         qdrant_score_map = dict(qdrant_results)
-        await _score_unwindowed_candidates(
-            vector_store=vector_store,
-            query_embedding=query_embedding,
-            qdrant_score_map=qdrant_score_map,
-            other_ranked=[keyword_ranked],
-            caller=caller,
-            project_id=project_id,
-            path="qdrant_keyword",
-        )
+        if not isinstance(qdrant_result, BaseException):
+            # See the graph path: a failed semantic leg does not get a second timeout.
+            await _score_unwindowed_candidates(
+                vector_store=vector_store,
+                query_embedding=query_embedding,
+                qdrant_score_map=qdrant_score_map,
+                other_ranked=[keyword_ranked],
+                caller=caller,
+                project_id=project_id,
+                path="qdrant_keyword",
+            )
 
         if qdrant_ranked and keyword_ranked:
             ranking_score_map = rrf_scores(qdrant_ranked, keyword_ranked, k=rrf_k)

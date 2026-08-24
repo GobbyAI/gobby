@@ -1217,3 +1217,48 @@ async def test_a_rescored_single_leg_hit_is_not_labelled_semantic_only(
     assert results[0].raw_semantic_score == 0.64
     assert results[0].search_via == "graph"
     assert results[0].ranking_mode == "nonsemantic_fallback"
+
+
+async def test_a_failed_semantic_leg_is_not_given_a_second_timeout(monkeypatch: Any) -> None:
+    """Rescoring must not double the worst case of a search that already failed.
+
+    The rescore runs after the three legs, so a vector store that just spent its
+    whole timeout failing would otherwise be handed another one -- and the search
+    already has its graph and keyword candidates in hand.
+    """
+
+    class _FailingStore(_ScoringVectorStore):
+        async def search(
+            self,
+            query_embedding: list[float],
+            limit: int = 10,
+            filters: dict[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> list[tuple[str, float]]:
+            raise TimeoutError("qdrant timed out")
+
+    store = _FailingStore(results=[], stored={"graph-found": 0.64})
+    service = _service(["graph-found"], vector_store=store, falkordb_graph_search=True)
+
+    async def graph_search(**_kwargs: Any) -> GraphScoredResult:
+        return GraphScoredResult(scored=[("graph-found", 0.80)])
+
+    monkeypatch.setattr(service, "_search_graph_scored", graph_search)
+    results = await service._search_with_graph(
+        query="query",
+        query_embedding=[1.0, 0.0],
+        limit=2,
+        filters={},
+        project_id=None,
+        memory_type=None,
+        tags_all=None,
+        tags_any=None,
+        tags_none=None,
+        half_life=0.0,
+        effective_min_score=0.0,
+    )
+
+    assert store.scored_ids == []
+    # The graph leg's own answer still stands, on its synthetic cosine.
+    assert [mem.id for mem in results] == ["graph-found"]
+    assert results[0].ranking_mode == "graph_synthetic"
