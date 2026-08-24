@@ -5278,3 +5278,97 @@ class TestNonTaskResumeCallback:
             "pending_terminations",
         ]
         assert fail_first is False
+
+
+@pytest.mark.asyncio
+async def test_reconcile_skips_an_already_terminal_run_without_warning(
+    monitor: AgentLifecycleMonitor,
+    agent_run_manager: LocalAgentRunManager,
+    sample_session: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A run that finished on its own is reconciliation's success case, not a failure.
+
+    An agent that calls end_agent_run goes terminal before reconciliation reaches
+    it, so there is no interrupted sequence left to re-drive. Logging that at
+    WARNING fires on every well-behaved agent and teaches operators to ignore the
+    logger that reports the retryable failures (#20860).
+    """
+    run = _make_terminal_run(
+        agent_run_manager,
+        sample_session,
+        run_id=_rid("run-already-terminal"),
+        tmux_session_name="gobby-already-terminal",
+    )
+    agent_run_manager.record_termination_intent(
+        run.id,
+        action="complete",
+        reason="reconciled complete",
+    )
+    candidate = agent_run_manager.get(run.id)
+    assert candidate is not None
+    agent_run_manager.complete(run.id, result="done")
+
+    # The live race: the run is a candidate when the batch is listed and has gone
+    # terminal by the time termination reaches it, so the listing hands back a
+    # snapshot that is already stale.
+    with (
+        patch.object(
+            monitor._agent_run_manager,
+            "list_termination_candidates",
+            return_value=[candidate],
+        ),
+        caplog.at_level(logging.INFO, logger="gobby.agents.lifecycle_reconciliation"),
+    ):
+        reconciled = await monitor.reconcile_pending_terminations()
+
+    assert reconciled == 0
+    records = [record for record in caplog.records if run.id in record.getMessage()]
+    assert records, "the skip has to be visible somewhere"
+    assert [record.levelno for record in records] == [logging.INFO]
+    assert "failed" not in records[0].getMessage()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_still_warns_on_a_retryable_termination_failure(
+    monitor: AgentLifecycleMonitor,
+    agent_run_manager: LocalAgentRunManager,
+    sample_session: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Only ALREADY_TERMINAL is benign; every other code is a real, retryable failure."""
+    run = _make_terminal_run(
+        agent_run_manager,
+        sample_session,
+        run_id=_rid("run-kill-failed"),
+        tmux_session_name="gobby-kill-failed",
+    )
+    agent_run_manager.record_termination_intent(
+        run.id,
+        action="timeout",
+        reason="reconciled timeout",
+    )
+
+    async def has_session(_name: str) -> bool:
+        return True
+
+    async def kill_session(_name: str, *, missing_ok: bool = False) -> bool:
+        return False
+
+    with (
+        patch.object(monitor._tmux, "has_session", side_effect=has_session),
+        patch.object(
+            monitor._tmux,
+            "capture_full_pane",
+            new_callable=AsyncMock,
+            return_value="pane",
+        ),
+        patch.object(monitor._tmux, "kill_session", side_effect=kill_session),
+        caplog.at_level(logging.INFO, logger="gobby.agents.lifecycle_reconciliation"),
+    ):
+        reconciled = await monitor.reconcile_pending_terminations()
+
+    assert reconciled == 0
+    records = [record for record in caplog.records if run.id in record.getMessage()]
+    assert [record.levelno for record in records] == [logging.WARNING]
+    assert "failed" in records[0].getMessage()

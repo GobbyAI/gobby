@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
 from gobby.agents.agent_cleanup import AgentCleanupHandler
-from gobby.agents.capture import terminate_managed_tmux_async
+from gobby.agents.capture import TerminationErrorCode, terminate_managed_tmux_async
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.storage.agents import (
     AgentRun,
@@ -131,6 +131,19 @@ class LifecycleReconciliation:
             )
             if result.success:
                 reconciled += 1
+            elif result.error_code == TerminationErrorCode.ALREADY_TERMINAL:
+                # Not a failure: this pass exists to re-drive interrupted terminal
+                # sequences, and the run finished its own. Every agent that calls
+                # end_agent_run goes terminal between the candidate listing and
+                # this call, so warning here fires on the healthy path and teaches
+                # operators to ignore the logger that reports the retryable codes
+                # (#20860). The other two callers of this result already skip it
+                # the same way -- memory_watchdog and session_coordinator.
+                logger.info(
+                    "Termination reconciliation skipped for run %s: %s",
+                    run.id,
+                    result.error,
+                )
             else:
                 logger.warning(
                     "Termination reconciliation failed for run %s: %s (%s)",
