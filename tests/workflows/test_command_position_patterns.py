@@ -98,12 +98,31 @@ def _block_pattern_entries(body: RuleDefinitionBody) -> list[tuple[str, str | No
     ]
 
 
+# Session variables that satisfy each rule's `when` / agent_scope gate so the
+# engine evaluation exercises the pattern, not the gate. Worker-safety rules
+# gate on is_spawned_agent; overrides below cover the other groups.
+DEFAULT_ENGINE_VARIABLES: dict[str, object] = {"is_spawned_agent": True}
+ENGINE_VARIABLE_OVERRIDES: dict[str, dict[str, object]] = {
+    "no-push-for-workers": {"_agent_type": "developer"},
+    "require-task-before-commit": {"require_task_before_edit": True, "task_claimed": False},
+    "require-monolith-resolution-before-commit": {},
+    "block-gobby-tasks-cli": {},
+    "no-external-github-issues": {},
+    "no-remote-exec": {},
+    "require-pytest-guard-env": {},
+}
+
+
 class RuleCase(NamedTuple):
     """Blocked and allowed command shapes for one anchored rule."""
 
     name: str
     blocked: tuple[str, ...]
     allowed: tuple[str, ...]
+
+    @property
+    def engine_variables(self) -> dict[str, object]:
+        return ENGINE_VARIABLE_OVERRIDES.get(self.name, DEFAULT_ENGINE_VARIABLES)
 
 
 # Blocked: typical, env-prefixed, and path-prefixed invocations.
@@ -340,17 +359,44 @@ GIT_OPTION_CASES = (
 
 
 @pytest.mark.parametrize("case", RULE_CASES, ids=lambda case: case.name)
-def test_invocations_block_and_prose_allowed(
+async def test_invocations_block_and_prose_allowed(
     db: HubDatabase,
     manager: RuleDefinitionManager,
+    monkeypatch: pytest.MonkeyPatch,
     case: RuleCase,
 ) -> None:
     _sync_bundled(db)
     body = _get_rule(manager, case.name)
-    for command in case.blocked:
+    env_prefixed = f"RULE_MATRIX_ENV=1 {case.blocked[0]}"
+    for command in (*case.blocked, env_prefixed):
         assert _blocks(body, command), f"{case.name} should block: {command}"
     for command in case.allowed:
         assert not _blocks(body, command), f"{case.name} should allow: {command}"
+
+    # End-to-end: the same shapes through RuleEngine, with only this rule
+    # installed so the decision is attributable to it. The monolith rule's
+    # `when` reads real file line counts, which no compliant checkout can
+    # trip; patch the helper at the evaluator seam to satisfy the gate.
+    monkeypatch.setattr(
+        "gobby.workflows.monolith_guard.outstanding_monolith_paths",
+        lambda variables, project_path: ["src/gobby/oversized.py"],
+    )
+    db.execute("DELETE FROM rule_definitions WHERE name != %s", (case.name,))
+    engine = RuleEngine(db)
+    for command in (case.blocked[0], env_prefixed):
+        response = await engine.evaluate(
+            _bash_event(command),
+            session_id=SESSION_ID,
+            variables=dict(case.engine_variables),
+        )
+        assert response.decision == "block", f"{case.name} engine should block: {command}"
+    prose = case.allowed[0]
+    response = await engine.evaluate(
+        _bash_event(prose),
+        session_id=SESSION_ID,
+        variables=dict(case.engine_variables),
+    )
+    assert response.decision != "block", f"{case.name} engine should allow: {prose}"
 
 
 @pytest.mark.parametrize(("rule_name", "suffix"), GIT_OPTION_CASES)
