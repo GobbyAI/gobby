@@ -144,6 +144,23 @@ def test_a_marker_that_does_not_say_when_grants_nothing(
 
 
 @pytest.mark.parametrize(
+    "cause",
+    [None, "", "inactivity", "CONTEXT_REUSE", 7, {"cause": "context_reuse"}],
+    ids=["absent", "empty", "unknown", "wrong-case", "numeric", "nested"],
+)
+def test_a_marker_whose_cause_is_not_one_of_the_two_grants_nothing(cause: Any) -> None:
+    """Only the two speculative writers earn the grace, so the marker has to
+    name one of them. A fresh created_at beside any other cause is a variables
+    row written by something else, and reading it as a contest would park a
+    genuinely dead owner's claim for the whole revival horizon."""
+    payload: dict[str, Any] = {"created_at": datetime.now(UTC).isoformat()}
+    if cause is not None:
+        payload["cause"] = cause
+
+    assert contested_expiry_recorded_at({CONTESTED_TERMINAL_EXPIRY_VARIABLE: payload}) is None
+
+
+@pytest.mark.parametrize(
     ("age", "expected"),
     [
         (timedelta(minutes=1), True),

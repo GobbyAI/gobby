@@ -8,7 +8,10 @@ from gobby.sessions.compact_markers import (
     COMPACT_SELF_CONTINUE_FRESH_SECONDS,
     COMPACT_SELF_CONTINUE_VARIABLE,
 )
-from gobby.sessions.contested_expiry import CONTESTED_TERMINAL_EXPIRY_VARIABLE
+from gobby.sessions.contested_expiry import (
+    CONTESTED_EXPIRY_CAUSES,
+    CONTESTED_TERMINAL_EXPIRY_VARIABLE,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions._constants import SESSION_REVIVAL_HORIZON_HOURS
 from gobby.storage.sql_dialect import json_array_contains_condition
@@ -140,6 +143,8 @@ def release_task_claim(
             now.isoformat(),
             CONTESTED_TERMINAL_EXPIRY_VARIABLE,
             CONTESTED_TERMINAL_EXPIRY_VARIABLE,
+            sorted(CONTESTED_EXPIRY_CAUSES),
+            CONTESTED_TERMINAL_EXPIRY_VARIABLE,
             CONTESTED_TERMINAL_EXPIRY_VARIABLE,
             revival_cutoff.isoformat(),
             CONTESTED_TERMINAL_EXPIRY_VARIABLE,
@@ -192,7 +197,10 @@ def release_task_claim(
                    -- marker -- inactivity, a killed tmux server, an explicit
                    -- close -- is final and keeps the ordinary schedule, which
                    -- is what stops this from shadowing the marker grace above
-                   -- for every other expired terminal session.
+                   -- for every other expired terminal session. session_variables
+                   -- is a shared store, so the cause has to name one of the two
+                   -- speculative writers: a fresh created_at left under this key
+                   -- by anything else is not a contest.
                    SELECT 1
                      FROM sessions s
                      JOIN session_variables sv ON sv.session_id = s.id
@@ -200,6 +208,7 @@ def release_task_claim(
                       AND s.session_type = 'terminal'
                       AND s.status = 'expired'
                       AND jsonb_typeof(sv.variables -> %s) = 'object'
+                      AND sv.variables -> %s ->> 'cause' = ANY(%s)
                       AND jsonb_typeof(
                           sv.variables -> %s -> 'created_at'
                       ) = 'string'

@@ -546,23 +546,46 @@ def test_a_nested_cli_start_in_a_plain_terminal_leaves_the_outer_claim_intact(
     assert _claim(temp_db, task.id) == outer.id
 
 
+def _rewrite_contested_cause(temp_db: HubDatabase, session_id: str, cause: Any) -> None:
+    temp_db.execute(
+        """
+        UPDATE session_variables
+           SET variables = jsonb_set(variables, %s::text[], %s::jsonb)
+         WHERE session_id = %s
+        """,
+        (
+            [CONTESTED_TERMINAL_EXPIRY_VARIABLE, "cause"],
+            json.dumps(cause),
+            session_id,
+        ),
+    )
+
+
 @pytest.mark.parametrize(
-    ("tmux_pane", "marker_age"),
+    ("tmux_pane", "marker_age", "cause"),
     [
-        ("%20", None),
-        (None, None),
-        ("%20", timedelta(minutes=1)),
-        (None, timedelta(minutes=1)),
-        ("%20", timedelta(hours=SESSION_REVIVAL_HORIZON_HOURS, minutes=1)),
-        (None, timedelta(hours=SESSION_REVIVAL_HORIZON_HOURS, minutes=1)),
+        ("%20", None, None),
+        (None, None, None),
+        ("%20", timedelta(minutes=1), "context_reuse"),
+        (None, timedelta(minutes=1), "context_reuse"),
+        (None, timedelta(minutes=1), "parent_registration"),
+        ("%20", timedelta(hours=SESSION_REVIVAL_HORIZON_HOURS, minutes=1), "context_reuse"),
+        (None, timedelta(hours=SESSION_REVIVAL_HORIZON_HOURS, minutes=1), "context_reuse"),
+        ("%20", timedelta(minutes=1), "inactivity"),
+        (None, timedelta(minutes=1), "inactivity"),
+        (None, timedelta(minutes=1), 7),
     ],
     ids=[
         "pane-final",
         "paneless-final",
         "pane-fresh",
         "paneless-fresh",
+        "paneless-fresh-parent-registration",
         "pane-stale",
         "paneless-stale",
+        "pane-unknown-cause",
+        "paneless-unknown-cause",
+        "paneless-non-string-cause",
     ],
 )
 def test_the_python_shield_and_the_sql_guard_state_the_same_rule(
@@ -570,19 +593,23 @@ def test_the_python_shield_and_the_sql_guard_state_the_same_rule(
     sample_project: dict[str, Any],
     tmux_pane: str | None,
     marker_age: timedelta | None,
+    cause: Any,
 ) -> None:
     """One rule, two enforcement points, and no way for them to drift apart.
 
     is_contestable_terminal_expiry decides recovery in Python; release_task_claim
     decides the sweep in SQL, where it has to stay a single compare-and-set. The
-    matrix covers both terminal shapes against no marker, a fresh one and one
-    past the revival horizon (#20837).
+    matrix covers both terminal shapes against no marker, a fresh marker naming
+    either speculative writer, one past the revival horizon, and a fresh marker
+    whose cause names neither writer (#20837).
     """
     session_id = str(uuid.uuid4())
     _make_session(temp_db, sample_project, session_id, "expired", tmux_pane=tmux_pane)
     if marker_age is not None:
         record_contested_terminal_expiry(temp_db, session_id, "context_reuse")
         _backdate_contested_marker(temp_db, session_id, marker_age)
+        if cause != "context_reuse":
+            _rewrite_contested_cause(temp_db, session_id, cause)
     task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
 
     session = SessionManager(temp_db).get(session_id)
@@ -596,6 +623,29 @@ def test_the_python_shield_and_the_sql_guard_state_the_same_rule(
     sql_shields = _claim(temp_db, task.id) == session_id
 
     assert python_shields == sql_shields
+
+
+def test_sweep_reclaims_a_claim_whose_marker_names_no_speculative_writer(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """A fresh created_at is not on its own evidence of a contest.
+
+    session_variables is a shared store, so any writer can leave an object with
+    a created_at under this key. Only the two SessionStart guesses put a claim
+    in doubt; anything else is a dead owner whose claim releases now rather than
+    in 24 hours (#20837).
+    """
+    session_id = str(uuid.uuid4())
+    _make_session(temp_db, sample_project, session_id, "expired", tmux_pane="%20")
+    record_contested_terminal_expiry(temp_db, session_id, "context_reuse")
+    _rewrite_contested_cause(temp_db, session_id, "inactivity")
+    task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
+
+    reclaimed = sweep_stale_claims(temp_db, project_id=sample_project["id"])
+
+    assert reclaimed >= 1
+    assert _claim(temp_db, task.id) is None
 
 
 def test_sweep_reclaims_a_claim_held_by_an_expired_non_terminal_session(

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 from gobby.utils.datetime import parse_stored_datetime
 
@@ -31,6 +31,11 @@ CONTESTED_TERMINAL_EXPIRY_VARIABLE = "contested_terminal_expiry"
 # one's, so the reused-context scan expired it.
 # parent_registration: a child session registered under this one as its parent.
 ContestedExpiryCause = Literal["context_reuse", "parent_registration"]
+
+# session_variables is a shared store, so a fresh created_at under this key is
+# not on its own evidence of a contest. Only a cause naming one of the two
+# speculative writers is, and both shields check the name against this set.
+CONTESTED_EXPIRY_CAUSES: frozenset[str] = frozenset(get_args(ContestedExpiryCause))
 
 
 def contested_expiry_payload(cause: ContestedExpiryCause, recorded_at: datetime) -> dict[str, str]:
@@ -42,12 +47,16 @@ def contested_expiry_recorded_at(variables: Mapping[str, Any] | None) -> datetim
     """Return when a speculative expiry marked this session, if one did.
 
     Returns None for a session with no marker, which is every session expired
-    by a writer that knew the session was finished.
+    by a writer that knew the session was finished, and for a marker whose cause
+    names neither speculative writer.
     """
     if not isinstance(variables, Mapping):
         return None
     payload = variables.get(CONTESTED_TERMINAL_EXPIRY_VARIABLE)
     if not isinstance(payload, Mapping):
+        return None
+    cause = payload.get("cause")
+    if not isinstance(cause, str) or cause not in CONTESTED_EXPIRY_CAUSES:
         return None
     recorded_at = payload.get("created_at")
     if not isinstance(recorded_at, str):
@@ -61,6 +70,7 @@ def contested_expiry_recorded_at(variables: Mapping[str, Any] | None) -> datetim
 
 
 __all__ = [
+    "CONTESTED_EXPIRY_CAUSES",
     "CONTESTED_TERMINAL_EXPIRY_VARIABLE",
     "ContestedExpiryCause",
     "contested_expiry_payload",
