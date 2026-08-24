@@ -205,6 +205,14 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "5970bfeb313dbd58545c3d4ebe824f2de8d6e140ecec4fc6e02f0078856f6231",
         sql: include_str!("../../assets/schema/migrations/403_interactive_overlay_principal.sql"),
     },
+    EmbeddedMigration {
+        version: 404,
+        filename: "404_scope_rotation_sweep_to_managed_principals.sql",
+        checksum: "76976c81b1bf18bab99fc158aa9bdc1ad043dea2b53e7d024450b0f6c4e543a3",
+        sql: include_str!(
+            "../../assets/schema/migrations/404_scope_rotation_sweep_to_managed_principals.sql"
+        ),
+    },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 

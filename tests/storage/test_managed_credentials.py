@@ -433,6 +433,80 @@ def test_rotation_race_creates_one_successor_and_drains_the_predecessor(
         manager.close()
 
 
+def test_rotation_sweep_leaves_interactive_principals_to_their_own_path(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    """The generic sweep must not rotate a principal that owns a rotation path.
+
+    rotate_interactive_principal drains the predecessor before creating the
+    successor, carries the deployment token, mints a `gobby_ix_*` role and
+    stores the password. rotate_principal does none of that, so a binding it
+    converts is unusable -- and its token-less successor collides with the
+    predecessor on uq_interactive_principal_active, which is what failed
+    reconciliation at every daemon start.
+    """
+    fixture = authorization_fixture
+    manager = _manager(fixture, tmp_path / "managed")
+    store = _secret_store(fixture)
+    token = "5weep5weep5weep0"
+    agent_execution_id = uuid4()
+    try:
+        interactive = manager.issue_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            session_id=fixture.session_id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            secret_store=store,
+        )
+        manager.issue(
+            managed_execution_id=agent_execution_id,
+            owner_kind="agent_run",
+            session_id=fixture.session_id,
+            agent_run_id=fixture.agent_run_id,
+            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+        )
+        aged = [agent_execution_id, interactive.managed_execution_id]
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            admin.execute(
+                f"UPDATE {AUTH_SCHEMA}.principal_bindings "
+                "SET issued_at = NOW() - INTERVAL '46 minutes', "
+                "expires_at = NOW() + INTERVAL '10 minutes' "
+                "WHERE managed_execution_id = ANY(%s)",
+                (aged,),
+            )
+            due = admin.execute(
+                f"SELECT managed_execution_id FROM {AUTH_SCHEMA}.principals_due_for_rotation(%s)",
+                (fixture.machine_id,),
+            ).fetchall()
+
+        due_ids = {UUID(str(row[0])) for row in due}
+        assert agent_execution_id in due_ids
+        assert interactive.managed_execution_id not in due_ids
+
+        rotated = {str(credential.managed_execution_id) for credential in manager.rotate_due()}
+
+        assert str(agent_execution_id) in rotated
+        assert str(interactive.managed_execution_id) not in rotated
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            surviving = admin.execute(
+                "SELECT role_name, deployment_token, credential_generation "
+                f"FROM {AUTH_SCHEMA}.principal_bindings "
+                "WHERE managed_execution_id = %s AND revoked_at IS NULL",
+                (interactive.managed_execution_id,),
+            ).fetchall()
+        assert surviving == [(interactive.role_name, token, interactive.credential_generation)]
+    finally:
+        manager.revoke(agent_execution_id, reason="test-cleanup")
+        manager.revoke_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            reason="test-cleanup",
+        )
+        manager.close()
+        store.db.close()
+
+
 def test_restart_reconcile_revokes_expired_role_with_a_live_connection(
     authorization_fixture: AuthorizationFixture,
     tmp_path: Path,
