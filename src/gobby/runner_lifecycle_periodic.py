@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -12,6 +13,7 @@ from gobby.config.wiki import WikiConfig, WikiRootConfig
 from gobby.gwiki_gateway import INTERACTIVE_GWIKI_TIMEOUT_SECONDS, GwikiGateway
 from gobby.runner_lifecycle_startup import StartupTracker
 from gobby.telemetry.loop_lag import loop_lag_watchdog
+from gobby.telemetry.loop_stack_sampler import LoopStackSampler
 from gobby.wiki.update_coordinator import WikiUpdateCoordinator
 from gobby.wiki.watcher import WikiWatcher, WikiWatchScope
 
@@ -230,11 +232,18 @@ def start_periodic_tasks(
         ),
         name="metrics-archive",
     )
-    # Report loop stalls with the tasks that were live for them. Without this
-    # the daemon cannot say what stopped it scheduling: sample(1) collapses
-    # Python frames and py-spy needs root on macOS (#20841).
+    # Report loop stalls with the tasks that were live for them, and with the
+    # Python stacks the loop thread actually spent the gap in. Without this the
+    # daemon cannot say what stopped it scheduling: sample(1) collapses Python
+    # frames and py-spy needs root on macOS (#20841). The sampler runs on its
+    # own thread, so it keeps reporting while the loop refuses to yield.
+    runner._loop_stack_sampler = LoopStackSampler(threading.get_ident())
+    runner._loop_stack_sampler.start()
     runner._loop_lag_task = asyncio.create_task(
-        loop_lag_watchdog(lambda: runner._shutdown_requested),
+        loop_lag_watchdog(
+            lambda: runner._shutdown_requested,
+            stack_sampler=runner._loop_stack_sampler,
+        ),
         name="loop-lag-watchdog",
     )
     services = getattr(getattr(runner, "http_server", None), "services", None)

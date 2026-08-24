@@ -31,6 +31,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from types import FrameType
 
+from gobby.telemetry.loop_stack_sampler import LoopStackSampler
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_THRESHOLD_SECONDS = 1.0
@@ -45,6 +47,8 @@ MAX_CHAIN_FRAMES = 60
 MAX_TRACE_FRAMES = 10
 # A task can finish between the diff and the trace scan a moment later.
 GONE = "<no longer live>"
+# Enough to show where the time concentrated without printing a profile.
+MAX_REPORTED_STACKS = 3
 
 
 @dataclass(frozen=True)
@@ -57,6 +61,7 @@ class LoopLagReport:
     started: list[tuple[str, str]] = field(default_factory=list)
     ended: list[str] = field(default_factory=list)
     bystanders: list[str] = field(default_factory=list)
+    hot_stacks: list[tuple[str, int]] = field(default_factory=list)
 
     def render(self) -> str:
         head = (
@@ -64,6 +69,15 @@ class LoopLagReport:
             f"(threshold {self.threshold_seconds:.2f}s)"
         )
         parts = []
+        if self.hot_stacks:
+            total = sum(count for _, count in self.hot_stacks)
+            parts.append(
+                f"hot loop-thread stacks ({total} samples): "
+                + "; ".join(
+                    f"[{count} samples, {100 * count / total:.0f}%] {stack}"
+                    for stack, count in self.hot_stacks[:MAX_REPORTED_STACKS]
+                )
+            )
         if self.advanced:
             parts.append("ran during the stall: " + _render_positions(self.advanced))
         if self.ended:
@@ -231,6 +245,7 @@ async def loop_lag_watchdog(
     rearm_seconds: float = DEFAULT_REARM_SECONDS,
     on_lag: Callable[[LoopLagReport], None] | None = None,
     sleep: Callable[[float], Awaitable[None]] | None = None,
+    stack_sampler: LoopStackSampler | None = None,
 ) -> None:
     """Watch the loop's scheduling delay and report every stall past the threshold."""
     loop = asyncio.get_running_loop()
@@ -246,6 +261,9 @@ async def loop_lag_watchdog(
             else:
                 await asyncio.sleep(poll_seconds)
             lag = max(0.0, loop.time() - before - poll_seconds)
+            # Drain every cycle so a report carries only the gap's own samples,
+            # never the quiet minutes that preceded it.
+            hot_stacks = stack_sampler.drain() if stack_sampler is not None else []
             positions_after = _snapshot_positions(self_task)
             moved = _diff_positions(positions_before, positions_after)
             positions_before = positions_after
@@ -266,6 +284,7 @@ async def loop_lag_watchdog(
                 ],
                 ended=moved.ended[:MAX_REPORTED_TASKS],
                 bystanders=moved.bystanders,
+                hot_stacks=hot_stacks,
             )
             if on_lag is not None:
                 on_lag(report)

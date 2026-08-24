@@ -210,6 +210,13 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
         "_wiki_watcher_task",
     )
 
+    # Retire the loop-stack sampler thread before the loop goes away, so it
+    # cannot sample a thread that is on its way out.
+    loop_stack_sampler = getattr(runner, "_loop_stack_sampler", None)
+    if loop_stack_sampler is not None:
+        loop_stack_sampler.stop()
+        runner._loop_stack_sampler = None
+
     code_index_shutdown = getattr(runner, "_code_index_shutdown", None)
     if code_index_shutdown is not None:
         code_index_shutdown.set()

@@ -13,6 +13,7 @@ report itself is the signal the test waits on.
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 
 import pytest
@@ -23,6 +24,7 @@ from gobby.telemetry.loop_lag import (
     loop_lag_watchdog,
     measure_loop_lag,
 )
+from gobby.telemetry.loop_stack_sampler import LoopStackSampler
 
 pytestmark = pytest.mark.unit
 
@@ -339,3 +341,66 @@ async def test_quiet_polls_cost_nothing_beyond_the_position_scan(
     assert cycles == 10
     assert reports == [], "no stall was created"
     assert calls == 0, f"quiet polls must not build traces; built them {calls} times"
+
+
+async def test_a_stall_report_carries_the_hot_python_stack_when_sampling() -> None:
+    """A stall spread over ordinary Python needs frames, not just a task name.
+
+    The daemon's worst stalls have no single blocking call to name -- their cost
+    is spread across dict work, isinstance checks and GC. What identifies them
+    is the Python stack the loop thread spent that time in, which only an
+    off-loop sampler can see.
+    """
+    reports: list[LoopLagReport] = []
+    stop = asyncio.Event()
+    reported = asyncio.Event()
+    released = asyncio.Event()
+    start_burning = asyncio.Event()
+
+    def record(report: LoopLagReport) -> None:
+        reports.append(report)
+        reported.set()
+
+    def burn_in_a_named_frame() -> None:
+        burn(0.5)
+
+    async def hog_the_loop() -> None:
+        await start_burning.wait()
+        burn_in_a_named_frame()
+        await released.wait()
+
+    cycles = 0
+
+    async def pace(_seconds: float) -> None:
+        nonlocal cycles
+        cycles += 1
+        if cycles == 2:
+            start_burning.set()
+        await yield_to_loop()
+
+    sampler = LoopStackSampler(threading.get_ident(), interval_seconds=0.002)
+    sampler.start()
+    watchdog = asyncio.create_task(
+        loop_lag_watchdog(
+            stop.is_set,
+            threshold_seconds=0.2,
+            poll_seconds=0.01,
+            on_lag=record,
+            sleep=pace,
+            stack_sampler=sampler,
+        )
+    )
+    hog = asyncio.create_task(hog_the_loop(), name="hog-the-loop")
+    try:
+        await asyncio.wait_for(reported.wait(), timeout=WATCHDOG_TIMEOUT_SECONDS)
+    finally:
+        stop.set()
+        released.set()
+        await asyncio.gather(watchdog, hog)
+        sampler.stop()
+
+    rendered = reports[0].render()
+    assert "burn_in_a_named_frame" in rendered, (
+        f"the report must name the frame the loop thread burned in; got {rendered!r}"
+    )
+    assert "hot loop-thread stacks" in rendered
