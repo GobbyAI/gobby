@@ -274,6 +274,26 @@ RULE_CASES = (
         allowed=('git commit -m "docs: brew install steps"',),
     ),
     RuleCase(
+        "no-npm-publish",
+        blocked=("npm publish",),
+        allowed=('echo "npm publish"',),
+    ),
+    RuleCase(
+        "no-twine-upload",
+        blocked=("twine upload dist/*",),
+        allowed=('echo "twine upload"',),
+    ),
+    RuleCase(
+        "no-cargo-publish",
+        blocked=("cargo publish", "cargo +nightly publish"),
+        allowed=('echo "cargo publish"',),
+    ),
+    RuleCase(
+        "no-gem-push",
+        blocked=("gem push pkg-1.0.0.gem",),
+        allowed=('echo "gem push"',),
+    ),
+    RuleCase(
         "no-external-github-issues",
         blocked=(
             "gh issue create --repo octo/hello --title Bug",
