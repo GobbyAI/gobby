@@ -25,6 +25,7 @@ from typing import IO
 
 import pytest
 
+from gobby.adapters.codex_impl.client_lifecycle import stop
 from gobby.adapters.codex_impl.client_rpc import read_loop
 from gobby.adapters.subprocess_stderr import SubprocessStderrDrain
 from gobby.servers.routes.admin._health import create_health_router
@@ -151,6 +152,36 @@ async def test_a_quiet_codex_read_loop_leaves_the_default_executor_free(
         quiet_pipe.release_readers()
         await asyncio.gather(task, return_exceptions=True)
         stream.close()
+
+
+async def test_reaping_a_stubborn_codex_child_leaves_the_default_executor_free(
+    default_executor_with_one_thread: None,
+) -> None:
+    """A child that ignores SIGTERM holds its own thread for the five-second wait."""
+    exited = threading.Event()
+    process = SimpleNamespace(
+        terminate=lambda: None,
+        kill=exited.set,
+        wait=lambda: exited.wait(),
+        stdin=None,
+        stdout=None,
+        stderr=None,
+    )
+    client = SimpleNamespace(
+        _shutdown_event=asyncio.Event(),
+        _reader_task=None,
+        _incoming_request_tasks=[],
+        _process=process,
+        _stderr_drain=SubprocessStderrDrain("codex-app-server"),
+        _pending_requests_lock=threading.Lock(),
+        _pending_requests={},
+    )
+    stopping = asyncio.create_task(stop(client))  # type: ignore[arg-type]
+    try:
+        await assert_default_executor_still_answers()
+    finally:
+        exited.set()
+        await asyncio.gather(stopping, return_exceptions=True)
 
 
 async def test_liveness_answers_while_the_default_executor_is_exhausted(

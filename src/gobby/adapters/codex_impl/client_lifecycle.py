@@ -8,6 +8,7 @@ import os
 from typing import TYPE_CHECKING, Any
 
 from gobby.adapters.codex_impl.types import CodexConnectionState
+from gobby.utils.stream_pump import open_stream_pump_executor
 
 if TYPE_CHECKING:
     from gobby.adapters.codex_impl.client import CodexAppServerClient
@@ -125,7 +126,14 @@ async def stop(client: CodexAppServerClient) -> None:
             try:
                 process.terminate()
                 loop = asyncio.get_running_loop()
-                await asyncio.wait_for(loop.run_in_executor(None, process.wait), timeout=5.0)
+                # A child that ignores SIGTERM holds this wait for the full
+                # five seconds, and every failed start() runs it too. Keep it
+                # off the shared default executor (#20839).
+                reaper = open_stream_pump_executor("codex-wait")
+                try:
+                    await asyncio.wait_for(loop.run_in_executor(reaper, process.wait), timeout=5.0)
+                finally:
+                    reaper.shutdown(wait=False)
             except Exception as e:
                 logger.warning("Error terminating Codex app-server: %s", e)
                 process.kill()
