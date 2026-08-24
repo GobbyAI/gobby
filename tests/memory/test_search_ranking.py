@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
+from unittest.mock import patch
 
 import pytest
 
@@ -793,6 +795,39 @@ async def test_embed_text_absent_preserves_yake_path() -> None:
     assert [text for text, _ in embedded] == [expected, expected, expected]
     assert all(is_query for _, is_query in embedded)
     assert keyword_queries == [_NOISY_PROMPT] * 3
+
+
+@pytest.mark.asyncio
+async def test_yake_extraction_runs_off_the_event_loop_thread() -> None:
+    """#20868: YAKE is CPU-bound, so `search()` must run it in a worker thread.
+
+    Records the thread identity inside the extraction and asserts it differs
+    from the event loop thread, while the extraction result still drives the
+    embedding exactly as before the offload.
+    """
+    import gobby.memory.services.search as search_module
+    from gobby.search.keywords import extract_keywords as real_extract
+
+    extraction_threads: list[int] = []
+
+    def recording_extract(text: str) -> str | None:
+        extraction_threads.append(threading.get_ident())
+        return real_extract(text)
+
+    embedded: list[tuple[str, bool]] = []
+    keyword_queries: list[str] = []
+    service = _recorded_search_service(embedded=embedded, keyword_queries=keyword_queries)
+
+    with patch.object(search_module, "extract_keywords", recording_extract):
+        await service.search(_NOISY_PROMPT, limit=1)
+
+    assert extraction_threads, "keyword extraction never ran"
+    assert extraction_threads[0] != threading.get_ident(), (
+        "YAKE extraction ran on the event loop thread"
+    )
+    # Offloading must not change what the vector leg embeds.
+    assert embedded == [(real_extract(_NOISY_PROMPT), True)]
+    assert keyword_queries == [_NOISY_PROMPT]
 
 
 @pytest.mark.asyncio
