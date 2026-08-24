@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Mapping
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
@@ -76,6 +77,31 @@ def past_terminal_revival_horizon(session: Session) -> bool:
         session.session_type == "terminal"
         and session.status == "expired"
         and session.updated_at < utc_now() - timedelta(hours=SESSION_REVIVAL_HORIZON_HOURS)
+    )
+
+
+def is_contestable_terminal_expiry(session: Session) -> bool:
+    """Report whether this session's expiry may still be reversed by pane ownership.
+
+    SessionStart expires every terminal session sharing a reused terminal context
+    before anything validates who owns the pane, so an expired status here can
+    simply be wrong. ``revive_expired_terminal_session`` settles the contest
+    afterwards and routinely reverses it. Until it does, treat the owner as live:
+    a session in this state is working, not dead.
+
+    Only a session carrying a tmux pane can be in that contest, and only until the
+    revival horizon passes -- which is what keeps an ordinary expiry sweepable.
+    ``release_task_claim`` enforces the same rule in SQL so its release stays a
+    single compare-and-set.
+    """
+    terminal_context = session.terminal_context
+    pane = terminal_context.get("tmux_pane") if isinstance(terminal_context, Mapping) else None
+    return (
+        session.session_type == "terminal"
+        and session.status == "expired"
+        and isinstance(pane, str)
+        and bool(pane.strip())
+        and not past_terminal_revival_horizon(session)
     )
 
 

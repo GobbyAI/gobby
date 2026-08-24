@@ -8,7 +8,10 @@ from dataclasses import dataclass
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
-from gobby.storage.sessions._constants import LIVE_SESSION_STATUSES
+from gobby.storage.sessions._constants import (
+    LIVE_SESSION_STATUSES,
+    is_contestable_terminal_expiry,
+)
 from gobby.storage.tasks._manager import LocalTaskManager
 from gobby.storage.tasks._transitions import (
     escalate_task_if_owned,
@@ -70,7 +73,13 @@ def recover_expired_live_session_claims(
             )
             session = None
             session_lookup_failed = True
-        if session is not None and session.status in _LIVE_OWNER_STATUSES:
+        if session is not None and (
+            session.status in _LIVE_OWNER_STATUSES or is_contestable_terminal_expiry(session)
+        ):
+            # Recovery costs more here than a claim release does: a dirty task is
+            # escalated and _clear_claim_variables pops the attribution #20789
+            # keeps across every other claim release. Revival restores neither, so
+            # an expiry that pane ownership can still reverse is not a dead owner.
             continue
 
         try:

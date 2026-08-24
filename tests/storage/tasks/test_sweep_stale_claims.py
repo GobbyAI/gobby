@@ -3,21 +3,29 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import patch
 
 import pytest
 
+from gobby.hooks.event_handlers._session_start.terminal_runtime import (
+    expire_stale_terminal_sessions_for_context,
+)
 from gobby.sessions.compact_continuation import mark_compact_self_continuation_pending
 from gobby.sessions.compact_markers import (
     COMPACT_SELF_CONTINUE_FRESH_SECONDS,
     COMPACT_SELF_CONTINUE_VARIABLE,
 )
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._constants import SESSION_REVIVAL_HORIZON_HOURS
 from gobby.storage.tasks._automation import list_automation_candidates, sweep_stale_claims
 from gobby.storage.tasks._manager import LocalTaskManager
 from gobby.storage.tasks._models import Isolation, Task
+from gobby.terminal_ownership import PaneOwnershipDecision, resolve_pane_ownership
 from tests.storage.tasks._stage_test_helpers import (
     create_task,
     initialize_manifest,
@@ -28,6 +36,44 @@ from tests.storage.tasks._stage_test_helpers import (
 pytestmark = pytest.mark.unit
 
 SESS_DEAD = str(uuid.uuid4())
+MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+_OUTER_PID = 4100
+_INNER_PID = 4200
+_PROCESS_CREATE_TIME = 100.0
+
+
+class _NestedProcess:
+    """A pid whose ancestry models a CLI invoked from inside another CLI."""
+
+    def __init__(self, pid: int) -> None:
+        self.pid = pid
+
+    def create_time(self) -> float:
+        return _PROCESS_CREATE_TIME
+
+    def parents(self) -> list[object]:
+        return [SimpleNamespace(pid=_OUTER_PID)] if self.pid == _INNER_PID else []
+
+
+@pytest.fixture
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", MACHINE_ID):
+        yield
+
+
+def _nested_process_resolve(
+    sessions: list[object],
+    *,
+    requested_session_id: str | None = None,
+) -> PaneOwnershipDecision:
+    """Resolve ownership for real against a faked process tree, not a faked verdict."""
+    return resolve_pane_ownership(
+        sessions,
+        requested_session_id=requested_session_id,
+        process_factory=_NestedProcess,
+        process_group_factory=lambda pid: pid,
+        foreground_group_factory=lambda pid: pid,
+    )
 
 
 def _make_session(
@@ -57,7 +103,7 @@ def _make_session(
         (
             session_id,
             f"ext-{session_id[:8]}",
-            "21000000-0000-4000-8000-000000000001",
+            MACHINE_ID,
             "claude",
             sample_project["id"],
             status,
@@ -298,22 +344,65 @@ def test_sweep_keeps_a_claim_held_by_a_freshly_expired_terminal_session(
     assert _claim(temp_db, task.id) == session_id
 
 
-def test_a_revived_terminal_session_still_holds_the_claim_it_started_with(
+def test_a_nested_cli_start_leaves_the_outer_sessions_claim_intact(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    _local_machine_identity: None,
 ) -> None:
-    """The full cascade: claim, speculative expiry, sweep, revival."""
-    session_id = str(uuid.uuid4())
-    _make_session(temp_db, sample_project, session_id, "active", tmux_pane="%20")
-    task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
+    """The full cascade, driven through the real lifecycle paths.
 
-    # SessionStart expires the pane's previous owner on context reuse.
-    temp_db.execute("UPDATE sessions SET status = 'expired' WHERE id = %s", (session_id,))
-    sweep_stale_claims(temp_db, project_id=sample_project["id"])
-    # Ownership reconciliation then finds this session was the real owner.
-    temp_db.execute("UPDATE sessions SET status = 'active' WHERE id = %s", (session_id,))
+    A nested CLI registers on the pane its parent already owns, SessionStart
+    expires the parent speculatively, the dispatcher sweeps, and ownership
+    reconciliation then names the outer process the owner. The claim the outer
+    session started with has to survive all four steps.
+    """
+    manager = SessionManager(temp_db)
+    outer_context = {
+        "tmux_pane": "%20",
+        "tmux_socket_path": "/tmp/tmux-501/default",
+        "parent_pid": _OUTER_PID,
+        "parent_create_time": _PROCESS_CREATE_TIME,
+    }
+    outer = manager.register(
+        external_id="outer-cli",
+        machine_id=MACHINE_ID,
+        source="claude",
+        project_id=sample_project["id"],
+        terminal_context=outer_context,
+    )
+    task = _claimed_task(temp_db, sample_project, claimed_by=outer.id)
 
-    assert _claim(temp_db, task.id) == session_id
+    inner_context = {**outer_context, "parent_pid": _INNER_PID}
+    inner = manager.register(
+        external_id="inner-cli",
+        machine_id=MACHINE_ID,
+        source="claude",
+        project_id=sample_project["id"],
+        terminal_context=inner_context,
+    )
+    expire_stale_terminal_sessions_for_context(
+        SimpleNamespace(_session_manager=manager, logger=logging.getLogger(__name__)),
+        session_id=inner.id,
+        project_id=sample_project["id"],
+        terminal_context=inner_context,
+    )
+    expired = manager.get(outer.id)
+    assert expired is not None
+    assert expired.status == "expired"
+
+    reclaimed = sweep_stale_claims(temp_db, project_id=sample_project["id"])
+
+    monkeypatch.setattr(
+        "gobby.storage.sessions._terminal_revival.resolve_pane_ownership",
+        _nested_process_resolve,
+    )
+    revived = manager.revive_expired_terminal_session(outer.id)
+
+    assert reclaimed == 0
+    assert revived is not None
+    assert revived.status == "active"
+    assert _claim(temp_db, task.id) == outer.id
 
 
 def test_sweep_reclaims_a_claim_held_by_an_expired_non_terminal_session(
