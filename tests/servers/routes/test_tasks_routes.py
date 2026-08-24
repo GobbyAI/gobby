@@ -16,6 +16,7 @@ from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
 from gobby.servers.routes.tasks_assignment import MailboxService
+from gobby.storage.hub._ambient import ambient_transaction
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.task_affected_files import TaskAffectedFileManager
@@ -421,6 +422,38 @@ class TestListTasks:
             c = TestClient(server.app)
             response = c.get("/api/tasks")
         assert response.status_code == 400
+
+    def test_list_reads_the_page_and_its_total_from_one_snapshot(
+        self,
+        client: TestClient,
+        task_manager: LocalTaskManager,
+        two_tasks: tuple[dict[str, Any], dict[str, Any]],
+    ) -> None:
+        """A close landing between the page and the count drifts the UI's total.
+
+        Both reads join the route's ambient transaction, so the count seeing one
+        is what proves it shares the page's snapshot (#20870 F2).
+        """
+        seen: list[object] = []
+        real_count = task_manager.count_tasks
+
+        def counting(**kwargs: Any) -> int:
+            seen.append(ambient_transaction(task_manager.db))
+            return real_count(**kwargs)
+
+        with patch.object(task_manager, "count_tasks", side_effect=counting):
+            response = client.get("/api/tasks")
+
+        assert response.status_code == 200
+        assert len(seen) == 1
+        assert seen[0] is not None, "the total was counted outside the page's snapshot"
+
+    def test_list_rejects_an_unrecognized_sort_by(self, client: TestClient) -> None:
+        """`?sort_by=` is unvalidated user input, so a typo is a 400, not a 500."""
+        response = client.get("/api/tasks?sort_by=nonsense")
+
+        assert response.status_code == 400
+        assert "sort_by" in response.json()["detail"]
 
     def test_list_stats_counts(self, client: TestClient, sample_task: dict) -> None:
         response = client.get("/api/tasks")

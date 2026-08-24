@@ -25,6 +25,7 @@ from gobby.storage.tasks._models import (
     TaskNotFoundError,
     validate_task_type,
 )
+from gobby.storage.tasks._queries import task_read_snapshot
 from gobby.storage.tasks._stage_types import StageState
 from gobby.storage.tasks._stage_views import stage_state_view
 from gobby.tasks.isolation import validate_task_isolation_artifacts
@@ -320,38 +321,40 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             if stage_state is not None and not stage_filters:
                 raise HTTPException(status_code=400, detail="stage_state requires stage")
 
-            tasks = await server.run_db(
-                server.task_manager.list_tasks,
-                project_id=resolved_project,
-                current_stage_state=current_stage_state,
-                priority=priority,
-                task_type=task_type,
-                claimed=claimed,
-                closed=closed,
-                label=label,
-                parent_task_id=parent_task_id,
-                title_like=search,
-                stages=stage_filters,
-                stage_state=stage_state,
-                limit=limit,
-                offset=offset,
-                sort_by=sort_by,
-                sort_order=sort_order,
-            )
-            total = await server.run_db(
-                server.task_manager.count_tasks,
-                project_id=resolved_project,
-                current_stage_state=current_stage_state,
-                priority=priority,
-                claimed=claimed,
-                closed=closed,
-                task_type=task_type,
-                label=label,
-                parent_task_id=parent_task_id,
-                title_like=search,
-                stages=stage_filters,
-                stage_state=stage_state,
-            )
+            filters: dict[str, Any] = {
+                "project_id": resolved_project,
+                "current_stage_state": current_stage_state,
+                "priority": priority,
+                "task_type": task_type,
+                "claimed": claimed,
+                "closed": closed,
+                "label": label,
+                "parent_task_id": parent_task_id,
+                "title_like": search,
+                "stages": stage_filters,
+                "stage_state": stage_state,
+            }
+
+            def _page_and_total() -> tuple[list[Task], int]:
+                """Read the page and its total from one snapshot.
+
+                Two transactions let a close land between them, so the page
+                shrinks while ``total`` still counts the task and the UI's
+                load-more drifts (#20870 F2).
+                """
+                with task_read_snapshot(server.task_manager.db):
+                    return (
+                        server.task_manager.list_tasks(
+                            **filters,
+                            limit=limit,
+                            offset=offset,
+                            sort_by=sort_by,
+                            sort_order=sort_order,
+                        ),
+                        server.task_manager.count_tasks(**filters),
+                    )
+
+            tasks, total = await server.run_db(_page_and_total)
 
             task_dicts = [t.to_brief() for t in tasks]
             if include_stages or stage_filters or stage_state is not None:

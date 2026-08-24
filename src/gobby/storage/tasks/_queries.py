@@ -7,9 +7,12 @@ This module provides query operations for listing and filtering tasks:
 - list_workflow_tasks: Tasks associated with a workflow
 """
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub._ambient import ambient_transaction
+from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.sql_dialect import json_array_contains_condition
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._models import Task, task_type_filter_values
@@ -243,6 +246,13 @@ def list_tasks(
         "created_at": "created_at",
         "priority": "priority",
     }
+    if sort_by not in valid_sorts:
+        # sort_by arrives unvalidated from ?sort_by=, and the route turns a
+        # ValueError into a 400. A KeyError would reach the client as a 500.
+        raise ValueError(
+            f"Unknown sort_by {sort_by!r}; expected one of: hierarchy, "
+            + ", ".join(sorted(valid_sorts))
+        )
     order_clause = valid_sorts[sort_by]
     direction = "DESC" if sort_order.lower() == "desc" else "ASC"
     query = (
@@ -282,47 +292,84 @@ def _hierarchy_page(
     most -- under four concurrent listings the loop thread spent 95.5% of its
     samples in take_gil, because that conversion runs on the shared db executor
     (#20840, #20846).
+
+    All five reads share one snapshot. Three independent transactions let a
+    delete land between the projection and the page fetch, which drops the
+    vanished ids and silently shortens the page while the caller's separate
+    ``count_tasks`` still reports the old total (#20870 F2). Callers that want
+    the page and the total to agree open their own snapshot around both; this
+    one is inherited.
     """
-    key_rows = db.fetchall(
-        f"SELECT id, parent_task_id, priority, created_at FROM tasks WHERE {where}",
-        tuple(params),
-    )
-    if not key_rows:
-        return []
-
-    # Only edges whose blocked end is in the filtered set can reorder it, and
-    # order_task_keys ignores blockers outside a task's own sibling group.
-    edge_rows = db.fetchall(
-        "SELECT task_id, depends_on FROM task_dependencies"
-        f" WHERE dep_type = 'blocks' AND task_id IN (SELECT id FROM tasks WHERE {where})",
-        tuple(params),
-    )
-    blockers: dict[str, list[str]] = {}
-    for edge in edge_rows:
-        blockers.setdefault(str(edge["task_id"]), []).append(str(edge["depends_on"]))
-
-    keys = [
-        TaskOrderKey(
-            id=str(row["id"]),
-            parent_task_id=str(row["parent_task_id"]) if row["parent_task_id"] else None,
-            priority=row["priority"],
-            created_at=row["created_at"],
-            blocked_by=tuple(blockers.get(str(row["id"]), ())),
+    with task_read_snapshot(db):
+        # order_task_keys breaks (priority, created_at) ties by input order, so
+        # without this ORDER BY the tie-break is Postgres heap order. Ties are
+        # the common case -- priority defaults to 2 and created_at is the
+        # transaction timestamp, so siblings applied in one expansion carry a
+        # byte-identical key -- and a non-HOT update between two pages would
+        # then show a task twice or not at all (#20870 F1).
+        key_rows = db.fetchall(
+            f"SELECT id, parent_task_id, priority, created_at FROM tasks WHERE {where}"
+            " ORDER BY priority ASC, created_at ASC, id ASC",
+            tuple(params),
         )
-        for row in key_rows
-    ]
-    ordered_ids = order_task_keys(keys)
-    page_ids = ordered_ids[offset : offset + limit] if limit else ordered_ids[offset:]
-    if not page_ids:
-        return []
+        if not key_rows:
+            return []
 
-    rows = db.fetchall("SELECT * FROM tasks WHERE id = ANY(%s)", (page_ids,))
-    by_id = {str(row["id"]): Task.from_row(row) for row in rows}
-    # ANY() does not preserve argument order, so re-impose the page's own.
-    tasks = [by_id[task_id] for task_id in page_ids if task_id in by_id]
-    hydrate_task_stage_state(db, tasks)
-    hydrate_task_blocking_state(db, tasks)
-    return tasks
+        # Only edges whose blocked end is in the filtered set can reorder it, and
+        # order_task_keys ignores blockers outside a task's own sibling group.
+        edge_rows = db.fetchall(
+            "SELECT task_id, depends_on FROM task_dependencies"
+            f" WHERE dep_type = 'blocks' AND task_id IN (SELECT id FROM tasks WHERE {where})",
+            tuple(params),
+        )
+        blockers: dict[str, list[str]] = {}
+        for edge in edge_rows:
+            blockers.setdefault(str(edge["task_id"]), []).append(str(edge["depends_on"]))
+
+        keys = [
+            TaskOrderKey(
+                id=str(row["id"]),
+                parent_task_id=str(row["parent_task_id"]) if row["parent_task_id"] else None,
+                priority=row["priority"],
+                created_at=row["created_at"],
+                blocked_by=tuple(blockers.get(str(row["id"]), ())),
+            )
+            for row in key_rows
+        ]
+        ordered_ids = order_task_keys(keys)
+        page_ids = ordered_ids[offset : offset + limit] if limit else ordered_ids[offset:]
+        if not page_ids:
+            return []
+
+        rows = db.fetchall("SELECT * FROM tasks WHERE id = ANY(%s)", (page_ids,))
+        by_id = {str(row["id"]): Task.from_row(row) for row in rows}
+        # ANY() does not preserve argument order, so re-impose the page's own.
+        tasks = [by_id[task_id] for task_id in page_ids if task_id in by_id]
+        hydrate_task_stage_state(db, tasks)
+        hydrate_task_blocking_state(db, tasks)
+        return tasks
+
+
+@contextmanager
+def task_read_snapshot(db: HubDatabase) -> Iterator[Transaction]:
+    """Hold one read-only snapshot for a whole task read.
+
+    ``SET TRANSACTION ISOLATION LEVEL`` is only legal as a transaction's first
+    statement, so a read running inside a caller's transaction reads that
+    caller's view rather than redeclaring one. Nested ``db.fetchall`` calls
+    join whichever transaction is ambient, which is what keeps the hydration
+    helpers on the snapshot without threading a connection through them.
+
+    Wrap a page and its total together to make them agree; the hierarchy page
+    inherits the snapshot rather than opening a second one.
+    """
+    ambient = ambient_transaction(db)
+    if ambient is not None:
+        yield ambient
+        return
+    with db.transaction() as transaction:
+        transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        yield transaction
 
 
 def _ready_tasks_cte_sql() -> str:
