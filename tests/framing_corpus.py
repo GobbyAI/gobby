@@ -62,6 +62,7 @@ REDIRECT_RULES = frozenset(
         "require-objc-skill",
         "require-php-skill",
         "require-plan-skill",
+        "require-pytest-guard-env",
         "require-python-skill",
         "require-restraint-skill",
         "require-ruby-skill",
