@@ -922,6 +922,80 @@ _RED_PYTEST_OUTPUT = (
     "EXIT=0\n"
 )
 
+# Real shape of a PASSING `gobby test-types audit` ratchet over a non-empty
+# baseline: the headline "Errors:" counts every baselined finding, and
+# "Files scanned: 2\nErrors: 10" is one newline-crossing match away from
+# reading as "2 errors" (#20880's misfiled type_check run).
+_PASSING_TEST_TYPES_AUDIT_OUTPUT = (
+    "Test types audit\n"
+    "Files scanned: 2\n"
+    "Errors: 10\n"
+    "Codes: mypy:arg-type=7, mypy:assignment=3\n"
+    "Baseline: loaded (.gobby/test-types-baseline.json)\n"
+    "Baseline mode: diff\n"
+    "New errors: 0\n"
+    "Known baseline errors: 10\n"
+    "Failing new errors >= high: 0\n"
+    "\n"
+    "Ranked files:\n"
+    "    7 tests/mcp_proxy/tools/test_task_expansion_new.py [mypy:arg-type]\n"
+    "    3 tests/tasks/test_validation.py [mypy:assignment]\n"
+)
+
+# The same audit with new errors above the threshold: exit 1, and the ratchet's
+# own failing tally line is the runner-summary proof for wrapper-zeroed runs.
+_FAILING_TEST_TYPES_AUDIT_OUTPUT = (
+    "Test types audit\n"
+    "Files scanned: 2\n"
+    "Errors: 12\n"
+    "Codes: mypy:arg-type=9, mypy:assignment=3\n"
+    "Baseline: loaded (.gobby/test-types-baseline.json)\n"
+    "Baseline mode: diff\n"
+    "New errors: 2\n"
+    "Known baseline errors: 10\n"
+    "Failing new errors >= high: 2\n"
+    "\n"
+    "New failing errors:\n"
+    '  tests/tasks/test_validation.py:41: error: Argument 1 to "close_task" has'
+    ' incompatible type "None"; expected "str" [mypy:arg-type]\n'
+)
+
+# `gobby test-quality audit` with a non-empty baseline shares the shape but says
+# "Issues"; it must stay clean by contract, not by accident of wording (#20880).
+_PASSING_TEST_QUALITY_AUDIT_OUTPUT = (
+    "Test quality audit\n"
+    "Files scanned: 3\n"
+    "Tests scanned: 41\n"
+    "Issues: 6\n"
+    "Severity: high=2, medium=4\n"
+    "Codes: no-assertions=2, mystery-guest=4\n"
+    "Baseline: loaded (.gobby/test-quality-baseline.json)\n"
+    "Baseline mode: diff\n"
+    "New issues: 0\n"
+    "Known baseline issues: 6\n"
+    "Failing new issues >= high: 0\n"
+    "\n"
+    "Known baseline issues:\n"
+    "  HIGH no-assertions tests/tasks/test_validation.py::test_gate:12 - no assertions\n"
+)
+
+_FAILING_TEST_QUALITY_AUDIT_OUTPUT = (
+    "Test quality audit\n"
+    "Files scanned: 3\n"
+    "Tests scanned: 41\n"
+    "Issues: 7\n"
+    "Severity: high=3, medium=4\n"
+    "Codes: no-assertions=3, mystery-guest=4\n"
+    "Baseline: loaded (.gobby/test-quality-baseline.json)\n"
+    "Baseline mode: diff\n"
+    "New issues: 1\n"
+    "Known baseline issues: 6\n"
+    "Failing new issues >= high: 1\n"
+    "\n"
+    "Failing new issues:\n"
+    "  HIGH no-assertions tests/tasks/test_close.py::test_new:9 - no assertions\n"
+)
+
 _RUNNER_FAILURE_OUTPUTS = [
     pytest.param(_RED_PYTEST_OUTPUT, id="pytest-counted-summary"),
     pytest.param("===== 178 errors in 4.90s =====", id="pytest-collection-errors"),
@@ -930,6 +1004,8 @@ _RUNNER_FAILURE_OUTPUTS = [
     pytest.param("--- FAIL: TestThing (0.00s)\nFAIL\tgithub.com/a/b\t0.1s", id="go"),
     pytest.param("Found 2 errors in 1 file (checked 3 source files)", id="mypy"),
     pytest.param("Tests  3 failed | 5 passed (8)", id="vitest"),
+    pytest.param(_FAILING_TEST_TYPES_AUDIT_OUTPUT, id="test-types-ratchet-failing"),
+    pytest.param(_FAILING_TEST_QUALITY_AUDIT_OUTPUT, id="test-quality-ratchet-failing"),
 ]
 
 _CLEAN_OUTPUTS = [
@@ -940,6 +1016,14 @@ _CLEAN_OUTPUTS = [
     pytest.param("Success: no issues found in 1830 source files", id="mypy-clean"),
     pytest.param("New errors: 0\nFailing new errors >= high: 0", id="ratchet-clean"),
     pytest.param("All checks passed!", id="ruff-clean"),
+    pytest.param(
+        _PASSING_TEST_TYPES_AUDIT_OUTPUT,
+        id="test-types-ratchet-passing-with-baselined-errors",
+    ),
+    pytest.param(
+        _PASSING_TEST_QUALITY_AUDIT_OUTPUT,
+        id="test-quality-ratchet-passing-with-baselined-issues",
+    ),
 ]
 
 
@@ -1064,6 +1148,64 @@ async def test_uncompounded_passing_run_is_still_a_success(tmp_path: Path) -> No
     )
 
     assert [(run.outcome, run.exit_code) for run in evidence.validation_runs] == [("success", 0)]
+
+
+_TEST_TYPES_AUDIT_COMMAND = (
+    "uv run gobby test-types audit tests/tasks/test_validation.py "
+    "--baseline .gobby/test-types-baseline.json --fail-on-new"
+)
+
+
+def test_failing_audit_nonzero_exit_stays_a_failure_in_both_trust_modes() -> None:
+    """#20880: a genuinely failing ratchet keeps its exit-1 failure, bare or compound."""
+    for trustworthy in (True, False):
+        outcome, exit_code, _reason = transcript_evidence._extract_outcome(
+            {"exit_code": 1, "stdout": _FAILING_TEST_TYPES_AUDIT_OUTPUT},
+            _FAILING_TEST_TYPES_AUDIT_OUTPUT,
+            aggregate_status_is_trustworthy=trustworthy,
+        )
+        assert (outcome, exit_code) == ("failure", 1)
+
+
+@pytest.mark.asyncio
+async def test_passing_test_types_audit_is_recorded_as_a_successful_type_check(
+    tmp_path: Path,
+) -> None:
+    """#20880: exit 0 with a passing ratchet is a success even for a compound run.
+
+    The audit's headline counts baselined errors ("Errors: 10"), and the compound
+    `cd ... && audit` shape routed that output through the runner-summary rule,
+    filing the passing run as a failing type_check.
+    """
+    transcript = tmp_path / "audit.jsonl"
+    _write_jsonl(
+        transcript,
+        _claude_tool_pair(
+            command=_TEST_TYPES_AUDIT_COMMAND,
+            call_id="audit-bare",
+            start=BASE_TIME,
+            result={"exit_code": 0, "stdout": _PASSING_TEST_TYPES_AUDIT_OUTPUT},
+        )
+        + _claude_tool_pair(
+            command=f"cd /repo && {_TEST_TYPES_AUDIT_COMMAND}",
+            call_id="audit-compound",
+            start=BASE_TIME + timedelta(minutes=1),
+            result={"exit_code": 0, "stdout": _PASSING_TEST_TYPES_AUDIT_OUTPUT},
+        ),
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [(run.categories, run.outcome, run.exit_code) for run in evidence.validation_runs] == [
+        (("type_check",), "success", 0),
+        (("type_check",), "success", 0),
+    ]
 
 
 def _codex_nested_exec_pair(*, command: str, result: dict[str, Any]) -> list[dict[str, Any]]:
