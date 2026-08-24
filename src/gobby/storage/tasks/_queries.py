@@ -12,15 +12,11 @@ from contextlib import contextmanager
 from typing import Any
 
 from gobby.storage.hub._ambient import ambient_transaction
-from gobby.storage.hub.protocol import HubDatabase, Transaction
+from gobby.storage.hub.protocol import HubDatabase, Row, Transaction
 from gobby.storage.sql_dialect import json_array_contains_condition
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._models import Task, task_type_filter_values
-from gobby.storage.tasks._ordering import (
-    TaskOrderKey,
-    order_task_keys,
-    order_tasks_hierarchically,
-)
+from gobby.storage.tasks._ordering import TaskOrderKey, order_task_keys
 from gobby.storage.tasks._read import _escape_like_pattern
 from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
 
@@ -317,37 +313,99 @@ def _hierarchy_page(
 
         # Only edges whose blocked end is in the filtered set can reorder it, and
         # order_task_keys ignores blockers outside a task's own sibling group.
+        # Re-embedding the WHERE evaluates the filter a second time; substituting
+        # the ids already in hand ships one UUID per matching row instead.
+        # Measured on this 14,920-task project (#20878): a stage-filtered
+        # listing pays 2.2 ms embedded vs 1.2 ms for ids in hand, while the
+        # plain project listing pays 7.7 ms embedded vs 22.0 ms shipping all
+        # 14,920 ids. The unselective shape is the common one, so the embedded
+        # WHERE stays.
         edge_rows = db.fetchall(
             "SELECT task_id, depends_on FROM task_dependencies"
             f" WHERE dep_type = 'blocks' AND task_id IN (SELECT id FROM tasks WHERE {where})",
             tuple(params),
         )
-        blockers: dict[str, list[str]] = {}
-        for edge in edge_rows:
-            blockers.setdefault(str(edge["task_id"]), []).append(str(edge["depends_on"]))
+        return _hydrated_page(
+            db, key_rows, _blockers_by_task(edge_rows), limit=limit, offset=offset
+        )
 
-        keys = [
-            TaskOrderKey(
-                id=str(row["id"]),
-                parent_task_id=str(row["parent_task_id"]) if row["parent_task_id"] else None,
-                priority=row["priority"],
-                created_at=row["created_at"],
-                blocked_by=tuple(blockers.get(str(row["id"]), ())),
-            )
-            for row in key_rows
-        ]
-        ordered_ids = order_task_keys(keys)
-        page_ids = ordered_ids[offset : offset + limit] if limit else ordered_ids[offset:]
-        if not page_ids:
+
+def _blockers_by_task(edge_rows: list[Row]) -> dict[str, list[str]]:
+    """Group blocking-edge rows by the task they block."""
+    blockers: dict[str, list[str]] = {}
+    for edge in edge_rows:
+        blockers.setdefault(str(edge["task_id"]), []).append(str(edge["depends_on"]))
+    return blockers
+
+
+def _hydrated_page(
+    db: HubDatabase,
+    key_rows: list[Row],
+    blockers: dict[str, list[str]],
+    *,
+    limit: int,
+    offset: int,
+) -> list[Task]:
+    """Order projected keys, slice the page, then fetch and hydrate only it.
+
+    The tail every hierarchy-ordered listing shares: the caller supplies the
+    key projection and the blocking edges, this converts and hydrates nothing
+    beyond the ``limit`` tasks it returns. Runs inside the caller's snapshot so
+    the page fetch and hydration see the projection's view of the tasks.
+    """
+    keys = [
+        TaskOrderKey(
+            id=str(row["id"]),
+            parent_task_id=str(row["parent_task_id"]) if row["parent_task_id"] else None,
+            priority=row["priority"],
+            created_at=row["created_at"],
+            blocked_by=tuple(blockers.get(str(row["id"]), ())),
+        )
+        for row in key_rows
+    ]
+    ordered_ids = order_task_keys(keys)
+    page_ids = ordered_ids[offset : offset + limit] if limit else ordered_ids[offset:]
+    if not page_ids:
+        return []
+
+    rows = db.fetchall("SELECT * FROM tasks WHERE id = ANY(%s)", (page_ids,))
+    by_id = {str(row["id"]): Task.from_row(row) for row in rows}
+    # ANY() does not preserve argument order, so re-impose the page's own.
+    tasks = [by_id[task_id] for task_id in page_ids if task_id in by_id]
+    hydrate_task_stage_state(db, tasks)
+    hydrate_task_blocking_state(db, tasks)
+    return tasks
+
+
+def _projected_listing_page(
+    db: HubDatabase,
+    projection_query: str,
+    params: list[Any],
+    *,
+    limit: int,
+    offset: int,
+) -> list[Task]:
+    """Run a key-projection listing and return one hydrated page from it.
+
+    The ready and blocked listings' filters are the expensive half of their
+    queries -- a recursive readiness CTE and a recursive ancestor check -- so
+    unlike ``_hierarchy_page`` the edge fetch substitutes the ids already in
+    hand rather than evaluating the filter a second time. All reads share one
+    snapshot for the same reason ``_hierarchy_page``'s do (#20870 F2).
+    """
+    with task_read_snapshot(db):
+        key_rows = db.fetchall(projection_query, tuple(params))
+        if not key_rows:
             return []
 
-        rows = db.fetchall("SELECT * FROM tasks WHERE id = ANY(%s)", (page_ids,))
-        by_id = {str(row["id"]): Task.from_row(row) for row in rows}
-        # ANY() does not preserve argument order, so re-impose the page's own.
-        tasks = [by_id[task_id] for task_id in page_ids if task_id in by_id]
-        hydrate_task_stage_state(db, tasks)
-        hydrate_task_blocking_state(db, tasks)
-        return tasks
+        edge_rows = db.fetchall(
+            "SELECT task_id, depends_on FROM task_dependencies"
+            " WHERE dep_type = 'blocks' AND task_id = ANY(%s)",
+            ([str(row["id"]) for row in key_rows],),
+        )
+        return _hydrated_page(
+            db, key_rows, _blockers_by_task(edge_rows), limit=limit, offset=offset
+        )
 
 
 @contextmanager
@@ -432,13 +490,19 @@ def list_ready_tasks(
     with siblings sorted by priority ASC, then created_at ASC.
 
     Note: The limit is applied AFTER hierarchical ordering to ensure coherent
-    tree structures. We fetch all ready tasks, order them hierarchically,
-    then return the first N tasks in tree traversal order.
+    tree structures, so ordering must see every matching task -- but it needs
+    only the four-column key projection, not whole rows. This listing backs
+    suggest_next_task and the dispatcher, so it pages the way #20840 taught
+    the main listing to: order over the projection, then fetch, convert, and
+    hydrate only the page (#20878).
     """
-    # Use recursive CTE to find tasks with ready parent chains.
+    # Use recursive CTE to find tasks with ready parent chains. The ORDER BY
+    # makes the (priority, created_at) tie-break deterministic instead of
+    # Postgres heap order -- order_task_keys breaks ties by input order, and
+    # ties are the common case (#20870 F1).
     query = f"""
     {_ready_tasks_cte_sql()}
-    SELECT t.* FROM tasks t
+    SELECT t.id, t.parent_task_id, t.priority, t.created_at FROM tasks t
     JOIN ready_tasks rt ON t.id = rt.id
     WHERE 1=1
     """
@@ -457,18 +521,9 @@ def list_ready_tasks(
         query += " AND t.parent_task_id = %s"
         params.append(parent_task_id)
 
-    # Fetch every matching task so hierarchical ordering and caller pagination
-    # cannot silently discard rows beyond an internal cap.
     query += " ORDER BY t.priority ASC, t.created_at ASC, t.id ASC"
 
-    rows = db.fetchall(query, tuple(params))
-    tasks = [Task.from_row(row) for row in rows]
-    hydrate_task_stage_state(db, tasks)
-    hydrate_task_blocking_state(db, tasks)
-
-    # Order hierarchically, then apply user's limit/offset
-    ordered = order_tasks_hierarchically(tasks)
-    return ordered[offset : offset + limit] if limit else ordered
+    return _projected_listing_page(db, query, params, limit=limit, offset=offset)
 
 
 def list_blocked_tasks(
@@ -487,10 +542,14 @@ def list_blocked_tasks(
     with siblings sorted by priority ASC, then created_at ASC.
 
     Note: The limit is applied AFTER hierarchical ordering to ensure coherent
-    tree structures.
+    tree structures, so ordering must see every matching task -- over the
+    four-column key projection, with only the returned page fetched,
+    converted, and hydrated (#20878, same shape as #20840's main listing).
     """
+    # The ORDER BY makes the (priority, created_at) tie-break deterministic
+    # instead of Postgres heap order (#20870 F1).
     query = f"""
-    SELECT t.* FROM tasks t
+    SELECT t.id, t.parent_task_id, t.priority, t.created_at FROM tasks t
     WHERE t.closed_at IS NULL
     AND (
         t.escalated_at IS NOT NULL
@@ -507,15 +566,6 @@ def list_blocked_tasks(
         query += " AND t.parent_task_id = %s"
         params.append(parent_task_id)
 
-    # Fetch every matching task so hierarchical ordering and caller pagination
-    # cannot silently discard rows beyond an internal cap.
     query += " ORDER BY t.priority ASC, t.created_at ASC, t.id ASC"
 
-    rows = db.fetchall(query, tuple(params))
-    tasks = [Task.from_row(row) for row in rows]
-    hydrate_task_stage_state(db, tasks)
-    hydrate_task_blocking_state(db, tasks)
-
-    # Order hierarchically, then apply user's limit/offset
-    ordered = order_tasks_hierarchically(tasks)
-    return ordered[offset : offset + limit] if limit else ordered
+    return _projected_listing_page(db, query, params, limit=limit, offset=offset)
