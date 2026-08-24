@@ -353,9 +353,24 @@ GIT_OPTION_CASES = (
     ("no-push", "push origin main"),
     ("no-push-for-workers", "push"),
     ("no-force-push", "push --force origin main"),
+    ("no-force-push-interactive", "push --force origin main"),
+    ("no-git-stash", "stash"),
+    ("no-git-stash-interactive", "stash"),
+    ("no-destructive-git", "reset --hard HEAD~1"),
+    ("no-destructive-git-interactive", "reset --hard HEAD~1"),
+    ("block-git-clone", "clone https://example.com/repo.git"),
+    ("block-git-clone-interactive", "clone https://example.com/repo.git"),
+    ("block-git-worktree-mutations", "worktree prune"),
+    ("block-git-worktree-mutations-interactive", "worktree prune"),
     ("no-invalid-git-flags", "log --no-stat"),
     ("require-task-before-commit", 'commit -m "[gobby-#20825] chore: x"'),
     ("require-monolith-resolution-before-commit", "commit"),
+)
+
+# A real `git commit` invocation is what the commit gates exist to block, so a
+# commit message mentioning their trigger is still a genuine commit command.
+COMMIT_PROSE_EXEMPT = frozenset(
+    {"require-task-before-commit", "require-monolith-resolution-before-commit"}
 )
 
 
@@ -371,7 +386,10 @@ async def test_invocations_block_and_prose_allowed(
     env_prefixed = f"RULE_MATRIX_ENV=1 {case.blocked[0]}"
     for command in (*case.blocked, env_prefixed):
         assert _blocks(body, command), f"{case.name} should block: {command}"
-    for command in case.allowed:
+    allowed = list(case.allowed)
+    if case.name not in COMMIT_PROSE_EXEMPT:
+        allowed.append(f'git commit -m "docs: mention {case.blocked[0]}"')
+    for command in allowed:
         assert not _blocks(body, command), f"{case.name} should allow: {command}"
 
     # End-to-end: the same shapes through RuleEngine, with only this rule
