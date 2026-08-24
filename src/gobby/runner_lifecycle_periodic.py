@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.config.wiki import WikiConfig, WikiRootConfig
 from gobby.gwiki_gateway import INTERACTIVE_GWIKI_TIMEOUT_SECONDS, GwikiGateway
 from gobby.runner_lifecycle_startup import StartupTracker
+from gobby.telemetry.loop_lag import loop_lag_watchdog
 from gobby.wiki.update_coordinator import WikiUpdateCoordinator
 from gobby.wiki.watcher import WikiWatcher, WikiWatchScope
 
@@ -229,6 +230,13 @@ def start_periodic_tasks(
         ),
         name="metrics-archive",
     )
+    # Report loop stalls with the tasks that were live for them. Without this
+    # the daemon cannot say what stopped it scheduling: sample(1) collapses
+    # Python frames and py-spy needs root on macOS (#20841).
+    runner._loop_lag_task = asyncio.create_task(
+        loop_lag_watchdog(lambda: runner._shutdown_requested),
+        name="loop-lag-watchdog",
+    )
     services = getattr(getattr(runner, "http_server", None), "services", None)
     model_metadata_coverage_auditor = getattr(
         services,
@@ -445,6 +453,7 @@ def start_periodic_tasks(
             runner._tool_results_cleanup_task,
             runner._workflow_audit_cleanup_task,
             runner._metrics_archive_task,
+            runner._loop_lag_task,
             runner._model_metadata_refresh_task,
             runner._provider_capability_refresh_task,
             runner._span_cleanup_task,

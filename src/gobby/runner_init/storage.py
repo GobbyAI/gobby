@@ -128,6 +128,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     runner._span_cleanup_task = None
     runner._unmodeled_observations_cleanup_task = None
     runner._metrics_archive_task = None
+    runner._loop_lag_task = None
     runner._model_metadata_refresh_task = None
     runner._provider_capability_refresh_task = None
     runner._metric_snapshot_task = None
