@@ -615,3 +615,51 @@ async def test_a_retry_does_not_invalidate_its_own_guard_cache(tmp_path: Path) -
     await evaluate_epic_guards(task_manager=manager, task=retried, repo_path=str(tmp_path))
 
     assert _run_count(tmp_path) == 1, "the retry re-ran the guard it should have reused"
+
+
+@pytest.mark.asyncio
+async def test_reparenting_the_task_earns_a_fresh_guard_run(tmp_path: Path) -> None:
+    """The self row is unkeyed except for the parent it collects under.
+
+    Collection reads the closing task's parent to pick the nearest epic and to
+    decide which closed tasks are guard leaves rather than parents of one. A
+    closed parent with the task as its only child contributes nothing; moving
+    the task out makes it a leaf, and the guard set grows -- while the scope row
+    set, the git state and the excluded self row all stay put. Found by session
+    #11037's review of 24fa93b992.
+    """
+    test_path = "tests/test_guard.py"
+    other_path = "tests/test_other_guard.py"
+    for path in (test_path, other_path):
+        Path(tmp_path, path).parent.mkdir(exist_ok=True)
+        Path(tmp_path, path).write_text("def test_guard(): pass\n", encoding="utf-8")
+    _write_project(tmp_path, _counting_template())
+    _init_repo(tmp_path)
+    now = datetime(2026, 8, 21, tzinfo=UTC)
+    epic = _task("epic", task_type="epic", parent=None, now=now)
+    closed_parent = _task(
+        "closed_parent",
+        parent=epic.id,
+        now=now,
+        criteria=f"test: {other_path}::test_guard",
+        closed=True,
+    )
+    prior = _task(
+        "prior", parent=epic.id, now=now, criteria=f"test: {test_path}::test_guard", closed=True
+    )
+    current = _task("current", parent=closed_parent.id, now=now)
+    tasks = [epic, closed_parent, prior, current]
+    manager = cast(LocalTaskManager, _TaskManager(tasks))
+
+    first = await evaluate_epic_guards(task_manager=manager, task=current, repo_path=str(tmp_path))
+    reparented = replace(current, parent_task_id=epic.id)
+    tasks[tasks.index(current)] = reparented
+    second = await evaluate_epic_guards(
+        task_manager=manager, task=reparented, repo_path=str(tmp_path)
+    )
+
+    assert first.paths == (test_path,)
+    assert sorted(second.paths) == sorted((other_path, test_path))
+    assert _run_count(tmp_path) == 2, (
+        "the reparented task served a guard set that no longer applies"
+    )

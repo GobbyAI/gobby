@@ -288,7 +288,11 @@ def _epic_scope_digest(task_manager: LocalTaskManager, task: Task) -> str | None
         for row in scope
         if str(row.id) != str(task.id)
     )
-    payload = json.dumps([str(task.id), rows], separators=(",", ":"))
+    # The parent is the one self-row field collection still reads: it picks the
+    # nearest epic and decides which closed tasks are guard leaves rather than
+    # parents of one. Reparenting inside the same epic changes the guard set
+    # while leaving the row set and the git state alone (#11037 on 24fa93b992).
+    payload = json.dumps([str(task.id), str(task.parent_task_id), rows], separators=(",", ":"))
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
