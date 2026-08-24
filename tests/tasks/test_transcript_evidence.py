@@ -15,6 +15,7 @@ from gobby.storage.session_models import Session
 from gobby.tasks import transcript_evidence
 from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.transcript_evidence import (
+    WINDOW_LOOKBACK,
     TranscriptEdit,
     TranscriptEvidence,
     TranscriptEvidenceUnavailable,
@@ -22,6 +23,7 @@ from gobby.tasks.transcript_evidence import (
     _extract_output,
     derive_transcript_evidence,
     merge_transcript_evidence,
+    select_window_raw_lines,
 )
 
 BASE_TIME = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)
@@ -1138,3 +1140,67 @@ async def test_codex_uncompounded_passing_run_is_still_a_success(tmp_path: Path)
     )
 
     assert [(run.outcome, run.exit_code) for run in evidence.validation_runs] == [("success", 0)]
+
+
+def _timestamped(stamp: str) -> str:
+    return json.dumps({"type": "assistant", "timestamp": stamp, "message": {}})
+
+
+def test_window_selection_drops_only_lines_older_than_the_lookback() -> None:
+    window_start = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)
+    lines = [
+        _timestamped("2026-07-20T12:00:00Z"),
+        _timestamped((window_start - WINDOW_LOOKBACK - timedelta(minutes=1)).isoformat()),
+        _timestamped((window_start - timedelta(minutes=5)).isoformat()),
+        _timestamped(window_start.isoformat()),
+        _timestamped("2026-07-27T14:00:00Z"),
+        json.dumps({"type": "summary", "summary": "no timestamp here"}),
+        _timestamped("2026-07-20T12:00:00+02:00"),
+    ]
+
+    selected = list(select_window_raw_lines(lines, window_start))
+
+    assert [item.raw_line_no for item in selected] == [2, 3, 4, 5, 6]
+    assert [item.text for item in selected] == [lines[index] for index in (2, 3, 4, 5, 6)]
+
+
+def test_window_selection_keeps_everything_without_a_window() -> None:
+    lines = [_timestamped("2026-07-20T12:00:00Z"), _timestamped("2026-07-27T14:00:00Z")]
+
+    selected = list(select_window_raw_lines(lines, None))
+
+    assert [item.text for item in selected] == lines
+    assert [item.raw_line_no for item in selected] == [0, 1]
+
+
+@pytest.mark.asyncio
+async def test_pre_window_history_does_not_change_derived_evidence(tmp_path: Path) -> None:
+    window_start = BASE_TIME
+    transcript = tmp_path / "claude.jsonl"
+    in_window = _claude_tool_pair(
+        command="uv run pytest tests/tasks/test_example.py",
+        call_id="fresh",
+        start=window_start + timedelta(minutes=1),
+        result={"exit_code": 0, "stdout": "passed"},
+    )
+    ancient = _claude_tool_pair(
+        command="uv run pytest tests/tasks/test_ancient.py",
+        call_id="ancient",
+        start=window_start - timedelta(days=3),
+        result={"exit_code": 1, "stdout": "1 failed"},
+    )
+    _write_jsonl(transcript, [*ancient, *in_window])
+    session = _session("claude", transcript)
+
+    evidence = await derive_transcript_evidence(
+        session,
+        window_start,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [run.command for run in evidence.validation_runs] == [
+        "uv run pytest tests/tasks/test_example.py"
+    ]
+    assert [run.outcome for run in evidence.validation_runs] == ["success"]

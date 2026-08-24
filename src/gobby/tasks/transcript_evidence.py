@@ -6,9 +6,9 @@ import asyncio
 import json
 import os
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -25,11 +25,34 @@ from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import (
     ParsedMessage,
     ParsedToolEvent,
+    RawLine,
     raw_lines_from_texts,
 )
 from gobby.storage.session_models import Session
 
 EvidenceOutcome = Literal["success", "failure", "unknown"]
+
+# How much transcript before the claim window still reaches the parser.
+#
+# Every consumer drops a record that falls outside the claim window, so lines
+# older than the window can only cost parsing. Measured on this repository's
+# 83 MB / 53k-line session, deriving against a claim made 30 minutes earlier:
+# 420 ms handing the parser every line, 219 ms handing it only the window's.
+# The saving is the parser's own per-line work, and it grows with session
+# length while the window does not (#20866).
+#
+# Narrowing is exact for the records themselves — a differential run over that
+# transcript produced identical runs, edits, and degraded capabilities for a
+# 30-minute, a 7-hour, and a whole-session window. The lookback exists for the
+# parser's cross-line state: a tool call whose begin and end straddle the
+# boundary still needs its begin line. Two hours covers any realistic
+# validation command, and a line whose timestamp is absent or not
+# unambiguously UTC is always kept.
+WINDOW_LOOKBACK = timedelta(hours=2)
+
+_UTC_LINE_TIMESTAMP_RE = re.compile(
+    r'"timestamp"\s*:\s*"(\d{4}-\d{2}-\d{2}T[0-9:.]{8,})(?:Z|\+00:00)"'
+)
 
 _SHELL_TOOLS = {
     "bash",
@@ -194,6 +217,28 @@ async def derive_transcript_evidence(
     )
 
 
+def select_window_raw_lines(
+    lines: Iterable[str],
+    window_start: datetime | None,
+) -> Iterator[RawLine]:
+    """Yield raw lines the claim window can still reach, keeping line numbers.
+
+    A line is dropped only when it carries an unambiguously UTC timestamp
+    older than :data:`WINDOW_LOOKBACK` before the window. Everything else —
+    later lines, undated lines, and timestamps in another offset — is kept, so
+    this narrows the parser's input without deciding anything about it.
+    """
+    if window_start is None:
+        yield from raw_lines_from_texts(lines)
+        return
+    cutoff = (_as_utc(window_start) - WINDOW_LOOKBACK).strftime("%Y-%m-%dT%H:%M:%S")
+    for index, text in enumerate(lines):
+        match = _UTC_LINE_TIMESTAMP_RE.search(text)
+        if match is not None and match.group(1) < cutoff:
+            continue
+        yield RawLine(byte_offset=None, raw_line_no=index, text=text)
+
+
 def merge_transcript_evidence(*evidence_sets: TranscriptEvidence) -> TranscriptEvidence:
     """Merge session evidence while preserving provider timestamps and local order."""
     runs = sorted(
@@ -262,7 +307,7 @@ def _derive_transcript_evidence_sync(
         repo_path=repo_path,
         window_start=window_start,
     )
-    for event in parser.iter_parse_events(raw_lines_from_texts(lines)):
+    for event in parser.iter_parse_events(select_window_raw_lines(lines, window_start)):
         for outcome in event.codex_exec_outcomes:
             _consume_codex_outcome(state, outcome)
         for record in event.records:
