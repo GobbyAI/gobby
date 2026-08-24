@@ -1130,3 +1130,52 @@ async def test_close_resolves_commits_and_validates_them_off_the_event_loop() ->
     assert validated_on, "validate_commit_requirements must run"
     assert loop_thread not in resolved_on
     assert loop_thread not in validated_on
+
+
+@pytest.mark.asyncio
+async def test_commit_close_links_and_closes_off_the_event_loop() -> None:
+    """The two mutations commit_close makes both block, so neither may run on the loop.
+
+    link_close_commit_shas reaches git by its own route -- the storage layer's
+    link_commit -> normalize_commit_sha -> run_git_command -> subprocess.run --
+    which #20861's three offloads did not cover. The storage close_task
+    transition runs synchronous psycopg, and _close_eligible_ancestors walks up
+    the tree inside the transaction it holds open, so its cost grows with depth
+    and sibling count. The loop-lag watchdog caught both below commit_close
+    (#20862).
+    """
+    task = _task()
+    ctx = _ctx(task)
+    evaluation = _ready_evaluation(task)
+    linked_on: list[int] = []
+    closed_on: list[int] = []
+
+    def record_link(*_args: object, **_kwargs: object) -> tuple[Task, None]:
+        linked_on.append(threading.get_ident())
+        return (task, None)
+
+    def record_close(*_args: object, **_kwargs: object) -> None:
+        closed_on.append(threading.get_ident())
+
+    cast(MagicMock, ctx.task_manager.close_task).side_effect = record_close
+
+    with (
+        patch.object(close_finalization, "resolve_close_commit_shas", return_value=([], None)),
+        patch.object(close_finalization, "link_close_commit_shas", record_link),
+        patch.object(close_finalization, "notify_parent_on_task_state_change"),
+    ):
+        result = await _commit_close(
+            ctx,
+            evaluation,
+            reason="completed",
+            skip_validation=False,
+            override_justification=None,
+            commit_sha=None,
+        )
+
+    assert result["closed"] is True
+    loop_thread = threading.get_ident()
+    assert linked_on, "link_close_commit_shas must run"
+    assert closed_on, "the storage close_task transition must run"
+    assert loop_thread not in linked_on
+    assert loop_thread not in closed_on

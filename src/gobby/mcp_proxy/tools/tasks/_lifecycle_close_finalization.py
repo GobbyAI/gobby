@@ -215,7 +215,11 @@ async def commit_close(
             evaluation,
             "Task-attributed files changed after evaluation; commit them and retry close_task.",
         )
-    linked, link_error = link_close_commit_shas(
+    # Off the loop: this reaches git by its own route -- the storage layer's
+    # link_commit -> normalize_commit_sha -> run_git_command -> subprocess.run --
+    # which is why #20861's three offloads did not cover it (#20862).
+    linked, link_error = await asyncio.to_thread(
+        link_close_commit_shas,
         ctx.task_manager,
         task=fresh,
         commit_shas=commit_shas,
@@ -244,7 +248,13 @@ async def commit_close(
     current_commit_sha = commit_shas[-1] if commit_shas else None
     closed_ancestors: list[str] = []
     try:
-        ctx.task_manager.close_task(
+        # Off the loop: the transition runs synchronous psycopg, and
+        # _close_eligible_ancestors walks up the tree inside the transaction it
+        # holds open, so the wait grows with depth and sibling count (#20862).
+        # closed_ancestors is filled in place, so the worker thread's writes are
+        # visible here once the await returns.
+        await asyncio.to_thread(
+            ctx.task_manager.close_task,
             task.id,
             reason=reason,
             closed_in_session_id=evaluation.resolved_session_id,
