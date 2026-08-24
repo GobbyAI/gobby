@@ -12,6 +12,7 @@ import os
 import shlex
 import shutil
 import signal
+import subprocess
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -233,34 +234,40 @@ class TmuxSessionManager:
         *tmux_args: str,
         timeout: float = TMUX_COMMAND_TIMEOUT_SECONDS,
     ) -> tuple[int, str, str]:
-        """Run a tmux subcommand and return (returncode, stdout, stderr)."""
+        """Run a tmux subcommand and return (returncode, stdout, stderr).
+
+        The spawn runs in a worker thread rather than through
+        ``asyncio.create_subprocess_exec``, whose ``Popen.__init__`` forks
+        inline on the event loop. With the daemon around a gigabyte resident
+        that fork is expensive, and it is on the hot path: the pane monitor
+        polls tmux continuously and the window-name repair loop spawns per
+        session, so a stack sampler caught this reaching
+        ``Popen._execute_child`` on the loop thread during multi-second
+        stalls (#20841).
+        """
         cmd = [*self._base_args(), *tmux_args]
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
         try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except TimeoutError:
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                logger.debug(
-                    "Tmux command exited before timeout kill "
-                    "(pid=%s, timeout=%ss, command=%r, socket_name=%r, socket_path=%r)",
-                    getattr(proc, "pid", None),
-                    timeout,
-                    cmd,
-                    self._config.socket_name,
-                    self._config.socket_path,
-                )
-            await proc.wait()
-            raise
+            completed = await asyncio.to_thread(
+                subprocess.run,
+                cmd,
+                capture_output=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            # subprocess.run has already killed and reaped the child. Callers
+            # branch on TimeoutError, so keep that contract.
+            logger.debug(
+                "Tmux command timed out (timeout=%ss, command=%r, socket_name=%r, socket_path=%r)",
+                timeout,
+                cmd,
+                self._config.socket_name,
+                self._config.socket_path,
+            )
+            raise TimeoutError(f"tmux command timed out after {timeout}s") from exc
         return (
-            proc.returncode or 0,
-            (stdout_bytes or b"").decode(),
-            (stderr_bytes or b"").decode(),
+            completed.returncode,
+            (completed.stdout or b"").decode(),
+            (completed.stderr or b"").decode(),
         )
 
     async def probe_target(self, target: str) -> TmuxProbeResult:

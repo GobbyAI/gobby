@@ -11,8 +11,11 @@ import logging
 import os
 import shlex
 import signal
+import subprocess
+import threading
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -631,26 +634,19 @@ class TestTmuxSessionManager:
     ) -> None:
         mgr = TmuxSessionManager()
         assert mgr._base_args()[-2:] == ["-f", "/dev/null"]
-        proc = MagicMock(returncode=0)
-        proc.communicate = AsyncMock(return_value=(b"", b""))
 
         with patch(
-            "gobby.agents.tmux.session_manager.asyncio.create_subprocess_exec",
-            new_callable=AsyncMock,
-            return_value=proc,
-        ) as mock_exec:
+            "gobby.agents.tmux.session_manager.subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0, b"", b""),
+        ) as mock_run:
             await getattr(mgr, method_name)(*method_args)
 
-        mock_exec.assert_awaited_once_with(
-            "tmux",
-            "-L",
-            "gobby",
-            "-f",
-            "/dev/null",
-            *tmux_args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        mock_run.assert_called_once()
+        call_args, call_kwargs = mock_run.call_args
+        assert call_args[0] == ["tmux", "-L", "gobby", "-f", "/dev/null", *tmux_args]
+        assert call_kwargs["capture_output"] is True
+        # Per-method timeout policy is asserted by the tests that own it.
+        assert call_kwargs["timeout"] > 0
 
     @pytest.mark.asyncio
     async def test_refresh_client_refreshes_each_listed_client_tty(self) -> None:
@@ -826,26 +822,22 @@ class TestTmuxSessionManager:
             assert result == []
 
     @pytest.mark.asyncio
-    async def test_run_timeout_handles_already_exited_process(
+    async def test_run_timeout_raises_timeout_error_and_logs_the_command(
         self,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        mgr = TmuxSessionManager()
-        proc = MagicMock()
-        proc.pid = 12345
-        proc.communicate = AsyncMock()
-        proc.kill.side_effect = ProcessLookupError()
-        proc.wait = AsyncMock()
+        """A timed-out tmux command must surface TimeoutError and name itself.
 
-        with (
-            patch(
-                "gobby.agents.tmux.session_manager.asyncio.create_subprocess_exec",
-                return_value=proc,
-            ),
-            patch(
-                "gobby.agents.tmux.session_manager.asyncio.wait_for",
-                side_effect=TimeoutError,
-            ),
+        subprocess.run kills and reaps the child itself on timeout, so there is
+        no hand-rolled kill to assert; what callers depend on is the exception
+        type, and what diagnosis depends on is the command and timeout in the
+        log.
+        """
+        mgr = TmuxSessionManager()
+
+        with patch(
+            "gobby.agents.tmux.session_manager.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd=["tmux"], timeout=0.01),
         ):
             with (
                 caplog.at_level(logging.DEBUG, logger="gobby.agents.tmux.session_manager"),
@@ -853,9 +845,6 @@ class TestTmuxSessionManager:
             ):
                 await mgr._run("list-sessions", timeout=0.01)
 
-        proc.kill.assert_called_once()
-        proc.wait.assert_awaited_once()
-        assert "pid=12345" in caplog.text
         assert "list-sessions" in caplog.text
         assert "timeout=0.01s" in caplog.text
 
@@ -2846,3 +2835,39 @@ class TestTmuxTargetProbe:
 
         assert probe.state is TmuxProbeState.INDETERMINATE
         assert not caplog.records
+
+
+@pytest.mark.asyncio
+async def test_tmux_commands_do_not_fork_on_the_event_loop() -> None:
+    """Spawning a tmux subprocess must not fork from the loop thread.
+
+    ``asyncio.create_subprocess_exec`` runs ``Popen.__init__`` inline, so the
+    fork/exec happens on the event loop. In a daemon holding around a gigabyte
+    resident that is expensive, and an in-process stack sampler caught this
+    exact chain repeatedly during multi-second stalls: the tmux pane monitor's
+    poll loop and the window-name repair loop both reaching
+    ``Popen._execute_child`` on the loop thread (#20841).
+
+    Patching ``Popen.__init__`` pins the real fork site rather than either
+    spawn API, so this stays honest whichever one ``_run`` uses. Every tmux
+    call funnels through ``_run``, so covering it covers list_sessions,
+    create_session, send_keys and the rest.
+    """
+    manager = TmuxSessionManager()
+    fork_threads: list[int] = []
+    real_init = subprocess.Popen.__init__
+
+    def recording_init(self: Any, args: Any, *rest: Any, **kwargs: Any) -> None:
+        fork_threads.append(threading.get_ident())
+        # Run a trivial command instead of real tmux, keeping the spawn honest
+        # without needing a tmux server in the test environment.
+        real_init(self, ["true"], *rest, **kwargs)
+
+    loop_thread = threading.get_ident()
+    with patch.object(subprocess.Popen, "__init__", recording_init):
+        await manager._run("list-sessions")
+
+    assert fork_threads, "the tmux command must actually have spawned a process"
+    assert loop_thread not in fork_threads, (
+        f"tmux forked on the event loop thread {loop_thread}; the spawn must be offloaded"
+    )
