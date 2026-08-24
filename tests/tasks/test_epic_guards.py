@@ -587,3 +587,31 @@ async def test_a_newly_closed_leaf_earns_a_fresh_guard_run(tmp_path: Path) -> No
     assert first.paths == (test_path,)
     assert sorted(second.paths) == sorted((other_path, test_path))
     assert _run_count(tmp_path) == 2, "the new leaf's guard was never run"
+
+
+@pytest.mark.asyncio
+async def test_a_retry_does_not_invalidate_its_own_guard_cache(tmp_path: Path) -> None:
+    """The task being closed must not key its own guard run.
+
+    A blocked close records the verdict and the failure count on the task, so
+    every retry moves that task's updated_at. The task sits inside its own epic
+    scope, so keying on the whole scope made each retry invalidate the cache the
+    retry existed for -- measured as a full 30 s guard re-run on every attempt
+    (#20866). It cannot contribute a guard to itself in any case: guards come
+    from earlier closed leaves and this one is open.
+    """
+    test_path = "tests/test_guard.py"
+    Path(tmp_path, test_path).parent.mkdir()
+    Path(tmp_path, test_path).write_text("def test_guard(): pass\n", encoding="utf-8")
+    _write_project(tmp_path, _counting_template())
+    _init_repo(tmp_path)
+    epic, prior, current = _task_tree(criteria=f"test: {test_path}::test_guard")
+    tasks = [epic, prior, current]
+    manager = cast(LocalTaskManager, _TaskManager(tasks))
+
+    await evaluate_epic_guards(task_manager=manager, task=current, repo_path=str(tmp_path))
+    retried = replace(current, updated_at=datetime(2026, 8, 25, tzinfo=UTC))
+    tasks[tasks.index(current)] = retried
+    await evaluate_epic_guards(task_manager=manager, task=retried, repo_path=str(tmp_path))
+
+    assert _run_count(tmp_path) == 1, "the retry re-ran the guard it should have reused"

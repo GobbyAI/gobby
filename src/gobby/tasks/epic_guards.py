@@ -278,7 +278,16 @@ def _epic_scope_digest(task_manager: LocalTaskManager, task: Task) -> str | None
     except Exception:
         logger.debug("Epic guard scope digest unavailable for task %s", task.id, exc_info=True)
         return None
-    rows = sorted((str(row.id), str(row.updated_at), str(row.closed_at)) for row in scope)
+    # The task under evaluation is in its own epic scope and cannot contribute a
+    # guard to itself -- guards come from earlier closed leaves, and this one is
+    # open. Its updated_at moves on every blocked close attempt, because that is
+    # where the verdict and the failure count are recorded, so keeping it in the
+    # digest made each retry invalidate the cache the retry was meant to use.
+    rows = sorted(
+        (str(row.id), str(row.updated_at), str(row.closed_at))
+        for row in scope
+        if str(row.id) != str(task.id)
+    )
     payload = json.dumps([str(task.id), rows], separators=(",", ":"))
     return hashlib.sha256(payload.encode()).hexdigest()
 
