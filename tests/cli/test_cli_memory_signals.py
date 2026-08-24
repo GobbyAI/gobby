@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-from click.testing import CliRunner
+from click.testing import CliRunner, Result
 
 from gobby.cli.memory.signals import recall_signals
 from gobby.memory.recall_constants import RECALL_QUERY_CONSTRUCTION_VERSION
@@ -335,3 +335,137 @@ def test_audit_labels_cutoff_change_produces_distinct_cohort_binding() -> None:
 
     assert payloads[0]["cohort_digest"] != payloads[1]["cohort_digest"]
     assert payloads[0]["sample_digest"] != payloads[1]["sample_digest"]
+
+
+def _replay_rows() -> list[dict[str, object]]:
+    """Two labeled requests: one topically matched, one not."""
+    rows: list[dict[str, object]] = []
+    for request_id, query, candidates in (
+        (
+            "req-1",
+            "postgres connection pool exhaustion",
+            (("mem-1", "postgres connection pool exhaustion", 0.90, True),),
+        ),
+        (
+            "req-2",
+            "tailscale funnel certificate renewal",
+            (("mem-2", "worktree cleanup after a merge", 0.95, False),),
+        ),
+    ):
+        presented = [
+            {"memory_id": memory_id, "excerpt": excerpt}
+            for memory_id, excerpt, _similarity, _useful in candidates
+        ]
+        for rank, (memory_id, _excerpt, similarity, useful) in enumerate(candidates):
+            rows.append(
+                {
+                    "project_id": "project-1",
+                    "recall_request_id": request_id,
+                    "memory_id": memory_id,
+                    "rank": rank,
+                    "similarity": similarity,
+                    "judge_useful": useful,
+                    "query_text": query,
+                    "presented": presented,
+                }
+            )
+    return rows
+
+
+def _invoke_replay(extra: list[str]) -> tuple[MagicMock, Result]:
+    store = MagicMock()
+    store.fetch_shadow_replay_rows.return_value = _replay_rows()
+    with (
+        patch("gobby.cli.memory.signals.require_cli_database"),
+        patch("gobby.cli.memory.signals.RecallSignalStore", return_value=store),
+    ):
+        result = CliRunner().invoke(
+            recall_signals,
+            [*_cohort_args("replay-candidate-filter"), *extra],
+        )
+    return store, result
+
+
+def test_replay_candidate_filter_writes_the_report_json_to_out(tmp_path: Path) -> None:
+    out_path = tmp_path / "candidate-filter.json"
+
+    _store, result = _invoke_replay(["--static-min-similarity", "0.65", "--out", str(out_path)])
+
+    assert result.exit_code == 0, result.output
+    written = json.loads(out_path.read_text())
+    assert written == json.loads(result.output)
+    assert written["report_version"] == "recall-candidate-filter-replay-v1"
+
+
+def test_replay_candidate_filter_report_names_its_cohort_identity() -> None:
+    _store, result = _invoke_replay(["--static-min-similarity", "0.65"])
+
+    assert result.exit_code == 0, result.output
+    identity = json.loads(result.output)["cohort_identity"]
+    assert identity["query_construction_version"] == RECALL_QUERY_CONSTRUCTION_VERSION
+    assert identity["judge_protocol_version"] == SHADOW_PROTOCOL_VERSION
+    assert identity["label_source"] == "digest_shadow"
+    assert identity["candidate_scope"] == "full"
+
+
+def test_replay_candidate_filter_reports_both_arms_request_level() -> None:
+    _store, result = _invoke_replay(["--static-min-similarity", "0.65"])
+
+    assert result.exit_code == 0, result.output
+    arms = json.loads(result.output)["arms"]
+    required = {
+        "requests_evaluated",
+        "abstention_rate",
+        "abstain_correct",
+        "abstain_regret",
+        "mean_selected",
+        "pairwise_accuracy",
+        "pairwise_requests",
+    }
+    for arm in ("candidate_filter", "static_constants"):
+        assert required <= set(arms[arm]), arm
+    # The filter abstains on the unrelated request; static admits both.
+    assert arms["candidate_filter"]["abstention_rate"] == 0.5
+    assert arms["static_constants"]["abstention_rate"] == 0.0
+
+
+def test_replay_candidate_filter_forwards_the_exact_cohort_fences() -> None:
+    store, result = _invoke_replay(["--static-min-similarity", "0.65"])
+
+    assert result.exit_code == 0, result.output
+    kwargs = store.fetch_shadow_replay_rows.call_args.kwargs
+    assert kwargs["judge_protocol_version"] == SHADOW_PROTOCOL_VERSION
+    assert kwargs["query_construction_version"] == RECALL_QUERY_CONSTRUCTION_VERSION
+    assert kwargs["data_cutoff"] == datetime(2026, 7, 17, 12, tzinfo=UTC)
+    assert kwargs["completion_cutoff"] == datetime(2026, 7, 17, 13, tzinfo=UTC)
+    assert kwargs["candidate_scope"] == "full"
+
+
+def test_replay_candidate_filter_defaults_the_static_arm_to_selection_min_score() -> None:
+    runtime = SimpleNamespace(
+        config=SimpleNamespace(memory_recall=SimpleNamespace(selection_min_score=0.92))
+    )
+    with patch("gobby.cli.memory.signals.get_cli_runtime", return_value=runtime):
+        _store, result = _invoke_replay([])
+
+    assert result.exit_code == 0, result.output
+    arms = json.loads(result.output)["arms"]
+    assert arms["static_constants"]["selection_threshold"] == 0.92
+
+
+def test_replay_candidate_filter_surfaces_an_ambiguous_cohort() -> None:
+    store = MagicMock()
+    store.fetch_shadow_replay_rows.side_effect = ShadowCohortAmbiguityError(
+        "judge_model_key", {"judge-v1": 3, "judge-v2": 4}
+    )
+    with (
+        patch("gobby.cli.memory.signals.require_cli_database"),
+        patch("gobby.cli.memory.signals.RecallSignalStore", return_value=store),
+    ):
+        result = CliRunner().invoke(
+            recall_signals,
+            [*_cohort_args("replay-candidate-filter"), "--static-min-similarity", "0.65"],
+        )
+
+    assert result.exit_code != 0
+    assert "Ambiguous judge_model_key cohorts" in result.output

@@ -59,11 +59,13 @@ import pytest
 
 from gobby.config.persistence import MemoryKnowledgeGraphConfig
 from gobby.memory.recall_fit import (
+    replay_row_from_signal_row,
+    split_request_ids_per_project,
+)
+from gobby.memory.recall_fit_shrinkage import (
     LabeledFitReport,
     default_replay_grid,
     fit_and_evaluate,
-    replay_row_from_signal_row,
-    split_request_ids_per_project,
 )
 from gobby.memory.recall_refit import static_replay_params
 from gobby.memory.recall_ship_gate import GateCohort, build_ship_audit_sample

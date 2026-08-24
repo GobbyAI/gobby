@@ -18,9 +18,11 @@ Scope and semantics (contract: docs/contracts/memory-usefulness-label.md):
   (denominators) only.
 - **Scope-specific weighting.** Full shadow cohorts weight pairs uniformly.
   Injected cohorts preserve relative clipped IPS weights within each request.
-- **Per-project partial pooling, not naive full pooling.** Requests are split
-  train/eval within each project; per-project fits are shrunk toward the
-  pooled fit in proportion to per-project pair support.
+- **Per-project splits.** Requests are split train/eval within each project.
+  The fitting procedure that consumes those splits — grid search with
+  per-project shrinkage toward the pooled fit — lives in
+  ``recall_fit_shrinkage``; this module owns the replay algebra and the
+  metrics both it and the candidate-filter replay score against.
 
 Replay algebra (exact unless noted):
 
@@ -41,8 +43,9 @@ Replay algebra (exact unless noted):
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any, Literal
 
@@ -61,8 +64,6 @@ WeightingMode = Literal["full", "injected"]
 REQUEST_SPLIT_VERSION = "recall-request-hash-split-v1"
 PAIRWISE_EVALUATOR_VERSION = "recall-request-normalized-pairwise-v1"
 AUDIT_SAMPLER_VERSION = "recall-training-request-sampler-v1"
-SHRINKAGE_SELECTION_METHOD = "synthetic+nested-training-v1"
-SHRINKAGE_REQUEST_CANDIDATES: tuple[float, ...] = (2.0, 5.0, 10.0, 20.0, 50.0)
 
 
 def evaluation_protocol_identity(*, split_version: str = REQUEST_SPLIT_VERSION) -> dict[str, str]:
@@ -383,9 +384,8 @@ def evaluate_pairwise(
     )
 
 
-def _pair_credit(
-    positive_key: tuple[bool, float, float], negative_key: tuple[bool, float, float]
-) -> float:
+def _pair_credit(positive_key: tuple[Any, ...], negative_key: tuple[Any, ...]) -> float:
+    """Ordering credit for one preference pair; an exact tie splits it."""
     if positive_key > negative_key:
         return 1.0
     if positive_key == negative_key:
@@ -453,339 +453,469 @@ def split_requests_per_project(
     return train, evaluation
 
 
+# --------------------------------------------------------------------------- #
+# Post-retrieval candidate-filter replay (plan 4.2)                            #
+# --------------------------------------------------------------------------- #
+
+CANDIDATE_FILTER_REPLAY_VERSION = "recall-candidate-filter-replay-v1"
+
+DIGEST_CONDITIONED_EVALUATION_NOTE = (
+    "This replay is no-digest by construction, and every number in it must be "
+    "read that way. A v1 shadow snapshot stores only the scrubbed query text "
+    "and the candidate excerpts presented to the judge; it stores neither the "
+    "conversation digest nor the assistant response. A digest-conditioned "
+    "candidate filter therefore cannot be replayed against v1 labels at all — "
+    "not approximated, not bounded — because the inputs it would condition on "
+    "were never captured. Evaluating one requires v2 data: a cohort whose "
+    "query_construction_version fence post-dates the digest-enrichment cutover."
+)
+
+# Tokens shorter than this carry no topical signal in a query-coverage score.
+_MIN_TOKEN_CHARS = 3
+_TOKEN_PATTERN = re.compile(r"[a-z0-9_]+")
+# Function words carry no topical signal, so they must not inflate query coverage.
+_QUERY_STOPWORDS = frozenset(
+    "about after again against all already also and any are because been before being "
+    "both but can cannot could did does doing done down each even every for from get gets "
+    "getting had has have having her here him his how into its just like make makes many "
+    "may might more most much must need needs not now off once one only our out over own "
+    "same seem seems shall she should since some such than that the their them then there "
+    "these they this those through too under until very was were what when where which "
+    "while who why will with would you your".split()
+)
+
+
 @dataclass(frozen=True)
-class FittedParams:
-    """Pooled fit plus per-project fits shrunk toward it (partial pooling)."""
+class CandidateReplayRow:
+    """One retrieved candidate reduced to what a v1 snapshot actually stores.
 
-    pooled: ReplayParams
-    per_project: dict[str | None, ReplayParams]
-    pooled_pairs: int
-    project_pairs: dict[str | None, int]
-    pooled_mixed_requests: int
-    project_mixed_requests: dict[str | None, int]
-
-
-@dataclass(frozen=True)
-class ShrinkageSelection:
-    """Frozen request-unit prior chosen without evaluating outer holdout rows."""
-
-    selected_requests: float
-    candidate_scores: dict[float, float]
-    selection_method: str
-    nested_train_requests: int
-    nested_validation_requests: int
-    synthetic_requests: int
-
-
-def _labeled_pair_count(rows: Sequence[ReplayRow]) -> int:
-    by_request: dict[str, tuple[int, int]] = {}
-    for row in rows:
-        pos, neg = by_request.get(row.recall_request_id, (0, 0))
-        if row.judge_useful is True:
-            pos += 1
-        elif row.judge_useful is False:
-            neg += 1
-        by_request[row.recall_request_id] = (pos, neg)
-    return sum(pos * neg for pos, neg in by_request.values())
-
-
-def _mixed_request_count(rows: Sequence[ReplayRow]) -> int:
-    by_request: dict[str, tuple[bool, bool]] = {}
-    for row in rows:
-        has_positive, has_negative = by_request.get(row.recall_request_id, (False, False))
-        if row.judge_useful is True:
-            has_positive = True
-        elif row.judge_useful is False:
-            has_negative = True
-        by_request[row.recall_request_id] = (has_positive, has_negative)
-    return sum(has_positive and has_negative for has_positive, has_negative in by_request.values())
-
-
-def _grid_best(
-    rows: Sequence[ReplayRow],
-    grid: Sequence[ReplayParams],
-    propensities: Mapping[PropensityKey, float],
-    *,
-    clip: float,
-    weighting_mode: WeightingMode,
-) -> ReplayParams:
-    best = grid[0]
-    best_accuracy = -1.0
-    for candidate in grid:
-        result = evaluate_pairwise(
-            rows,
-            {},
-            propensities,
-            default_params=candidate,
-            clip=clip,
-            weighting_mode=weighting_mode,
-        )
-        if result.accuracy > best_accuracy:
-            best = candidate
-            best_accuracy = result.accuracy
-    return best
-
-
-def _shrink_value(
-    project_value: float | None, pooled_value: float | None, lam: float
-) -> float | None:
-    """Blend one parameter; ``None`` means "keep logged" and cannot blend."""
-    if project_value is None or pooled_value is None:
-        return project_value if lam >= 0.5 else pooled_value
-    return lam * project_value + (1.0 - lam) * pooled_value
-
-
-def _shrink_params(project: ReplayParams, pooled: ReplayParams, lam: float) -> ReplayParams:
-    cap = _shrink_value(
-        float(project.cooccur_support_cap) if project.cooccur_support_cap is not None else None,
-        float(pooled.cooccur_support_cap) if pooled.cooccur_support_cap is not None else None,
-        lam,
-    )
-    return ReplayParams(
-        half_life_days=_shrink_value(project.half_life_days, pooled.half_life_days, lam),
-        graph_synthetic_discount=_shrink_value(
-            project.graph_synthetic_discount, pooled.graph_synthetic_discount, lam
-        ),
-        cooccur_alpha=_shrink_value(project.cooccur_alpha, pooled.cooccur_alpha, lam),
-        cooccur_support_cap=round(cap) if cap is not None else None,
-    )
-
-
-def fit_partial_pooled(
-    rows: Sequence[ReplayRow],
-    grid: Sequence[ReplayParams],
-    propensities: Mapping[PropensityKey, float],
-    *,
-    shrinkage_requests: float = 50.0,
-    clip: float = 10.0,
-    weighting_mode: WeightingMode = "full",
-) -> FittedParams:
-    """Grid-fit pooled params, then per-project params shrunk toward pooled.
-
-    Shrinkage weight ``lam = n_p / (n_p + shrinkage_requests)`` where ``n_p``
-    is the project's mixed-request count: small projects ride the pooled fit,
-    well-supported projects keep their own optimum. This is the
-    partial-pooling contract of #17197 — no naive full pooling, no
-    unregularized per-project fits.
+    ``query_text`` and ``excerpt`` are the *only* textual inputs a replayed
+    candidate filter may read — they are exactly the two things the shadow
+    judge saw. ``similarity`` is the logged blended score the shipped
+    static-constant selection ranks and thresholds on.
     """
-    if not grid:
-        raise ValueError("grid must contain at least one ReplayParams candidate")
-    if shrinkage_requests < 0.0:
-        raise ValueError("shrinkage_requests must be non-negative")
-    pooled = _grid_best(rows, grid, propensities, clip=clip, weighting_mode=weighting_mode)
 
-    rows_by_project: dict[str | None, list[ReplayRow]] = {}
+    recall_request_id: str
+    memory_id: str
+    project_id: str | None
+    rank: int
+    query_text: str
+    excerpt: str
+    similarity: float | None
+    judge_useful: bool | None
+
+
+@dataclass(frozen=True)
+class CandidateFilterParams:
+    """Tunables of the replayed post-retrieval filter."""
+
+    min_score: float = 0.34
+    max_selected: int = 3
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.min_score <= 1.0:
+            raise ValueError(f"min_score must be in [0, 1], got {self.min_score}")
+        if self.max_selected < 1:
+            raise ValueError(f"max_selected must be positive, got {self.max_selected}")
+
+
+def _content_tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in _TOKEN_PATTERN.findall(text.lower())
+        if len(token) >= _MIN_TOKEN_CHARS and token not in _QUERY_STOPWORDS
+    }
+
+
+def candidate_filter_score(query_text: str, excerpt: str) -> float:
+    """Share of the query's content tokens the excerpt covers, in [0, 1].
+
+    Coverage rather than symmetric overlap: a long memory should not be
+    penalized for saying more than the query asked, and a short memory should
+    not score well merely for being short. A query with no content tokens
+    scores 0 — the filter has nothing to match on and abstaining is correct.
+    """
+    query_tokens = _content_tokens(query_text)
+    if not query_tokens:
+        return 0.0
+    return len(query_tokens & _content_tokens(excerpt)) / len(query_tokens)
+
+
+def candidate_replay_rows_from_signal_rows(
+    rows: Iterable[Mapping[str, Any]],
+) -> list[CandidateReplayRow]:
+    """Adapt shadow replay rows, dropping any whose snapshot lacks an excerpt.
+
+    The excerpt lives in the request's ``presented`` block keyed by memory id;
+    a row whose memory is absent from that block cannot be scored by a
+    text-only filter and is dropped rather than scored against empty text.
+    """
+    adapted: list[CandidateReplayRow] = []
     for row in rows:
-        rows_by_project.setdefault(row.project_id, []).append(row)
-
-    per_project: dict[str | None, ReplayParams] = {}
-    project_pairs: dict[str | None, int] = {}
-    project_mixed_requests: dict[str | None, int] = {}
-    for project_id, project_rows in rows_by_project.items():
-        pairs = _labeled_pair_count(project_rows)
-        mixed_requests = _mixed_request_count(project_rows)
-        project_pairs[project_id] = pairs
-        project_mixed_requests[project_id] = mixed_requests
-        if mixed_requests == 0:
-            per_project[project_id] = pooled
+        memory_id = str(row.get("memory_id") or "")
+        excerpt = _presented_excerpt(row.get("presented"), memory_id)
+        query_text = row.get("query_text")
+        if excerpt is None or not isinstance(query_text, str):
             continue
-        project_best = _grid_best(
-            project_rows,
-            grid,
-            propensities,
-            clip=clip,
-            weighting_mode=weighting_mode,
+        project_id = row.get("project_id")
+        judge_useful = row.get("judge_useful")
+        adapted.append(
+            CandidateReplayRow(
+                recall_request_id=str(row["recall_request_id"]),
+                memory_id=memory_id,
+                project_id=str(project_id) if project_id is not None else None,
+                rank=int(row["rank"]),
+                query_text=query_text,
+                excerpt=excerpt,
+                similarity=_float_or_none(row.get("similarity")),
+                judge_useful=judge_useful if isinstance(judge_useful, bool) else None,
+            )
         )
-        lam = mixed_requests / (mixed_requests + shrinkage_requests)
-        per_project[project_id] = _shrink_params(project_best, pooled, lam)
-
-    return FittedParams(
-        pooled=pooled,
-        per_project=per_project,
-        pooled_pairs=_labeled_pair_count(rows),
-        project_pairs=project_pairs,
-        pooled_mixed_requests=_mixed_request_count(rows),
-        project_mixed_requests=project_mixed_requests,
-    )
+    return adapted
 
 
-def select_shrinkage_requests(
-    *,
-    training_rows: Sequence[ReplayRow],
-    synthetic_rows: Sequence[ReplayRow],
-    grid: Sequence[ReplayParams],
-    candidates: Sequence[float] = SHRINKAGE_REQUEST_CANDIDATES,
-    eval_stride: int = 2,
-    split_version: str = REQUEST_SPLIT_VERSION,
-    smoothing: float = 1.0,
-    clip: float = 10.0,
-    weighting_mode: WeightingMode = "full",
-) -> ShrinkageSelection:
-    """Choose shrinkage on planted data plus validation nested inside training."""
-    if not candidates:
-        raise ValueError("candidates must contain at least one request-unit prior")
-    if any(candidate <= 0.0 for candidate in candidates):
-        raise ValueError("shrinkage request candidates must be positive")
-
-    nested_train, nested_validation = split_requests_per_project(
-        training_rows,
-        eval_stride=eval_stride,
-        split_version=f"{split_version}:{SHRINKAGE_SELECTION_METHOD}",
-    )
-    propensities = estimate_position_propensities(nested_train, smoothing=smoothing)
-    candidate_scores: dict[float, float] = {}
-    for candidate in candidates:
-        fitted = fit_partial_pooled(
-            nested_train,
-            grid,
-            propensities,
-            shrinkage_requests=candidate,
-            clip=clip,
-            weighting_mode=weighting_mode,
-        )
-        nested_result = evaluate_pairwise(
-            nested_validation,
-            fitted.per_project,
-            propensities,
-            default_params=fitted.pooled,
-            clip=clip,
-            weighting_mode=weighting_mode,
-        )
-        synthetic_result = evaluate_pairwise(
-            synthetic_rows,
-            fitted.per_project,
-            propensities,
-            default_params=fitted.pooled,
-            clip=clip,
-            weighting_mode=weighting_mode,
-        )
-        evaluated_requests = (
-            nested_result.mixed_request_count + synthetic_result.mixed_request_count
-        )
-        if evaluated_requests == 0:
-            raise ValueError("shrinkage selection requires mixed validation requests")
-        candidate_scores[float(candidate)] = (
-            nested_result.accuracy * nested_result.mixed_request_count
-            + synthetic_result.accuracy * synthetic_result.mixed_request_count
-        ) / evaluated_requests
-
-    selected = max(candidate_scores, key=candidate_scores.__getitem__)
-    return ShrinkageSelection(
-        selected_requests=selected,
-        candidate_scores=candidate_scores,
-        selection_method=SHRINKAGE_SELECTION_METHOD,
-        nested_train_requests=len({row.recall_request_id for row in nested_train}),
-        nested_validation_requests=len({row.recall_request_id for row in nested_validation}),
-        synthetic_requests=len({row.recall_request_id for row in synthetic_rows}),
-    )
+def _presented_excerpt(presented: Any, memory_id: str) -> str | None:
+    if not isinstance(presented, Sequence) or isinstance(presented, str | bytes):
+        return None
+    for item in presented:
+        if not isinstance(item, Mapping):
+            continue
+        if str(item.get("memory_id") or "") != memory_id:
+            continue
+        excerpt = item.get("excerpt")
+        return excerpt if isinstance(excerpt, str) else None
+    return None
 
 
-# --------------------------------------------------------------------------- #
-# End-to-end harness entry point                                               #
-# --------------------------------------------------------------------------- #
+Selection = list[tuple[CandidateReplayRow, float]]
+
+
+def select_by_candidate_filter(
+    rows: Sequence[CandidateReplayRow], params: CandidateFilterParams
+) -> Selection:
+    """Rank one request's candidates by query coverage and admit 0..max."""
+    scored = [(row, candidate_filter_score(row.query_text, row.excerpt)) for row in rows]
+    admitted = [(row, score) for row, score in scored if score >= params.min_score]
+    admitted.sort(key=lambda item: (-item[1], item[0].rank, item[0].memory_id))
+    return admitted[: params.max_selected]
+
+
+def select_by_static_constants(
+    rows: Sequence[CandidateReplayRow], *, min_similarity: float, max_selected: int
+) -> Selection:
+    """Replay the shipped selection: similarity floor, then the rank cap.
+
+    A candidate with no finite similarity is dropped rather than admitted,
+    matching ``selection_min_score`` semantics on the live path.
+    """
+    admitted = [
+        (row, row.similarity)
+        for row in rows
+        if row.similarity is not None and row.similarity >= min_similarity
+    ]
+    admitted.sort(key=lambda item: (-item[1], item[0].rank, item[0].memory_id))
+    return admitted[:max_selected]
 
 
 @dataclass(frozen=True)
-class LabeledFitReport:
-    """Everything #17198's ship gate needs from one fit-and-holdout run."""
+class ArmMetrics:
+    """Request-level selection quality for one arm of the replay.
 
+    ``pairwise_accuracy`` carries ``pairwise_requests`` as its own denominator
+    precisely so it is never read as a whole-population number: it scores only
+    the requests where this arm selected both a useful and a not-useful
+    candidate, which a heavily abstaining arm can make vanishingly small.
+    """
+
+    arm: str
+    selection_threshold: float
+    requests_evaluated: int
+    abstention_rate: float
+    abstain_correct: float
+    abstain_regret: float
+    mean_selected: float
+    pairwise_accuracy: float
+    pairwise_requests: int
+
+    def to_record(self) -> dict[str, Any]:
+        return {
+            "arm": self.arm,
+            "selection_threshold": self.selection_threshold,
+            "requests_evaluated": self.requests_evaluated,
+            "abstention_rate": self.abstention_rate,
+            "abstain_correct": self.abstain_correct,
+            "abstain_regret": self.abstain_regret,
+            "mean_selected": self.mean_selected,
+            "pairwise_accuracy": self.pairwise_accuracy,
+            "pairwise_requests": self.pairwise_requests,
+        }
+
+
+def evaluate_candidate_selection(
+    arm: str,
+    requests: Mapping[str, Sequence[CandidateReplayRow]],
+    selections: Mapping[str, Selection],
+    *,
+    selection_threshold: float,
+) -> ArmMetrics:
+    """Score one arm's selections request-by-request against v1 labels."""
+    evaluated = len(requests)
+    if evaluated == 0:
+        return ArmMetrics(
+            arm=arm,
+            selection_threshold=selection_threshold,
+            requests_evaluated=0,
+            abstention_rate=0.0,
+            abstain_correct=0.0,
+            abstain_regret=0.0,
+            mean_selected=0.0,
+            pairwise_accuracy=0.0,
+            pairwise_requests=0,
+        )
+
+    abstentions = 0
+    regretted = 0
+    selected_total = 0
+    pairwise_requests = 0
+    pairwise_correct = 0.0
+
+    for request_id, candidates in requests.items():
+        selection = selections.get(request_id, [])
+        selected_total += len(selection)
+        if not selection:
+            abstentions += 1
+            if any(row.judge_useful is True for row in candidates):
+                regretted += 1
+            continue
+        positives = [(row, score) for row, score in selection if row.judge_useful is True]
+        negatives = [(row, score) for row, score in selection if row.judge_useful is False]
+        if not positives or not negatives:
+            continue
+        pairwise_requests += 1
+        request_credit = 0.0
+        for _positive, positive_score in positives:
+            for _negative, negative_score in negatives:
+                request_credit += _pair_credit((positive_score,), (negative_score,))
+        pairwise_correct += request_credit / (len(positives) * len(negatives))
+
+    return ArmMetrics(
+        arm=arm,
+        selection_threshold=selection_threshold,
+        requests_evaluated=evaluated,
+        abstention_rate=abstentions / evaluated,
+        abstain_correct=(abstentions - regretted) / abstentions if abstentions else 0.0,
+        abstain_regret=regretted / abstentions if abstentions else 0.0,
+        mean_selected=selected_total / evaluated,
+        pairwise_accuracy=pairwise_correct / pairwise_requests if pairwise_requests else 0.0,
+        pairwise_requests=pairwise_requests,
+    )
+
+
+@dataclass(frozen=True)
+class CandidateFilterReplayReport:
+    """One no-digest candidate-filter replay against a fenced v1 cohort."""
+
+    cohort_identity: dict[str, Any]
+    filter_params: CandidateFilterParams
     rows_total: int
-    rows_labeled: int
-    train_requests: int
-    eval_requests: int
-    fitted: FittedParams
-    baseline_eval: PairwiseEvalResult
-    fitted_eval: PairwiseEvalResult
+    rows_scored: int
+    requests_total: int
+    requests_evaluated: int
+    requests_skipped_unlabeled: int
+    mean_selected_match_tolerance: float
+    candidate_filter: ArmMetrics
+    static_constants: ArmMetrics
+    static_constants_matched: ArmMetrics | None
+
+    def to_record(self) -> dict[str, Any]:
+        matched = self.static_constants_matched
+        return {
+            "report_version": CANDIDATE_FILTER_REPLAY_VERSION,
+            "cohort_identity": dict(self.cohort_identity),
+            "filter_params": {
+                "min_score": self.filter_params.min_score,
+                "max_selected": self.filter_params.max_selected,
+            },
+            "rows_total": self.rows_total,
+            "rows_scored": self.rows_scored,
+            "requests_total": self.requests_total,
+            "requests_evaluated": self.requests_evaluated,
+            "requests_skipped_unlabeled": self.requests_skipped_unlabeled,
+            "mean_selected_match_tolerance": self.mean_selected_match_tolerance,
+            "arms": {
+                "candidate_filter": self.candidate_filter.to_record(),
+                "static_constants": self.static_constants.to_record(),
+                "static_constants_matched": matched.to_record() if matched else None,
+            },
+            "digest_conditioned_evaluation": DIGEST_CONDITIONED_EVALUATION_NOTE,
+        }
 
 
-def fit_and_evaluate_partitioned(
-    train: Sequence[ReplayRow],
-    evaluation: Sequence[ReplayRow],
-    grid: Sequence[ReplayParams],
+def _mean_selected_at(
+    requests: Mapping[str, Sequence[CandidateReplayRow]],
     *,
-    smoothing: float = 1.0,
-    clip: float = 10.0,
-    shrinkage_requests: float = 50.0,
-    weighting_mode: WeightingMode = "full",
-) -> LabeledFitReport:
-    """Fit on an already-frozen training partition and evaluate its holdout."""
-    propensities = estimate_position_propensities(train, smoothing=smoothing)
-    fitted = fit_partial_pooled(
-        train,
-        grid,
-        propensities,
-        shrinkage_requests=shrinkage_requests,
-        clip=clip,
-        weighting_mode=weighting_mode,
+    min_similarity: float,
+    max_selected: int,
+) -> float:
+    total = sum(
+        len(
+            select_by_static_constants(
+                rows, min_similarity=min_similarity, max_selected=max_selected
+            )
+        )
+        for rows in requests.values()
     )
-    baseline = ReplayParams()
-    baseline_eval = evaluate_pairwise(
-        evaluation,
-        {},
-        propensities,
-        default_params=baseline,
-        clip=clip,
-        weighting_mode=weighting_mode,
-    )
-    fitted_eval = evaluate_pairwise(
-        evaluation,
-        fitted.per_project,
-        propensities,
-        default_params=fitted.pooled,
-        clip=clip,
-        weighting_mode=weighting_mode,
-    )
-    return LabeledFitReport(
-        rows_total=len(train) + len(evaluation),
-        rows_labeled=sum(1 for row in (*train, *evaluation) if row.judge_useful is not None),
-        train_requests=len({row.recall_request_id for row in train}),
-        eval_requests=len({row.recall_request_id for row in evaluation}),
-        fitted=fitted,
-        baseline_eval=baseline_eval,
-        fitted_eval=fitted_eval,
-    )
+    return total / len(requests)
 
 
-def fit_and_evaluate(
-    rows: Sequence[ReplayRow],
-    grid: Sequence[ReplayParams],
+def _match_static_threshold(
+    requests: Mapping[str, Sequence[CandidateReplayRow]],
     *,
-    eval_stride: int = 2,
-    smoothing: float = 1.0,
-    clip: float = 10.0,
-    shrinkage_requests: float = 50.0,
-    weighting_mode: WeightingMode = "full",
-    split_version: str = REQUEST_SPLIT_VERSION,
-) -> LabeledFitReport:
-    """Split per project, fit with partial pooling, evaluate on the holdout.
+    target: float,
+    max_selected: int,
+    tolerance: float,
+) -> float | None:
+    """Find the similarity floor whose mean selected count matches ``target``.
 
-    The baseline arm replays the *logged* parameters (``ReplayParams()`` with
-    every field ``None``) on the same holdout — the fitted-vs-static
-    comparison #17198's must-beat-static gate consumes. Propensities are
-    estimated on the training split only, then reused for the holdout so the
-    two arms are weighted identically.
+    Mean selected count is non-increasing in the floor, so a binary search over
+    the observed similarity values finds the closest achievable match. Returns
+    ``None`` when even the closest floor misses by more than ``tolerance`` —
+    the arms simply cannot be matched on that cohort.
     """
-    train, evaluation = split_requests_per_project(
-        rows, eval_stride=eval_stride, split_version=split_version
+    thresholds = [0.0] + sorted(
+        {row.similarity for rows in requests.values() for row in rows if row.similarity is not None}
     )
-    return fit_and_evaluate_partitioned(
-        train,
-        evaluation,
-        grid,
-        smoothing=smoothing,
-        shrinkage_requests=shrinkage_requests,
-        clip=clip,
-        weighting_mode=weighting_mode,
+    low, high = 0, len(thresholds) - 1
+    best = 0
+    while low <= high:
+        mid = (low + high) // 2
+        mean = _mean_selected_at(
+            requests, min_similarity=thresholds[mid], max_selected=max_selected
+        )
+        if mean >= target:
+            best = mid
+            low = mid + 1
+        else:
+            high = mid - 1
+
+    neighbours = {best, min(best + 1, len(thresholds) - 1)}
+    chosen = min(
+        neighbours,
+        key=lambda index: (
+            abs(
+                _mean_selected_at(
+                    requests, min_similarity=thresholds[index], max_selected=max_selected
+                )
+                - target
+            ),
+            thresholds[index],
+        ),
     )
+    achieved = _mean_selected_at(
+        requests, min_similarity=thresholds[chosen], max_selected=max_selected
+    )
+    if abs(achieved - target) > tolerance:
+        return None
+    return thresholds[chosen]
 
 
-def default_replay_grid() -> list[ReplayParams]:
-    """Half-life sweep around today's defaults; other constants stay logged.
+def replay_candidate_filter(
+    signal_rows: Iterable[Mapping[str, Any]],
+    *,
+    cohort_identity: Mapping[str, Any],
+    static_min_similarity: float,
+    params: CandidateFilterParams | None = None,
+    mean_selected_match_tolerance: float = 0.05,
+) -> CandidateFilterReplayReport:
+    """Replay a no-digest candidate filter against static constants on v1 labels.
 
-    #17198 widens this to the (alpha, cap) dimensions; the harness default
-    keeps the exactly-replayable axis so grid size stays trivial.
+    Both arms see the same requests and are scored by the same request-level
+    metrics. Requests carrying no label at all are excluded outright: silence
+    on a request whose candidates were never judged is neither a right silence
+    nor a missed injection, and counting it as either would flatter one arm.
+
+    The cohort identity must carry the ``query_construction_version`` fence, so
+    a report can never be written without recording which query-construction
+    era produced the rows it scored.
     """
-    baseline = ReplayParams()
-    return [baseline] + [
-        replace(baseline, half_life_days=half_life) for half_life in (7.0, 14.0, 30.0, 60.0, 120.0)
-    ]
+    filter_params = params or CandidateFilterParams()
+    if mean_selected_match_tolerance < 0.0:
+        raise ValueError("mean_selected_match_tolerance must be non-negative")
+    fence = cohort_identity.get("query_construction_version")
+    if not isinstance(fence, str) or not fence.strip():
+        raise ValueError("cohort_identity must carry a non-empty query_construction_version fence")
+
+    materialized = list(signal_rows)
+    rows = candidate_replay_rows_from_signal_rows(materialized)
+    by_request: dict[str, list[CandidateReplayRow]] = {}
+    for row in rows:
+        by_request.setdefault(row.recall_request_id, []).append(row)
+
+    labeled = {
+        request_id: candidates
+        for request_id, candidates in by_request.items()
+        if any(row.judge_useful is not None for row in candidates)
+    }
+
+    filter_selections = {
+        request_id: select_by_candidate_filter(candidates, filter_params)
+        for request_id, candidates in labeled.items()
+    }
+    static_selections = {
+        request_id: select_by_static_constants(
+            candidates,
+            min_similarity=static_min_similarity,
+            max_selected=filter_params.max_selected,
+        )
+        for request_id, candidates in labeled.items()
+    }
+
+    filter_metrics = evaluate_candidate_selection(
+        "candidate_filter",
+        labeled,
+        filter_selections,
+        selection_threshold=filter_params.min_score,
+    )
+    static_metrics = evaluate_candidate_selection(
+        "static_constants",
+        labeled,
+        static_selections,
+        selection_threshold=static_min_similarity,
+    )
+
+    matched_metrics: ArmMetrics | None = None
+    if labeled:
+        matched_threshold = _match_static_threshold(
+            labeled,
+            target=filter_metrics.mean_selected,
+            max_selected=filter_params.max_selected,
+            tolerance=mean_selected_match_tolerance,
+        )
+        if matched_threshold is not None:
+            matched_metrics = evaluate_candidate_selection(
+                "static_constants_matched",
+                labeled,
+                {
+                    request_id: select_by_static_constants(
+                        candidates,
+                        min_similarity=matched_threshold,
+                        max_selected=filter_params.max_selected,
+                    )
+                    for request_id, candidates in labeled.items()
+                },
+                selection_threshold=matched_threshold,
+            )
+
+    return CandidateFilterReplayReport(
+        cohort_identity=dict(cohort_identity),
+        filter_params=filter_params,
+        rows_total=len(materialized),
+        rows_scored=len(rows),
+        requests_total=len(by_request),
+        requests_evaluated=len(labeled),
+        requests_skipped_unlabeled=len(by_request) - len(labeled),
+        mean_selected_match_tolerance=mean_selected_match_tolerance,
+        candidate_filter=filter_metrics,
+        static_constants=static_metrics,
+        static_constants_matched=matched_metrics,
+    )

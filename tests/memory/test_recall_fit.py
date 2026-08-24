@@ -8,24 +8,37 @@ join in ``tests/storage/test_recall_signals.py``.
 
 from __future__ import annotations
 
+import json
+from collections.abc import Sequence
+from typing import Any
+
 import pytest
 
 from gobby.memory.recall_fit import (
-    SHRINKAGE_REQUEST_CANDIDATES,
-    FittedParams,
+    CandidateFilterParams,
+    CandidateFilterReplayReport,
     ReplayParams,
     ReplayRow,
-    default_replay_grid,
+    candidate_filter_score,
+    candidate_replay_rows_from_signal_rows,
     estimate_position_propensities,
     evaluate_pairwise,
-    fit_and_evaluate,
-    fit_partial_pooled,
     ips_weight,
+    replay_candidate_filter,
     replay_row_from_signal_row,
     replayed_similarity,
     replayed_sort_key,
-    select_shrinkage_requests,
+    select_by_candidate_filter,
+    select_by_static_constants,
     split_requests_per_project,
+)
+from gobby.memory.recall_fit_shrinkage import (
+    SHRINKAGE_REQUEST_CANDIDATES,
+    FittedParams,
+    default_replay_grid,
+    fit_and_evaluate,
+    fit_partial_pooled,
+    select_shrinkage_requests,
 )
 
 pytestmark = pytest.mark.unit
@@ -749,3 +762,448 @@ class TestSignalRowAdapter:
         assert row.judge_useful is None
         assert row.ranking_score == 0.0
         assert row.logged_half_life_days is None
+
+
+def _signal_row(
+    *,
+    request_id: str = "req-1",
+    memory_id: str = "mem-1",
+    rank: int = 0,
+    query_text: str = "postgres connection pool exhaustion during migration",
+    excerpt: str = "The migration exhausts the postgres connection pool.",
+    similarity: float | None = 0.8,
+    judge_useful: bool | None = True,
+    presented: list[dict[str, Any]] | None = None,
+    project_id: str | None = "proj-a",
+) -> dict[str, Any]:
+    """One `fetch_shadow_replay_rows` row as the candidate replay consumes it."""
+    return {
+        "recall_request_id": request_id,
+        "memory_id": memory_id,
+        "project_id": project_id,
+        "rank": rank,
+        "similarity": similarity,
+        "judge_useful": judge_useful,
+        "query_text": query_text,
+        "presented": (
+            presented
+            if presented is not None
+            else [{"memory_id": memory_id, "excerpt": excerpt, "neutral_key": "M1"}]
+        ),
+    }
+
+
+def _request_rows(
+    request_id: str,
+    query_text: str,
+    candidates: Sequence[tuple[str, str, float | None, bool | None]],
+    *,
+    project_id: str | None = "proj-a",
+) -> list[dict[str, Any]]:
+    """Build one request's rows sharing a single `presented` block."""
+    presented = [
+        {"memory_id": memory_id, "excerpt": excerpt, "neutral_key": f"M{index + 1}"}
+        for index, (memory_id, excerpt, _similarity, _useful) in enumerate(candidates)
+    ]
+    return [
+        _signal_row(
+            request_id=request_id,
+            memory_id=memory_id,
+            rank=index,
+            query_text=query_text,
+            similarity=similarity,
+            judge_useful=useful,
+            presented=presented,
+            project_id=project_id,
+        )
+        for index, (memory_id, _excerpt, similarity, useful) in enumerate(candidates)
+    ]
+
+
+_COHORT = {
+    "label_source": "digest_shadow",
+    "query_construction_version": "digest-enriched-natural-language-v2",
+    "judge_protocol_version": "digest-shadow-query-relevance-v2",
+}
+
+
+class TestCandidateFilterScore:
+    def test_full_query_coverage_scores_one(self) -> None:
+        score = candidate_filter_score(
+            "postgres connection pool exhaustion",
+            "The postgres connection pool hits exhaustion under load.",
+        )
+
+        assert score == 1.0
+
+    def test_partial_coverage_is_the_covered_share_of_query_terms(self) -> None:
+        # Content tokens: postgres, connection, pool, exhaustion. Two covered.
+        score = candidate_filter_score(
+            "postgres connection pool exhaustion",
+            "Tune the connection pool for the worker fleet.",
+        )
+
+        assert score == 0.5
+
+    def test_stopwords_and_short_tokens_do_not_inflate_coverage(self) -> None:
+        # "migration" is the sole content token on either side, so coverage is
+        # complete; the shared "the"/"a"/"is"/"done" must not count as matches,
+        # and the unmatched ones must not count against it either.
+        score = candidate_filter_score(
+            "is the migration done",
+            "the a is of to migration",
+        )
+
+        assert score == 1.0
+
+    def test_an_uncovered_query_term_lowers_coverage(self) -> None:
+        # Content tokens: migration, problem. Only migration is covered.
+        score = candidate_filter_score(
+            "is the migration a problem",
+            "the a is of to migration",
+        )
+
+        assert score == 0.5
+
+    def test_a_query_with_no_content_tokens_scores_zero(self) -> None:
+        assert candidate_filter_score("is it the one", "postgres connection pool") == 0.0
+
+    def test_a_long_excerpt_is_not_penalized_for_saying_more(self) -> None:
+        focused = candidate_filter_score("connection pool", "connection pool")
+        verbose = candidate_filter_score(
+            "connection pool",
+            "connection pool sizing interacts with worker concurrency and idle timeouts "
+            "across every deployment target we support.",
+        )
+
+        assert focused == verbose == 1.0
+
+
+class TestCandidateReplayRowAdaptation:
+    def test_the_excerpt_is_taken_from_the_matching_presented_entry(self) -> None:
+        rows = candidate_replay_rows_from_signal_rows(
+            _request_rows(
+                "req-1",
+                "connection pool",
+                [
+                    ("mem-1", "first excerpt", 0.9, True),
+                    ("mem-2", "second excerpt", 0.4, False),
+                ],
+            )
+        )
+
+        assert [row.memory_id for row in rows] == ["mem-1", "mem-2"]
+        assert [row.excerpt for row in rows] == ["first excerpt", "second excerpt"]
+
+    def test_a_row_absent_from_the_snapshot_is_dropped_not_scored_empty(self) -> None:
+        row = _signal_row(memory_id="mem-9", presented=[{"memory_id": "mem-1", "excerpt": "x"}])
+
+        assert candidate_replay_rows_from_signal_rows([row]) == []
+
+    def test_a_row_without_stored_query_text_is_dropped(self) -> None:
+        row = _signal_row()
+        row["query_text"] = None
+
+        assert candidate_replay_rows_from_signal_rows([row]) == []
+
+
+class TestSelection:
+    def test_the_filter_admits_at_most_max_selected_best_first(self) -> None:
+        rows = candidate_replay_rows_from_signal_rows(
+            _request_rows(
+                "req-1",
+                "postgres connection pool exhaustion",
+                [
+                    ("mem-1", "connection pool", 0.9, True),
+                    ("mem-2", "postgres connection pool exhaustion", 0.5, True),
+                    ("mem-3", "postgres connection pool", 0.4, False),
+                    ("mem-4", "postgres pool exhaustion", 0.3, False),
+                ],
+            )
+        )
+
+        selection = select_by_candidate_filter(rows, CandidateFilterParams(max_selected=3))
+
+        assert [row.memory_id for row, _score in selection] == ["mem-2", "mem-3", "mem-4"]
+
+    def test_the_filter_abstains_when_nothing_clears_its_floor(self) -> None:
+        rows = candidate_replay_rows_from_signal_rows(
+            _request_rows(
+                "req-1",
+                "postgres connection pool exhaustion",
+                [("mem-1", "unrelated tailscale funnel notes", 0.99, True)],
+            )
+        )
+
+        assert select_by_candidate_filter(rows, CandidateFilterParams()) == []
+
+    def test_static_constants_drop_a_candidate_with_no_similarity(self) -> None:
+        rows = candidate_replay_rows_from_signal_rows(
+            _request_rows(
+                "req-1",
+                "connection pool",
+                [
+                    ("mem-1", "connection pool", None, True),
+                    ("mem-2", "connection pool", 0.7, True),
+                ],
+            )
+        )
+
+        selection = select_by_static_constants(rows, min_similarity=0.65, max_selected=3)
+
+        assert [row.memory_id for row, _score in selection] == ["mem-2"]
+
+
+class TestCandidateFilterReplay:
+    def _cohort_rows(self) -> list[dict[str, Any]]:
+        # req-1: both arms admit both candidates and rank the useful one first
+        #        (the filter covers 4/4 query terms vs 3/4).
+        # req-2: nothing is topically related, so the filter abstains while
+        #        static admits two high-similarity useless memories.
+        # req-3: unlabeled throughout — excluded from both arms outright.
+        return [
+            *_request_rows(
+                "req-1",
+                "postgres connection pool exhaustion",
+                [
+                    ("mem-1", "postgres connection pool exhaustion under migration", 0.90, True),
+                    ("mem-2", "postgres connection pool", 0.80, False),
+                ],
+            ),
+            *_request_rows(
+                "req-2",
+                "tailscale funnel certificate renewal",
+                [
+                    ("mem-3", "worktree cleanup after a merge", 0.95, False),
+                    ("mem-4", "ruff formatting conventions", 0.70, False),
+                ],
+            ),
+            *_request_rows(
+                "req-3",
+                "postgres connection pool exhaustion",
+                [("mem-5", "postgres connection pool exhaustion", 0.90, None)],
+            ),
+        ]
+
+    def _report(self, **kwargs: Any) -> CandidateFilterReplayReport:
+        return replay_candidate_filter(
+            self._cohort_rows(),
+            cohort_identity=_COHORT,
+            static_min_similarity=0.65,
+            **kwargs,
+        )
+
+    def test_requests_with_no_label_are_excluded_from_every_arm(self) -> None:
+        report = self._report()
+
+        assert report.requests_total == 3
+        assert report.requests_evaluated == 2
+        assert report.requests_skipped_unlabeled == 1
+        assert report.candidate_filter.requests_evaluated == 2
+        assert report.static_constants.requests_evaluated == 2
+
+    def test_the_filter_abstains_where_static_constants_inject(self) -> None:
+        report = self._report()
+
+        assert report.candidate_filter.abstention_rate == 0.5
+        assert report.static_constants.abstention_rate == 0.0
+
+    def test_a_right_silence_is_abstain_correct_not_regret(self) -> None:
+        report = self._report()
+
+        # req-2's sole abstention carried no useful label: a right silence.
+        assert report.candidate_filter.abstain_correct == 1.0
+        assert report.candidate_filter.abstain_regret == 0.0
+
+    def test_a_missed_injection_is_counted_as_abstain_regret(self) -> None:
+        rows = _request_rows(
+            "req-1",
+            "tailscale funnel certificate renewal",
+            [("mem-1", "worktree cleanup after a merge", 0.9, True)],
+        )
+
+        report = replay_candidate_filter(rows, cohort_identity=_COHORT, static_min_similarity=0.65)
+
+        assert report.candidate_filter.abstention_rate == 1.0
+        assert report.candidate_filter.abstain_regret == 1.0
+        assert report.candidate_filter.abstain_correct == 0.0
+
+    def test_mean_selected_counts_abstentions_in_its_denominator(self) -> None:
+        report = self._report()
+
+        # The filter takes both of req-1's candidates and abstains on req-2,
+        # so its mean is halved by the abstention rather than reported over
+        # the requests it answered.
+        assert report.candidate_filter.mean_selected == 1.0
+        # Static admits both candidates in both requests.
+        assert report.static_constants.mean_selected == 2.0
+
+    def test_pairwise_accuracy_carries_its_own_denominator(self) -> None:
+        report = self._report()
+
+        # Both arms score 1.0, but each rests on a single mixed request out of
+        # two evaluated: the accuracy is not a whole-population number, and
+        # only the paired denominator says so.
+        assert report.candidate_filter.pairwise_accuracy == 1.0
+        assert report.candidate_filter.pairwise_requests == 1
+        assert report.candidate_filter.requests_evaluated == 2
+        assert report.static_constants.pairwise_accuracy == 1.0
+        assert report.static_constants.pairwise_requests == 1
+        assert report.static_constants.requests_evaluated == 2
+
+    def test_an_always_abstaining_arm_scores_no_pairwise_requests(self) -> None:
+        rows = _request_rows(
+            "req-1",
+            "tailscale funnel certificate renewal",
+            [
+                ("mem-1", "worktree cleanup after a merge", 0.9, True),
+                ("mem-2", "ruff formatting conventions", 0.8, False),
+            ],
+        )
+
+        report = replay_candidate_filter(rows, cohort_identity=_COHORT, static_min_similarity=0.65)
+
+        assert report.candidate_filter.abstention_rate == 1.0
+        assert report.candidate_filter.pairwise_requests == 0
+        assert report.candidate_filter.pairwise_accuracy == 0.0
+
+    def test_a_tied_selection_score_splits_pairwise_credit(self) -> None:
+        rows = _request_rows(
+            "req-1",
+            "connection pool",
+            [
+                ("mem-1", "connection pool", 0.80, True),
+                ("mem-2", "connection pool", 0.80, False),
+            ],
+        )
+
+        report = replay_candidate_filter(rows, cohort_identity=_COHORT, static_min_similarity=0.65)
+
+        assert report.static_constants.pairwise_requests == 1
+        assert report.static_constants.pairwise_accuracy == 0.5
+
+    def test_the_matched_arm_lands_on_the_filters_mean_selected(self) -> None:
+        report = self._report()
+
+        matched = report.static_constants_matched
+        assert matched is not None
+        assert matched.mean_selected == pytest.approx(
+            report.candidate_filter.mean_selected, abs=report.mean_selected_match_tolerance
+        )
+        assert matched.selection_threshold > report.static_constants.selection_threshold
+
+    def test_an_unmatchable_cohort_reports_no_matched_arm(self) -> None:
+        # Every candidate shares one similarity, so the static arm can only
+        # select all of them or none — it cannot land near 0.5 per request.
+        rows = [
+            *_request_rows(
+                "req-1",
+                "postgres connection pool exhaustion",
+                [("mem-1", "postgres connection pool exhaustion", 0.9, True)],
+            ),
+            *_request_rows(
+                "req-2",
+                "tailscale funnel certificate renewal",
+                [("mem-2", "worktree cleanup after a merge", 0.9, False)],
+            ),
+        ]
+
+        report = replay_candidate_filter(
+            rows,
+            cohort_identity=_COHORT,
+            static_min_similarity=0.65,
+            mean_selected_match_tolerance=0.01,
+        )
+
+        assert report.candidate_filter.mean_selected == 0.5
+        assert report.static_constants_matched is None
+
+    def test_a_cohort_identity_without_the_fence_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="query_construction_version"):
+            replay_candidate_filter(
+                self._cohort_rows(),
+                cohort_identity={"label_source": "digest_shadow"},
+                static_min_similarity=0.65,
+            )
+
+    def test_a_blank_fence_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="query_construction_version"):
+            replay_candidate_filter(
+                self._cohort_rows(),
+                cohort_identity={"query_construction_version": "  "},
+                static_min_similarity=0.65,
+            )
+
+    def test_rows_dropped_for_a_missing_excerpt_stay_visible_in_the_report(self) -> None:
+        rows = [
+            *self._cohort_rows(),
+            _signal_row(
+                request_id="req-4",
+                memory_id="mem-6",
+                presented=[{"memory_id": "other", "excerpt": "x"}],
+            ),
+        ]
+
+        report = replay_candidate_filter(rows, cohort_identity=_COHORT, static_min_similarity=0.65)
+
+        assert report.rows_total == len(rows)
+        assert report.rows_scored == len(rows) - 1
+
+    def test_an_empty_cohort_yields_zeroed_arms_rather_than_dividing_by_zero(self) -> None:
+        report = replay_candidate_filter([], cohort_identity=_COHORT, static_min_similarity=0.65)
+
+        assert report.requests_evaluated == 0
+        assert report.candidate_filter.abstention_rate == 0.0
+        assert report.candidate_filter.mean_selected == 0.0
+        assert report.static_constants_matched is None
+
+
+class TestCandidateFilterReplayRecord:
+    def _report(self) -> CandidateFilterReplayReport:
+        return replay_candidate_filter(
+            _request_rows(
+                "req-1",
+                "postgres connection pool exhaustion",
+                [
+                    ("mem-1", "postgres connection pool exhaustion", 0.90, True),
+                    ("mem-2", "ruff formatting conventions", 0.80, False),
+                ],
+            ),
+            cohort_identity=_COHORT,
+            static_min_similarity=0.65,
+        )
+
+    def test_both_arms_carry_every_request_level_metric(self) -> None:
+        record = self._report().to_record()
+
+        required = {
+            "requests_evaluated",
+            "abstention_rate",
+            "abstain_correct",
+            "abstain_regret",
+            "mean_selected",
+            "pairwise_accuracy",
+            "pairwise_requests",
+        }
+        for arm in ("candidate_filter", "static_constants"):
+            assert required <= set(record["arms"][arm]), arm
+
+    def test_the_record_names_the_cohort_identity_it_ran_under(self) -> None:
+        record = self._report().to_record()
+
+        assert record["cohort_identity"] == _COHORT
+        assert (
+            record["cohort_identity"]["query_construction_version"]
+            == "digest-enriched-natural-language-v2"
+        )
+
+    def test_the_record_states_that_digest_evaluation_needs_v2_data(self) -> None:
+        note = self._report().to_record()["digest_conditioned_evaluation"]
+
+        assert "no-digest" in note
+        assert "requires v2 data" in note
+
+    def test_the_record_is_json_serializable(self) -> None:
+        record = self._report().to_record()
+
+        assert json.loads(json.dumps(record, sort_keys=True)) == record

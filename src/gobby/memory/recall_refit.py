@@ -41,14 +41,13 @@ from typing import TYPE_CHECKING, Any, cast
 
 from gobby.config.persistence import MemoryConfig
 from gobby.memory.recall_fit import (
-    FittedParams,
-    LabeledFitReport,
     PairwiseEvalResult,
     ReplayParams,
     ReplayRow,
     WeightingMode,
     evaluate_pairwise,
 )
+from gobby.memory.recall_fit_shrinkage import FittedParams, LabeledFitReport
 from gobby.memory.recall_ship_gate import (
     AUDIT_MIN_AGREEMENT,
     AUDIT_MIN_WILSON_LOWER_BOUND,

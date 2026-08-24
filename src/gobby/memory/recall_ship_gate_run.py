@@ -19,11 +19,11 @@ from gobby.memory.recall_fit import (
     WeightingMode,
     estimate_position_propensities,
     evaluate_pairwise,
-    fit_and_evaluate_partitioned,
     replay_row_from_signal_row,
     split_request_ids_per_project,
     split_requests_per_project,
 )
+from gobby.memory.recall_fit_shrinkage import fit_and_evaluate_partitioned
 from gobby.memory.recall_refit import (
     MIN_EVAL_MIXED_REQUESTS,
     MIN_EVAL_PAIRS,

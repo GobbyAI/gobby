@@ -13,7 +13,12 @@ import click
 
 from gobby.cli.runtime import get_cli_runtime, require_cli_database
 from gobby.memory.recall_constants import RECALL_QUERY_CONSTRUCTION_VERSION
-from gobby.memory.recall_fit import WeightingMode, split_request_ids_per_project
+from gobby.memory.recall_fit import (
+    CandidateFilterParams,
+    WeightingMode,
+    replay_candidate_filter,
+    split_request_ids_per_project,
+)
 from gobby.memory.recall_ship_gate import (
     AUDIT_SAMPLE_REQUESTS,
     GateCohort,
@@ -519,3 +524,125 @@ def drift(
     click.echo(json.dumps(report.to_record(), indent=2))
     if report.alarm:
         raise SystemExit(1)
+
+
+@recall_signals.command("replay-candidate-filter")
+@click.option("--label-source", required=True)
+@click.option(
+    "--protocol-version",
+    required=True,
+    help=f"Judge protocol fence (current: {SHADOW_PROTOCOL_VERSION}).",
+)
+@click.option(
+    "--query-construction-version",
+    default=RECALL_QUERY_CONSTRUCTION_VERSION,
+    show_default=True,
+    help="Query-construction era fence. The report records the cohort it ran under.",
+)
+@click.option("--regime-key", required=True)
+@click.option("--judge-model-key", required=True)
+@click.option("--judge-config-fingerprint", required=True)
+@click.option("--data-cutoff", required=True, type=_AWARE_DATETIME)
+@click.option("--completion-cutoff", required=True, type=_AWARE_DATETIME)
+@click.option(
+    "--candidate-scope",
+    type=click.Choice(["injected", "full"]),
+    default="full",
+    show_default=True,
+)
+@click.option(
+    "--filter-min-score",
+    type=click.FloatRange(min=0.0, max=1.0),
+    default=CandidateFilterParams().min_score,
+    show_default=True,
+    help="Query-coverage floor the replayed candidate filter admits on.",
+)
+@click.option(
+    "--max-selected",
+    type=click.IntRange(min=1),
+    default=CandidateFilterParams().max_selected,
+    show_default=True,
+    help="Per-request selection cap applied to both arms.",
+)
+@click.option(
+    "--static-min-similarity",
+    type=click.FloatRange(min=0.0, max=1.0),
+    default=None,
+    help="Static-constant arm's similarity floor (defaults to memory_recall.selection_min_score).",
+)
+@click.option(
+    "--out",
+    "out_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Write the report JSON to PATH so the numbers survive the terminal.",
+)
+@click.pass_context
+def replay_candidate_filter_command(
+    ctx: click.Context,
+    label_source: str,
+    protocol_version: str,
+    query_construction_version: str,
+    regime_key: str,
+    judge_model_key: str,
+    judge_config_fingerprint: str,
+    data_cutoff: datetime,
+    completion_cutoff: datetime,
+    candidate_scope: str,
+    filter_min_score: float,
+    max_selected: int,
+    static_min_similarity: float | None,
+    out_path: Path | None,
+) -> None:
+    """Replay a no-digest candidate filter against static constants on v1 labels.
+
+    Reports request-level abstention behavior for both arms, so an arm that
+    looks accurate only because it almost never selects anything cannot hide
+    behind pairwise accuracy. No live-path constant changes: this is an
+    offline read of an already-fenced cohort.
+    """
+    if static_min_similarity is None:
+        static_min_similarity = get_cli_runtime(ctx).config.memory_recall.selection_min_score
+
+    weighting_mode = cast(WeightingMode, candidate_scope)
+    cohort = GateCohort(
+        label_source=label_source,
+        candidate_scope=candidate_scope,
+        judge_protocol_version=protocol_version,
+        query_construction_version=query_construction_version,
+        weighting_regime_key=regime_key,
+        judge_model_key=judge_model_key,
+        judge_config_fingerprint=judge_config_fingerprint,
+        data_cutoff=data_cutoff,
+        completion_cutoff=completion_cutoff,
+        weighting_mode=weighting_mode,
+    )
+    store = RecallSignalStore(require_cli_database(ctx))
+    try:
+        rows = store.fetch_shadow_replay_rows(
+            phase="fitting",
+            label_source=label_source,
+            candidate_scope=candidate_scope,
+            judge_protocol_version=protocol_version,
+            query_construction_version=query_construction_version,
+            weighting_regime_key=regime_key,
+            judge_model_key=judge_model_key,
+            judge_config_fingerprint=judge_config_fingerprint,
+            data_cutoff=data_cutoff,
+            completion_cutoff=completion_cutoff,
+            project_id=None,
+            limit=100_000,
+        )
+    except ShadowCohortAmbiguityError as error:
+        raise click.ClickException(_ambiguity_message(error)) from error
+
+    report = replay_candidate_filter(
+        rows,
+        cohort_identity=cohort.identity(),
+        static_min_similarity=static_min_similarity,
+        params=CandidateFilterParams(min_score=filter_min_score, max_selected=max_selected),
+    )
+    serialized = json.dumps(report.to_record(), indent=2, sort_keys=True)
+    click.echo(serialized)
+    if out_path is not None:
+        out_path.write_text(f"{serialized}\n", encoding="utf-8")
