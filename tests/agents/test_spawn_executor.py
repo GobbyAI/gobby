@@ -2439,6 +2439,42 @@ class TestCodexPromptDelivery:
         assert tmux.kill_session.await_count == 0
 
     @pytest.mark.asyncio
+    async def test_pane_output_is_persisted_before_the_session_is_killed(self) -> None:
+        """The kill is allowlisted out of the capture policy only because of this order.
+
+        tests/agents/test_capture_consumers.py exempts
+        _fail_codex_prompt_delivery from the raw-tmux-kill guard on the grounds
+        that the pane is already preserved: the failure error carries it, and
+        run_manager.fail persists that error before the session dies. If the
+        kill ever moved ahead of the persist, the exemption would be wrong and
+        the pane would be lost on the one path where it is the evidence
+        (#20844).
+        """
+        order: list[str] = []
+
+        def record_kill(*_args: object, **_kwargs: object) -> bool:
+            order.append("kill")
+            return True
+
+        def record_persist(*_args: object, **_kwargs: object) -> None:
+            order.append("persist")
+
+        tmux = MagicMock()
+        tmux.capture_pane = AsyncMock(return_value="composer never rendered")
+        tmux.send_keys = AsyncMock()
+        tmux.kill_session = AsyncMock(side_effect=record_kill)
+        run_manager = MagicMock()
+        run_manager.fail.side_effect = record_persist
+
+        with patch.object(spawn_executor_support, "_CODEX_COMPOSER_READY_TIMEOUT_SECONDS", 0.0):
+            await _deliver_codex_prompt(tmux, "sess", "Do the task", "run-1", run_manager)
+
+        assert order == ["persist", "kill"], (
+            f"the pane must be persisted before the kill; got {order}"
+        )
+        assert "composer never rendered" in run_manager.fail.call_args.kwargs["error"]
+
+    @pytest.mark.asyncio
     async def test_schedule_skips_empty_prompt(self) -> None:
         tmux = MagicMock()
 

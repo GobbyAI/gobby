@@ -13,6 +13,18 @@ _RAW_KILL_ALLOWLIST = {
     ("src/gobby/agents/tmux/session_manager.py", "TmuxSessionManager.kill_session"),
     ("src/gobby/agents/tmux/spawner.py", "TmuxSpawner._async_spawn"),
     ("src/gobby/servers/websocket/tmux.py", "TmuxMixin._handle_tmux_kill_session"),
+    # The pane is already preserved here, by a narrower route than the policy.
+    # Every caller builds this path's error through
+    # _codex_prompt_failure_reason, which redacts the captured pane, bounds it,
+    # and embeds it in the error that run_manager.fail persists -- and that
+    # happens before the kill. Routing the kill through the policy as well
+    # would capture the same pane twice, unredacted the second time, and the
+    # policy's record_termination_intent rejects an already-failed run, which
+    # would return early and leave the tmux session alive (#20844).
+    (
+        "src/gobby/agents/spawn_executor_support.py",
+        "_fail_codex_prompt_delivery",
+    ),
 }
 
 
