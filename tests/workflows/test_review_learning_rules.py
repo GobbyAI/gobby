@@ -10,8 +10,8 @@ import pytest
 import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules

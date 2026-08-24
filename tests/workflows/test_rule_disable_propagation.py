@@ -9,8 +9,8 @@ from datetime import UTC, datetime
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
 from gobby.workflows.engine.core import RuleEngine
 

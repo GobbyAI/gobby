@@ -523,9 +523,7 @@ async def test_merge_worker_three_cleanup_failures_transition_to_terminate(
             session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002",
             variables=variables,
         )
-        instance = instance_manager.get_for_session(
-            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002"
-        )
+        instance = instance_manager.get_for_session("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002")
         assert instance is not None
         assert instance.current_step == "cleanup"
         assert instance.variables["worktree_cleanup_failures"] == expected_failures

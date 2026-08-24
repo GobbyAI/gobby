@@ -25,10 +25,10 @@ from gobby.mcp_proxy.services.result_handling import (
     apply_before_tool_enforcement,
     build_before_tool_event,
 )
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
-from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import split_rule_definition_data
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler

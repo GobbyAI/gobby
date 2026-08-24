@@ -67,7 +67,9 @@ class TestAuthStatus:
 
 
 class TestAuthLogin:
-    def test_login_is_case_insensitive_and_creates_user_owned_session(self, temp_db: HubDatabase) -> None:
+    def test_login_is_case_insensitive_and_creates_user_owned_session(
+        self, temp_db: HubDatabase
+    ) -> None:
         _set_password(temp_db, "mypassword")
         client = TestClient(_server(temp_db).app)
 
@@ -131,9 +133,7 @@ class TestAuthLogin:
         assert all(call.args[1] == DUMMY_PASSWORD_HASH for call in verify.call_args_list[1:])
 
     @pytest.mark.parametrize("email", [TEST_USER_EMAIL, " ", "invalid"])
-    def test_repeated_failed_logins_are_locked_out(
-        self, temp_db: HubDatabase, email: str
-    ) -> None:
+    def test_repeated_failed_logins_are_locked_out(self, temp_db: HubDatabase, email: str) -> None:
         _set_password(temp_db, "mypassword")
         client = TestClient(_server(temp_db).app)
         credentials = {"email": email, "password": "wrong"}

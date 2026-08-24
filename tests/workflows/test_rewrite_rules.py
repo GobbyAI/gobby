@@ -11,8 +11,8 @@ import pytest
 from gobby.adapters.claude_code import _ACTION_FIRST_PREFIXES, is_action_first_reason
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.skills.formatting import skill_fetch_directive
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import (
     RuleDefinitionBody,
     RuleEffect,

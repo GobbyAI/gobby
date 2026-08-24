@@ -6,7 +6,6 @@ behavior to the old rule_definitions format.
 
 from __future__ import annotations
 
-import json
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,8 +15,8 @@ import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import sync_bundled_rules

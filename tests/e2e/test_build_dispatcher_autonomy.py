@@ -1017,5 +1017,8 @@ async def test_idle_planner_stage_agent_keeps_periodic_enter_and_gets_handoff_re
     ]
     assert all(call_args.args[1] != "Up" for call_args in mock_tmux.send_keys.call_args_list)
     assert "Workflow: planner. Current step: plan." in sent_prompt
-    assert "Finish the required Gobby lifecycle MCP transition, then call end_agent_run." in sent_prompt
+    assert (
+        "Finish the required Gobby lifecycle MCP transition, then call end_agent_run."
+        in sent_prompt
+    )
     assert stage_row(temp_db, task.id, "planning")["state"] == "in_progress"

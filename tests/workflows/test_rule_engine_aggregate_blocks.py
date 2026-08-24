@@ -12,8 +12,8 @@ import pytest
 from gobby.config.app import DaemonConfig
 from gobby.config.runtime_models import ConfigSnapshot
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.blocked_tool_recovery import format_aggregated_block_reason
 from gobby.workflows.engine.core import RuleEngine

@@ -98,7 +98,9 @@ class TestLocalMachineManager:
         assert throttled is not None
         assert throttled.last_seen == first.last_seen
 
-    def test_upsert_seen_rejects_conflicting_owner_without_mutation(self, temp_db: HubDatabase) -> None:
+    def test_upsert_seen_rejects_conflicting_owner_without_mutation(
+        self, temp_db: HubDatabase
+    ) -> None:
         users = LocalUserManager(temp_db)
         users.create(
             user_id=OTHER_USER_ID,

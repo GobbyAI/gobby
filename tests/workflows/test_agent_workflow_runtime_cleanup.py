@@ -15,19 +15,19 @@ if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
 import gobby.mcp_proxy.tools.tasks._stage_ops as stage_ops
+from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, TaskDispatchMutexManager
 from gobby.storage.tasks._updates import update_task
-from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.utils.session_context import session_context_for_test
-from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.step_instances import AgentStepInstanceManager
-from tests.workflows.step_instance_fixtures import make_step_instance
 from tests.storage.tasks._stage_test_helpers import initialize_manifest, spec, stage_row
+from tests.workflows.step_instance_fixtures import make_step_instance
 
 pytestmark = pytest.mark.unit
 

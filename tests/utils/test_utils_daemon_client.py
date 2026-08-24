@@ -550,7 +550,9 @@ class TestDaemonClientRawAndStream:
 
         with patch("httpx.AsyncClient", SlowClient):
             task = asyncio.create_task(
-                client.stream_request("GET", "/api/chat/attachments/x/content", hop=True).__aenter__()
+                client.stream_request(
+                    "GET", "/api/chat/attachments/x/content", hop=True
+                ).__aenter__()
             )
             await started.wait()
             task.cancel()

@@ -11,8 +11,8 @@ import pytest
 import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.blocked_tool_recovery import (
     _ACTION_WORD_RE as ACTION_WORD_RE,

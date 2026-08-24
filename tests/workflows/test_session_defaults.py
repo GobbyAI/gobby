@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.sync_rules import sync_bundled_rules
 from gobby.workflows.sync_variables import sync_bundled_variables
 
@@ -297,7 +297,10 @@ def test_project_scoped_defaults_isolation(db: HubDatabase) -> None:
     )
 
     _seed_project_scoped_defaults(db)
-    agent = AgentDefinitionBody(prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."}, name="default")
+    agent = AgentDefinitionBody(
+        prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
+        name="default",
+    )
     sv_mgr = SessionVariableManager(db)
 
     assert load_variable_defaults(db, None) == _expected_for(None)

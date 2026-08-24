@@ -44,7 +44,9 @@ class TestPlannerSkillLoading:
     def test_load_skill_step_targets_plan_draft(self, agent: AgentDefinitionBody) -> None:
         """Step status message must name the plan-draft skill explicitly so the
         runtime prompt contains the right get_skill(name=...) call."""
-        load_step = find_step((agent.step_workflow.steps if agent.step_workflow else []), "load_skill")
+        load_step = find_step(
+            (agent.step_workflow.steps if agent.step_workflow else []), "load_skill"
+        )
         assert load_step is not None
         assert load_step.status_message is not None
         assert "plan-draft" in load_step.status_message
@@ -62,7 +64,9 @@ class TestPlannerSkillLoading:
     def test_load_skill_only_permits_get_skill(self, agent: AgentDefinitionBody) -> None:
         """Tight allow-list prevents the agent from wandering during skill
         load — no drafting edits, no unrelated MCP calls."""
-        load_step = find_step((agent.step_workflow.steps if agent.step_workflow else []), "load_skill")
+        load_step = find_step(
+            (agent.step_workflow.steps if agent.step_workflow else []), "load_skill"
+        )
         assert load_step is not None
         assert load_step.allowed_mcp_tools == ["gobby-skills:get_skill"]
 
@@ -74,7 +78,9 @@ class TestPlannerSkillLoading:
         objects — use an isinstance-guarded extraction so this works for both
         dict-valued and (future) model-object entries.
         """
-        load_step = find_step((agent.step_workflow.steps if agent.step_workflow else []), "load_skill")
+        load_step = find_step(
+            (agent.step_workflow.steps if agent.step_workflow else []), "load_skill"
+        )
         assert load_step is not None
         mcp_success = getattr(load_step, "on_mcp_success", []) or []
 
@@ -85,7 +91,9 @@ class TestPlannerSkillLoading:
         assert ("gobby-skills", "get_skill", "skill_loaded") in triples
 
     def test_transition_gates_on_skill_loaded(self, agent: AgentDefinitionBody) -> None:
-        load_step = find_step((agent.step_workflow.steps if agent.step_workflow else []), "load_skill")
+        load_step = find_step(
+            (agent.step_workflow.steps if agent.step_workflow else []), "load_skill"
+        )
         assert load_step is not None
         transitions = load_step.transitions or []
         assert any(t.to == "plan" and t.when and "skill_loaded" in t.when for t in transitions)

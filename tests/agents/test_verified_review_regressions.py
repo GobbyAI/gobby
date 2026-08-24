@@ -102,9 +102,8 @@ def test_session_manager_requires_sandbox_policy_hash_writer() -> None:
         parent_session_id="parent",
         project_id="project",
         session_manager=cast(Any, manager),
-
-    prepared_spawn=prepared_spawn(),
-)
+        prepared_spawn=prepared_spawn(),
+    )
 
     result = _session_manager_validation_error(request, "codex")
 

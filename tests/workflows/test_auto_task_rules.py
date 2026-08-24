@@ -8,12 +8,10 @@ Verifies auto-task rules sync correctly and have proper structure:
 
 from __future__ import annotations
 
-import json
-
 import pytest
 
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.sync_rules import sync_bundled_rules
 

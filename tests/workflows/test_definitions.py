@@ -1,7 +1,5 @@
 """Tests for WorkflowDefinition models in definitions.py."""
 
-from datetime import UTC, datetime
-
 import pytest
 
 pytestmark = pytest.mark.unit

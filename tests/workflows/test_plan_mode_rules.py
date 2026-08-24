@@ -5,7 +5,6 @@ Verifies plan-mode detection, Consider guidance, mode_level tracking, and resets
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, cast
@@ -13,9 +12,9 @@ from typing import Any, cast
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler

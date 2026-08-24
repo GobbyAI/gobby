@@ -54,9 +54,7 @@ class StubConfigRuntime(ConfigRuntime):
 def authenticate_test_server(server: HTTPServer) -> HTTPServer:
     """Mark requests authenticated for tests outside the authentication contract."""
     cast(Any, server.auth_service).is_request_authenticated = MagicMock(return_value=True)
-    cast(Any, server.auth_service).authenticate = MagicMock(
-        return_value=AuthDecision(allowed=True)
-    )
+    cast(Any, server.auth_service).authenticate = MagicMock(return_value=AuthDecision(allowed=True))
     return server
 
 

@@ -26,7 +26,6 @@ from gobby.workflows.dry_run import (
     check_agent_tool_gates,
     check_step_tool_gates,
     evaluate_agent_definition,
-    evaluate_pipeline_definition,
 )
 from gobby.workflows.native_tools import is_known_native_tool
 
@@ -138,7 +137,11 @@ class TestStepToolGates:
 
 class TestAgentToolGates:
     def test_agent_level_typo_in_blocked_tools_is_error(self) -> None:
-        agent = AgentDefinitionBody(prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."}, name="merge-worker", blocked_tools=["Wokflow", "Task"])
+        agent = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
+            name="merge-worker",
+            blocked_tools=["Wokflow", "Task"],
+        )
         result = _evaluation()
         check_agent_tool_gates(agent, result)
         errors = [i for i in result.items if i.level == "error"]

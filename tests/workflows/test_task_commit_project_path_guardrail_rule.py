@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
@@ -18,9 +18,7 @@ def test_task_commit_project_path_guardrail_rule_syncs_and_validates(
     result = sync_bundled_rules(temp_db, get_bundled_rules_path())
     assert result["errors"] == []
 
-    temp_db.execute(
-        "UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'"
-    )
+    temp_db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
     row = RuleDefinitionManager(temp_db).get_by_name(
         "task-commit-project-path-allowlist-before-git"
     )

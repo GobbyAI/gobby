@@ -58,16 +58,18 @@ def test_success_path_uses_complete_stage_for_in_progress_epic_qa() -> None:
     assert "gobby-agents:end_agent_run" in blocked
     assert (
         "gobby-agents:end_agent_run"
-        in next(step for step in agent["step_workflow"]["steps"] if step["name"] == "terminate")["allowed_mcp_tools"]
+        in next(step for step in agent["step_workflow"]["steps"] if step["name"] == "terminate")[
+            "allowed_mcp_tools"
+        ]
     )
 
 
 def test_reads_subtree() -> None:
     agent = _agent()
     claim_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "claim")
-    review_text = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")[
-        "status_message"
-    ]
+    review_text = next(
+        step for step in agent["step_workflow"]["steps"] if step["name"] == "review"
+    )["status_message"]
 
     assert "gobby-tasks:get_task" in claim_step["allowed_mcp_tools"]
     assert "gobby-tasks:list_tasks" in claim_step["allowed_mcp_tools"]
@@ -78,7 +80,9 @@ def test_reads_subtree() -> None:
 def test_docs_epics_can_use_discovery_brief_plan_substitute() -> None:
     agent = _agent()
     instructions = agent["prompts"]["agent"]
-    status = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")["status_message"]
+    status = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")[
+        "status_message"
+    ]
 
     assert "Discovery Brief" in instructions
     assert "descendant task set" in instructions
@@ -90,7 +94,9 @@ def test_docs_epics_can_use_discovery_brief_plan_substitute() -> None:
 def test_epic_review_order_is_spec_quality_testing_proportionality() -> None:
     agent = _agent()
     instructions = agent["prompts"]["agent"]
-    status = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")["status_message"]
+    status = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")[
+        "status_message"
+    ]
 
     # Anchor on the explicit "Review in order" sentence: the `proportionality`
     # skill name also appears earlier in the skill-load list, so a bare
@@ -169,9 +175,9 @@ def test_closed_epic_routes_to_post_hoc_review_with_reopen_permission() -> None:
 def test_tdd_audit_evidence_is_language_aware() -> None:
     agent = _agent()
     instructions = agent["prompts"]["agent"]
-    review_text = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")[
-        "status_message"
-    ]
+    review_text = next(
+        step for step in agent["step_workflow"]["steps"] if step["name"] == "review"
+    )["status_message"]
 
     for text in (instructions, review_text):
         assert "supported-language" in text

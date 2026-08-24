@@ -21,7 +21,9 @@ def _agent() -> dict:
 def test_doc_reviewer_is_read_only() -> None:
     agent = _agent()
     review_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
-    terminate_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "terminate")
+    terminate_step = next(
+        step for step in agent["step_workflow"]["steps"] if step["name"] == "terminate"
+    )
 
     allowed_tools = set(review_step.get("allowed_tools", []))
     blocked_mcp_tools = set(review_step.get("blocked_mcp_tools", []))
@@ -38,9 +40,9 @@ def test_doc_reviewer_is_read_only() -> None:
 def test_doc_reviewer_avoids_full_test_suites() -> None:
     agent = _agent()
     instructions = agent["prompts"]["agent"]
-    status_message = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")[
-        "status_message"
-    ]
+    status_message = next(
+        step for step in agent["step_workflow"]["steps"] if step["name"] == "review"
+    )["status_message"]
 
     assert "Do NOT run full pytest, Cargo, Vitest, or Jest suites" in instructions
     assert "`cargo test -p <package>`" in instructions
@@ -55,7 +57,9 @@ def test_doc_reviewer_avoids_full_test_suites() -> None:
 
 def test_doc_reviewer_loads_required_skills() -> None:
     agent = _agent()
-    load_step = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "load_skills")
+    load_step = next(
+        step for step in agent["step_workflow"]["steps"] if step["name"] == "load_skills"
+    )
 
     assert agent["step_workflow"]["variables"]["required_skills"] == [
         "code-index",

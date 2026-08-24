@@ -170,9 +170,7 @@ def test_put_user_md_refuses_streamed_byte_above_wire_max(files_home: Path) -> N
     @app.middleware("http")
     async def drop_content_length(request: Request, call_next: Any) -> Response:
         request.scope["headers"] = [
-            (key, value)
-            for key, value in request.scope["headers"]
-            if key != b"content-length"
+            (key, value) for key, value in request.scope["headers"] if key != b"content-length"
         ]
         return cast(Response, await call_next(request))
 

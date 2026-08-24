@@ -18,9 +18,9 @@ from typing import Any
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.storage.definitions.rules import RuleDefinitionManager, RuleDefinitionRow
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import Task
-from gobby.storage.definitions.rules import RuleDefinitionManager, RuleDefinitionRow
 from gobby.tasks.state_semantics import ACTIVE_STAGE_STATES
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
@@ -111,9 +111,7 @@ class TestStopGatesSync:
 
         assert STOP_GATES_RULES.issubset(rule_names), f"Missing: {STOP_GATES_RULES - rule_names}"
 
-    def test_all_rules_have_group(
-        self, db: HubDatabase, manager: RuleDefinitionManager
-    ) -> None:
+    def test_all_rules_have_group(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         """All rules should have group='stop-gates'."""
         _sync_bundled(db)
 
@@ -530,9 +528,7 @@ class TestLegitimateWaitConditions:
 class TestRequireStepCompletion:
     """Verify spawned-agent step completion gates only apply to active step workflows."""
 
-    def test_blocks_on_turn_end(
-        self, db: HubDatabase, manager: RuleDefinitionManager
-    ) -> None:
+    def test_blocks_on_turn_end(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         """Should be a block effect on semantic turn_end."""
         _sync_bundled(db)
 

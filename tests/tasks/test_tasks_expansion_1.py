@@ -39,7 +39,12 @@ def _parent(
 
 
 def _store_agent(service: ExpansionService, name: str, description: str) -> None:
-    body = AgentDefinitionBody(prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."}, name=name, description=description, surfaces=["spawn"])
+    body = AgentDefinitionBody(
+        prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
+        name=name,
+        description=description,
+        surfaces=["spawn"],
+    )
     AgentDefinitionManager(service.db).create(
         name=name,
         definition_json=body.model_dump(mode="json"),

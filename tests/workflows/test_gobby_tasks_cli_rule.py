@@ -7,8 +7,8 @@ from datetime import UTC, datetime
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
@@ -20,9 +20,7 @@ pytestmark = pytest.mark.unit
 def db(temp_db: HubDatabase) -> HubDatabase:
     database = temp_db
     sync_bundled_rules(database, get_bundled_rules_path())
-    database.execute(
-        "UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'"
-    )
+    database.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
     return database
 
 

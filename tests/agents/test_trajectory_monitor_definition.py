@@ -21,7 +21,10 @@ def _agent() -> dict[str, Any]:
 
 
 def _step(agent: dict[str, Any], name: str) -> dict[str, Any]:
-    return cast(dict[str, Any], next(step for step in agent["step_workflow"]["steps"] if step["name"] == name))
+    return cast(
+        dict[str, Any],
+        next(step for step in agent["step_workflow"]["steps"] if step["name"] == name),
+    )
 
 
 def test_trajectory_monitor_is_read_only_and_terminates_explicitly() -> None:

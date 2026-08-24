@@ -14,8 +14,8 @@ import re
 
 import pytest
 
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 

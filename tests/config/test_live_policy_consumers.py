@@ -31,8 +31,8 @@ from gobby.servers.routes.configuration_validation_detection import (
 from gobby.servers.routes.rules import create_rules_router
 from gobby.servers.routes.sessions.core import register_core_routes
 from gobby.servers.tool_approvals import get_global_approval_rules
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
 

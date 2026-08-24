@@ -470,8 +470,7 @@ class TestWebChatLifecycle:
         db_session_id = "dddddddd-dddd-4ddd-8ddd-ddddddddddd1"
         machine_id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1"
         temp_db.execute(
-            "INSERT INTO machines (id, owner_user_id) VALUES (%s, %s) "
-            "ON CONFLICT (id) DO NOTHING",
+            "INSERT INTO machines (id, owner_user_id) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
             (machine_id, TEST_USER_ID),
         )
         temp_db.execute(

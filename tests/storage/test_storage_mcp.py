@@ -514,9 +514,7 @@ class TestLocalMCPManager:
             [{"name": "removed_tool", "inputSchema": {"type": "object"}}],
             project_id=sample_project["id"],
         )
-        tool = mcp_manager.get_cached_tools(
-            "remove-me", project_id=sample_project["id"]
-        )[0]
+        tool = mcp_manager.get_cached_tools("remove-me", project_id=sample_project["id"])[0]
         generation_state = EmbeddingGenerationState(mcp_manager.db)
         watermark = generation_state.watermark()
 
@@ -524,9 +522,9 @@ class TestLocalMCPManager:
         assert result is True
         assert mcp_manager.get_server("remove-me", project_id=sample_project["id"]) is None
         changes = generation_state.changes_after(watermark)
-        assert [(change.source_kind, change.source_id, change.is_tombstone) for change in changes] == [
-            ("tool", tool.id, True)
-        ]
+        assert [
+            (change.source_kind, change.source_id, change.is_tombstone) for change in changes
+        ] == [("tool", tool.id, True)]
 
     def test_remove_nonexistent(
         self,

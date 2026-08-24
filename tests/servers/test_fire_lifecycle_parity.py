@@ -81,8 +81,7 @@ def _seed_session_row(db: HubDatabase, session_id: str = SESSION_ID) -> None:
         (project_id, "parity-test-project"),
     )
     db.execute(
-        "INSERT INTO machines (id, owner_user_id) VALUES (%s, %s) "
-        "ON CONFLICT (id) DO NOTHING",
+        "INSERT INTO machines (id, owner_user_id) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
         (machine_id, TEST_USER_ID),
     )
     db.execute(

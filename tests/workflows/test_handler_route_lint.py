@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import yaml
 
-from gobby.workflows.definitions import AgentDefinitionBody, WorkflowDefinition, WorkflowStep
 from gobby.workflows.agent_models import AgentStepWorkflowBody
+from gobby.workflows.definitions import AgentDefinitionBody, WorkflowDefinition, WorkflowStep
 from gobby.workflows.dry_run import evaluate_agent_definition
 from gobby.workflows.handler_route_lint import check_handler_routes
 

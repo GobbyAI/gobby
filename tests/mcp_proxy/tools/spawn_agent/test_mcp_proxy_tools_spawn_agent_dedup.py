@@ -187,7 +187,11 @@ class TestSpawnAgentDedup:
         runner._child_session_manager = MagicMock()
         runner.run_storage.has_active_run_for_task.return_value = False
 
-        agent_body = AgentDefinitionBody(prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."}, name="epic-reviewer", provider="claude")
+        agent_body = AgentDefinitionBody(
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
+            name="epic-reviewer",
+            provider="claude",
+        )
 
         mock_task_manager = MagicMock()
         mock_task = MagicMock()
