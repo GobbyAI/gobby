@@ -5,7 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 from typing import IO
+
+from gobby.utils.stream_pump import open_stream_pump_executor
 
 DEFAULT_STDERR_RING_LIMIT_BYTES = 64 * 1024
 DEFAULT_STDERR_LOG_LIMIT_CHARS = 300
@@ -69,12 +72,21 @@ class SubprocessStderrDrain:
         self._buffer = StderrRingBuffer(limit)
         self._task: asyncio.Task[None] | None = None
         self._updated = asyncio.Event()
+        self._pump_executor: ThreadPoolExecutor | None = None
 
     def start_text(self, stream: IO[str] | None) -> None:
-        """Start draining a synchronous text-mode stderr stream."""
+        """Start draining a synchronous text-mode stderr stream.
+
+        A child that never writes to stderr leaves the read blocked for its
+        whole life, so the drain takes a thread of its own instead of one of
+        the loop's shared default-executor slots (#20839).
+        """
         if stream is None:
             return
-        self._replace_task(asyncio.create_task(self._drain_text(stream)))
+        self._shutdown_pump_executor()
+        executor = open_stream_pump_executor(self._label)
+        self._pump_executor = executor
+        self._replace_task(asyncio.create_task(self._drain_text(stream, executor)))
 
     def start_async(self, stream: asyncio.StreamReader | None) -> None:
         """Start draining an asyncio subprocess stderr stream."""
@@ -86,13 +98,23 @@ class SubprocessStderrDrain:
         """Cancel the active drain task, if any."""
         task = self._task
         self._task = None
-        if task is None or task.done():
-            return
-        task.cancel()
         try:
-            await task
-        except asyncio.CancelledError:
-            pass
+            if task is None or task.done():
+                return
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        finally:
+            self._shutdown_pump_executor()
+
+    def _shutdown_pump_executor(self) -> None:
+        """Release the pump thread; it exits once its stream reaches EOF."""
+        executor = self._pump_executor
+        self._pump_executor = None
+        if executor is not None:
+            executor.shutdown(wait=False)
 
     async def wait_finished(self, *, timeout: float = 0.1) -> None:
         """Wait briefly for the drain task to consume EOF after process exit."""
@@ -132,12 +154,12 @@ class SubprocessStderrDrain:
             old_task.cancel()
         self._task = task
 
-    async def _drain_text(self, stream: IO[str]) -> None:
+    async def _drain_text(self, stream: IO[str], executor: ThreadPoolExecutor) -> None:
         loop = asyncio.get_running_loop()
         fd = stream.fileno()
         while True:
             try:
-                chunk = await loop.run_in_executor(None, os.read, fd, 4096)
+                chunk = await loop.run_in_executor(executor, os.read, fd, 4096)
             except OSError:
                 return
             if not chunk:

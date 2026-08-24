@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.adapters.codex_impl.types import CodexConnectionState
+from gobby.utils.stream_pump import open_stream_pump_executor
 
 if TYPE_CHECKING:
     from gobby.adapters.codex_impl.client import CodexAppServerClient
@@ -213,6 +215,18 @@ async def read_loop(client: CodexAppServerClient) -> None:
     if not client._process or not client._process.stdout:
         return
 
+    # readline blocks until the app-server speaks, which for a quiet client is
+    # the whole life of the process. Park that on a thread this loop owns
+    # rather than on the shared default executor (#20839).
+    executor = open_stream_pump_executor("codex-stdout")
+    try:
+        await _consume_stdout(client, executor)
+    finally:
+        executor.shutdown(wait=False)
+
+
+async def _consume_stdout(client: CodexAppServerClient, executor: ThreadPoolExecutor) -> None:
+    """Dispatch every JSON-RPC line the app-server writes until shutdown."""
     loop = asyncio.get_running_loop()
 
     while not client._shutdown_event.is_set():
@@ -225,8 +239,8 @@ async def read_loop(client: CodexAppServerClient) -> None:
             if stdout is None:
                 break
 
-            # Read line in thread pool to avoid blocking
-            line = await loop.run_in_executor(None, stdout.readline)
+            # Read line on the pump thread to avoid blocking the event loop
+            line = await loop.run_in_executor(executor, stdout.readline)
 
             if not line:
                 if client._shutdown_event.is_set():

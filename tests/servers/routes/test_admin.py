@@ -1026,24 +1026,18 @@ class TestHealthEndpoint:
     ) -> None:
         diagnostic = _hook_runtime_diagnostic(runtime_state)
 
-        with (
-            patch(
-                "gobby.servers.routes.admin._health.read_ghook_runtime_diagnostic",
-                return_value=diagnostic,
-            ) as mock_read,
-            patch(
-                "gobby.servers.routes.admin._health.asyncio.to_thread",
-                new_callable=AsyncMock,
-                side_effect=lambda func, *args, **kwargs: func(*args, **kwargs),
-            ) as mock_to_thread,
-        ):
+        with patch(
+            "gobby.servers.routes.admin._health.read_ghook_runtime_diagnostic",
+            return_value=diagnostic,
+        ) as mock_read:
             response = client.get("/api/health")
 
         assert response.status_code == 200
         assert response.json()["status"] == expected_health
         assert response.json()["hook_runtime"]["state"] == runtime_state.value
+        # Read once per probe, and read inline: liveness must not wait on a
+        # slot in the shared default executor (#20839).
         mock_read.assert_called_once_with()
-        mock_to_thread.assert_awaited_once_with(mock_read)
 
     def test_health_surfaces_forced_runner_init_failure(
         self,

@@ -151,7 +151,12 @@ def create_health_router(server: "HTTPServer") -> APIRouter:
     @router.get("/health")
     async def health_check() -> dict[str, Any]:
         """Lightweight health check including local hook-runtime compatibility."""
-        hook_runtime = await asyncio.to_thread(read_ghook_runtime_diagnostic)
+        # Read the stamp inline. It is a few hundred bytes of page-cached local
+        # JSON -- cheaper than the thread hop it used to pay for, and the hop
+        # made liveness depend on a free slot in the shared default executor,
+        # which is exactly what timed this endpoint out at five seconds
+        # (#20839).
+        hook_runtime = read_ghook_runtime_diagnostic()
         degraded_services = _get_degraded_services(server)
         return {
             "status": "degraded" if hook_runtime.is_degraded or degraded_services else "ok",
