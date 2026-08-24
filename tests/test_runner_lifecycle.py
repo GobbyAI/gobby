@@ -4077,6 +4077,22 @@ async def test_startup_fails_closed_without_agent_reconciliation_owner() -> None
         )
 
 
+def _empty_database_double() -> MagicMock:
+    """A database double whose unstubbed queries come back empty.
+
+    A bare ``MagicMock()`` answers every query with another truthy MagicMock,
+    which models a database that can never return "no row". Startup recovery
+    reads task_close_reviews through a strict row guard that rightly refuses a
+    non-Mapping, so the bare double fails there for a reason that has nothing
+    to do with what these tests assert (#20842).
+    """
+    database = MagicMock()
+    cursor = database.transaction.return_value.__enter__.return_value.execute.return_value
+    cursor.fetchone.return_value = None
+    cursor.fetchall.return_value = []
+    return database
+
+
 class TestAgentRestartRecoveryHelpers:
     """Tests for agent restart/shutdown recovery helpers."""
 
@@ -4189,7 +4205,7 @@ class TestAgentRestartRecoveryHelpers:
         runner = cast(
             GobbyRunner,
             SimpleNamespace(
-                database=MagicMock(),
+                database=_empty_database_double(),
                 db_executor=None,
                 completion_registry=registry,
                 wake_dispatcher=SimpleNamespace(wake=wake),
@@ -4271,7 +4287,7 @@ class TestAgentRestartRecoveryHelpers:
         runner = cast(
             GobbyRunner,
             SimpleNamespace(
-                database=MagicMock(),
+                database=_empty_database_double(),
                 db_executor=None,
                 completion_registry=CompletionEventRegistry(wake_callback=wake),
                 wake_dispatcher=SimpleNamespace(wake=wake),
@@ -4327,7 +4343,7 @@ class TestAgentRestartRecoveryHelpers:
         runner = cast(
             GobbyRunner,
             SimpleNamespace(
-                database=MagicMock(),
+                database=_empty_database_double(),
                 db_executor=None,
                 completion_registry=registry,
                 wake_dispatcher=SimpleNamespace(wake=AsyncMock()),
@@ -4379,7 +4395,7 @@ class TestAgentRestartRecoveryHelpers:
             ]
         )
         runner = SimpleNamespace(
-            database=MagicMock(),
+            database=_empty_database_double(),
             db_executor=None,
             completion_registry=MagicMock(),
             wake_dispatcher=SimpleNamespace(wake=wake),
@@ -4434,7 +4450,7 @@ class TestAgentRestartRecoveryHelpers:
             return {"error_code": "session_not_found"}
 
         runner = SimpleNamespace(
-            database=MagicMock(),
+            database=_empty_database_double(),
             db_executor=None,
             completion_registry=MagicMock(),
             wake_dispatcher=SimpleNamespace(wake=wake),
@@ -4511,7 +4527,7 @@ class TestAgentRestartRecoveryHelpers:
             return {"ism_persisted": True}
 
         runner = SimpleNamespace(
-            database=MagicMock(),
+            database=_empty_database_double(),
             db_executor=None,
             completion_registry=MagicMock(),
             wake_dispatcher=SimpleNamespace(wake=wake),
@@ -4605,7 +4621,7 @@ class TestAgentRestartRecoveryHelpers:
         )
         runner = SimpleNamespace(
             agent_runner=SimpleNamespace(run_storage=run_storage),
-            database=MagicMock(),
+            database=_empty_database_double(),
             db_executor=None,
             session_manager=MagicMock(),
             config=MagicMock(),
