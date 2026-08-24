@@ -55,10 +55,19 @@ def ensure_epic_integration_workspaces(
     integration_by_epic: dict[str, str] = {}
 
     for task in tasks:
-        if task.task_type != "epic" or task.closed_at is not None:
+        if task.task_type != "epic":
             continue
         artifacts = task_manager.artifacts.get_artifacts(task.id)
         if repair_only and not artifacts.integration_branch:
+            continue
+        if task.closed_at is not None and not (
+            merge_closed_descendant_commits and artifacts.integration_branch
+        ):
+            # An epic closes the moment its last child closes (#20600), so by
+            # repair time the epic owning the work is normally already closed,
+            # and its last child's commit is the one most likely to be missing.
+            # Merging into a workspace it already has is what this repair is
+            # for; provisioning a new one for a closed epic is not.
             continue
         parent_integration = _nearest_ancestor_integration(
             task.parent_task_id,

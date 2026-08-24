@@ -1632,3 +1632,61 @@ def test_epic_integration_workspace_recovers_partially_promoted_worktree(
     assert stored.workspace_role == "integration"
     assert _git(phase_path, "rev-parse", "HEAD") == phase_sha
     assert _git(repo, "branch", "--list", _integration_branch(parent)) == ""
+
+
+def test_closed_epic_without_a_workspace_is_not_provisioned_during_merge_repair(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    """Repair merges into a workspace an epic already has; it does not create one.
+
+    An epic closes with its last child (#20600), so merge repair has to keep
+    working on closed epics. That must not turn into provisioning workspaces
+    for epics that finished without one.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
+    leaf = task_manager.create_task(
+        project_id=project.id,
+        title="Leaf",
+        parent_task_id=parent.id,
+        category="code",
+        task_type="task",
+        validation_criteria="Test task completion is observable.",
+    )
+
+    _git(repo, "checkout", "-b", "task/leaf")
+    (repo / "feature.txt").write_text("feature\n")
+    _git(repo, "add", "feature.txt")
+    _git(repo, "commit", "-m", "feature")
+    feature_sha = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "main")
+
+    # No integration workspace is ever provisioned for the epic.
+    task_manager.close_task_with_commit(leaf.id, feature_sha, force=True, cwd=repo)
+    closed_parent = task_manager.get_task(parent.id)
+    assert closed_parent is not None
+    assert closed_parent.closed_at is not None
+
+    ensure_epic_integration_workspaces(
+        task_manager=task_manager,
+        root_task=parent,
+        backend="worktree",
+        target_branch="main",
+        project_id=project.id,
+        services=None,
+        merge_closed_descendant_commits=True,
+    )
+
+    assert task_manager.artifacts.get_artifacts(parent.id).integration_branch is None
+    assert LocalWorktreeManager(temp_db).get_by_task(parent.id) is None
