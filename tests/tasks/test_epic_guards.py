@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -238,3 +239,40 @@ def _git(repo: Path, *args: str) -> str:
     )
     assert result.returncode == 0, result.stderr
     return result.stdout
+
+
+@pytest.mark.asyncio
+async def test_guard_collection_runs_off_the_event_loop(tmp_path: Path) -> None:
+    """Collecting guard paths must not run its database work on the loop.
+
+    Collection walks every task in the project through synchronous psycopg. On
+    a project with ~15k tasks an in-process sampler caught that chain holding
+    the daemon's event loop for 66 seconds -- close_task -> evaluate_epic_guards
+    -> collect_epic_guard_paths -> list_tasks -> _normalize_row -- while every
+    route, liveness included, stopped answering (#20841).
+    """
+    test_path = "tests/test_guard.py"
+    Path(tmp_path, test_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(tmp_path, test_path).write_text("def test_guard(): pass\n", encoding="utf-8")
+    _write_project(tmp_path, "printf '%s\\n' {test_files}")
+    epic, prior, current = _task_tree(criteria=f"Covered. test: `{test_path}::test_guard`.")
+
+    listing_threads: list[int] = []
+
+    class _ThreadRecordingTaskManager(_TaskManager):
+        def list_tasks(self, **kwargs: object) -> list[Task]:
+            listing_threads.append(threading.get_ident())
+            return super().list_tasks(**kwargs)
+
+    loop_thread = threading.get_ident()
+    result = await evaluate_epic_guards(
+        task_manager=cast(LocalTaskManager, _ThreadRecordingTaskManager([epic, prior, current])),
+        task=current,
+        repo_path=str(tmp_path),
+    )
+
+    assert result.passed is True, result.message
+    assert listing_threads, "the guard collection must have queried tasks"
+    assert loop_thread not in listing_threads, (
+        "task listing ran on the event loop thread; it must be offloaded"
+    )

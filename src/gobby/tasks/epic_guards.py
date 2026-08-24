@@ -49,7 +49,11 @@ async def evaluate_epic_guards(
     timeout_seconds: float = _GUARD_TIMEOUT_SECONDS,
 ) -> EpicGuardResult:
     """Collect and run every earlier closed leaf's guard test."""
-    paths, source_task_ids, collection_errors = collect_epic_guard_paths(
+    # Collection walks every task in the project over synchronous psycopg. Left
+    # on the loop that held the daemon for 66 seconds on a ~15k-task project,
+    # with every route including liveness timing out (#20841).
+    paths, source_task_ids, collection_errors = await asyncio.to_thread(
+        collect_epic_guard_paths,
         task_manager=task_manager,
         task=task,
         repo_path=repo_path,
