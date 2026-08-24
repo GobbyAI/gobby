@@ -7,14 +7,18 @@ import hashlib
 import json
 import shlex
 import subprocess
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.acceptance_artifacts import extract_artifact_references
+from gobby.utils.git import run_git_command
 
 _GUARD_OUTPUT_LIMIT = 32_000
 _GUARD_TIMEOUT_SECONDS = 600.0
+_REPO_STATE_TIMEOUT_SECONDS = 15
+_GUARD_CACHE_LIMIT = 16
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +58,9 @@ class EpicGuardResult:
         facts = self.details()
         del facts["output"]
         return facts
+
+
+_passed_guard_runs: OrderedDict[str, EpicGuardResult] = OrderedDict()
 
 
 async def evaluate_epic_guards(
@@ -117,6 +124,16 @@ async def evaluate_epic_guards(
     quoted_paths = " ".join(shlex.quote(path) for path in paths)
     command = template.replace("{test_files}", quoted_paths)
     fingerprint = _fingerprint(paths, source_task_ids, template)
+    # The guard set on this project is 25 test files and the run costs 29 s of
+    # every close attempt against any leaf in the epic -- more than the criteria
+    # review once its verdict is memoized, and paid again by each blocked retry
+    # (#20866). The answer only depends on the guard set and what those tests
+    # read, so an unchanged repository yields an unchanged answer.
+    cache_key = await asyncio.to_thread(_guard_run_cache_key, fingerprint, repo_path)
+    if cache_key is not None:
+        cached = _passed_guard_runs.get(cache_key)
+        if cached is not None:
+            return cached
     try:
         process = await asyncio.create_subprocess_shell(
             command,
@@ -166,7 +183,7 @@ async def evaluate_epic_guards(
             output=output,
             fingerprint=fingerprint,
         )
-    return EpicGuardResult(
+    passed = EpicGuardResult(
         passed=True,
         skipped=False,
         error_type=None,
@@ -177,6 +194,51 @@ async def evaluate_epic_guards(
         output=output,
         fingerprint=fingerprint,
     )
+    if cache_key is not None:
+        _remember_passed_guard_run(cache_key, passed)
+    return passed
+
+
+def _guard_run_cache_key(fingerprint: str, repo_path: str) -> str | None:
+    """Key one guard run by its guard set and everything git can see.
+
+    Returns ``None`` when git cannot describe the tree -- no repository, no
+    commit yet, a broken checkout -- because a key that cannot notice a change
+    would serve a pass that is no longer true. Without a key the guard runs,
+    which is the answer that was always correct.
+
+    The repository path is part of the key. Two checkouts can share a commit,
+    a status and a diff while differing in everything git ignores, and the
+    guard runs inside one of them.
+    """
+    parts: list[str] = [repo_path]
+    for argv in (
+        ["git", "rev-parse", "HEAD"],
+        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        # HEAD plus the status lines name which files moved; only the diff says
+        # what they now contain, and an edit to an already-dirty file changes
+        # nothing else.
+        ["git", "diff", "HEAD"],
+    ):
+        output = run_git_command(argv, cwd=repo_path, timeout=_REPO_STATE_TIMEOUT_SECONDS)
+        if output is None:
+            return None
+        parts.append(output)
+    digest = hashlib.sha256("\0".join(parts).encode()).hexdigest()
+    return f"{fingerprint}:{digest}"
+
+
+def _remember_passed_guard_run(cache_key: str, result: EpicGuardResult) -> None:
+    """Keep the most recent passing runs, and only the passing ones.
+
+    A failure is the answer that already stopped a close, so re-running it
+    costs an attempt that was blocked anyway, and keeping failures out means
+    one flaky run cannot block every later attempt on the same state.
+    """
+    _passed_guard_runs[cache_key] = result
+    _passed_guard_runs.move_to_end(cache_key)
+    while len(_passed_guard_runs) > _GUARD_CACHE_LIMIT:
+        _passed_guard_runs.popitem(last=False)
 
 
 def collect_epic_guard_paths(

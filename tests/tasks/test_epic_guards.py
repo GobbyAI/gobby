@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import threading
 from datetime import UTC, datetime
@@ -308,11 +309,14 @@ def _task(
 
 
 def _write_project(tmp_path: Path, template: str) -> None:
-    Path(tmp_path, ".gobby").mkdir(exist_ok=True)
+    Path(tmp_path, ".gobby").mkdir(exist_ok=True, parents=True)
     Path(tmp_path, ".gobby", "project.json").write_text(
         json.dumps({"verification": {"custom": {"guard_tests": template}}}),
         encoding="utf-8",
     )
+
+
+_FIXED_GIT_DATE = "2026-08-24T12:00:00+00:00"
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -322,6 +326,11 @@ def _git(repo: Path, *args: str) -> str:
         text=True,
         capture_output=True,
         check=False,
+        env={
+            **os.environ,
+            "GIT_AUTHOR_DATE": _FIXED_GIT_DATE,
+            "GIT_COMMITTER_DATE": _FIXED_GIT_DATE,
+        },
     )
     assert result.returncode == 0, result.stderr
     return result.stdout
@@ -363,3 +372,156 @@ async def test_guard_collection_runs_off_the_event_loop(tmp_path: Path) -> None:
     assert loop_thread not in listing_threads, (
         "task listing ran on the event loop thread; it must be offloaded"
     )
+
+
+@pytest.mark.asyncio
+async def test_an_unchanged_repo_does_not_pay_the_guard_run_twice(tmp_path: Path) -> None:
+    """A repeat close attempt must not re-run the whole guard set.
+
+    Measured on this project, the guard set is 25 test files and the run costs
+    29 s of every close attempt against any leaf in the epic -- more than the
+    criteria review once its verdict is memoized (#20866). The result only
+    depends on the guard set and what the tests read, so an unchanged repo
+    yields an unchanged answer and the second attempt serves the first one's.
+    """
+    test_path = "tests/test_guard.py"
+    Path(tmp_path, test_path).parent.mkdir()
+    Path(tmp_path, test_path).write_text("def test_guard(): pass\n", encoding="utf-8")
+    _write_project(tmp_path, _counting_template())
+    _init_repo(tmp_path)
+    epic, prior, current = _task_tree(criteria=f"test: {test_path}::test_guard")
+    manager = cast(LocalTaskManager, _TaskManager([epic, prior, current]))
+
+    first = await evaluate_epic_guards(task_manager=manager, task=current, repo_path=str(tmp_path))
+    second = await evaluate_epic_guards(task_manager=manager, task=current, repo_path=str(tmp_path))
+
+    assert first.passed is True and second.passed is True
+    assert _run_count(tmp_path) == 1, "the guard runner ran a second time"
+    assert second.output == first.output
+    assert second.fingerprint == first.fingerprint
+
+
+@pytest.mark.asyncio
+async def test_a_changed_repo_runs_the_guard_again(tmp_path: Path) -> None:
+    """Anything git can see changing has to earn a fresh run.
+
+    The cached answer is only as good as its key, so the key carries HEAD plus
+    the working tree's own diff and its untracked files. An edit to a file the
+    guard tests read would otherwise serve a verdict from before the edit.
+    """
+    test_path = "tests/test_guard.py"
+    Path(tmp_path, test_path).parent.mkdir()
+    Path(tmp_path, test_path).write_text("def test_guard(): pass\n", encoding="utf-8")
+    _write_project(tmp_path, _counting_template())
+    _init_repo(tmp_path)
+    epic, prior, current = _task_tree(criteria=f"test: {test_path}::test_guard")
+    manager = cast(LocalTaskManager, _TaskManager([epic, prior, current]))
+
+    await evaluate_epic_guards(task_manager=manager, task=current, repo_path=str(tmp_path))
+    Path(tmp_path, "src.py").write_text("value = 2\n", encoding="utf-8")
+    await evaluate_epic_guards(task_manager=manager, task=current, repo_path=str(tmp_path))
+    Path(tmp_path, test_path).write_text("def test_guard(): assert True\n", encoding="utf-8")
+    await evaluate_epic_guards(task_manager=manager, task=current, repo_path=str(tmp_path))
+
+    assert _run_count(tmp_path) == 3, "an untracked file and a tracked edit each need a fresh run"
+
+
+@pytest.mark.asyncio
+async def test_a_failing_guard_is_never_served_from_the_cache(tmp_path: Path) -> None:
+    """Only a pass is worth reusing.
+
+    A failure is the answer that stops a close, and re-running it costs the
+    attempt that was already blocked. Keeping failures out of the cache also
+    keeps one flaky run from blocking every later attempt on the same state.
+    """
+    test_path = "tests/test_guard.py"
+    Path(tmp_path, test_path).parent.mkdir()
+    Path(tmp_path, test_path).write_text("def test_guard(): pass\n", encoding="utf-8")
+    _write_project(tmp_path, f"{_counting_template()}; exit 9")
+    _init_repo(tmp_path)
+    epic, prior, current = _task_tree(criteria=f"test: {test_path}::test_guard")
+    manager = cast(LocalTaskManager, _TaskManager([epic, prior, current]))
+
+    first = await evaluate_epic_guards(task_manager=manager, task=current, repo_path=str(tmp_path))
+    second = await evaluate_epic_guards(task_manager=manager, task=current, repo_path=str(tmp_path))
+
+    assert first.error_type == "epic_guard_failed"
+    assert second.error_type == "epic_guard_failed"
+    assert _run_count(tmp_path) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_repo_git_cannot_describe_always_runs_the_guard(tmp_path: Path) -> None:
+    """No key, no cache. An unversioned tree must never serve a stale pass."""
+    test_path = "tests/test_guard.py"
+    Path(tmp_path, test_path).parent.mkdir()
+    Path(tmp_path, test_path).write_text("def test_guard(): pass\n", encoding="utf-8")
+    _write_project(tmp_path, _counting_template())
+    epic, prior, current = _task_tree(criteria=f"test: {test_path}::test_guard")
+    manager = cast(LocalTaskManager, _TaskManager([epic, prior, current]))
+
+    await evaluate_epic_guards(task_manager=manager, task=current, repo_path=str(tmp_path))
+    await evaluate_epic_guards(task_manager=manager, task=current, repo_path=str(tmp_path))
+
+    assert _run_count(tmp_path) == 2
+
+
+def _counting_template() -> str:
+    return (
+        "c=$(cat guard-runs 2>/dev/null || echo 0); c=$((c+1)); "
+        'printf "%s\\n" "$c" > guard-runs; printf \'%s\\n\' {test_files}'
+    )
+
+
+def _run_count(repo: Path) -> int:
+    counter = Path(repo, "guard-runs")
+    return int(counter.read_text().strip()) if counter.is_file() else 0
+
+
+def _init_repo(repo: Path) -> None:
+    """Build a guard fixture repository whose HEAD is a fixed value.
+
+    The commit dates are pinned so identical content always produces identical
+    commits. Two of these repositories then collide on HEAD by construction
+    rather than by both committing inside the same second.
+    """
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "tests@example.com")
+    _git(repo, "config", "user.name", "Tests")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "guard fixture")
+    Path(repo, ".gitignore").write_text("guard-runs\n", encoding="utf-8")
+    _git(repo, "add", ".gitignore")
+    _git(repo, "commit", "-m", "ignore the run counter")
+
+
+@pytest.mark.asyncio
+async def test_two_checkouts_with_identical_git_state_do_not_share_a_pass(
+    tmp_path: Path,
+) -> None:
+    """A cached pass belongs to the checkout it ran in.
+
+    Two repositories can agree on their commit, their status and their diff and
+    still differ in everything git ignores -- a virtualenv, generated files, a
+    local config -- and the guard runs inside one of them. Committing the same
+    content with the same author within the same second is enough to produce
+    the same HEAD, which is how this was found.
+    """
+    first_repo, second_repo = tmp_path / "first", tmp_path / "second"
+    for repo in (first_repo, second_repo):
+        Path(repo, "tests").mkdir(parents=True)
+        Path(repo, "tests", "test_guard.py").write_text(
+            "def test_guard(): pass\n", encoding="utf-8"
+        )
+        _write_project(repo, _counting_template())
+        _init_repo(repo)
+    assert _git(first_repo, "rev-parse", "HEAD") == _git(second_repo, "rev-parse", "HEAD")
+    epic, prior, current = _task_tree(criteria="test: tests/test_guard.py::test_guard")
+    manager = cast(LocalTaskManager, _TaskManager([epic, prior, current]))
+
+    for repo in (first_repo, second_repo):
+        result = await evaluate_epic_guards(task_manager=manager, task=current, repo_path=str(repo))
+        assert result.passed is True
+
+    assert _run_count(first_repo) == 1
+    assert _run_count(second_repo) == 1, "the second checkout served the first checkout's run"
