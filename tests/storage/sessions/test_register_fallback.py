@@ -372,3 +372,48 @@ def test_register_raises_on_storage_failure(
                 source="claude",
                 project_id=project_id,
             )
+
+
+def test_expired_row_is_invisible_to_lookup_but_visible_to_recovery(
+    session_mgr: SessionManager,
+    project_id: str,
+) -> None:
+    """The asymmetry that sends a same-source event down the recovery path.
+
+    lookup_session_id validates its candidate against a status exclusion, so a
+    retired row is invisible to it. recover_session applies no status filter.
+    A recovery can therefore be reached with the source matching exactly, which
+    is why the caller must report the dimension that actually differed rather
+    than assuming a source mismatch.
+    """
+    session = session_mgr.register(
+        external_id="retired-terminal-session",
+        machine_id=LOCAL_MACHINE_ID,
+        source="claude",
+        project_id=project_id,
+        terminal_context={"tmux_pane": "%9", "tmux_socket_path": "/tmp/tmux-501/gobby"},
+    )
+    assert (
+        session_mgr.lookup_session_id(
+            "retired-terminal-session", source="claude", project_id=project_id
+        )
+        == session.id
+    )
+
+    assert session_mgr.mark_session_expired(session.id)
+
+    assert (
+        session_mgr.lookup_session_id(
+            "retired-terminal-session", source="claude", project_id=project_id
+        )
+        is None
+    )
+    recovered = session_mgr.recover_session(
+        external_id="retired-terminal-session",
+        source="claude",
+        project_id=project_id,
+    )
+    assert recovered is not None
+    assert recovered.id == session.id
+    assert recovered.source == "claude"
+    assert recovered.status == "expired"
