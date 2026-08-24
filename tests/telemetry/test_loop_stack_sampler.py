@@ -139,3 +139,31 @@ def test_a_deep_stack_still_names_the_call_that_entered_it() -> None:
     assert "test_a_deep_stack_still_names_the_call_that_entered_it" in top_stack, (
         f"the outermost end must still name the entry point; got {top_stack!r}"
     )
+
+
+def test_the_caller_window_outreaches_our_own_intermediary_layers() -> None:
+    """Our own plumbing must not consume every caller slot before the culprit.
+
+    The pool-checkout reports spent all eight caller slots on repository
+    storage frames -- transaction, enter_transaction, _native_transaction,
+    _transaction_context, _pool_connection and their postgres_pool
+    counterparts -- and stopped one layer short of the route that opened the
+    transaction, naming a layer instead of a culprit. The window has to reach
+    past the deepest intermediary stack we own (#20845).
+    """
+    sampler = LoopStackSampler(
+        threading.get_ident(),
+        interval_seconds=SAMPLE_INTERVAL_SECONDS,
+    )
+    sampler.start()
+    try:
+        recurse_then_burn(24, time.monotonic() + BURN_SECONDS)
+    finally:
+        sampler.stop()
+
+    hottest = sampler.drain()
+    assert hottest, "a sampler that collects nothing cannot name anything"
+    top_stack, _count = hottest[0]
+    assert "test_the_caller_window_outreaches_our_own_intermediary_layers" in top_stack, (
+        f"two dozen intermediary frames of our own buried the entry point; got {top_stack!r}"
+    )

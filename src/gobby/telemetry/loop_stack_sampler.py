@@ -43,7 +43,15 @@ STACK_SIGNATURE_FRAMES = 12
 # frames are no help either -- every stack starts with the same interpreter,
 # uvicorn and asyncio scaffolding -- so keep the nearest frames that are ours
 # (#20845).
-STACK_CALLER_FRAMES = 8
+#
+# Sixteen rather than eight: at eight, the pool-checkout reports spent every
+# caller slot on our own storage plumbing -- transaction, enter_transaction,
+# _native_transaction, _transaction_context, _pool_connection and their
+# postgres_pool counterparts are all repository frames -- and still stopped one
+# layer short of the route that opened the transaction. A caller window has to
+# outreach the deepest of our own intermediary stacks or it names a layer
+# instead of a culprit.
+STACK_CALLER_FRAMES = 16
 _ELIDED = "..."
 _STDLIB_PREFIX = sysconfig.get_paths()["stdlib"]
 
