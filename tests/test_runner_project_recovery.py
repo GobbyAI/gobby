@@ -28,6 +28,12 @@ class RecordingCronExecutor:
         self.handlers[name] = handler
 
 
+def _wiki_enabled_config_runtime() -> SimpleNamespace:
+    active = SimpleNamespace(wiki=SimpleNamespace(enabled=True))
+    bundle = SimpleNamespace(snapshot=SimpleNamespace(active=active))
+    return SimpleNamespace(capture=lambda: bundle)
+
+
 def _create_projects(temp_db: object, tmp_path: Path) -> list[object]:
     project_manager = LocalProjectManager(temp_db)
     projects = []
@@ -139,6 +145,7 @@ async def test_wiki_cron_registers_each_project_outside_startup_project(
         database=temp_db,
         project_id=None,
         config=SimpleNamespace(wiki=SimpleNamespace(scheduled_scopes=[])),
+        config_runtime=_wiki_enabled_config_runtime(),
         cron_storage=cron_storage,
         cron_scheduler=SimpleNamespace(executor=executor),
         db_executor=SimpleNamespace(run=db_run),
@@ -206,6 +213,7 @@ async def test_wiki_cron_purges_stale_projects_and_restores_fresh_jobs(
     db_run = AsyncMock(side_effect=lambda operation, *args, **kwargs: operation(*args, **kwargs))
     runner = SimpleNamespace(
         database=temp_db,
+        config_runtime=_wiki_enabled_config_runtime(),
         cron_storage=cron_storage,
         cron_scheduler=SimpleNamespace(executor=executor),
         db_executor=SimpleNamespace(run=db_run),
@@ -260,6 +268,7 @@ async def test_wiki_cron_stale_only_projects_complete_after_cleanup(
     db_run = AsyncMock(side_effect=lambda operation, *args, **kwargs: operation(*args, **kwargs))
     runner = SimpleNamespace(
         database=temp_db,
+        config_runtime=_wiki_enabled_config_runtime(),
         cron_storage=cron_storage,
         cron_scheduler=SimpleNamespace(executor=executor),
         db_executor=SimpleNamespace(run=db_run),

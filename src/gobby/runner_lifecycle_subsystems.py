@@ -383,8 +383,19 @@ async def _register_wiki_cron_handlers(
         from gobby.wiki.prune_job import register_wiki_prune_cron
         from gobby.wiki.scheduled_jobs import (
             WIKI_JOB_NAME_PREFIX,
+            park_wiki_cron_jobs,
             register_wiki_cron_jobs_for_projects,
         )
+
+        if not runner.config_runtime.capture().snapshot.active.wiki.enabled:
+            parked = await _run_db(runner, park_wiki_cron_jobs, cron_storage)
+            logger.info(
+                "Wiki cron registration skipped: wiki.enabled is false; parked %s row(s)",
+                parked,
+            )
+            if tracker:
+                tracker.complete("Wiki cron handlers")
+            return
 
         await _run_db(
             runner,

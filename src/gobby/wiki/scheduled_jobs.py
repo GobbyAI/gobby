@@ -425,6 +425,21 @@ async def register_wiki_cron_jobs_for_projects(
     return registered
 
 
+def park_wiki_cron_jobs(cron_storage: CronJobStorage) -> int:
+    """Park every scheduled wiki system cron row so none fires while wiki is disabled.
+
+    Parking clears next_run_at and leaves the operator enabled toggle untouched,
+    so re-enabling wiki restores the family through the normal registration wake.
+    """
+    parked = 0
+    for job in cron_storage.list_system_jobs_by_name_prefix(WIKI_JOB_NAME_PREFIX):
+        if job.next_run_at is None:
+            continue
+        cron_storage.park_system_job(job.id)
+        parked += 1
+    return parked
+
+
 def _wiki_command_specs(
     *,
     gateway: WikiGatewayProtocol,
