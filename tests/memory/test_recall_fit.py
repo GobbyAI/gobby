@@ -9,16 +9,20 @@ join in ``tests/storage/test_recall_signals.py``.
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
-from typing import Any
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
 import pytest
 
+from gobby.config.sessions import MemoryRecallConfig
+from gobby.memory.recall import MAX_RECALL_MEMORIES, MemoryRecallRunner
 from gobby.memory.recall_fit import (
     CandidateFilterParams,
     CandidateFilterReplayReport,
     ReplayParams,
     ReplayRow,
+    _match_static_threshold,
     candidate_filter_score,
     candidate_replay_rows_from_signal_rows,
     estimate_position_propensities,
@@ -40,6 +44,10 @@ from gobby.memory.recall_fit_shrinkage import (
     fit_partial_pooled,
     select_shrinkage_requests,
 )
+from gobby.memory.services._search_constants import _GRAPH_CONFIDENCE_SELECTION_FLOOR
+from gobby.memory.services._search_results import build_results
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.memories import LocalMemoryManager, Memory, MemoryType
 
 pytestmark = pytest.mark.unit
 
@@ -776,12 +784,19 @@ def _signal_row(
     judge_useful: bool | None = True,
     presented: list[dict[str, Any]] | None = None,
     project_id: str | None = "proj-a",
+    search_via: str = "semantic",
+    graph_score: float | None = None,
 ) -> dict[str, Any]:
     """One `fetch_shadow_replay_rows` row as the candidate replay consumes it.
 
     `similarity` is the decayed score the replay orders on; dividing
     `temporal_decay_factor` back out gives the score it thresholds on. Decay
     defaults to 1.0, which makes the two axes the same number.
+
+    `search_via` and `graph_score` together say whether a row is a
+    graph-expander find: `graph_score` is the raw entity-match confidence for
+    any graph-sourced hit, and a `search_via` without `semantic` is what the
+    live path records for a candidate the vector leg's own window missed.
     """
     return {
         "recall_request_id": request_id,
@@ -792,12 +807,85 @@ def _signal_row(
         "temporal_decay_factor": temporal_decay_factor,
         "judge_useful": judge_useful,
         "query_text": query_text,
+        "search_via": search_via,
+        "graph_score": graph_score,
         "presented": (
             presented
             if presented is not None
             else [{"memory_id": memory_id, "excerpt": excerpt, "neutral_key": "M1"}]
         ),
     }
+
+
+PROJECT_SCOPE = "44444444-4444-4444-8444-444444444444"
+
+
+def _stored_memory(memory_id: str) -> Memory:
+    """One stored memory as `build_results` hydrates it, before any scoring.
+
+    Aged a fixed span rather than pinned to a date, so the decay factor stays
+    meaningfully below 1 forever instead of drifting toward an underflow that
+    would eventually make the undecayed axis unrecoverable.
+    """
+    aged = datetime.now(UTC) - timedelta(days=45)
+    return Memory(
+        id=memory_id,
+        memory_type=MemoryType.FACT,
+        content=f"Recorded candidate {memory_id}.",
+        created_at=aged,
+        updated_at=aged,
+        project_id=PROJECT_SCOPE,
+        tags=["test"],
+    )
+
+
+class _FlatStorage:
+    """The slice of `LocalMemoryManager` that `build_results` actually calls."""
+
+    def __init__(self, memories: Sequence[Memory]) -> None:
+        self._memories = list(memories)
+
+    def get_memories(self, memory_ids: Sequence[str], *, scope: Any = None) -> list[Memory]:
+        wanted = set(memory_ids)
+        return [mem for mem in self._memories if mem.id in wanted]
+
+    def get_memory(self, memory_id: str, *, scope: Any = None) -> Memory:
+        for mem in self._memories:
+            if mem.id == memory_id:
+                return mem
+        raise ValueError(memory_id)
+
+
+def _recorded_rows(
+    candidates: Sequence[Memory], graph_score_map: Mapping[str, float]
+) -> list[dict[str, Any]]:
+    """Log scored candidates the way a recall signal row records them.
+
+    `graph_score` comes from the raw graph map rather than from the candidate,
+    because that is what the live logger writes: every graph-sourced hit gets
+    its undiscounted confidence recorded, including one the vector leg also
+    found. Reconstructing the gate from those rows is exactly what replay does.
+    """
+    presented = [
+        {"memory_id": mem.id, "excerpt": mem.content, "neutral_key": f"M{index + 1}"}
+        for index, mem in enumerate(candidates)
+    ]
+    return [
+        {
+            "recall_request_id": "req-1",
+            "memory_id": mem.id,
+            "project_id": None,
+            "rank": index,
+            "similarity": mem.similarity,
+            "temporal_decay_factor": mem.temporal_decay_factor,
+            "judge_useful": True,
+            "query_text": "recorded candidate set",
+            "presented": presented,
+            "search_via": mem.search_via,
+            "graph_score": graph_score_map.get(mem.id),
+        }
+        for index, mem in enumerate(candidates)
+    ]
 
 
 def _request_rows(
@@ -992,6 +1080,265 @@ class TestSelection:
 
         assert [row.memory_id for row, _score in selection] == ["aged"]
         assert [score for _row, score in selection] == [0.60], "ordering still reads the decayed"
+
+
+class TestReplayedGraphConfidenceAxis:
+    """#20879: the replayed arm has to judge a graph find the way the live gate does.
+
+    Since #20873 a graph-expander find -- a memory the graph surfaced and the
+    vector leg's own window missed -- is admitted on its entity-match
+    confidence, with its cosine used only to rank it. An arm still reading the
+    cosine disagrees with live selection on every such hit, and the Phase 4
+    refit owns exactly the constants that gate them.
+    """
+
+    def test_a_graph_expander_find_is_admitted_on_confidence_not_its_cosine(self) -> None:
+        # The expander's whole value is the low-cosine, high-confidence hit, so
+        # `found` clears the confidence floor on a cosine that `missed`, judged
+        # on the same number by the semantic leg, does not survive.
+        rows = candidate_replay_rows_from_signal_rows(
+            [
+                _signal_row(
+                    memory_id="found",
+                    rank=0,
+                    similarity=0.40,
+                    search_via="graph",
+                    graph_score=0.80,
+                ),
+                _signal_row(
+                    memory_id="missed",
+                    rank=1,
+                    similarity=0.40,
+                    search_via="semantic",
+                ),
+            ]
+        )
+
+        selection = select_by_static_constants(rows, min_similarity=0.70, max_selected=3)
+
+        assert [row.memory_id for row, _score in selection] == ["found"]
+
+    def test_a_graph_expander_find_under_the_confidence_floor_is_dropped(self) -> None:
+        # 0.572 is the measured median of the live confidence distribution, and
+        # a strong cosine must not rescue it: confidence is the whole admission.
+        rows = candidate_replay_rows_from_signal_rows(
+            [
+                _signal_row(
+                    memory_id="weak",
+                    rank=0,
+                    similarity=0.95,
+                    search_via="graph|keyword",
+                    graph_score=0.572,
+                )
+            ]
+        )
+
+        assert select_by_static_constants(rows, min_similarity=0.70, max_selected=3) == []
+
+    def test_a_graph_hit_the_vector_leg_also_found_is_gated_on_its_cosine(self) -> None:
+        # Live sets no confidence for a candidate already in the semantic
+        # window, so letting entity confidence rescue a sub-floor cosine here
+        # would widen the semantic axis under cover of the expander.
+        rows = candidate_replay_rows_from_signal_rows(
+            [
+                _signal_row(
+                    memory_id="both-legs",
+                    rank=0,
+                    similarity=0.40,
+                    search_via="semantic|graph",
+                    graph_score=0.95,
+                )
+            ]
+        )
+
+        assert select_by_static_constants(rows, min_similarity=0.70, max_selected=3) == []
+
+    def test_an_unreachable_cosine_floor_still_admits_a_graph_expander_find(self) -> None:
+        # The matched arm sweeps the cosine floor. A sweep that could gate the
+        # graph axis would model a selection the live path never performs.
+        rows = candidate_replay_rows_from_signal_rows(
+            [
+                _signal_row(
+                    memory_id="found",
+                    rank=0,
+                    similarity=0.10,
+                    search_via="graph",
+                    graph_score=0.80,
+                )
+            ]
+        )
+
+        selection = select_by_static_constants(rows, min_similarity=1.0, max_selected=3)
+
+        assert [row.memory_id for row, _score in selection] == ["found"]
+
+    def test_the_confidence_floor_is_a_tunable_the_refit_can_sweep(self) -> None:
+        rows = candidate_replay_rows_from_signal_rows(
+            [
+                _signal_row(
+                    memory_id="found",
+                    rank=0,
+                    similarity=0.10,
+                    search_via="graph",
+                    graph_score=0.60,
+                )
+            ]
+        )
+
+        assert (
+            select_by_static_constants(
+                rows, min_similarity=0.70, max_selected=3, graph_confidence_min_score=0.55
+            )
+            != []
+        )
+        assert (
+            select_by_static_constants(
+                rows, min_similarity=0.70, max_selected=3, graph_confidence_min_score=0.65
+            )
+            == []
+        )
+
+
+class TestMatchedStaticThreshold:
+    def test_the_threshold_grid_is_the_undecayed_axis_it_compares_on(self) -> None:
+        """#20879: a grid of decayed values cannot reach an undecayed breakpoint.
+
+        `select_by_static_constants` compares the undecayed score, so the
+        breakpoints where mean-selected changes are the undecayed values. Both
+        rows here decay by half, which puts every decayed grid point below both
+        breakpoints -- so on that grid the arm selects two candidates at every
+        threshold it can offer and the match fails outright, while the
+        undecayed grid lands the target exactly.
+        """
+        rows = candidate_replay_rows_from_signal_rows(
+            [
+                _signal_row(
+                    memory_id="aged-high", rank=0, similarity=0.40, temporal_decay_factor=0.5
+                ),
+                _signal_row(
+                    memory_id="aged-low", rank=1, similarity=0.30, temporal_decay_factor=0.5
+                ),
+            ]
+        )
+
+        matched = _match_static_threshold(
+            {"req-1": rows},
+            target=1.0,
+            max_selected=3,
+            tolerance=0.05,
+            graph_confidence_min_score=_GRAPH_CONFIDENCE_SELECTION_FLOOR,
+        )
+
+        assert matched == pytest.approx(0.80)
+
+    def test_a_graph_expander_find_is_not_a_breakpoint_on_the_swept_axis(self) -> None:
+        """A cohort of graph finds alone offers the sweep no cosine breakpoints.
+
+        Their admission is decided by the confidence floor at every threshold,
+        so the only grid point is the 0.0 floor and the reported mean counts
+        exactly the find that clears the confidence floor.
+        """
+        rows = candidate_replay_rows_from_signal_rows(
+            [
+                _signal_row(
+                    memory_id="strong",
+                    rank=0,
+                    similarity=0.50,
+                    search_via="graph",
+                    graph_score=0.80,
+                ),
+                _signal_row(
+                    memory_id="weak",
+                    rank=1,
+                    similarity=0.45,
+                    search_via="graph",
+                    graph_score=0.512,
+                ),
+            ]
+        )
+
+        matched = _match_static_threshold(
+            {"req-1": rows},
+            target=1.0,
+            max_selected=3,
+            tolerance=0.05,
+            graph_confidence_min_score=_GRAPH_CONFIDENCE_SELECTION_FLOOR,
+        )
+
+        assert matched == 0.0
+
+
+# `graph-find` sits in the band where the two axes disagree: live admits it at
+# 0.70 >= 0.653, while judging its discounted cosine would face 0.70 * 0.9 =
+# 0.63 against the 0.70 selection floor and drop it. `graph-find-weak` clears
+# the 0.611 search floor and misses the selection floor, so it reaches the gate
+# and is refused there. `both-legs` carries a confidence high enough to rescue
+# anything, and must not: the vector leg already scored it.
+_GRAPH_SCORES = {"graph-find": 0.70, "graph-find-weak": 0.62, "both-legs": 0.95}
+
+
+class TestReplayMatchesTheLiveGate:
+    """The harness and the live gate agree on a recorded candidate set (#20879)."""
+
+    def _live_candidates(self) -> list[Memory]:
+        """Score one mixed candidate set through the real search result builder.
+
+        Hand-building `Memory(similarity=...)` would let the test assert
+        agreement with a live path it never ran; `build_results` is the step
+        that decides which axis each candidate carries, so the fixture has to
+        go through it.
+        """
+        stored = [
+            _stored_memory("semantic-strong"),
+            _stored_memory("semantic-weak"),
+            _stored_memory("graph-find"),
+            _stored_memory("graph-find-weak"),
+            _stored_memory("both-legs"),
+        ]
+        return build_results(
+            storage=cast(LocalMemoryManager, _FlatStorage(stored)),
+            merged_ids=[mem.id for mem in stored],
+            ranking_score_map={mem.id: 1.0 for mem in stored},
+            qdrant_score_map={
+                "semantic-strong": 0.88,
+                "semantic-weak": 0.60,
+                "both-legs": 0.60,
+            },
+            qdrant_set={"semantic-strong", "semantic-weak", "both-legs"},
+            keyword_set=set(),
+            graph_set={"graph-find", "graph-find-weak", "both-legs"},
+            graph_score_map=_GRAPH_SCORES,
+            rrf_applied=False,
+            project_id=None,
+            memory_type=None,
+            tags_all=None,
+            tags_any=None,
+            tags_none=None,
+            half_life=30.0,
+            effective_min_score=0.55,
+            limit=10,
+        )
+
+    def test_the_replayed_arm_selects_what_the_live_gate_selects(self) -> None:
+        candidates = self._live_candidates()
+
+        runner = MemoryRecallRunner(
+            db=cast(HubDatabase, None),
+            memory_manager=cast(Any, None),
+            config=MemoryRecallConfig(),
+        )
+        live_selected, _drops = runner._filter_ranked(candidates, frozenset())
+        live_ids = [payload["id"] for payload in live_selected]
+
+        replayed = select_by_static_constants(
+            candidate_replay_rows_from_signal_rows(_recorded_rows(candidates, _GRAPH_SCORES)),
+            min_similarity=MemoryRecallConfig().selection_min_score,
+            max_selected=MAX_RECALL_MEMORIES,
+        )
+
+        assert [row.memory_id for row, _score in replayed] == live_ids
+        assert "graph-find" in live_ids, "the fixture must exercise the confidence axis"
+        assert "semantic-strong" in live_ids, "the fixture must exercise the cosine axis"
 
 
 class TestCandidateFilterReplay:

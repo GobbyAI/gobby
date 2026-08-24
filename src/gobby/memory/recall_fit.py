@@ -39,6 +39,14 @@ Replay algebra (exact unless noted):
   Raw support is recovered from ``edge_support_norm`` under the logging-time
   cap; a saturated norm (1.0) only lower-bounds support, so re-caps upward
   are conservative there.
+
+Selection replay reproduces two admission axes, because live selection has
+had two since #20873. A graph-expander find -- a memory the graph surfaced and
+the vector leg's own window missed, identified by a ``graph_score`` on a
+``search_via`` without ``semantic`` -- is admitted on that raw entity-match
+confidence; every other candidate is admitted on its undecayed cosine. Both
+floors are parameters of the replayed arm, since the confidence floor is
+provisional and the Phase 4 refit owns it (#20879).
 """
 
 from __future__ import annotations
@@ -49,6 +57,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any, Literal
 
+from gobby.memory.services._search_constants import _GRAPH_CONFIDENCE_SELECTION_FLOOR
 from gobby.memory.services.knowledge_graph.writer import (
     COOCCUR_ALPHA,
     COOCCUR_SUPPORT_CAP,
@@ -457,7 +466,10 @@ def split_requests_per_project(
 # Post-retrieval candidate-filter replay (plan 4.2)                            #
 # --------------------------------------------------------------------------- #
 
-CANDIDATE_FILTER_REPLAY_VERSION = "recall-candidate-filter-replay-v1"
+# v2: the static arm gates a graph-expander find on its entity-match confidence
+# rather than its cosine, matching live selection since #20873 (#20879). A v1
+# report scored a materially different arm and must not be read as comparable.
+CANDIDATE_FILTER_REPLAY_VERSION = "recall-candidate-filter-replay-v2"
 
 DIGEST_CONDITIONED_EVALUATION_NOTE = (
     "This replay is no-digest by construction, and every number in it must be "
@@ -505,6 +517,8 @@ class CandidateReplayRow:
     similarity: float | None
     judge_useful: bool | None
     temporal_decay_factor: float | None = None
+    search_via: str | None = None
+    graph_score: float | None = None
 
     @property
     def undecayed_similarity(self) -> float | None:
@@ -515,6 +529,25 @@ class CandidateReplayRow:
         if decay is None or decay <= 0.0:
             return self.similarity
         return self.similarity / decay
+
+    @property
+    def graph_confidence(self) -> float | None:
+        """The entity-match confidence this row is admitted on, if it has one.
+
+        A graph-expander find is a memory the graph surfaced and the vector
+        leg's own window missed, and since #20873 that is what live selection
+        judges on confidence rather than cosine. ``graph_score`` is logged for
+        every graph-sourced hit including one the vector leg also returned, so
+        ``search_via`` is what separates the two: live sets no confidence for a
+        candidate already in the semantic window, because letting entity
+        confidence rescue a sub-floor cosine there would widen the semantic
+        axis under cover of the expander. ``None`` for every other row (#20879).
+        """
+        if self.graph_score is None:
+            return None
+        if "semantic" in (self.search_via or "").split("|"):
+            return None
+        return self.graph_score
 
 
 @dataclass(frozen=True)
@@ -571,6 +604,7 @@ def candidate_replay_rows_from_signal_rows(
             continue
         project_id = row.get("project_id")
         judge_useful = row.get("judge_useful")
+        search_via = row.get("search_via")
         adapted.append(
             CandidateReplayRow(
                 recall_request_id=str(row["recall_request_id"]),
@@ -582,6 +616,8 @@ def candidate_replay_rows_from_signal_rows(
                 similarity=_float_or_none(row.get("similarity")),
                 judge_useful=judge_useful if isinstance(judge_useful, bool) else None,
                 temporal_decay_factor=_float_or_none(row.get("temporal_decay_factor")),
+                search_via=str(search_via) if isinstance(search_via, str) else None,
+                graph_score=_float_or_none(row.get("graph_score")),
             )
         )
     return adapted
@@ -614,21 +650,38 @@ def select_by_candidate_filter(
 
 
 def select_by_static_constants(
-    rows: Sequence[CandidateReplayRow], *, min_similarity: float, max_selected: int
+    rows: Sequence[CandidateReplayRow],
+    *,
+    min_similarity: float,
+    max_selected: int,
+    graph_confidence_min_score: float = _GRAPH_CONFIDENCE_SELECTION_FLOOR,
 ) -> Selection:
-    """Replay the shipped selection: undecayed floor, then the rank cap.
+    """Replay the shipped selection: per-axis floor, then the rank cap.
 
-    The floor reads the undecayed score and the order reads the decayed one,
-    matching ``selection_min_score`` semantics on the live path since #20831 --
-    the arm exists to model what actually ships, so an arm left on the old axis
-    would have phase-4 fitting ratify a selection nothing performs. A candidate
-    with no similarity is dropped rather than admitted.
+    The cosine floor reads the undecayed score and the order reads the decayed
+    one, matching ``selection_min_score`` semantics on the live path since
+    #20831 -- the arm exists to model what actually ships, so an arm left on
+    the old axis would have phase-4 fitting ratify a selection nothing
+    performs. A candidate with no similarity is dropped rather than admitted.
+
+    A graph-expander find is admitted on its entity-match confidence instead,
+    which is the axis live selection has judged it on since #20873; its cosine
+    only ranks it. ``graph_confidence_min_score`` defaults to the shipped floor
+    and is a parameter because that constant is provisional and the Phase 4
+    refit owns it -- fitting it needs an arm that can sweep it (#20879).
     """
     admitted: Selection = []
     for row in rows:
-        undecayed = row.undecayed_similarity
-        if undecayed is None or row.similarity is None or undecayed < min_similarity:
+        if row.similarity is None:
             continue
+        confidence = row.graph_confidence
+        if confidence is not None:
+            if confidence < graph_confidence_min_score:
+                continue
+        else:
+            undecayed = row.undecayed_similarity
+            if undecayed is None or undecayed < min_similarity:
+                continue
         admitted.append((row, row.similarity))
     admitted.sort(key=lambda item: (-item[1], item[0].rank, item[0].memory_id))
     return admitted[:max_selected]
@@ -740,6 +793,7 @@ class CandidateFilterReplayReport:
     requests_evaluated: int
     requests_skipped_unlabeled: int
     mean_selected_match_tolerance: float
+    static_graph_confidence_min_score: float
     candidate_filter: ArmMetrics
     static_constants: ArmMetrics
     static_constants_matched: ArmMetrics | None
@@ -759,6 +813,12 @@ class CandidateFilterReplayReport:
             "requests_evaluated": self.requests_evaluated,
             "requests_skipped_unlabeled": self.requests_skipped_unlabeled,
             "mean_selected_match_tolerance": self.mean_selected_match_tolerance,
+            # The static arm gates two axes, and only the cosine one is carried
+            # on ArmMetrics.selection_threshold. Recording the confidence floor
+            # beside it is what lets a later reader tell which gate a report
+            # ran under -- the 0.65 fossil #20771 unwound happened because a
+            # constant's calibration context lived nowhere near it (#20879).
+            "static_graph_confidence_min_score": self.static_graph_confidence_min_score,
             "arms": {
                 "candidate_filter": self.candidate_filter.to_record(),
                 "static_constants": self.static_constants.to_record(),
@@ -773,11 +833,15 @@ def _mean_selected_at(
     *,
     min_similarity: float,
     max_selected: int,
+    graph_confidence_min_score: float,
 ) -> float:
     total = sum(
         len(
             select_by_static_constants(
-                rows, min_similarity=min_similarity, max_selected=max_selected
+                rows,
+                min_similarity=min_similarity,
+                max_selected=max_selected,
+                graph_confidence_min_score=graph_confidence_min_score,
             )
         )
         for rows in requests.values()
@@ -791,25 +855,46 @@ def _match_static_threshold(
     target: float,
     max_selected: int,
     tolerance: float,
+    graph_confidence_min_score: float,
 ) -> float | None:
-    """Find the similarity floor whose mean selected count matches ``target``.
+    """Find the cosine floor whose mean selected count matches ``target``.
+
+    The grid is the set of undecayed similarities of the rows this floor
+    actually gates, because those are the only values at which mean selected
+    count changes. Searching the decayed values instead put every grid point
+    below the breakpoints it was looking for: on an aged cohort the arm then
+    reports the same mean at every threshold the grid can offer and the match
+    fails outright (#20879). Graph-expander finds are excluded from the grid
+    for the same reason -- the confidence floor decides them at every
+    threshold, so their cosines are not breakpoints.
 
     Mean selected count is non-increasing in the floor, so a binary search over
-    the observed similarity values finds the closest achievable match. Returns
-    ``None`` when even the closest floor misses by more than ``tolerance`` —
-    the arms simply cannot be matched on that cohort.
+    that grid finds the closest achievable match. Returns ``None`` when even
+    the closest floor misses by more than ``tolerance`` -- the arms simply
+    cannot be matched on that cohort.
     """
+
+    def mean_at(threshold: float) -> float:
+        return _mean_selected_at(
+            requests,
+            min_similarity=threshold,
+            max_selected=max_selected,
+            graph_confidence_min_score=graph_confidence_min_score,
+        )
+
     thresholds = [0.0] + sorted(
-        {row.similarity for rows in requests.values() for row in rows if row.similarity is not None}
+        {
+            undecayed
+            for rows in requests.values()
+            for row in rows
+            if row.graph_confidence is None and (undecayed := row.undecayed_similarity) is not None
+        }
     )
     low, high = 0, len(thresholds) - 1
     best = 0
     while low <= high:
         mid = (low + high) // 2
-        mean = _mean_selected_at(
-            requests, min_similarity=thresholds[mid], max_selected=max_selected
-        )
-        if mean >= target:
+        if mean_at(thresholds[mid]) >= target:
             best = mid
             low = mid + 1
         else:
@@ -818,19 +903,9 @@ def _match_static_threshold(
     neighbours = {best, min(best + 1, len(thresholds) - 1)}
     chosen = min(
         neighbours,
-        key=lambda index: (
-            abs(
-                _mean_selected_at(
-                    requests, min_similarity=thresholds[index], max_selected=max_selected
-                )
-                - target
-            ),
-            thresholds[index],
-        ),
+        key=lambda index: (abs(mean_at(thresholds[index]) - target), thresholds[index]),
     )
-    achieved = _mean_selected_at(
-        requests, min_similarity=thresholds[chosen], max_selected=max_selected
-    )
+    achieved = mean_at(thresholds[chosen])
     if abs(achieved - target) > tolerance:
         return None
     return thresholds[chosen]
@@ -841,6 +916,7 @@ def replay_candidate_filter(
     *,
     cohort_identity: Mapping[str, Any],
     static_min_similarity: float,
+    static_graph_confidence_min_score: float = _GRAPH_CONFIDENCE_SELECTION_FLOOR,
     params: CandidateFilterParams | None = None,
     mean_selected_match_tolerance: float = 0.05,
 ) -> CandidateFilterReplayReport:
@@ -883,6 +959,7 @@ def replay_candidate_filter(
             candidates,
             min_similarity=static_min_similarity,
             max_selected=filter_params.max_selected,
+            graph_confidence_min_score=static_graph_confidence_min_score,
         )
         for request_id, candidates in labeled.items()
     }
@@ -907,6 +984,7 @@ def replay_candidate_filter(
             target=filter_metrics.mean_selected,
             max_selected=filter_params.max_selected,
             tolerance=mean_selected_match_tolerance,
+            graph_confidence_min_score=static_graph_confidence_min_score,
         )
         if matched_threshold is not None:
             matched_metrics = evaluate_candidate_selection(
@@ -917,6 +995,7 @@ def replay_candidate_filter(
                         candidates,
                         min_similarity=matched_threshold,
                         max_selected=filter_params.max_selected,
+                        graph_confidence_min_score=static_graph_confidence_min_score,
                     )
                     for request_id, candidates in labeled.items()
                 },
@@ -932,6 +1011,7 @@ def replay_candidate_filter(
         requests_evaluated=len(labeled),
         requests_skipped_unlabeled=len(by_request) - len(labeled),
         mean_selected_match_tolerance=mean_selected_match_tolerance,
+        static_graph_confidence_min_score=static_graph_confidence_min_score,
         candidate_filter=filter_metrics,
         static_constants=static_metrics,
         static_constants_matched=matched_metrics,

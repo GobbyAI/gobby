@@ -14,6 +14,7 @@ from click.testing import CliRunner, Result
 from gobby.cli.memory.signals import recall_signals
 from gobby.memory.recall_constants import RECALL_QUERY_CONSTRUCTION_VERSION
 from gobby.memory.recall_fit import split_request_ids_per_project
+from gobby.memory.services._search_constants import _GRAPH_CONFIDENCE_SELECTION_FLOOR
 from gobby.memory.shadow_relevance import SHADOW_PROTOCOL_VERSION
 from gobby.storage.recall_shadow_signals import ShadowCohortAmbiguityError
 
@@ -397,7 +398,7 @@ def test_replay_candidate_filter_writes_the_report_json_to_out(tmp_path: Path) -
     assert result.exit_code == 0, result.output
     written = json.loads(out_path.read_text())
     assert written == json.loads(result.output)
-    assert written["report_version"] == "recall-candidate-filter-replay-v1"
+    assert written["report_version"] == "recall-candidate-filter-replay-v2"
 
 
 def test_replay_candidate_filter_report_names_its_cohort_identity() -> None:
@@ -454,6 +455,32 @@ def test_replay_candidate_filter_defaults_the_static_arm_to_selection_min_score(
     assert result.exit_code == 0, result.output
     arms = json.loads(result.output)["arms"]
     assert arms["static_constants"]["selection_threshold"] == 0.92
+
+
+def test_replay_candidate_filter_records_the_graph_confidence_floor_it_ran_under() -> None:
+    """#20879: the static arm gates two axes and the report has to name both.
+
+    `selection_threshold` carries only the cosine floor, so a report that did
+    not record the confidence floor beside it could not be told apart from one
+    run under a different gate -- which is precisely how the 0.65 fossil
+    #20771 unwound survived as long as it did.
+    """
+    _store, result = _invoke_replay(
+        ["--static-min-similarity", "0.65", "--static-graph-confidence-min-score", "0.71"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["static_graph_confidence_min_score"] == 0.71
+
+
+def test_replay_candidate_filter_defaults_the_graph_confidence_floor_to_the_shipped_one() -> None:
+    _store, result = _invoke_replay(["--static-min-similarity", "0.65"])
+
+    assert result.exit_code == 0, result.output
+    assert (
+        json.loads(result.output)["static_graph_confidence_min_score"]
+        == _GRAPH_CONFIDENCE_SELECTION_FLOOR
+    )
 
 
 def test_replay_candidate_filter_surfaces_an_ambiguous_cohort() -> None:

@@ -32,6 +32,7 @@ from gobby.memory.recall_signal_log import (
     resolve_recall_signal_path,
     rotated_recall_signal_paths,
 )
+from gobby.memory.services._search_constants import _GRAPH_CONFIDENCE_SELECTION_FLOOR
 from gobby.memory.shadow_relevance import SHADOW_PROTOCOL_VERSION
 from gobby.storage.recall_shadow_signals import ShadowCohortAmbiguityError
 from gobby.storage.recall_signals import RecallSignalStore
@@ -571,6 +572,17 @@ def drift(
     help="Static-constant arm's similarity floor (defaults to memory_recall.selection_min_score).",
 )
 @click.option(
+    "--static-graph-confidence-min-score",
+    type=click.FloatRange(min=0.0, max=1.0),
+    default=_GRAPH_CONFIDENCE_SELECTION_FLOOR,
+    show_default=True,
+    help=(
+        "Static-constant arm's entity-match confidence floor for a graph-expander "
+        "find, which live selection judges on confidence rather than cosine. "
+        "Provisional: the Phase 4 refit owns this constant."
+    ),
+)
+@click.option(
     "--out",
     "out_path",
     type=click.Path(dir_okay=False, path_type=Path),
@@ -592,6 +604,7 @@ def replay_candidate_filter_command(
     filter_min_score: float,
     max_selected: int,
     static_min_similarity: float | None,
+    static_graph_confidence_min_score: float,
     out_path: Path | None,
 ) -> None:
     """Replay a no-digest candidate filter against static constants on v1 labels.
@@ -640,6 +653,7 @@ def replay_candidate_filter_command(
         rows,
         cohort_identity=cohort.identity(),
         static_min_similarity=static_min_similarity,
+        static_graph_confidence_min_score=static_graph_confidence_min_score,
         params=CandidateFilterParams(min_score=filter_min_score, max_selected=max_selected),
     )
     serialized = json.dumps(report.to_record(), indent=2, sort_keys=True)
