@@ -30,8 +30,9 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close import (
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
 from gobby.mcp_proxy.tools.tasks._task_scope import TaskScopeEvaluation
+from gobby.mcp_proxy.tools._background_task_lifecycle import resolve_background_loop
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.tasks import Task
+from gobby.storage.tasks import Task, TaskHasOpenChildrenError
 from gobby.tasks.close_verdict import CloseCriterionVerdict, CloseVerdict
 from gobby.tasks.transcript_evidence import TranscriptEvidence, TranscriptValidationRun
 from gobby.workflows.state_manager import SessionVariableManager
@@ -1213,7 +1214,6 @@ async def test_commit_close_runs_every_storage_call_off_the_event_loop() -> None
             "list_tasks",
             "close_task",
             "on_epic_terminal",
-            "notify_parent",
             "cleanup_claim",
         )
     }
@@ -1233,7 +1233,7 @@ async def test_commit_close_runs_every_storage_call_off_the_event_loop() -> None
     ) -> None:
         threads["close_task"].append(threading.get_ident())
         # The transition reports what it auto-closed by filling this list, which
-        # is what puts _record_closed_ancestors on the path below.
+        # is what puts _collect_closed_ancestors on the path below.
         if closed_ancestors is not None:
             closed_ancestors.append(ancestor.id)
 
@@ -1242,6 +1242,8 @@ async def test_commit_close_runs_every_storage_call_off_the_event_loop() -> None
             threads[name].append(threading.get_ident())
 
         return record
+
+    notify_threads: list[int] = []
 
     manager = cast(MagicMock, ctx.task_manager)
     manager.get_task.side_effect = record_get_task
@@ -1270,7 +1272,7 @@ async def test_commit_close_runs_every_storage_call_off_the_event_loop() -> None
         patch.object(
             close_finalization,
             "notify_parent_on_task_state_change",
-            recorder("notify_parent"),
+            _record_notify_threads(notify_threads),
         ),
         patch.object(close_finalization, "_cleanup_closed_claim", recorder("cleanup_claim")),
         patch(
@@ -1295,6 +1297,9 @@ async def test_commit_close_runs_every_storage_call_off_the_event_loop() -> None
     for name, idents in threads.items():
         assert idents, f"{name} must run"
         assert loop_thread not in idents, f"{name} ran on the event loop thread"
+    # The notifier is not a storage call -- it schedules a coroutine, which
+    # needs the loop it is scheduling onto, so it belongs on this thread.
+    assert notify_threads == [loop_thread, loop_thread]
 
 
 class _RecordingDb:
@@ -1370,3 +1375,101 @@ def test_close_verdict_memo_is_skipped_without_a_session_or_criteria() -> None:
         )
         is None
     )
+
+
+def _record_notify_threads(sink: list[int]) -> Callable[..., None]:
+    def record(*_args: object, **_kwargs: object) -> None:
+        sink.append(threading.get_ident())
+
+    return record
+
+
+def _epic_close_evaluation(task: Task) -> CloseEvaluation:
+    evaluation = CloseEvaluation(task.id)
+    evaluation.task = task
+    evaluation.task_id = task.id
+    evaluation.repo_path = "/repo"
+    evaluation.resolved_session_id = task.claimed_by_session_id
+    evaluation.edit_session_id = task.claimed_by_session_id
+    evaluation.is_epic = True
+    evaluation.skip_leaf_checks = True
+    evaluation.fingerprint = CloseEvaluationFingerprint.capture(
+        task, children_state=(), attribution=None
+    )
+    evaluation.scope_snapshot = ((), (), ())
+    evaluation.pass_gate(11, "criteria_review", "Passed.")
+    return evaluation
+
+
+@pytest.mark.asyncio
+async def test_close_notifications_reach_a_usable_background_loop() -> None:
+    task = replace(_task(), task_type="epic", seq_num=4242)
+    ancestor = replace(task, id="00000000-0000-4000-8000-000000000414", seq_num=4241)
+    ctx = _ctx(task)
+    manager = cast(MagicMock, ctx.task_manager)
+    manager.get_task.side_effect = lambda task_id, *_a, **_k: (
+        ancestor if task_id == ancestor.id else task
+    )
+    manager.list_tasks.return_value = []
+    reachable: list[bool] = []
+
+    def record_close(*_args: object, **kwargs: object) -> None:
+        closed = kwargs.get("closed_ancestors")
+        if isinstance(closed, list):
+            closed.append(ancestor.id)
+
+    def record_notify(*_args: object, **_kwargs: object) -> None:
+        # The notifier only schedules; schedule_background_task needs a running
+        # loop or the propagated one, so this is the property that decides
+        # whether the broadcast happens at all.
+        reachable.append(resolve_background_loop() is not None)
+
+    manager.close_task.side_effect = record_close
+
+    with (
+        patch.object(close_finalization, "resolve_close_commit_shas", return_value=([], None)),
+        patch.object(close_finalization, "link_close_commit_shas", return_value=(task, None)),
+        patch.object(close_finalization, "notify_parent_on_task_state_change", record_notify),
+        patch.object(close_finalization, "_cleanup_closed_claim", lambda *a, **k: None),
+        patch("gobby.hooks.event_handlers._plan.on_epic_terminal", lambda *a, **k: None),
+    ):
+        result = await _commit_close(
+            ctx,
+            _epic_close_evaluation(task),
+            reason="completed",
+            skip_validation=False,
+            override_justification=None,
+            commit_sha=None,
+        )
+
+    assert result["closed"] is True
+    # One for the task, one for the ancestor the transition closed.
+    assert reachable == [True, True]
+
+
+@pytest.mark.asyncio
+async def test_a_child_created_during_the_close_window_asks_for_a_retry() -> None:
+    task = replace(_task(), task_type="epic", seq_num=4242)
+    ctx = _ctx(task)
+    manager = cast(MagicMock, ctx.task_manager)
+    manager.list_tasks.return_value = []
+    manager.close_task.side_effect = TaskHasOpenChildrenError(
+        task.id, ["00000000-0000-4000-8000-000000000415 (Late child)"]
+    )
+
+    with (
+        patch.object(close_finalization, "resolve_close_commit_shas", return_value=([], None)),
+        patch.object(close_finalization, "link_close_commit_shas", return_value=(task, None)),
+    ):
+        result = await _commit_close(
+            ctx,
+            _epic_close_evaluation(task),
+            reason="completed",
+            skip_validation=False,
+            override_justification=None,
+            commit_sha=None,
+        )
+
+    assert result.get("error") == "stale_task_state"
+    assert result.get("stale_state") is True
+    assert "Late child" in str(result.get("message"))

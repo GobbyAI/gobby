@@ -8,7 +8,7 @@ from typing import Any
 from gobby.storage.delivery import upsert_merged_campaign_in_transaction
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.session_resolution import is_session_uuid
-from gobby.storage.tasks._models import TaskStaleStateError
+from gobby.storage.tasks._models import TaskHasOpenChildrenError, TaskStaleStateError
 from gobby.utils.datetime import utc_now
 
 _TERMINAL_PARENT_CLOSE_REASONS = frozenset({"completed", "obsolete"})
@@ -55,15 +55,10 @@ def _close_task_in_txn(
             (task_id,),
         ).fetchall()
         if open_children:
-            child_list = ", ".join(
-                f"{child['id']} ({child['title']})" for child in open_children[:3]
-            )
+            listed = [f"{child['id']} ({child['title']})" for child in open_children[:3]]
             if len(open_children) > 3:
-                child_list += f" and {len(open_children) - 3} more"
-            raise ValueError(
-                f"Cannot close task {task_id}: has {len(open_children)} open child task(s): "
-                f"{child_list}"
-            )
+                listed.append(f"and {len(open_children) - 3} more")
+            raise TaskHasOpenChildrenError(task_id, listed)
 
     now = closed_at or _now()
     persisted_session_id = (

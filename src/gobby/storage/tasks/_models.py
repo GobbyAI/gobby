@@ -90,6 +90,25 @@ class TaskStaleStateError(ValueError):
         )
 
 
+class TaskHasOpenChildrenError(ValueError):
+    """Raised when a close is refused because the task still has open children.
+
+    A subclass of ValueError so existing callers that treat it as ordinary
+    validation keep working, and its own type so the close path can tell it
+    apart from a programming error: a child created inside the close window
+    passes the optimistic check and only fails here, which is a retry, not a
+    fault (#20871).
+    """
+
+    def __init__(self, task_id: str, open_children: list[str]) -> None:
+        self.task_id = task_id
+        self.open_children = open_children
+        super().__init__(
+            f"Cannot close task {task_id}: has {len(open_children)} open child task(s): "
+            + ", ".join(open_children)
+        )
+
+
 def validate_category(category: str | None) -> str | None:
     """Validate and normalize a category value.
 

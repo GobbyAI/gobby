@@ -29,7 +29,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import (
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import determine_close_outcome
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_state_change
 from gobby.mcp_proxy.tools.tasks._task_scope import collect_commit_paths, evaluate_task_scope
-from gobby.storage.tasks import Task, TaskStaleStateError
+from gobby.storage.tasks import Task, TaskHasOpenChildrenError, TaskStaleStateError
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
 
 logger = logging.getLogger(__name__)
@@ -272,12 +272,27 @@ async def commit_close(
         )
     except TaskStaleStateError as exc:
         return stale_close_response(evaluation, str(exc))
+    except TaskHasOpenChildrenError as exc:
+        # The offloads above suspend this path twice, so a child can be created
+        # under the task between the freshness check and the transition. That
+        # insert does not touch the parent's updated_at, so it passes the CAS
+        # and only the in-transaction guard sees it. It is a retry, not a
+        # fault, and it reaches the caller as one (#20871).
+        return stale_close_response(evaluation, str(exc))
 
-    # A get_task and a notify per ancestor the transition closed, so this one
-    # scales with how far up the tree the close reached.
-    ancestor_summaries = await asyncio.to_thread(_record_closed_ancestors, ctx, closed_ancestors)
+    # A get_task per ancestor the transition closed, so the walk scales with
+    # how far up the tree the close reached and stays off the loop.
+    ancestor_summaries = await asyncio.to_thread(_collect_closed_ancestors, ctx, closed_ancestors)
     if ancestor_summaries:
         evaluation.extra["closed_ancestors"] = ancestor_summaries
+    for summary in ancestor_summaries:
+        # On the loop thread, for the reason given at the task's own notify.
+        notify_parent_on_task_state_change(
+            ctx.task_manager.db,
+            summary["id"],
+            "closed",
+            task_ref=summary["ref"],
+        )
 
     if evaluation.is_epic and reason.casefold() in {"completed", "obsolete"}:
         from gobby.hooks.event_handlers._plan import on_epic_terminal
@@ -292,8 +307,12 @@ async def commit_close(
             },
             db=ctx.task_manager.db,
         )
-    await asyncio.to_thread(
-        notify_parent_on_task_state_change,
+    # On the loop thread on purpose. This call does not notify: it hands a
+    # coroutine to schedule_background_task, which needs a running loop or the
+    # internal-tool ContextVar, and an async tool sets neither in a worker
+    # thread. Off the loop it raises RuntimeError, which the notifier swallows,
+    # so the parent's progress broadcast disappears without a log (#20871).
+    notify_parent_on_task_state_change(
         ctx.task_manager.db,
         task.id,
         "closed",
@@ -303,10 +322,11 @@ async def commit_close(
     return evaluation.response(preview=False, closed=True)
 
 
-def _record_closed_ancestors(
+def _collect_closed_ancestors(
     ctx: RegistryContext,
     ancestor_ids: list[str],
 ) -> list[dict[str, str]]:
+    """Describe each ancestor the transition closed. Notifying is the caller's."""
     summaries: list[dict[str, str]] = []
     for ancestor_id in ancestor_ids:
         ancestor = ctx.task_manager.get_task(ancestor_id)
@@ -314,12 +334,6 @@ def _record_closed_ancestors(
             continue
         ref = f"#{ancestor.seq_num}" if ancestor.seq_num else ancestor.id
         summaries.append({"id": ancestor.id, "ref": ref, "title": ancestor.title})
-        notify_parent_on_task_state_change(
-            ctx.task_manager.db,
-            ancestor.id,
-            "closed",
-            task_ref=ref,
-        )
     return summaries
 
 
