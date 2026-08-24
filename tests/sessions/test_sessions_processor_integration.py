@@ -87,17 +87,17 @@ async def test_incremental_processing(processor, transcript_file):
     with open(transcript_file, "w") as f:
         f.write(msg1 + "\n")
 
+    # The processor records stats before it advances the offset, so waiting on
+    # stats and then reading the offset catches the window in between. Wait on
+    # the offset, which is the later of the two writes.
     await wait_for_async_condition(
-        lambda: processor._stats.get("session-1", {}).get("message_count", 0) >= 1,
+        lambda: processor._byte_offsets.get("session-1", 0) > 0,
         description="first incremental transcript processing",
     )
 
     # Verify first message processed
     stats = processor._stats.get("session-1", {})
     assert stats.get("message_count", 0) >= 1
-
-    # Verify byte offset advanced
-    assert processor._byte_offsets.get("session-1", 0) > 0
 
     # Append new msg
     msg2 = json.dumps(
