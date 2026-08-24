@@ -19,8 +19,9 @@ stale -- and is read by the same ``release_task_claim`` statement.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal, get_args
 
 from gobby.utils.datetime import parse_stored_datetime
@@ -37,10 +38,27 @@ ContestedExpiryCause = Literal["context_reuse", "parent_registration"]
 # speculative writers is, and both shields check the name against this set.
 CONTESTED_EXPIRY_CAUSES: frozenset[str] = frozenset(get_args(ContestedExpiryCause))
 
+# The Python shield parses the stamp and compares datetimes; release_task_claim
+# compares the stored text, because casting an arbitrary jsonb string to
+# timestamptz raises out of the sweep. Those two comparisons only agree on
+# fixed-width UTC, so both sides admit exactly the stamps this pattern accepts:
+# same field widths, always six fractional digits, always +00:00, which makes
+# lexicographic order chronological order. A stamp in any other shape -- a local
+# offset, a bare date, more or less precision -- is read as no marker by both.
+CONTESTED_EXPIRY_STAMP_PATTERN = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}\+00:00$"
+
+_STAMP_FORMAT = "%Y-%m-%dT%H:%M:%S.%f+00:00"
+_STAMP_RE = re.compile(CONTESTED_EXPIRY_STAMP_PATTERN)
+
+
+def contested_expiry_stamp(moment: datetime) -> str:
+    """Render one instant in the only stamp shape both shields admit."""
+    return moment.astimezone(UTC).strftime(_STAMP_FORMAT)
+
 
 def contested_expiry_payload(cause: ContestedExpiryCause, recorded_at: datetime) -> dict[str, str]:
     """Build the marker a speculative expiry stores on the session it expired."""
-    return {"cause": cause, "created_at": recorded_at.isoformat()}
+    return {"cause": cause, "created_at": contested_expiry_stamp(recorded_at)}
 
 
 def contested_expiry_recorded_at(variables: Mapping[str, Any] | None) -> datetime | None:
@@ -59,7 +77,7 @@ def contested_expiry_recorded_at(variables: Mapping[str, Any] | None) -> datetim
     if not isinstance(cause, str) or cause not in CONTESTED_EXPIRY_CAUSES:
         return None
     recorded_at = payload.get("created_at")
-    if not isinstance(recorded_at, str):
+    if not isinstance(recorded_at, str) or _STAMP_RE.fullmatch(recorded_at) is None:
         return None
     try:
         return parse_stored_datetime(recorded_at)
@@ -71,8 +89,10 @@ def contested_expiry_recorded_at(variables: Mapping[str, Any] | None) -> datetim
 
 __all__ = [
     "CONTESTED_EXPIRY_CAUSES",
+    "CONTESTED_EXPIRY_STAMP_PATTERN",
     "CONTESTED_TERMINAL_EXPIRY_VARIABLE",
     "ContestedExpiryCause",
     "contested_expiry_payload",
     "contested_expiry_recorded_at",
+    "contested_expiry_stamp",
 ]

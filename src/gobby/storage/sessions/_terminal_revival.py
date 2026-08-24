@@ -15,6 +15,7 @@ from gobby.terminal_ownership import (
 from gobby.utils.datetime import utc_now
 
 from ._constants import get_logger, past_terminal_revival_horizon
+from ._contested_expiry import clear_contested_terminal_expiry
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -68,6 +69,7 @@ class _TerminalRevivalMixin:
                 )
             updated = self.get(session_id)
             if updated is not None and updated.status == "active":
+                clear_contested_terminal_expiry(self.db, session_id)
                 self._notify_session_change("session_updated", session_id)
                 self._notify_status_transition(
                     SessionStatusTransition.from_session(updated, transitioned_at=now)
@@ -199,6 +201,12 @@ class _TerminalRevivalMixin:
                     )
                     if desired_status != candidate.status:
                         status_changes.append((candidate, desired_status))
+
+        for candidate, desired_status in status_changes:
+            if desired_status == "active":
+                # This candidate just won the contest its marker recorded, so
+                # the marker has nothing left to shield (#20837).
+                clear_contested_terminal_expiry(self.db, candidate.id)
 
         if owner is None:
             if inconclusive_reason is not None:

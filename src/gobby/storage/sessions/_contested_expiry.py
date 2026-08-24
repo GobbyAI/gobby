@@ -50,6 +50,32 @@ def record_contested_terminal_expiry(
         )
 
 
+def clear_contested_terminal_expiry(db: HubDatabase, session_id: str) -> None:
+    """Drop the marker once the contest it describes has been settled.
+
+    A speculative expiry is in doubt only until the session's status is written
+    again. Leaving the marker behind would let a session contested once and
+    revived shield a later, genuinely final expiry for the rest of the revival
+    horizon, so every status write past the speculative one clears it.
+    """
+    with db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
+        conn.execute(
+            """
+            UPDATE session_variables
+               SET variables = variables - %s,
+                   updated_at = %s
+             WHERE session_id = %s
+               AND jsonb_exists(variables, %s)
+            """,
+            (
+                CONTESTED_TERMINAL_EXPIRY_VARIABLE,
+                utc_now().isoformat(),
+                session_id,
+                CONTESTED_TERMINAL_EXPIRY_VARIABLE,
+            ),
+        )
+
+
 def read_session_variables(db: HubDatabase, session_id: str) -> dict[str, Any] | None:
     """Return a session's stored variables, or None when it has no row."""
     row = db.fetchone(
@@ -68,4 +94,8 @@ def _stored_variables(row: Mapping[str, Any] | Any) -> dict[str, Any]:
     return dict(raw) if isinstance(raw, Mapping) else {}
 
 
-__all__ = ["read_session_variables", "record_contested_terminal_expiry"]
+__all__ = [
+    "clear_contested_terminal_expiry",
+    "read_session_variables",
+    "record_contested_terminal_expiry",
+]

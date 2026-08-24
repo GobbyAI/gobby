@@ -17,6 +17,7 @@ from ._constants import (
     system_session_id,
     validate_session_status_transition,
 )
+from ._contested_expiry import clear_contested_terminal_expiry
 from ._lineage_guard import repair_self_parent_session, sanitize_parent_session_id
 from ._session_metadata_update import _SessionMetadataUpdateMixin
 from ._summary_update import _SummaryUpdateMixin
@@ -58,6 +59,11 @@ class _FieldUpdateMixin(
                 "UPDATE sessions SET status = %s, updated_at = %s WHERE id = %s",
                 (status, now, session_id),
             )
+        # Any status write settles the expiry a marker was describing, so the
+        # marker never outlives the one it was written for. mark_session_expired
+        # records its own after this returns, which is what keeps a stale marker
+        # from shielding a later, final expiry (#20837).
+        clear_contested_terminal_expiry(self.db, session_id)
         updated = self.get(session_id)
         if updated is not None:
             event = "session_expired" if status == "expired" else "session_updated"

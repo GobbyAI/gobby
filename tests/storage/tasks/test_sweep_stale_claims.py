@@ -19,7 +19,10 @@ from gobby.sessions.compact_markers import (
     COMPACT_SELF_CONTINUE_FRESH_SECONDS,
     COMPACT_SELF_CONTINUE_VARIABLE,
 )
-from gobby.sessions.contested_expiry import CONTESTED_TERMINAL_EXPIRY_VARIABLE
+from gobby.sessions.contested_expiry import (
+    CONTESTED_TERMINAL_EXPIRY_VARIABLE,
+    contested_expiry_stamp,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._constants import (
@@ -255,7 +258,14 @@ def _backdate_contested_marker(
     session_id: str,
     age: timedelta,
 ) -> None:
-    stale = datetime.now(UTC) - age
+    _restamp_contested_marker(
+        temp_db,
+        session_id,
+        contested_expiry_stamp(datetime.now(UTC) - age),
+    )
+
+
+def _restamp_contested_marker(temp_db: HubDatabase, session_id: str, stamp: str) -> None:
     temp_db.execute(
         """
         UPDATE session_variables
@@ -268,7 +278,7 @@ def _backdate_contested_marker(
         """,
         (
             [CONTESTED_TERMINAL_EXPIRY_VARIABLE, "created_at"],
-            stale.isoformat(),
+            stamp,
             session_id,
         ),
     )
@@ -623,6 +633,50 @@ def test_the_python_shield_and_the_sql_guard_state_the_same_rule(
     sql_shields = _claim(temp_db, task.id) == session_id
 
     assert python_shields == sql_shields
+
+
+@pytest.mark.parametrize(
+    "stamp",
+    [
+        lambda now: (now + timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%S.%f+05:00"),
+        lambda now: now.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+        lambda now: now.strftime("%Y-%m-%dT%H:%M:%S+00:00"),
+        lambda now: now.strftime("%Y-%m-%d"),
+        lambda now: "not a timestamp",
+    ],
+    ids=["local-offset", "z-suffix", "no-fraction", "date-only", "unparseable"],
+)
+def test_a_stamp_outside_the_canonical_shape_reads_the_same_to_both_shields(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    stamp: Any,
+) -> None:
+    """The two shields compare the stamp differently and have to agree anyway.
+
+    Python parses it into a datetime; release_task_claim compares the stored
+    text, because casting arbitrary jsonb to timestamptz would raise out of the
+    sweep. Text comparison is only chronological on fixed-width UTC -- a local
+    offset in particular sorts by its wall clock, not its instant -- so both
+    sides admit exactly that shape and read anything else as no marker (#20837).
+    """
+    session_id = str(uuid.uuid4())
+    _make_session(temp_db, sample_project, session_id, "expired", tmux_pane="%20")
+    record_contested_terminal_expiry(temp_db, session_id, "context_reuse")
+    _restamp_contested_marker(temp_db, session_id, stamp(datetime.now(UTC)))
+    task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
+
+    session = SessionManager(temp_db).get(session_id)
+    assert session is not None
+    python_shields = is_contestable_terminal_expiry(
+        session,
+        read_session_variables(temp_db, session_id),
+    )
+
+    sweep_stale_claims(temp_db, project_id=sample_project["id"])
+    sql_shields = _claim(temp_db, task.id) == session_id
+
+    assert python_shields is False
+    assert sql_shields is False
 
 
 def test_sweep_reclaims_a_claim_whose_marker_names_no_speculative_writer(

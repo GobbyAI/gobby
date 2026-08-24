@@ -10,7 +10,9 @@ from gobby.sessions.compact_markers import (
 )
 from gobby.sessions.contested_expiry import (
     CONTESTED_EXPIRY_CAUSES,
+    CONTESTED_EXPIRY_STAMP_PATTERN,
     CONTESTED_TERMINAL_EXPIRY_VARIABLE,
+    contested_expiry_stamp,
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions._constants import SESSION_REVIVAL_HORIZON_HOURS
@@ -145,10 +147,11 @@ def release_task_claim(
             CONTESTED_TERMINAL_EXPIRY_VARIABLE,
             sorted(CONTESTED_EXPIRY_CAUSES),
             CONTESTED_TERMINAL_EXPIRY_VARIABLE,
+            CONTESTED_EXPIRY_STAMP_PATTERN,
             CONTESTED_TERMINAL_EXPIRY_VARIABLE,
-            revival_cutoff.isoformat(),
+            contested_expiry_stamp(revival_cutoff),
             CONTESTED_TERMINAL_EXPIRY_VARIABLE,
-            now.isoformat(),
+            contested_expiry_stamp(now),
         )
     )
 
@@ -209,9 +212,12 @@ def release_task_claim(
                       AND s.status = 'expired'
                       AND jsonb_typeof(sv.variables -> %s) = 'object'
                       AND sv.variables -> %s ->> 'cause' = ANY(%s)
-                      AND jsonb_typeof(
-                          sv.variables -> %s -> 'created_at'
-                      ) = 'string'
+                      -- Casting an arbitrary jsonb string to timestamptz raises
+                      -- out of the sweep, so the stamp is compared as text and
+                      -- the pattern is what makes that comparison chronological:
+                      -- fixed-width UTC only, the same set the Python shield
+                      -- parses. Anything else reads as no marker on both sides.
+                      AND sv.variables -> %s ->> 'created_at' ~ %s
                       AND sv.variables -> %s ->> 'created_at' >= %s
                       AND sv.variables -> %s ->> 'created_at' <= %s
                )
