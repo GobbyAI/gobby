@@ -33,6 +33,14 @@ def burn(seconds: float) -> None:
         pass
 
 
+async def yield_to_loop() -> None:
+    """Give every other ready task one step, without waiting on the clock."""
+    loop = asyncio.get_running_loop()
+    resumed = loop.create_future()
+    loop.call_soon(resumed.set_result, None)
+    await resumed
+
+
 async def test_a_loop_that_comes_back_late_but_under_threshold_is_not_reported() -> None:
     """Ordinary scheduling delay is not a stall; only the threshold makes it one."""
     reports: list[LoopLagReport] = []
@@ -103,6 +111,78 @@ async def test_a_blocked_loop_is_reported_with_the_task_that_blocked_it() -> Non
     rendered = report.render()
     assert "hog-the-loop" in rendered
     assert "hog_the_loop" in rendered
+
+
+async def test_the_task_that_ran_during_the_stall_is_singled_out() -> None:
+    """Naming every live task names nothing; the report must isolate the suspect.
+
+    While the loop is blocked nothing else gets a step, so the one task whose
+    await position moved across the gap is the task that was executing. Tasks
+    that merely sat suspended are bystanders and must be reported as such.
+
+    The watchdog is paced by an injected yield so the baseline snapshot is taken
+    on a quiet cycle, with both tasks already parked, before the burn starts.
+    """
+    reports: list[LoopLagReport] = []
+    stop = asyncio.Event()
+    reported = asyncio.Event()
+    released = asyncio.Event()
+    start_burning = asyncio.Event()
+    bystander_may_finish = asyncio.Event()
+
+    def record(report: LoopLagReport) -> None:
+        reports.append(report)
+        reported.set()
+
+    async def hog_the_loop() -> None:
+        await start_burning.wait()
+        burn(0.5)
+        await released.wait()
+
+    async def merely_waiting() -> None:
+        await bystander_may_finish.wait()
+
+    cycles = 0
+
+    async def pace(_seconds: float) -> None:
+        """Yield to the loop, releasing the burn only after a quiet cycle."""
+        nonlocal cycles
+        cycles += 1
+        if cycles == 2:
+            start_burning.set()
+        await yield_to_loop()
+
+    watchdog = asyncio.create_task(
+        loop_lag_watchdog(
+            stop.is_set,
+            threshold_seconds=0.2,
+            poll_seconds=0.01,
+            on_lag=record,
+            sleep=pace,
+        )
+    )
+    bystander = asyncio.create_task(merely_waiting(), name="merely-waiting")
+    hog = asyncio.create_task(hog_the_loop(), name="hog-the-loop")
+    try:
+        await asyncio.wait_for(reported.wait(), timeout=WATCHDOG_TIMEOUT_SECONDS)
+    finally:
+        stop.set()
+        released.set()
+        bystander_may_finish.set()
+        await asyncio.gather(watchdog, hog, bystander)
+
+    report = reports[0]
+    assert [name.split()[0] for name, _ in report.advanced] == ["hog-the-loop"], (
+        f"only the burning task ran during the stall; got {report.advanced!r}"
+    )
+    assert report.started == [], "no task was created during this stall"
+    bystander_names = [name.split()[0] for name in report.bystanders]
+    assert "merely-waiting" in bystander_names, (
+        f"a task that never moved is a bystander; got {report.bystanders!r}"
+    )
+    rendered = report.render()
+    assert "ran during the stall" in rendered
+    assert "hog-the-loop" in rendered
 
 
 async def test_a_stall_is_reported_once_rather_than_every_poll() -> None:
