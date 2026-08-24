@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from typing import Any, Literal, TypeGuard
 
 from gobby.sessions.transcripts.base import TokenUsage
 
 ToolResultKind = Literal["text", "json", "image", "error"]
+
+# RenderState fields its __deepcopy__ shares with the clone instead of copying.
+# Only a grow-only record whose entries can never change how a record renders
+# belongs here -- see RenderState.__deepcopy__ for why the resolved-id set
+# qualifies. Everything not named is deep-copied, so a field added later is
+# rollback-safe by default rather than silently reset (#20875).
+_SHARED_RENDER_STATE_FIELDS = frozenset({"resolved_tool_call_ids"})
 
 
 @dataclass
@@ -114,16 +121,26 @@ class RenderState:
         only suppress a duplicate tool_result, never change how a record renders.
         Re-feeding a rolled-back batch puts its calls back in
         ``pending_tool_calls``, which is checked first, so a stale id cannot
-        shadow a genuine pairing either. Sharing it is what lets the suppression
-        be unconditional -- remembering every id for the life of the session --
-        without the copy growing with the session.
+        shadow a genuine pairing either -- the ordering is documented where it
+        lives, at the pairing checks in ``transcript_render_blocks``. Sharing it
+        is what lets the suppression be unconditional -- remembering every id
+        for the life of the session -- without the copy growing with the
+        session.
+
+        The field list comes from ``fields(self)`` with the explicit share list
+        ``_SHARED_RENDER_STATE_FIELDS`` rather than a hand enumeration, so a
+        field added later is deep-copied by default instead of silently
+        resetting on rollback (#20875).
         """
-        clone = RenderState(resolved_tool_call_ids=self.resolved_tool_call_ids)
+        cls = type(self)
+        clone = cls.__new__(cls)
         memo[id(self)] = clone
-        clone.current_message = deepcopy(self.current_message, memo)
-        clone.pending_tool_calls = deepcopy(self.pending_tool_calls, memo)
-        clone.tool_call_messages = deepcopy(self.tool_call_messages, memo)
-        clone.seen_content = set(self.seen_content)
+        for spec in fields(self):
+            value = getattr(self, spec.name)
+            if spec.name in _SHARED_RENDER_STATE_FIELDS:
+                setattr(clone, spec.name, value)
+            else:
+                setattr(clone, spec.name, deepcopy(value, memo))
         return clone
 
     def remember_resolved_tool_call(self, tool_use_id: str) -> None:
