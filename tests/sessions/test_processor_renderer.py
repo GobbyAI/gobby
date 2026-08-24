@@ -133,8 +133,19 @@ class TestRenderedBroadcast:
             tool_result={"content": "file contents here"},
         )
         completed, state = render_incremental([result_msg], state, session_id="s1")
-        assert state.pending_tool_calls["tu-1"].status == "completed"
-        assert state.pending_tool_calls["tu-1"].result is not None
+        # The pairing shows on the message, which is what gets broadcast. The
+        # resolved call leaves pending_tool_calls rather than accumulating there
+        # for the life of the session (#20859); only its id stays behind.
+        assert "tu-1" not in state.pending_tool_calls
+        assert "tu-1" in state.resolved_tool_call_ids
+        assert state.current_message is not None
+        tool_calls = state.current_message.content_blocks[0].tool_calls
+        assert tool_calls is not None
+        paired = tool_calls[0]
+        assert paired.id == "tu-1"
+        assert paired.status == "completed"
+        assert paired.result is not None
+        assert paired.result.content == {"content": "file contents here"}
 
     async def test_late_tool_result_rebroadcasts_completed_owner(
         self, processor: SessionMessageProcessor

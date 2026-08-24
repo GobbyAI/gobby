@@ -162,7 +162,7 @@ def _process_message_block(
     # Tool Result Pairing
     if msg.content_type in ["tool_result", "mcp_tool_result"]:
         if msg.tool_use_id and msg.tool_use_id in state.pending_tool_calls:
-            tool_call = state.pending_tool_calls[msg.tool_use_id]
+            tool_call = state.pending_tool_calls.pop(msg.tool_use_id)
             content = msg.tool_result if msg.tool_result is not None else msg.content
             tool_call.result = ToolResult(
                 content=content,
@@ -170,6 +170,17 @@ def _process_message_block(
                 metadata=extract_result_metadata(tool_call.tool_type, content, tool_call.arguments),
             )
             tool_call.status = "completed"
+            # The call is answered, so drop the two entries that were holding its
+            # arguments, its result and its whole owner message alive for the rest
+            # of the session, and keep only the id a duplicate needs (#20859).
+            # Popping the index entry does not touch the payload: the object just
+            # mutated is the same one the owner message's content block holds.
+            state.tool_call_messages.pop(msg.tool_use_id, None)
+            state.resolved_tool_call_ids.add(msg.tool_use_id)
+            return
+        if msg.tool_use_id and msg.tool_use_id in state.resolved_tool_call_ids:
+            # A second result for a call already paired. Suppressed rather than
+            # appended, exactly as it was while resolved calls stayed pending.
             return
 
     if not state.current_message:

@@ -1,8 +1,11 @@
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
 from gobby.sessions.transcript_renderer import (
+    RenderedMessage,
+    RenderedToolCall,
     RenderState,
     classify_tool,
     extract_result_metadata,
@@ -14,6 +17,14 @@ from gobby.sessions.transcripts.base import ParsedMessage
 pytestmark = pytest.mark.unit
 
 
+def only_tool_call(message: RenderedMessage) -> RenderedToolCall:
+    """The single tool call of a single-block message, without an unchecked index."""
+    tool_calls = message.content_blocks[0].tool_calls
+    assert tool_calls is not None
+    assert len(tool_calls) == 1
+    return tool_calls[0]
+
+
 def make_msg(
     index: int,
     role: str,
@@ -22,7 +33,7 @@ def make_msg(
     tool_use_id: str | None = None,
     tool_name: str | None = None,
     tool_input: dict | None = None,
-    tool_result: str | None = None,
+    tool_result: dict[str, Any] | None = None,
 ) -> ParsedMessage:
     return ParsedMessage(
         index=index,
@@ -574,3 +585,113 @@ def test_render_transcript_metadata_integration() -> None:
     assert tool_call.tool_type == "bash"
     assert tool_call.result.metadata["exit_code"] == 0
     assert tool_call.result.metadata["stdout_lines"] == 2
+
+
+class TestResolvedToolCallRetention:
+    """A resolved call must stop being retained, without losing what it rendered.
+
+    RenderState is deep-copied on the daemon's event loop once per transcript
+    batch, so anything it keeps for the life of a session is a growing tax on
+    loop scheduling (#20859). Retaining a resolved call bought exactly one
+    thing -- suppressing a duplicate tool_result -- and that survives as an id.
+    """
+
+    def _call_and_result(self) -> list[ParsedMessage]:
+        return [
+            make_msg(
+                0,
+                "assistant",
+                "",
+                content_type="tool_use",
+                tool_use_id="call-1",
+                tool_name="Bash",
+                tool_input={"command": "ls"},
+            ),
+            make_msg(
+                1,
+                "user",
+                "",
+                content_type="tool_result",
+                tool_use_id="call-1",
+                tool_result={"exit_code": 0, "stdout": "a", "stderr": ""},
+            ),
+        ]
+
+    def test_a_resolved_call_is_released_from_the_pending_maps(self) -> None:
+        call, result = self._call_and_result()
+        state = RenderState()
+        _completed, state = render_incremental([call], state, session_id="s1")
+        assert "call-1" in state.pending_tool_calls
+        assert "call-1" in state.tool_call_messages
+
+        _completed, state = render_incremental([result], state, session_id="s1")
+
+        assert state.pending_tool_calls == {}
+        assert state.tool_call_messages == {}
+        assert "call-1" in state.resolved_tool_call_ids
+
+    def test_releasing_the_call_leaves_the_rendered_result_intact(self) -> None:
+        call, result = self._call_and_result()
+        state = RenderState()
+        _completed, state = render_incremental([call], state, session_id="s1")
+        _completed, state = render_incremental([result], state, session_id="s1")
+
+        assert state.current_message is not None
+        tool_call = only_tool_call(state.current_message)
+        assert tool_call.status == "completed"
+        assert tool_call.arguments == {"command": "ls"}
+        assert tool_call.result is not None
+        assert tool_call.result.metadata is not None
+        assert tool_call.result.metadata["exit_code"] == 0
+
+    def test_a_late_result_still_rebroadcasts_its_owner(self) -> None:
+        call, result = self._call_and_result()
+        state = RenderState()
+        _completed, state = render_incremental(
+            [call, make_msg(2, "user", "next turn")], state, session_id="s1"
+        )
+        owner = state.tool_call_messages["call-1"]
+
+        completed, state = render_incremental([result], state, session_id="s1")
+
+        assert owner in completed
+        assert only_tool_call(owner).result is not None
+
+    def test_a_duplicate_result_is_suppressed_not_orphaned(self) -> None:
+        call, result = self._call_and_result()
+        state = RenderState()
+        _completed, state = render_incremental([call, result], state, session_id="s1")
+        assert state.current_message is not None
+        blocks_before = len(state.current_message.content_blocks)
+
+        completed, state = render_incremental([result], state, session_id="s1")
+
+        assert completed == []
+        assert state.current_message is not None
+        assert len(state.current_message.content_blocks) == blocks_before
+
+    def test_retention_does_not_grow_with_the_number_of_resolved_calls(self) -> None:
+        state = RenderState()
+        for index in range(40):
+            call = make_msg(
+                index * 2,
+                "assistant",
+                "",
+                content_type="tool_use",
+                tool_use_id=f"call-{index}",
+                tool_name="Bash",
+                tool_input={"command": "ls"},
+            )
+            result = make_msg(
+                index * 2 + 1,
+                "user",
+                "",
+                content_type="tool_result",
+                tool_use_id=f"call-{index}",
+                tool_result={"exit_code": 0, "stdout": "a", "stderr": ""},
+            )
+            _completed, state = render_incremental([call, result], state, session_id="s1")
+
+        assert state.pending_tool_calls == {}
+        assert state.tool_call_messages == {}
+        assert len(state.resolved_tool_call_ids) == 40

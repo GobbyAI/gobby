@@ -318,7 +318,12 @@ class ProcessorTranscriptMixin:
         *,
         record_observations: bool = False,
     ) -> None:
-        render_state = deepcopy(self._render_states.get(session_id, RenderState()))
+        # Mutated in place rather than copied. _process_parsed_batch, the only
+        # production caller, already deep-copied this state three lines before
+        # calling here and restores it if the batch raises, so a second copy
+        # protected nothing the first does not -- and both ran on the event loop
+        # (#20859).
+        render_state = self._render_states.get(session_id) or RenderState()
         source = messages[0].source if messages else None
         observation_tracker = (
             ObservationTracker(self._observation_store) if record_observations else None

@@ -139,7 +139,7 @@ def render_incremental(
 
         # 2. Tool result pairing (can bypass turn logic if paired)
         is_tool_result = msg.content_type in ["tool_result", "mcp_tool_result"]
-        if is_tool_result and msg.tool_use_id in state.pending_tool_calls:
+        if is_tool_result and state.knows_tool_call(msg.tool_use_id):
             owner = state.tool_call_messages.get(msg.tool_use_id)
             _process_message_block(
                 msg,

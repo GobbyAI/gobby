@@ -446,8 +446,6 @@ class TranscriptIndexAppender:
                         )
                     )
 
-            if event.parser_safe:
-                _free_resolved_tool_calls(self._state)
             self._safe_to_start_event = event.parser_safe
             self._next_start_index = _next_index_after_records(
                 records, self._next_start_index, event.parsed_index
@@ -553,20 +551,6 @@ def _stores_byte_offsets(seek_mode: str) -> bool:
 def _require_gzip_logical_size(seek_mode: str, logical_size: int | None) -> None:
     if seek_mode == "gzip-block" and logical_size is None:
         raise ValueError("logical_size is required for gzip-block transcript indexes")
-
-
-def _free_resolved_tool_calls(state: RenderState) -> None:
-    """Drop heavy fields of resolved pending tool calls, keeping their keys.
-
-    Bounds index-build RAM to roughly one inter-boundary span: the only reason
-    the index build retains ``pending_tool_calls`` is the membership check that
-    suppresses duplicate tool_results, so the large argument/result payloads can
-    be released once a call is resolved.
-    """
-    for call in state.pending_tool_calls.values():
-        if call.status == "completed":
-            call.arguments = {}
-            call.result = None
 
 
 def _resolve_adjustments(

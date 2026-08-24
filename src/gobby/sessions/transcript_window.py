@@ -220,10 +220,11 @@ def _track_budget(
 def _seed_stubs(state: RenderState, index: TranscriptIndex, window_start_parsed_index: int) -> None:
     """Seed throwaway pending entries for tools opened before the window start.
 
-    A ``tool_result`` for one of these ids then hits the ``id in
-    pending_tool_calls`` bypass and is absorbed into the stub (suppressed) instead
-    of emitting an orphan group — exactly as a full render suppresses it (the
-    renderer never evicts resolved pending calls).
+    A ``tool_result`` for one of these ids then hits the ``knows_tool_call``
+    bypass and is absorbed into the stub (suppressed) instead of emitting an
+    orphan group — exactly as a full render suppresses it. Resolving the stub
+    moves its id from ``pending_tool_calls`` to ``resolved_tool_call_ids``, which
+    the same bypass reads, so a repeated result stays suppressed too.
     """
     for tool_id, first_idx in index.tool_first_open.items():
         if first_idx < window_start_parsed_index:
