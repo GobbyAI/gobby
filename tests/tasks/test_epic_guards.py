@@ -525,3 +525,29 @@ async def test_two_checkouts_with_identical_git_state_do_not_share_a_pass(
 
     assert _run_count(first_repo) == 1
     assert _run_count(second_repo) == 1, "the second checkout served the first checkout's run"
+
+
+@pytest.mark.asyncio
+async def test_editing_an_untracked_file_in_place_earns_a_fresh_run(tmp_path: Path) -> None:
+    """An untracked fixture a guard test reads must not serve a stale pass.
+
+    The status listing names untracked paths, so creating or deleting one moves
+    the key on its own. Editing one in place moves nothing: there is no diff for
+    an untracked file, which is where the tracked half of the key does its work.
+    Each listed untracked path therefore carries its size and mtime.
+    """
+    test_path = "tests/test_guard.py"
+    Path(tmp_path, test_path).parent.mkdir()
+    Path(tmp_path, test_path).write_text("def test_guard(): pass\n", encoding="utf-8")
+    _write_project(tmp_path, _counting_template())
+    _init_repo(tmp_path)
+    fixture = Path(tmp_path, "tests", "conftest.py")
+    fixture.write_text("VALUE = 1\n", encoding="utf-8")
+    epic, prior, current = _task_tree(criteria=f"test: {test_path}::test_guard")
+    manager = cast(LocalTaskManager, _TaskManager([epic, prior, current]))
+
+    await evaluate_epic_guards(task_manager=manager, task=current, repo_path=str(tmp_path))
+    fixture.write_text("VALUE = 22222\n", encoding="utf-8")
+    await evaluate_epic_guards(task_manager=manager, task=current, repo_path=str(tmp_path))
+
+    assert _run_count(tmp_path) == 2, "an in-place edit to an untracked file served a stale pass"

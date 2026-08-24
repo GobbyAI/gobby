@@ -10,6 +10,7 @@ from unittest.mock import patch
 import pytest
 
 import gobby.mcp_proxy.tools.tasks._lifecycle_validation as lifecycle
+from gobby.ai.text_generation import FeatureGenerationUnavailableError
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import evaluate_criteria_review
 from gobby.storage.hub.protocol import HubDatabase
@@ -175,3 +176,39 @@ async def test_fifth_consecutive_infra_failure_escalates(
     assert refreshed is not None
     assert refreshed.is_escalated is True
     assert refreshed.validation_fail_count == 0
+
+
+@pytest.mark.asyncio
+async def test_total_timeout_expiry_fails_closed_into_backoff(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An expired provider chain must back off, not count against the task.
+
+    validate_task bounds the chain with close_review_total_timeout_seconds, and
+    the service raises FeatureGenerationUnavailableError when it expires
+    (#20866). That is infrastructure saying nothing, so the close records a
+    backoff window and leaves validation_fail_count alone -- counting it would
+    walk an unreachable provider straight into escalation.
+    """
+    manager = LocalTaskManager(temp_db)
+    task = _make_leaf_task(manager, sample_project["id"])
+    expiry = FeatureGenerationUnavailableError("JSON generation exceeded total timeout (120s)")
+    validator = _ScriptedValidator([expiry])
+    _Clock.current = datetime(2026, 1, 1, tzinfo=UTC)
+    monkeypatch.setattr(lifecycle, "utc_now", lambda: _Clock.current)
+
+    result = await _evaluate(task, manager, validator)
+
+    assert result.can_close is False
+    assert result.error_type == "validation_infrastructure_unavailable"
+    assert result.extra["retry_after"] == 15
+    assert "exceeded total timeout" in str(result.message)
+    refreshed = manager.get_task(task.id)
+    assert refreshed is not None
+    assert refreshed.validation_fail_count == 0, "an unreachable provider is not a failed criterion"
+    assert refreshed.is_escalated is False
+    state = TaskValidationBackoffStore(temp_db).get(task.id)
+    assert state is not None and state.consecutive_failures == 1
+    assert state.consecutive_failures < MAX_CONSECUTIVE_INFRA_FAILURES

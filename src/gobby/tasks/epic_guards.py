@@ -210,22 +210,52 @@ def _guard_run_cache_key(fingerprint: str, repo_path: str) -> str | None:
     The repository path is part of the key. Two checkouts can share a commit,
     a status and a diff while differing in everything git ignores, and the
     guard runs inside one of them.
+
+    Files git ignores are outside the key by design: a guard test and what it
+    reads are committed, so a change that matters shows up in one of the three
+    commands or in an untracked file's stat.
     """
-    parts: list[str] = [repo_path]
-    for argv in (
-        ["git", "rev-parse", "HEAD"],
+    head = run_git_command(
+        ["git", "rev-parse", "HEAD"], cwd=repo_path, timeout=_REPO_STATE_TIMEOUT_SECONDS
+    )
+    status = run_git_command(
         ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
-        # HEAD plus the status lines name which files moved; only the diff says
-        # what they now contain, and an edit to an already-dirty file changes
-        # nothing else.
-        ["git", "diff", "HEAD"],
-    ):
-        output = run_git_command(argv, cwd=repo_path, timeout=_REPO_STATE_TIMEOUT_SECONDS)
-        if output is None:
-            return None
-        parts.append(output)
+        cwd=repo_path,
+        timeout=_REPO_STATE_TIMEOUT_SECONDS,
+    )
+    # HEAD and the status entries name which files moved; only the diff says
+    # what the tracked ones now contain, and an edit to an already-dirty
+    # tracked file changes nothing else.
+    diff = run_git_command(
+        ["git", "diff", "HEAD"], cwd=repo_path, timeout=_REPO_STATE_TIMEOUT_SECONDS
+    )
+    if head is None or status is None or diff is None:
+        return None
+    parts = [repo_path, head, status, diff, *_untracked_stats(status, repo_path)]
     digest = hashlib.sha256("\0".join(parts).encode()).hexdigest()
     return f"{fingerprint}:{digest}"
+
+
+def _untracked_stats(status: str, repo_path: str) -> list[str]:
+    """Stat every untracked path the status listed.
+
+    An untracked file has no diff, so the status entry is the only trace of it
+    and that entry names the path alone. Editing an untracked fixture a guard
+    test reads would otherwise leave the key untouched and serve a pass from
+    before the edit. Size and mtime cost one lstat each and no reads.
+    """
+    stats: list[str] = []
+    for entry in status.split("\0"):
+        if not entry.startswith("?? "):
+            continue
+        path = entry[3:]
+        try:
+            info = Path(repo_path, path).lstat()
+        except OSError:
+            stats.append(f"{path}:gone")
+            continue
+        stats.append(f"{path}:{info.st_size}:{info.st_mtime_ns}")
+    return stats
 
 
 def _remember_passed_guard_run(cache_key: str, result: EpicGuardResult) -> None:
