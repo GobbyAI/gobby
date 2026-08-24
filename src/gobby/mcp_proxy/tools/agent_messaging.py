@@ -254,7 +254,7 @@ def add_messaging_tools(
             "The calling session must be the sender or recipient."
         ),
     )
-    async def get_inter_session_message(message_id: str) -> dict[str, Any]:
+    def get_inter_session_message(message_id: str) -> dict[str, Any]:
         try:
             from gobby.utils.session_context import get_current_session_id
 
@@ -298,7 +298,7 @@ def add_messaging_tools(
             "as delivered. Use for debugging, audit, and visibility."
         ),
     )
-    async def get_inter_session_messages(
+    def get_inter_session_messages(
         target_session_id: str,
         direction: str = "all",
         undelivered_only: bool = False,

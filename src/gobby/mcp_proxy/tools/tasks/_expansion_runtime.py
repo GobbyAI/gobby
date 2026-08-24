@@ -7,7 +7,10 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from gobby.mcp_proxy.tools._background_task_lifecycle import register_background_task
+from gobby.mcp_proxy.tools._background_task_lifecycle import (
+    register_background_task,
+    resolve_background_loop,
+)
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
@@ -133,11 +136,34 @@ async def _notify_completion_registry(
         logger.debug("Failed to notify expansion completion for %s", run_id, exc_info=True)
 
 
-def _run_start_coroutine(coro: Any) -> Any:
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
+def _start_expansion_coroutine(coro: Any, run_id: str) -> Any:
+    """Background the run on whichever loop is reachable, else run it inline.
+
+    Returns the completed run when it had to run inline, and None once the run
+    is scheduled. An internal MCP tool that awaits nothing is registered sync so
+    the registry offloads it, which leaves no running loop here even though the
+    daemon has one; resolve_background_loop recovers it from the context the
+    registry set. Without that recovery this reported a finished run where the
+    caller expects a started one (#20845).
+    """
+    loop = resolve_background_loop()
+    if loop is None:
         return asyncio.run(coro)
+
+    def _schedule() -> None:
+        _register_background_task(
+            run_id,
+            loop.create_task(coro, name=f"expansion-run-{run_id}"),
+        )
+
+    try:
+        on_target_loop = asyncio.get_running_loop() is loop
+    except RuntimeError:
+        on_target_loop = False
+    if on_target_loop:
+        _schedule()
+    else:
+        loop.call_soon_threadsafe(_schedule)
     return None
 
 
@@ -321,7 +347,7 @@ def start_expansion_run_impl(
         auto_apply=auto_apply,
         stage_pipeline_mode=resolved_stage_pipeline_mode,
     )
-    completed_run = _run_start_coroutine(coro)
+    completed_run = _start_expansion_coroutine(coro, run.id)
     if completed_run is not None:
         return ExpansionRunResult(
             True,
@@ -331,8 +357,6 @@ def start_expansion_run_impl(
             run=_summarize_run(completed_run),
         )
 
-    background_task = asyncio.create_task(coro, name=f"expansion-run-{run.id}")
-    _register_background_task(run.id, background_task)
     return ExpansionRunResult(True, run.id, "running", False, run=_summarize_run(run))
 
 

@@ -32,7 +32,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         name="get_worktree",
         description="Get details of a specific worktree.",
     )
-    async def get_worktree(worktree_id: str) -> dict[str, Any]:
+    def get_worktree(worktree_id: str) -> dict[str, Any]:
         """Get worktree details by ID.
 
         Args:
@@ -69,7 +69,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         name="list_worktrees",
         description="List worktrees with optional filters. Accepts #N, N, UUID, or prefix for agent_session_id.",
     )
-    async def list_worktrees(
+    def list_worktrees(
         status: str | None = None,
         agent_session_id: str | None = None,
         limit: int | str = 50,
@@ -137,7 +137,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         name="get_worktree_stats",
         description="Get worktree statistics for the project.",
     )
-    async def get_worktree_stats(project_path: str | None = None) -> dict[str, Any]:
+    def get_worktree_stats(project_path: str | None = None) -> dict[str, Any]:
         """Get worktree statistics.
 
         Args:
@@ -168,7 +168,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         name="get_worktree_by_task",
         description="Get worktree linked to a specific task.",
     )
-    async def get_worktree_by_task(task_id: str) -> dict[str, Any]:
+    def get_worktree_by_task(task_id: str) -> dict[str, Any]:
         """Get worktree linked to a task.
 
         Args:

@@ -18,7 +18,7 @@ def create_clone_cleanup_registry(ctx: CloneRegistryContext) -> InternalToolRegi
         description="Stale clone detection and cleanup tools",
     )
 
-    async def detect_stale_clones(
+    def detect_stale_clones(
         hours: int | str = 24,
         limit: int | str = 50,
     ) -> dict[str, Any]:

@@ -18,7 +18,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
         name="update_skill",
         description="Update a skill by refreshing from its source. Returns whether the skill was updated.",
     )
-    async def update_skill(
+    def update_skill(
         name: str | None = None,
         skill_id: str | None = None,
     ) -> dict[str, Any]:

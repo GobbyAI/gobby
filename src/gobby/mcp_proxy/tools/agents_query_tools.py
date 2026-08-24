@@ -176,7 +176,7 @@ def register_agent_query_tools(
             **_agent_result_payload(run),
         }
 
-    async def get_agent_capture(
+    def get_agent_capture(
         run_id: str,
         offset: int = 0,
         limit: int = _AGENT_CAPTURE_PAGE_DEFAULT_CHARS,
@@ -579,7 +579,7 @@ def register_agent_query_tools(
             "Accepts #N, N, UUID, or prefix for session_id."
         ),
     )
-    async def list_agent_runs(
+    def list_agent_runs(
         parent_session_id: str | None = None,
         status: str | None = None,
         limit: int = 20,
@@ -612,7 +612,7 @@ def register_agent_query_tools(
             "Accepts #N, N, UUID, or prefix for session_id."
         ),
     )
-    async def can_spawn_agent(parent_session_id: str | None = None) -> dict[str, Any]:
+    def can_spawn_agent(parent_session_id: str | None = None) -> dict[str, Any]:
         effective_parent_ref = parent_session_id or ctx.get_current_session_id()
         if not effective_parent_ref:
             return {
@@ -776,7 +776,7 @@ def register_agent_query_tools(
         name="running_agent_stats",
         description="Get statistics about running agents.",
     )
-    async def running_agent_stats() -> dict[str, Any]:
+    def running_agent_stats() -> dict[str, Any]:
         all_runs = ctx.agent_run_manager.list_active_global()
         by_parent: dict[str, int] = {}
 

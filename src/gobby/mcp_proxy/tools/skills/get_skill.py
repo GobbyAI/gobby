@@ -350,7 +350,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
         name="get_skill_file",
         description="Get a single file's content from a multi-file skill. Use after get_skill() shows available files.",
     )
-    async def get_skill_file_tool(
+    def get_skill_file_tool(
         path: str,
         name: str | None = None,
         skill_id: str | None = None,

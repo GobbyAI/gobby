@@ -133,7 +133,7 @@ def create_voice_registry(
         name="list_vocab",
         description="List current Whisper STT vocabulary terms and prompt.",
     )
-    async def list_vocab() -> dict[str, Any]:
+    def list_vocab() -> dict[str, Any]:
         """List the current vocabulary and whisper_prompt."""
         try:
             config = _snapshot(config_service_getter()).active.voice

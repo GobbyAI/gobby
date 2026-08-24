@@ -17,7 +17,7 @@ def create_clone_read_registry(ctx: CloneRegistryContext) -> InternalToolRegistr
         description="Clone read, ownership, and association tools",
     )
 
-    async def get_clone(clone_id: str) -> dict[str, Any]:
+    def get_clone(clone_id: str) -> dict[str, Any]:
         """
         Get clone by ID.
 
@@ -51,7 +51,7 @@ def create_clone_read_registry(ctx: CloneRegistryContext) -> InternalToolRegistr
         func=get_clone,
     )
 
-    async def list_clones(
+    def list_clones(
         status: str | None = None,
         limit: int = 50,
     ) -> dict[str, Any]:
@@ -98,7 +98,7 @@ def create_clone_read_registry(ctx: CloneRegistryContext) -> InternalToolRegistr
         func=list_clones,
     )
 
-    async def claim_clone(
+    def claim_clone(
         clone_id: str,
     ) -> dict[str, Any]:
         """
@@ -141,7 +141,7 @@ def create_clone_read_registry(ctx: CloneRegistryContext) -> InternalToolRegistr
         func=claim_clone,
     )
 
-    async def release_clone(clone_id: str) -> dict[str, Any]:
+    def release_clone(clone_id: str) -> dict[str, Any]:
         """
         Release a clone from its current owner.
 
@@ -177,7 +177,7 @@ def create_clone_read_registry(ctx: CloneRegistryContext) -> InternalToolRegistr
         func=release_clone,
     )
 
-    async def get_clone_by_task(task_id: str) -> dict[str, Any]:
+    def get_clone_by_task(task_id: str) -> dict[str, Any]:
         """
         Get clone linked to a specific task.
 
@@ -210,7 +210,7 @@ def create_clone_read_registry(ctx: CloneRegistryContext) -> InternalToolRegistr
         func=get_clone_by_task,
     )
 
-    async def link_task_to_clone(
+    def link_task_to_clone(
         clone_id: str,
         task_id: str,
     ) -> dict[str, Any]:
@@ -255,7 +255,7 @@ def create_clone_read_registry(ctx: CloneRegistryContext) -> InternalToolRegistr
         func=link_task_to_clone,
     )
 
-    async def get_clone_stats() -> dict[str, Any]:
+    def get_clone_stats() -> dict[str, Any]:
         """
         Get clone statistics for the project.
 

@@ -40,7 +40,7 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         name="claim_worktree",
         description="Claim ownership of a worktree for an agent session. Accepts #N, N, UUID, or prefix for session_id.",
     )
-    async def claim_worktree(
+    def claim_worktree(
         worktree_id: str,
         session_id: str,
     ) -> dict[str, Any]:
@@ -87,7 +87,7 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         name="release_worktree",
         description="Release ownership of a worktree.",
     )
-    async def release_worktree(worktree_id: str) -> dict[str, Any]:
+    def release_worktree(worktree_id: str) -> dict[str, Any]:
         """Release a worktree from its current owner.
 
         Args:
@@ -280,7 +280,7 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         name="mark_worktree_merged",
         description="Mark a worktree as merged (ready for cleanup).",
     )
-    async def mark_worktree_merged(worktree_id: str) -> dict[str, Any]:
+    def mark_worktree_merged(worktree_id: str) -> dict[str, Any]:
         """Mark a worktree as merged.
 
         Args:
@@ -320,7 +320,7 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         name="abandon_worktree",
         description="Mark a worktree as abandoned.",
     )
-    async def abandon_worktree(worktree_id: str) -> dict[str, Any]:
+    def abandon_worktree(worktree_id: str) -> dict[str, Any]:
         """Mark a worktree as abandoned.
 
         Args:
@@ -343,7 +343,7 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         name="reactivate_worktree",
         description="Reactivate a worktree without merging or deleting it.",
     )
-    async def reactivate_worktree(worktree_id: str) -> dict[str, Any]:
+    def reactivate_worktree(worktree_id: str) -> dict[str, Any]:
         """Reactivate a worktree.
 
         Args:
@@ -371,7 +371,7 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         name="link_task_to_worktree",
         description="Link a task to an existing worktree.",
     )
-    async def link_task_to_worktree(
+    def link_task_to_worktree(
         worktree_id: str,
         task_id: str,
     ) -> dict[str, Any]:

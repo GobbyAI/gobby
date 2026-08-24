@@ -23,6 +23,28 @@ def internal_tool_background_loop(loop: asyncio.AbstractEventLoop) -> Iterator[N
         _internal_tool_loop.reset(token)
 
 
+def _running_loop() -> asyncio.AbstractEventLoop | None:
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+
+
+def resolve_background_loop() -> asyncio.AbstractEventLoop | None:
+    """The loop fire-and-forget work should run on, from a thread or the loop.
+
+    A synchronous internal tool executes in a worker thread, where there is no
+    running loop even though the daemon has one; `internal_tool_background_loop`
+    is how the caller hands it over. Returns None when nothing usable is
+    reachable, which is the standalone case -- a CLI, a test -- and the caller
+    decides what to do about it.
+    """
+    target = _running_loop() or _internal_tool_loop.get()
+    if target is None or target.is_closed():
+        return None
+    return target
+
+
 def register_background_task(
     registry: dict[str, asyncio.Task[None]],
     key: str,
@@ -63,13 +85,9 @@ def schedule_background_task(
     description: str,
 ) -> None:
     """Create and register a task on the current or propagated internal-tool loop."""
-    try:
-        current_loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
-    except RuntimeError:
-        current_loop = None
-
-    target_loop = current_loop or _internal_tool_loop.get()
-    if target_loop is None or target_loop.is_closed():
+    current_loop = _running_loop()
+    target_loop = resolve_background_loop()
+    if target_loop is None:
         raise RuntimeError("no running event loop available for background task")
 
     def _schedule() -> None:

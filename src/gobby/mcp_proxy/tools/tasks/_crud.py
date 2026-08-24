@@ -62,7 +62,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         description="Task CRUD operations",
     )
 
-    async def create_task(
+    def create_task(
         title: str,
         category: str,
         description: str | None = None,

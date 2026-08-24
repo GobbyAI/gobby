@@ -72,9 +72,10 @@ async def _call_tool(registry: Any, name: str, **kwargs: Any) -> dict[str, Any]:
     """Call a tool on the registry by name."""
     tool = registry.get_tool(name)
     assert tool is not None, f"Tool '{name}' not found"
+    # A tool that awaits nothing is registered sync so the registry offloads it
+    # (#20845); both shapes are valid and the caller should not care which.
     result = tool(**kwargs)
-    assert isinstance(result, Awaitable)
-    resolved = await result
+    resolved = await result if isinstance(result, Awaitable) else result
     assert isinstance(resolved, dict)
     return cast(dict[str, Any], resolved)
 

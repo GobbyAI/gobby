@@ -187,7 +187,7 @@ class TestGetSkillFileServeScan:
         storage.set_skill_files(skill.id, [_skill_file(skill.id, "references/x.md", MALICIOUS_MD)])
         tool = create_skills_registry(db).get_tool("get_skill_file")
 
-        result = await tool(name="ext-files", path="references/x.md")
+        result = tool(name="ext-files", path="references/x.md")
 
         assert result["success"] is False
         assert "failed security scan" in result["error"]
@@ -208,7 +208,7 @@ class TestGetSkillFileServeScan:
         storage.set_skill_files(skill.id, [_skill_file(skill.id, "references/x.md", BENIGN_MD)])
         tool = create_skills_registry(db).get_tool("get_skill_file")
 
-        result = await tool(name="ext-files-ok", path="references/x.md")
+        result = tool(name="ext-files-ok", path="references/x.md")
 
         assert result["success"] is True
         assert result["file"]["content"] == BENIGN_MD

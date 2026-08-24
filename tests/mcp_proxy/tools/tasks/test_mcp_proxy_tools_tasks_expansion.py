@@ -143,12 +143,12 @@ def test_start_expansion_replaces_stale_crashed_run(
         (utc_now() - timedelta(minutes=31), crashed.id),
     )
 
-    def finish_immediately(coro: Coroutine[Any, Any, Any]) -> ExpansionRun | None:
+    def finish_immediately(coro: Coroutine[Any, Any, Any], run_id: str) -> ExpansionRun | None:
         coro.close()
         return run_manager.get_latest_for_task(task.id)
 
     with patch(
-        "gobby.mcp_proxy.tools.tasks._expansion_runtime._run_start_coroutine",
+        "gobby.mcp_proxy.tools.tasks._expansion_runtime._start_expansion_coroutine",
         side_effect=finish_immediately,
     ):
         result = start_expansion_run_impl(

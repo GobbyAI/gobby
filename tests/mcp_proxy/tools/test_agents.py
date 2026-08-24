@@ -616,7 +616,7 @@ class TestListAgentRuns:
         registry = create_agents_registry(runner)
         list_agent_runs = registry._tools["list_agent_runs"].func
 
-        result = await list_agent_runs(parent_session_id="sess-123")
+        result = list_agent_runs(parent_session_id="sess-123")
 
         assert result["success"] is True
         assert result["runs"] == []
@@ -644,7 +644,7 @@ class TestListAgentRuns:
         registry = create_agents_registry(runner)
         list_agent_runs = registry._tools["list_agent_runs"].func
 
-        result = await list_agent_runs(parent_session_id="sess-123")
+        result = list_agent_runs(parent_session_id="sess-123")
 
         assert result["success"] is True
         assert result["count"] == 1
@@ -668,7 +668,7 @@ class TestListAgentRuns:
         registry = create_agents_registry(runner)
         list_agent_runs = registry._tools["list_agent_runs"].func
 
-        await list_agent_runs(parent_session_id="sess-123", status="running")
+        list_agent_runs(parent_session_id="sess-123", status="running")
 
         runner.list_runs.assert_called_once_with("sess-123", status="running", limit=20)
         assert runner.list_runs.call_count == 1
@@ -683,7 +683,7 @@ class TestListAgentRuns:
         registry = create_agents_registry(runner)
         list_agent_runs = registry._tools["list_agent_runs"].func
 
-        await list_agent_runs(parent_session_id="sess-123", limit=50)
+        list_agent_runs(parent_session_id="sess-123", limit=50)
 
         runner.list_runs.assert_called_once_with("sess-123", status=None, limit=50)
         assert runner.list_runs.call_count == 1
@@ -698,7 +698,7 @@ class TestListAgentRuns:
         registry = create_agents_registry(runner)
         list_agent_runs = registry._tools["list_agent_runs"].func
 
-        result = await list_agent_runs(parent_session_id="sess-123", limit=0)
+        result = list_agent_runs(parent_session_id="sess-123", limit=0)
 
         assert result["success"] is True
         runner.list_runs.assert_called_once_with("sess-123", status=None, limit=1)
@@ -847,7 +847,7 @@ class TestCanSpawnAgent:
         registry = create_agents_registry(runner)
         can_spawn = registry._tools["can_spawn_agent"].func
 
-        result = await can_spawn(parent_session_id="sess-123")
+        result = can_spawn(parent_session_id="sess-123")
 
         assert result["can_spawn"] is True
         assert result["reason"] == "Spawning allowed"
@@ -861,7 +861,7 @@ class TestCanSpawnAgent:
         registry = create_agents_registry(runner)
         can_spawn = registry._tools["can_spawn_agent"].func
 
-        result = await can_spawn(parent_session_id="sess-123")
+        result = can_spawn(parent_session_id="sess-123")
 
         assert result["can_spawn"] is False
         assert result["reason"] == "Max depth reached"
@@ -1763,7 +1763,7 @@ class TestRunningAgentStats:
         registry = create_agents_registry(runner)
         stats = registry._tools["running_agent_stats"].func
 
-        result = await stats()
+        result = stats()
 
         assert result["success"] is True
         assert result["total"] == 0
@@ -1795,7 +1795,7 @@ class TestRunningAgentStats:
         registry = create_agents_registry(runner)
         stats = registry._tools["running_agent_stats"].func
 
-        result = await stats()
+        result = stats()
 
         assert result["success"] is True
         assert result["total"] == 4

@@ -32,7 +32,7 @@ def create_cleanup_registry(ctx: RegistryContext) -> InternalToolRegistry:
         name="detect_stale_worktrees",
         description="Find worktrees with no activity for a period.",
     )
-    async def detect_stale_worktrees(
+    def detect_stale_worktrees(
         project_path: str | None = None,
         hours: int | str = 24,
         limit: int | str = 50,

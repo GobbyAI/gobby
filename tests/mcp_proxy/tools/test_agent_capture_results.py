@@ -134,10 +134,10 @@ async def test_get_agent_capture_paginates_unicode_and_out_of_range_offsets() ->
     registry = _registry(_run(result=_slot(capture)))
 
     get_capture = registry.get_tool("get_agent_capture")
-    first = await get_capture(run_id="run-123", offset=0, limit=3)
-    second = await get_capture(run_id="run-123", offset=3, limit=3)
-    third = await get_capture(run_id="run-123", offset=6, limit=3)
-    beyond = await get_capture(run_id="run-123", offset=100, limit=3)
+    first = get_capture(run_id="run-123", offset=0, limit=3)
+    second = get_capture(run_id="run-123", offset=3, limit=3)
+    third = get_capture(run_id="run-123", offset=6, limit=3)
+    beyond = get_capture(run_id="run-123", offset=100, limit=3)
 
     assert first["content"] + second["content"] + third["content"] == capture
     assert first["total_chars"] == len(capture)

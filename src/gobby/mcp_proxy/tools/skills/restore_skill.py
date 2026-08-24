@@ -15,7 +15,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
         name="restore_skill",
         description="Restore a soft-deleted skill.",
     )
-    async def restore_skill(
+    def restore_skill(
         skill_id: str | None = None,
         name: str | None = None,
     ) -> dict[str, Any]:

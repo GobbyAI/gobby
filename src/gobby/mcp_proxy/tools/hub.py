@@ -112,7 +112,7 @@ def create_hub_registry(
         name="get_machine_id",
         description="Get the daemon's machine identifier. Use this from sandboxed agents that cannot read ~/.gobby/machine_id directly.",
     )
-    async def get_machine_id() -> dict[str, Any]:
+    def get_machine_id() -> dict[str, Any]:
         """
         Get the machine identifier used by this Gobby daemon.
 
