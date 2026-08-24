@@ -21,6 +21,7 @@ from gobby.hooks.terminal_context import (
 from gobby.sessions.compact_identity import resolve_compact_continuation
 from gobby.sessions.tmux_window_naming import schedule_tmux_window_rename
 from gobby.storage.session_activity import reconcile_compact_session_activity
+from gobby.storage.sessions._constants import TERMINAL_SESSION_STATUSES
 from gobby.tasks.state_semantics import serialize_task_state
 
 if TYPE_CHECKING:
@@ -312,14 +313,43 @@ class SessionLookupService:
             project_id=project_id,
         )
         if recovered_session:
-            self._logger.warning(
-                "Recovered session %s for external_id=%s across source mismatch "
-                "(incoming=%s, existing=%s)",
-                recovered_session.id,
-                external_id,
-                event.source.value,
-                recovered_session.source,
-            )
+            # recover_session relaxes two dimensions that lookup_session_id enforces:
+            # it searches across sources, and unlike the cache validity check in
+            # storage.sessions._registration_cache it does not exclude retired rows.
+            # Seeing a retired row here is deliberate — a CLI still emitting events
+            # after a handoff expired its session should rebind to that session
+            # rather than accumulate a duplicate, which is the case
+            # revive_expired_terminal_session then repairs. Report whichever
+            # dimension actually differed: blaming source for a status-driven
+            # recovery sends a same-source WARNING to errors.log on a routine path,
+            # which buries the warnings that matter.
+            if recovered_session.source != event.source.value:
+                self._logger.warning(
+                    "Recovered session %s for external_id=%s across source mismatch "
+                    "(incoming=%s, existing=%s)",
+                    recovered_session.id,
+                    external_id,
+                    event.source.value,
+                    recovered_session.source,
+                )
+            elif recovered_session.status in TERMINAL_SESSION_STATUSES:
+                self._logger.info(
+                    "Recovered %s session %s for external_id=%s (source=%s); "
+                    "the exact lookup skips retired rows",
+                    recovered_session.status,
+                    recovered_session.id,
+                    external_id,
+                    event.source.value,
+                )
+            else:
+                self._logger.info(
+                    "Recovered session %s for external_id=%s after the exact lookup "
+                    "missed (source=%s, status=%s)",
+                    recovered_session.id,
+                    external_id,
+                    event.source.value,
+                    recovered_session.status,
+                )
             return recovered_session.id
 
         compact_handled, compact_session_id = self._recover_compact_session(

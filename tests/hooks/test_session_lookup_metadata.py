@@ -31,6 +31,7 @@ def _service(
     session_manager: MagicMock,
     session_task_manager: MagicMock,
     resolve_project_id: MagicMock,
+    logger: MagicMock | None = None,
 ) -> SessionLookupService:
     coordinator = MagicMock()
     return SessionLookupService(
@@ -39,7 +40,7 @@ def _service(
         session_task_manager=session_task_manager,
         get_machine_id=lambda: "21000000-0000-4000-8000-000000000009",
         resolve_project_id=resolve_project_id,
-        logger=MagicMock(),
+        logger=logger or MagicMock(),
     )
 
 
@@ -175,6 +176,7 @@ def test_user_prompt_submit_weak_context_recovers_tmux_session_without_registeri
         id="tmux-capable-session",
         project_id="project-1",
         source="claude",
+        status="active",
         title="Existing terminal",
     )
     session_manager = MagicMock()
@@ -330,3 +332,100 @@ def test_task_context_preserves_explicit_task_and_enriches_matching_link() -> No
         "title": "Explicit event task",
         "state": "ready",
     }
+
+
+def _recovery_case(
+    recovered: SimpleNamespace,
+    logger: MagicMock,
+) -> tuple[SessionLookupService, HookEvent]:
+    """Drive resolve() down the recover_session branch with a watchable logger."""
+    session_manager = MagicMock()
+    session_manager.get_session_id.return_value = None
+    session_manager.lookup_session_id.return_value = None
+    session_manager.recover_session.return_value = recovered
+    session_manager.backfill_terminal_context.return_value = (recovered, False)
+    session_task_manager = MagicMock()
+    session_task_manager.get_session_tasks.return_value = []
+    resolve_project_id = MagicMock(return_value="project-1")
+    service = _service(session_manager, session_task_manager, resolve_project_id, logger)
+    event = _event()
+    event.event_type = HookEventType.BEFORE_AGENT
+    event.cwd = "/work/repos/gobby"
+    event.data = {
+        "cwd": "/work/repos/gobby",
+        "terminal_context": {"cwd": "/work/repos/gobby"},
+    }
+    return service, event
+
+
+def _recovery_records(logger_method: MagicMock) -> list[tuple[str, tuple[Any, ...]]]:
+    return [
+        (call.args[0], call.args[1:])
+        for call in logger_method.call_args_list
+        if "ecovered" in call.args[0]
+    ]
+
+
+def test_same_source_recovery_of_a_retired_row_names_status_not_source() -> None:
+    logger = MagicMock()
+    recovered = SimpleNamespace(
+        id="retired-session",
+        project_id="project-1",
+        source="claude",
+        status="expired",
+        title="Retired terminal",
+    )
+    service, event = _recovery_case(recovered, logger)
+
+    assert service.resolve(event) == "retired-session"
+
+    # A WARNING here reaches errors.log, so a routine same-source recovery must
+    # not emit one — that is the false positive this guards.
+    assert _recovery_records(logger.warning) == []
+    infos = _recovery_records(logger.info)
+    assert len(infos) == 1
+    template, args = infos[0]
+    assert "source mismatch" not in template
+    assert "expired" in (template % args)
+
+
+def test_cross_source_recovery_still_warns_about_the_source() -> None:
+    logger = MagicMock()
+    recovered = SimpleNamespace(
+        id="foreign-session",
+        project_id="project-1",
+        source="codex",
+        status="active",
+        title="Other CLI",
+    )
+    service, event = _recovery_case(recovered, logger)
+
+    assert service.resolve(event) == "foreign-session"
+
+    warnings = _recovery_records(logger.warning)
+    assert len(warnings) == 1
+    template, args = warnings[0]
+    assert "source mismatch" in template
+    rendered = template % args
+    assert "incoming=claude" in rendered
+    assert "existing=codex" in rendered
+
+
+def test_same_source_recovery_of_a_live_row_does_not_claim_a_mismatch() -> None:
+    logger = MagicMock()
+    recovered = SimpleNamespace(
+        id="live-session",
+        project_id="project-1",
+        source="claude",
+        status="active",
+        title="Live terminal",
+    )
+    service, event = _recovery_case(recovered, logger)
+
+    assert service.resolve(event) == "live-session"
+
+    assert _recovery_records(logger.warning) == []
+    infos = _recovery_records(logger.info)
+    assert len(infos) == 1
+    template, _ = infos[0]
+    assert "source mismatch" not in template
