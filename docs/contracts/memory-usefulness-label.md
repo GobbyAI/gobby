@@ -327,6 +327,43 @@ Every signal event carries a `weighting` snapshot
 - Fits condition on the snapshot values (e.g. half-lives) as hyperparameters
   of the regime, not as per-row features.
 
+## 7a. Query-construction fencing and the frozen v1 cohort (non-negotiable)
+
+The `weighting` snapshot also carries `query_construction_version` — the era
+of the query that drove the retrieval (`RECALL_QUERY_CONSTRUCTION_VERSION`,
+`recall_constants.py`). Changing how the query is built changes the
+population, not a per-row feature, so it fences like the regime key.
+
+- **The legacy era is the absent key.** Rows written before the key existed
+  carry none, so `weighting->>'query_construction_version' IS NULL` selects
+  the pre-v2 era exactly and no migration or backfill is needed.
+- **Every cohort-scoped read filters on it**, with the NULL-aware
+  `IS NOT DISTINCT FROM` so a `None` cohort resolves to the legacy era rather
+  than matching nothing. A single fit, eval, audit, or drift replay MUST NOT
+  pool rows across construction versions, and `GateCohort.identity()` carries
+  the version so two eras cannot collapse onto one `holdout_consumption_key`.
+- **The polling path is fenced too, and its parameter is required rather than
+  defaulted.** `shadow_cohort_query`, `fetch_unshadowed_requests`, and
+  `claim_shadow_request` take the version explicitly; a defaulted `None` would
+  match only the legacy era and stamp the new protocol's labels onto
+  pre-cutover retrievals.
+
+**The v1 cohort is frozen, not migrated.** At cutover:
+
+1. The running v1 poller drains its backlog normally; its labels stay v1.
+2. `SHADOW_PROTOCOL_VERSION` and the poller's construction version flip
+   together. Legacy rows stop matching the poller's filter.
+3. `gobby memory recall-signals supersede-legacy-cohort` retires whatever
+   remains unjudged, writing `recall_shadow_judge_state` rows with
+   `status='terminal'` and `last_error='query_construction_version_superseded'`.
+   It inserts rather than updates — an unclaimed request has no state row at
+   all — never touches a `complete` row, and is idempotent.
+
+Existing v1 `recall_usefulness` rows and their prompt snapshots are never
+rewritten, deleted, or re-judged: they stay valid evidence under the protocol
+and query era that produced them, and the fence is what keeps them out of v2
+cohorts.
+
 ## 8. Non-goals
 
 - **Recall-side (false-negative) labels** — this contract is precision-side
