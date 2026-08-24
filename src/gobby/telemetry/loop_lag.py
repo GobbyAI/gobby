@@ -35,7 +35,13 @@ from gobby.telemetry.loop_stack_sampler import LoopStackSampler
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_THRESHOLD_SECONDS = 1.0
+# The ceiling #20841 holds a spawn to. One second was the right threshold while
+# stalls ran to 66s, but the blockers that produced those are fixed: what remains
+# is a few hundred milliseconds at a time, entirely invisible to a watchdog that
+# only speaks up past a second, and #20845 committed the loop to p95 <= 50ms and
+# p99 <= 100ms. A watchdog set ten times above the bound it exists to police
+# cannot report the only stalls left.
+DEFAULT_THRESHOLD_SECONDS = 0.2
 DEFAULT_POLL_SECONDS = 0.05
 # One report per stall rather than one per poll, and a floor on how often a
 # pathological loop can fill the log.
