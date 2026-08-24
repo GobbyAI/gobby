@@ -26,6 +26,8 @@ __all__ = [
     "_execute_run_background",
     "_register_background_task",
     "_summarize_run",
+    "cancel_scheduled_expansion_run",
+    "is_expansion_run_scheduled",
     "schedule_expansion_run",
     "start_expansion_run_impl",
 ]
@@ -149,6 +151,50 @@ class ScheduledRun:
     """The coroutine's return value, only meaningful for an inline run."""
 
 
+@dataclass
+class _PendingRun:
+    """A run handed to the loop whose task does not exist yet.
+
+    `loop.call_soon_threadsafe` returns before the callback runs, so from a
+    worker thread there is a window where the run is going but
+    `_background_run_tasks` has nothing in it. This is what stands in for the
+    task across that window.
+    """
+
+    cancel_requested: bool = False
+
+
+_pending_runs: dict[str, _PendingRun] = {}
+
+
+def is_expansion_run_scheduled(run_id: str) -> bool:
+    """Whether this process is already running the run's coroutine.
+
+    True from the moment the run is handed to the loop, so a resume arriving
+    in the scheduling window sees the run that is already going instead of
+    starting a second execution of it (#20855).
+    """
+    if run_id in _pending_runs:
+        return True
+    task = _background_run_tasks.get(run_id)
+    return task is not None and not task.done()
+
+
+def cancel_scheduled_expansion_run(run_id: str) -> None:
+    """Cancel a run's coroutine whether or not its task exists yet.
+
+    A run still in the scheduling window has no task to cancel; the request is
+    recorded and honoured the moment the callback creates one, so the
+    coroutine cannot outlive the row it is cancelled with.
+    """
+    pending = _pending_runs.get(run_id)
+    if pending is not None:
+        pending.cancel_requested = True
+    task = _background_run_tasks.get(run_id)
+    if task is not None and not task.done():
+        task.cancel()
+
+
 def schedule_expansion_run(coro: Any, run_id: str, *, name: str | None = None) -> ScheduledRun:
     """Background the run on whichever loop is reachable, else run it inline.
 
@@ -166,12 +212,17 @@ def schedule_expansion_run(coro: Any, run_id: str, *, name: str | None = None) -
     task_name = name or f"expansion-run-{run_id}"
 
     def _schedule() -> None:
-        _register_background_task(run_id, loop.create_task(coro, name=task_name))
+        pending = _pending_runs.pop(run_id, None)
+        task = loop.create_task(coro, name=task_name)
+        _register_background_task(run_id, task)
+        if pending is not None and pending.cancel_requested:
+            task.cancel()
 
     try:
         on_target_loop = asyncio.get_running_loop() is loop
     except RuntimeError:
         on_target_loop = False
+    _pending_runs[run_id] = _PendingRun()
     if on_target_loop:
         _schedule()
     else:

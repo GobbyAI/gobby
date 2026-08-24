@@ -12,10 +12,17 @@ from uuid import uuid4
 
 import pytest
 
+from gobby.mcp_proxy.tools._background_task_lifecycle import internal_tool_background_loop
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._expansion import (
     _background_run_tasks,
     create_expansion_registry,
+)
+from gobby.mcp_proxy.tools.tasks._expansion_runtime import (
+    ScheduledRun,
+    cancel_scheduled_expansion_run,
+    is_expansion_run_scheduled,
+    schedule_expansion_run,
 )
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.tasks import LocalTaskManager
@@ -179,6 +186,24 @@ def _register_active_plan(
     return plan_path
 
 
+async def _runs_until_cancelled() -> None:
+    """A run body that ends only when something cancels it."""
+    await asyncio.Event().wait()
+
+
+async def _drain_queued_callbacks() -> None:
+    """Return once every callback queued before this call has run.
+
+    The loop runs its ready queue in order, so a callback queued here lands
+    behind the one `call_soon_threadsafe` already posted -- no sleep needed to
+    know the scheduling hop is done.
+    """
+    loop = asyncio.get_running_loop()
+    drained = loop.create_future()
+    loop.call_soon(drained.set_result, None)
+    await drained
+
+
 class TestExpansionRuns:
     @pytest.mark.asyncio
     async def test_validate_plan_file_returns_semantic_lint_errors(
@@ -226,6 +251,74 @@ class TestExpansionRuns:
 
         assert len(ran_on) == 1
         assert ran_on[0] != loop_thread, "an expansion tool body ran on the event loop thread"
+
+    @pytest.mark.asyncio
+    async def test_a_run_scheduled_from_a_worker_thread_is_active_before_the_loop_runs(
+        self,
+    ) -> None:
+        """The window the worker-thread hop opens.
+
+        A synchronous tool schedules through `loop.call_soon_threadsafe`, so
+        the run's `asyncio.Task` does not exist until the loop next takes a
+        callback. Resume and cancel ask whether a run is already going; before
+        #20855 they asked `_background_run_tasks`, which is empty for that
+        whole window, so a live run read as idle and resume started a second
+        execution of it.
+        """
+        loop = asyncio.get_running_loop()
+        run_id = str(uuid4())
+        scheduled: list[ScheduledRun] = []
+
+        def schedule_from_worker() -> None:
+            with internal_tool_background_loop(loop):
+                scheduled.append(schedule_expansion_run(_runs_until_cancelled(), run_id))
+
+        worker = threading.Thread(target=schedule_from_worker)
+        worker.start()
+        # Joining blocks the loop thread, so the queued callback cannot have
+        # run yet -- this is the window, held open deterministically.
+        worker.join()
+
+        assert scheduled[0].scheduled is True
+        assert run_id not in _background_run_tasks
+        assert is_expansion_run_scheduled(run_id) is True
+
+        await _drain_queued_callbacks()
+
+        assert run_id in _background_run_tasks
+        assert is_expansion_run_scheduled(run_id) is True
+
+    @pytest.mark.asyncio
+    async def test_cancelling_a_run_in_that_window_cancels_the_task_it_produces(
+        self,
+    ) -> None:
+        """Cancel has to reach a run whose task does not exist yet.
+
+        Marking the row cancelled while the queued callback goes on to create
+        an uncancelled task leaves the run executing against a row that says
+        it stopped.
+        """
+        loop = asyncio.get_running_loop()
+        run_id = str(uuid4())
+
+        def schedule_from_worker() -> None:
+            with internal_tool_background_loop(loop):
+                schedule_expansion_run(_runs_until_cancelled(), run_id)
+
+        worker = threading.Thread(target=schedule_from_worker)
+        worker.start()
+        worker.join()
+
+        cancel_scheduled_expansion_run(run_id)
+        await _drain_queued_callbacks()
+
+        task = _background_run_tasks[run_id]
+        # Bounded: a run that ignored the request never ends on its own, and
+        # that has to read as a failure rather than a hung suite.
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=1)
+        assert task.cancelled() is True
+        assert is_expansion_run_scheduled(run_id) is False
 
     @pytest.mark.asyncio
     async def test_start_expansion_run_creates_run(

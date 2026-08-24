@@ -10,9 +10,10 @@ from gobby.code_index.storage import CodeIndexStorage
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._expansion_runtime import (
-    _background_run_tasks,
     _build_expansion_service,
     _summarize_run,
+    cancel_scheduled_expansion_run,
+    is_expansion_run_scheduled,
     schedule_expansion_run,
     start_expansion_run_impl,
 )
@@ -463,8 +464,7 @@ def _register_lifecycle_tools(registry: InternalToolRegistry, ctx: RegistryConte
         if run is None:
             return {"error": f"Expansion run {run_id} not found"}
 
-        current_task = _background_run_tasks.get(run_id)
-        if current_task is not None and not current_task.done():
+        if is_expansion_run_scheduled(run_id):
             _subscribe_completion(ctx, run_id, resolved_session_id)
             return {
                 "success": True,
@@ -526,9 +526,7 @@ def _register_lifecycle_tools(registry: InternalToolRegistry, ctx: RegistryConte
         if not run_manager.is_active_status(run.status):
             return {"success": True, "run": _summarize_run(run)}
 
-        task = _background_run_tasks.get(run_id)
-        if task is not None and not task.done():
-            task.cancel()
+        cancel_scheduled_expansion_run(run_id)
         run = run_manager.cancel(run_id, error="Expansion run cancelled by user")
         if run is None:
             return {"error": f"Expansion run {run_id} not found"}
