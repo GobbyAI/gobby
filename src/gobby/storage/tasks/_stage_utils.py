@@ -185,6 +185,24 @@ def _close_eligible_ancestors(
         ).fetchone()
         if open_child is not None:
             return
+        unfinished_stage = conn.execute(
+            """
+            SELECT 1
+              FROM task_stage_states
+             WHERE task_id = %s
+               AND state != 'done'
+             LIMIT 1
+            """,
+            (parent_id,),
+        ).fetchone()
+        if unfinished_stage is not None:
+            # A stage manifest is work this parent still owes. Closing it on its
+            # last child would ship the epic with its epic_qa, pr, and merge
+            # stages never run, and strand those rows on a closed task — which
+            # also makes it invisible to dispatch, since candidates require
+            # closed_at IS NULL. Such a parent closes through its merge stage.
+            # A parent with no manifest rows is unaffected.
+            return
         _close_task_in_txn(
             conn,
             parent_id,

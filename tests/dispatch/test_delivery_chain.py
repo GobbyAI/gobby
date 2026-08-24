@@ -256,13 +256,16 @@ async def test_parent_epic_pr_merge_closes_with_real_heartbeat(
         category="code",
         validation_criteria="Test task completion is observable.",
     )
-    manager.close_task(child.id, force=True)
+    # gobby build materializes the manifest before work starts, so the epic
+    # already owes its delivery stages when its last child closes. Closing the
+    # child first would auto-close the epic and strand the manifest.
     update_task(temp_db, parent.id, allow_automation=True, isolation="none")
     initialize_manifest(
         temp_db,
         parent.id,
         [spec("epic_qa", 0), spec("pr", 1), spec("merge", 2)],
     )
+    manager.close_task(child.id, force=True)
     spawned: list[str] = []
     monkeypatch.setattr(
         dispatcher,

@@ -27,7 +27,11 @@ def _row(definition_json: object, *, name: str = "coder") -> AgentDefinitionRow:
 
 
 def test_string_json_uses_row_name_fallback() -> None:
-    view = _agent_definition_view(_row('{"surfaces": ["spawn"]}'))
+    # A spawn surface requires its prompt block (require_surface_prompt_blocks);
+    # the subject here is the name fallback, not an incomplete definition.
+    view = _agent_definition_view(
+        _row('{"surfaces": ["spawn"], "prompts": {"agent": "Do the work."}}')
+    )
 
     assert view.name == "coder"
     assert getattr(view, "parse_error", None) is None

@@ -8,6 +8,11 @@ import pytest
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager, Task
+from tests.storage.tasks._stage_test_helpers import (
+    initialize_manifest,
+    set_stage_state,
+    spec,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -109,3 +114,39 @@ def _open(manager: LocalTaskManager, task_id: str) -> bool:
     task = manager.get_task(task_id)
     assert task is not None
     return task.closed_at is None
+
+
+def test_parent_with_unfinished_stages_survives_its_last_child(
+    temp_db: HubDatabase, tmp_path: Path
+) -> None:
+    """A delivery manifest is work the parent still owes.
+
+    Closing it on the last child's close ships the epic without its epic_qa,
+    pr, or merge stage ever running, and strands those manifest rows on a
+    closed task. The merge stage is what closes such an epic.
+    """
+    manager, project_id = _manager(temp_db, tmp_path)
+    parent = _create(manager, project_id, "Delivery epic", task_type="epic")
+    leaf = _create(manager, project_id, "Only leaf", parent_task_id=parent.id)
+    initialize_manifest(temp_db, parent.id, [spec("epic_qa", 0), spec("pr", 1), spec("merge", 2)])
+
+    closed_ancestors: list[str] = []
+    manager.close_task(leaf.id, closed_ancestors=closed_ancestors)
+
+    assert closed_ancestors == []
+    assert _open(manager, parent.id)
+
+
+def test_parent_with_a_finished_manifest_still_closes(temp_db: HubDatabase, tmp_path: Path) -> None:
+    manager, project_id = _manager(temp_db, tmp_path)
+    parent = _create(manager, project_id, "Delivered epic", task_type="epic")
+    leaf = _create(manager, project_id, "Only leaf", parent_task_id=parent.id)
+    initialize_manifest(temp_db, parent.id, [spec("epic_qa", 0), spec("merge", 1)])
+    for stage_name in ("epic_qa", "merge"):
+        set_stage_state(temp_db, parent.id, stage_name, "done")
+
+    closed_ancestors: list[str] = []
+    manager.close_task(leaf.id, closed_ancestors=closed_ancestors)
+
+    assert closed_ancestors == [parent.id]
+    assert not _open(manager, parent.id)
