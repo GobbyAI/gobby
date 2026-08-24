@@ -3,6 +3,7 @@ from typing import Any
 
 import pytest
 
+from gobby.sessions.transcript_render_models import MAX_REMEMBERED_RESOLVED_CALLS
 from gobby.sessions.transcript_renderer import (
     RenderedMessage,
     RenderedToolCall,
@@ -695,3 +696,28 @@ class TestResolvedToolCallRetention:
         assert state.pending_tool_calls == {}
         assert state.tool_call_messages == {}
         assert len(state.resolved_tool_call_ids) == 40
+
+    def test_the_remembered_ids_stop_at_the_bound(self) -> None:
+        state = RenderState()
+        for index in range(MAX_REMEMBERED_RESOLVED_CALLS + 25):
+            state.remember_resolved_tool_call(f"call-{index}")
+
+        assert len(state.resolved_tool_call_ids) == MAX_REMEMBERED_RESOLVED_CALLS
+        # The oldest are what fall out, so a duplicate of a recent call is still
+        # recognised; only one older than the whole window is not.
+        assert not state.knows_tool_call("call-0")
+        assert not state.knows_tool_call("call-24")
+        assert state.knows_tool_call("call-25")
+        assert state.knows_tool_call(f"call-{MAX_REMEMBERED_RESOLVED_CALLS + 24}")
+
+    def test_re_resolving_an_id_refreshes_its_place_in_the_window(self) -> None:
+        state = RenderState()
+        state.remember_resolved_tool_call("call-old")
+        for index in range(MAX_REMEMBERED_RESOLVED_CALLS - 1):
+            state.remember_resolved_tool_call(f"call-{index}")
+        state.remember_resolved_tool_call("call-old")
+
+        state.remember_resolved_tool_call("call-new")
+
+        assert state.knows_tool_call("call-old")
+        assert not state.knows_tool_call("call-0")

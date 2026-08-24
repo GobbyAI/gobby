@@ -176,7 +176,7 @@ def _process_message_block(
             # Popping the index entry does not touch the payload: the object just
             # mutated is the same one the owner message's content block holds.
             state.tool_call_messages.pop(msg.tool_use_id, None)
-            state.resolved_tool_call_ids.add(msg.tool_use_id)
+            state.remember_resolved_tool_call(msg.tool_use_id)
             return
         if msg.tool_use_id and msg.tool_use_id in state.resolved_tool_call_ids:
             # A second result for a call already paired. Suppressed rather than
