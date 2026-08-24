@@ -24,6 +24,7 @@ from gobby.hooks.envelope_dedupe import (
     is_envelope_processing_active,
     is_inbox_envelope_fresh,
     mark_envelope_processed,
+    prune_processed_envelope_markers,
 )
 from gobby.hooks.runtime_compat import SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION
 from gobby.utils.local_token import read_local_api_token
@@ -370,13 +371,42 @@ def _compute_sleep_seconds(interval_seconds: int, jitter_seconds: float) -> floa
     )
 
 
+async def prune_hook_inbox_markers(inbox_dir: Path | None = None) -> int:
+    """Drop processed markers past their retention window, off the loop thread.
+
+    A pass walks the marker directory and stats every entry it reads, so it
+    stays in a worker thread however small the directory currently is.
+    """
+    processed_dir = get_processed_envelope_dir(inbox_dir or get_hook_inbox_dir())
+    result = await asyncio.to_thread(prune_processed_envelope_markers, processed_dir)
+    if result.deleted:
+        logger.info(
+            "Pruned %s expired hook envelope marker(s) from %s",
+            result.deleted,
+            processed_dir,
+            extra={
+                "event": "hook_envelope_markers_pruned",
+                "examined": result.examined,
+                "deleted": result.deleted,
+                "backlog_remaining": result.truncated,
+            },
+        )
+    return result.deleted
+
+
 async def drain_hook_inbox_loop(
     app: Any,
     is_shutdown_requested: Callable[[], bool],
     interval_seconds: int = 60,
     jitter_seconds: float = 5.0,
+    prune_interval_seconds: float = 3600.0,
 ) -> None:
-    """Background loop that replays pending hook inbox envelopes."""
+    """Background loop that replays pending hook inbox envelopes.
+
+    The loop also owns marker retention: the markers live in this directory,
+    so pruning them here needs no second scheduled loop. Pruning runs on its
+    own slower cadence because a drain has to be frequent and a prune does not.
+    """
     try:
         replayed = await drain_hook_inbox_once(app)
         if replayed > 0:
@@ -386,6 +416,7 @@ async def drain_hook_inbox_loop(
     except Exception as exc:
         logger.error("Initial hook inbox drain failed: %s", exc)
 
+    next_prune_at = time.monotonic()
     while not is_shutdown_requested():
         try:
             sleep_seconds = _compute_sleep_seconds(interval_seconds, jitter_seconds)
@@ -393,6 +424,9 @@ async def drain_hook_inbox_loop(
             replayed = await drain_hook_inbox_once(app)
             if replayed > 0:
                 logger.debug("Hook inbox replayed %s pending envelope(s)", replayed)
+            if time.monotonic() >= next_prune_at:
+                next_prune_at = time.monotonic() + prune_interval_seconds
+                await prune_hook_inbox_markers()
         except asyncio.CancelledError:
             break
         except Exception as exc:

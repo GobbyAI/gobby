@@ -7,7 +7,9 @@ import json
 import logging
 import os
 import re
+import time
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
@@ -20,6 +22,21 @@ logger = logging.getLogger(__name__)
 ENVELOPE_ID_HEADER: Final = "X-Gobby-Envelope-Id"
 ENVELOPE_REPLAY_GRACE_SECONDS: Final = 120.0
 _ENVELOPE_FILENAME_RE: Final = re.compile(r"^[nc]-(?P<timestamp_ms>\d+)-.+$")
+
+# A marker only has to outlive the window in which its envelope can still
+# arrive again: is_envelope_processed guards inbox replay and
+# envelope_terminal_response answers a duplicate delivery from a retrying
+# ghook client, and both are bounded by ENVELOPE_REPLAY_GRACE_SECONDS. A day
+# is ~700x that grace period, so nothing that could still be replayed is ever
+# inside the prune, and the directory settles at roughly one day of traffic.
+PROCESSED_MARKER_RETENTION_SECONDS: Final = 24 * 60 * 60.0
+
+# One pass reads at most this many directory entries. Without a bound the
+# first pass after this landed would have walked 1.7M entries -- a 172-second
+# scan -- in one go; with it the backlog drains over successive passes while
+# each pass stays short. Steady state is ~27k entries, so an ordinary pass
+# sees the whole directory and the bound never binds.
+PROCESSED_MARKER_PRUNE_MAX_ENTRIES: Final = 100_000
 
 
 def get_processed_envelope_dir(inbox_dir: Path | None = None) -> Path:
@@ -346,6 +363,73 @@ def _clear_stale_unreadable_marker(
     try:
         marker.unlink()
     except FileNotFoundError:
+        return False
+    return True
+
+
+@dataclass(frozen=True)
+class ProcessedMarkerPruneResult:
+    """What one bounded prune pass over the marker directory did."""
+
+    examined: int = 0
+    deleted: int = 0
+    truncated: bool = False
+    """True when the pass stopped at its entry bound with the directory unfinished."""
+
+
+def prune_processed_envelope_markers(
+    processed_dir: Path | None = None,
+    *,
+    now: float | None = None,
+    retention_seconds: float = PROCESSED_MARKER_RETENTION_SECONDS,
+    max_entries: int = PROCESSED_MARKER_PRUNE_MAX_ENTRIES,
+) -> ProcessedMarkerPruneResult:
+    """Delete marker files past the retention window, bounded to one pass.
+
+    Blocking: the caller must keep this off the event loop thread. Age comes
+    from the file's mtime rather than its stored processed_at because a marker
+    is written once and never rewritten, and reading every marker to parse a
+    timestamp would cost an open and a JSON parse per entry.
+
+    Entries are examined in directory order, which puts the oldest first, so a
+    truncated pass deletes the oldest of the backlog and the next pass resumes
+    where this one stopped.
+    """
+    target = processed_dir if processed_dir is not None else get_processed_envelope_dir()
+    cutoff = (now if now is not None else time.time()) - retention_seconds
+    examined = 0
+    deleted = 0
+    truncated = False
+    try:
+        with os.scandir(target) as entries:
+            for entry in entries:
+                if examined >= max_entries:
+                    truncated = True
+                    break
+                examined += 1
+                if _prune_marker_entry(entry, cutoff=cutoff):
+                    deleted += 1
+    except OSError:
+        # A missing or unreadable marker directory is not an error worth
+        # losing the maintenance loop over; the next pass tries again.
+        return ProcessedMarkerPruneResult(examined=examined, deleted=deleted)
+    return ProcessedMarkerPruneResult(examined=examined, deleted=deleted, truncated=truncated)
+
+
+def _prune_marker_entry(entry: os.DirEntry[str], *, cutoff: float) -> bool:
+    """Delete one directory entry when it is a file older than the cutoff."""
+    try:
+        if not entry.is_file(follow_symlinks=False):
+            return False
+        if entry.stat(follow_symlinks=False).st_mtime >= cutoff:
+            return False
+        os.unlink(entry.path)
+    except FileNotFoundError:
+        # Another pass or a concurrent writer got there first.
+        return False
+    except OSError:
+        # One bad entry must not end the pass: the rest of the directory is
+        # still prunable and the loop has to survive it.
         return False
     return True
 
