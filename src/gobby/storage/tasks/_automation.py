@@ -9,6 +9,7 @@ from gobby.sessions.compact_markers import (
     COMPACT_SELF_CONTINUE_VARIABLE,
 )
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions._constants import SESSION_REVIVAL_HORIZON_HOURS
 from gobby.storage.sql_dialect import json_array_contains_condition
 from gobby.storage.tasks._ancestor_gate import find_child_development_ancestor_gate
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
@@ -125,6 +126,7 @@ def release_task_claim(
         "live-session",
     )
     compact_cutoff = now - timedelta(seconds=COMPACT_SELF_CONTINUE_FRESH_SECONDS)
+    revival_cutoff = now - timedelta(hours=SESSION_REVIVAL_HORIZON_HOURS)
     params: list[Any] = [now, task_id, expected_owner_session_id]
     params.extend(live_session_params)
     params.extend(
@@ -135,6 +137,7 @@ def release_task_claim(
             compact_cutoff.isoformat(),
             COMPACT_SELF_CONTINUE_VARIABLE,
             now.isoformat(),
+            revival_cutoff,
         )
     )
 
@@ -171,6 +174,25 @@ def release_task_claim(
                       ) = 'string'
                       AND sv.variables -> %s ->> 'created_at' >= %s
                       AND sv.variables -> %s ->> 'created_at' <= %s
+               )
+               AND NOT EXISTS (
+                   -- SessionStart expires every terminal session sharing a
+                   -- reused terminal context before anything validates who owns
+                   -- the pane; revive_expired_terminal_session settles that
+                   -- afterwards and routinely reverses it. Until the revival
+                   -- horizon passes the expiry is still contestable, so the
+                   -- owner's status is transiently stale in the same way a
+                   -- mid-compaction owner's is, and the claim outlives it.
+                   -- Only a session carrying a tmux pane can be in that
+                   -- contest, which keeps this from shadowing the marker grace
+                   -- above for every other expired terminal session.
+                   SELECT 1
+                     FROM sessions s
+                    WHERE s.id = tasks.claimed_by_session_id
+                      AND s.session_type = 'terminal'
+                      AND s.status = 'expired'
+                      AND NULLIF(BTRIM(s.terminal_context ->> 'tmux_pane'), '') IS NOT NULL
+                      AND s.updated_at >= %s
                )
             """,
             tuple(params),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -13,6 +14,7 @@ from gobby.sessions.compact_markers import (
     COMPACT_SELF_CONTINUE_VARIABLE,
 )
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions._constants import SESSION_REVIVAL_HORIZON_HOURS
 from gobby.storage.tasks._automation import list_automation_candidates, sweep_stale_claims
 from gobby.storage.tasks._manager import LocalTaskManager
 from gobby.storage.tasks._models import Isolation, Task
@@ -33,12 +35,24 @@ def _make_session(
     sample_project: dict[str, Any],
     session_id: str,
     status: str,
+    *,
+    session_type: str = "terminal",
+    age: timedelta = timedelta(0),
+    tmux_pane: str | None = None,
 ) -> None:
-    now = datetime.now(UTC).isoformat()
+    stamp = (datetime.now(UTC) - age).isoformat()
+    terminal_context = (
+        json.dumps({"tmux_pane": tmux_pane, "tmux_socket_path": "/tmp/tmux-501/default"})
+        if tmux_pane is not None
+        else None
+    )
     temp_db.execute(
         """
-        INSERT INTO sessions (id, external_id, machine_id, source, project_id, status, created_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO sessions (
+            id, external_id, machine_id, source, project_id, status,
+            session_type, terminal_context, created_at, updated_at
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             session_id,
@@ -47,7 +61,10 @@ def _make_session(
             "claude",
             sample_project["id"],
             status,
-            now,
+            session_type,
+            terminal_context,
+            stamp,
+            stamp,
         ),
     )
 
@@ -84,13 +101,22 @@ def _claim(temp_db: HubDatabase, task_id: str) -> str | None:
     return row["claimed_by_session_id"] if row else None
 
 
-@pytest.mark.parametrize("status", ["expired", "deleted"])
-def test_sweep_reclaims_task_claimed_by_terminal_session(
+@pytest.mark.parametrize(
+    ("status", "age"),
+    [
+        # A deleted terminal session is never revived, so its claim is free at once.
+        ("deleted", timedelta(0)),
+        # An expired one is revivable until the horizon passes; past it, so is its claim.
+        ("expired", timedelta(hours=SESSION_REVIVAL_HORIZON_HOURS, minutes=1)),
+    ],
+)
+def test_sweep_reclaims_task_claimed_by_unrevivable_terminal_session(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     status: str,
+    age: timedelta,
 ) -> None:
-    _make_session(temp_db, sample_project, SESS_DEAD, status)
+    _make_session(temp_db, sample_project, SESS_DEAD, status, age=age, tmux_pane="%20")
     task = _claimed_task(temp_db, sample_project, claimed_by=SESS_DEAD)
 
     reclaimed = sweep_stale_claims(temp_db, project_id=sample_project["id"])
@@ -107,7 +133,13 @@ def test_sweep_reclaims_non_automation_task_claimed_by_inactive_session(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
-    _make_session(temp_db, sample_project, SESS_DEAD, "expired")
+    _make_session(
+        temp_db,
+        sample_project,
+        SESS_DEAD,
+        "expired",
+        age=timedelta(hours=SESSION_REVIVAL_HORIZON_HOURS, minutes=1),
+    )
     task = _claimed_task(
         temp_db,
         sample_project,
@@ -242,3 +274,60 @@ def test_generic_sweep_defers_live_session_claims(
 
     assert reclaimed == 0
     assert _claim(temp_db, task.id) == SESS_DEAD
+
+
+def test_sweep_keeps_a_claim_held_by_a_freshly_expired_terminal_session(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """A speculative expiry must not cost a live session its work.
+
+    SessionStart expires every terminal session sharing a reused terminal
+    context before anything validates who actually owns the pane; the
+    authoritative resolver, revive_expired_terminal_session, runs later and
+    routinely reverses it. Releasing the claim in between destroys the claim
+    of a session that is still working.
+    """
+    session_id = str(uuid.uuid4())
+    _make_session(temp_db, sample_project, session_id, "expired", tmux_pane="%20")
+    task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
+
+    reclaimed = sweep_stale_claims(temp_db, project_id=sample_project["id"])
+
+    assert reclaimed == 0
+    assert _claim(temp_db, task.id) == session_id
+
+
+def test_a_revived_terminal_session_still_holds_the_claim_it_started_with(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """The full cascade: claim, speculative expiry, sweep, revival."""
+    session_id = str(uuid.uuid4())
+    _make_session(temp_db, sample_project, session_id, "active", tmux_pane="%20")
+    task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
+
+    # SessionStart expires the pane's previous owner on context reuse.
+    temp_db.execute("UPDATE sessions SET status = 'expired' WHERE id = %s", (session_id,))
+    sweep_stale_claims(temp_db, project_id=sample_project["id"])
+    # Ownership reconciliation then finds this session was the real owner.
+    temp_db.execute("UPDATE sessions SET status = 'active' WHERE id = %s", (session_id,))
+
+    assert _claim(temp_db, task.id) == session_id
+
+
+def test_sweep_reclaims_a_claim_held_by_an_expired_non_terminal_session(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """Only terminal sessions are revivable, so only they earn the grace."""
+    session_id = str(uuid.uuid4())
+    _make_session(
+        temp_db, sample_project, session_id, "expired", session_type="web_chat", tmux_pane="%20"
+    )
+    task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
+
+    reclaimed = sweep_stale_claims(temp_db, project_id=sample_project["id"])
+
+    assert reclaimed >= 1
+    assert _claim(temp_db, task.id) is None
