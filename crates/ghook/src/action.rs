@@ -13,10 +13,29 @@ pub(crate) struct HookAction {
 }
 
 pub(crate) fn continue_action(source: &str, hook_type: &str) -> HookAction {
+    if is_claude_worktree_create(source, hook_type) {
+        return worktree_create_failure("daemon unavailable; no worktree was created");
+    }
     HookAction {
         exit_code: 0,
         stdout_json: Some(skip_stdout_json(source, hook_type)),
         stderr_message: None,
+    }
+}
+
+/// Claude consumes WorktreeCreate stdout verbatim as the created worktree
+/// path, so this hook type must never receive the JSON envelope (or any
+/// other JSON) on stdout — only the bare path on success, or a non-zero
+/// exit with stderr when no worktree exists.
+fn is_claude_worktree_create(source: &str, hook_type: &str) -> bool {
+    source == "claude" && hook_type.eq_ignore_ascii_case("worktree-create")
+}
+
+fn worktree_create_failure(detail: &str) -> HookAction {
+    HookAction {
+        exit_code: 1,
+        stdout_json: None,
+        stderr_message: Some(format!("ghook: worktree-create failed: {detail}")),
     }
 }
 
@@ -53,6 +72,11 @@ pub(crate) fn action_from_success_response(
 ) -> Result<HookAction, String> {
     let trimmed = response_body.trim();
     if trimmed.is_empty() {
+        if is_claude_worktree_create(canonical_source, hook_type) {
+            return Ok(worktree_create_failure(
+                "daemon returned an empty response body",
+            ));
+        }
         return Ok(HookAction {
             exit_code: 0,
             stdout_json: None,
@@ -96,6 +120,26 @@ pub(crate) fn action_from_success_response(
                 exit_code: 2,
                 stdout_json: None,
                 stderr_message: Some(reason.to_string()),
+            });
+        }
+
+        if is_claude_worktree_create(canonical_source, hook_type) {
+            let path = map
+                .and_then(|m| m.get("hookSpecificOutput"))
+                .and_then(Value::as_object)
+                .and_then(|h| h.get("worktreePath"))
+                .and_then(Value::as_str)
+                .filter(|p| !p.is_empty());
+            return Ok(match path {
+                // stdout carries the bare path here, not JSON.
+                Some(path) => HookAction {
+                    exit_code: 0,
+                    stdout_json: Some(path.to_string()),
+                    stderr_message: None,
+                },
+                None => worktree_create_failure(
+                    "daemon response has no hookSpecificOutput.worktreePath",
+                ),
             });
         }
 
@@ -198,6 +242,10 @@ pub(crate) fn action_from_failure(
         transport::DeliveryFailureKind::Other => detail.to_string(),
     };
 
+    if is_claude_worktree_create(cfg.source, hook_type) {
+        return worktree_create_failure(&message);
+    }
+
     HookAction {
         exit_code: 1,
         stdout_json: Some(
@@ -293,6 +341,47 @@ mod tests {
             continue_action("agy", "Stop").stdout_json.as_deref(),
             Some("{}")
         );
+    }
+
+    #[test]
+    fn action_from_success_claude_worktree_create_emits_bare_path() {
+        let body = r#"{"continue":true,"hookSpecificOutput":{"hookEventName":"WorktreeCreate","worktreePath":"/tmp/wt/agent-1"}}"#;
+        let action = action_from_success_response("claude", "worktree-create", body).unwrap();
+        assert_eq!(action.exit_code, 0);
+        assert_eq!(action.stdout_json.as_deref(), Some("/tmp/wt/agent-1"));
+        assert!(action.stderr_message.is_none());
+    }
+
+    #[test]
+    fn action_from_success_claude_worktree_create_without_path_fails() {
+        for body in [r#"{"continue":true}"#, ""] {
+            let action = action_from_success_response("claude", "worktree-create", body).unwrap();
+            assert_eq!(action.exit_code, 1);
+            assert!(action.stdout_json.is_none());
+            assert!(action.stderr_message.is_some());
+        }
+    }
+
+    #[test]
+    fn continue_action_claude_worktree_create_fails_instead_of_emitting_json() {
+        let action = continue_action("claude", "worktree-create");
+        assert_eq!(action.exit_code, 1);
+        assert!(action.stdout_json.is_none());
+        assert!(action.stderr_message.is_some());
+    }
+
+    #[test]
+    fn action_from_failure_claude_worktree_create_suppresses_stdout_json() {
+        let cfg = CliConfig::for_cli("claude").unwrap();
+        let action = action_from_failure(
+            "worktree-create",
+            &cfg,
+            DeliveryFailureKind::Connect,
+            "connection refused",
+        );
+        assert_eq!(action.exit_code, 1);
+        assert!(action.stdout_json.is_none());
+        assert!(action.stderr_message.is_some());
     }
 
     #[test]
