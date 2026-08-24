@@ -1164,6 +1164,23 @@ def test_window_selection_drops_only_lines_older_than_the_lookback() -> None:
     assert [item.text for item in selected] == [lines[index] for index in (2, 3, 4, 5, 6)]
 
 
+def test_window_selection_keeps_a_line_whose_nested_timestamp_is_older() -> None:
+    window_start = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)
+    # A Claude JSONL line carries its own timestamp last; a structured result
+    # embedded earlier can carry an older one of its own.
+    line = json.dumps(
+        {
+            "type": "user",
+            "toolUseResult": {"timestamp": "2026-07-01T09:00:00Z"},
+            "timestamp": window_start.isoformat(),
+        }
+    )
+
+    selected = list(select_window_raw_lines([line], window_start))
+
+    assert [item.text for item in selected] == [line]
+
+
 def test_window_selection_keeps_everything_without_a_window() -> None:
     lines = [_timestamped("2026-07-20T12:00:00Z"), _timestamped("2026-07-27T14:00:00Z")]
 

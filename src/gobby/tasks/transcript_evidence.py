@@ -233,8 +233,12 @@ def select_window_raw_lines(
         return
     cutoff = (_as_utc(window_start) - WINDOW_LOOKBACK).strftime("%Y-%m-%dT%H:%M:%S")
     for index, text in enumerate(lines):
-        match = _UTC_LINE_TIMESTAMP_RE.search(text)
-        if match is not None and match.group(1) < cutoff:
+        # Every timestamp on the line must be older, not just the first one:
+        # the top-level timestamp sits near the end of a Claude JSONL line, so
+        # an unescaped nested one earlier in the line would otherwise shadow it
+        # and strand a live validation run.
+        stamps = [match.group(1) for match in _UTC_LINE_TIMESTAMP_RE.finditer(text)]
+        if stamps and all(stamp < cutoff for stamp in stamps):
             continue
         yield RawLine(byte_offset=None, raw_line_no=index, text=text)
 
