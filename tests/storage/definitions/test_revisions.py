@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterator
 from types import SimpleNamespace
@@ -24,6 +25,7 @@ from gobby.storage.definitions.notifications import DefinitionRevisionListener
 from gobby.storage.definitions.revisions import (
     DEFINITION_DOMAINS,
     DefinitionDomain,
+    RevisionExecutor,
     advance_persistent_revision,
     bump_definitions_revision,
     fetch_persistent_revisions,
@@ -91,6 +93,51 @@ async def wait_until(predicate: Callable[[], bool], *, timeout: float = 1.0) -> 
     async with asyncio.timeout(timeout):
         while not predicate():
             await asyncio.sleep(0.005)
+
+
+def _notify_from_a_foreign_backend(conninfo: str, payload: str) -> None:
+    """Notify the revision channel from a backend the caller does not own.
+
+    LISTEN/NOTIFY is scoped to the database, never to a schema, so a per-test
+    schema cannot keep other writers off `gobby_definition_revisions`. Any
+    concurrent pytest process, xdist worker, or daemon sharing the test
+    database publishes onto the same channel. Emitting one deliberately turns
+    that race into a fixed precondition.
+    """
+    with psycopg.connect(conninfo, autocommit=True) as foreign:
+        foreign.execute("SELECT pg_notify(%s, %s)", ("gobby_definition_revisions", payload))
+
+
+def _backend_pid(conn: RevisionExecutor) -> int:
+    """Return the server pid of the backend this connection is bound to."""
+    row = conn.execute("SELECT pg_backend_pid() AS pid").fetchone()
+    assert row is not None
+    return int(row["pid"])
+
+
+def _notifications_from(
+    listener: psycopg.Connection[Any],
+    backend_pid: int,
+    *,
+    timeout: float,
+) -> list[str]:
+    """Collect payloads `backend_pid` published, discarding every foreign one.
+
+    Returns as soon as one of our own notifications arrives, otherwise after
+    `timeout` seconds. `Notify.pid` is the notifying backend's server pid, so
+    it is what separates our own publication from everyone else's on a
+    database-wide channel.
+    """
+    payloads: list[str] = []
+    deadline = time.monotonic() + timeout
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return payloads
+        for notification in listener.notifies(timeout=remaining, stop_after=1):
+            if notification.pid == backend_pid:
+                payloads.append(notification.payload)
+                return payloads
 
 
 @pytest.fixture
@@ -168,14 +215,13 @@ def test_listener_exception_does_not_propagate_to_bump_caller(
 def test_advance_persistent_revision_commits_and_notifies(
     revision_db: PostgresHubDatabase,
 ) -> None:
-    notifications: list[str] = []
     with psycopg.connect(revision_db.conninfo, autocommit=True) as listener:
         listener.execute("LISTEN gobby_definition_revisions")
+        _notify_from_a_foreign_backend(revision_db.conninfo, "rules:4242")
         with revision_db.transaction() as txn:
+            notifier_pid = _backend_pid(txn)
             advance_persistent_revision(txn, "rules")
-        for notification in listener.notifies(timeout=2.0, stop_after=1):
-            notifications.append(notification.payload)
-            break
+        notifications = _notifications_from(listener, notifier_pid, timeout=2.0)
 
     row = revision_db.fetchone(
         "SELECT revision FROM definition_revisions WHERE domain = %s",
@@ -191,21 +237,22 @@ def test_advance_persistent_revision_rollback_is_silent(
 ) -> None:
     with psycopg.connect(revision_db.conninfo, autocommit=True) as listener:
         listener.execute("LISTEN gobby_definition_revisions")
+        _notify_from_a_foreign_backend(revision_db.conninfo, "rules:4242")
+        notifier_pid = -1
         with pytest.raises(RuntimeError, match="rollback"):
             with revision_db.transaction() as txn:
+                notifier_pid = _backend_pid(txn)
                 advance_persistent_revision(txn, "rules")
                 raise RuntimeError("rollback")
-        timed_out = True
-        for _notification in listener.notifies(timeout=0.2, stop_after=1):
-            timed_out = False
-            break
+        assert notifier_pid > 0
+        notifications = _notifications_from(listener, notifier_pid, timeout=0.2)
 
     row = revision_db.fetchone(
         "SELECT revision FROM definition_revisions WHERE domain = %s",
         ("rules",),
     )
     assert row is None
-    assert timed_out is True
+    assert notifications == []
 
 
 def test_ambient_nested_commit_visibility(revision_db: PostgresHubDatabase) -> None:
