@@ -98,10 +98,42 @@ pub fn envelope_filename(critical: bool) -> String {
     format!("{prefix}-{}-{uuid}.json", ts13())
 }
 
+/// Removes a temp file unless the write that created it completed.
+///
+/// The drain ignores `*.tmp` and nothing else reaps one, so a bare `?` between
+/// the create and the rename leaked a file that lived forever: 59 had built up
+/// in one inbox, the oldest four months old (#20854). Armed only after the
+/// create succeeds, so it never removes an entry this write did not make.
+struct TempFileGuard<'a> {
+    path: &'a Path,
+    armed: bool,
+}
+
+impl<'a> TempFileGuard<'a> {
+    fn arm(path: &'a Path) -> Self {
+        Self { path, armed: true }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for TempFileGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            // Best-effort: the write is already failing and the reaper on the
+            // daemon side covers whatever a dying process leaves behind.
+            let _ = fs::remove_file(self.path);
+        }
+    }
+}
+
 /// Atomically write `bytes` to `final_path` via tmp + fsync + rename.
 ///
 /// Creates the parent directory if missing. The tmp file lives next to
-/// the final path with a `.tmp` suffix — the drain ignores `*.tmp`.
+/// the final path with a `.tmp` suffix — the drain ignores `*.tmp` — and is
+/// removed again if any step after its creation fails.
 pub fn atomic_write(final_path: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(parent) = final_path.parent() {
         fs::create_dir_all(parent)
@@ -115,15 +147,16 @@ pub fn atomic_write(final_path: &Path, bytes: &[u8]) -> Result<()> {
     name.push(".tmp");
     tmp.set_file_name(name);
 
-    {
-        let mut f = File::create(&tmp).with_context(|| format!("create tmp {}", tmp.display()))?;
-        f.write_all(bytes)
-            .with_context(|| format!("write tmp {}", tmp.display()))?;
-        f.sync_all()
-            .with_context(|| format!("fsync tmp {}", tmp.display()))?;
-    }
+    let mut file = File::create(&tmp).with_context(|| format!("create tmp {}", tmp.display()))?;
+    let mut guard = TempFileGuard::arm(&tmp);
+    file.write_all(bytes)
+        .with_context(|| format!("write tmp {}", tmp.display()))?;
+    file.sync_all()
+        .with_context(|| format!("fsync tmp {}", tmp.display()))?;
+    drop(file);
     fs::rename(&tmp, final_path)
         .with_context(|| format!("rename {} -> {}", tmp.display(), final_path.display()))?;
+    guard.disarm();
     if let Some(parent) = final_path.parent() {
         // Directory fsync is best-effort because some platforms/filesystems reject it.
         let _ = File::open(parent).and_then(|dir| dir.sync_all());
@@ -391,6 +424,42 @@ mod tests {
         atomic_write(&path, b"{}").unwrap();
         let tmp = dir.path().join("ok.json.tmp");
         assert!(!tmp.exists());
+    }
+
+    #[test]
+    fn atomic_write_removes_its_tmp_when_the_rename_fails() {
+        // A non-empty directory cannot be replaced by a rename, which fails the
+        // write with the tmp file already created, fsynced and closed.
+        let dir = tempdir().unwrap();
+        let occupied = dir.path().join("taken.json");
+        fs::create_dir(&occupied).unwrap();
+        fs::write(occupied.join("child"), b"x").unwrap();
+
+        let err = atomic_write(&occupied, b"{}").unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("rename"),
+            "unexpected failure: {err:#}"
+        );
+        assert!(
+            !dir.path().join("taken.json.tmp").exists(),
+            "a failed write left its temp file behind"
+        );
+    }
+
+    #[test]
+    fn atomic_write_leaves_an_entry_it_did_not_create() {
+        // The create is what arms the cleanup. When it fails there is nothing
+        // this write owns, and whatever is sitting on the tmp path is not ours.
+        let dir = tempdir().unwrap();
+        let squatter = dir.path().join("blocked.json.tmp");
+        fs::create_dir(&squatter).unwrap();
+
+        assert!(atomic_write(&dir.path().join("blocked.json"), b"{}").is_err());
+        assert!(
+            squatter.is_dir(),
+            "the cleanup removed an entry it did not create"
+        );
     }
 
     #[test]

@@ -8,7 +8,7 @@ import logging
 import os
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -368,8 +368,8 @@ def _clear_stale_unreadable_marker(
 
 
 @dataclass(frozen=True)
-class ProcessedMarkerPruneResult:
-    """What one bounded prune pass over the marker directory did."""
+class DirectoryPruneResult:
+    """What one bounded prune pass over a directory did."""
 
     examined: int = 0
     deleted: int = 0
@@ -377,26 +377,23 @@ class ProcessedMarkerPruneResult:
     """True when the pass stopped at its entry bound with the directory unfinished."""
 
 
-def prune_processed_envelope_markers(
-    processed_dir: Path | None = None,
+def prune_directory_by_age(
+    target: Path,
     *,
-    now: float | None = None,
-    retention_seconds: float = PROCESSED_MARKER_RETENTION_SECONDS,
-    max_entries: int = PROCESSED_MARKER_PRUNE_MAX_ENTRIES,
-) -> ProcessedMarkerPruneResult:
-    """Delete marker files past the retention window, bounded to one pass.
+    cutoff: float,
+    max_entries: int,
+    matches: Callable[[str], bool] | None = None,
+) -> DirectoryPruneResult:
+    """Delete files older than the cutoff, bounded to one pass.
 
-    Blocking: the caller must keep this off the event loop thread. Age comes
-    from the file's mtime rather than its stored processed_at because a marker
-    is written once and never rewritten, and reading every marker to parse a
-    timestamp would cost an open and a JSON parse per entry.
+    Blocking: the caller must keep this off the event loop thread. `matches`
+    selects entries by name and defaults to every entry; the bound counts every
+    entry read, because reading is the cost the bound exists to limit.
 
     Entries are examined in directory order, which puts the oldest first, so a
     truncated pass deletes the oldest of the backlog and the next pass resumes
     where this one stopped.
     """
-    target = processed_dir if processed_dir is not None else get_processed_envelope_dir()
-    cutoff = (now if now is not None else time.time()) - retention_seconds
     examined = 0
     deleted = 0
     truncated = False
@@ -407,16 +404,39 @@ def prune_processed_envelope_markers(
                     truncated = True
                     break
                 examined += 1
-                if _prune_marker_entry(entry, cutoff=cutoff):
+                if matches is not None and not matches(entry.name):
+                    continue
+                if _prune_entry(entry, cutoff=cutoff):
                     deleted += 1
     except OSError:
-        # A missing or unreadable marker directory is not an error worth
-        # losing the maintenance loop over; the next pass tries again.
-        return ProcessedMarkerPruneResult(examined=examined, deleted=deleted)
-    return ProcessedMarkerPruneResult(examined=examined, deleted=deleted, truncated=truncated)
+        # A missing or unreadable directory is not an error worth losing the
+        # maintenance loop over; the next pass tries again.
+        return DirectoryPruneResult(examined=examined, deleted=deleted)
+    return DirectoryPruneResult(examined=examined, deleted=deleted, truncated=truncated)
 
 
-def _prune_marker_entry(entry: os.DirEntry[str], *, cutoff: float) -> bool:
+def prune_processed_envelope_markers(
+    processed_dir: Path | None = None,
+    *,
+    now: float | None = None,
+    retention_seconds: float = PROCESSED_MARKER_RETENTION_SECONDS,
+    max_entries: int = PROCESSED_MARKER_PRUNE_MAX_ENTRIES,
+) -> DirectoryPruneResult:
+    """Delete marker files past the retention window, bounded to one pass.
+
+    Blocking: the caller must keep this off the event loop thread. Age comes
+    from the file's mtime rather than its stored processed_at because a marker
+    is written once and never rewritten, and reading every marker to parse a
+    timestamp would cost an open and a JSON parse per entry.
+
+    Every entry is a candidate: nothing but markers is written here.
+    """
+    target = processed_dir if processed_dir is not None else get_processed_envelope_dir()
+    cutoff = (now if now is not None else time.time()) - retention_seconds
+    return prune_directory_by_age(target, cutoff=cutoff, max_entries=max_entries)
+
+
+def _prune_entry(entry: os.DirEntry[str], *, cutoff: float) -> bool:
     """Delete one directory entry when it is a file older than the cutoff."""
     try:
         if not entry.is_file(follow_symlinks=False):

@@ -10,13 +10,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from random import SystemRandom
-from typing import Any
+from typing import Any, Final
 
 import httpx
 
 from gobby.cli.utils import get_gobby_home
 from gobby.hooks.envelope_dedupe import (
     ENVELOPE_ID_HEADER,
+    DirectoryPruneResult,
     clear_stale_envelope_processing_marker,
     envelope_id_from_inbox_path,
     get_processed_envelope_dir,
@@ -24,6 +25,7 @@ from gobby.hooks.envelope_dedupe import (
     is_envelope_processing_active,
     is_inbox_envelope_fresh,
     mark_envelope_processed,
+    prune_directory_by_age,
     prune_processed_envelope_markers,
 )
 from gobby.hooks.runtime_compat import SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION
@@ -32,6 +34,20 @@ from gobby.utils.local_token import read_local_api_token
 logger = logging.getLogger(__name__)
 _JITTER_RANDOM = SystemRandom()
 _DRAIN_LOCK_STATE_KEY = "_gobby_hook_inbox_drain_lock"
+
+# How long an abandoned temp file must sit before the reaper takes it. ghook
+# writes an envelope as create, write, fsync, rename with no waiting between
+# the steps, so an hour is orders of magnitude past the longest plausible
+# in-flight write and no temp file a running ghook could still rename falls
+# inside it. The writer already removes its own temp on every error return
+# (crates/ghook/src/transport.rs); this window exists for the one case the
+# writer cannot handle, a killed process.
+ORPHANED_TEMP_RETENTION_SECONDS: Final = 60 * 60.0
+
+# Same bound and the same reason as the marker prune: one pass reads at most
+# this many entries, so a backlog drains over successive passes while each pass
+# stays short. The inbox holds tens of entries in steady state.
+ORPHANED_TEMP_PRUNE_MAX_ENTRIES: Final = 100_000
 
 
 def get_hook_inbox_dir() -> Path:
@@ -371,27 +387,77 @@ def _compute_sleep_seconds(interval_seconds: int, jitter_seconds: float) -> floa
     )
 
 
-async def prune_hook_inbox_markers(inbox_dir: Path | None = None) -> int:
-    """Drop processed markers past their retention window, off the loop thread.
+def _is_orphaned_temp_name(name: str) -> bool:
+    """True for the intermediate file ghook's atomic write leaves behind."""
+    return name.endswith(".tmp")
 
-    A pass walks the marker directory and stats every entry it reads, so it
-    stays in a worker thread however small the directory currently is.
+
+def prune_orphaned_inbox_temp_files(
+    inbox_dir: Path | None = None,
+    *,
+    now: float | None = None,
+    retention_seconds: float = ORPHANED_TEMP_RETENTION_SECONDS,
+    max_entries: int = ORPHANED_TEMP_PRUNE_MAX_ENTRIES,
+) -> DirectoryPruneResult:
+    """Delete temp files a dead writer left behind, bounded to one pass.
+
+    Blocking: the caller must keep this off the event loop thread. Only `.tmp`
+    names are candidates, because a pending envelope shares this directory and
+    is legitimately older than any window whenever the daemon was down.
     """
-    processed_dir = get_processed_envelope_dir(inbox_dir or get_hook_inbox_dir())
-    result = await asyncio.to_thread(prune_processed_envelope_markers, processed_dir)
-    if result.deleted:
+    target = inbox_dir if inbox_dir is not None else get_hook_inbox_dir()
+    cutoff = (now if now is not None else time.time()) - retention_seconds
+    return prune_directory_by_age(
+        target,
+        cutoff=cutoff,
+        max_entries=max_entries,
+        matches=_is_orphaned_temp_name,
+    )
+
+
+def _prune_hook_inbox_blocking(
+    inbox_dir: Path,
+) -> tuple[DirectoryPruneResult, DirectoryPruneResult]:
+    """Run both retention passes in one worker-thread hop."""
+    markers = prune_processed_envelope_markers(get_processed_envelope_dir(inbox_dir))
+    temps = prune_orphaned_inbox_temp_files(inbox_dir)
+    return markers, temps
+
+
+async def prune_hook_inbox(inbox_dir: Path | None = None) -> int:
+    """Drop expired markers and abandoned temp files, off the loop thread.
+
+    Both passes stat every entry they read, so they share one worker-thread hop
+    however small the directories currently are. Returns the total deleted.
+    """
+    root = inbox_dir or get_hook_inbox_dir()
+    markers, temps = await asyncio.to_thread(_prune_hook_inbox_blocking, root)
+    processed_dir = get_processed_envelope_dir(root)
+    if markers.deleted:
         logger.info(
             "Pruned %s expired hook envelope marker(s) from %s",
-            result.deleted,
+            markers.deleted,
             processed_dir,
             extra={
                 "event": "hook_envelope_markers_pruned",
-                "examined": result.examined,
-                "deleted": result.deleted,
-                "backlog_remaining": result.truncated,
+                "examined": markers.examined,
+                "deleted": markers.deleted,
+                "backlog_remaining": markers.truncated,
             },
         )
-    return result.deleted
+    if temps.deleted:
+        logger.info(
+            "Reaped %s abandoned hook envelope temp file(s) from %s",
+            temps.deleted,
+            root,
+            extra={
+                "event": "hook_envelope_temp_files_reaped",
+                "examined": temps.examined,
+                "deleted": temps.deleted,
+                "backlog_remaining": temps.truncated,
+            },
+        )
+    return markers.deleted + temps.deleted
 
 
 async def drain_hook_inbox_loop(
@@ -403,9 +469,10 @@ async def drain_hook_inbox_loop(
 ) -> None:
     """Background loop that replays pending hook inbox envelopes.
 
-    The loop also owns marker retention: the markers live in this directory,
-    so pruning them here needs no second scheduled loop. Pruning runs on its
-    own slower cadence because a drain has to be frequent and a prune does not.
+    The loop also owns inbox retention -- expired processed markers and temp
+    files a dead writer abandoned both live in this directory, so pruning them
+    here needs no second scheduled loop. Pruning runs on its own slower cadence
+    because a drain has to be frequent and a prune does not.
     """
     try:
         replayed = await drain_hook_inbox_once(app)
@@ -426,7 +493,7 @@ async def drain_hook_inbox_loop(
                 logger.debug("Hook inbox replayed %s pending envelope(s)", replayed)
             if time.monotonic() >= next_prune_at:
                 next_prune_at = time.monotonic() + prune_interval_seconds
-                await prune_hook_inbox_markers()
+                await prune_hook_inbox()
         except asyncio.CancelledError:
             break
         except Exception as exc:

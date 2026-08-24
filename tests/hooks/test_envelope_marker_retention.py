@@ -20,11 +20,11 @@ import pytest
 from gobby.hooks.envelope_dedupe import (
     ENVELOPE_REPLAY_GRACE_SECONDS,
     PROCESSED_MARKER_RETENTION_SECONDS,
-    ProcessedMarkerPruneResult,
+    DirectoryPruneResult,
     mark_envelope_processed,
     prune_processed_envelope_markers,
 )
-from gobby.hooks.inbox import prune_hook_inbox_markers
+from gobby.hooks.inbox import prune_hook_inbox
 
 pytestmark = pytest.mark.unit
 
@@ -178,14 +178,14 @@ async def test_the_prune_never_runs_on_the_event_loop_thread(
     prune_threads: list[int] = []
     real_prune = prune_processed_envelope_markers
 
-    def _recording_prune(processed_dir: Path | None = None) -> ProcessedMarkerPruneResult:
+    def _recording_prune(processed_dir: Path | None = None) -> DirectoryPruneResult:
         prune_threads.append(threading.get_ident())
         return real_prune(processed_dir)
 
     monkeypatch.setattr("gobby.hooks.inbox.prune_processed_envelope_markers", _recording_prune)
     loop_thread = threading.get_ident()
 
-    deleted = await prune_hook_inbox_markers()
+    deleted = await prune_hook_inbox()
 
     assert deleted == 1
     assert prune_threads, "the prune must have walked the marker directory"
