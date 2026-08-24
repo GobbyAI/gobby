@@ -40,6 +40,21 @@ class EpicGuardResult:
             "fingerprint": self.fingerprint,
         }
 
+    def review_facts(self) -> dict[str, object]:
+        """Guard identity for the criteria review, without the runner's stdout.
+
+        These facts reach the review prompt and, through it, both the review
+        and evidence fingerprints. The runner's output carries a fresh duration
+        on every run, so including it moved the fingerprint pair on every close
+        attempt and made the memoized verdict unreachable (#20866). Nothing is
+        lost: a guard that fails stops the close at gate 13, so the text this
+        drops is always a success banner, and dropping it also keeps up to
+        32,000 characters of unrelated test output out of the prompt.
+        """
+        facts = self.details()
+        del facts["output"]
+        return facts
+
 
 async def evaluate_epic_guards(
     *,

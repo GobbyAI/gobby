@@ -495,11 +495,17 @@ async def _evaluate_close(
     acceptance_details: dict[str, object]
     tdd_details: dict[str, object]
     guard_details: dict[str, object]
+    # Gate 13's own details keep the guard runner's stdout for diagnostics; the
+    # facts handed to the criteria review must not, because they fingerprint
+    # the review and a fresh pytest duration per attempt makes the memoized
+    # verdict unreachable (#20866).
+    guard_review_facts: dict[str, object]
     test_bodies = "Named acceptance tests: none."
     if reason in NO_WORK_CLOSE_REASONS:
         acceptance_details = {"findings": [], "test_references": [], "evidence_files": []}
         tdd_details = {"findings": [], "red_runs": [], "green_runs": []}
         guard_details = {"paths": [], "source_task_ids": []}
+        guard_review_facts = dict(guard_details)
         for item, name in (
             (11, "acceptance_artifacts"),
             (12, "tdd_evidence"),
@@ -569,6 +575,7 @@ async def _evaluate_close(
             repo_path=repo_path,
         )
         guard_details = guards.details()
+        guard_review_facts = guards.review_facts()
         if not guards.passed:
             return evaluation.fail(
                 13,
@@ -634,7 +641,7 @@ async def _evaluate_close(
             "validation_commands": command_gate.details,
             "acceptance_artifacts": acceptance_details,
             "tdd_evidence": tdd_details,
-            "epic_guards": guard_details,
+            "epic_guards": guard_review_facts,
         },
         validation_config=ctx.validation_config,
         reason=reason,

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
+from contextlib import nullcontext
 from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -18,6 +20,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
 from gobby.storage.tasks import Task
 from gobby.tasks.acceptance_artifacts import AcceptanceArtifactResult, AcceptanceTest
+from gobby.tasks.epic_guards import EpicGuardResult
 from gobby.tasks.transcript_evidence import TranscriptEvidence, TranscriptValidationRun
 
 pytestmark = pytest.mark.unit
@@ -97,8 +100,15 @@ def _transcript() -> TranscriptEvidence:
     )
 
 
-async def _evaluate(task: Task, *, override_justification: str | None) -> CloseEvaluation:
-    review = AsyncMock(
+async def _evaluate(
+    task: Task,
+    *,
+    override_justification: str | None,
+    review: AsyncMock | None = None,
+    guards: EpicGuardResult | None = None,
+    artifacts: AcceptanceArtifactResult | None = None,
+) -> CloseEvaluation:
+    review = review or AsyncMock(
         return_value=ValidationResult(
             can_close=True,
             validation_status="valid",
@@ -107,7 +117,16 @@ async def _evaluate(task: Task, *, override_justification: str | None) -> CloseE
             extra={"verdict": {"status": "valid"}},
         )
     )
+    artifacts = artifacts or AcceptanceArtifactResult(
+        passed=True,
+        tests=(NAMED_TEST,),
+        findings=(),
+        evidence_files=(),
+    )
     with (
+        patch.object(lifecycle, "evaluate_epic_guards", AsyncMock(return_value=guards))
+        if guards is not None
+        else nullcontext(),
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
@@ -125,16 +144,7 @@ async def _evaluate(task: Task, *, override_justification: str | None) -> CloseE
             "_derive_close_transcript_evidence",
             AsyncMock(return_value=_transcript()),
         ),
-        patch.object(
-            lifecycle,
-            "evaluate_acceptance_artifacts",
-            return_value=AcceptanceArtifactResult(
-                passed=True,
-                tests=(NAMED_TEST,),
-                findings=(),
-                evidence_files=(),
-            ),
-        ),
+        patch.object(lifecycle, "evaluate_acceptance_artifacts", return_value=artifacts),
         patch.object(lifecycle, "collect_commit_diff_text", return_value="diff"),
         patch.object(lifecycle, "evaluate_criteria_review", review),
         patch("gobby.workflows.task_claim_state.target_task_has_edits", return_value=True),
@@ -201,3 +211,65 @@ async def test_unescalated_close_with_justification_still_fails_tdd_evidence() -
 
     assert evaluation.error == "tdd_evidence_missing"
     assert _gate(evaluation, 12).status == "failed"  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_criteria_review_sees_guard_identity_without_its_stdout() -> None:
+    """The facts handed to the criteria review must repeat for an unchanged close.
+
+    checklist_facts feeds the review prompt and both fingerprints, so a fact
+    that moves on every attempt makes the memoized verdict unreachable and no
+    repeat close can ever be served from it (#20866). The guard runner's stdout
+    is exactly that: a fresh pytest duration per run. Gate 13's own details
+    keep it for diagnostics, because a guard that fails never reaches gate 14.
+    """
+    review = AsyncMock(
+        return_value=ValidationResult(
+            can_close=True,
+            validation_status="valid",
+            validation_feedback="Criteria satisfied.",
+            reset_reason="llm_valid",
+            extra={"verdict": {"status": "valid"}},
+        )
+    )
+    guards = EpicGuardResult(
+        passed=True,
+        skipped=False,
+        error_type=None,
+        message="Epic guards passed.",
+        paths=("tests/memory/test_recall.py",),
+        source_task_ids=("00000000-0000-4000-8000-000000000102",),
+        command="uv run pytest 'tests/memory/test_recall.py'",
+        output="4 passed in 3.71s\n",
+        fingerprint="guardfingerprint",
+    )
+
+    evaluation = await _evaluate(
+        _task(escalated=False),
+        override_justification=None,
+        review=review,
+        guards=guards,
+        # No named acceptance test, so gate 12 has nothing to demand and the
+        # evaluation reaches gate 14, which is what this test is about.
+        artifacts=AcceptanceArtifactResult(
+            passed=True,
+            tests=(),
+            findings=(),
+            evidence_files=(),
+        ),
+    )
+
+    assert evaluation.error is None
+    await_args = review.await_args
+    assert await_args is not None, "the criteria review must have run"
+    facts = cast(dict[str, Any], await_args.kwargs["checklist_facts"])
+    guard_facts = cast(dict[str, Any], facts["epic_guards"])
+    guard_output = guards.output
+    assert guard_output is not None
+    assert "output" not in guard_facts
+    assert guard_output not in json.dumps(facts, default=str)
+    assert guard_facts["paths"] == ["tests/memory/test_recall.py"]
+    assert guard_facts["fingerprint"] == "guardfingerprint"
+    assert guard_facts["command"] == "uv run pytest 'tests/memory/test_recall.py'"
+    gate_details = cast(Any, _gate(evaluation, 13)).details
+    assert gate_details["output"] == guards.output, "gate 13 keeps the runner output"

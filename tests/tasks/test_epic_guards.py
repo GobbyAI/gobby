@@ -128,6 +128,50 @@ async def test_guard_runner_failure_names_path_and_output(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_review_facts_hold_still_while_guard_output_moves(tmp_path: Path) -> None:
+    """The guard's review facts must repeat when nothing about the guard changed.
+
+    Guard facts reach the criteria-review prompt and, through it, both the
+    review and evidence fingerprints. The runner's stdout carries a fresh
+    duration on every run, so including it moved the fingerprint pair on every
+    close attempt and no memoized verdict could ever be served (#20866). A
+    guard only reaches the criteria review after it passed, so what the
+    projection drops is a success banner.
+    """
+    test_path = "tests/test_guard.py"
+    Path(tmp_path, test_path).parent.mkdir()
+    Path(tmp_path, test_path).write_text("def test_guard(): pass\n", encoding="utf-8")
+    _write_project(
+        tmp_path,
+        "c=$(cat guard-runs 2>/dev/null || echo 0); c=$((c+1)); "
+        'printf "%s\\n" "$c" > guard-runs; printf "run %s\\n" "$c"; '
+        "printf '%s\\n' {test_files}",
+    )
+    epic, prior, current = _task_tree(criteria=f"test: {test_path}::test_guard")
+    manager = cast(LocalTaskManager, _TaskManager([epic, prior, current]))
+
+    first = await evaluate_epic_guards(
+        task_manager=manager,
+        task=current,
+        repo_path=str(tmp_path),
+    )
+    second = await evaluate_epic_guards(
+        task_manager=manager,
+        task=current,
+        repo_path=str(tmp_path),
+    )
+
+    assert first.passed is True and second.passed is True
+    assert first.output == f"run 1\n{test_path}\n"
+    assert second.output == f"run 2\n{test_path}\n"
+    assert first.details() != second.details()
+    assert first.review_facts() == second.review_facts()
+    assert "output" not in first.review_facts()
+    assert first.review_facts()["paths"] == [test_path]
+    assert first.review_facts()["fingerprint"] == first.fingerprint
+
+
+@pytest.mark.asyncio
 async def test_deleted_guard_file_blocks_close(tmp_path: Path) -> None:
     _write_project(tmp_path, "printf '%s' {test_files}")
     epic, prior, current = _task_tree(criteria="test: tests/test_deleted.py::test_guard")
