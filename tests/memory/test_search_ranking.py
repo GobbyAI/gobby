@@ -1058,6 +1058,112 @@ def test_the_search_floor_keeps_an_aged_graph_only_hit_eligible() -> None:
     assert abs(results[0].similarity - 0.1575) < 1e-6
 
 
+def test_a_graph_expander_hit_is_admitted_on_confidence_not_its_real_cosine() -> None:
+    """The expander's whole value is the low-cosine, high-confidence hit.
+
+    Since #20858 `_score_unwindowed_candidates` fills `qdrant_score_map` for any
+    candidate the collection can score, so a graph-found memory stopped taking
+    the synthetic branch and met the cosine floor on its real score. Anything
+    the expander finds that also clears that floor, the vector leg already
+    found -- so gating it on cosine is equivalent to switching #17104 off. The
+    admission axis is graph confidence; the real cosine ranks (#20873).
+    """
+    service = _service([], storage=_AgedStorage({"expander-find": 0.0}))
+
+    results = service._build_results(
+        merged_ids=["expander-find"],
+        ranking_score_map={"expander-find": 0.5},
+        # The reviewer's worked example: confidence 0.80 against a real cosine of
+        # 0.40. Both a non-empty score map and a non-zero floor, which is the
+        # combination no test covered.
+        qdrant_score_map={"expander-find": 0.40},
+        qdrant_set=set(),
+        keyword_set=set(),
+        graph_set={"expander-find"},
+        graph_score_map={"expander-find": 0.80},
+        rrf_applied=False,
+        project_id=None,
+        memory_type=None,
+        tags_all=None,
+        tags_any=None,
+        tags_none=None,
+        half_life=30.0,
+        effective_min_score=0.55,
+        limit=5,
+    )
+
+    assert [mem.id for mem in results] == ["expander-find"]
+    admitted = results[0]
+    assert admitted.graph_confidence == 0.80
+    # Ranking keeps #20858's improvement: the real cosine stands in for the
+    # invented one, it just no longer decides eligibility.
+    assert admitted.raw_semantic_score == 0.40
+    assert admitted.similarity is not None
+    assert abs(admitted.similarity - 0.40) < 1e-6
+
+
+def test_a_graph_expander_hit_below_the_confidence_floor_is_dropped() -> None:
+    """Confidence gates; it does not exempt. A weak entity match is still cut.
+
+    0.512 is the p10 of the measured 2026-08 confidence distribution, so this
+    is a value the expander really produces rather than one chosen to fail.
+    """
+    service = _service([], storage=_AgedStorage({"weak-link": 0.0}))
+
+    results = service._build_results(
+        merged_ids=["weak-link"],
+        ranking_score_map={"weak-link": 0.5},
+        qdrant_score_map={"weak-link": 0.40},
+        qdrant_set=set(),
+        keyword_set=set(),
+        graph_set={"weak-link"},
+        graph_score_map={"weak-link": 0.512},
+        rrf_applied=False,
+        project_id=None,
+        memory_type=None,
+        tags_all=None,
+        tags_any=None,
+        tags_none=None,
+        half_life=30.0,
+        effective_min_score=0.55,
+        limit=5,
+    )
+
+    assert results == []
+
+
+def test_a_graph_hit_the_vector_leg_also_found_is_gated_on_its_cosine() -> None:
+    """Confidence admits only what the vector leg missed.
+
+    A memory in `qdrant_set` was returned by the semantic leg's own window, so
+    it is a semantic hit that the graph also happens to mention. Letting its
+    entity confidence rescue a sub-floor cosine would widen the semantic axis
+    under cover of the expander, which is not what #20873 decided.
+    """
+    service = _service([], storage=_AgedStorage({"both-legs": 0.0}))
+
+    results = service._build_results(
+        merged_ids=["both-legs"],
+        ranking_score_map={"both-legs": 0.5},
+        qdrant_score_map={"both-legs": 0.40},
+        qdrant_set={"both-legs"},
+        keyword_set=set(),
+        graph_set={"both-legs"},
+        graph_score_map={"both-legs": 0.95},
+        rrf_applied=False,
+        project_id=None,
+        memory_type=None,
+        tags_all=None,
+        tags_any=None,
+        tags_none=None,
+        half_life=30.0,
+        effective_min_score=0.55,
+        limit=5,
+    )
+
+    assert results == []
+
+
 class _ScoringVectorStore:
     """A vector store that can score any stored id, not only its own top-N.
 

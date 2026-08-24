@@ -128,6 +128,10 @@ class Memory:
     raw_semantic_score: float | None = None  # Raw Qdrant score, not persisted
     temporal_decay_factor: float | None = None  # Search-time decay, not persisted
     ranking_mode: str | None = None  # Search-time scoring mode, not persisted
+    # Entity-match confidence for a hit the graph expander found and the vector
+    # leg missed. It is the admission axis for that hit at both floors, while
+    # `similarity` ranks it (#20873). None for every other candidate.
+    graph_confidence: float | None = None  # Set at search time, not persisted
 
     def __post_init__(self) -> None:
         self.memory_type = validate_memory_type(self.memory_type)

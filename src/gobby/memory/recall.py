@@ -15,6 +15,7 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.memory.recall_constants import RECALL_QUERY_CONSTRUCTION_VERSION
 from gobby.memory.recall_signal_log import make_injection_outcome_recorder
 from gobby.memory.scoring import undecay
+from gobby.memory.services._search_constants import _GRAPH_CONFIDENCE_SELECTION_FLOOR
 from gobby.memory.synthetic_prompts import synthetic_prompt_reason
 from gobby.utils.datetime import datetime_to_required_iso
 from gobby.utils.injected_context import strip_injected_context
@@ -418,7 +419,9 @@ class MemoryRecallRunner:
         because 27.8% of scored hits are graph-synthetic and carry no raw
         cosine; reading it would permanently disable the recall expander
         (#17104). Returns None for a candidate that carries no usable score,
-        which is every keyword-only hit.
+        which since #20858's rescoring is a memory with no stored vector rather
+        than every keyword-only hit. Graph-expander finds do not reach this at
+        all -- they are judged on entity-match confidence (#20873).
         """
         similarity = getattr(memory, "similarity", None)
         if (
@@ -455,17 +458,30 @@ class MemoryRecallRunner:
             if memory_id in injected:
                 drops.append((memory_id, "already_injected", None))
                 continue
-            similarity = self._undecayed_score(memory)
-            if similarity is None:
-                # An unscored candidate cannot be shown to clear the floor, so it
-                # is dropped rather than admitted on the strength of its rank.
-                # Keyword-only hits carry no score at all and so are permanently
-                # injection-ineligible, which is intended (#20831).
-                drops.append((memory_id, "other", "null_similarity"))
-                continue
-            if similarity < self.config.selection_min_score:
-                drops.append((memory_id, "other", "selection_min_score"))
-                continue
+            # A graph-expander find carries entity-match confidence as its
+            # admission evidence and a cosine that only ranks it. Judging it here
+            # on the cosine would admit it to search results and never inject it,
+            # which leaves the expander off exactly where it matters (#20873).
+            confidence = getattr(memory, "graph_confidence", None)
+            if isinstance(confidence, int | float) and not isinstance(confidence, bool):
+                if float(confidence) < _GRAPH_CONFIDENCE_SELECTION_FLOOR:
+                    drops.append((memory_id, "other", "graph_confidence_min_score"))
+                    continue
+            else:
+                similarity = self._undecayed_score(memory)
+                if similarity is None:
+                    # An unscored candidate cannot be shown to clear the floor, so
+                    # it is dropped rather than admitted on the strength of its
+                    # rank. This is the backstop for a memory with no stored vector
+                    # to score; a keyword hit whose memory does carry one is
+                    # rescored (#20858) and judged at the floor below like every
+                    # other candidate, which is the exit the #20831 ruling reserved
+                    # for itself (#20873).
+                    drops.append((memory_id, "other", "null_similarity"))
+                    continue
+                if similarity < self.config.selection_min_score:
+                    drops.append((memory_id, "other", "selection_min_score"))
+                    continue
             if len(selected) < MAX_RECALL_MEMORIES:
                 selected.append(_memory_to_payload(memory))
             else:

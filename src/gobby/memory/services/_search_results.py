@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from gobby.memory.scoring import temporal_decay, undecay
 from gobby.memory.services._search_constants import (
+    _GRAPH_CONFIDENCE_SEARCH_FLOOR,
     _GRAPH_SYNTHETIC_SIM_DISCOUNT,
     _USER_SOURCE_BOOST,
 )
@@ -58,21 +59,28 @@ def build_results(
         decay_factor: float | None = None
         similarity: float | None = None
         synthetic_similarity = False
+        # An expander find is a memory the graph surfaced and the semantic leg's
+        # own window did not. A candidate in `qdrant_set` is a semantic hit the
+        # graph also mentions, and it stays on the cosine axis: letting its
+        # entity confidence rescue a sub-floor cosine would widen the semantic
+        # axis under cover of the expander (#20873).
+        graph_confidence: float | None = (
+            None if memory_id in qdrant_set else (graph_score_map or {}).get(memory_id)
+        )
         if raw_semantic_score is not None:
             similarity = raw_semantic_score
             if mem.source_type == "user":
                 similarity *= _USER_SOURCE_BOOST
             decay_factor = temporal_decay(mem.updated_at, half_life)
             similarity *= decay_factor
-        elif graph_score_map is not None:
-            # Recall expander (#17104): graph-only hits use a discounted entity-match
-            # cosine so they can fill weak semantic slots without outranking stronger
-            # semantic matches on the same similarity axis.
-            graph_confidence = graph_score_map.get(memory_id)
-            if graph_confidence is not None:
-                decay_factor = temporal_decay(mem.updated_at, half_life)
-                similarity = graph_confidence * graph_synthetic_discount * decay_factor
-                synthetic_similarity = True
+        elif graph_confidence is not None:
+            # Recall expander (#17104): a graph hit the collection could not score
+            # at all still needs a place on the similarity axis, so it enters at a
+            # discounted entity-match cosine and cannot outrank a real semantic
+            # match. Its admission is decided on the confidence below either way.
+            decay_factor = temporal_decay(mem.updated_at, half_life)
+            similarity = graph_confidence * graph_synthetic_discount * decay_factor
+            synthetic_similarity = True
 
         # The floor reads the undecayed score (#20858). Gating `similarity` gated
         # `cosine * boost * decay`, which at the live corpus median age of 25.9 days
@@ -80,12 +88,18 @@ def build_results(
         # aged past the median was cut before the selection gate saw it while
         # null-similarity keyword hits, exempt below, kept their slots. Ranking still
         # uses the decayed value: age orders results, it no longer decides eligibility.
-        if (
-            effective_min_score > 0
-            and similarity is not None
-            and undecay(similarity, decay_factor) < effective_min_score
-        ):
-            continue
+        #
+        # A graph-expander find is judged on its confidence instead. Since
+        # #20858 fills a real cosine in for every scorable candidate, the
+        # expander's own hits -- entity-linked but differently worded, so
+        # low-cosine by construction -- began meeting this floor on a score that
+        # was never their admission evidence (#20873).
+        if effective_min_score > 0:
+            if graph_confidence is not None:
+                if graph_confidence < _GRAPH_CONFIDENCE_SEARCH_FLOOR:
+                    continue
+            elif similarity is not None and undecay(similarity, decay_factor) < effective_min_score:
+                continue
 
         sources = []
         if memory_id in qdrant_set:
@@ -99,6 +113,7 @@ def build_results(
         mem.raw_semantic_score = raw_semantic_score
         mem.temporal_decay_factor = decay_factor
         mem.similarity = similarity
+        mem.graph_confidence = graph_confidence
         mem.ranking_score = ranking_score_map.get(memory_id, 0.0)
         if synthetic_similarity:
             mem.ranking_mode = "graph_synthetic"

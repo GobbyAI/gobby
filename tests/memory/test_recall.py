@@ -28,6 +28,7 @@ from gobby.memory.recall import (
     _memory_to_payload,
     scrub_memory_recall_query,
 )
+from gobby.memory.services._search_results import build_results
 from gobby.review_learning.fingerprint import build_occurrence_key
 from gobby.review_learning.lessons import normalize_lesson
 from gobby.storage.hub.protocol import HubDatabase
@@ -522,13 +523,14 @@ async def test_a_keyword_only_candidate_is_never_injected(
     temp_db: HubDatabase,
     persisted_session: None,
 ) -> None:
-    """#20831, intended: no score at all, no injection, on any query.
+    """No score at all, no injection -- the backstop, narrowed by #20873.
 
-    A keyword-only hit carries no similarity, so there is nothing to divide the
-    decay out of and nothing to compare against the floor. It stays permanently
-    injection-ineligible; BM25 does produce a number, but it is unbounded and on
-    no shared axis, so admitting it would need a defined score path this change
-    deliberately does not invent.
+    The #20831 ruling was epistemic: a keyword hit carried no similarity, so
+    nothing could divide the decay out of it and nothing could compare it to
+    the floor. That premise holds only for a memory with no stored vector to
+    score, which is what this pins. A keyword hit whose memory does carry a
+    vector is judged at the threshold like every other candidate -- see
+    `test_a_keyword_hit_with_a_stored_vector_is_judged_at_the_threshold`.
     """
     floor = MemoryRecallConfig().selection_min_score
     manager = FakeMemoryManager(
@@ -546,6 +548,151 @@ async def test_a_keyword_only_candidate_is_never_injected(
     assert _drop_row(temp_db, "keyword-only") == {
         "drop_reason": "other",
         "drop_detail": "null_similarity",
+    }
+
+
+class _FlatStorage:
+    """Storage for building a candidate through the real `build_results`."""
+
+    def __init__(self, memory_ids: list[str]) -> None:
+        self._memory_ids = memory_ids
+
+    def _memory(self, memory_id: str) -> Memory:
+        if memory_id not in self._memory_ids:
+            raise ValueError(memory_id)
+        return _memory(memory_id, similarity=None, temporal_decay_factor=None)
+
+    def get_memories(self, memory_ids: list[str], scope: Any = None) -> list[Memory]:
+        return [self._memory(memory_id) for memory_id in memory_ids]
+
+    def get_memory(self, memory_id: str, scope: Any = None) -> Memory:
+        return self._memory(memory_id)
+
+
+def _rescored(
+    memory_id: str,
+    *,
+    cosine: float,
+    keyword: bool = False,
+    graph_confidence: float | None = None,
+) -> Memory:
+    """One search candidate, scored by the real `build_results`.
+
+    A hand-built `Memory(similarity=...)` cannot observe what rescoring did,
+    because rescoring is exactly the step that decides whether `similarity` is
+    set at all (#20873 criterion 3). Decay is neutral here -- the fixture's
+    memories are dated 2026-01-01 and the half-life is large enough that the
+    undecayed and decayed axes stay the same number.
+    """
+    results = build_results(
+        storage=cast(Any, _FlatStorage([memory_id])),
+        merged_ids=[memory_id],
+        ranking_score_map={memory_id: 0.5},
+        # What `_score_unwindowed_candidates` fills in: a real cosine for any
+        # candidate the collection can score, whichever leg surfaced it.
+        qdrant_score_map={memory_id: cosine},
+        qdrant_set=set(),
+        keyword_set={memory_id} if keyword else set(),
+        graph_set=set() if graph_confidence is None else {memory_id},
+        graph_score_map=None if graph_confidence is None else {memory_id: graph_confidence},
+        rrf_applied=False,
+        project_id=None,
+        memory_type=None,
+        tags_all=None,
+        tags_any=None,
+        tags_none=None,
+        half_life=1.0e9,
+        effective_min_score=0.0,
+        limit=5,
+    )
+    assert len(results) == 1, "the fixture must produce exactly one candidate"
+    return results[0]
+
+
+@pytest.mark.asyncio
+async def test_a_graph_expander_hit_is_injected_not_merely_admitted(
+    temp_db: HubDatabase,
+    persisted_session: None,
+) -> None:
+    """Admission alone leaves the expander off where it matters (#20873 rider 2).
+
+    If graph confidence gates only the search floor while the selection gate
+    still judges the real cosine, a confidence-0.80 / cosine-0.40 hit reaches
+    the result set and is never injected. Both gates read the same axis, so
+    this asserts injection rather than survival.
+    """
+    candidate = _rescored("expander-find", cosine=0.40, graph_confidence=0.80)
+    assert candidate.similarity is not None
+    assert candidate.similarity < MemoryRecallConfig().selection_min_score, (
+        "the fixture must put the real cosine under the selection floor"
+    )
+    # A control that always injects, so a recall that ran and skipped the
+    # expander hit is distinguishable from a recall that produced nothing.
+    manager = FakeMemoryManager(
+        [_memory("control", similarity=0.91), candidate],
+        record_outcomes=True,
+    )
+
+    result = await _runner(temp_db, manager).run(_event(), SESSION_ID, _variables())
+
+    assert result is not None
+    assert sorted(memory["id"] for memory in result.memories) == ["control", "expander-find"]
+
+
+@pytest.mark.asyncio
+async def test_a_graph_expander_hit_under_the_confidence_floor_is_still_dropped(
+    temp_db: HubDatabase,
+    persisted_session: None,
+) -> None:
+    """Confidence gates the selection axis too; it does not exempt from it.
+
+    0.572 is the median of the measured 2026-08 confidence distribution, so
+    this pins the ordinary expander find: it is admitted to search at 0.611 and
+    still not injected at the 0.653 p90 seat.
+    """
+    manager = FakeMemoryManager(
+        [
+            _memory("control", similarity=0.91),
+            _rescored("weak-link", cosine=0.40, graph_confidence=0.572),
+        ],
+        record_outcomes=True,
+    )
+
+    result = await _runner(temp_db, manager).run(_event(), SESSION_ID, _variables())
+
+    assert result is not None
+    assert [memory["id"] for memory in result.memories] == ["control"]
+    assert _drop_row(temp_db, "weak-link")["drop_detail"] == "graph_confidence_min_score"
+
+
+@pytest.mark.asyncio
+async def test_a_keyword_hit_with_a_stored_vector_is_judged_at_the_threshold(
+    temp_db: HubDatabase,
+    persisted_session: None,
+) -> None:
+    """#20873: the same bar as everything else, once there is a score to judge.
+
+    `_score_unwindowed_candidates` removes the premise the #20831 ruling rested
+    on, so a keyword-found memory that carries a stored vector is judged at
+    `selection_min_score`. No bar is lowered: the sub-threshold hit is still
+    dropped, and by the threshold rather than by provenance.
+    """
+    floor = MemoryRecallConfig().selection_min_score
+    manager = FakeMemoryManager(
+        [
+            _rescored("keyword-strong", cosine=floor + 0.05, keyword=True),
+            _rescored("keyword-weak", cosine=floor - 0.05, keyword=True),
+        ],
+        record_outcomes=True,
+    )
+
+    result = await _runner(temp_db, manager).run(_event(), SESSION_ID, _variables())
+
+    assert result is not None
+    assert [memory["id"] for memory in result.memories] == ["keyword-strong"]
+    assert _drop_row(temp_db, "keyword-weak") == {
+        "drop_reason": "other",
+        "drop_detail": "selection_min_score",
     }
 
 
