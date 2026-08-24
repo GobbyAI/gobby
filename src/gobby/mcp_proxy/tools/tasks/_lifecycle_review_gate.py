@@ -14,6 +14,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
 )
 from gobby.storage.tasks import Task
 from gobby.tasks.close_verdict import CloseVerdictParseError, parse_close_verdict
+from gobby.tasks.close_verdict_memo import CloseVerdictMemo
 from gobby.tasks.validation import TaskValidator
 
 
@@ -40,6 +41,7 @@ async def evaluate_close_criteria(
     description: str,
     test_bodies: str,
     submitted_review: SubmittedCloseReview | None = None,
+    verdict_memo: CloseVerdictMemo | None = None,
 ) -> ValidationResult:
     """Run one bounded review or account for an authenticated background verdict."""
     if submitted_review is not None:
@@ -106,6 +108,7 @@ async def evaluate_close_criteria(
         reason=reason,
         description=description,
         test_bodies=test_bodies,
+        verdict_memo=verdict_memo,
     )
     if result.error_type == "validation_prompt_too_large":
         return ValidationResult(

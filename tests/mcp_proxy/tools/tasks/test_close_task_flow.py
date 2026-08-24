@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -21,6 +22,7 @@ from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
 )
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close import (
+    _close_verdict_memo,
     _commit_close,
     _evaluate_close,
     register_close_task,
@@ -28,7 +30,9 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close import (
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
 from gobby.mcp_proxy.tools.tasks._task_scope import TaskScopeEvaluation
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import Task
+from gobby.tasks.close_verdict import CloseCriterionVerdict, CloseVerdict
 from gobby.tasks.transcript_evidence import TranscriptEvidence, TranscriptValidationRun
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -1291,3 +1295,78 @@ async def test_commit_close_runs_every_storage_call_off_the_event_loop() -> None
     for name, idents in threads.items():
         assert idents, f"{name} must run"
         assert loop_thread not in idents, f"{name} ran on the event loop thread"
+
+
+class _RecordingDb:
+    """Records the statements a store writes, without a database."""
+
+    def __init__(self) -> None:
+        self.statements: list[tuple[str, tuple[object, ...]]] = []
+
+    @contextmanager
+    def transaction(self) -> Iterator[_RecordingDb]:
+        yield self
+
+    def execute(self, statement: str, parameters: tuple[object, ...] = ()) -> _RecordingDb:
+        self.statements.append((statement, parameters))
+        return self
+
+    def fetchone(self) -> None:
+        return None
+
+
+def test_close_verdict_memo_binds_the_task_ref_and_its_criteria() -> None:
+    task = replace(_task(), seq_num=4242)
+    ctx = _ctx(task)
+    db = _RecordingDb()
+    ctx.task_manager.db = cast(HubDatabase, db)
+
+    memo = _close_verdict_memo(
+        ctx,
+        task=task,
+        caller_session_id="00000000-0000-4000-8000-000000000301",
+        close_arguments={"reason": "completed"},
+    )
+
+    assert memo is not None
+    memo.put(
+        review_fingerprint="review",
+        evidence_fingerprint="evidence",
+        verdict=CloseVerdict(
+            status="valid",
+            criteria=(CloseCriterionVerdict(1, "Focused tests pass.", True, None),),
+            feedback="Satisfied.",
+        ),
+    )
+
+    pruned, written = db.statements
+    assert "DELETE FROM task_close_reviews" in pruned[0]
+    assert "INSERT INTO task_close_reviews" in written[0]
+    assert task.id in written[1]
+    assert "#4242" in written[1]
+    assert "review" in written[1]
+    assert "evidence" in written[1]
+
+
+def test_close_verdict_memo_is_skipped_without_a_session_or_criteria() -> None:
+    task = replace(_task(), seq_num=4242)
+    ctx = _ctx(task)
+
+    assert (
+        _close_verdict_memo(
+            ctx,
+            task=task,
+            caller_session_id=None,
+            close_arguments={"reason": "completed"},
+        )
+        is None
+    )
+    assert (
+        _close_verdict_memo(
+            ctx,
+            task=_task(criteria=None),
+            caller_session_id="00000000-0000-4000-8000-000000000301",
+            close_arguments={"reason": "completed"},
+        )
+        is None
+    )

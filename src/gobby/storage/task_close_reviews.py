@@ -34,6 +34,13 @@ _COLUMNS = """
     created_at, updated_at
 """
 
+# Marks a row that records an inline bounded review rather than a delegated
+# background one. Such a row is born terminal and already delivered, so it
+# holds no active-review lock and never reaches wake delivery; the kind tag is
+# what keeps the memo lookup from ever reading an agentic row's payload, whose
+# shape is a terminal review envelope rather than a bare verdict (#20866).
+INLINE_CRITERIA_VERDICT_KIND = "inline_criteria_verdict"
+
 
 @dataclass(frozen=True, slots=True)
 class TaskCloseReview:
@@ -128,6 +135,96 @@ class TaskCloseReviewStore:
         if row is None:
             raise RuntimeError(f"Active close review for task {task_id} disappeared")
         return _review_from_row(row), created
+
+    def get_memoized_verdict(
+        self,
+        *,
+        task_id: str,
+        review_fingerprint: str,
+        evidence_fingerprint: str,
+    ) -> dict[str, Any] | None:
+        """Return the verdict already reviewed for this exact evidence state."""
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                """
+                SELECT result_payload
+                FROM task_close_reviews
+                WHERE task_id = %s
+                  AND review_fingerprint = %s
+                  AND evidence_fingerprint = %s
+                  AND result_payload->>'kind' = %s
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (task_id, review_fingerprint, evidence_fingerprint, INLINE_CRITERIA_VERDICT_KIND),
+            ).fetchone()
+        if not isinstance(row, Mapping):
+            return None
+        payload = _json_object(row["result_payload"])
+        verdict = (payload or {}).get("verdict")
+        return dict(verdict) if isinstance(verdict, Mapping) else None
+
+    def memoize_verdict(
+        self,
+        *,
+        task_id: str,
+        task_ref: str,
+        caller_session_id: str,
+        close_arguments: Mapping[str, Any],
+        review_fingerprint: str,
+        evidence_fingerprint: str,
+        verdict: Mapping[str, Any],
+        valid: bool,
+    ) -> None:
+        """Record one bounded verdict so this evidence state is never re-reviewed.
+
+        The row is written terminal, completed, and delivered in one statement:
+        no lifecycle transition applies to a review that already happened
+        inline, and the partial active-status unique index does not cover
+        terminal rows.
+
+        Superseded memos for the task are dropped in the same transaction. A
+        task's evidence state moves forward — a new commit, a fresh edit,
+        repaired criteria — so an older memo can only be hit again by reverting
+        to that exact state, which is worth one more review rather than a row
+        per attempt for the life of the project.
+        """
+        now = datetime.now(UTC)
+        with self.db.transaction() as conn:
+            conn.execute(
+                """
+                DELETE FROM task_close_reviews
+                WHERE task_id = %s
+                  AND result_payload->>'kind' = %s
+                  AND (review_fingerprint, evidence_fingerprint) <> (%s, %s)
+                """,
+                (task_id, INLINE_CRITERIA_VERDICT_KIND, review_fingerprint, evidence_fingerprint),
+            )
+            conn.execute(
+                """
+                INSERT INTO task_close_reviews (
+                    id, task_id, task_ref, caller_session_id, close_arguments,
+                    review_fingerprint, evidence_fingerprint, status, result_payload,
+                    completed_at, delivered_at, created_at, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s::jsonb, %s, %s, %s, %s)
+                """,
+                (
+                    str(uuid4()),
+                    task_id,
+                    task_ref,
+                    caller_session_id,
+                    _json(close_arguments),
+                    review_fingerprint,
+                    evidence_fingerprint,
+                    "closed" if valid else "invalid",
+                    _json({"kind": INLINE_CRITERIA_VERDICT_KIND, "verdict": dict(verdict)}),
+                    now,
+                    now,
+                    now,
+                    now,
+                ),
+            )
 
     def get(self, review_id: str) -> TaskCloseReview | None:
         return self._get("id = %s", (review_id,))
@@ -314,6 +411,7 @@ def _review_from_row(row: object) -> TaskCloseReview:
 
 __all__ = [
     "ACTIVE_TASK_CLOSE_REVIEW_STATUSES",
+    "INLINE_CRITERIA_VERDICT_KIND",
     "TERMINAL_TASK_CLOSE_REVIEW_STATUSES",
     "ActiveTaskCloseReviewStatus",
     "TaskCloseReview",

@@ -179,6 +179,12 @@ failure. Repair that fact before retrying. Stale task state returns
 `stale_task_state`; it never silently reruns the criteria review. Never call
 `link_commit` merely to close.
 
+The criteria review runs once per evidence state, not once per attempt: its
+verdict is memoized against the review and evidence fingerprints, so retrying
+an unchanged close serves the stored verdict instead of paying another
+provider round trip. Repair the blocker — a new commit, a fresh edit, corrected
+criteria — and the changed fingerprint earns a fresh review on its own.
+
 ## Review and Non-Work Paths
 
 Interactive sessions use `close_task`; the present user is the reviewer.

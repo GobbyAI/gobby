@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -13,6 +14,7 @@ from gobby.llm import LLMService
 from gobby.prompts import PromptLoader
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.tasks.close_verdict import CloseVerdict, parse_close_verdict
+from gobby.tasks.close_verdict_memo import CloseVerdictMemo
 from gobby.tasks.criteria_contract import split_validation_criteria
 from gobby.tasks.generation_schemas import TASK_CLOSE_VALIDATION_SCHEMA
 from gobby.tasks.validation_evidence import ValidationEvidenceTooLarge, build_close_diff_evidence
@@ -84,8 +86,9 @@ class TaskValidator:
         closure_reason: str = "completed",
         description: str = "",
         test_bodies: str = "Named acceptance tests: none.",
+        verdict_memo: CloseVerdictMemo | None = None,
     ) -> CloseVerdict:
-        """Review all criteria once against a bounded work summary and linked diff."""
+        """Review all criteria once per evidence state, not once per attempt."""
         prepared = self.prepare_task_review(
             title=title,
             changes_summary=changes_summary,
@@ -108,6 +111,24 @@ class TaskValidator:
                 evidence_fingerprint=prepared.evidence_fingerprint,
             )
 
+        if verdict_memo is not None:
+            # Off the loop: the memo reaches psycopg synchronously, and this
+            # runs on the daemon's event loop thread inside close_task (#20866).
+            memoized = await asyncio.to_thread(
+                verdict_memo.get,
+                review_fingerprint=prepared.review_fingerprint,
+                evidence_fingerprint=prepared.evidence_fingerprint,
+            )
+            if memoized is not None:
+                logger.debug(
+                    "Serving the memoized close criteria verdict for task %s "
+                    "(review=%s evidence=%s)",
+                    task_id,
+                    prepared.review_fingerprint[:12],
+                    prepared.evidence_fingerprint[:12],
+                )
+                return memoized
+
         logger.debug(
             "Running bounded close criteria review for task %s "
             "(prompt_chars=%d manifest_files=%d excerpt_chars=%d)",
@@ -122,8 +143,23 @@ class TaskValidator:
             system_prompt=self.config.system_prompt,
             json_schema=TASK_CLOSE_VALIDATION_SCHEMA,
             caller="tasks.close_checklist",
+            # Without this the chain is bounded only per candidate, so a
+            # provider fallback pays the whole latency again; expiry raises
+            # FeatureGenerationUnavailableError, which the close gate already
+            # routes into validation backoff and escalation (#20866).
+            total_timeout_seconds=self.config.close_review_total_timeout_seconds,
         )
-        return parse_close_verdict(payload, list(prepared.criteria))
+        verdict = parse_close_verdict(payload, list(prepared.criteria))
+        if verdict_memo is not None:
+            # Off the loop for the same reason as the lookup above: this one
+            # writes, and it also prunes the task's superseded memo rows.
+            await asyncio.to_thread(
+                verdict_memo.put,
+                review_fingerprint=prepared.review_fingerprint,
+                evidence_fingerprint=prepared.evidence_fingerprint,
+                verdict=verdict,
+            )
+        return verdict
 
     def prepare_task_review(
         self,

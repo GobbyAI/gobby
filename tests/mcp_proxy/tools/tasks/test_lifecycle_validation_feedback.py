@@ -2,20 +2,29 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.config.tasks import TaskValidationConfig
+from gobby.llm import LLMService
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import evaluate_criteria_review
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.task_close_reviews import TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.close_verdict import CloseCriterionVerdict, CloseVerdict
+from gobby.tasks.close_verdict_memo import CloseVerdictMemo, TaskCloseVerdictMemo
+from gobby.tasks.criteria_contract import split_validation_criteria
 from gobby.tasks.validation import TaskValidator, ValidationPromptTooLarge
 from gobby.tasks.validation_history import ValidationHistoryManager
 
 pytestmark = pytest.mark.integration
+
+_SESSION_ID = "00000000-0000-4000-8000-0000000009f1"
 
 
 class _Validator:
@@ -44,8 +53,10 @@ def _task(manager: LocalTaskManager, project_id: str) -> Task:
 async def _evaluate(
     task: Task,
     manager: LocalTaskManager,
-    validator: _Validator,
+    validator: _Validator | TaskValidator,
     reason: str = "completed",
+    verdict_memo: CloseVerdictMemo | None = None,
+    checklist_facts: dict[str, object] | None = None,
 ) -> Any:
     ctx = cast(RegistryContext, SimpleNamespace(task_manager=manager))
     return await evaluate_criteria_review(
@@ -55,10 +66,37 @@ async def _evaluate(
         resolved_id=task.id,
         changes_summary="Documented the checklist.",
         diff_text="diff --git a/docs/guide.md b/docs/guide.md",
-        checklist_facts={"validation_commands": "skipped:category"},
+        checklist_facts=checklist_facts or {"validation_commands": "skipped:category"},
         validation_config=None,
         reason=reason,
+        verdict_memo=verdict_memo,
     )
+
+
+def _render_context(
+    _path: str,
+    context: dict[str, Any] | None = None,
+    strict: bool = False,
+) -> str:
+    del strict
+    return json.dumps(context or {}, sort_keys=True, default=str)
+
+
+def _memo_validator(temp_db: HubDatabase) -> tuple[TaskValidator, AsyncMock]:
+    """A real validator over a rendered prompt, with only the provider faked."""
+    llm_service = MagicMock(spec=LLMService)
+    llm_service.call_json_feature = AsyncMock(
+        return_value={
+            "status": "valid",
+            "criteria": [{"index": 1, "satisfied": True, "gap": None}],
+            "feedback": "Documentation criterion is satisfied.",
+        }
+    )
+    validator = TaskValidator(TaskValidationConfig(), llm_service, db=temp_db)
+    # The bundled prompt template is not seeded into the test hub, and the
+    # memo keys on the rendered prompt, so render the context itself.
+    cast(Any, validator._loader).render = _render_context
+    return validator, llm_service.call_json_feature
 
 
 @pytest.mark.asyncio
@@ -153,6 +191,65 @@ async def test_invalid_verdict_returns_first_gap_and_increments_once(
     assert refreshed is not None and refreshed.validation_fail_count == 1
     history = ValidationHistoryManager(temp_db).get_iteration_history(task.id)
     assert [(item.iteration, item.status) for item in history] == [(1, "invalid")]
+
+
+@pytest.mark.asyncio
+async def test_unchanged_evidence_reuses_the_persisted_verdict(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = _task(manager, sample_project["id"])
+    validator, call_json_feature = _memo_validator(temp_db)
+    memo = TaskCloseVerdictMemo(
+        TaskCloseReviewStore(temp_db),
+        task_id=task.id,
+        task_ref=f"#{task.seq_num}",
+        caller_session_id=_SESSION_ID,
+        close_arguments={"reason": "completed"},
+        criteria=split_validation_criteria(task.validation_criteria or ""),
+    )
+
+    first = await _evaluate(task, manager, validator, verdict_memo=memo)
+    refreshed = manager.get_task(task.id)
+    assert refreshed is not None
+    second = await _evaluate(refreshed, manager, validator, verdict_memo=memo)
+
+    assert first.can_close is True
+    assert second.can_close is True
+    assert second.extra["verdict"] == first.extra["verdict"]
+    assert call_json_feature.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_new_commit_evidence_invalidates_the_persisted_verdict(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = _task(manager, sample_project["id"])
+    validator, call_json_feature = _memo_validator(temp_db)
+    memo = TaskCloseVerdictMemo(
+        TaskCloseReviewStore(temp_db),
+        task_id=task.id,
+        task_ref=f"#{task.seq_num}",
+        caller_session_id=_SESSION_ID,
+        close_arguments={"reason": "completed"},
+        criteria=split_validation_criteria(task.validation_criteria or ""),
+    )
+
+    await _evaluate(task, manager, validator, verdict_memo=memo)
+    refreshed = manager.get_task(task.id)
+    assert refreshed is not None
+    await _evaluate(
+        refreshed,
+        manager,
+        validator,
+        verdict_memo=memo,
+        checklist_facts={"validation_commands": "skipped:category", "commit_shas": ["deadbee"]},
+    )
+
+    assert call_json_feature.await_count == 2
 
 
 @pytest.mark.asyncio

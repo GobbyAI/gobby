@@ -187,6 +187,14 @@ class TaskValidationConfig(FeatureDefaultConfig):
         default=256_000,
         description="Maximum rendered character count for the task-close criteria-review prompt.",
     )
+    close_review_total_timeout_seconds: float = Field(
+        default=120.0,
+        gt=0,
+        description=(
+            "Wall-clock bound on the whole task-close criteria-review provider chain, "
+            "including fallbacks. Expiry fails closed into validation backoff."
+        ),
+    )
     # Escalation settings
     escalation_enabled: bool = Field(
         default=True,

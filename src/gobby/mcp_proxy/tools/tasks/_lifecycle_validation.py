@@ -14,6 +14,7 @@ from gobby.mcp_proxy.tools.tasks._escalation_coordinator import coordinate_task_
 from gobby.storage.tasks import Task, TaskAlreadyEscalatedError, TaskStaleStateError
 from gobby.storage.tasks._validation_backoff import TaskValidationBackoffStore
 from gobby.tasks.close_verdict import CloseVerdict, CloseVerdictParseError
+from gobby.tasks.close_verdict_memo import CloseVerdictMemo
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
 from gobby.tasks.validation import ValidationPromptTooLarge
 from gobby.tasks.validation_history import ValidationHistoryManager
@@ -276,8 +277,9 @@ async def evaluate_criteria_review(
     reason: str = "completed",
     description: str = "",
     test_bodies: str = "Named acceptance tests: none.",
+    verdict_memo: CloseVerdictMemo | None = None,
 ) -> ValidationResult:
-    """Run and account for exactly one bounded LLM criteria review."""
+    """Run and account for one bounded criteria review per unique evidence state."""
     backoff = active_validation_backoff(task, ctx)
     if backoff is not None:
         return backoff
@@ -292,6 +294,7 @@ async def evaluate_criteria_review(
             closure_reason=reason,
             description=description,
             test_bodies=test_bodies,
+            verdict_memo=verdict_memo,
         )
     except ValidationPromptTooLarge as exc:
         return ValidationResult(

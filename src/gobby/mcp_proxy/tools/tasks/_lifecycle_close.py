@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any, Literal
 
@@ -51,13 +52,16 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
 )
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.mcp_proxy.tools.tasks._task_scope import evaluate_task_scope
+from gobby.storage.task_close_reviews import TaskCloseReviewStore
 from gobby.storage.tasks import Task, TaskNotFoundError
 from gobby.tasks.acceptance_artifacts import (
     evaluate_acceptance_artifacts,
     render_acceptance_test_bodies,
 )
 from gobby.tasks.close_checklist import evaluate_validation_commands
+from gobby.tasks.close_verdict_memo import TaskCloseVerdictMemo
 from gobby.tasks.commits import collect_commit_diff_text
+from gobby.tasks.criteria_contract import split_validation_criteria
 from gobby.tasks.epic_guards import evaluate_epic_guards
 from gobby.tasks.generation_schemas import TASK_CLOSE_VALIDATION_SCHEMA
 from gobby.tasks.state_semantics import get_claimed_session_id
@@ -69,6 +73,32 @@ from gobby.tasks.transcript_evidence import (
 from gobby.tasks.validation import NO_WORK_CLOSE_REASONS
 
 _DELIBERATE_CLOSE_SKIP = "Skipped for a justified deliberate close of an escalated task."
+
+
+def _close_verdict_memo(
+    ctx: RegistryContext,
+    *,
+    task: Task,
+    caller_session_id: str | None,
+    close_arguments: Mapping[str, Any],
+) -> TaskCloseVerdictMemo | None:
+    """Bind this task's verdict memo to the attempt's own identity.
+
+    Returns ``None`` when the attempt has no resolvable session or no criteria
+    to review against — both cases the review gate handles on its own, and
+    neither is worth a memo row.
+    """
+    criteria = split_validation_criteria(task.validation_criteria or "")
+    if caller_session_id is None or not criteria:
+        return None
+    return TaskCloseVerdictMemo(
+        TaskCloseReviewStore(ctx.task_manager.db),
+        task_id=task.id,
+        task_ref=f"#{task.seq_num}" if task.seq_num else task.id,
+        caller_session_id=caller_session_id,
+        close_arguments=close_arguments,
+        criteria=criteria,
+    )
 
 
 def _is_deliberate_close(task: Task, override_justification: str | None) -> bool:
@@ -580,6 +610,19 @@ async def _evaluate_close(
         task_validator=task_validator,
         ctx=ctx,
         resolved_id=resolved_id,
+        verdict_memo=_close_verdict_memo(
+            ctx,
+            task=evaluation_task,
+            caller_session_id=evaluation.resolved_session_id,
+            close_arguments={
+                "reason": reason,
+                "changes_summary": changes_summary,
+                "commit_sha": commit_sha,
+                "project_path": project_path,
+                "override_justification": override_justification,
+                "scope_justification": scope_justification,
+            },
+        ),
         changes_summary=changes_summary or "",
         diff_text=diff_text,
         checklist_facts={

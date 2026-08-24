@@ -119,7 +119,19 @@ task-attributed files, transcript-visible validation, then one bounded criteria
 review. It returns per-item results, resolved commit SHAs, a transcript evidence
 summary, and the verdict. Blocked calls remain read-only and name the first
 repair action. A ready `preview=true` call reuses that evaluation, links the
-commit, and closes in the same call; the LLM runs once.
+commit, and closes in the same call.
+
+The bounded criteria review runs once per evidence state, not once per attempt.
+Its verdict is memoized against the review and evidence fingerprints the
+validator already computes, so a blocked attempt followed by an unchanged retry
+serves the stored verdict and makes no second provider call. Anything that
+changes what the reviewer would see — a new task-attributed edit, a different
+commit set, edited criteria, a changed summary — moves a fingerprint and earns
+a fresh review. Each review is itself wall-clock bounded across the whole
+provider-fallback chain by
+`gobby-tasks.validation.close_review_total_timeout_seconds` (120s by default);
+expiry fails closed into the same 15–120 second validation backoff as any other
+provider outage.
 Validation runs when the task has validation criteria. Skip-style reasons such as `duplicate`,
 `already_implemented`, `wont_fix`, `obsolete`, and `out_of_repo` are for
 no-work or out-of-repo closes; they still require a useful `changes_summary`.
@@ -349,11 +361,11 @@ containers and do not require their own commit or criteria review.
 
 The rendered criteria-review prompt limit is the positive integer setting
 `gobby-tasks.validation.close_review_prompt_max_chars`, which defaults to
-32,000 characters. Gobby preserves every validation criterion and changed-file
-manifest entry; an oversized prompt must be split into smaller tasks. Supporting
-evidence remains bounded to 2,000 characters for the changes summary, 500 for
-checklist facts, and 5,500 for the diff packet, including up to 4,000 characters
-of excerpts.
+256,000 characters. Gobby preserves every validation criterion, changed-file
+manifest entry, and the complete textual diff — supporting evidence carries no
+budget of its own, and only the fully rendered prompt is measured against the
+limit. A prompt over the limit routes to the background task-close validator
+rather than being trimmed.
 
 ## CLI Reference
 
