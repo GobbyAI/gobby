@@ -4,16 +4,35 @@ Uses YAKE (Yet Another Keyword Extractor) to strip conversational noise
 from user prompts before embedding. YAKE is unsupervised, model-free,
 and runs in ~1-5ms per query.
 
+``extract_keywords`` is CPU-bound synchronous work: async callers on the
+daemon event loop must run it via ``asyncio.to_thread`` (#20868).
+
 Example:
     >>> extract_keywords("hey could you maybe look at the webhook handler thing?")
-    'webhook handler'
+    'handler thing webhook hey'
 """
 
 from __future__ import annotations
 
 import logging
+import threading
+from types import ModuleType
+from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Imported at module load so no request ever pays module loading: the daemon's
+# memory search service imports this module at startup, which warms YAKE before
+# the first post-restart search (#20868). Guarded so a broken YAKE install
+# degrades to raw-query search instead of taking the memory service down.
+_yake: ModuleType | None
+try:
+    import yake as _yake_module
+except ImportError as import_error:
+    logger.debug("YAKE not installed or failed to import: %s", import_error)
+    _yake = None
+else:
+    _yake = _yake_module
 
 # Minimum word count to attempt extraction — very short queries
 # are already focused enough.
@@ -22,6 +41,38 @@ _MIN_WORDS_FOR_EXTRACTION = 6
 # If YAKE keywords are less than this fraction of original words,
 # the query was noisy and keyword extraction is worthwhile.
 _NOISE_THRESHOLD = 0.7
+
+# One extractor per thread per (language, max_keywords): construction reads
+# stopword files from disk, so instances are reused across calls — but never
+# across threads, because extraction mutates instance-level similarity caches
+# and stats (#20868 runs extraction in asyncio.to_thread executor workers).
+_extractor_cache = threading.local()
+
+
+def _get_extractor(language: str, max_keywords: int) -> Any:
+    """Return this thread's cached ``KeywordExtractor`` for the given config."""
+    if _yake is None:
+        # extract_keywords() checks availability first; defensive for other callers.
+        raise RuntimeError("YAKE is not available")
+    cache: dict[tuple[str, int], Any] | None = getattr(_extractor_cache, "extractors", None)
+    if cache is None:
+        cache = {}
+        _extractor_cache.extractors = cache
+    key = (language, max_keywords)
+    extractor = cache.get(key)
+    if extractor is None:
+        # NOTE: yake>=0.7.3 renamed dedupLim -> dedup_lim and silently ignores the
+        # old spelling, so this runs at the 0.9 default rather than the 0.3 the
+        # original call intended. Preserved as-is because #20868 requires identical
+        # extraction output; restoring aggressive deduplication is tracked in #20882.
+        extractor = _yake.KeywordExtractor(
+            lan=language,
+            n=2,  # max n-gram size
+            top=max_keywords,
+            dedupLim=0.3,
+        )
+        cache[key] = extractor
+    return extractor
 
 
 def extract_keywords(
@@ -35,6 +86,9 @@ def extract_keywords(
     text is significantly shorter than raw text), or None if the query is
     already focused and extraction wouldn't help.
 
+    CPU-bound and synchronous by design; event-loop callers must offload it
+    with ``asyncio.to_thread`` (#20868).
+
     Args:
         text: Input text to extract keywords from
         max_keywords: Maximum number of keywords to extract
@@ -46,17 +100,11 @@ def extract_keywords(
     words = text.split()
     if len(words) < _MIN_WORDS_FOR_EXTRACTION:
         return None
+    if _yake is None:
+        return None
 
     try:
-        import yake
-
-        extractor = yake.KeywordExtractor(
-            lan=language,
-            n=2,  # max n-gram size
-            top=max_keywords,
-            dedupLim=0.3,  # aggressive deduplication
-        )
-        keywords = extractor.extract_keywords(text)
+        keywords = _get_extractor(language, max_keywords).extract_keywords(text)
 
         if not keywords:
             return None
@@ -88,9 +136,6 @@ def extract_keywords(
 
         return None
 
-    except ImportError as e:
-        logger.debug("YAKE not installed or failed to import: %s", e)
-        return None
     except Exception as e:
         logger.debug("YAKE extraction failed: %s", e)
         return None
