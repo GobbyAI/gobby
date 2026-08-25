@@ -392,10 +392,12 @@ def issue_grant_postgres(
                     "maintenance grant requires execution_id",
                     code="claims_mismatch",
                 )
+            overlay = typed.code_overlay_project_id
             issued = credentials.issue_maintenance(  # type: ignore[attr-defined]
                 managed_execution_id=UUID(typed.execution_id),
                 project_id=UUID(typed.project_id),
                 expires_at=expires_at,
+                code_overlay_project_id=UUID(overlay) if overlay is not None else None,
             )
             return PostgresDirect(
                 dsn=issued.dsn,

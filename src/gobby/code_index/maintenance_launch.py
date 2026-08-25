@@ -13,7 +13,11 @@ from gobby.runtime_grants.launch import ManagedLaunch
 
 class MaintenanceLaunchFactory(Protocol):
     def open(
-        self, project_id: str, *, timeout_seconds: float
+        self,
+        project_id: str,
+        *,
+        timeout_seconds: float,
+        code_overlay_project_id: str | None = None,
     ) -> AbstractContextManager[ManagedLaunch]: ...
 
 
@@ -23,14 +27,26 @@ async def open_launch_async(
     project_id: str,
     *,
     timeout_seconds: float,
+    code_overlay_project_id: str | None = None,
 ) -> AsyncIterator[ManagedLaunch]:
-    """Enter a maintenance launch without blocking the event loop."""
+    """Enter a maintenance launch without blocking the event loop.
+
+    ``code_overlay_project_id`` binds the grant to a worktree/clone code-index
+    overlay so gcode writes under that derived project id pass RLS. The claim
+    is only forwarded when set, so factories without overlay support keep
+    serving ordinary project launches.
+    """
+    claim_kwargs: dict[str, str] = {}
+    if code_overlay_project_id is not None:
+        claim_kwargs["code_overlay_project_id"] = code_overlay_project_id
     open_async = getattr(factory, "open_async", None)
     if open_async is not None:
-        async with open_async(project_id, timeout_seconds=timeout_seconds) as launch:
+        async with open_async(
+            project_id, timeout_seconds=timeout_seconds, **claim_kwargs
+        ) as launch:
             yield launch
         return
-    cm = factory.open(project_id, timeout_seconds=timeout_seconds)
+    cm = factory.open(project_id, timeout_seconds=timeout_seconds, **claim_kwargs)
     launch = await asyncio.to_thread(cm.__enter__)
 
     async def _exit(
@@ -56,7 +72,12 @@ async def open_launch_async(
 
 
 @contextmanager
-def unavailable_launch(project_id: str, *, timeout_seconds: float) -> Iterator[ManagedLaunch]:
-    del project_id, timeout_seconds
+def unavailable_launch(
+    project_id: str,
+    *,
+    timeout_seconds: float,
+    code_overlay_project_id: str | None = None,
+) -> Iterator[ManagedLaunch]:
+    del project_id, timeout_seconds, code_overlay_project_id
     raise RuntimeError("maintenance launch factory is not configured")
     yield  # pragma: no cover

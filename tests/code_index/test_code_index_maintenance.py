@@ -91,8 +91,13 @@ def _dummy_launch(project_id: str, *, timeout_seconds: float) -> Iterator[Manage
 
 class DummyLaunchFactory:
     def open(
-        self, project_id: str, *, timeout_seconds: float
+        self,
+        project_id: str,
+        *,
+        timeout_seconds: float,
+        code_overlay_project_id: str | None = None,
     ) -> AbstractContextManager[ManagedLaunch]:
+        del code_overlay_project_id
         return _dummy_launch(project_id, timeout_seconds=timeout_seconds)
 
 
@@ -221,6 +226,57 @@ async def test_maintenance_purges_indexed_project_after_missing_threshold(
     assert gcode_gateway.maintenance_calls == []
     assert "proj-missing" in gcode_gateway.graph_cleared
     assert not missing_root.exists()
+
+
+@pytest.mark.asyncio
+async def test_maintenance_leaves_live_worktree_overlay_selectors_alone(
+    tmp_path: Path,
+) -> None:
+    """An unregistered selector that is its root's derived id is not reconciled (#20889)."""
+    from gobby.code_index.eligibility import code_index_id_for_root
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    overlay_id = code_index_id_for_root(worktree)
+    project = IndexedProject(
+        id=overlay_id,
+        root_path=str(worktree),
+        total_files=2,
+        total_symbols=3,
+    )
+    storage = MagicMock()
+    storage.get_registry_project.return_value = (False, False)
+    storage.list_projection_cleanup_pending.return_value = []
+    storage.list_indexed_projects.return_value = [project]
+    gcode_gateway = RecordingGcodeGateway()
+
+    async def run_db(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        return func(*args, **kwargs)
+
+    context = SimpleNamespace(
+        storage=storage,
+        gcode_gateway=gcode_gateway,
+        launch_factory=DummyLaunchFactory(),
+        daemon_config_breaker=SyncCircuitBreaker(
+            name="test",
+            probe_target="daemon config",
+            operation="maintenance",
+        ),
+        config=SimpleNamespace(
+            graph_enabled=True,
+            embedding_enabled=True,
+            missing_root_purge_observations=2,
+            maintenance_index_timeout_seconds=900,
+        ),
+        run_db=run_db,
+    )
+
+    await _run_maintenance(cast(CodeIndexContext, context))
+
+    storage.delete_project_index.assert_not_called()
+    assert gcode_gateway.maintenance_calls == []
+    assert gcode_gateway.graph_cleared == []
+    assert worktree.is_dir()
 
 
 @pytest.mark.asyncio

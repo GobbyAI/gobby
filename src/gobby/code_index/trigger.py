@@ -59,6 +59,9 @@ class CodeIndexTrigger:
         # Pending files grouped by canonical root path.
         self._pending_by_root: dict[str, set[str]] = {}
         self._project_id_by_root: dict[str, str] = {}
+        # Overlay claim per root: derived code-index id for worktree/clone
+        # roots, None for ordinary project roots.
+        self._overlay_by_root: dict[str, str | None] = {}
         self._scheduled_by_root: dict[str, asyncio.Handle] = {}
         self._active_tasks_by_root: dict[str, asyncio.Task[None]] = {}
         self._background_tasks: set[asyncio.Task[None]] = set()
@@ -69,20 +72,32 @@ class CodeIndexTrigger:
         file_path: str,
         project_id: str,
         root_path: str,
+        code_overlay_project_id: str | None = None,
     ) -> None:
         """Thread-safe notification that a file was edited.
 
         Can be called from any thread. Schedules end-of-tick indexing on the
-        event loop.
+        event loop. ``code_overlay_project_id`` carries the derived overlay id
+        when ``root_path`` is a worktree/clone isolation workspace, so the
+        launch grant admits gcode's writes under that id.
         """
-        self._loop.call_soon_threadsafe(self._schedule_file, file_path, project_id, root_path)
+        self._loop.call_soon_threadsafe(
+            self._schedule_file, file_path, project_id, root_path, code_overlay_project_id
+        )
 
-    def _schedule_file(self, file_path: str, project_id: str, root_path: str) -> None:
+    def _schedule_file(
+        self,
+        file_path: str,
+        project_id: str,
+        root_path: str,
+        code_overlay_project_id: str | None = None,
+    ) -> None:
         """Add a file to its root's next batch (runs on the event loop)."""
         root_key = self._root_key(root_path)
         normalized_path = self._normalize_file_path(file_path, root_key)
         self._pending_by_root.setdefault(root_key, set()).add(normalized_path)
         self._project_id_by_root[root_key] = project_id
+        self._overlay_by_root[root_key] = code_overlay_project_id
 
         if root_key in self._scheduled_by_root or root_key in self._active_tasks_by_root:
             return
@@ -105,6 +120,7 @@ class CodeIndexTrigger:
             return
         if not self._pending_by_root.get(root_key):
             self._project_id_by_root.pop(root_key, None)
+            self._overlay_by_root.pop(root_key, None)
             return
 
         project_id = self._project_id_by_root[root_key]
@@ -135,6 +151,7 @@ class CodeIndexTrigger:
                 self._schedule_batch(root_key)
         elif root_key not in self._scheduled_by_root:
             self._project_id_by_root.pop(root_key, None)
+            self._overlay_by_root.pop(root_key, None)
 
     def _requeue_for_retry(
         self,
@@ -219,7 +236,10 @@ class CodeIndexTrigger:
                 )
             else:
                 async with open_launch_async(
-                    factory, project_id, timeout_seconds=timeout
+                    factory,
+                    project_id,
+                    timeout_seconds=timeout,
+                    code_overlay_project_id=self._overlay_by_root.get(root_key),
                 ) as launch:
                     result = await self._gcode_gateway.incremental_index(
                         Path(root_key),
@@ -243,9 +263,20 @@ class CodeIndexTrigger:
             else:
                 detail = result.stderr.strip() or result.stdout.strip() or "(no output)"
                 if result.timed_out:
-                    logger.warning("gcode index timed out after %gs", result.timeout_seconds)
+                    logger.warning(
+                        "gcode index timed out after %gs for project %s at %s",
+                        result.timeout_seconds,
+                        project_id,
+                        root_key,
+                    )
                 else:
-                    logger.warning("gcode index exited %s: %s", result.returncode, detail)
+                    logger.warning(
+                        "gcode index exited %s for project %s at %s: %s",
+                        result.returncode,
+                        project_id,
+                        root_key,
+                        detail,
+                    )
                 self._requeue_for_retry(root_key, project_id, files)
         except GcodeDaemonConfigUnavailableError:
             self._daemon_config_breaker.record_failure()
@@ -262,5 +293,5 @@ class CodeIndexTrigger:
             raise
         except Exception as e:
             self._daemon_config_breaker.record_success()
-            logger.warning("gcode index failed: %s", e)
+            logger.warning("gcode index failed for project %s at %s: %s", project_id, root_key, e)
             self._requeue_for_retry(root_key, project_id, files)

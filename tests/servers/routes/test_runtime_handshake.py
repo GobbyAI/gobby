@@ -272,6 +272,45 @@ def test_bearer_claim_binding_matrix() -> None:
     assert managed_fail.value.code == "credential_issuance_failed"
 
 
+def test_maintenance_overlay_claim_binding() -> None:
+    """issue_for_maintenance validates and carries an overlay claim (#20889)."""
+    handshake = _handshake()
+    overlay = "0d1a4ce8-6f21-5d59-8abc-9d2f5b2b8a7a"
+
+    grant = handshake.issue_for_maintenance(
+        machine_id=LOCAL_MACHINE_ID,
+        project_id=PROJECT_ID,
+        execution_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        code_overlay_project_id=overlay,
+    )
+    assert grant.principal.code_overlay_project_id == overlay
+
+    bare = handshake.issue_for_maintenance(
+        machine_id=LOCAL_MACHINE_ID,
+        project_id=PROJECT_ID,
+        execution_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+    )
+    assert bare.principal.code_overlay_project_id is None
+
+    with pytest.raises(HandshakeRejection) as not_uuid:
+        handshake.issue_for_maintenance(
+            machine_id=LOCAL_MACHINE_ID,
+            project_id=PROJECT_ID,
+            execution_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+            code_overlay_project_id="not-a-uuid",
+        )
+    assert not_uuid.value.code == "claims_mismatch"
+
+    with pytest.raises(HandshakeRejection) as same_project:
+        handshake.issue_for_maintenance(
+            machine_id=LOCAL_MACHINE_ID,
+            project_id=PROJECT_ID,
+            execution_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+            code_overlay_project_id=PROJECT_ID,
+        )
+    assert same_project.value.code == "claims_mismatch"
+
+
 def test_expiry_bounded_and_serialized() -> None:
     concurrent = 0
     peak = 0

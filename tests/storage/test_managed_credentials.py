@@ -179,6 +179,68 @@ def test_issue_maintenance_creates_mnt_role_and_revokes(
         manager.close()
 
 
+def test_issue_maintenance_records_registered_overlay_claim(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    """A registered worktree's derived overlay id lands on the binding (#20889)."""
+    from uuid import uuid5
+
+    from gobby.code_index.models import CODE_INDEX_UUID_NAMESPACE
+
+    fixture = authorization_fixture
+    execution_id = uuid4()
+    worktree_id = uuid4()
+    worktree_path = f"/tmp/gobby-overlay-{execution_id.hex}"
+    overlay_id = uuid5(CODE_INDEX_UUID_NAMESPACE, worktree_path)
+    with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+        admin.execute(
+            """INSERT INTO public.worktrees (
+                   id, project_id, machine_id, branch_name, worktree_path
+               ) VALUES (%s, %s, %s, %s, %s)""",
+            (worktree_id, fixture.project_id, fixture.machine_id, "overlay-test", worktree_path),
+        )
+    manager = _manager(fixture, tmp_path / "managed")
+    try:
+        issued = manager.issue_maintenance(
+            managed_execution_id=execution_id,
+            project_id=fixture.project_id,
+            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+            code_overlay_project_id=overlay_id,
+        )
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            bound = admin.execute(
+                """SELECT code_overlay_project_id FROM gobby_agent_auth.principal_bindings
+                   WHERE managed_execution_id = %s""",
+                (execution_id,),
+            ).fetchone()
+        assert bound == (overlay_id,)
+        manager.revoke(execution_id, reason="test-maintenance-overlay")
+        del issued
+    finally:
+        manager.close()
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            admin.execute("DELETE FROM public.worktrees WHERE id = %s", (worktree_id,))
+
+
+def test_issue_maintenance_rejects_unregistered_overlay_claim(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    fixture = authorization_fixture
+    manager = _manager(fixture, tmp_path / "managed")
+    try:
+        with pytest.raises(CredentialIssuanceError):
+            manager.issue_maintenance(
+                managed_execution_id=uuid4(),
+                project_id=fixture.project_id,
+                expires_at=datetime.now(UTC) + timedelta(minutes=30),
+                code_overlay_project_id=uuid4(),
+            )
+    finally:
+        manager.close()
+
+
 def test_bootstrap_failure_rolls_back_the_partially_created_role(
     authorization_fixture: AuthorizationFixture,
     tmp_path: Path,

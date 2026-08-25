@@ -113,6 +113,13 @@ async def _run_maintenance(
             project_exists=exists,
             project_deleted=deleted,
         )
+        if decision.kind == "overlay":
+            # A live worktree/clone overlay: the incremental trigger owns its
+            # freshness under an overlay-claim launch, and it has no registry
+            # row to maintain against. Reconciling it here would delete a
+            # working index out from under the worktree (#20889).
+            missing_root_observations.pop(project_id, None)
+            continue
         if decision.kind != "active":
             missing_root_observations.pop(project_id, None)
             await _reconcile_stale_selector(context, project_id, decision.kind)

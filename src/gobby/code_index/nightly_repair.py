@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import uuid4
 
+from gobby.code_index.eligibility import code_index_id_for_root
 from gobby.code_index.maintenance_launch import open_launch_async
 from gobby.code_index.maintenance_log import log_gcode_maintenance_event
 from gobby.scheduler.executor import CronHandler
@@ -74,6 +75,11 @@ class CodeIndexNightlyRepairer:
                 root = Path(str(root_path)).expanduser()
                 if not await asyncio.to_thread(root.is_dir):
                     return f"{project_id}:skipped_missing_root"
+                if await asyncio.to_thread(code_index_id_for_root, root) == project_id:
+                    # Live worktree/clone overlay selector: its grant scope is
+                    # the overlay claim, not a registered project, so the
+                    # registry-keyed repair launch cannot cover it (#20889).
+                    return f"{project_id}:skipped_overlay"
 
                 async with semaphore:
                     timeout = config.nightly_repair_timeout_seconds

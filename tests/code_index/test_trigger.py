@@ -205,8 +205,13 @@ async def test_flush_resolves_launch_factory_from_launch_source(tmp_path: Path) 
 
     class DummyLaunchFactory:
         def open(
-            self, project_id: str, *, timeout_seconds: float
+            self,
+            project_id: str,
+            *,
+            timeout_seconds: float,
+            code_overlay_project_id: str | None = None,
         ) -> AbstractContextManager[ManagedLaunch]:
+            del code_overlay_project_id
             return _dummy_launch(project_id, timeout_seconds=timeout_seconds)
 
     class LaunchSource:
@@ -238,6 +243,71 @@ async def test_flush_resolves_launch_factory_from_launch_source(tmp_path: Path) 
     await _wait_for_call_count(gateway, 1)
 
     assert gateway.envs == [{"GOBBY_MANAGED_EXECUTION_BOOTSTRAP": "/tmp/grant.json"}]
+
+
+@pytest.mark.asyncio
+async def test_flush_passes_overlay_claim_to_launch_factory(tmp_path: Path) -> None:
+    """A worktree root's flush opens its launch with the derived overlay id."""
+    opened: list[tuple[str, str | None]] = []
+
+    @contextmanager
+    def _recording_launch() -> Iterator[ManagedLaunch]:
+        yield ManagedLaunch(
+            grant_path=Path("/tmp/grant.json"),
+            env={"GOBBY_MANAGED_EXECUTION_BOOTSTRAP": "/tmp/grant.json"},
+        )
+
+    class RecordingLaunchFactory:
+        def open(
+            self,
+            project_id: str,
+            *,
+            timeout_seconds: float,
+            code_overlay_project_id: str | None = None,
+        ) -> AbstractContextManager[ManagedLaunch]:
+            del timeout_seconds
+            opened.append((project_id, code_overlay_project_id))
+            return _recording_launch()
+
+    clock = FakeClock()
+    gateway = RecordingGateway()
+    breaker = SyncCircuitBreaker(
+        name="Gcode daemon-config",
+        probe_target="daemon config endpoint",
+        operation="daemon-owned gcode work",
+        failure_threshold=1,
+        base_backoff_seconds=30.0,
+        max_backoff_seconds=900.0,
+        monotonic=clock,
+    )
+    trigger = CodeIndexTrigger(
+        loop=asyncio.get_running_loop(),
+        retry_base_seconds=5.0,
+        retry_max_seconds=10.0,
+        index_timeout_seconds=0.01,
+        gcode_gateway=gateway,
+        daemon_config_breaker=breaker,
+        launch_factory=cast(Any, RecordingLaunchFactory()),
+    )
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    overlay_id = "0d1a4ce8-6f21-5d59-8abc-9d2f5b2b8a7a"
+    trigger.notify_file_changed(
+        str(worktree / "src" / "foo.py"),
+        "parent-project",
+        str(worktree),
+        code_overlay_project_id=overlay_id,
+    )
+    await _wait_for_call_count(gateway, 1)
+
+    assert opened == [("parent-project", overlay_id)]
+
+    # An ordinary project root carries no overlay claim.
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    trigger.notify_file_changed(str(plain / "bar.py"), "parent-project", str(plain))
+    await _wait_for_call_count(gateway, 2)
+    assert opened[1] == ("parent-project", None)
 
 
 @pytest.mark.asyncio
@@ -379,7 +449,8 @@ async def test_command_failure_requeues_with_bounded_backoff(
 
     assert harness.trigger._pending_by_root[root_key] == {"src/foo.py"}
     assert harness.trigger._retry_delay_by_root[root_key] == 10.0
-    assert caplog.text.count("gcode index exited 1: bad index") == 2
+    assert caplog.text.count("gcode index exited 1 for project proj-1 at") == 2
+    assert caplog.text.count("bad index") == 2
 
 
 @pytest.mark.asyncio
@@ -530,7 +601,8 @@ async def test_unavailable_gateway_requeues_and_warns(
     _cancel_scheduled_callback(harness.trigger, root_key)
 
     assert harness.trigger._pending_by_root[root_key] == {"src/foo.py"}
-    assert "gcode index failed: gcode is not installed" in caplog.text
+    assert "gcode index failed for project proj-1 at" in caplog.text
+    assert "gcode is not installed" in caplog.text
 
 
 @pytest.mark.asyncio

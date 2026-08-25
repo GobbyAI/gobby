@@ -9,6 +9,7 @@ from gobby.adapters.codex_impl.execution_chain import (
     FUNCTIONS_EXEC_NAMES,
     validate_functions_exec_wrapper,
 )
+from gobby.code_index.eligibility import overlay_project_id_for_root
 from gobby.hooks._normalization_canonical import CANONICAL_WRITE_TOOL_NAMES
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
@@ -303,6 +304,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
                     file_path=repo_relative_path,
                     project_id=project_id,
                     root_path=root_path,
+                    code_overlay_project_id=overlay_project_id_for_root(repo_root),
                 )
         except Exception as exc:
             self.logger.debug("Failed to trigger code index update: %s", exc)

@@ -177,6 +177,7 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
         managed_execution_id: UUID,
         project_id: UUID,
         expires_at: datetime,
+        code_overlay_project_id: UUID | None = None,
     ) -> MaintenanceCredential:
         issued_at = datetime.now(UTC)
         normalized_expiry = self._validate_expiry(issued_at, expires_at)
@@ -187,7 +188,7 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
         try:
             row = self._database.fetchone(
                 f"""SELECT * FROM {AUTH_SCHEMA}.issue_maintenance_principal(
-                    %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s
                 )""",
                 (
                     managed_execution_id,
@@ -195,6 +196,7 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
                     self._machine_id,
                     normalized_expiry,
                     password,
+                    code_overlay_project_id,
                 ),
             )
             if row is None:

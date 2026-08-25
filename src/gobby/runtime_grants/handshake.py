@@ -38,6 +38,24 @@ def encode_grant_header(grant: GrantBundle) -> str:
     return base64.urlsafe_b64encode(grant.model_dump_canonical()).decode().rstrip("=")
 
 
+def _normalized_overlay_claim(project_id: str, code_overlay_project_id: str | None) -> str | None:
+    """Validate an optional code-index overlay claim against its project."""
+    if code_overlay_project_id is None:
+        return None
+    try:
+        overlay = str(UUID(code_overlay_project_id))
+    except ValueError:
+        raise HandshakeRejection(
+            "code_overlay_project_id must be a UUID", code="claims_mismatch"
+        ) from None
+    if overlay == project_id:
+        raise HandshakeRejection(
+            "code_overlay_project_id must differ from project_id",
+            code="claims_mismatch",
+        )
+    return overlay
+
+
 def decode_grant_header(value: str) -> GrantBundle:
     """Parse a presented ``X-Gobby-Runtime-Grant`` header."""
     padded = value + "=" * (-len(value) % 4)
@@ -108,19 +126,7 @@ class HandshakeService:
             )
         if not self._project_admitted(project_id):
             raise HandshakeRejection("project is not admitted", code="claims_mismatch")
-        if code_overlay_project_id is not None:
-            try:
-                overlay = str(UUID(code_overlay_project_id))
-            except ValueError:
-                raise HandshakeRejection(
-                    "code_overlay_project_id must be a UUID", code="claims_mismatch"
-                ) from None
-            if overlay == project_id:
-                raise HandshakeRejection(
-                    "code_overlay_project_id must differ from project_id",
-                    code="claims_mismatch",
-                )
-            code_overlay_project_id = overlay
+        code_overlay_project_id = _normalized_overlay_claim(project_id, code_overlay_project_id)
         principal = GrantPrincipal(
             kind="interactive",
             machine_id=machine_id,
@@ -163,6 +169,7 @@ class HandshakeService:
         machine_id: str,
         project_id: str,
         execution_id: str,
+        code_overlay_project_id: str | None = None,
     ) -> GrantBundle:
         if machine_id != self.local_machine_id:
             raise HandshakeRejection(
@@ -171,12 +178,14 @@ class HandshakeService:
             )
         if not self._project_admitted(project_id):
             raise HandshakeRejection("project is not admitted", code="claims_mismatch")
+        code_overlay_project_id = _normalized_overlay_claim(project_id, code_overlay_project_id)
         principal = GrantPrincipal(
             kind="maintenance",
             machine_id=machine_id,
             project_id=project_id,
             execution_id=execution_id,
             session_id=None,
+            code_overlay_project_id=code_overlay_project_id,
         )
         return self._issue(principal)
 

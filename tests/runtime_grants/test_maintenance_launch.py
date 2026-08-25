@@ -35,9 +35,11 @@ class _Handshake:
     def __init__(self, *, error: Exception | None = None) -> None:
         self.error = error
         self.calls = 0
+        self.issued_kwargs: list[dict[str, Any]] = []
 
-    def issue_for_maintenance(self, **_kwargs: Any) -> GrantBundle:
+    def issue_for_maintenance(self, **kwargs: Any) -> GrantBundle:
         self.calls += 1
+        self.issued_kwargs.append(kwargs)
         if self.error is not None:
             raise self.error
         return GrantBundle.model_validate_json(_GOLDEN.read_bytes())
@@ -89,6 +91,27 @@ def test_open_revokes_only_after_issue(monkeypatch: pytest.MonkeyPatch, tmp_path
 
     assert len(credentials.revoked) == 1
     assert credentials.revoked[0][1] == "maintenance-complete"
+
+
+def test_open_forwards_overlay_claim(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    handshake = _Handshake()
+    credentials = _RecordingCredentials()
+    factory = _factory(handshake, credentials)
+    launch = ManagedLaunch(grant_path=tmp_path / "grant.json", env={})
+
+    monkeypatch.setattr(
+        "gobby.runtime_grants.maintenance.materialize_managed_launch",
+        lambda *_args, **_kwargs: launch,
+    )
+
+    overlay = "0d1a4ce8-6f21-5d59-8abc-9d2f5b2b8a7a"
+    with factory.open("project-1", timeout_seconds=1, code_overlay_project_id=overlay):
+        pass
+    with factory.open("project-1", timeout_seconds=1):
+        pass
+
+    claims = [kwargs["code_overlay_project_id"] for kwargs in handshake.issued_kwargs]
+    assert claims == [overlay, None]
 
 
 def test_open_preserves_body_error_when_revoke_fails(

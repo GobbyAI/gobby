@@ -213,6 +213,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
             "../../assets/schema/migrations/404_scope_rotation_sweep_to_managed_principals.sql"
         ),
     },
+    EmbeddedMigration {
+        version: 405,
+        filename: "405_maintenance_overlay_principal.sql",
+        checksum: "66f92eeb9603f89303a7c5628ab68aa3f3f3971ffc3d0cedf21c04154d9d7d93",
+        sql: include_str!("../../assets/schema/migrations/405_maintenance_overlay_principal.sql"),
+    },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 

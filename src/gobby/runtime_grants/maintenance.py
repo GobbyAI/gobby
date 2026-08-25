@@ -62,7 +62,13 @@ class HandshakeMaintenanceLaunchFactory:
         self._machine_id = machine_id
 
     @contextmanager
-    def open(self, project_id: str, *, timeout_seconds: float) -> Iterator[ManagedLaunch]:
+    def open(
+        self,
+        project_id: str,
+        *,
+        timeout_seconds: float,
+        code_overlay_project_id: str | None = None,
+    ) -> Iterator[ManagedLaunch]:
         execution_id = uuid4()
         dest = Path(tempfile.mkdtemp(prefix="gobby-mnt-"))
         issued = False
@@ -71,6 +77,7 @@ class HandshakeMaintenanceLaunchFactory:
                 machine_id=self._machine_id,
                 project_id=project_id,
                 execution_id=str(execution_id),
+                code_overlay_project_id=code_overlay_project_id,
             )
             issued = True
             launch = materialize_managed_launch(
@@ -94,9 +101,17 @@ class HandshakeMaintenanceLaunchFactory:
 
     @asynccontextmanager
     async def open_async(
-        self, project_id: str, *, timeout_seconds: float
+        self,
+        project_id: str,
+        *,
+        timeout_seconds: float,
+        code_overlay_project_id: str | None = None,
     ) -> AsyncIterator[ManagedLaunch]:
-        cm = self.open(project_id, timeout_seconds=timeout_seconds)
+        cm = self.open(
+            project_id,
+            timeout_seconds=timeout_seconds,
+            code_overlay_project_id=code_overlay_project_id,
+        )
         enter_task = asyncio.create_task(asyncio.to_thread(cm.__enter__))
         launch, pending_cancel = await _await_tracked(enter_task)
         if pending_cancel is not None:

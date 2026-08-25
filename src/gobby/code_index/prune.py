@@ -336,6 +336,10 @@ class CodeIndexPruner:
                     project_exists=exists,
                     project_deleted=deleted,
                 )
+                if decision.kind == "overlay":
+                    # Live worktree/clone overlay: owned by overlay-claim
+                    # launches, not the registry-keyed prune pass (#20889).
+                    return f"{project_id}:skipped_overlay"
                 if decision.kind != "active":
                     outcome = await _reconcile_stale_selector(
                         self._context, project_id, decision.kind
