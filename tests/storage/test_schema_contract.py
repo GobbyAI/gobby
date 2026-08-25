@@ -3,18 +3,21 @@
 from __future__ import annotations
 
 import ast
+import importlib.resources
 import json
 import logging
 import re
 import subprocess
 from collections import Counter
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
 from gobby.storage import schema_contract
 from gobby.storage.hub import postgres
+from gobby.storage.schema_identity_pin import SchemaIdentityError
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PRODUCTION_PYTHON_ROOT = _REPO_ROOT / "src" / "gobby"
@@ -230,3 +233,24 @@ def test_apply_reports_timeout_as_actionable_failure(monkeypatch: pytest.MonkeyP
 
     with pytest.raises(schema_contract.SchemaContractError, match="timed out after 300 seconds"):
         schema_contract.apply_schema("postgresql://gobby:secret@database.example/gobby")
+
+
+def test_expected_identity_reports_packaged_contract_violations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The packaged pin is validated by the shared identity contract, not a local copy."""
+    packaged = {**schema_contract.expected_schema_identity(), "extra": 1}
+    resource = SimpleNamespace(read_text=lambda: json.dumps(packaged))
+    monkeypatch.setattr(
+        importlib.resources,
+        "files",
+        lambda package: SimpleNamespace(joinpath=lambda name: resource),
+    )
+
+    with pytest.raises(
+        schema_contract.SchemaContractError,
+        match=r"Packaged schema_expected_identity\.json is invalid: .*must contain exactly",
+    ) as exc:
+        schema_contract.expected_schema_identity()
+
+    assert isinstance(exc.value.__cause__, SchemaIdentityError)

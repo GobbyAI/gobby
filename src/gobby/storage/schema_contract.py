@@ -7,8 +7,8 @@ import json
 import logging
 import os
 import subprocess
-from typing import cast
 
+from gobby.storage.schema_identity_pin import SchemaIdentityError, validate_identity
 from gobby.utils.native_bin import resolve_native_bin
 
 logger = logging.getLogger(__name__)
@@ -16,8 +16,6 @@ logger = logging.getLogger(__name__)
 EXPECTED_IDENTITY_ENV = "GOBBY_EXPECTED_SCHEMA_IDENTITY"
 DATABASE_URL_ENV = "GOBBY_DATABASE_URL"
 _IDENTITY_FILE = "schema_expected_identity.json"
-_INTEGER_FIELDS = ("runner_protocol", "baseline_version", "latest_version")
-_STRING_FIELDS = ("baseline_checksum", "latest_checksum", "assets_root_hash")
 
 
 class SchemaContractError(RuntimeError):
@@ -28,27 +26,10 @@ def expected_schema_identity() -> dict[str, int | str]:
     """Load and validate the release-pinned gdaemon schema identity."""
     raw = importlib.resources.files("gobby.storage").joinpath(_IDENTITY_FILE).read_text()
     parsed: object = json.loads(raw)
-    if not isinstance(parsed, dict):
-        raise SchemaContractError(f"Packaged {_IDENTITY_FILE} must contain a JSON object")
-    values = cast(dict[str, object], parsed)
-    expected_fields = {*_INTEGER_FIELDS, *_STRING_FIELDS}
-    if set(values) != expected_fields:
-        raise SchemaContractError(
-            f"Packaged {_IDENTITY_FILE} must contain exactly {sorted(expected_fields)}"
-        )
-
-    identity: dict[str, int | str] = {}
-    for field in _INTEGER_FIELDS:
-        value = values[field]
-        if isinstance(value, bool) or not isinstance(value, int):
-            raise SchemaContractError(f"Packaged schema identity field {field} must be an integer")
-        identity[field] = value
-    for field in _STRING_FIELDS:
-        value = values[field]
-        if not isinstance(value, str) or not value:
-            raise SchemaContractError(f"Packaged schema identity field {field} must be a string")
-        identity[field] = value
-    return identity
+    try:
+        return validate_identity(parsed)
+    except SchemaIdentityError as exc:
+        raise SchemaContractError(f"Packaged {_IDENTITY_FILE} is invalid: {exc}") from exc
 
 
 def expected_schema_identity_json() -> str:
