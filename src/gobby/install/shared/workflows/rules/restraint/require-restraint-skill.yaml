@@ -45,7 +45,7 @@ rules:
       - (variables.get('restraint_reminder_turn') or 0) >= 5)
     effects:
       - type: inject_context
-        template: "Restraint reminder ({{ restraint_level }}): least mechanism that fully solves the problem; ladder before new code."
+        template: "Restraint reminder ({{ restraint_level }}): Use the least mechanism that fully solves the problem; walk the ladder before new code, rung 1 first."
       - type: set_variable
         variable: restraint_reminder_turn
         value: "variables.get('turns_since_compact') or 0"

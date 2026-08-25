@@ -374,7 +374,7 @@ These are the bundled default variables (from `gobby-default-variables.yaml`):
 | `brevity_disabled` | `false` | bool | Whether brevity reinforcement is disabled |
 | `brevity_level` | `"normal"` | string | Active brevity level (lite/normal/max); set by `gobby-skills:get_skill` on each leveled load |
 | `restraint_disabled` | `false` | bool | Whether restraint reinforcement is disabled |
-| `restraint_level` | `"normal"` | string | Active restraint level (lite/normal/max); set by `gobby-skills:get_skill` on each leveled load |
+| `restraint_level` | `"max"` | string | Active restraint level (lite/normal/max, default max); set by `gobby-skills:get_skill` on each leveled load |
 | `brevity_last_violation` | `""` | string | Last response fragment that violated brevity rules |
 | `brevity_last_violation_rule` | `""` | string | Brevity rule matched by the last violation |
 | `_agent_context_injected` | `false` | bool | Whether agent identity was injected on first pre-turn event |

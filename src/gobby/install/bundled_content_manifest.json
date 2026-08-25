@@ -364,7 +364,7 @@
     "skills/python/references/types.md": "b4f2c7ef6f54ef0fc835970688e4e08c9ec73e0a34b54d08f7b7aa0eed7cc61b",
     "skills/repository-maintenance/SKILL.md": "dc9bfae880d5186f821070b5cfe2137895d456c0737efe06ad905e31e4325d7f",
     "skills/research/SKILL.md": "d8ca2a2baccf337bd78be57f0ed1ca51d1da30208fec4ce71aa46109e75bdb32",
-    "skills/restraint/SKILL.md": "3f98445c3d4951e363d1716d3a86fd77a6637742e744c6f0945bfbf200871619",
+    "skills/restraint/SKILL.md": "c7837e9f5c83a07b66d59613c5e5115e45e217bbd686fd1281605bb364bfa9aa",
     "skills/review-learning/SKILL.md": "eae875f8e3b2c0ae94b9393ed8a15d0edd5e125884ef2aeb648a2bc469d05e5e",
     "skills/review/SKILL.md": "5ee63a4a875d7944027de1877b2b41d8e4f2c80c1d17c152cbcdc5b8c4dff6d4",
     "skills/ruby/SKILL.md": "3374d8e8221978025425bbae50de5fbb81f7fa533d85722d3ae9508486dba340",
@@ -488,7 +488,7 @@
     "workflows/rules/progressive-discovery/track-listed-servers.yaml": "50540409ad5d9e4fce4fee522612495b312724f81ff966dfd5923de05892a7f3",
     "workflows/rules/progressive-discovery/track-schema-lookup.yaml": "3f10d14f6d1152bcab54abced1a3f5796aa8ce245d8b8b7024838bd0d0387886",
     "workflows/rules/progressive-discovery/track-servers-listed.yaml": "9c68005caeb22340265f97ce31756df44e3356eec911485d52ef2a8d08e3d1ed",
-    "workflows/rules/restraint/require-restraint-skill.yaml": "5c7798808fe8e2658ece6abcb443f364adc7e7fd7cc0be2d16a047a9b7505811",
+    "workflows/rules/restraint/require-restraint-skill.yaml": "b8a0add84c7df8f68eb9f2ea95b4ee492fc351746b8324ea0e6d6fb144ab3c55",
     "workflows/rules/review-learning/inject-plan-enhancer-lessons.yaml": "882b7afd9aee748c08f27b1f574fae29b957fe1eec0a63004dfd52b6b8a90612",
     "workflows/rules/review-learning/inject-plan-reviewer-lessons.yaml": "6d8c015447a39e8cfb4f719f2e0ec551229f8f1f2a3c607571daa268baa63e94",
     "workflows/rules/review-learning/inject-planner-lessons.yaml": "02592f81269e54ef3538844530b9de845fa8c4a4e6c3445a86ebb1ad854b0cf8",
@@ -573,7 +573,7 @@
     "workflows/rules/worker-safety/no-push-for-workers.yaml": "e6238077bea978ff1e470a4c65f4b5a13610704cc3c1aa917e147cfe43f06a40",
     "workflows/rules/worker-safety/no-push.yaml": "b2a686d08f0b3bc466a0c4b94a6295ca2eca17ef151b8143ca722392de671648",
     "workflows/rules/worker-safety/no-remote-exec.yaml": "ade659ca1c9b87bc95b86b9c7ffe575fe56b0543ae3a271dba0c0fc1f2579991",
-    "workflows/variables/gobby-default-variables.yaml": "6a4e9887f0974008c446f7534f9324431f05aa74f859f0dee0fd1453fdb7f5bd"
+    "workflows/variables/gobby-default-variables.yaml": "29620fef8d3208c5cfbc2fd535a20dc1690685a4dd8e5646ee1e787962eb90c8"
   },
   "hash_algorithm": "sha256",
   "root": "shared",

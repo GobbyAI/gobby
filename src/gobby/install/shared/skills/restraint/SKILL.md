@@ -1,7 +1,7 @@
 ---
 name: restraint
-description: "Authoring-side discipline against over-engineering. A decision ladder — YAGNI, reuse, stdlib, native, installed deps, minimal code — applied among complete solutions only. Three levels: lite, normal, max."
-version: "1.1.0"
+description: "Authoring-side discipline against over-engineering. A decision ladder — YAGNI, reuse, stdlib, native, installed deps, minimal code — applied among complete solutions only. Three levels: lite, normal, max (default)."
+version: "1.2.0"
 category: optimization
 triggers:
   - restraint
@@ -15,7 +15,7 @@ metadata:
   gobby:
     audience: all
     levels: [lite, normal, max]
-    default_level: normal
+    default_level: max
 ---
 
 # Restraint
@@ -69,21 +69,22 @@ task system is the ledger.
 
 ## Levels
 
-Select a level at load time: `get_skill(name="restraint", level="max")`.
-Omitting `level` loads the default (`normal`). The active level persists in
+Select a level at load time: `get_skill(name="restraint", level="normal")`.
+Omitting `level` loads the default (`max`). The active level persists in
 session state until changed or the session ends.
 
 ### Lite
 Build what was asked as specified. If a lazier complete alternative exists,
 note it in one line.
 
-### Normal (default)
-The ladder enforced. Ship the shortest complete diff and stop.
+### Normal
+The ladder enforced on how to build. Ship the shortest complete diff and stop.
 
-### Max
-Challenge the requirements themselves — ask whether the feature is needed
-before building it. Still never ship an incomplete fix. Max is summoned
-only, never a default.
+### Max (default)
+Rung 1 applies to the request itself: before choosing how to build, say
+whether the work needs to exist given the mechanisms already in place, and
+recommend not building when they already solve the whole problem. Still
+never ship an incomplete fix.
 
 ## Output Style
 
