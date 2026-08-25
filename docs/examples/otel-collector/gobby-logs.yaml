@@ -71,6 +71,26 @@ receivers:
       enabled: true
       max_elapsed_time: 0s
 
+  file_log/llm:
+    include: ["${env:GOBBY_LOG_DIR}/llm.log"]
+    start_at: end
+    storage: file_storage
+    on_truncate: read_whole_file
+    include_file_name: true
+    include_file_path: true
+    attributes:
+      gobby.log.surface: llm
+    multiline:
+      line_start_pattern: '^(?:\{|\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} - )'
+    operators:
+      - type: json_parser
+        if: 'body matches "^[[:space:]]*[{]"'
+        parse_to: body
+        on_error: send_quiet
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 0s
+
   file_log/mcp:
     include: ["${env:GOBBY_LOG_DIR}/mcp.log"]
     start_at: end
@@ -174,6 +194,7 @@ service:
         - file_log/errors
         - file_log/runtime
         - file_log/hooks
+        - file_log/llm
         - file_log/mcp
         - file_log/automation
         - file_log/ui

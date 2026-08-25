@@ -827,13 +827,7 @@ class TextGenerationService:
         provider = binding.provider if binding else request.provider
         model = request.model or (next(iter(binding.models), None) if binding else None)
         if success:
-            # TODO(gobby-#20698): Keep INFO as a temporary vLLM end-to-end testing cutoff
-            # until feature calls move to their dedicated log surface.
-            log_event = (
-                logger.info
-                if binding is not None and binding.metadata.get("protocol") == "vllm"
-                else logger.debug
-            )
+            log_event = logger.info
             message = "feature_llm_call"
         elif isinstance(error, _CircuitOpenError):
             log_event = logger.debug

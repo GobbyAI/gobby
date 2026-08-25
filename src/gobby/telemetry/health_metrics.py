@@ -9,7 +9,7 @@ from gobby.telemetry.instruments import get_telemetry_metrics
 if TYPE_CHECKING:
     from gobby.telemetry.instruments import TelemetryMetrics
 
-_LOG_SURFACES: Final = frozenset({"daemon", "hooks", "mcp", "automation", "parser"})
+_LOG_SURFACES: Final = frozenset({"daemon", "hooks", "llm", "mcp", "automation", "parser"})
 _LOG_SEVERITIES: Final = frozenset({"WARNING", "ERROR", "CRITICAL"})
 _AUTOMATION_OUTCOMES: Final = {
     "cron": frozenset({"fired", "succeeded", "failed"}),

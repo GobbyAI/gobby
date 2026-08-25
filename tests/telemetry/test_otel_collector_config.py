@@ -35,12 +35,13 @@ RECEIVER_FILES = {
     "errors": "errors.log",
     "runtime": "runtime.log",
     "hooks": "hooks.log",
+    "llm": "llm.log",
     "mcp": "mcp.log",
     "automation": "automation.log",
     "ui": "ui.log",
     "parser": "*-parser-error.log",
 }
-FORMATTED_SURFACES = {"daemon", "errors", "hooks", "mcp", "automation"}
+FORMATTED_SURFACES = {"daemon", "errors", "hooks", "llm", "mcp", "automation"}
 
 
 def _load_config() -> dict[str, object]:
@@ -132,6 +133,7 @@ def test_collector_config_uses_durable_otlp_delivery() -> None:
                 "file_log/errors",
                 "file_log/runtime",
                 "file_log/hooks",
+                "file_log/llm",
                 "file_log/mcp",
                 "file_log/automation",
                 "file_log/ui",
@@ -436,7 +438,7 @@ def _append_smoke_records(paths: dict[str, Path]) -> None:
         "{malformed-json-sentinel\n",
         append=True,
     )
-    for surface in ("errors", "hooks", "mcp", "automation"):
+    for surface in ("errors", "hooks", "llm", "mcp", "automation"):
         _write_line(
             paths[surface],
             json.dumps(
@@ -543,14 +545,14 @@ def test_collector_exports_all_surfaces_from_fresh_offsets(tmp_path: Path) -> No
     try:
         output.wait_until_ready(timeout=ready_timeout)
         _append_smoke_records(paths)
-        records = capture.wait_for_count(9, timeout=export_timeout)
+        records = capture.wait_for_count(10, timeout=export_timeout)
     finally:
         collector_output = _stop_collector(process, output)
         server.shutdown()
         server.server_close()
         server_thread.join(timeout=5)
 
-    assert len(records) == 9, collector_output
+    assert len(records) == 10, collector_output
     serialized_bodies = json.dumps([record.body for record in records], default=str)
     assert "historical-" not in serialized_bodies
 
@@ -562,10 +564,11 @@ def test_collector_exports_all_surfaces_from_fresh_offsets(tmp_path: Path) -> No
         assert record.attributes["log.file.name"]
         path = record.attributes["log.file.path"]
         assert isinstance(path, str)
-        assert path == str(paths[surface])
+        expected_path = f"/logs/{paths[surface].name}" if launch.use_docker else str(paths[surface])
+        assert path == expected_path
 
     assert set(by_surface) == set(RECEIVER_FILES)
-    for surface in ("errors", "hooks", "mcp", "automation"):
+    for surface in ("errors", "hooks", "llm", "mcp", "automation"):
         [record] = by_surface[surface]
         assert isinstance(record.body, dict)
         assert record.body["message"] == f"{surface}-json-sentinel"

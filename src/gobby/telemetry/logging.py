@@ -6,7 +6,7 @@ import json
 import logging
 import os
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, ClassVar, Literal
@@ -19,6 +19,7 @@ from gobby.config.logging import (
     DAEMON_LOG_FILENAME,
     ERRORS_LOG_FILENAME,
     HOOKS_LOG_FILENAME,
+    LLM_LOG_FILENAME,
     MCP_LOG_FILENAME,
     RULE_ALLOW_AUDIT_LOG_FILENAME,
     LoggingSettings,
@@ -26,7 +27,7 @@ from gobby.config.logging import (
     resolved_logs_dir,
 )
 
-LogSurface = Literal["daemon", "hooks", "mcp", "automation", "allow_audit"]
+LogSurface = Literal["daemon", "hooks", "llm", "mcp", "automation", "allow_audit"]
 
 _PARSER_ERROR_NAMESPACE = "gobby.parser_error"
 _PRIMARY_LOG_FILENAMES: dict[LogSurface, str] = {
@@ -34,11 +35,13 @@ _PRIMARY_LOG_FILENAMES: dict[LogSurface, str] = {
     "automation": AUTOMATION_LOG_FILENAME,
     "daemon": DAEMON_LOG_FILENAME,
     "hooks": HOOKS_LOG_FILENAME,
+    "llm": LLM_LOG_FILENAME,
     "mcp": MCP_LOG_FILENAME,
 }
 _MANAGED_CHILD_LOGGERS = (
     "gobby.rule_allow_audit",
     "gobby.hooks",
+    "gobby.ai.text_generation",
     "gobby.mcp",
     "gobby.mcp.server",
     "gobby.mcp.client",
@@ -46,6 +49,7 @@ _MANAGED_CHILD_LOGGERS = (
     "gobby.servers.routes.mcp",
 )
 _MCP_NAMESPACES = ("gobby.mcp", "gobby.mcp_proxy", "gobby.servers.routes.mcp")
+_LLM_NAMESPACES = ("gobby.ai.text_generation",)
 _AUTOMATION_NAMESPACES = (
     "gobby.scheduler",
     "gobby.dispatch",
@@ -62,6 +66,8 @@ class _HandlerConfig:
     logs_dir: Path
     max_bytes: int
     backup_count: int
+    llm_max_bytes: int
+    llm_backup_count: int
     allow_audit_max_bytes: int
     allow_audit_backup_count: int
 
@@ -71,6 +77,8 @@ _active_handler_config = _HandlerConfig(
     logs_dir=resolved_logs_dir(_default_logging_settings),
     max_bytes=_default_logging_settings.max_size_mb * 1024 * 1024,
     backup_count=_default_logging_settings.backup_count,
+    llm_max_bytes=_default_logging_settings.llm_max_size_mb * 1024 * 1024,
+    llm_backup_count=_default_logging_settings.llm_backup_count,
     allow_audit_max_bytes=_default_logging_settings.allow_audit_max_size_mb * 1024 * 1024,
     allow_audit_backup_count=allow_audit_backup_count(_default_logging_settings),
 )
@@ -88,6 +96,8 @@ def classify_log_surface(logger_name: str) -> LogSurface:
         return "allow_audit"
     if _in_namespace(logger_name, "gobby.hooks"):
         return "hooks"
+    if any(_in_namespace(logger_name, namespace) for namespace in _LLM_NAMESPACES):
+        return "llm"
     if any(_in_namespace(logger_name, namespace) for namespace in _MCP_NAMESPACES):
         return "mcp"
     if any(_in_namespace(logger_name, namespace) for namespace in _AUTOMATION_NAMESPACES):
@@ -296,6 +306,8 @@ def _handler_config(settings: LoggingSettings) -> _HandlerConfig:
         logs_dir=resolved_logs_dir(settings),
         max_bytes=settings.max_size_mb * 1024 * 1024,
         backup_count=settings.backup_count,
+        llm_max_bytes=settings.llm_max_size_mb * 1024 * 1024,
+        llm_backup_count=settings.llm_backup_count,
         allow_audit_max_bytes=settings.allow_audit_max_size_mb * 1024 * 1024,
         allow_audit_backup_count=allow_audit_backup_count(settings),
     )
@@ -346,12 +358,9 @@ def parser_error_log_path(cli_name: str) -> Path:
 def _effective_handler_config() -> _HandlerConfig:
     configured_dir = os.environ.get("GOBBY_LOGGING_DIR")
     logs_dir = Path(configured_dir) if configured_dir else _active_handler_config.logs_dir
-    return _HandlerConfig(
+    return replace(
+        _active_handler_config,
         logs_dir=logs_dir.expanduser(),
-        max_bytes=_active_handler_config.max_bytes,
-        backup_count=_active_handler_config.backup_count,
-        allow_audit_max_bytes=_active_handler_config.allow_audit_max_bytes,
-        allow_audit_backup_count=_active_handler_config.allow_audit_backup_count,
     )
 
 
@@ -417,14 +426,18 @@ def _create_formatted_handlers(
             surface_config = config
             surface_formatter = formatter
             if surface == "allow_audit":
-                surface_config = _HandlerConfig(
-                    logs_dir=config.logs_dir,
+                surface_config = replace(
+                    config,
                     max_bytes=config.allow_audit_max_bytes,
                     backup_count=config.allow_audit_backup_count,
-                    allow_audit_max_bytes=config.allow_audit_max_bytes,
-                    allow_audit_backup_count=config.allow_audit_backup_count,
                 )
                 surface_formatter = logging.Formatter("%(message)s")
+            elif surface == "llm":
+                surface_config = replace(
+                    config,
+                    max_bytes=config.llm_max_bytes,
+                    backup_count=config.llm_backup_count,
+                )
             handler = _create_rotating_handler(
                 config.logs_dir / filename,
                 surface_config,

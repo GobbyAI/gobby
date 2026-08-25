@@ -14,6 +14,7 @@ DAEMON_LOG_FILENAME = "daemon.log"
 ERRORS_LOG_FILENAME = "errors.log"
 RUNTIME_LOG_FILENAME = "runtime.log"
 HOOKS_LOG_FILENAME = "hooks.log"
+LLM_LOG_FILENAME = "llm.log"
 MCP_LOG_FILENAME = "mcp.log"
 RULE_ALLOW_AUDIT_LOG_FILENAME = "rule-allow-audit.jsonl"
 UI_LOG_FILENAME = "ui.log"
@@ -47,6 +48,14 @@ class LoggingSettings(BaseModel):
         default=5,
         description="Number of rotated log files to keep",
     )
+    llm_max_size_mb: int = Field(
+        default=50,
+        description="Maximum feature LLM log file size in MB",
+    )
+    llm_backup_count: int = Field(
+        default=5,
+        description="Number of rotated feature LLM log files to keep",
+    )
     runtime_max_size_mb: int = Field(
         default=50,
         description="Maximum runtime output file size in MB",
@@ -76,6 +85,8 @@ class LoggingSettings(BaseModel):
     @field_validator(
         "max_size_mb",
         "backup_count",
+        "llm_max_size_mb",
+        "llm_backup_count",
         "runtime_max_size_mb",
         "growth_warn_mb_per_interval",
         "allow_audit_max_size_mb",

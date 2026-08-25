@@ -265,7 +265,7 @@ async def test_text_generation_service_generate_result_preserves_usage() -> None
 
 
 @pytest.mark.asyncio
-async def test_successful_non_vllm_text_generation_logs_feature_llm_call_at_debug(
+async def test_successful_non_vllm_text_generation_logs_feature_llm_call_at_info(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     registry = AICapabilityRegistry(
@@ -282,7 +282,7 @@ async def test_successful_non_vllm_text_generation_logs_feature_llm_call_at_debu
         registry,
         {"endpoint:lm-studio": RecordingAdapter("endpoint:lm-studio")},
     )
-    caplog.set_level(logging.DEBUG, logger=TEXT_GENERATION_LOGGER)
+    caplog.set_level(logging.INFO, logger=TEXT_GENERATION_LOGGER)
 
     await service.generate_result(
         TextGenerationRequest(
@@ -293,7 +293,7 @@ async def test_successful_non_vllm_text_generation_logs_feature_llm_call_at_debu
     records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
     assert len(records) == 1
     record = records[0]
-    assert record.levelno == logging.DEBUG
+    assert record.levelno == logging.INFO
     assert record.__dict__["success"] is True
     assert record.__dict__["provider"] == "endpoint:lm-studio"
     assert record.__dict__["model"] == "local-model"
@@ -304,7 +304,7 @@ async def test_successful_non_vllm_text_generation_logs_feature_llm_call_at_debu
     "capability",
     [AICapability.TEXT_GENERATE, AICapability.VISION_EXTRACT],
 )
-def test_successful_vllm_feature_call_logs_at_info_by_protocol(
+def test_successful_vllm_feature_call_logs_at_info(
     capability: AICapability,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -338,7 +338,7 @@ def test_successful_vllm_feature_call_logs_at_info_by_protocol(
         ("endpoint:ordinary", {}),
     ],
 )
-def test_successful_non_vllm_feature_calls_log_at_debug(
+def test_successful_non_vllm_feature_calls_log_at_info(
     provider: str,
     metadata: dict[str, str],
     caplog: pytest.LogCaptureFixture,
@@ -361,7 +361,7 @@ def test_successful_non_vllm_feature_calls_log_at_debug(
     )
 
     record = next(record for record in caplog.records if record.message == "feature_llm_call")
-    assert record.levelno == logging.DEBUG
+    assert record.levelno == logging.INFO
 
 
 @pytest.mark.asyncio
@@ -404,7 +404,7 @@ async def test_recoverable_candidate_failure_logs_feature_llm_call_at_debug(
 
     assert result.provider == "endpoint:good"
     records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
-    assert [record.levelno for record in records] == [logging.DEBUG, logging.DEBUG]
+    assert [record.levelno for record in records] == [logging.DEBUG, logging.INFO]
     assert records[0].__dict__["success"] is False
     assert records[1].__dict__["success"] is True
 

@@ -22,6 +22,8 @@ def test_logging_settings_defaults_and_resolved_paths(monkeypatch: pytest.Monkey
     assert settings.dir == "~/.gobby/logs"
     assert settings.max_size_mb == 10
     assert settings.backup_count == 5
+    assert settings.llm_max_size_mb == 50
+    assert settings.llm_backup_count == 5
     assert settings.runtime_max_size_mb == 50
     assert settings.growth_warn_mb_per_interval == 100
     assert settings.allow_audit_retention_days == 14
@@ -50,6 +52,8 @@ def test_default_logging_paths_follow_gobby_home(
     (
         "max_size_mb",
         "backup_count",
+        "llm_max_size_mb",
+        "llm_backup_count",
         "runtime_max_size_mb",
         "growth_warn_mb_per_interval",
         "allow_audit_retention_days",

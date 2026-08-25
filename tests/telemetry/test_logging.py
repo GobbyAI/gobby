@@ -15,6 +15,7 @@ from gobby.config.logging import (
     DAEMON_LOG_FILENAME,
     ERRORS_LOG_FILENAME,
     HOOKS_LOG_FILENAME,
+    LLM_LOG_FILENAME,
     MCP_LOG_FILENAME,
     RULE_ALLOW_AUDIT_LOG_FILENAME,
     RUNTIME_LOG_FILENAME,
@@ -48,7 +49,7 @@ def logging_config(temp_log_dir: Path) -> LoggingSettings:
     return LoggingSettings(dir=str(temp_log_dir), level="debug", format="text")
 
 
-def test_otel_trace_formatter_injects_trace_id():
+def test_otel_trace_formatter_injects_trace_id() -> None:
     formatter = OTelTraceFormatter("%(trace_id)s - %(message)s")
     record = logging.LogRecord(
         name="test",
@@ -62,7 +63,7 @@ def test_otel_trace_formatter_injects_trace_id():
 
     # Without active span
     assert " - test message" in formatter.format(record)
-    assert record.trace_id == "-"
+    assert record.__dict__["trace_id"] == "-"
 
     # With active span
     provider = TracerProvider()
@@ -71,10 +72,10 @@ def test_otel_trace_formatter_injects_trace_id():
         trace_id = format(span.get_span_context().trace_id, "032x")
         formatted = formatter.format(record)
         assert trace_id in formatted
-        assert record.trace_id == trace_id
+        assert record.__dict__["trace_id"] == trace_id
 
 
-def test_json_otel_formatter_produces_json():
+def test_json_otel_formatter_produces_json() -> None:
     formatter = JsonOTelFormatter()
     record = logging.LogRecord(
         name="gobby.test",
@@ -94,7 +95,7 @@ def test_json_otel_formatter_produces_json():
     assert data["name"] == "gobby.test"
 
 
-def test_json_otel_formatter_serializes_non_json_extra_values():
+def test_json_otel_formatter_serializes_non_json_extra_values() -> None:
     stream = io.StringIO()
     handler = logging.StreamHandler(stream)
     handler.setFormatter(JsonOTelFormatter())
@@ -129,6 +130,9 @@ def test_json_otel_formatter_serializes_non_json_extra_values():
         ("gobby.hooks", "hooks"),
         ("gobby.hooks.events", "hooks"),
         ("gobby.hooks_extra", "daemon"),
+        ("gobby.ai.text_generation", "llm"),
+        ("gobby.ai.text_generation.adapters", "llm"),
+        ("gobby.ai.text_generation_extra", "daemon"),
         ("gobby.mcp", "mcp"),
         ("gobby.mcp.server", "mcp"),
         ("gobby.mcp_proxy", "mcp"),
@@ -157,6 +161,7 @@ def test_setup_file_logging_routes_each_record_to_one_primary_surface(
         "gobby.runner": "daemon-record",
         "gobby.rule_allow_audit": '{"result":"allow"}',
         "gobby.hooks.events": "hook-record",
+        "gobby.ai.text_generation": "llm-record",
         "gobby.mcp_proxy.manager": "mcp-proxy-record",
         "gobby.servers.routes.mcp.tools": "mcp-route-record",
         "gobby.scheduler.executor": "scheduler-record",
@@ -170,6 +175,7 @@ def test_setup_file_logging_routes_each_record_to_one_primary_surface(
     for logger_name, message in messages.items():
         logging.getLogger(logger_name).info(message)
     logging.getLogger("gobby.hooks.events").warning("hook-warning")
+    logging.getLogger("gobby.ai.text_generation").warning("llm-warning")
     logging.getLogger("gobby.scheduler.scheduler").warning("automation-warning")
     logging.getLogger("gobby.runner").info("daemon-info")
 
@@ -178,6 +184,7 @@ def test_setup_file_logging_routes_each_record_to_one_primary_surface(
         "daemon": resolved_log_path(logging_config, DAEMON_LOG_FILENAME),
         "errors": resolved_log_path(logging_config, ERRORS_LOG_FILENAME),
         "hooks": resolved_log_path(logging_config, HOOKS_LOG_FILENAME),
+        "llm": resolved_log_path(logging_config, LLM_LOG_FILENAME),
         "mcp": resolved_log_path(logging_config, MCP_LOG_FILENAME),
         "allow_audit": resolved_log_path(logging_config, RULE_ALLOW_AUDIT_LOG_FILENAME),
     }
@@ -185,6 +192,7 @@ def test_setup_file_logging_routes_each_record_to_one_primary_surface(
 
     assert "daemon-record" in contents["daemon"]
     assert "hook-record" in contents["hooks"]
+    assert "llm-record" in contents["llm"]
     assert "mcp-proxy-record" in contents["mcp"]
     assert "mcp-route-record" in contents["mcp"]
     for message in (
@@ -200,7 +208,7 @@ def test_setup_file_logging_routes_each_record_to_one_primary_surface(
     for message in messages.values():
         primary_writes = sum(
             message in contents[surface]
-            for surface in ("allow_audit", "automation", "daemon", "hooks", "mcp")
+            for surface in ("allow_audit", "automation", "daemon", "hooks", "llm", "mcp")
         )
         assert primary_writes == 1
 
@@ -208,6 +216,8 @@ def test_setup_file_logging_routes_each_record_to_one_primary_surface(
 
     assert "hook-warning" in contents["hooks"]
     assert "hook-warning" in contents["errors"]
+    assert "llm-warning" in contents["llm"]
+    assert "llm-warning" in contents["errors"]
     assert "automation-warning" in contents["automation"]
     assert "automation-warning" in contents["errors"]
     assert "daemon-info" not in contents["errors"]
@@ -256,7 +266,7 @@ def test_setup_file_logging_uses_root_handlers_and_shared_formatter_family(
         for handler in root_logger.handlers
         if isinstance(handler, logging.handlers.RotatingFileHandler)
     ]
-    assert len(file_handlers) == 6
+    assert len(file_handlers) == 7
     audit_handlers = [
         handler
         for handler in file_handlers
@@ -267,7 +277,13 @@ def test_setup_file_logging_uses_root_handlers_and_shared_formatter_family(
     assert {
         type(handler.formatter) for handler in file_handlers if handler not in audit_handlers
     } == {OTelTraceFormatter}
-    for name in ("gobby.hooks", "gobby.mcp", "gobby.mcp_proxy", "gobby.servers.routes.mcp"):
+    for name in (
+        "gobby.ai.text_generation",
+        "gobby.hooks",
+        "gobby.mcp",
+        "gobby.mcp_proxy",
+        "gobby.servers.routes.mcp",
+    ):
         child = logging.getLogger(name)
         assert child.propagate
         assert child.handlers == []
@@ -304,6 +320,33 @@ def test_setup_file_logging_rotation(logging_config: LoggingSettings) -> None:
 
     # Check if rotated file exists
     assert Path(f"{resolved_log_path(logging_config, DAEMON_LOG_FILENAME)}.1").exists()
+
+
+def test_setup_file_logging_uses_independent_llm_rotation(
+    logging_config: LoggingSettings,
+) -> None:
+    logging_config.max_size_mb = 2
+    logging_config.backup_count = 3
+    logging_config.llm_max_size_mb = 1
+    logging_config.llm_backup_count = 2
+
+    setup_file_logging(logging_config)
+
+    llm_handler = next(
+        handler
+        for handler in logging.getLogger("gobby").handlers
+        if isinstance(handler, logging.handlers.RotatingFileHandler)
+        and Path(handler.baseFilename).name == LLM_LOG_FILENAME
+    )
+    assert llm_handler.maxBytes == 1024 * 1024
+    assert llm_handler.backupCount == 2
+
+    large_msg = "x" * 1024 * 100
+    for _ in range(15):
+        logging.getLogger("gobby.ai.text_generation").info(large_msg)
+
+    assert Path(f"{resolved_log_path(logging_config, LLM_LOG_FILENAME)}.1").exists()
+    assert not Path(f"{resolved_log_path(logging_config, DAEMON_LOG_FILENAME)}.1").exists()
 
 
 def test_setup_file_logging_verbose_sets_debug(logging_config: LoggingSettings) -> None:
@@ -347,7 +390,10 @@ def test_setup_file_logging_has_no_otel_log_handler(logging_config: LoggingSetti
     assert not any(isinstance(h, LoggingHandler) for h in root_logger.handlers)
 
 
-def test_init_telemetry_sets_providers(telemetry_config, logging_config):
+def test_init_telemetry_sets_providers(
+    telemetry_config: TelemetrySettings,
+    logging_config: LoggingSettings,
+) -> None:
     from opentelemetry import metrics, trace
 
     # Clear providers if possible or just check they are set
@@ -357,8 +403,10 @@ def test_init_telemetry_sets_providers(telemetry_config, logging_config):
     assert metrics.get_meter_provider() is not None
 
 
-def test_daemon_init_activates_llm_instrumentor(telemetry_config, logging_config):
-    from gobby.runner_init.storage import init_telemetry as daemon_init_telemetry
+def test_init_telemetry_activates_llm_instrumentor(
+    telemetry_config: TelemetrySettings,
+    logging_config: LoggingSettings,
+) -> None:
     from gobby.telemetry.instrumentors import _instrumented
 
     telemetry_config.llm_tracing.enabled = True
@@ -384,7 +432,7 @@ def test_daemon_init_activates_llm_instrumentor(telemetry_config, logging_config
 
         instrumentor = OpenAIInstrumentor()
         try:
-            daemon_init_telemetry(telemetry_config, logging_config)
+            init_telemetry(telemetry_config, logging_config)
 
             assert instrumentor.is_instrumented_by_opentelemetry
         finally:
@@ -400,7 +448,7 @@ def test_shutdown_telemetry_has_no_logging_bridge_and_shuts_down_providers() -> 
     mock_shutdown_providers.assert_called_once()
 
 
-def test_otel_trace_formatter_short_name():
+def test_otel_trace_formatter_short_name() -> None:
     formatter = OTelTraceFormatter("%(short_name)s")
 
     # gobby.test -> test
@@ -412,7 +460,7 @@ def test_otel_trace_formatter_short_name():
     assert formatter.format(record2) == "other.test"
 
 
-def test_otel_trace_formatter_conditional_trace_id_append():
+def test_otel_trace_formatter_conditional_trace_id_append() -> None:
     """Trace ID is appended at end only when a real span is active."""
     formatter = OTelTraceFormatter("%(message)s")
     record = logging.LogRecord("test", logging.INFO, "", 0, "test message", (), None)
@@ -431,7 +479,7 @@ def test_otel_trace_formatter_conditional_trace_id_append():
         assert formatted == f"test message [{trace_id}]"
 
 
-def test_otel_trace_formatter_trace_id_before_extras():
+def test_otel_trace_formatter_trace_id_before_extras() -> None:
     """Trace ID appears before extra fields when both are present."""
     formatter = OTelTraceFormatter("%(message)s")
     record = logging.LogRecord("test", logging.INFO, "", 0, "msg", (), None)
@@ -445,7 +493,7 @@ def test_otel_trace_formatter_trace_id_before_extras():
         assert f"msg [{trace_id}] | custom_field=value" == formatted
 
 
-def test_otel_trace_formatter_extra_fields():
+def test_otel_trace_formatter_extra_fields() -> None:
     formatter = OTelTraceFormatter("%(message)s")
     record = logging.LogRecord("test", logging.INFO, "", 0, "msg", (), None)
     record.custom_field = "value"

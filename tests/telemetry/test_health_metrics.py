@@ -76,6 +76,7 @@ def test_logging_handler_counts_each_source_record_once_with_bounded_labels(
 
     logging.getLogger("gobby.runner").warning("daemon warning")
     logging.getLogger("gobby.hooks.runner").error("hook error")
+    logging.getLogger("gobby.ai.text_generation").error("llm error")
     logging.getLogger("gobby.mcp_proxy.tools").critical("mcp critical")
     logging.getLogger("gobby.scheduler.executor").warning("automation warning")
     get_parser_error_logger("codex").error("parser error")
@@ -85,6 +86,7 @@ def test_logging_handler_counts_each_source_record_once_with_bounded_labels(
     assert _counter_values(reader, "logging_records_total") == {
         (("severity", "CRITICAL"), ("surface", "mcp")): 1,
         (("severity", "ERROR"), ("surface", "hooks")): 1,
+        (("severity", "ERROR"), ("surface", "llm")): 1,
         (("severity", "ERROR"), ("surface", "parser")): 1,
         (("severity", "WARNING"), ("surface", "automation")): 1,
         (("severity", "WARNING"), ("surface", "daemon")): 1,

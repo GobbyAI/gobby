@@ -10961,26 +10961,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/telemetry/test_logging.py::::mypy:attr-defined",
-      "issue_code": "mypy:attr-defined",
-      "line": 65,
-      "message": "\"LogRecord\" has no attribute \"trace_id\"",
-      "occurrences": 3,
-      "path": "tests/telemetry/test_logging.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/telemetry/test_logging.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 51,
-      "message": "Function is missing a return type annotation",
-      "occurrences": 9,
-      "path": "tests/telemetry/test_logging.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/telemetry/test_metrics.py::::mypy:no-untyped-def",
       "issue_code": "mypy:no-untyped-def",
       "line": 18,

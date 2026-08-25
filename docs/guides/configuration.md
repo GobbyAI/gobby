@@ -240,6 +240,8 @@ logging:
   dir: ~/.gobby/logs
   max_size_mb: 10
   backup_count: 5
+  llm_max_size_mb: 50
+  llm_backup_count: 5
   runtime_max_size_mb: 50
   growth_warn_mb_per_interval: 100
 
@@ -254,8 +256,11 @@ telemetry:
 ```
 
 `logging.max_size_mb` and `logging.backup_count` control formatted daemon and
-parser log rotation. `logging.runtime_max_size_mb` is a health threshold for
-the append-only `runtime.log`; it does not truncate the file.
+parser log rotation. `logging.llm_max_size_mb` and `logging.llm_backup_count`
+independently control the higher-volume `llm.log` surface. The 50 MiB default
+keeps more feature-call history without enlarging other logs.
+`logging.runtime_max_size_mb` is a health threshold for the append-only
+`runtime.log`; it does not truncate the file.
 `logging.growth_warn_mb_per_interval` controls the warning threshold for total
 log-directory growth between resource-monitor samples.
 

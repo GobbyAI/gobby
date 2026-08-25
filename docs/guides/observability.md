@@ -61,13 +61,14 @@ Start with the file whose surface matches the failing operation:
 | `errors.log` | Aggregate view of every Gobby `WARNING`, `ERROR`, and `CRITICAL` record |
 | `runtime.log` | Raw daemon process stdout/stderr, including failures before formatted logging is available |
 | `hooks.log` | Hook ingestion, dispatch, adapter, and lifecycle behavior |
+| `llm.log` | Feature LLM calls, candidate routing, latency, outcomes, and provider circuit-breaker events |
 | `mcp.log` | MCP proxy, server, client, discovery, and MCP route behavior |
 | `automation.log` | Scheduler, dispatcher, build, system automation, and pipeline-heartbeat behavior |
 | `ui.log` | UI development-server stdout/stderr |
 | `*-parser-error.log` | Per-CLI transcript parser diagnostics, such as `codex-parser-error.log` |
 
 Each formatted record has exactly one primary file among `daemon.log`,
-`hooks.log`, `mcp.log`, and `automation.log`. Parser diagnostics use their
+`hooks.log`, `llm.log`, `mcp.log`, and `automation.log`. Parser diagnostics use their
 per-CLI parser file. Gobby also writes every `WARNING` or higher record to
 `errors.log` intentionally, so the same source record appears in its primary
 file and the aggregate. This duplicate write is useful for incident scanning;
@@ -78,7 +79,9 @@ file and the aggregate. This duplicate write is useful for incident scanning;
 `daemon.log`, `hooks.log`, `mcp.log`, `automation.log`, `errors.log`, and the
 parser-error files rotate at `logging.max_size_mb`. Gobby keeps
 `logging.backup_count` numbered backups for each file. The defaults are 10 MiB
-and five backups. `ui.log` has an independent 5 MiB limit and three backups.
+and five backups. `llm.log` uses independent `logging.llm_max_size_mb` and
+`logging.llm_backup_count` settings, defaulting to 50 MiB and five backups.
+`ui.log` has an independent 5 MiB limit and three backups.
 
 `runtime.log` is an append-only capture owned by the process launcher or OS
 service. `logging.runtime_max_size_mb` is a health threshold: crossing it marks
