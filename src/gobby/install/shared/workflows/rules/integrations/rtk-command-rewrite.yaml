@@ -1,6 +1,6 @@
 # RTK remains opt-in. Installer consent toggles the installed global row;
 # template sync preserves that installed state on later upgrades.
-tags: [integrations, rtk, gobby]
+tags: [integrations, rtk, gobby, default]
 
 rules:
   rtk-command-rewrite:

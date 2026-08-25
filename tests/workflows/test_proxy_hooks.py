@@ -93,6 +93,9 @@ sys.stdout.write(f"rtk {{command}}")
     )
     executable.chmod(0o755)
     monkeypatch.setenv("GOBBY_RTK_BIN", str(executable))
+    # Keep the fake the only candidate: a host-installed rtk on PATH would
+    # otherwise absorb a failed probe and silently rewrite for real.
+    monkeypatch.setenv("PATH", str(tmp_path / "empty-path"))
     return executable
 
 
@@ -167,6 +170,7 @@ def test_bundled_rtk_rule_is_disabled_and_permission_neutral() -> None:
 
     assert definition["enabled"] is False
     assert definition["priority"] == 90
+    assert "default" in document["tags"]
     assert definition["event"] == "before_tool"
     assert definition["tools"] == ["Bash"]
     assert definition["effects"] == [{"type": "proxy_hook", "handler": "rtk", "timeout_seconds": 2}]
@@ -187,6 +191,9 @@ def test_bundled_rtk_rule_syncs_as_disabled_installed_row(
     assert row.source == "installed"
     assert row.enabled is False
     assert row.priority == 90
+    # Agent rule selectors activate rules by tag (every bundled agent includes
+    # "tag:default"); without it the engine drops the rule before evaluation.
+    assert "default" in (row.tags or [])
     body = RuleDefinitionBody.model_validate(row.definition_json)
     assert body.group == "integrations"
     assert body.tools == ["Bash"]
@@ -497,13 +504,21 @@ async def test_rtk_timeout_passes_through(
     manager: RuleDefinitionManager,
     fake_rtk: Path,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     monkeypatch.setenv("FAKE_RTK_MODE", "sleep")
-    _create_rule(manager, "proxy-timeout", [_proxy_effect(timeout_seconds=0.1)], priority=10)
+    # 1.0s leaves the resolver a 250ms probe budget (enough for the Python fake
+    # to answer --version) while the fake's 2s sleep still overruns the rewrite.
+    _create_rule(manager, "proxy-timeout", [_proxy_effect(timeout_seconds=1.0)], priority=10)
 
-    response = await RuleEngine(db).evaluate(_event(), SESSION_ID, {})
+    with caplog.at_level(logging.WARNING, logger=proxy_hooks.logger.name):
+        response = await RuleEngine(db).evaluate(_event(), SESSION_ID, {})
 
+    assert response.decision == "allow"
     assert response.modified_input is None
+    assert [
+        record.getMessage() for record in caplog.records if record.name == proxy_hooks.logger.name
+    ] == ["proxy_hook[proxy-timeout]: RTK timed out"]
 
 
 async def test_exhausted_shared_deadline_skips_rtk(
