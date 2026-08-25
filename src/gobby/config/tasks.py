@@ -187,6 +187,16 @@ class TaskValidationConfig(FeatureDefaultConfig):
         default=256_000,
         description="Maximum rendered character count for the task-close criteria-review prompt.",
     )
+    close_review_prompt_budget_chars: int = Field(
+        default=50_000,
+        description=(
+            "Working character budget for the task-close criteria-review prompt. Diff "
+            "evidence is truncated per file to fit, keeping every changed file "
+            "represented, declaring omitted spans, and always retaining lines that "
+            "match strings named by the criteria. close_review_prompt_max_chars "
+            "remains the hard failure cap."
+        ),
+    )
     close_review_total_timeout_seconds: float = Field(
         default=120.0,
         gt=0,
@@ -222,6 +232,7 @@ class TaskValidationConfig(FeatureDefaultConfig):
         "max_iterations",
         "close_validation_escalation_threshold",
         "close_review_prompt_max_chars",
+        "close_review_prompt_budget_chars",
     )
     @classmethod
     def validate_positive_int(cls, v: int) -> int:

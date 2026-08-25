@@ -1,7 +1,7 @@
 ---
 name: validation-validate
 description: Bounded task-close criteria review
-version: "3.0"
+version: "3.1"
 variables:
   title:
     type: str
@@ -26,7 +26,10 @@ variables:
   diff_evidence:
     type: str
     required: true
-    description: Complete file manifest, per-file LOC statistics, and textual diff
+    description: >-
+      Complete file manifest with per-file LOC statistics, plus the textual
+      diff — complete when it fits the review budget, otherwise truncated per
+      file with inline omission markers
   test_bodies:
     type: str
     required: true
@@ -50,6 +53,11 @@ Inspect every named acceptance-test body. Reject delegated tests, constant or
 tautological assertions, placeholders, empty stubs, and tests that never exercise
 the criterion's subject. A passing command proves execution only; each satisfied
 test-backed criterion needs evidence in the body that it exercises the behavior.
+
+Diff evidence over the review budget arrives truncated per file: the manifest
+statistics stay complete, omitted spans are declared with inline markers, and
+lines matching strings the criteria name are retained. Judge what is shown —
+a marked omission is withheld evidence, never missing work.
 
 When the closure reason is one of `duplicate`, `already_implemented`,
 `wont_fix`, `obsolete`, or `out_of_repo`, the task is being dispositioned
