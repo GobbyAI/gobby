@@ -213,6 +213,31 @@ async def test_rtk_rewrite_is_permission_neutral(
 
     assert response.modified_input == {"command": "rtk git status"}
     assert response.permission_decision is None
+
+
+async def test_rtk_rewrite_returns_the_complete_tool_input(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    fake_rtk: Path,
+) -> None:
+    """Claude applies ``updatedInput`` wholesale, so the rewrite carries every field."""
+    _create_rule(manager, "rtk", [_proxy_effect()], priority=90)
+    event = _event()
+    event.data["tool_input"] = {
+        "command": "git status",
+        "timeout": 300000,
+        "description": "Show status",
+        "run_in_background": False,
+    }
+
+    response = await RuleEngine(db).evaluate(event, SESSION_ID, {})
+
+    assert response.modified_input == {
+        "command": "rtk git status",
+        "timeout": 300000,
+        "description": "Show status",
+        "run_in_background": False,
+    }
     assert response.auto_approve is False
 
 

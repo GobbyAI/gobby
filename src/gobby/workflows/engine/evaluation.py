@@ -64,6 +64,26 @@ class BlockGate:
     acknowledge_variable: str | None = None
 
 
+def _replacement_tool_input(event: HookEvent, updates: dict[str, Any]) -> dict[str, Any]:
+    """Merge rewrite updates over the tool input the CLI actually sent.
+
+    Every consumer applies ``modified_input`` wholesale — Claude Code's
+    ``updatedInput``, AGY's ``overwrite``, the web-chat effective input — so a
+    bare delta drops every field the rule left alone: a rewritten Bash command
+    lost its ``timeout`` and ran under the CLI default. ``normalize_tool_fields``
+    keeps the payload the CLI sent as ``_raw_tool_input``, untouched by aliases
+    such as a backfilled ``file_path``; the normalized ``tool_input`` is the
+    fallback for data that never passed through normalization.
+    """
+    data = event.data if isinstance(event.data, dict) else {}
+    base = data.get("_raw_tool_input")
+    if not isinstance(base, dict):
+        base = data.get("tool_input")
+    if not isinstance(base, dict):
+        return updates
+    return {**base, **updates}
+
+
 class EvaluationMixin:
     """Mixin providing the RuleEngine evaluation loop and response assembly."""
 
@@ -502,6 +522,8 @@ class EvaluationMixin:
                 modified_input = permission_meta.get("input_updates")
             permission_decision = permission_meta.get("permission_decision")
             updated_permissions = permission_meta.get("updated_permissions")
+        if modified_input is not None:
+            modified_input = _replacement_tool_input(evaluation.event, modified_input)
 
         watch_paths = evaluation.variables.pop("_watch_paths", None)
         worktree_path = evaluation.variables.pop("_worktree_path", None)

@@ -1882,6 +1882,32 @@ class TestEndToEndRuleMatch:
         assert data.get("mcp_server") == "gobby-memory"
 
 
+class TestRawToolInputSnapshot:
+    """normalize_tool_fields keeps the payload the CLI sent beside the aliased copy."""
+
+    def test_snapshot_predates_aliasing_and_survives_repeat_passes(self) -> None:
+        data: dict[str, Any] = {
+            "tool_name": "Glob",
+            "tool_input": {"pattern": "*.py", "path": "src"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["tool_input"]["file_path"] == "src"
+        assert data["_raw_tool_input"] == {"pattern": "*.py", "path": "src"}
+
+        normalize_tool_fields(data)
+
+        assert data["_raw_tool_input"] == {"pattern": "*.py", "path": "src"}
+
+    def test_non_mapping_tool_input_takes_no_snapshot(self) -> None:
+        data: dict[str, Any] = {"tool_name": "Bash", "tool_input": "not a mapping"}
+
+        normalize_tool_fields(data)
+
+        assert "_raw_tool_input" not in data
+
+
 class TestStringArgumentCoercion:
     """Tests for auto-coercing stringified arguments in call_tool."""
 

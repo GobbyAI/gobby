@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -198,6 +199,23 @@ class TestTranslateToHookEvent:
         assert event.cwd == "/projects/test"
         assert event.timestamp is not None
         assert event.metadata == {"_native_hook_type": "session-start"}
+
+    def test_pre_tool_use_keeps_the_raw_tool_input(self) -> None:
+        """Normalization aliases ``tool_input``; the payload Claude sent survives beside it."""
+        adapter = ClaudeCodeAdapter()
+        native: dict[str, Any] = {
+            "hook_type": "pre-tool-use",
+            "input_data": {
+                "session_id": "ext-123",
+                "tool_name": "Glob",
+                "tool_input": {"pattern": "*.py", "path": "src"},
+            },
+        }
+
+        event = adapter.translate_to_hook_event(native)
+
+        assert event.data["tool_input"]["file_path"] == "src"
+        assert event.data["_raw_tool_input"] == {"pattern": "*.py", "path": "src"}
 
     def test_top_level_platform_session_id_copied_to_metadata(self) -> None:
         adapter = ClaudeCodeAdapter()
@@ -978,9 +996,15 @@ class TestTranslateFromHookResponse:
         assert "Subagent context" in result["hookSpecificOutput"]["additionalContext"]
 
     def test_permission_request_allow_uses_nested_decision(self) -> None:
+        """An explicit approval nests behavior, updatedInput, and updatedPermissions.
+
+        A rewrite alone is permission-neutral (see test_permission_neutral_rewrites),
+        so the approval has to be stated for the nested decision to exist.
+        """
         adapter = ClaudeCodeAdapter()
         response = HookResponse(
             decision="allow",
+            permission_decision="allow",
             modified_input={"command": "npm run lint"},
             updated_permissions=[
                 {"type": "setMode", "mode": "acceptEdits", "destination": "session"}
