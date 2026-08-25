@@ -17,6 +17,10 @@ filter = 'package(gobby-hooks)'
 test-group = 'ghook-process'
 
 [[profile.default.overrides]]
+filter = 'package(gobby-core) & (test(schema::runner_tests) | binary(catalog_manifest_freshness) | binary(schema_contract))'
+test-group = 'serial-db'
+
+[[profile.default.overrides]]
 filter = 'package(gobby-code) & (test(::serial_db::) | test(serial_db::))'
 test-group = 'serial-db'
 
