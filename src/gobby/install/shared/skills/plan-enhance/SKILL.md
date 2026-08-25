@@ -16,7 +16,8 @@ metadata:
 > Internal methodology skill; loaded with `get_skill(name="plan-enhance")` by the
 > `plan-enhancer-taskless` agent (interactive `/gobby plan`) and the
 > `plan-enhancer` agent (stage-native dispatch). Not a user-facing command. Load
-> the shared **`restraint`** and **`proportionality`** skills alongside it: every
+> **`restraint`** first (`get_skill(name="restraint")`), before any suggestion is
+> formed, and the shared **`proportionality`** skill alongside this one: every
 > suggestion walks the restraint decision ladder before it is recorded, each
 > recorded suggestion names the rung it stopped at, and one that stops at a
 > lower rung than the mechanism it proposes is dropped.
