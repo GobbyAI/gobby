@@ -930,6 +930,7 @@ def test_interactive_issue_rolls_generation_past_credential_age_bound(
                 (first.managed_execution_id,),
             )
 
+        renewal_started = datetime.now(UTC)
         renewed = manager.issue_interactive(
             deployment_token=token,
             project_id=fixture.project_id,
@@ -946,7 +947,7 @@ def test_interactive_issue_rolls_generation_past_credential_age_bound(
         with psycopg.connect(fixture.database_url, autocommit=True) as admin:
             bindings = admin.execute(
                 "SELECT credential_generation, predecessor_drain_deadline IS NOT NULL, "
-                "revocation_requested_at IS NOT NULL "
+                "revocation_requested_at IS NOT NULL, issued_at "
                 f"FROM {AUTH_SCHEMA}.principal_bindings "
                 "WHERE deployment_token = %s AND project_id = %s AND revoked_at IS NULL "
                 "ORDER BY credential_generation",
@@ -957,10 +958,15 @@ def test_interactive_issue_rolls_generation_past_credential_age_bound(
                 "WHERE role_name = %s AND credential_generation = %s",
                 (renewed.role_name, renewed.credential_generation),
             ).fetchall()
-        assert bindings == [
+        assert [row[:3] for row in bindings] == [
             (first.credential_generation, True, True),
             (renewed.credential_generation, False, False),
         ]
+        predecessor_issued_at, successor_issued_at = (row[3] for row in bindings)
+        assert successor_issued_at > predecessor_issued_at
+        # Fresh issued_at, tolerating sub-second skew between the Python and
+        # Postgres clocks.
+        assert successor_issued_at >= renewal_started - timedelta(seconds=5)
         assert audit == [("rotate",)]
     finally:
         manager.revoke_interactive(
