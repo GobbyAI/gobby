@@ -1,0 +1,54 @@
+skill: plan-mechanic
+agent: default
+description: >-
+  Agent is handed a plan that fails `gobby plans validate` and is tempted to
+  rewrite the failing section instead of applying the smallest validator-driven
+  repair.
+prompt: |
+  `uv run gobby plans validate .gobby/plans/example.md -p .` reports
+  target-coverage on § 3.1 and shared-target-ordering between § 2.1 and § 3.1.
+  Get the plan to validate clean.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: rewrite_section
+        section: "3.1"
+        text: Simplified the deliverable so it only touches one file.
+      - action: respond
+        text: Rewrote section 3.1 so the targets are simpler now.
+  loaded:
+    loaded_skills:
+      - plan-mechanic
+    actions:
+      - action: run_plan_validate
+        command: uv run gobby plans validate .gobby/plans/example.md -p .
+      - action: apply_bounded_repair
+        section: "3.1"
+        lint: target-coverage
+        text: Added the body-mentioned path to the Targets block.
+      - action: apply_bounded_repair
+        section: "3.1"
+        lint: shared-target-ordering
+        text: "Added (depends: 2.1) to the heading."
+      - action: run_plan_validate
+        command: uv run gobby plans validate .gobby/plans/example.md -p . --mode expansion
+      - action: respond
+        text: "Validation clean: standard and expansion. 2 repairs applied. V1 fences byte-identical."
+assertions:
+  baseline_action_order:
+    - rewrite_section
+    - respond
+  loaded_action_order:
+    - run_plan_validate
+    - apply_bounded_repair
+    - apply_bounded_repair
+    - run_plan_validate
+    - respond
+  baseline_text_contains:
+    - Rewrote section
+  loaded_text_contains:
+    - "Validation clean"
+    - byte-identical
+  loaded_text_forbids:
+    - Rewrote section
