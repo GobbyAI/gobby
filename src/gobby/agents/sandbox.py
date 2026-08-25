@@ -708,11 +708,15 @@ def compute_sandbox_paths(
     workspace = Path(canonical_path(workspace_path))
     policy_env = os.environ if env is None else env
     git_paths = _git_metadata_write_paths(workspace)
+    from gobby.integrations.rtk import sandbox_paths as resolve_rtk_sandbox_paths
+
+    rtk_paths = resolve_rtk_sandbox_paths(env=policy_env)
     write_paths = canonical_paths(
         [
             *default_write_paths(config, workspace),
             *git_paths,
             *(provider_write_exceptions(provider) if provider else []),
+            *(tuple(str(path) for path in rtk_paths.write_paths) if rtk_paths else ()),
         ]
     )
     read_paths = canonical_paths(
@@ -720,6 +724,7 @@ def compute_sandbox_paths(
             str(workspace),
             *write_paths,
             *gobby_read_exceptions(policy_env),
+            *(tuple(str(path) for path in rtk_paths.read_paths) if rtk_paths else ()),
             *toolchain_read_roots(),
             *mcp_config_read_exceptions(workspace),
             *(

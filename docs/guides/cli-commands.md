@@ -162,6 +162,7 @@ gobby uninstall [OPTIONS]
 | Option | Purpose |
 | --- | --- |
 | `--claude` | Install Claude Code integration assets. |
+| `--grok` | Install Grok CLI integration assets. |
 | `--agy` | Install AGY integration assets. |
 | `--codex` | Install Codex integration assets. |
 | `--droid` | Install Droid integration assets. |
@@ -172,6 +173,7 @@ gobby uninstall [OPTIONS]
 | `--falkordb-password-stdin` | Read the FalkorDB password from standard input. |
 | `--project` | Install project-scoped configuration. |
 | `--voice` | Install voice support assets. |
+| `--rtk`, `--no-rtk` | Enable or disable RTK command rewriting through Gobby's hook proxy. |
 | `--embedding-url URL` | Use a custom embedding API endpoint. |
 | `--embedding-provider PROVIDER` | Force embedding provider compatibility mode (`lmstudio`, `ollama`, `openai-compatible`, `vllm`). |
 | `--embedding-model MODEL` | Override the embedding model. |
@@ -199,16 +201,49 @@ CLI-targeted flags and `--hooks` are maintenance operations. In particular,
 `gobby install --hooks` only ensures the personal marker and reinstalls
 repository Git hooks; it skips daemon configuration and managed services.
 
+RTK integration is opt-in. Interactive installs prompt with the currently
+installed `rtk-command-rewrite` rule state as the default; fresh
+`--no-interactive` installs leave it disabled. `--rtk` accepts a compatible stock
+RTK 0.45.0 or newer from PATH, uses Homebrew when available, or installs a
+checksum-verified fallback in `~/.gobby/bin/`. Gobby never invokes `rtk init`.
+
+When enabled, `ghook` remains every CLI's installed hook. Gobby calls
+`rtk rewrite -- <command>` only for synchronous `before_tool` shell-command
+rewrites on Claude Code, Codex, Qwen, Grok, Droid, and AGY. `rewrite` is the
+same contract stock RTK host hooks use, so RTK's heredoc, command-substitution,
+and file-redirect gates apply: exit 0 (allow) and exit 3 (ask) apply the
+rewritten command from stdout; exit 1 (no equivalent) and exit 2 (deny) pass the
+original command through untouched. Gobby ignores RTK's permission verdict and
+preserves each host's native permission flow. RTK failures, timeouts, invalid
+output, and unsupported providers fail open. RTK's existing `exclude_commands`,
+`transparent_prefixes`, global `history.db`, and `tee/` configuration remain
+authoritative. The compatibility probe (`--version` plus `rewrite --help`) runs
+once per executable and is reused until the binary changes on disk.
+
+`gobby hooks status` reports RTK binary path/version, installed rule state,
+direct-hook conflicts, ownership, and health. Opt-in reconciliation backs up and
+removes exact RTK-generated direct hooks, legacy scripts, instruction blocks, and
+generated files; modified or unrelated content is preserved and reported.
+Global uninstall disables the rule. `gobby uninstall --tools` also removes the
+checksum-matching Gobby fallback, while Homebrew and other user-managed RTK
+installations remain installed.
+
+The V1 handler registry is internal and contains only `rtk`. Future versions may
+add named trusted handlers, broader hook-event capabilities, and dedicated
+management surfaces.
+
 `gobby uninstall` options:
 
 | Option | Purpose |
 | --- | --- |
 | `--claude` | Remove Claude Code integration assets. |
+| `--grok` | Remove Grok CLI integration assets. |
 | `--agy` | Remove AGY integration assets. |
 | `--codex` | Remove Codex integration assets. |
 | `--droid` | Remove Droid integration assets. |
 | `--qwen` | Remove QwenCode integration assets. |
 | `--all` | Remove all supported integration assets. |
+| `--tools` | Remove Gobby-owned managed tool artifacts, including the RTK fallback. |
 | `--falkordb` | Remove FalkorDB graph backend data and configuration. |
 | `--volumes` | Remove service volumes where supported. |
 | `--project` | Remove project-scoped configuration. |

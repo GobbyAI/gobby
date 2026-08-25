@@ -13,6 +13,7 @@ from gobby.ui_exposure import UiExposeError, disable_tailscale_ui
 
 from ._install_prompts import _echo_uninstall_summary, _run_standard_cli_uninstall
 from .install_setup_impeccable import remove_impeccable_runtime
+from .install_setup_rtk import disable_rule_if_present, remove_managed_rtk
 from .installers import (
     uninstall_agy,
     uninstall_claude,
@@ -21,6 +22,7 @@ from .installers import (
     uninstall_grok,
     uninstall_qwen,
 )
+from .runtime import CliRuntime, get_cli_runtime
 
 
 def _teardown_ui_exposure() -> None:
@@ -144,11 +146,28 @@ def uninstall(
     ):
         all_flag = True
 
+    if not project_flag:
+        try:
+            runtime = get_cli_runtime()
+        except RuntimeError:
+            runtime = CliRuntime(config_file=None)
+        try:
+            disable_rule_if_present(runtime.require_database())
+        except (BootstrapConfigError, FileNotFoundError, OSError, RuntimeError, ValueError) as exc:
+            click.echo(f"Warning: could not disable RTK rewrite rule: {exc}", err=True)
+        finally:
+            runtime.close()
+
     if tools_flag:
         cleanup = remove_impeccable_runtime()
         for path in cleanup.removed:
             click.echo(f"Removed managed artifact: {path}")
         for warning in cleanup.skipped:
+            click.echo(f"Warning: {warning}", err=True)
+        rtk_cleanup = remove_managed_rtk()
+        for path in rtk_cleanup.removed:
+            click.echo(f"Removed managed artifact: {path}")
+        for warning in rtk_cleanup.conflicts:
             click.echo(f"Warning: {warning}", err=True)
         if not any((claude_flag, grok_flag, agy_flag, qwen_flag, codex_flag, droid_flag, all_flag)):
             return

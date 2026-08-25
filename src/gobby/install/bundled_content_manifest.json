@@ -467,6 +467,7 @@
     "workflows/rules/context-handoff/preserve-context-on-compact.yaml": "191138e048eeadab0305ca0ea13e68b8b6a4151d4cf7a193f7fe7b03e42a9154",
     "workflows/rules/error-recovery/inject-tool-error-recovery.yaml": "440e18522408fcfba63f45a0615b00f8ec9c38e9d6f6cb032ae5904372365156",
     "workflows/rules/impeccable/design-detector.yaml": "0ca9b0690d61dff80a89e714f7687bcb837958af70c417655756ccdf47ea3012",
+    "workflows/rules/integrations/rtk-command-rewrite.yaml": "8af9d4fed869a11b23efe026c375ee7fddfc4a6546df8983cefe2efca9c58803",
     "workflows/rules/memory-lifecycle/digest-on-plan-turn-end.yaml": "c368689c821dd658523a3efc6b302edf8c0a7775b530528a0d8f623b32877d53",
     "workflows/rules/memory-lifecycle/digest-on-response.yaml": "61590db82a5ec27c039cf460f6fb5cdc14b9e8134ef0bbb4e3fde21289583ba2",
     "workflows/rules/memory-lifecycle/guard-plan-memory-writes.yaml": "1077d39cc57cc34e8d9d2661248399fff1136d50edba5ac8cdd7e1f5d3ef285d",

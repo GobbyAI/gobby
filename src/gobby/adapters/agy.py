@@ -69,14 +69,14 @@ class AgyAdapter(ACPHookAdapter):
 
         if event_name == "Stop":
             if response.decision in {"deny", "block"}:
-                result: dict[str, Any] = {"decision": "continue"}
+                stop_result: dict[str, Any] = {"decision": "continue"}
                 if normalized_reason:
-                    result["reason"] = normalized_reason
-                return result
+                    stop_result["reason"] = normalized_reason
+                return stop_result
             return {}
 
         is_denied = response.decision in {"deny", "block"}
-        decision = response.decision
+        decision: str | None = None
         if response.permission_decision:
             decision = response.permission_decision
         elif response.auto_approve:
@@ -86,7 +86,9 @@ class AgyAdapter(ACPHookAdapter):
         elif is_denied:
             decision = "deny"
 
-        result = {"decision": decision}
+        result: dict[str, Any] = {}
+        if decision is not None:
+            result["decision"] = decision
         if normalized_reason:
             result["reason"] = normalized_reason
         if response.modified_input is not None:

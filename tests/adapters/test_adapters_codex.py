@@ -2991,7 +2991,6 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert "decision" not in result
         assert result["hookSpecificOutput"] == {
             "hookEventName": "PreToolUse",
-            "permissionDecision": "allow",
             "updatedInput": {"command": "sed -n '1,20p' file.txt"},
         }
 

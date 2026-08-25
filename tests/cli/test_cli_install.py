@@ -343,6 +343,8 @@ class TestInstallCommand:
         assert "compatible embedding APIs" in result.output
         assert "--ide-settings" in result.output
         assert "--no-ide-settings" in result.output
+        assert "--rtk" in result.output
+        assert "--no-rtk" in result.output
         assert "--container-restarts" in result.output
         assert "--no-container-restarts" in result.output
 
@@ -745,6 +747,7 @@ class TestUninstallCommand:
         assert "--qwen" in result.output
         assert "--codex" in result.output
         assert "--all" in result.output
+        assert "--tools" in result.output
         assert "--yes" in result.output or "-y" in result.output
 
     @patch("gobby.cli.runtime.CliRuntime.require_config")

@@ -63,6 +63,7 @@ from gobby.workflows.engine.event_utils import (
     _project_id_from_event,
     _resolve_rule_events,
 )
+from gobby.workflows.engine.proxy_hooks import ProxyHooksMixin
 from gobby.workflows.engine.templating import TemplatingMixin
 from gobby.workflows.selectors import rule_matches_agent
 from gobby.workflows.step_instances import AgentStepInstanceManager
@@ -103,7 +104,13 @@ __all__ = [
 ]
 
 
-class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixin):
+class RuleEngine(
+    EvaluationMixin,
+    EffectsMixin,
+    ProxyHooksMixin,
+    TemplatingMixin,
+    EnforcementMixin,
+):
     """Single-pass rule evaluation engine.
 
     Loads rules from rule_definitions via RuleDefinitionManager,
@@ -550,6 +557,83 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                     evaluation,
                     aggregate_blocks=aggregate_blocks,
                 )
+
+                # Proxy transformations are deferred until every original-input
+                # denial has passed. Apply prior declarative rewrites first so
+                # each trusted handler receives the latest accumulated command.
+                if is_before_tool and not block_gates and evaluation.proxy_hooks:
+                    rewrite_meta = variables.get("_rewrite_input")
+                    input_was_rewritten = False
+                    if isinstance(rewrite_meta, dict):
+                        updates = rewrite_meta.get("input_updates")
+                        tool_input = event.data.get("tool_input")
+                        if isinstance(updates, dict) and isinstance(tool_input, dict):
+                            tool_input.update(updates)
+                            input_was_rewritten = bool(updates)
+
+                    proxy_changed = await self._run_proxy_hooks(
+                        evaluation.proxy_hooks,
+                        event,
+                        blocking_deadline=blocking_deadline,
+                    )
+                    if proxy_changed:
+                        tool_input = event.data.get("tool_input")
+                        command = (
+                            tool_input.get("command") if isinstance(tool_input, dict) else None
+                        )
+                        if isinstance(command, str):
+                            rewrite_meta = variables.setdefault("_rewrite_input", {})
+                            current_updates = rewrite_meta.get("input_updates")
+                            if not isinstance(current_updates, dict):
+                                current_updates = {}
+                            rewrite_meta["input_updates"] = {
+                                **current_updates,
+                                "command": command,
+                            }
+
+                    if input_was_rewritten or proxy_changed:
+                        agent_block = await offload(
+                            self._check_agent_tool_enforcement,
+                            event,
+                            session_id,
+                            variables,
+                        )
+                        if agent_block is not None:
+                            variables["_last_blocked_tool"] = _get_tool_identity(event.data)
+                            if _is_write_like_event_data(event.data):
+                                _clear_edit_write_state(variables)
+                            return await self._finalize_block_response(
+                                agent_block,
+                                evaluation,
+                                span,
+                                source="step-enforcement",
+                                rule_name="agent-tool-enforcement",
+                            )
+
+                        step_block = await offload(
+                            self._check_step_tool_enforcement,
+                            event,
+                            session_id,
+                            variables,
+                        )
+                        if step_block is not None:
+                            variables["_last_blocked_tool"] = _get_tool_identity(event.data)
+                            if _is_write_like_event_data(event.data):
+                                _clear_edit_write_state(variables)
+                            return await self._finalize_block_response(
+                                step_block,
+                                evaluation,
+                                span,
+                                source="step-enforcement",
+                                rule_name="step-tool-enforcement",
+                            )
+
+                        block_gates = await self._run_rule_loop(
+                            rules,
+                            evaluation,
+                            aggregate_blocks=aggregate_blocks,
+                            block_effects_only=True,
+                        )
 
                 # 6. Build response — overrides take precedence over rule-evaluated decisions,
                 # but the rule loop always runs so mcp_calls are always collected.
