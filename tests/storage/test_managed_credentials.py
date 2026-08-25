@@ -901,6 +901,42 @@ def test_interactive_reuse_refreshes_expired_role(
         store.db.close()
 
 
+def test_interactive_issue_without_session_persists_null_session_id(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    """An interactive issue with no session id stores NULL, never a minted one (#20899)."""
+    fixture = authorization_fixture
+    manager = _manager(fixture, tmp_path / "managed-nosession")
+    store = _secret_store(fixture)
+    token = "a2a2a2a2a2a2a2a2"
+    try:
+        issued = manager.issue_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            session_id=None,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            secret_store=store,
+        )
+        with psycopg.connect(issued.dsn) as conn:
+            assert conn.execute("SELECT 1").fetchone() == (1,)
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            row = admin.execute(
+                f"SELECT session_id FROM {AUTH_SCHEMA}.principal_bindings "
+                "WHERE managed_execution_id = %s",
+                (issued.managed_execution_id,),
+            ).fetchone()
+        assert row == (None,)
+    finally:
+        manager.revoke_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            reason="test-cleanup",
+        )
+        manager.close()
+        store.db.close()
+
+
 def test_interactive_issue_rolls_generation_past_credential_age_bound(
     authorization_fixture: AuthorizationFixture,
     tmp_path: Path,
