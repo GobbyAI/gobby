@@ -930,6 +930,55 @@ fn worktree_handshake_sends_overlay_and_caches_under_it() {
     assert_eq!(cached.source, GrantSource::Cache);
 }
 
+fn interactive_handshake_body(harness: &Harness, session_id: Option<&str>) -> String {
+    let mut grant = fixture_grant(PrincipalKind::Interactive);
+    grant.deployment.token = deployment_token(&harness.home);
+    grant = grant.with_checksum();
+    let scripted = spawn_scripted(vec![
+        Step::Challenge {
+            valid: true,
+            token: TOKEN.into(),
+        },
+        Step::Handshake {
+            grant: Box::new(grant.clone()),
+        },
+        Step::Config {
+            revision: grant.config_revision,
+        },
+    ]);
+    let mut request = harness.request(Some(scripted.url.clone()));
+    request.session_id = session_id.map(ToOwned::to_owned);
+    acquire_with(&request).expect("handshake");
+    let requests = join(scripted);
+    requests
+        .iter()
+        .find(|request| request.contains("POST /api/runtime/handshake HTTP"))
+        .expect("handshake request")
+        .clone()
+}
+
+#[test]
+fn interactive_handshake_presents_the_real_session_id() {
+    let harness = Harness::new();
+    let session = "0a80e7a4-6f6e-4b7a-9d3e-2f1c5b7a9c11";
+    let handshake = interactive_handshake_body(&harness, Some(session));
+    assert!(
+        handshake.contains(&format!("\"session_id\":\"{session}\"")),
+        "handshake body must carry the caller's session id: {handshake}"
+    );
+}
+
+#[test]
+fn interactive_handshake_without_session_sends_null_not_a_minted_id() {
+    for absent in [None, Some("not-a-uuid")] {
+        let handshake = interactive_handshake_body(&Harness::new(), absent);
+        assert!(
+            handshake.contains("\"session_id\":null"),
+            "a missing or invalid session must be presented as null, never fabricated: {handshake}"
+        );
+    }
+}
+
 #[test]
 fn main_checkout_handshake_omits_overlay() {
     let harness = Harness::new();
@@ -1096,6 +1145,11 @@ fn hmac_sha256_rejects_empty_key() {
 
 #[test]
 fn expected_schema_identity_tracks_catalog_head() {
+    // With the postgres feature the identity is the live embedded catalog;
+    // without it, the frozen golden fixture identity.
+    #[cfg(feature = "postgres")]
+    assert_eq!(expected_schema_identity().latest_version, 406);
+    #[cfg(not(feature = "postgres"))]
     assert_eq!(expected_schema_identity().latest_version, 403);
 }
 

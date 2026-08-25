@@ -39,6 +39,9 @@ from gobby.storage.model_metadata import ModelMetadataStore
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
+    from gobby.runtime_grants.schema import GrantPrincipal, PostgresDirect
+    from gobby.storage.managed_credential_types import SecretStore
+    from gobby.storage.managed_credentials import ManagedCredentialManager
 
 logger = logging.getLogger(__name__)
 
@@ -343,39 +346,31 @@ def init_servers(runner: GobbyRunner) -> None:
 
 
 def issue_grant_postgres(
-    principal: object,
+    principal: GrantPrincipal,
     *,
-    credentials: object,
+    credentials: ManagedCredentialManager,
     deployment_token: str,
-    secrets: object,
+    secrets: SecretStore,
     managed_bootstrap_dsn: Callable[[object], str],
-) -> object:
+) -> PostgresDirect:
     """Issue a Postgres capability for a handshake principal.
 
-    Interactive grants require ``principal.session_id``; issuance exceptions
-    become a generic handshake rejection so credential details stay out of
-    the client envelope.
+    Interactive grants accept a missing ``principal.session_id`` (the binding
+    column is audit-only); issuance exceptions become a generic handshake
+    rejection so credential details stay out of the client envelope.
     """
     from gobby.runtime_grants.handshake import HandshakeRejection
-    from gobby.runtime_grants.schema import GrantPrincipal, PostgresDirect
+    from gobby.runtime_grants.schema import PostgresDirect
     from gobby.storage.managed_credential_types import CredentialAuthorizationError
 
-    typed = principal if isinstance(principal, GrantPrincipal) else None
-    if typed is None:
-        raise TypeError("principal must be a GrantPrincipal")
     expires_at = datetime.now(UTC) + timedelta(hours=1)
     try:
-        if typed.kind == "interactive":
-            if typed.session_id is None:
-                raise HandshakeRejection(
-                    "interactive grant requires session_id",
-                    code="claims_mismatch",
-                )
-            overlay = typed.code_overlay_project_id
-            issued = credentials.issue_interactive(  # type: ignore[attr-defined]
+        if principal.kind == "interactive":
+            overlay = principal.code_overlay_project_id
+            issued = credentials.issue_interactive(
                 deployment_token=deployment_token,
-                project_id=UUID(typed.project_id),
-                session_id=UUID(typed.session_id),
+                project_id=UUID(principal.project_id),
+                session_id=UUID(principal.session_id) if principal.session_id else None,
                 expires_at=expires_at,
                 secret_store=secrets,
                 code_overlay_project_id=UUID(overlay) if overlay is not None else None,
@@ -386,49 +381,49 @@ def issue_grant_postgres(
                 credential_generation=issued.credential_generation,
                 valid_until=int(issued.expires_at.timestamp()),
             )
-        if typed.kind == "maintenance":
-            if typed.execution_id is None:
+        if principal.kind == "maintenance":
+            if principal.execution_id is None:
                 raise HandshakeRejection(
                     "maintenance grant requires execution_id",
                     code="claims_mismatch",
                 )
-            overlay = typed.code_overlay_project_id
-            issued = credentials.issue_maintenance(  # type: ignore[attr-defined]
-                managed_execution_id=UUID(typed.execution_id),
-                project_id=UUID(typed.project_id),
+            overlay = principal.code_overlay_project_id
+            maintenance = credentials.issue_maintenance(
+                managed_execution_id=UUID(principal.execution_id),
+                project_id=UUID(principal.project_id),
                 expires_at=expires_at,
                 code_overlay_project_id=UUID(overlay) if overlay is not None else None,
             )
             return PostgresDirect(
-                dsn=issued.dsn,
-                role_name=issued.credential.role_name,
-                credential_generation=issued.credential.credential_generation,
-                valid_until=int(issued.credential.expires_at.timestamp()),
+                dsn=maintenance.dsn,
+                role_name=maintenance.credential.role_name,
+                credential_generation=maintenance.credential.credential_generation,
+                valid_until=int(maintenance.credential.expires_at.timestamp()),
             )
-        if typed.execution_id is None or typed.session_id is None:
+        if principal.execution_id is None or principal.session_id is None:
             raise HandshakeRejection(
                 "managed grant requires execution and session identity",
                 code="claims_mismatch",
             )
-        issued = credentials.issue(  # type: ignore[attr-defined]
-            managed_execution_id=UUID(typed.execution_id),
-            owner_kind="tool_chat" if typed.kind == "tool_chat" else "agent_run",
-            session_id=UUID(typed.session_id),
-            agent_run_id=(UUID(typed.execution_id) if typed.kind == "agent_run" else None),
+        managed = credentials.issue(
+            managed_execution_id=UUID(principal.execution_id),
+            owner_kind="tool_chat" if principal.kind == "tool_chat" else "agent_run",
+            session_id=UUID(principal.session_id),
+            agent_run_id=(UUID(principal.execution_id) if principal.kind == "agent_run" else None),
             expires_at=expires_at,
         )
         return PostgresDirect(
-            dsn=managed_bootstrap_dsn(issued.bootstrap_path),
-            role_name=issued.role_name,
-            credential_generation=issued.credential_generation,
-            valid_until=int(issued.expires_at.timestamp()),
+            dsn=managed_bootstrap_dsn(managed.bootstrap_path),
+            role_name=managed.role_name,
+            credential_generation=managed.credential_generation,
+            valid_until=int(managed.expires_at.timestamp()),
         )
     except HandshakeRejection:
         raise
     except CredentialAuthorizationError as error:
         raise HandshakeRejection(str(error), code="claims_mismatch") from None
     except Exception:
-        logger.exception("grant credential issuance failed", extra={"kind": typed.kind})
+        logger.exception("grant credential issuance failed", extra={"kind": principal.kind})
         raise HandshakeRejection(
             _CREDENTIAL_ISSUANCE_FAILED,
             code="credential_issuance_failed",
@@ -439,7 +434,7 @@ def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
     # Deferred imports stay here: they close a runner <-> runtime_grants cycle.
     from gobby.runtime_grants.handshake import HandshakeRejection, HandshakeService
     from gobby.runtime_grants.revocation import GrantRevocationStore
-    from gobby.runtime_grants.schema import GrantBundle, GrantPrincipal, PostgresDirect
+    from gobby.runtime_grants.schema import GrantBundle, PostgresDirect
     from gobby.runtime_grants.service import DeploymentGrantContext, GrantService
     from gobby.servers.grant_auth import LiveLeaseGrantService
     from gobby.servers.lease_fence import EffectFence, bind_fenced_writer

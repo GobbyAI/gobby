@@ -116,7 +116,7 @@ class HandshakeService:
         *,
         machine_id: str,
         project_id: str,
-        session_id: str,
+        session_id: str | None,
         code_overlay_project_id: str | None = None,
     ) -> GrantBundle:
         if machine_id != self.local_machine_id:

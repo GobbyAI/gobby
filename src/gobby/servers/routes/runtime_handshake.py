@@ -157,13 +157,10 @@ def create_runtime_handshake_router(server: Any) -> APIRouter:
                     project_id=body.project_id,
                 )
             else:
-                session_id = body.session_id
-                if session_id is None:
-                    raise HandshakeRejection("session_id is required", code="claims_mismatch")
                 grant = service.issue_for_operator(
                     machine_id=body.machine_id,
                     project_id=body.project_id,
-                    session_id=session_id,
+                    session_id=body.session_id,
                     code_overlay_project_id=body.code_overlay_project_id,
                 )
         except HandshakeRejection as error:

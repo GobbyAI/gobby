@@ -408,6 +408,31 @@ def test_operator_overlay_flows_into_principal() -> None:
     assert len(seen) == 2
 
 
+def test_operator_issue_accepts_missing_session_id() -> None:
+    """A sessionless interactive caller gets a grant with session_id None (#20899)."""
+    seen: list[Any] = []
+
+    def issue_postgres(principal: Any) -> PostgresDirect:
+        seen.append(principal)
+        return _postgres()
+
+    service = HandshakeService(
+        grants=_grant_service(),
+        local_machine_id=LOCAL_MACHINE_ID,
+        operator_token=OPERATOR_TOKEN,
+        issue_postgres=issue_postgres,
+        admitted_projects=frozenset({PROJECT_ID}),
+        clock=lambda: 1_700_000_000,
+    )
+    grant = service.issue_for_operator(
+        machine_id=LOCAL_MACHINE_ID,
+        project_id=PROJECT_ID,
+        session_id=None,
+    )
+    assert grant.principal.session_id is None
+    assert seen[0].session_id is None
+
+
 def test_handshake_endpoint_accepts_overlay(tmp_path: Path) -> None:
     grants = _grant_service()
     server = _config_server(grants, tmp_path / "token")

@@ -227,6 +227,10 @@ impl<'a> AcquireRequest<'a> {
     pub fn from_process(project_root: &'a Path) -> Self {
         let mut request = Self::new(project_root);
         request.daemon_url = Some(crate::daemon_url::daemon_url());
+        request.session_id = std::env::var("GOBBY_SESSION_ID")
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
         request.managed_bootstrap = std::env::var_os(MANAGED_BOOTSTRAP_ENV).map(PathBuf::from);
         request.managed_envelope = std::env::var(crate::local_token::AGENT_API_TOKEN_ENV).ok();
         request.expected_execution_id = std::env::var("GOBBY_AGENT_RUN_ID")
@@ -378,11 +382,11 @@ impl AcquireCtx {
         })
     }
 
-    fn interactive_identity<'a>(&'a self, session_id: &'a str) -> HandshakeIdentity<'a> {
+    fn interactive_identity<'a>(&'a self, session_id: Option<&'a str>) -> HandshakeIdentity<'a> {
         HandshakeIdentity {
             machine_id: &self.machine_id,
             project_id: &self.project_id,
-            session_id: Some(session_id),
+            session_id,
             code_overlay_project_id: self.code_overlay_project_id.as_deref(),
         }
     }
@@ -765,12 +769,14 @@ fn handshake_interactive(
     with_presentation_retry(|| handshake_interactive_once(ctx, expected.as_deref(), verify_derived))
 }
 
-fn interactive_session_id(ctx: &AcquireCtx) -> String {
+// Interactive principals are keyed on token+machine+project; the session id is
+// audit-only, so an absent or invalid one is presented as no session rather
+// than a fabricated identity (#20899).
+fn interactive_session_id(ctx: &AcquireCtx) -> Option<String> {
     ctx.session_id
         .as_deref()
         .filter(|value| uuid::Uuid::parse_str(value).is_ok())
         .map(ToOwned::to_owned)
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
 }
 
 fn handshake_interactive_once(
@@ -788,7 +794,7 @@ fn handshake_interactive_once(
     let grant = challenge_and_handshake(
         &ctx.daemon_url,
         &token,
-        ctx.interactive_identity(&session_id),
+        ctx.interactive_identity(session_id.as_deref()),
         None,
         ctx.deadline,
     )?;
@@ -961,7 +967,7 @@ fn fetch_settings_coherent(
             challenge_and_handshake(
                 &ctx.daemon_url,
                 &token,
-                ctx.interactive_identity(&session_id),
+                ctx.interactive_identity(session_id.as_deref()),
                 None,
                 ctx.deadline,
             )?,
