@@ -73,7 +73,6 @@ class _OverviewModel:
     latency_class: str
     extended_thinking: bool
     adaptive_thinking: bool
-    current: bool
 
 
 @dataclass(frozen=True)
@@ -155,42 +154,26 @@ def _from_source[T](source_key: str, parse: Callable[[], T]) -> T:
 
 
 def _parse_models_overview(document: str) -> tuple[_OverviewModel, ...]:
-    current_section = _bounded_section(
-        document,
-        "### Latest models comparison",
-        "<AccordionGroup>",
-    )
-    legacy_section = _bounded_section(
-        document,
-        '<Accordion title="Legacy models">',
-        "</Accordion>",
-    )
-    current = _parse_overview_table(_find_table(current_section, ("feature",)), current=True)
-    legacy = _parse_overview_table(_find_table(legacy_section, ("feature",)), current=False)
-    models = current + legacy
+    section = _required_heading_section(document, "Compare models")
+    models = _parse_overview_table(_find_table(section, ("feature",)))
     canonical_ids = [model.canonical_model for model in models]
     if len(canonical_ids) != len(set(canonical_ids)):
         raise ValueError("models overview contains duplicate Claude API IDs")
     return models
 
 
-def _parse_overview_table(
-    table: _MarkdownTable,
-    *,
-    current: bool,
-) -> tuple[_OverviewModel, ...]:
+def _parse_overview_table(table: _MarkdownTable) -> tuple[_OverviewModel, ...]:
     if len(table.headers) < 2:
         raise ValueError("models overview table has no model columns")
     features = {_normalize_cell(row[0]): row[1:] for row in table.rows}
     api_ids = _required_feature(features, "claude api id")
     api_aliases = _required_feature(features, "claude api alias")
-    extended = _required_feature(features, "extended thinking", prefix=True)
-    adaptive = _required_feature(features, "adaptive thinking", prefix=True)
+    thinking = _required_feature(features, "thinking", prefix=True)
     latency = _required_feature(features, "comparative latency")
     contexts = _required_feature(features, "context window")
     outputs = _required_feature(features, "max output")
     model_count = len(table.headers) - 1
-    required_rows = (api_ids, api_aliases, extended, adaptive, latency, contexts, outputs)
+    required_rows = (api_ids, api_aliases, thinking, latency, contexts, outputs)
     if any(len(row) != model_count for row in required_rows):
         raise ValueError("models overview table has inconsistent model columns")
 
@@ -199,6 +182,9 @@ def _parse_overview_table(
         latency_class = _clean_cell(latency[index]).casefold()
         if latency_class not in _LATENCY_CLASSES:
             raise ValueError(f"unknown comparative latency {latency_class!r}")
+        thinking_mode = _normalize_cell(thinking[index])
+        if not thinking_mode.startswith(("adaptive", "extended")):
+            raise ValueError(f"unknown thinking mode {thinking_mode!r}")
         models.append(
             _OverviewModel(
                 canonical_model=_clean_cell(api_ids[index]),
@@ -207,9 +193,8 @@ def _parse_overview_table(
                 context_length=_parse_token_count(contexts[index]),
                 max_output_tokens=_parse_token_count(outputs[index]),
                 latency_class=latency_class,
-                extended_thinking=_parse_yes_no(extended[index]),
-                adaptive_thinking=_parse_yes_no(adaptive[index]),
-                current=current,
+                extended_thinking=thinking_mode.startswith("extended"),
+                adaptive_thinking=thinking_mode.startswith("adaptive"),
             )
         )
     if any(not model.canonical_model.startswith("claude-") for model in models):
@@ -333,10 +318,9 @@ def _build_model(
             "context_length": "models-overview",
             "max_output_tokens": "models-overview",
             "latency_class": "models-overview",
+            "input_modalities": "models-overview",
         }
     )
-    if model.current:
-        model_sources["input_modalities"] = "models-overview"
     if effort_support.levels is not None:
         model_sources["supported_efforts"] = "effort-docs"
         model_sources["default_effort"] = "effort-docs"
@@ -366,7 +350,7 @@ def _build_model(
         supported_efforts=effort_support.levels,
         default_effort=effort_support.default,
         latency_class=model.latency_class,
-        input_modalities=("text", "image") if model.current else None,
+        input_modalities=("text", "image"),
         supports_tools=None,
         routes=(route,),
         provenance=_provenance(model_sources, observed_at),
@@ -422,9 +406,7 @@ def _model_from_behavior(
     family_named = [model for model in named if family in model.display_name.casefold()]
     if family_named:
         return family_named[0]
-    family_models = [
-        model for model in models if model.current and family in model.display_name.casefold()
-    ]
+    family_models = [model for model in models if family in model.display_name.casefold()]
     if not family_models:
         raise ValueError(f"model alias names unknown family {family!r}")
     return family_models[0]
@@ -450,16 +432,6 @@ def _required_heading_section(document: str, heading: str) -> str:
     next_heading = re.search(r"^##\s+", document[body_start:], flags=re.MULTILINE)
     body_end = body_start + next_heading.start() if next_heading else len(document)
     return document[body_start:body_end]
-
-
-def _bounded_section(document: str, start: str, end: str) -> str:
-    start_index = document.find(start)
-    if start_index < 0:
-        raise ValueError(f"required section {start!r} is missing")
-    end_index = document.find(end, start_index + len(start))
-    if end_index < 0:
-        raise ValueError(f"required section {start!r} has no {end!r} boundary")
-    return document[start_index:end_index]
 
 
 def _find_table(document: str, required_headers: tuple[str, ...]) -> _MarkdownTable:
@@ -524,15 +496,6 @@ def _parse_token_count(value: str) -> int:
         raise ValueError(f"invalid token count {value!r}")
     multiplier = {"": 1, "k": 1_000, "m": 1_000_000}[match.group(2).casefold()]
     return int(Decimal(match.group(1)) * multiplier)
-
-
-def _parse_yes_no(value: str) -> bool:
-    normalized = _clean_cell(value).casefold()
-    if normalized.startswith("yes"):
-        return True
-    if normalized.startswith("no"):
-        return False
-    raise ValueError(f"expected Yes/No capability value, got {value!r}")
 
 
 def _normalize_cell(value: str) -> str:

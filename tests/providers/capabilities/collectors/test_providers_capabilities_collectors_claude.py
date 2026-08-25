@@ -44,20 +44,25 @@ def _collector(documents: Mapping[str, str]) -> ClaudeCollector:
 
 @pytest.mark.asyncio
 async def test_alias_to_canonical_mapping() -> None:
+    snapshot = await _collector(_documents()).collect()
+    models = {model.canonical_model: model for model in snapshot.models}
+
+    assert {"opus", "opus[1m]", "opusplan"} <= set(models["claude-opus-5"].aliases)
+    assert {"sonnet", "sonnet[1m]"} <= set(models["claude-sonnet-5"].aliases)
+    assert "fable" in models["claude-fable-5"].aliases
+    assert "haiku" in models["claude-haiku-4-5-20251001"].aliases
+
+
+@pytest.mark.asyncio
+async def test_alias_to_undocumented_model_version_fails_snapshot() -> None:
     documents = _documents()
     documents["model-config"] = documents["model-config"].replace(
         "| Anthropic API | Opus 5 | Sonnet 5 |",
         "| Anthropic API | Opus 4.6 | Sonnet 5 |",
     )
 
-    snapshot = await _collector(documents).collect()
-    models = {model.canonical_model: model for model in snapshot.models}
-
-    assert {"opus", "opus[1m]", "opusplan"} <= set(models["claude-opus-4-6"].aliases)
-    assert "opus" not in models["claude-opus-5"].aliases
-    assert {"sonnet", "sonnet[1m]"} <= set(models["claude-sonnet-5"].aliases)
-    assert "fable" in models["claude-fable-5"].aliases
-    assert "haiku" in models["claude-haiku-4-5-20251001"].aliases
+    with pytest.raises(ClaudeSourceError, match="model-config"):
+        await _collector(documents).collect()
 
 
 @pytest.mark.asyncio
@@ -80,7 +85,7 @@ async def test_fact_provenance() -> None:
 @pytest.mark.parametrize(
     ("source_key", "old", "new"),
     [
-        ("models-overview", "**Claude API ID**", "**API model**"),
+        ("models-overview", "| Claude API ID |", "| API model |"),
         ("model-config", "| Model alias | Behavior |", "| Name | Behavior |"),
         (
             "effort-docs",
@@ -104,13 +109,18 @@ async def test_malformed_required_source_fails_snapshot(
 
 
 @pytest.mark.asyncio
-async def test_current_and_legacy_models_emit_standard_routes() -> None:
+async def test_compared_models_emit_standard_routes() -> None:
     collector = _collector(_documents())
 
     snapshot = validate_snapshot(await collector.collect(), collector.sources)
     models = {model.canonical_model: model for model in snapshot.models}
 
-    assert "claude-opus-4-6" in models
+    assert set(models) == {
+        "claude-fable-5",
+        "claude-opus-5",
+        "claude-sonnet-5",
+        "claude-haiku-4-5-20251001",
+    }
     assert all(
         tuple(route.speed_mode for route in model.routes) == (SpeedMode.STANDARD,)
         for model in models.values()
@@ -134,7 +144,6 @@ async def test_effort_compatibility_uses_canonical_model_ids() -> None:
         "max",
     )
     assert models["claude-opus-5"].default_effort == "high"
-    assert models["claude-opus-4-6"].supported_efforts == ("low", "medium", "high", "max")
     assert models["claude-fable-5"].supported_efforts == (
         "low",
         "medium",
