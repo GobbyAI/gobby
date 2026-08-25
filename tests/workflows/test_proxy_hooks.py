@@ -11,12 +11,13 @@ import pytest
 import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from gobby.integrations.rtk import clear_probe_cache
+from gobby.integrations.rtk import RTK_RULE_NAME, clear_probe_cache
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine import proxy_hooks
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
@@ -162,7 +163,7 @@ def test_proxy_effect_contract_rejects_non_before_tool_event() -> None:
 
 def test_bundled_rtk_rule_is_disabled_and_permission_neutral() -> None:
     document = yaml.safe_load(RTK_RULE_PATH.read_text(encoding="utf-8"))
-    definition = document["rtk-command-rewrite"]
+    definition = document["rules"]["rtk-command-rewrite"]
 
     assert definition["enabled"] is False
     assert definition["priority"] == 90
@@ -172,6 +173,26 @@ def test_bundled_rtk_rule_is_disabled_and_permission_neutral() -> None:
     RuleDefinitionBody.model_validate(
         {key: value for key, value in definition.items() if key in {"event", "tools", "effects"}}
     )
+
+
+def test_bundled_rtk_rule_syncs_as_disabled_installed_row(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+) -> None:
+    result = sync_bundled_rules(db, get_bundled_rules_path())
+
+    assert result["errors"] == []
+    row = manager.get_by_name(RTK_RULE_NAME, project_id=None)
+    assert row is not None
+    assert row.source == "installed"
+    assert row.enabled is False
+    assert row.priority == 90
+    body = RuleDefinitionBody.model_validate(row.definition_json)
+    assert body.group == "integrations"
+    assert body.tools == ["Bash"]
+    assert body.effects is not None
+    [effect] = body.effects
+    assert (effect.type, effect.handler, effect.timeout_seconds) == ("proxy_hook", "rtk", 2)
 
 
 async def test_rtk_rewrite_is_permission_neutral(

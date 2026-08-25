@@ -1,12 +1,15 @@
 # RTK remains opt-in. Installer consent toggles the installed global row;
 # template sync preserves that installed state on later upgrades.
-rtk-command-rewrite:
-  description: "Rewrite shell commands through stock RTK before native permission handling"
-  event: before_tool
-  enabled: false
-  priority: 90
-  tools: [Bash]
-  effects:
-    - type: proxy_hook
-      handler: rtk
-      timeout_seconds: 2
+tags: [integrations, rtk, gobby]
+
+rules:
+  rtk-command-rewrite:
+    description: "Rewrite shell commands through stock RTK before native permission handling"
+    event: before_tool
+    enabled: false
+    priority: 90
+    tools: [Bash]
+    effects:
+      - type: proxy_hook
+        handler: rtk
+        timeout_seconds: 2
