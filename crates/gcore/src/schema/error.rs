@@ -10,6 +10,8 @@ pub enum SchemaError {
     UnterminatedSql(String),
     #[error("unsupported PostgreSQL schema state: {0}")]
     Unsupported(String),
+    #[error("schema apply lock: {0}")]
+    ApplyLock(String),
     #[error("schema verification failed: {0}")]
     Verification(String),
     #[error(transparent)]

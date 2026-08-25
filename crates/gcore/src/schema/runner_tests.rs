@@ -1541,7 +1541,7 @@ fn lock_and_recovery_tests_repair_an_invalid_concurrent_index() -> anyhow::Resul
 }
 
 #[test]
-fn lock_and_recovery_tests_named_schema_locks_are_independent() -> anyhow::Result<()> {
+fn lock_and_recovery_tests_database_apply_lock_serializes_schemas() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -1554,7 +1554,7 @@ fn lock_and_recovery_tests_named_schema_locks_are_independent() -> anyhow::Resul
     }
     lock_client.batch_execute("SET search_path TO schema_lock_a, pg_catalog")?;
     lock_client.query_one(
-        "SELECT pg_advisory_lock(hashtext('postgres_migrations_apply'), hashtext(current_schema()))",
+        "SELECT pg_advisory_lock(hashtext('postgres_migrations_apply'), 0)",
         &[],
     )?;
 
@@ -1565,13 +1565,22 @@ fn lock_and_recovery_tests_named_schema_locks_are_independent() -> anyhow::Resul
             .map_err(|error| error.to_string());
         sender.send(result).expect("receiver remains available");
     });
-    let result = receiver
-        .recv_timeout(StdDuration::from_secs(3))
-        .expect("different schema lock must remain available");
+    // The baseline creates cluster-global roles and the shared gobby_agent_auth
+    // objects, so applying another schema must wait for the database-wide lock.
+    assert!(
+        matches!(
+            receiver.recv_timeout(StdDuration::from_secs(2)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ),
+        "apply for another schema must block while the database apply lock is held"
+    );
     lock_client.query_one(
-        "SELECT pg_advisory_unlock(hashtext('postgres_migrations_apply'), hashtext(current_schema()))",
+        "SELECT pg_advisory_unlock(hashtext('postgres_migrations_apply'), 0)",
         &[],
     )?;
+    let result = receiver
+        .recv_timeout(StdDuration::from_secs(30))
+        .expect("apply must proceed once the database apply lock is released");
     worker.join().expect("schema worker must not panic");
     result.map_err(anyhow::Error::msg)?;
     Ok(())
