@@ -31,6 +31,7 @@ from gobby.workflows.engine.event_utils import (
     _get_tool_identity,
     _is_write_like_event_data,
 )
+from gobby.workflows.engine.proxy_hooks import ProxyHookInvocation
 
 if TYPE_CHECKING:
     from gobby.storage.workflow_audit import WorkflowAuditManager
@@ -50,6 +51,7 @@ class EvaluationContext:
     block_tool_name: str
     context_parts: list[str] = field(default_factory=list)
     mcp_calls: list[dict[str, Any]] = field(default_factory=list)
+    proxy_hooks: list[ProxyHookInvocation] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -262,6 +264,7 @@ class EvaluationMixin:
         evaluation: EvaluationContext,
         *,
         aggregate_blocks: bool,
+        block_effects_only: bool = False,
     ) -> list[BlockGate]:
         block_gates: list[BlockGate] = []
         metric_records: list[MetricsEventRecord] = []
@@ -296,7 +299,7 @@ class EvaluationMixin:
                 ):
                     continue
 
-            if block_gates:
+            if block_effects_only or block_gates:
                 for effect in body.resolved_effects:
                     if effect.type != "block" or not self._effect_matches_event(
                         effect, evaluation.event
@@ -355,6 +358,10 @@ class EvaluationMixin:
                 if effect.type == "block":
                     # Defer block to after all sibling non-block effects
                     deferred_block = effect
+                    continue
+
+                if effect.type == "proxy_hook":
+                    evaluation.proxy_hooks.append(ProxyHookInvocation(effect=effect, row=row))
                     continue
 
                 # Apply non-block effects immediately

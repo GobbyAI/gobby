@@ -326,9 +326,7 @@ class ClaudeCodeAdapter(BaseAdapter):
         elif decision_style == ClaudeDecisionStyle.PRE_TOOL_USE:
             permission_decision: str | None = "deny" if is_denied else response.permission_decision
             if not permission_decision:
-                if response.modified_input is not None:
-                    permission_decision = "allow"
-                elif response.auto_approve:
+                if response.auto_approve:
                     permission_decision = "allow"
                 elif response.decision == "ask":
                     permission_decision = "ask"
@@ -351,11 +349,7 @@ class ClaudeCodeAdapter(BaseAdapter):
             if not behavior:
                 if is_denied:
                     behavior = "deny"
-                elif (
-                    response.auto_approve
-                    or response.modified_input is not None
-                    or response.updated_permissions
-                ):
+                elif response.auto_approve:
                     behavior = "allow"
 
             if behavior:

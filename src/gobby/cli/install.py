@@ -81,6 +81,7 @@ from ._install_state import empty_install_state, prepare_install_state, should_c
 from .install_identity import ensure_install_identity
 from .install_setup import ensure_daemon_config, run_daemon_setup
 from .install_setup_gdaemon import GdaemonInstallError, ensure_gdaemon
+from .install_setup_rtk import RtkInstallStatus, reconcile_rtk
 from .installers import (
     install_agy,
     install_claude,
@@ -388,6 +389,12 @@ def _install_required_stack(
     help="Skip interactive prompts (for CI/automation)",
 )
 @click.option(
+    "--rtk/--no-rtk",
+    "rtk_flag",
+    default=None,
+    help="Enable or disable RTK command rewriting through Gobby hooks.",
+)
+@click.option(
     "--container-restarts/--no-container-restarts",
     "container_restarts_flag",
     default=True,
@@ -432,6 +439,7 @@ def install(
     container_restarts_flag: bool,
     files_home: Path | None = None,
     working_dir: Path | None = None,
+    rtk_flag: bool | None = None,
 ) -> None:
     """Install Gobby configuration, required infrastructure, and integrations.
 
@@ -541,6 +549,7 @@ def install(
         )
         and ide_settings_flag is None
         and expose_ui_flag is not True
+        and rtk_flag is None
     )
 
     # Get install directory info
@@ -669,6 +678,42 @@ def install(
         except (OSError, RuntimeError, ValueError) as exc:
             raise click.ClickException(f"Failed to establish account identity: {exc}") from exc
         click.echo(f"Account identity: {installed_user.email}")
+        try:
+            rtk_status = reconcile_rtk(
+                db,
+                rtk_flag,
+                no_interactive=no_interactive_flag,
+                confirm=click.confirm,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            if rtk_flag is not None or not no_interactive_flag:
+                raise click.ClickException(f"RTK reconciliation failed: {exc}") from exc
+            logger.warning("RTK state unavailable during noninteractive install: %s", exc)
+            rtk_status = RtkInstallStatus(
+                binary_path=None,
+                version=None,
+                rule_enabled=False,
+                direct_artifact_conflicts=(),
+                health="disabled",
+                managed_binary=False,
+            )
+        results["rtk"] = {
+            "success": rtk_status.health != "unavailable",
+            "path": str(rtk_status.binary_path) if rtk_status.binary_path else None,
+            "version": rtk_status.version,
+            "rule_enabled": rtk_status.rule_enabled,
+            "health": rtk_status.health,
+            "conflicts": list(rtk_status.direct_artifact_conflicts),
+        }
+        click.echo(
+            "RTK: "
+            f"{rtk_status.health}; rule="
+            f"{'enabled' if rtk_status.rule_enabled else 'disabled'}; "
+            f"binary={rtk_status.binary_path or 'unavailable'}; "
+            f"version={rtk_status.version or 'unknown'}"
+        )
+        for conflict in rtk_status.direct_artifact_conflicts:
+            click.echo(f"Warning: {conflict}", err=True)
         if initialize_project_after_setup:
             _initialize_project_after_setup(project_path)
         exposure_result: UiExposeResult | None = None

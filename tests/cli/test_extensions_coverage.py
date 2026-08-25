@@ -369,6 +369,10 @@ class TestHooksStatus:
         with (
             patch("pathlib.Path.home", return_value=tmp_path),
             patch("pathlib.Path.cwd", return_value=tmp_path),
+            patch(
+                "gobby.cli.install_setup_rtk.get_rtk_status",
+                side_effect=RuntimeError("status unavailable"),
+            ),
         ):
             result = runner.invoke(hooks, ["status", "--json"])
 
@@ -376,6 +380,7 @@ class TestHooksStatus:
         data = json.loads(result.output)
         assert "global_installed" in data
         assert "hooks_disabled" in data
+        assert data["rtk"]["health"] == "unknown"
 
     @patch("gobby.utils.project_context.get_hooks_config")
     @patch("gobby.utils.project_context.get_verification_config")
@@ -413,11 +418,17 @@ class TestHooksStatus:
             patch("pathlib.Path.home", return_value=tmp_path),
             patch("pathlib.Path.cwd", return_value=tmp_path),
             patch.dict(os.environ, {}, clear=False),
+            patch(
+                "gobby.cli.install_setup_rtk.get_rtk_status",
+                side_effect=RuntimeError("status unavailable"),
+            ),
         ):
             result = runner.invoke(hooks, ["status"])
 
         assert result.exit_code == 0
         assert "Global Hooks:" in result.output
+        assert "RTK Command Rewrite:" in result.output
+        assert "Health: unknown" in result.output
         assert "Verification Commands:" in result.output
         assert "lint: ruff check src/" in result.output
         assert "Hook Stages:" in result.output

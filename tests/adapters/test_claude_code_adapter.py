@@ -1292,7 +1292,7 @@ class TestHandleNative:
         )
 
     def test_handle_native_pre_tool_rewrite_allows_updated_input(self) -> None:
-        """PreToolUse rewrites must allow updatedInput even without auto_approve."""
+        """PreToolUse rewrites preserve permission handling without auto_approve."""
         adapter = ClaudeCodeAdapter()
         mock_hook_manager = MagicMock()
         rewritten_input = {"command": "npm run lint"}
@@ -1314,7 +1314,7 @@ class TestHandleNative:
         hook_output = result["hookSpecificOutput"]
         assert result["continue"] is True
         assert hook_output["hookEventName"] == "PreToolUse"
-        assert hook_output["permissionDecision"] == "allow"
+        assert "permissionDecision" not in hook_output
         assert hook_output["updatedInput"] == rewritten_input
 
     def test_handle_native_preserves_hook_type_in_response(self) -> None:

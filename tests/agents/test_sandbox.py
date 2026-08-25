@@ -33,6 +33,7 @@ from gobby.agents.spawn_cache_policy import (
     build_spawn_cache_env,
     sandbox_config_for_spawn,
 )
+from gobby.integrations.rtk import platform_paths
 
 pytestmark = pytest.mark.unit
 
@@ -1361,6 +1362,68 @@ class TestToolchainGrants:
         assert "registry.npmjs.org" not in offline.allowed_domains
         assert "registry.npmjs.org" in networked.allowed_domains
         assert set(offline.write_paths) == set(networked.write_paths)
+
+
+class TestRtkSandboxGrants:
+    """RTK keeps its developer-wide state while sandboxed agents run."""
+
+    def test_rtk_binary_config_and_state_paths_are_granted(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        home = tmp_path / "home"
+        workspace = tmp_path / "workspace"
+        binary = home / ".gobby" / "bin" / "rtk"
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+        workspace.mkdir()
+        binary.parent.mkdir(parents=True)
+        binary.touch()
+        defaults = platform_paths(home=home)
+        defaults.config_dir.mkdir(parents=True)
+        custom_database = tmp_path / "rtk-state" / "history.db"
+        custom_tee = tmp_path / "rtk-state" / "tee"
+        (defaults.config_dir / "config.toml").write_text(
+            f'[tracking]\ndatabase_path = "{custom_database}"\n[tee]\ndirectory = "{custom_tee}"\n',
+            encoding="utf-8",
+        )
+        expected = platform_paths(home=home)
+        expected.data_dir.mkdir(parents=True, exist_ok=True)
+
+        paths = compute_sandbox_paths(
+            config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+            workspace_path=str(workspace),
+            provider="codex",
+            env={"PATH": ""},
+        )
+
+        assert str(binary.resolve()) in paths.read_paths
+        assert str(expected.config_dir.resolve()) in paths.read_paths
+        assert str(expected.data_dir.resolve()) in paths.read_paths
+        assert str(expected.data_dir.resolve()) in paths.write_paths
+        assert str(custom_database.parent.resolve()) in paths.write_paths
+        assert str(custom_tee.resolve()) in paths.write_paths
+
+    def test_rtk_grants_do_not_include_unrelated_sibling(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        home = tmp_path / "home"
+        workspace = tmp_path / "workspace"
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+        workspace.mkdir()
+        expected = platform_paths(home=home)
+        expected.data_dir.mkdir(parents=True)
+        unrelated = expected.data_dir.parent / "other-tool"
+        unrelated.mkdir()
+
+        paths = compute_sandbox_paths(
+            config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+            workspace_path=str(workspace),
+            provider="codex",
+            env={"PATH": ""},
+        )
+
+        assert str(unrelated.resolve()) not in paths.read_paths
+        assert str(unrelated.resolve()) not in paths.write_paths
+        assert not TestToolchainGrants._srt_can_write(unrelated / "state.db", paths)
 
 
 class TestSandboxCacheProvisioning:

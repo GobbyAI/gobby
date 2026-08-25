@@ -9,7 +9,7 @@ import logging
 import os
 import sys
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import click
 
@@ -302,6 +302,8 @@ def hooks_status(json_format: bool) -> None:
     """
     from pathlib import Path
 
+    from gobby.cli.install_setup_rtk import get_rtk_status
+    from gobby.cli.runtime import CliRuntime, get_cli_runtime
     from gobby.utils.project_context import get_hooks_config, get_verification_config
 
     verification_config = get_verification_config()
@@ -325,12 +327,33 @@ def hooks_status(json_format: bool) -> None:
     # Check env var
     env_disabled = bool(os.environ.get("GOBBY_HOOKS_DISABLED"))
 
+    rtk_output: dict[str, Any]
+    try:
+        runtime = get_cli_runtime()
+    except RuntimeError:
+        runtime = CliRuntime(config_file=None)
+    try:
+        rtk_status = get_rtk_status(runtime.require_database())
+        rtk_output = {
+            "binary_path": str(rtk_status.binary_path) if rtk_status.binary_path else None,
+            "version": rtk_status.version,
+            "rule_enabled": rtk_status.rule_enabled,
+            "direct_artifact_conflicts": list(rtk_status.direct_artifact_conflicts),
+            "health": rtk_status.health,
+            "managed_binary": rtk_status.managed_binary,
+        }
+    except (OSError, RuntimeError, ValueError) as exc:
+        rtk_output = {"health": "unknown", "error": str(exc)}
+    finally:
+        runtime.close()
+
     if json_format:
         output = {
             "global_installed": global_installed,
             "hooks_disabled": hooks_disabled,
             "env_disabled": env_disabled,
             "verification": verification_config.all_commands() if verification_config else {},
+            "rtk": rtk_output,
             "hooks": {
                 "pre-commit": (
                     hooks_config.pre_commit.model_dump(by_alias=True) if hooks_config else None
@@ -363,6 +386,19 @@ def hooks_status(json_format: bool) -> None:
     else:
         click.echo("  Hooks: enabled")
 
+    click.echo()
+
+    click.echo("RTK Command Rewrite:")
+    click.echo(f"  Health: {rtk_output['health']}")
+    if rtk_output.get("binary_path"):
+        click.echo(f"  Binary: {rtk_output['binary_path']}")
+        click.echo(f"  Version: {rtk_output.get('version') or 'unknown'}")
+    if "rule_enabled" in rtk_output:
+        click.echo(f"  Rule: {'enabled' if rtk_output['rule_enabled'] else 'disabled'}")
+    for conflict in rtk_output.get("direct_artifact_conflicts", []):
+        click.echo(f"  Conflict: {conflict}")
+    if rtk_output.get("error"):
+        click.echo(f"  Error: {rtk_output['error']}")
     click.echo()
 
     # Display verification commands

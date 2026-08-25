@@ -91,7 +91,6 @@ def test_workflow_modified_input_for_codex_uses_updated_input_with_context() -> 
     assert context in result["systemMessage"]
     assert result["hookSpecificOutput"] == {
         "hookEventName": "PreToolUse",
-        "permissionDecision": "allow",
         "updatedInput": rewritten,
     }
 
