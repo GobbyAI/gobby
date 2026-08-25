@@ -3499,9 +3499,11 @@ async def test_text_generation_service_times_out_slow_candidate_and_falls_back(
 
     assert result.provider == "endpoint:good"
     records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
-    assert [record.levelno for record in records] == [logging.DEBUG, logging.DEBUG]
+    assert [record.levelno for record in records] == [logging.DEBUG, logging.INFO]
     assert records[0].__dict__["success"] is False
     assert "candidate timed out after 0.01s" in records[0].__dict__["error"]
+    assert records[1].__dict__["success"] is True
+    assert records[1].__dict__["provider"] == "endpoint:good"
 
 
 @pytest.mark.asyncio
@@ -3524,8 +3526,11 @@ async def test_text_generation_service_times_out_slow_json_candidate_and_falls_b
 
     assert result == {"provider": "endpoint:good", "model": "good-model"}
     records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
+    assert [record.levelno for record in records] == [logging.DEBUG, logging.INFO]
     assert records[0].__dict__["success"] is False
     assert "candidate timed out after 0.01s" in records[0].__dict__["error"]
+    assert records[1].__dict__["success"] is True
+    assert records[1].__dict__["provider"] == "endpoint:good"
 
 
 @pytest.mark.asyncio
