@@ -226,7 +226,7 @@ class ProxyHooksMixin:
             return False
 
         tool_input["command"] = transformed
-        logger.info(
+        logger.debug(
             "proxy_hook[%s]: RTK transformed command for %s",
             invocation.row.name,
             event.source.value,

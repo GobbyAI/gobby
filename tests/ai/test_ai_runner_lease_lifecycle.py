@@ -578,6 +578,8 @@ def test_renew_loop_routes_rowcount_mismatch_to_reacquisition(
         record for record in caplog.records if "attempting re-acquisition" in record.message
     ]
     assert len(recovery_records) == 1
+    # The lease context rides in ``extra`` only; the formatter renders it once (#20981).
+    assert "expected_generation=" not in recovery_records[0].getMessage()
     recovery_context = vars(recovery_records[0])
     assert recovery_context["expected_generation"] == "run-1"
     assert recovery_context["expected_revision"] == 7

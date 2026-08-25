@@ -215,6 +215,25 @@ async def test_rtk_rewrite_is_permission_neutral(
     assert response.permission_decision is None
 
 
+async def test_rtk_rewrite_logs_at_debug(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    fake_rtk: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A successful rewrite is routine, so it stays out of the INFO log (#20981)."""
+    _create_rule(manager, "rtk", [_proxy_effect()], priority=90)
+
+    with caplog.at_level(logging.DEBUG, logger=proxy_hooks.logger.name):
+        response = await RuleEngine(db).evaluate(_event(), SESSION_ID, {})
+
+    assert response.modified_input == {"command": "rtk git status"}
+    transformed = [
+        record for record in caplog.records if "RTK transformed command" in record.getMessage()
+    ]
+    assert [record.levelno for record in transformed] == [logging.DEBUG]
+
+
 async def test_rtk_rewrite_returns_the_complete_tool_input(
     db: HubDatabase,
     manager: RuleDefinitionManager,

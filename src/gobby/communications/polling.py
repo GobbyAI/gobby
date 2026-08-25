@@ -111,6 +111,9 @@ class PollingManager:
                 break
             except Exception as e:
                 consecutive_failures += 1
+                # A bare ``TimeoutError()`` renders as ''; name the class so the line
+                # still says what failed (#20981).
+                error = str(e) or type(e).__name__
                 sleep_duration = min(base_backoff * (2 ** (consecutive_failures - 1)), max_backoff)
                 if consecutive_failures == 1:
                     # One traceback per failure streak; repeats stay one line so a
@@ -118,14 +121,14 @@ class PollingManager:
                     logger.exception(
                         "Error polling channel %r: %s (backing off %ss)",
                         channel_name,
-                        e,
+                        error,
                         sleep_duration,
                     )
                 else:
                     logger.warning(
                         "Error polling channel %r: %s (failure %s in a row, backing off %ss)",
                         channel_name,
-                        e,
+                        error,
                         consecutive_failures,
                         sleep_duration,
                     )

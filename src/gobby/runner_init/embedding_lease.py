@@ -72,10 +72,7 @@ def _renew_embedding_lease(handle: _ManagedEmbeddingLease) -> None:
         except EmbeddingGenerationLeaseLost:
             handle.lease.fence()
             logger.warning(
-                "Managed embedding generation lease was lost; attempting re-acquisition "
-                "expected_generation=%s expected_revision=%d",
-                handle.lease.generation,
-                handle.lease.revision,
+                "Managed embedding generation lease was lost; attempting re-acquisition",
                 extra={
                     "expected_generation": handle.lease.generation,
                     "expected_revision": handle.lease.revision,
