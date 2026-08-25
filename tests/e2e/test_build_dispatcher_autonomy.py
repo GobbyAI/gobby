@@ -176,7 +176,7 @@ class MiniBuildHarness:
             resolve_stage_manifest_specs(
                 self.task_manager,
                 root,
-                "plan_file",  # type: ignore[arg-type]
+                "plan_file",
                 BuildOptions(isolation="none", skip_stages=self.skipped_stages),
                 skip_stages=self.skipped_stages,
             ),

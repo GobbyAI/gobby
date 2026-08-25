@@ -76,7 +76,7 @@ def _issue(
 ) -> GrantBundle:
     return service.issue(
         principal=GrantPrincipal(
-            kind=kind,  # type: ignore[arg-type]
+            kind=kind,
             machine_id="machine-1",
             project_id=project_id,
             execution_id=execution_id,

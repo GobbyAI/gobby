@@ -81,10 +81,10 @@ def test_token_breakdown_ignores_bool_token_values() -> None:
     snapshot = ContextUsageSnapshot.from_token_breakdown(
         source="web_chat",
         context_window=200_000,
-        uncached_prompt_tokens=True,  # type: ignore[arg-type]
-        cache_read_tokens=False,  # type: ignore[arg-type]
-        cache_creation_tokens=True,  # type: ignore[arg-type]
-        output_tokens=False,  # type: ignore[arg-type]
+        uncached_prompt_tokens=True,
+        cache_read_tokens=False,
+        cache_creation_tokens=True,
+        output_tokens=False,
     )
 
     assert snapshot.context_used_tokens is None

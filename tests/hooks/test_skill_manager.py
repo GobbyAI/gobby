@@ -284,7 +284,7 @@ class TestProjectScopedSkillCache:
 
         assert manager.resolve_skill_name("project-only", project_id="project-a") is project_skill
         assert manager.resolve_skill_name("project-only", project_id="project-b") is None
-        assert manager._load_from_db.call_args_list == [  # type: ignore[attr-defined]
+        assert manager._load_from_db.call_args_list == [
             call("project-a"),
             call("project-b"),
         ]
@@ -300,15 +300,15 @@ class TestProjectScopedSkillCache:
 
         manager.discover_core_skills("project-a")
         manager.discover_core_skills("project-a")
-        assert manager._load_from_db.call_count == 1  # type: ignore[attr-defined]
+        assert manager._load_from_db.call_count == 1
 
         now[0] = 16.0
         manager.discover_core_skills("project-a")
-        assert manager._load_from_db.call_count == 2  # type: ignore[attr-defined]
+        assert manager._load_from_db.call_count == 2
 
         get_skill_change_notifier(db).fire_change("update", "skill-1", "changed")
         manager.discover_core_skills("project-a")
-        assert manager._load_from_db.call_count == 3  # type: ignore[attr-defined]
+        assert manager._load_from_db.call_count == 3
 
     def test_filesystem_fallback_is_never_cached(self) -> None:
         from gobby.hooks.skill_manager import HookSkillManager

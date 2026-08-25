@@ -101,7 +101,7 @@ class TestStartDetached:
     ) -> None:
         """A detached run that raises is logged as an error and discarded."""
         executor = _make_executor(mock_db, mock_execution_manager, mock_llm_service)
-        executor.execute = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]
+        executor.execute = AsyncMock(side_effect=RuntimeError("boom"))
 
         with caplog.at_level(logging.ERROR, logger="gobby.workflows.pipeline_executor"):
             await executor.start_detached(
@@ -131,7 +131,7 @@ class TestStartDetached:
         """ApprovalRequired from a detached run parks the execution; it must
         not be reported as a failed background task."""
         executor = _make_executor(mock_db, mock_execution_manager, mock_llm_service)
-        executor.execute = AsyncMock(  # type: ignore[method-assign]
+        executor.execute = AsyncMock(
             side_effect=ApprovalRequired(
                 execution_id="pe-test-123",
                 step_id="gate",
@@ -188,7 +188,7 @@ class TestStartupSweep:
         async def _blocked_execute(*args, **kwargs):
             await release.wait()
 
-        executor.execute = AsyncMock(side_effect=_blocked_execute)  # type: ignore[method-assign]
+        executor.execute = AsyncMock(side_effect=_blocked_execute)
 
         execution = await executor.start_detached(
             pipeline=simple_pipeline,

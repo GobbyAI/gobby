@@ -50,7 +50,7 @@ def test_shared_database_concurrency_vectors() -> None:
 @pytest.mark.parametrize("value", [0, -1, True, "four", 1.5])
 def test_database_concurrency_config_rejects_invalid_values(value: object) -> None:
     with pytest.raises(ValidationError):
-        DatabaseConcurrencyConfig(executor_max_workers=value)  # type: ignore[arg-type]
+        DatabaseConcurrencyConfig(executor_max_workers=value)
 
 
 @pytest.mark.unit

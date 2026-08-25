@@ -934,7 +934,7 @@ async def test_tool_embedding_holds_project_admission_from_embedding_through_ups
         await release_upsert.wait()
 
     inner.upsert.side_effect = upsert
-    vector_store = ProjectFencedVectorStore(inner, fence)  # type: ignore[arg-type]
+    vector_store = ProjectFencedVectorStore(inner, fence)
     search = SemanticToolSearch(temp_db, vector_store=vector_store)
     search.embed_text = AsyncMock(return_value=[0.1] * DEFAULT_EMBEDDING_DIM)
     write_task = asyncio.create_task(

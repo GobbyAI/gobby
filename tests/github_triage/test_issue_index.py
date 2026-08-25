@@ -190,7 +190,7 @@ async def test_issue_index_holds_project_admission_from_embedding_through_upsert
         await release_embed.wait()
         return [0.1, 0.2]
 
-    vector_store = ProjectFencedVectorStore(inner, fence)  # type: ignore[arg-type]
+    vector_store = ProjectFencedVectorStore(inner, fence)
     indexer = GitHubIssueIndexer(vector_store=vector_store, embed_fn=embed)
     write_task = asyncio.create_task(indexer.upsert(_issue()))
     await embed_started.wait()

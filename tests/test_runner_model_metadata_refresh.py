@@ -137,7 +137,7 @@ async def test_replace_uses_bounded_four_statement_contract(
     monkeypatch.setattr("gobby.runner_model_metadata_refresh.run_bounded_db", bounded)
 
     inserted = await replace_model_metadata_async(
-        SimpleNamespace(conninfo="postgresql://metadata"),  # type: ignore[arg-type]
+        SimpleNamespace(conninfo="postgresql://metadata"),
         [_model()],
     )
 
@@ -215,7 +215,7 @@ async def test_shutdown_cancels_fetch_and_is_idempotent() -> None:
         "gobby.runner_model_metadata_refresh.fetch_models_async",
         side_effect=blocked_fetch,
     ):
-        task = asyncio.create_task(refresh_model_metadata_once(database))  # type: ignore[arg-type]
+        task = asyncio.create_task(refresh_model_metadata_once(database))
         runner = SimpleNamespace(_model_metadata_refresh_task=task, _wiki_watcher=None)
         await entered.wait()
         await _cancel_periodic_tasks(runner)
@@ -250,7 +250,7 @@ async def test_blocked_db_statements_terminate_without_post_teardown_activity(
     started = time.monotonic()
     with pytest.raises(BoundedDBTimeoutError):
         await replace_model_metadata_async(
-            SimpleNamespace(conninfo="postgresql://metadata"),  # type: ignore[arg-type]
+            SimpleNamespace(conninfo="postgresql://metadata"),
             [_model()],
         )
     assert time.monotonic() - started < 1.5
@@ -272,7 +272,7 @@ async def test_cumulative_delete_insert_deadline_is_end_to_end(
 
     with pytest.raises(BoundedDBTimeoutError):
         await replace_model_metadata_async(
-            SimpleNamespace(conninfo="postgresql://metadata"),  # type: ignore[arg-type]
+            SimpleNamespace(conninfo="postgresql://metadata"),
             [_model()],
         )
 
@@ -306,7 +306,7 @@ async def test_blocked_connect_terminates_without_running_db_work(
 
     with pytest.raises(BoundedDBTimeoutError):
         await replace_model_metadata_async(
-            SimpleNamespace(conninfo="postgresql://metadata"),  # type: ignore[arg-type]
+            SimpleNamespace(conninfo="postgresql://metadata"),
             [_model()],
         )
 

@@ -125,11 +125,14 @@ class TestEmailAdapter:
     async def test_ensure_smtp_connected_already_connected(
         self, mock_smtp: MagicMock, adapter: EmailAdapter
     ) -> None:
-        adapter._smtp_client = AsyncMock()
-        adapter._smtp_client.is_connected = True
+        client = AsyncMock()
+        client.is_connected = True
+        adapter._smtp_client = client
 
         await adapter._ensure_smtp_connected()
-        adapter._smtp_client.noop.assert_called_once()
+
+        assert adapter._smtp_client is client
+        client.noop.assert_called_once()
 
     @pytest.mark.asyncio
     @patch("gobby.communications.adapters.email.aiosmtplib", create=True)
@@ -149,6 +152,7 @@ class TestEmailAdapter:
 
         await adapter._ensure_smtp_connected()
 
+        assert adapter._smtp_client is new_client
         old_client.close.assert_called_once()
         mock_smtp.SMTP.assert_called_once()
         new_client.connect.assert_called_once()
@@ -690,7 +694,7 @@ async def test_imap_oauth2_login_uses_aioimaplib_xoauth2(adapter: EmailAdapter) 
 
     imap_client = FakeIMAPClient()
 
-    await adapter._imap_login(imap_client)  # type: ignore[arg-type]
+    await adapter._imap_login(imap_client)
 
     assert imap_client.xoauth2_calls == [("bot@example.com", b"access-token")]
 
@@ -709,7 +713,7 @@ async def test_imap_oauth2_login_rejects_non_ok_response(adapter: EmailAdapter) 
     imap_client = FakeIMAPClient()
 
     with pytest.raises(ValueError, match="IMAP XOAUTH2 login failed: NO"):
-        await adapter._imap_login(imap_client)  # type: ignore[arg-type]
+        await adapter._imap_login(imap_client)
 
 
 @pytest.mark.asyncio

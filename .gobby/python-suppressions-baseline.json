@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "site_count": 274,
+  "site_count": 249,
   "sites": [
     {
       "fingerprint": "0f66536411482f1a325ea75a3b12fe585163203aa948bb885f30281b874362a0",
@@ -753,26 +753,6 @@
       "statement": "await _sync_pass ( storage = storage , gcode_gateway = gateway , config = _config ( ) , batch_size = 50 , vector_breaker = breaker , )"
     },
     {
-      "fingerprint": "5bf8cb9479fbfa73be751fb88b5c73925b4e9274db51e1baca952e44a6fad60f",
-      "path": "tests/communications/adapters/test_communications_adapters_email.py",
-      "symbol": "test_imap_oauth2_login_rejects_non_ok_response",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "await adapter . _imap_login ( imap_client )"
-    },
-    {
-      "fingerprint": "ff8282caf4ccc8e368db9a19546f4ed473c732537456958a0a3b41199052e646",
-      "path": "tests/communications/adapters/test_communications_adapters_email.py",
-      "symbol": "test_imap_oauth2_login_uses_aioimaplib_xoauth2",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "await adapter . _imap_login ( imap_client )"
-    },
-    {
       "fingerprint": "9de108044fdc1ea011b6541ac4373f09d7c0b612582873a89cbac4d6ec1617e8",
       "path": "tests/communications/adapters/test_identity_contract.py",
       "symbol": "test_email_poll_populates_identity_contract",
@@ -833,16 +813,6 @@
       "statement": "await wait_for_async_condition ( lambda : not self . loop . _project_tasks , timeout = 2.0 , description = \"scheduled dispatcher tasks drained\" , )"
     },
     {
-      "fingerprint": "e563dd40fcdc6d49f14767c983ee600da816a47d6f1231a1307fea6bdb318c97",
-      "path": "tests/e2e/test_build_dispatcher_autonomy.py",
-      "symbol": "MiniBuildHarness.seed",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "self . task_manager . stage_states . initialize_manifest ( self . root_id , resolve_stage_manifest_specs ( self . task_manager , root , \"plan_file\" , BuildOptions ( isolation = \"none\" , skip_stages = self . skipped_stages ) , skip_stages = self . skipped_stages , ) , by_session_id = None , )"
-    },
-    {
       "fingerprint": "2cc2bff1e987c33fb412a28eae4a5846cd7c7e621e34a897a70c40f7b33f30fc",
       "path": "tests/e2e/test_plan_coverage_responsiveness.py",
       "symbol": "test_http_plane_responsive_during_coverage_regeneration._update",
@@ -851,16 +821,6 @@
         "BLE001"
       ],
       "statement": "except BaseException as exc :"
-    },
-    {
-      "fingerprint": "1fa07d450ffcf78c753cf8748e6592d818625afb9fb93e0363b09c6452f228b9",
-      "path": "tests/github_triage/test_issue_index.py",
-      "symbol": "test_issue_index_holds_project_admission_from_embedding_through_upsert",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "vector_store = ProjectFencedVectorStore ( inner , fence )"
     },
     {
       "fingerprint": "4c0bc752508ae1a605d12ddc4c92a1c7b793b6ca5a23158eea4244b98a7f1ac2",
@@ -903,36 +863,6 @@
       "statement": "return EventHandlers ( session_manager = session_manager )"
     },
     {
-      "fingerprint": "28f4de9acc3001fddd0e3b536d839aba3a3b69db2248641e9e8a5a3dd186feb8",
-      "path": "tests/hooks/test_skill_manager.py",
-      "symbol": "TestProjectScopedSkillCache.test_cache_expires_and_mutation_refreshes_immediately",
-      "directive": "type: ignore",
-      "codes": [
-        "attr-defined"
-      ],
-      "statement": "assert manager . _load_from_db . call_count == 1"
-    },
-    {
-      "fingerprint": "31c689a13b249533b31ac08d297fd8f00e5f74103c5bb5856292532117a3cd7e",
-      "path": "tests/hooks/test_skill_manager.py",
-      "symbol": "TestProjectScopedSkillCache.test_cache_expires_and_mutation_refreshes_immediately",
-      "directive": "type: ignore",
-      "codes": [
-        "attr-defined"
-      ],
-      "statement": "assert manager . _load_from_db . call_count == 2"
-    },
-    {
-      "fingerprint": "b1dda7f86b97c6537bd899255ef687302d31c8f7ee83adb6d5750a2e48130c56",
-      "path": "tests/hooks/test_skill_manager.py",
-      "symbol": "TestProjectScopedSkillCache.test_cache_expires_and_mutation_refreshes_immediately",
-      "directive": "type: ignore",
-      "codes": [
-        "attr-defined"
-      ],
-      "statement": "assert manager . _load_from_db . call_count == 3"
-    },
-    {
       "fingerprint": "12b64a45434bb2a85b34227f10218be37e07c58c3b0bd72b5f79e8912a40fe1e",
       "path": "tests/hooks/test_skill_manager.py",
       "symbol": "TestProjectScopedSkillCache.test_cache_expires_and_mutation_refreshes_immediately",
@@ -951,16 +881,6 @@
         "method-assign"
       ],
       "statement": "manager . _load_from_db = MagicMock ( side_effect = RuntimeError ( \"transient\" ) )"
-    },
-    {
-      "fingerprint": "c02ac4065099d3ea12ffd9ac62139d20bd7a94a5e27b23bc50fd82c3a0e10e4a",
-      "path": "tests/hooks/test_skill_manager.py",
-      "symbol": "TestProjectScopedSkillCache.test_project_skill_is_cached_only_for_its_project",
-      "directive": "type: ignore",
-      "codes": [
-        "attr-defined"
-      ],
-      "statement": "assert manager . _load_from_db . call_args_list == [ call ( \"project-a\" ) , call ( \"project-b\" ) , ]"
     },
     {
       "fingerprint": "e793753a7f7c7cdf41c8a8d111279d8060d9d395a606ed8ae61484ccb20c716e",
@@ -1021,16 +941,6 @@
         "arg-type"
       ],
       "statement": "event_handlers = EventHandlers ( session_manager = session_manager )"
-    },
-    {
-      "fingerprint": "e455d90bc66a69d741e88d83b6ee0f31a737ac364be7e6bc7b58a787135cb2ca",
-      "path": "tests/mcp_proxy/test_semantic_search.py",
-      "symbol": "test_tool_embedding_holds_project_admission_from_embedding_through_upsert",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "vector_store = ProjectFencedVectorStore ( inner , fence )"
     },
     {
       "fingerprint": "5963f86481f8317d45482d63357c47278165f9eb1fd6f06332ab7f2992c56dc3",
@@ -1583,16 +1493,6 @@
       "statement": "from tests . storage . stage_review_helpers import ( stage_review_setup as _stage_review_setup , )"
     },
     {
-      "fingerprint": "238178418ebc17cc25cca71022ee6c3fd2d311571b973178243e2377dfd6a69d",
-      "path": "tests/runtime_grants/test_revocation.py",
-      "symbol": "_issue",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "return service . issue ( principal = GrantPrincipal ( kind = kind , machine_id = \"machine-1\" , project_id = project_id , execution_id = execution_id , session_id = \"session-1\" , ) , postgres = PostgresDirect ( mode = \"direct\" , dsn = \"postgresql://role:secret@127.0.0.1:5432/gobby\" , role_name = \"gobby_interactive_1\" , credential_generation = 3 , valid_until = now + 3_600 , ) , now = now , ttl_seconds = 3_600 , )"
-    },
-    {
       "fingerprint": "d363383a35921fb076f5ad0b709bff3e6ae084aa431ac35f723aa21313caf47a",
       "path": "tests/scheduler/test_system_automation_loop.py",
       "symbol": "test_automation_tick_timeout_records_failure_and_releases_lock",
@@ -1863,16 +1763,6 @@
       "statement": "rate_limit . status_code = 429"
     },
     {
-      "fingerprint": "713dfa28fb42330d44630171325812025c1d4542711d1199f631eb408f5d76b9",
-      "path": "tests/sessions/test_acp_session_mapping.py",
-      "symbol": "test_map_session_info_requires_session_id",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "assert ( map_session_info ( \"not-a-mapping\" , provider = \"grok\" , resolve_project_id = _resolver ( { } ) , ) is None )"
-    },
-    {
       "fingerprint": "d1b72c472293addda7feddd56682d7123e531a72f0fc640ce695722f48d349c4",
       "path": "tests/sessions/test_context_usage.py",
       "symbol": "test_backfill_bumps_under_counted_windows_and_recomputes_ratio",
@@ -1953,46 +1843,6 @@
       "statement": "store = TaskValidationBackoffStore ( FakeDb ( ) )"
     },
     {
-      "fingerprint": "44943f35852feef02435c1103d105ae413e1304ffcd38f0fa338c3d7fb610a6d",
-      "path": "tests/storage/test_context_usage_snapshot.py",
-      "symbol": "test_token_breakdown_ignores_bool_token_values",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "snapshot = ContextUsageSnapshot . from_token_breakdown ( source = \"web_chat\" , context_window = 200_000 , uncached_prompt_tokens = True , cache_read_tokens = False , cache_creation_tokens = True , output_tokens = False , )"
-    },
-    {
-      "fingerprint": "44943f35852feef02435c1103d105ae413e1304ffcd38f0fa338c3d7fb610a6d",
-      "path": "tests/storage/test_context_usage_snapshot.py",
-      "symbol": "test_token_breakdown_ignores_bool_token_values",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "snapshot = ContextUsageSnapshot . from_token_breakdown ( source = \"web_chat\" , context_window = 200_000 , uncached_prompt_tokens = True , cache_read_tokens = False , cache_creation_tokens = True , output_tokens = False , )"
-    },
-    {
-      "fingerprint": "44943f35852feef02435c1103d105ae413e1304ffcd38f0fa338c3d7fb610a6d",
-      "path": "tests/storage/test_context_usage_snapshot.py",
-      "symbol": "test_token_breakdown_ignores_bool_token_values",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "snapshot = ContextUsageSnapshot . from_token_breakdown ( source = \"web_chat\" , context_window = 200_000 , uncached_prompt_tokens = True , cache_read_tokens = False , cache_creation_tokens = True , output_tokens = False , )"
-    },
-    {
-      "fingerprint": "44943f35852feef02435c1103d105ae413e1304ffcd38f0fa338c3d7fb610a6d",
-      "path": "tests/storage/test_context_usage_snapshot.py",
-      "symbol": "test_token_breakdown_ignores_bool_token_values",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "snapshot = ContextUsageSnapshot . from_token_breakdown ( source = \"web_chat\" , context_window = 200_000 , uncached_prompt_tokens = True , cache_read_tokens = False , cache_creation_tokens = True , output_tokens = False , )"
-    },
-    {
       "fingerprint": "565508ce009654456b05db39e7df7884267d4304782aab72d49cc997d2ceb1ce",
       "path": "tests/storage/test_context_usage_snapshot.py",
       "symbol": "test_token_breakdown_ignores_malformed_token_values",
@@ -2011,16 +1861,6 @@
         "arg-type"
       ],
       "statement": "snapshot = ContextUsageSnapshot . from_token_breakdown ( source = \"web_chat\" , context_window = 200_000 , uncached_prompt_tokens = \"not-a-number\" , cache_read_tokens = object ( ) , cache_creation_tokens = \"5\" , output_tokens = - 3 , )"
-    },
-    {
-      "fingerprint": "4c3a757f534daf17129871d7a07e939de30e1f9dc3434447e9f6b0ca3e4ea21c",
-      "path": "tests/storage/test_database_concurrency.py",
-      "symbol": "test_database_concurrency_config_rejects_invalid_values",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "DatabaseConcurrencyConfig ( executor_max_workers = value )"
     },
     {
       "fingerprint": "0b0211e9151e44c8eee7b24cc29817bb9c58a11dff0ea26b89256dc34069ef49",
@@ -2393,56 +2233,6 @@
       "statement": "def do_POST ( self ) -> None :"
     },
     {
-      "fingerprint": "1a9883cd0b356d36135c5ff414ac65aa5d058a93db98889f2dd604f4b865e9e2",
-      "path": "tests/test_runner_model_metadata_refresh.py",
-      "symbol": "test_blocked_connect_terminates_without_running_db_work",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "await replace_model_metadata_async ( SimpleNamespace ( conninfo = \"postgresql://metadata\" ) , [ _model ( ) ] , )"
-    },
-    {
-      "fingerprint": "afa6a9dc9227f423ad2a88f937d60fadb7edd4b321b81d8f5e77f943df85665b",
-      "path": "tests/test_runner_model_metadata_refresh.py",
-      "symbol": "test_blocked_db_statements_terminate_without_post_teardown_activity",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "await replace_model_metadata_async ( SimpleNamespace ( conninfo = \"postgresql://metadata\" ) , [ _model ( ) ] , )"
-    },
-    {
-      "fingerprint": "2477652c145033703c6a6f43fb58543b1ab09f5e4e87413b343252d172d97d26",
-      "path": "tests/test_runner_model_metadata_refresh.py",
-      "symbol": "test_cumulative_delete_insert_deadline_is_end_to_end",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "await replace_model_metadata_async ( SimpleNamespace ( conninfo = \"postgresql://metadata\" ) , [ _model ( ) ] , )"
-    },
-    {
-      "fingerprint": "c4bd5802ff495a2a878989e95be35a1775aa1bc8060fe4857499128a1fcd939b",
-      "path": "tests/test_runner_model_metadata_refresh.py",
-      "symbol": "test_replace_uses_bounded_four_statement_contract",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "inserted = await replace_model_metadata_async ( SimpleNamespace ( conninfo = \"postgresql://metadata\" ) , [ _model ( ) ] , )"
-    },
-    {
-      "fingerprint": "9420b2d4d43b7d52e46c5d2f4dedb9ff5aa4115a28124a8d83d46b23f1e3174e",
-      "path": "tests/test_runner_model_metadata_refresh.py",
-      "symbol": "test_shutdown_cancels_fetch_and_is_idempotent",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "task = asyncio . create_task ( refresh_model_metadata_once ( database ) )"
-    },
-    {
       "fingerprint": "610f80575378f9adfb69f1cc68315c7cb3348ff0414c9500fa0b5660d4d10a4e",
       "path": "tests/utils/test_stream_pump.py",
       "symbol": "test_a_quiet_codex_read_loop_leaves_the_default_executor_free",
@@ -2593,16 +2383,6 @@
       "statement": "unavailable = await create_wiki_prune_handler ( UnavailableGateway ( ) ) ( SimpleNamespace ( ) )"
     },
     {
-      "fingerprint": "09b25b74cbb30510ec89b15e5a3a0f92ddcdc25a78567c9e46054c12bdece6cc",
-      "path": "tests/wiki/test_prune_job.py",
-      "symbol": "test_wiki_prune_handler_reports_timeout_and_unavailable",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "unavailable = await create_wiki_prune_handler ( UnavailableGateway ( ) ) ( SimpleNamespace ( ) )"
-    },
-    {
       "fingerprint": "d166e7588db8538ca7b57e5b09498842810652c443e4f7408541178d64221d6d",
       "path": "tests/workflows/test_agent_resolver.py",
       "symbol": "_create_agent",
@@ -2652,36 +2432,6 @@
         "method-assign"
       ],
       "statement": "handler . _evaluate_rules = evaluate"
-    },
-    {
-      "fingerprint": "68cf1d1f2acbab2953dcffe0786adcbc206ac7ba735f6feb94e3536c0d65a538",
-      "path": "tests/workflows/test_pipeline_executor.py",
-      "symbol": "TestStartDetached.test_start_detached_approval_park_is_not_an_error",
-      "directive": "type: ignore",
-      "codes": [
-        "method-assign"
-      ],
-      "statement": "executor . execute = AsyncMock ( side_effect = ApprovalRequired ( execution_id = \"pe-test-123\" , step_id = \"gate\" , token = \"tok-1\" , message = \"approve me\" , ) )"
-    },
-    {
-      "fingerprint": "197bbf875913aed102e78709cb1fceffa8499fce17e485f53482bd6662580f5d",
-      "path": "tests/workflows/test_pipeline_executor.py",
-      "symbol": "TestStartDetached.test_start_detached_failure_is_logged_and_discarded",
-      "directive": "type: ignore",
-      "codes": [
-        "method-assign"
-      ],
-      "statement": "executor . execute = AsyncMock ( side_effect = RuntimeError ( \"boom\" ) )"
-    },
-    {
-      "fingerprint": "54ca862ea5a3405c3b795257f0fff6670590813af78e75e6fcaa89ec00a879e4",
-      "path": "tests/workflows/test_pipeline_executor.py",
-      "symbol": "TestStartupSweep.test_startup_sweep_excludes_inflight_detached_runs",
-      "directive": "type: ignore",
-      "codes": [
-        "method-assign"
-      ],
-      "statement": "executor . execute = AsyncMock ( side_effect = _blocked_execute )"
     },
     {
       "fingerprint": "88ee245d41762f5cf230f030a30ed8a8933fa90807595834ca51ea38de2fee49",

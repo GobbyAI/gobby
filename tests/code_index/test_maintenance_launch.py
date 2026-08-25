@@ -34,19 +34,26 @@ class _RecordingExit:
 @pytest.mark.asyncio
 async def test_open_launch_async_exit_survives_cancellation() -> None:
     recording = _RecordingExit()
+    body_started = asyncio.Event()
 
     class _Factory:
-        def open(self, project_id: str, *, timeout_seconds: float) -> _RecordingExit:
-            del project_id, timeout_seconds
+        def open(
+            self,
+            project_id: str,
+            *,
+            timeout_seconds: float,
+            code_overlay_project_id: str | None = None,
+        ) -> _RecordingExit:
+            del project_id, timeout_seconds, code_overlay_project_id
             return recording
 
     async def _run() -> None:
         async with open_launch_async(_Factory(), "project", timeout_seconds=1.0):
+            body_started.set()
             await asyncio.Event().wait()
 
     task = asyncio.create_task(_run())
-    await asyncio.to_thread(recording.entered.wait, 1)
-    await asyncio.sleep(0)
+    await asyncio.wait_for(body_started.wait(), timeout=1)
     task.cancel()
     await asyncio.to_thread(recording.exit_started.wait, 1)
     recording.release.set()

@@ -94,7 +94,7 @@ def test_map_session_info_requires_session_id() -> None:
         map_session_info(
             "not-a-mapping",
             provider="grok",
-            resolve_project_id=_resolver({}),  # type: ignore[arg-type]
+            resolve_project_id=_resolver({}),
         )
         is None
     )

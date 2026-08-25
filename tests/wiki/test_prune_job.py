@@ -166,7 +166,7 @@ async def test_wiki_prune_handler_reports_timeout_and_unavailable() -> None:
         async def prune_all_scopes(self, *, timeout: float | None = None) -> GwikiCommandResult:
             raise GwikiUnavailableError("gwiki is not installed")
 
-    unavailable = await create_wiki_prune_handler(UnavailableGateway())(  # type: ignore[arg-type]
+    unavailable = await create_wiki_prune_handler(UnavailableGateway())(
         SimpleNamespace()  # type: ignore[arg-type]
     )
 
