@@ -20,6 +20,7 @@ from gobby.tasks.transcript_evidence import (
     TranscriptEvidence,
     TranscriptEvidenceUnavailable,
     TranscriptValidationRun,
+    TranscriptValidationSegment,
     _extract_output,
     derive_transcript_evidence,
     merge_transcript_evidence,
@@ -1391,6 +1392,51 @@ async def test_compound_run_records_only_its_validation_segments(tmp_path: Path)
         str(tmp_path),
     )
 
-    assert [run.validation_commands for run in evidence.validation_runs] == [
-        ("pytest tests/servers/test_auth.py -q",)
+    assert [run.validation_segments for run in evidence.validation_runs] == [
+        (
+            TranscriptValidationSegment(
+                command="pytest tests/servers/test_auth.py -q", categories=("test",)
+            ),
+        )
     ]
+
+
+async def test_compound_run_records_every_segment_with_its_categories(tmp_path: Path) -> None:
+    """A format-then-test compound run belongs to both categories, one segment each."""
+    transcript = tmp_path / "compound-green.jsonl"
+    _write_jsonl(
+        transcript,
+        _claude_tool_pair(
+            command=(
+                "uv run ruff format --check src/gobby/x.py && "
+                "GOBBY_TEST_PROTECT=1 uv run pytest tests/unit -q"
+            ),
+            call_id="green-1",
+            start=BASE_TIME,
+            result={
+                "exit_code": 0,
+                "stdout": (
+                    "1 file already formatted\n"
+                    "tests/unit/test_a.py ..                                    [100%]\n"
+                    "2 passed in 0.10s\n"
+                ),
+            },
+        ),
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    (run,) = evidence.validation_runs
+    assert run.categories == ("format", "test")
+    assert run.validation_segments == (
+        TranscriptValidationSegment(
+            command="ruff format --check src/gobby/x.py", categories=("format",)
+        ),
+        TranscriptValidationSegment(command="pytest tests/unit -q", categories=("test",)),
+    )

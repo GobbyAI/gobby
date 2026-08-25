@@ -25,6 +25,7 @@ from gobby.hooks.events import HookEvent
 from gobby.tasks.transcript_evidence import (
     TranscriptEvidenceUnavailable,
     TranscriptValidationRun,
+    TranscriptValidationSegment,
     derive_transcript_evidence,
 )
 
@@ -507,13 +508,27 @@ def _analysis_cache_key(
 
 
 def _run_covers(success: TranscriptValidationRun, failure: TranscriptValidationRun) -> bool:
-    """Return whether the green run's scope contains the red run's scope.
+    """Return whether every red validation segment sits inside a green segment.
 
-    Selector options (``-k``, ``-m``, ...) narrow a run, so the green may carry
-    only selectors the red also carried; paths then compare as file trees.
+    Segments compare one to one, never as a union across the run: a lint
+    segment's paths cannot cover a test segment, and a sibling segment's
+    selectors cannot narrow it.
     """
-    success_paths, success_selectors = _split_targets(_run_targets(success))
-    failure_paths, failure_selectors = _split_targets(_run_targets(failure))
+    greens = _run_segments(success)
+    return all(
+        any(_segment_covers(green, red) for green in greens) for red in _run_segments(failure)
+    )
+
+
+def _segment_covers(
+    success: TranscriptValidationSegment,
+    failure: TranscriptValidationSegment,
+) -> bool:
+    """Same category, no extra selectors (``-k``, ``-m``, ...), and containing paths."""
+    if not set(success.categories) & set(failure.categories):
+        return False
+    success_paths, success_selectors = _split_targets(_command_targets(success.command))
+    failure_paths, failure_selectors = _split_targets(_command_targets(failure.command))
     if not success_selectors <= failure_selectors:
         return False
     if not success_paths:
@@ -568,11 +583,19 @@ def _green_scope_avoids_foreign_paths(
     )
 
 
+def _run_segments(run: TranscriptValidationRun) -> tuple[TranscriptValidationSegment, ...]:
+    """The run's validation segments; the whole command when it was built unclassified."""
+    return run.validation_segments or (
+        TranscriptValidationSegment(command=run.command, categories=run.categories),
+    )
+
+
 def _run_targets(run: TranscriptValidationRun) -> tuple[str, ...]:
-    """Cover targets of the validation segments only; the whole command when unclassified."""
-    commands = run.validation_commands or (run.command,)
+    """Cover targets across every validation segment, for the foreign-path checks."""
     return tuple(
-        dict.fromkeys(target for command in commands for target in _command_targets(command))
+        dict.fromkeys(
+            target for segment in _run_segments(run) for target in _command_targets(segment.command)
+        )
     )
 
 

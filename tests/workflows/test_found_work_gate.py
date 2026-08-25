@@ -21,6 +21,7 @@ from gobby.tasks.transcript_evidence import (
     EvidenceOutcome,
     TranscriptEvidence,
     TranscriptValidationRun,
+    TranscriptValidationSegment,
 )
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.found_work_gate import (
@@ -59,10 +60,19 @@ def _run(
     order: int,
     outcome: str,
     command: str = "pytest tests/unit/test_widget.py",
-    categories: tuple[str, ...] = ("test",),
+    categories: tuple[str, ...] | None = None,
     output: str | None = None,
 ) -> TranscriptValidationRun:
+    """Build a run the way the transcript recorder does: one segment per validation match."""
     now = datetime.now(UTC)
+    segments = tuple(
+        TranscriptValidationSegment(command=match.normalized_command, categories=match.categories)
+        for match in classify_validation_segments(command)
+    )
+    if categories is None:
+        categories = tuple(
+            dict.fromkeys(category for segment in segments for category in segment.categories)
+        ) or ("test",)
     return TranscriptValidationRun(
         session_id=SESSION_ID,
         source="claude",
@@ -76,9 +86,7 @@ def _run(
         order=order,
         exit_code=0 if outcome == "success" else 1,
         output=output,
-        validation_commands=tuple(
-            match.normalized_command for match in classify_validation_segments(command)
-        ),
+        validation_segments=segments,
     )
 
 
@@ -445,6 +453,36 @@ class TestTerminalValidationFailures:
         ]
         assert unresolved_validation_failures(runs, owner_handoff=False) == (runs[0],)
         runs.append(_run(3, "success", "uv run pytest tests/unit"))
+        assert unresolved_validation_failures(runs, owner_handoff=False) == ()
+
+    def test_format_first_compound_green_covers_pytest_failure(self) -> None:
+        """A green whose first segment is ruff still covers through its pytest segment."""
+        runs = [
+            _run(1, "failure", "uv run pytest tests/unit/test_a.py tests/unit/test_missing.py"),
+            _run(
+                2,
+                "success",
+                "uv run ruff format --check src/gobby/x.py && uv run pytest tests/unit -q",
+            ),
+        ]
+        assert runs[1].categories == ("format", "test")
+        assert unresolved_validation_failures(runs, owner_handoff=False) == ()
+
+    def test_lint_segment_scope_does_not_cover_pytest_failure(self) -> None:
+        """Only a segment of the failure's category can cover it, whatever paths it names."""
+        runs = [
+            _run(1, "failure", "uv run pytest tests/unit/test_a.py"),
+            _run(
+                2, "success", "uv run ruff check tests/unit && uv run pytest tests/other/test_b.py"
+            ),
+        ]
+        assert unresolved_validation_failures(runs, owner_handoff=False) == (runs[0],)
+
+    def test_selector_on_sibling_segment_does_not_narrow_pytest_segment(self) -> None:
+        runs = [
+            _run(1, "failure", "uv run pytest tests/unit/test_a.py"),
+            _run(2, "success", "cargo test -p gobby-core && uv run pytest tests/unit"),
+        ]
         assert unresolved_validation_failures(runs, owner_handoff=False) == ()
 
     def test_selector_narrowed_green_does_not_hide_broader_failure(self) -> None:
