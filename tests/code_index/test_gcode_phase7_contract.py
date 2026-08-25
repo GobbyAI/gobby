@@ -345,7 +345,7 @@ def test_phase7_ports_all_eight_read_queries_without_unbound_numeric_params() ->
         (
             "depth.clamp(1, 5)",
             "SKIP {offset} LIMIT {limit}",
-            "target.id IN [{ids}]",
+            "UNWIND [{ids}] AS anchor_id",
             "src.id IN [{ids}]",
             "LIMIT {limit}",
         ),
