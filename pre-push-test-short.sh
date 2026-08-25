@@ -65,6 +65,20 @@ else
 fi
 echo ""
 
+# Python suppression ratchet
+echo ">>> Checking Python suppression debt..."
+uv_run gobby test-types suppressions . \
+    --baseline .gobby/python-suppressions-baseline.json \
+    2>&1 | tee "$REPORTS_DIR/python-suppressions-$TIMESTAMP.txt"
+suppressions_status=${PIPESTATUS[0]}
+if [ "$suppressions_status" -eq 0 ]; then
+    echo "✓ Python suppression ratchet passed"
+else
+    echo "✗ Python suppression ratchet failed"
+    FAILED=$((FAILED+1))
+fi
+echo ""
+
 # Prettier - frontend formatting
 echo ">>> Checking frontend formatting..."
 (cd web && npm run format:check) 2>&1 | tee "$REPORTS_DIR/frontend-format-$TIMESTAMP.txt"

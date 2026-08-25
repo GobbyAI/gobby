@@ -223,8 +223,8 @@ def test_python_skill_loads_strict_typed_config_pattern() -> None:
     assert result.has_behavioral_delta
 
 
-def test_python_skill_restricts_suppressions_to_last_resort_conditions() -> None:
-    """Verify Python suppressions require failed root-cause fixes and narrow exceptions."""
+def test_python_skill_replaces_suppressions_with_typed_boundaries() -> None:
+    """Verify Python diagnostics route to adapters, stubs, and facade exports."""
     result = run_recorded_skill_scenario(SCENARIOS / "python/last-resort-suppressions.yaml")
 
     assert result.baseline.action_names == (
@@ -235,11 +235,33 @@ def test_python_skill_restricts_suppressions_to_last_resort_conditions() -> None
     assert result.loaded.action_names == (
         "inspect_diagnostics",
         "attempt_root_cause_fixes",
-        "confirm_allowed_external_conditions",
-        "add_rule_specific_suppressions",
-        "document_safety_justifications",
+        "define_typed_adapter",
+        "add_local_stub",
+        "export_registration_facade",
         "add_regression_tests",
         "run_validation",
+        "respond",
+    )
+    assert result.has_behavioral_delta
+
+
+def test_development_discipline_rejects_python_suppressions() -> None:
+    """Verify deadline pressure still routes diagnostics to typed boundaries."""
+    result = run_recorded_skill_scenario(
+        SCENARIOS / "development-discipline/no-python-suppressions.yaml"
+    )
+
+    assert result.baseline.action_names == (
+        "add_bare_noqa",
+        "add_bare_type_ignore",
+        "respond",
+    )
+    assert result.loaded.action_names == (
+        "inspect_diagnostics",
+        "define_protocol_adapter",
+        "add_local_stub",
+        "add_regression_tests",
+        "run_suppression_ratchet",
         "respond",
     )
     assert result.has_behavioral_delta

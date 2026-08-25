@@ -17,6 +17,9 @@ pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SKILL_DIR = REPO_ROOT / "src/gobby/install/shared/skills/python"
+DEVELOPMENT_DISCIPLINE_FILE = (
+    REPO_ROOT / "src/gobby/install/shared/skills/development-discipline/SKILL.md"
+)
 
 
 def test_python_skill_parses_with_references() -> None:
@@ -58,19 +61,25 @@ def test_python_skill_parses_with_references() -> None:
     }
 
 
-def test_python_skill_allows_suppressions_only_for_enumerated_last_resorts() -> None:
-    """Require a narrow, documented allowlist for noqa and type-ignore comments."""
+def test_python_skill_prohibits_suppressions_and_routes_to_typed_boundaries() -> None:
+    """Require root-cause typing repairs and the repository ratchet."""
     content = SkillLoader().load_skill(SKILL_DIR, validate=False).content
 
-    assert "Suppressions are a last resort" in content
-    assert "incorrect or incomplete third-party type information" in content
-    assert "confirmed linter or type-checker defect" in content
-    assert "runtime-required dynamic behavior or import side effect" in content
-    assert "# noqa: <rule-code>" in content
-    assert "# type: ignore[<error-code>]" in content
-    assert "Bare suppressions are prohibited" in content
-    assert "adjacent comment" in content
-    assert "regression test" in content
+    assert "Do not add `# noqa` or `# type: ignore`" in content
+    assert "typed adapter" in content
+    assert "local stub" in content
+    assert "explicit facade exports" in content.lower()
+    assert "gobby test-types suppressions" in content
+    assert "last resort" not in content
+
+
+def test_development_discipline_prohibits_python_suppressions() -> None:
+    content = DEVELOPMENT_DISCIPLINE_FILE.read_text(encoding="utf-8")
+
+    assert "never add `# type: ignore` or `# noqa`" in content
+    assert "typed adapter" in content
+    assert "local stub" in content
+    assert "gobby test-types suppressions" in content
 
 
 def test_synced_python_skill_is_searchable(temp_db: HubDatabase) -> None:

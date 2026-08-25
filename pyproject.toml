@@ -253,9 +253,7 @@ plugins = ["pydantic.mypy"]
 strict = true
 warn_return_any = true
 warn_unused_configs = true
-# Disabled: pre-commit mypy runs on individual files with different type inference,
-# causing type: ignore comments needed for partial context to be flagged as unused
-warn_unused_ignores = false
+warn_unused_ignores = true
 disallow_untyped_defs = true
 disallow_any_generics = true
 ignore_missing_imports = true

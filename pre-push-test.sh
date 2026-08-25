@@ -343,6 +343,22 @@ fi
 record_command_result "mypy" "$MYPY_EXIT" "$MYPY_REPORT"
 echo ""
 
+# Python suppression ratchet
+echo ">>> Checking Python suppression debt..."
+SUPPRESSIONS_REPORT="$REPORTS_DIR/python-suppressions-$TIMESTAMP.txt"
+SUPPRESSIONS_EXIT=0
+if uv_run gobby test-types suppressions . \
+    --baseline .gobby/python-suppressions-baseline.json \
+    2>&1 | tee "$SUPPRESSIONS_REPORT"; then
+    echo "✓ Python suppression ratchet passed"
+else
+    SUPPRESSIONS_EXIT=$?
+    echo "✗ Python suppression ratchet failed"
+    FAILED=1
+fi
+record_command_result "python-suppressions" "$SUPPRESSIONS_EXIT" "$SUPPRESSIONS_REPORT"
+echo ""
+
 # Prettier - frontend formatting
 echo ">>> Checking frontend formatting..."
 FRONTEND_FORMAT_REPORT="$REPORTS_DIR/frontend-format-$TIMESTAMP.txt"

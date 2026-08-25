@@ -443,6 +443,19 @@ def test_frontend_format_check_is_enforced_in_ci_and_pre_push(repo_root: Path) -
     _assert_before(full_script, "npm run format:check", "npx tsc --noEmit")
 
 
+def test_python_suppression_ratchet_runs_in_ci_and_pre_push(repo_root: Path) -> None:
+    command = "gobby test-types suppressions . --baseline .gobby/python-suppressions-baseline.json"
+    workflow = _load_yaml(repo_root / ".github/workflows/ci.yml")
+    typecheck = _mapping(_mapping(workflow["jobs"])["typecheck"])
+    ci_runs = _step_runs(_sequence(typecheck["steps"]))
+
+    assert any(command in run for run in ci_runs)
+    full_script = _load_pre_push_script(repo_root).replace("\\\n", "")
+    short_script = _load_pre_push_short_script(repo_root).replace("\\\n", "")
+    assert command in " ".join(full_script.split())
+    assert command in " ".join(short_script.split())
+
+
 def test_pre_push_exports_managed_falkordb_settings_before_home_isolation(
     repo_root: Path,
 ) -> None:

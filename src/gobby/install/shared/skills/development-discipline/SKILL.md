@@ -77,8 +77,15 @@ uv run gobby test-types audit <paths> --baseline .gobby/test-types-baseline.json
 ```
 
 Fix new test type errors directly. Use `typing.cast` at intentional invalid-input
-boundaries; never add `# type: ignore` comments (#14544). After reducing existing
-debt, safely regenerate the baseline with:
+boundaries, a typed adapter or local stub for dynamic dependencies, and explicit facade
+exports for intentional re-exports; never add `# type: ignore` or `# noqa` (#14544).
+Run the repository suppression ratchet after Python or test edits:
+
+```bash
+uv run gobby test-types suppressions . --baseline .gobby/python-suppressions-baseline.json
+```
+
+After reducing existing test-type debt, safely regenerate its baseline with:
 
 ```bash
 uv run gobby test-types audit <paths> --baseline .gobby/test-types-baseline.json --fail-on-new --write-baseline .gobby/test-types-baseline.json

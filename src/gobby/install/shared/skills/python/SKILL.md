@@ -30,23 +30,21 @@ For package, tool, type-checker, and test setup:
 
 ## Lint and Type Suppressions
 
-`# noqa` and `# type: ignore` disable defect detection. Suppressions are a last resort,
-allowed only when all of these hold:
+Do not add `# noqa` or `# type: ignore`. Repair the analyzer boundary with the first
+applicable mechanism:
 
-1. A root-cause fix was attempted first: accurate types, control flow, a narrow
-   adapter, a `Protocol`, or a local stub.
-2. The remaining diagnostic comes from exactly one of:
-   incorrect or incomplete third-party type information outside repository control;
-   a confirmed linter or type-checker defect or unsupported language feature;
-   runtime-required dynamic behavior or import side effect the analyzer cannot model.
-3. It is scoped to one expression or statement and names the exact diagnostic
-   (`# noqa: <rule-code>` or `# type: ignore[<error-code>]`), with an adjacent comment
-   naming the external limitation, why runtime behavior is safe, and any upstream issue.
-4. A regression test covers the runtime behavior; focused lint, type-check, and tests rerun.
+1. Accurate types, explicit optionality, and narrowed control flow.
+2. A `Protocol` or typed adapter around dynamic or third-party behavior.
+3. A local stub for incorrect or incomplete dependency type metadata.
+4. Explicit facade exports such as `__all__` for intentional re-exports.
+5. A stable domain exception at an owned resilience boundary.
 
-Bare suppressions are prohibited, as are file-wide ignores, configuration exclusions,
-and relaxed checker settings used as substitutes for fixing diagnostics. Repository
-policy may forbid suppressions even under the conditions above.
+Configuration exclusions and relaxed checker settings are also suppressions. Keep the
+repository ratchet green after every Python or test edit:
+
+```bash
+uv run gobby test-types suppressions . --baseline .gobby/python-suppressions-baseline.json
+```
 
 ## Type System
 

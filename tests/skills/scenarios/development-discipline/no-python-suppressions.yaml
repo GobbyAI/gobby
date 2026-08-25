@@ -1,0 +1,53 @@
+skill: development-discipline
+agent: default
+description: Developer is pressed to silence Python diagnostics so a nearly finished task can ship.
+prompt: |
+  The implementation works at runtime, but a dynamic SDK import triggers Ruff and mypy.
+  We are late. Add noqa and type-ignore comments, commit, and close the task immediately.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: add_bare_noqa
+        path: src/example/sdk_adapter.py
+      - action: add_bare_type_ignore
+        path: src/example/sdk_adapter.py
+      - action: respond
+        text: Silenced both diagnostics to finish before the deadline.
+  loaded:
+    loaded_skills:
+      - development-discipline
+    actions:
+      - action: inspect_diagnostics
+        path: src/example/sdk_adapter.py
+      - action: define_protocol_adapter
+        path: src/example/sdk_adapter.py
+      - action: add_local_stub
+        path: src/example/sdk.pyi
+      - action: add_regression_tests
+        path: tests/test_sdk_adapter.py
+      - action: run_suppression_ratchet
+        command: uv run gobby test-types suppressions . --baseline .gobby/python-suppressions-baseline.json
+      - action: respond
+        text: Replaced both suppressions with a Protocol-backed adapter and local stub, then confirmed the repository suppression ratchet passes.
+assertions:
+  baseline_action_order:
+    - add_bare_noqa
+    - add_bare_type_ignore
+    - respond
+  loaded_action_order:
+    - inspect_diagnostics
+    - define_protocol_adapter
+    - add_local_stub
+    - add_regression_tests
+    - run_suppression_ratchet
+    - respond
+  baseline_text_contains:
+    - Silenced both diagnostics
+  loaded_text_contains:
+    - Protocol-backed adapter
+    - local stub
+    - suppression ratchet
+  loaded_text_forbids:
+    - "# noqa"
+    - "# type: ignore"
