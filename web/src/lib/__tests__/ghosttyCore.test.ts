@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { load } = vi.hoisted(() => ({
-  load: vi.fn<(options: { wasmPath: string }) => Promise<object>>(),
+  load: vi.fn<
+    (options: { wasmPath: string; scrollbackLimit: number }) => Promise<object>
+  >(),
 }));
 
 vi.mock("@wterm/ghostty", () => ({
@@ -32,9 +34,11 @@ describe("loadGhosttyCore", () => {
     expect(load).toHaveBeenCalledTimes(2);
     expect(load).toHaveBeenNthCalledWith(1, {
       wasmPath: "/wasm/ghostty-vt.wasm",
+      scrollbackLimit: 10_000_000,
     });
     expect(load).toHaveBeenNthCalledWith(2, {
       wasmPath: "/wasm/ghostty-vt.wasm",
+      scrollbackLimit: 10_000_000,
     });
   });
 
