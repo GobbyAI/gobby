@@ -133,28 +133,11 @@ class TestAdminRoutes:
         return TestClient(app)
 
     def test_status_endpoint_includes_generation_endpoint_health(self, client, mock_server) -> None:
-        from gobby.config.ai import AIConfig, GenerationConfig
-        from gobby.config.app import DaemonConfig
-
-        # No dict of configured endpoints (MagicMock config): empty list.
         response = client.get("/api/admin/status")
         assert response.status_code == 200
         assert response.json()["generation_endpoints"] == []
 
-        mock_server.config = DaemonConfig(
-            ai=AIConfig(
-                generation=GenerationConfig(
-                    endpoints={
-                        "vllm": {
-                            "protocol": "vllm",
-                            "api_base": "http://localhost:8321/v1",
-                            "model": "auto",
-                        }
-                    }
-                )
-            )
-        )
-        probe_payload = [
+        cached_snapshot = [
             {
                 "name": "vllm",
                 "protocol": "vllm",
@@ -168,23 +151,21 @@ class TestAdminRoutes:
                 "error": None,
             }
         ]
+        snapshot = MagicMock(return_value=cached_snapshot)
+        mock_server.services.generation_endpoint_health = SimpleNamespace(snapshot=snapshot)
         with patch(
-            "gobby.servers.routes.admin._health.probe_generation_endpoints",
-            AsyncMock(return_value=probe_payload),
+            "gobby.servers.local_provider_models.probe_generation_endpoints",
+            AsyncMock(side_effect=AssertionError("status route performed endpoint I/O")),
         ) as mock_probe:
-            response = client.get("/api/admin/status")
-        assert response.status_code == 200
-        assert response.json()["generation_endpoints"] == probe_payload
-        mock_probe.assert_awaited_once()
+            first = client.get("/api/admin/status")
+            second = client.get("/api/admin/status")
 
-        # Probe failure logs a warning without failing the route.
-        with patch(
-            "gobby.servers.routes.admin._health.probe_generation_endpoints",
-            AsyncMock(side_effect=RuntimeError("probe exploded")),
-        ):
-            response = client.get("/api/admin/status")
-        assert response.status_code == 200
-        assert response.json()["generation_endpoints"] == []
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert first.json()["generation_endpoints"] == cached_snapshot
+        assert second.json()["generation_endpoints"] == cached_snapshot
+        assert snapshot.call_count == 2
+        mock_probe.assert_not_awaited()
 
     @patch("gobby.servers.routes.admin._health.psutil")
     def test_status_endpoint(self, mock_psutil, client, mock_server) -> None:

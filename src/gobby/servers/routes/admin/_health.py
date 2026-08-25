@@ -14,7 +14,6 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from gobby.cli.services import is_qdrant_healthy
 from gobby.hooks.runtime_compat import read_ghook_runtime_diagnostic
-from gobby.servers.local_provider_models import probe_generation_endpoints
 from gobby.telemetry.instruments import get_all_metrics, set_gauge, update_daemon_metrics
 
 if TYPE_CHECKING:
@@ -195,18 +194,6 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
         start_time = time.perf_counter()
         hook_runtime = read_ghook_runtime_diagnostic()
         degraded_services = _get_degraded_services(server)
-
-        # Launch the generation-endpoint probes early so their 1.5s cap
-        # overlaps the rest of the status collection.
-        endpoint_probe_task: asyncio.Task[list[dict[str, Any]]] | None = None
-        generation = getattr(
-            getattr(getattr(server, "config", None), "ai", None), "generation", None
-        )
-        configured_endpoints = getattr(generation, "endpoints", None)
-        if isinstance(configured_endpoints, dict):
-            endpoint_probe_task = asyncio.ensure_future(
-                probe_generation_endpoints(configured_endpoints)
-            )
 
         # Get server uptime
         uptime_seconds = None
@@ -563,12 +550,8 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             except Exception as e:
                 logger.warning("Failed to get automation loop status: %s", e)
 
-        generation_endpoints: list[dict[str, Any]] = []
-        if endpoint_probe_task is not None:
-            try:
-                generation_endpoints = await endpoint_probe_task
-            except Exception as exc:
-                logger.warning("Generation endpoint health probe failed: %s", exc)
+        endpoint_health = getattr(server.services, "generation_endpoint_health", None)
+        generation_endpoints = endpoint_health.snapshot() if endpoint_health is not None else []
 
         payload: dict[str, Any] = {
             "status": (

@@ -22,6 +22,7 @@ from gobby.providers.capabilities.coverage import ModelMetadataCoverageAuditor
 from gobby.providers.capabilities.refresh import CapabilityRefreshCoordinator
 from gobby.providers.capabilities.resolve import CapabilityResolver
 from gobby.providers.capabilities.store import ProviderCapabilityStore
+from gobby.servers.generation_endpoint_health import GenerationEndpointHealthCoordinator
 from gobby.servers.http import HTTPServer
 from gobby.servers.provider_model_discovery import (
     claude_uses_loopback_model_endpoint,
@@ -64,11 +65,17 @@ def _local_provider_metadata_exclusions() -> frozenset[str]:
 
 
 def register_config_event_publisher(runner: GobbyRunner) -> None:
-    """Publish each reconciled configuration revision to WebSocket clients."""
+    """Notify daemon consumers after each reconciled configuration revision."""
     websocket_server = runner.websocket_server
-    if websocket_server is None:
-        return
-    runner.config_runtime.register_revision_publisher(websocket_server.broadcast_config_event)
+    endpoint_health = runner.http_server.services.generation_endpoint_health
+
+    async def publish(revision: int) -> None:
+        if endpoint_health is not None:
+            endpoint_health.configuration_changed()
+        if websocket_server is not None:
+            await websocket_server.broadcast_config_event(revision)
+
+    runner.config_runtime.register_revision_publisher(publish)
 
 
 def _resolve_message_processor(runner: GobbyRunner) -> object | None:
@@ -110,6 +117,9 @@ def init_servers(runner: GobbyRunner) -> None:
         provider_capability_service,
         model_metadata_store,
         config.ai.model_metadata_aliases,
+    )
+    generation_endpoint_health = GenerationEndpointHealthCoordinator(
+        lambda: runner.config_runtime.capture().snapshot.active.ai.generation.endpoints
     )
 
     def tool_proxy_getter() -> object | None:
@@ -165,6 +175,7 @@ def init_servers(runner: GobbyRunner) -> None:
         provider_capability_service=provider_capability_service,
         provider_capability_resolver=provider_capability_resolver,
         model_metadata_coverage_auditor=model_metadata_coverage_auditor,
+        generation_endpoint_health=generation_endpoint_health,
         web_chat_runtime_manager=None,
         web_chat_session_registry=web_chat_session_registry,
         prompt_manager=runner.prompt_manager,

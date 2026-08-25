@@ -130,6 +130,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     runner._metrics_archive_task = None
     runner._model_metadata_refresh_task = None
     runner._provider_capability_refresh_task = None
+    runner._generation_endpoint_health_task = None
     runner._metric_snapshot_task = None
     runner._resource_monitor_task = None
     runner._hook_inbox_task = None

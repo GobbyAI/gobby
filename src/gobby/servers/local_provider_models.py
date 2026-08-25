@@ -557,14 +557,11 @@ def _short_error(exc: BaseException) -> str:
     return message or exc.__class__.__name__
 
 
-async def probe_generation_endpoint(
+def generation_endpoint_probe_result(
     endpoint_name: str,
     endpoint: GenerationEndpointConfig,
-    *,
-    timeout: float = 1.5,
 ) -> dict[str, Any]:
-    """Probe one configured generation endpoint's ``/v1/models`` for live health."""
-    result: dict[str, Any] = {
+    return {
         "name": endpoint_name,
         "protocol": endpoint.protocol,
         "provider_label": local_provider_display_label(endpoint.protocol),
@@ -576,15 +573,24 @@ async def probe_generation_endpoint(
         "model_count": None,
         "error": None,
     }
-    models_url = vllm_models_url(endpoint.api_base)
+
+
+def _probe_generation_endpoint_sync(
+    endpoint_name: str,
+    endpoint: GenerationEndpointConfig,
+    timeout: float,
+) -> dict[str, Any]:
+    """Run the complete endpoint probe in a worker thread."""
+    result = generation_endpoint_probe_result(endpoint_name, endpoint)
     try:
-        async with httpx.AsyncClient() as client:
-            response = await asyncio.wait_for(
-                client.get(models_url, headers=_headers(endpoint.api_key), timeout=timeout),
-                timeout,
+        with httpx.Client(timeout=timeout) as client:
+            response = client.get(
+                vllm_models_url(endpoint.api_base),
+                headers=_headers(endpoint.api_key),
+                timeout=timeout,
             )
-        response.raise_for_status()
-        payload: Any = response.json()
+            response.raise_for_status()
+            payload: Any = response.json()
     except Exception as exc:
         result["error"] = _short_error(exc)
         return result
@@ -607,6 +613,29 @@ async def probe_generation_endpoint(
         result["served_model"] = endpoint.model
     result["healthy"] = True
     return result
+
+
+async def probe_generation_endpoint(
+    endpoint_name: str,
+    endpoint: GenerationEndpointConfig,
+    *,
+    timeout: float = 1.5,
+) -> dict[str, Any]:
+    """Probe one configured generation endpoint's ``/v1/models`` for live health."""
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(
+                _probe_generation_endpoint_sync,
+                endpoint_name,
+                endpoint,
+                timeout,
+            ),
+            timeout=timeout,
+        )
+    except Exception as exc:
+        result = generation_endpoint_probe_result(endpoint_name, endpoint)
+        result["error"] = _short_error(exc)
+        return result
 
 
 async def probe_generation_endpoints(

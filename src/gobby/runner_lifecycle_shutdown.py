@@ -190,6 +190,7 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
         "_metrics_archive_task",
         "_model_metadata_refresh_task",
         "_provider_capability_refresh_task",
+        "_generation_endpoint_health_task",
         "_span_cleanup_task",
         "_unmodeled_observations_cleanup_task",
         "_metric_snapshot_task",

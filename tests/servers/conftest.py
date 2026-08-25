@@ -1,11 +1,15 @@
 """Shared fixtures and helpers for server tests."""
 
+from __future__ import annotations
+
+import asyncio
 from collections.abc import Iterator
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -26,6 +30,43 @@ from gobby.storage.sessions import SessionManager
 # Sentinel to distinguish "not provided" from "explicitly None"
 _NOT_PROVIDED = object()
 TEST_LOCAL_TOKEN = "server-test-local-token"
+
+
+class _AsyncProbeClientAdapter:
+    """Drive legacy async probe fakes from the sync worker introduced by #20865."""
+
+    def __init__(self, client: Any) -> None:
+        self._client = client
+
+    def __enter__(self) -> _AsyncProbeClientAdapter:
+        return self
+
+    def __exit__(self, *_args: Any) -> None:
+        return None
+
+    def get(self, url: str, **kwargs: Any) -> Any:
+        return asyncio.run(self._client.get(url, **kwargs))
+
+
+@pytest.fixture(autouse=True)
+def adapt_legacy_generation_probe_fakes(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep pre-existing local-provider field tests unchanged across the sync boundary."""
+    if request.module.__name__ != "tests.servers.test_local_provider_models":
+        return
+
+    original_client = httpx.Client
+    original_async_client = httpx.AsyncClient
+
+    def client_factory(**kwargs: Any) -> Any:
+        async_client_factory = httpx.AsyncClient
+        if async_client_factory is original_async_client:
+            return original_client(**kwargs)
+        return _AsyncProbeClientAdapter(async_client_factory())
+
+    monkeypatch.setattr(httpx, "Client", client_factory)
 
 
 class StubConfigRuntime(ConfigRuntime):
