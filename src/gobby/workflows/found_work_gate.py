@@ -74,6 +74,18 @@ _SCOPE_OPTION_NAMES = {
     "--run",
     "-run",
 }
+_COVER_SUFFIXES = {
+    ".py",
+    ".pyi",
+    ".rs",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".mjs",
+    ".cjs",
+    ".go",
+}
+_COVER_ROOTS = ("tests/", "src/", "crates/")
 _REPORTED_FAILURE_PATH_RE = re.compile(
     r"^\s*(?:FAILED|ERROR)\s+([^\s:]+)|"
     r"^\s*([^\s:]+\.[A-Za-z0-9]+):\d+(?::\d+)?:\s+(?:error|warning)\b",
@@ -555,14 +567,35 @@ def _command_targets(command: str) -> tuple[str, ...]:
     targets: list[str] = []
     for index, token in enumerate(tokens):
         if token in _SCOPE_OPTION_NAMES and index + 1 < len(tokens):
-            targets.append(f"{token}:{tokens[index + 1]}")
+            value = tokens[index + 1]
+            if "/" in value or Path(value).suffix:
+                normalized_value = value.removeprefix("./").rstrip("/")
+                if _is_cover_target(normalized_value):
+                    targets.append(normalized_value)
+                continue
+            targets.append(f"{token}:{value}")
             continue
         if token.startswith("-") or "=" in token or token in {"&&", "||", ";"}:
             continue
         normalized = token.removeprefix("./").rstrip("/")
-        if "/" in normalized or Path(normalized).suffix:
+        if _is_cover_target(normalized):
             targets.append(normalized)
     return tuple(dict.fromkeys(targets))
+
+
+def _is_cover_target(token: str) -> bool:
+    """Keep source/test paths; drop log redirects and mkdir/cd directories."""
+    path = token.split("::", 1)[0]
+    suffix = Path(path).suffix.lower()
+    if suffix in _COVER_SUFFIXES:
+        return True
+    normalized = path.replace("\\", "/")
+    return any(
+        normalized == root.rstrip("/")
+        or normalized.startswith(root)
+        or f"/{root}" in f"/{normalized}/"
+        for root in _COVER_ROOTS
+    )
 
 
 def _target_covers(success: str, failure: str) -> bool:

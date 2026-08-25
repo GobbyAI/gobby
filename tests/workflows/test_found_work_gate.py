@@ -371,6 +371,33 @@ class TestTerminalValidationFailures:
         ]
         assert unresolved_validation_failures(runs, owner_handoff=True) == (runs[0],)
 
+    def test_scratch_log_wrapper_is_covered_by_later_pytest_of_same_files(self) -> None:
+        failed = (
+            "mkdir -p /tmp/scratch && cd /Users/me/wt && "
+            "uv run pytest tests/cli/test_uninstall.py tests/cli/test_status.py "
+            "> /tmp/scratch/wt-11079-fix.log"
+        )
+        runs = [
+            _run(1, "failure", failed),
+            _run(
+                2,
+                "success",
+                "uv run pytest tests/cli/test_uninstall.py tests/cli/test_status.py",
+            ),
+        ]
+        assert unresolved_validation_failures(runs, owner_handoff=False) == ()
+
+    def test_wrapper_cover_still_requires_every_failed_test_file(self) -> None:
+        failed = (
+            "cd /Users/me/wt && uv run pytest tests/cli/test_uninstall.py "
+            "tests/cli/test_status.py > /tmp/scratch/out.log"
+        )
+        runs = [
+            _run(1, "failure", failed),
+            _run(2, "success", "uv run pytest tests/cli/test_uninstall.py"),
+        ]
+        assert unresolved_validation_failures(runs, owner_handoff=False) == (runs[0],)
+
     def test_project_verification_command_extends_detection(self, tmp_path: Path) -> None:
         project_dir = tmp_path / ".gobby"
         project_dir.mkdir()
