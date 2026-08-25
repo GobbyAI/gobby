@@ -14,6 +14,7 @@ or echoes do not.
 from __future__ import annotations
 
 import re
+from copy import deepcopy
 from datetime import UTC, datetime
 from typing import NamedTuple
 
@@ -595,3 +596,35 @@ def test_mask_quoted_is_opt_in(db: HubDatabase, manager: RuleDefinitionManager) 
         "stops matching, mask_quoted may no longer be needed"
     )
     assert not _blocks(body, command)
+
+
+async def test_engine_without_mask_quoted_blocks_quoted_prose(
+    db: HubDatabase, manager: RuleDefinitionManager
+) -> None:
+    """Opt-in regression: an effect without mask_quoted evaluates the raw command.
+
+    Strips mask_quoted from the bundled rule's stored definition and runs the
+    real engine, proving the pre-#20887 behavior is byte-for-byte preserved
+    when the flag is omitted: quoted multi-line prose still trips the pattern.
+    """
+    _sync_bundled(db)
+    db.execute("DELETE FROM rule_definitions WHERE name != 'require-pytest-guard-env'")
+    row = manager.get_by_name("require-pytest-guard-env")
+    assert row is not None
+    definition = deepcopy(row.definition_json)
+    assert any("mask_quoted" in effect for effect in definition["effects"])
+    definition["effects"] = [
+        {key: value for key, value in effect.items() if key != "mask_quoted"}
+        for effect in definition["effects"]
+    ]
+    manager.update(row.id, definition_json=definition)
+
+    engine = RuleEngine(db)
+    prose = await engine.evaluate(
+        _bash_event('git commit -m "[gobby-#20880] fix: x\n\nuv run pytest tests ran clean"'),
+        session_id=SESSION_ID,
+        variables={},
+    )
+    assert prose.decision == "block", (
+        "without mask_quoted the quoted multi-line prose must be evaluated raw and block"
+    )
