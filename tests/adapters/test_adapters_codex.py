@@ -2984,7 +2984,11 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert hso["updatedInput"] == response.modified_input
 
     def test_pre_tool_use_modified_input_emits_native_updated_input(self) -> None:
-        """modified_input alone becomes native Codex updatedInput."""
+        """modified_input alone becomes updatedInput with the allow Codex requires.
+
+        Codex reports ``updatedInput`` without ``permissionDecision: "allow"`` as
+        a failed hook and runs the original input.
+        """
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
@@ -2998,8 +3002,37 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert "decision" not in result
         assert result["hookSpecificOutput"] == {
             "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
             "updatedInput": {"command": "sed -n '1,20p' file.txt"},
         }
+
+    def test_pre_tool_use_permission_denial_discards_rewrite(self) -> None:
+        """An explicit deny keeps its decision and drops the rewrite."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(
+            permission_decision="deny",
+            modified_input={"command": "rtk git status"},
+        )
+        result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
+
+        assert result["continue"] is True
+        assert result["hookSpecificOutput"] == {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+        }
+        assert "updatedInput" not in result
+
+    def test_permission_request_rewrite_alone_stays_undecided(self) -> None:
+        """PermissionRequest only decides on explicit approval; a rewrite is neutral."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(modified_input={"command": "rtk git status"})
+        result = adapter.translate_from_hook_response(response, hook_type="PermissionRequest")
+
+        assert result == {"continue": True}
 
     def test_context_injection_session_start(self) -> None:
         """SessionStart uses hookSpecificOutput.additionalContext."""

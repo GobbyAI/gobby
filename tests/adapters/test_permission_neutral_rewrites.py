@@ -68,7 +68,11 @@ def _find_values(value: Any, key: str) -> list[Any]:
     return []
 
 
-@pytest.mark.parametrize(("provider", "translate"), _translators())
+def _permission_neutral_translators() -> list[tuple[str, Translator]]:
+    return [(provider, translate) for provider, translate in _translators() if provider != "codex"]
+
+
+@pytest.mark.parametrize(("provider", "translate"), _permission_neutral_translators())
 def test_modified_input_does_not_imply_approval(provider: str, translate: Translator) -> None:
     del provider
     rewritten = {"command": "rtk git status"}
@@ -79,6 +83,18 @@ def test_modified_input_does_not_imply_approval(provider: str, translate: Transl
     assert "allow" not in _find_values(result, "behavior")
     assert result.get("decision") != "allow"
     assert rewritten in _find_values(result, "updatedInput") + _find_values(result, "overwrite")
+
+
+def test_codex_modified_input_carries_the_allow_its_contract_requires() -> None:
+    """Codex accepts updatedInput only with permissionDecision "allow"."""
+    translate = dict(_translators())["codex"]
+    rewritten = {"command": "rtk git status"}
+
+    result = translate(HookResponse(modified_input=rewritten))
+
+    assert result["hookSpecificOutput"]["permissionDecision"] == "allow"
+    assert result["hookSpecificOutput"]["updatedInput"] == rewritten
+    assert "decision" not in result
 
 
 @pytest.mark.parametrize(("provider", "translate"), _translators())

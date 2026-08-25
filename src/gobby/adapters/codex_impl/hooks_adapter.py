@@ -239,15 +239,24 @@ class CodexHooksAdapter(BaseAdapter):
             permission_decision = response.permission_decision
             if permission_decision is None and response.auto_approve:
                 permission_decision = "allow"
-            if permission_decision is not None or isinstance(response.modified_input, dict):
+            updated_input = (
+                response.modified_input if isinstance(response.modified_input, dict) else None
+            )
+            if updated_input is not None and permission_decision is None:
+                # Codex accepts ``updatedInput`` only next to
+                # ``permissionDecision: "allow"``; every other shape is reported
+                # as a failed hook and the original input runs. A rewrite on its
+                # own therefore carries the approval; an explicit deny keeps its
+                # decision and discards the rewrite.
+                permission_decision = "allow"
+            if permission_decision is not None:
                 hook_output = result.setdefault(
                     "hookSpecificOutput",
                     {"hookEventName": "PreToolUse"},
                 )
-                if permission_decision is not None:
-                    hook_output["permissionDecision"] = permission_decision
-                if isinstance(response.modified_input, dict) and permission_decision != "deny":
-                    hook_output["updatedInput"] = response.modified_input
+                hook_output["permissionDecision"] = permission_decision
+                if updated_input is not None and permission_decision == "allow":
+                    hook_output["updatedInput"] = updated_input
 
         # Build additionalContext from all context sources. Keep high-value
         # session/system context ahead of large workflow payloads.
