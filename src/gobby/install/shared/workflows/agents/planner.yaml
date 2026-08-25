@@ -31,11 +31,15 @@ prompts:
     Your assigned planning task is in your session variables as assigned_task_id.
 
     Methodology:
-    After claiming your task, load the `plan-draft` skill before anything
-    else. Use only the Gobby MCP proxy tools for this — native Skill,
-    GitHub/app connector, and Computer Use tools bypass Gobby's skill tracking.
-    Call get_skill(name="plan-draft") on gobby-skills, then continue. Follow
-    that skill's methodology when drafting or revising the plan artifact —
+    After claiming your task, load the `restraint` and `plan-draft` skills
+    before anything else. Use only the Gobby MCP proxy tools for this — native
+    Skill, GitHub/app connector, and Computer Use tools bypass Gobby's skill
+    tracking. Call get_skill(name="restraint") and get_skill(name="plan-draft")
+    on gobby-skills, then continue. Every planning choice — what to build, how
+    much mechanism, which option to take when a finding or fork leaves one open
+    — walks `restraint`'s decision ladder and stops at the first rung that
+    fully solves the problem; record the rung beside the choice in the plan.
+    Follow `plan-draft`'s methodology when drafting or revising the plan artifact —
     phase structure, task format, TDD compatibility, categories, hierarchy,
     dependency notation, and verification checklist. The parser accepts only
     that format; invented alternatives are silently dropped at expansion.
@@ -129,6 +133,7 @@ workflows:
 step_workflow:
   variables:
     task_claimed: false
+    restraint_loaded: false
     skill_loaded: false
     plan_handoff_complete: false
 
@@ -159,15 +164,18 @@ step_workflow:
 
     - name: load_skill
       mcp_error_policy: stay
-      description: "Load the plan-draft methodology skill"
+      description: "Load the restraint and plan-draft methodology skills"
       status_message: |
-        Call get_skill(name="plan-draft") on gobby-skills, then continue before drafting.
+        Load both skills before drafting: call get_skill(name="restraint") and
+        get_skill(name="plan-draft") on gobby-skills, then continue.
         Use only mcp__gobby__call_tool in this step. Call get_skill directly:
+        call_tool("gobby-skills", "get_skill", {"name": "restraint"}) and
         call_tool("gobby-skills", "get_skill", {"name": "plan-draft"});
         native Skill, GitHub/app connector, and Computer Use tools bypass
         Gobby's skill tracking.
-        The returned skill content is the authoritative methodology for this
-        agent.
+        Both returned skills are authoritative: `restraint` is the decision
+        ladder every planning choice walks, `plan-draft` is the drafting
+        methodology for this agent.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
@@ -182,9 +190,15 @@ step_workflow:
           action: set_variable
           variable: skill_loaded
           value: true
+        - server: gobby-skills
+          tool: get_skill
+          when: "tool_input.name == 'restraint'"
+          action: set_variable
+          variable: restraint_loaded
+          value: true
       transitions:
         - to: plan
-          when: "vars.skill_loaded"
+          when: "vars.skill_loaded and vars.restraint_loaded"
 
     - name: plan
       mcp_error_policy: stay

@@ -14,6 +14,12 @@ metadata:
 # plan-review — Gobby Plan Adversarial Review Methodology
 
 > Internal methodology skill; loaded with `get_skill(name="plan-review")` from `/gobby plan` and autonomous agents. Not a user-facing command.
+>
+> Load `restraint` first (`get_skill(name="restraint")`) alongside
+> `proportionality`. Every proposed `fix` walks the restraint decision ladder
+> and names the lowest rung that fully repairs the defect; a fix that adds
+> mechanism around an already-sufficient design is an `over-engineering`
+> finding, never a repair.
 
 This skill is the single source of truth for **how to review a gobby plan**.
 
@@ -536,6 +542,15 @@ coordinator can apply after the vote: a missing Targets entry, a missing
 `(depends: …)` edge, or a missing acceptance item. Everything else is
 **design class** and stays prose: the planner decides how to redesign,
 resequence, or scope it in the next round.
+
+Vote outcomes at disposition are `accept`, `decline`, and
+`decline: over-mechanism`. The last is judged on the `restraint` decision
+ladder by whoever votes — the user interactively, the coordinator unattended:
+a finding whose fix adds mechanism around a design that already fully solves
+the problem is declined with the rung it fails at, and the declined finding is
+recorded in the checkpoint like any other. The usual trigger is a
+fixer-induced chain — a finding on the previous round's repair that asks for
+more machinery around it.
 
 Repair-class findings carry an optional `repairs` list. The category matrix
 governs which kinds a category may carry; a category absent from the table

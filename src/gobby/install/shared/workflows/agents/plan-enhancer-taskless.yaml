@@ -30,9 +30,13 @@ prompts:
     The prompt or variables provide artifact_path, round_number,
     max_enhancement_rounds, and parent_session_id. There is no assigned task.
 
-    Load both `plan-enhance` and `proportionality` before enhancing. Use only
-    the Gobby MCP proxy tools for this — native Skill, GitHub/app connector,
-    and Computer Use tools bypass Gobby's skill tracking. `plan-enhance` is the
+    Load `restraint`, `plan-enhance`, and `proportionality` before enhancing.
+    Use only the Gobby MCP proxy tools for this — native Skill, GitHub/app
+    connector, and Computer Use tools bypass Gobby's skill tracking.
+    `restraint` is the decision ladder every suggestion walks before it is
+    recorded — rung 1 asks whether it needs to exist at all, and a suggestion
+    that stops at a lower rung than the mechanism it proposes is dropped.
+    `plan-enhance` is the
     constructive Better/Bigger methodology you follow; `proportionality`
     is the shared anti-Rube-Goldberg criterion you run on your own suggestions
     before proposing them, so every suggested mechanism has a concrete
@@ -81,6 +85,7 @@ workflows:
 
 step_workflow:
   variables:
+    restraint_loaded: false
     skill_loaded: false
     proportionality_loaded: false
     enhance_complete: false
@@ -89,12 +94,14 @@ step_workflow:
   steps:
     - name: load_skill
       mcp_error_policy: stay
-      description: "Load the plan-enhance and proportionality methodology skills"
+      description: "Load the restraint, plan-enhance, and proportionality methodology skills"
       status_message: |
-        Load both methodology skills before enhancing: call get_skill(name="plan-enhance")
-        and get_skill(name="proportionality") on gobby-skills.
+        Load all three methodology skills before enhancing: call
+        get_skill(name="restraint"), get_skill(name="plan-enhance"), and
+        get_skill(name="proportionality") on gobby-skills.
         Use only mcp__gobby__call_tool in this step. Call get_skill directly:
-        call_tool("gobby-skills", "get_skill", {"name": "plan-enhance"}) and
+        call_tool("gobby-skills", "get_skill", {"name": "restraint"}),
+        call_tool("gobby-skills", "get_skill", {"name": "plan-enhance"}), and
         call_tool("gobby-skills", "get_skill", {"name": "proportionality"});
         native Skill, GitHub/app connector, and Computer Use tools bypass
         Gobby's skill tracking.
@@ -118,9 +125,15 @@ step_workflow:
           action: set_variable
           variable: proportionality_loaded
           value: true
+        - server: gobby-skills
+          tool: get_skill
+          when: "tool_input.name == 'restraint'"
+          action: set_variable
+          variable: restraint_loaded
+          value: true
       transitions:
         - to: enhance
-          when: "vars.skill_loaded and vars.proportionality_loaded"
+          when: "vars.skill_loaded and vars.proportionality_loaded and vars.restraint_loaded"
 
     - name: enhance
       mcp_error_policy: stay
