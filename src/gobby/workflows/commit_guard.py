@@ -351,6 +351,31 @@ def _active_foreign_path_owners(
     return {path: tuple(path_owners) for path, path_owners in owners.items()}
 
 
+def foreign_owned_dirty_paths(
+    db: HubDatabase,
+    *,
+    session_id: str,
+    project_id: str,
+    checkout_root: str,
+    paths: AbstractSet[str],
+) -> dict[str, tuple[ForeignPathOwner, ...]]:
+    """Resolve which of the given paths carry another active session's open-task attribution.
+
+    Raises DirtyEditOwnershipInspectionError for expected infrastructure failures so
+    callers choose their own fail-open or fail-closed posture at the boundary.
+    """
+    try:
+        owners = _active_foreign_path_owners(
+            db,
+            session_id=session_id,
+            project_id=project_id,
+            checkout_root=checkout_root,
+        )
+    except (psycopg.OperationalError, PoolTimeout) as exc:
+        raise DirtyEditOwnershipInspectionError("database ownership inspection failed") from exc
+    return {path: owners[path] for path in paths if path in owners}
+
+
 def _git_paths(project_path: str, *args: str) -> set[str]:
     try:
         result = subprocess.run(  # Hardcoded git command. # nosec B603 B607

@@ -1,5 +1,6 @@
 """Owner-controlled task path attribution release."""
 
+import logging
 import os
 import subprocess
 from pathlib import Path
@@ -12,7 +13,13 @@ from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
 from gobby.utils.session_context import get_current_session_id
+from gobby.workflows.commit_guard import (
+    DirtyEditOwnershipInspectionError,
+    foreign_owned_dirty_paths,
+)
 from gobby.workflows.task_claim_state import normalize_task_edited_path
+
+logger = logging.getLogger(__name__)
 
 
 def _dirty_repo_paths(repo_path: str, paths: list[str]) -> list[str]:
@@ -126,12 +133,42 @@ def register_release_task_paths(
                 f"Cannot verify task paths: {exc}",
                 TaskToolErrorCode.TASK_INVALID_STATUS,
             )
+        foreign_owned: dict[str, Any] = {}
         if dirty_paths:
-            return task_error(
-                "Cannot release paths with uncommitted content",
-                TaskToolErrorCode.TASK_INVALID_STATUS,
-                dirty_paths=dirty_paths,
-            )
+            # Dirt accounted for by another active session's open claimed task is not
+            # this task's uncommitted work: releasing only removes the stale
+            # attribution, while the dirt stays protected by the cross-session
+            # foreign-dirty-edit block and committable by its owner (#20818).
+            try:
+                foreign_owned = foreign_owned_dirty_paths(
+                    ctx.task_manager.db,
+                    session_id=session_id,
+                    project_id=task.project_id,
+                    checkout_root=repo_path,
+                    paths=set(dirty_paths),
+                )
+            except DirtyEditOwnershipInspectionError:
+                logger.warning(
+                    "Dirty-path ownership inspection failed during release_task_paths",
+                    extra={"task_id": resolved_task_id, "session_id": session_id},
+                    exc_info=True,
+                )
+                return task_error(
+                    "Cannot release paths with uncommitted content: ownership inspection "
+                    "failed, so the uncommitted content cannot be attributed to another "
+                    "session's open task. Retry once the database is reachable.",
+                    TaskToolErrorCode.TASK_INVALID_STATUS,
+                    dirty_paths=dirty_paths,
+                )
+            unaccounted = [path for path in dirty_paths if path not in foreign_owned]
+            if unaccounted:
+                return task_error(
+                    "Cannot release paths whose uncommitted content no other active "
+                    "session's open task accounts for; commit or revert it first "
+                    "(git stash is blocked for interactive sessions)",
+                    TaskToolErrorCode.TASK_INVALID_STATUS,
+                    dirty_paths=unaccounted,
+                )
 
         released, remaining = ctx.session_var_manager.release_task_edited_files(
             session_id,
@@ -139,19 +176,26 @@ def register_release_task_paths(
             normalized_paths,
             checkout_root=repo_path,
         )
-        return {
+        result: dict[str, Any] = {
             "success": True,
             "task_id": resolved_task_id,
             "released_paths": released,
             "remaining_paths": remaining,
         }
+        if foreign_owned:
+            result["foreign_dirty_paths"] = {
+                path: [{"task": owner.task_ref, "session": owner.session_ref} for owner in owners]
+                for path, owners in sorted(foreign_owned.items())
+            }
+        return result
 
     registry.register(
         name="release_task_paths",
         description=(
             "Release committed or abandoned paths from the current session's claimed task "
-            "attribution. Use only after verifying the owning task has no uncommitted work "
-            "on those paths."
+            "attribution. Paths with uncommitted content are releasable only when another "
+            "active session's open claimed task holds attribution on them (the dirt stays "
+            "accounted for); otherwise commit or revert before releasing."
         ),
         input_schema={
             "type": "object",
