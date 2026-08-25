@@ -10,6 +10,7 @@ from gobby.workflows.task_claim_state import (
     add_claimed_task,
     remove_claimed_task,
     target_task_has_edits,
+    task_edited_file_times,
 )
 
 pytestmark = pytest.mark.unit
@@ -114,12 +115,46 @@ class TestRemoveClaimedTask:
             "claimed_tasks": {"uuid-1": "#1"},
             "task_edited_files": {"uuid-1": ["a.py"]},
             "task_edited_file_checkouts": {"uuid-1": {"/repo": ["a.py"]}},
+            "task_edited_file_times": {"uuid-1": {"a.py": 100.0}, "uuid-2": {"b.py": 200.0}},
         }
 
         result = remove_claimed_task(variables, "uuid-1")
 
         assert result["task_edited_files"] == {}
         assert result["task_edited_file_checkouts"] == {}
+        assert result["task_edited_file_times"] == {"uuid-2": {"b.py": 200.0}}
+
+
+class TestTaskEditedFileTimes:
+    def test_reads_numeric_stamps_by_normalized_path(self) -> None:
+        variables = {
+            "task_edited_file_times": {
+                "uuid-1": {
+                    "src/./a.py": 100,
+                    "src/b.py": 200.5,
+                    "src/flag.py": True,
+                    "src/text.py": "300",
+                    "/abs.py": 400.0,
+                },
+            }
+        }
+
+        assert task_edited_file_times(variables, "uuid-1") == {
+            "src/a.py": 100.0,
+            "src/b.py": 200.5,
+        }
+
+    @pytest.mark.parametrize(
+        "variables",
+        [
+            {},
+            {"task_edited_file_times": "junk"},
+            {"task_edited_file_times": {"uuid-1": ["a.py"]}},
+            {"task_edited_file_times": {"uuid-2": {"a.py": 1.0}}},
+        ],
+    )
+    def test_missing_or_malformed_ledger_is_empty(self, variables: dict[str, Any]) -> None:
+        assert task_edited_file_times(variables, "uuid-1") == {}
 
 
 class TestReleaseClaimedTask:

@@ -661,8 +661,9 @@ async def test_release_refuses_dirty_paths(guard_harness: GuardHarness) -> None:
         "success": False,
         "status": "error",
         "error": (
-            "Cannot release paths whose uncommitted content no other active "
-            "session's open task accounts for; commit or revert it first "
+            "Cannot release paths whose uncommitted content may be this task's own "
+            "work (no recorded edit, or the newest recorded edit is newer than the "
+            "last commit touching the path); commit or revert it first "
             "(git stash is blocked for interactive sessions)"
         ),
         "error_code": "TASK_INVALID_STATUS",

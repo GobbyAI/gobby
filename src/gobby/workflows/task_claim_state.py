@@ -125,6 +125,11 @@ def remove_claimed_task(variables: dict[str, Any], task_id: str) -> dict[str, An
     result["task_edited_files"] = task_files
     if "task_edited_file_checkouts" in variables:
         result["task_edited_file_checkouts"] = task_file_checkouts
+    if "task_edited_file_times" in variables:
+        raw_times = variables.get("task_edited_file_times")
+        task_file_times = dict(raw_times) if isinstance(raw_times, dict) else {}
+        task_file_times.pop(task_id, None)
+        result["task_edited_file_times"] = task_file_times
     return result
 
 
@@ -181,6 +186,21 @@ def task_edited_file_set_for_checkout(
     if not task_id or root is None:
         return set()
     return set(_task_edited_file_checkouts(variables).get(task_id, {}).get(root, []))
+
+
+def task_edited_file_times(variables: dict[str, Any], task_id: str) -> dict[str, float]:
+    """Return epoch seconds of the session's newest recorded edit per path for one task."""
+    raw = variables.get("task_edited_file_times") or {}
+    raw_task_times = raw.get(task_id) if isinstance(raw, dict) else None
+    if not isinstance(raw_task_times, dict):
+        return {}
+    times: dict[str, float] = {}
+    for value, stamp in raw_task_times.items():
+        path = normalize_task_edited_path(value)
+        if path is None or isinstance(stamp, bool) or not isinstance(stamp, int | float):
+            continue
+        times[path] = float(stamp)
+    return times
 
 
 def target_task_has_edits(variables: dict[str, Any], task_id: str | None) -> bool:

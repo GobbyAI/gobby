@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -939,6 +940,57 @@ def test_release_task_edited_files_pops_last_task_path(db: Any, tmp_path: Path) 
     assert "task-1" not in variables["task_edited_files"]
     assert "task-1" not in variables["task_edited_file_checkouts"]
     assert target_task_has_edits(variables, "task-1") is False
+
+
+def test_record_edited_files_stamps_the_newest_edit_per_task_path(db: Any, tmp_path: Path) -> None:
+    """release_task_paths compares each stamp with the path's last commit, so the
+    ledger keeps epoch seconds of the newest edit and overwrites it on every edit."""
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    mgr.merge_variables(S1, {"claimed_tasks": {"task-1": "#1"}})
+
+    before = time.time()
+    mgr.record_edited_files(S1, ["src/app.py", "src/lib.py"], checkout_root=str(tmp_path))
+    between = time.time()
+    mgr.record_edited_files(S1, ["src/app.py"], checkout_root=str(tmp_path))
+    after = time.time()
+
+    times = mgr.get_variables(S1)["task_edited_file_times"]
+    assert set(times) == {"task-1"}
+    assert set(times["task-1"]) == {"src/app.py", "src/lib.py"}
+    assert before <= times["task-1"]["src/lib.py"] <= between
+    assert between <= times["task-1"]["src/app.py"] <= after
+
+
+def test_record_edited_files_without_claim_stamps_nothing(db: Any, tmp_path: Path) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+
+    mgr.record_edited_files(S1, ["src/app.py"], checkout_root=str(tmp_path))
+
+    assert "task_edited_file_times" not in _stored_variables(db, S1)
+
+
+def test_release_task_edited_files_drops_released_stamps(db: Any, tmp_path: Path) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    mgr.merge_variables(S1, {"claimed_tasks": {"task-1": "#1"}})
+    mgr.record_edited_files(S1, ["src/app.py", "src/lib.py"], checkout_root=str(tmp_path))
+
+    released, _remaining = mgr.release_task_edited_files(
+        S1, "task-1", ["src/app.py"], checkout_root=str(tmp_path)
+    )
+    assert released == ["src/app.py"]
+    assert set(mgr.get_variables(S1)["task_edited_file_times"]["task-1"]) == {"src/lib.py"}
+
+    released, _remaining = mgr.release_task_edited_files(
+        S1, "task-1", ["src/lib.py"], checkout_root=str(tmp_path)
+    )
+    assert released == ["src/lib.py"]
+    assert "task-1" not in mgr.get_variables(S1)["task_edited_file_times"]
 
 
 def test_record_edited_files_empty_paths_is_noop(db: Any) -> None:

@@ -265,7 +265,7 @@ async def test_text_generation_service_generate_result_preserves_usage() -> None
 
 
 @pytest.mark.asyncio
-async def test_successful_non_vllm_text_generation_logs_feature_llm_call_at_info(
+async def test_successful_text_generation_logs_feature_llm_call_at_info(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     registry = AICapabilityRegistry(
@@ -304,7 +304,7 @@ async def test_successful_non_vllm_text_generation_logs_feature_llm_call_at_info
     "capability",
     [AICapability.TEXT_GENERATE, AICapability.VISION_EXTRACT],
 )
-def test_successful_vllm_feature_call_logs_at_info(
+def test_successful_openai_compatible_feature_call_logs_at_info(
     capability: AICapability,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -338,7 +338,7 @@ def test_successful_vllm_feature_call_logs_at_info(
         ("endpoint:ordinary", {}),
     ],
 )
-def test_successful_non_vllm_feature_calls_log_at_info(
+def test_successful_cli_feature_calls_log_at_info(
     provider: str,
     metadata: dict[str, str],
     caplog: pytest.LogCaptureFixture,
@@ -365,7 +365,7 @@ def test_successful_non_vllm_feature_calls_log_at_info(
 
 
 @pytest.mark.asyncio
-async def test_recoverable_candidate_failure_logs_feature_llm_call_at_debug(
+async def test_recoverable_candidate_failure_logs_feature_llm_call_debug_then_info(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     registry = AICapabilityRegistry(

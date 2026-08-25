@@ -34,6 +34,9 @@ variables:
   task_edited_file_checkouts:
     value: {}
     description: "Map of claimed task UUIDs and absolute checkout roots to edited files"
+  task_edited_file_times:
+    value: {}
+    description: "Map of claimed task UUIDs to edited files and the epoch seconds of this session's newest edit"
   require_task_before_edit:
     value: true
     description: Default require_task_before_edit to true
