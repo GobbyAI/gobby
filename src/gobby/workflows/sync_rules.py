@@ -184,7 +184,15 @@ def _sync_rule_file(
 
         rules_dict = data.get("rules")
         if not isinstance(rules_dict, dict):
-            logger.debug("No 'rules' key in YAML, skipping", extra={"file": str(yaml_file)})
+            # A bundled template without a rules mapping is a packaging
+            # defect (its rules never install), so surface it loudly.
+            level = logging.WARNING if tag == "gobby" else logging.DEBUG
+            logger.log(
+                level,
+                "No 'rules' mapping in rule YAML, skipping %s",
+                yaml_file,
+                extra={"file": str(yaml_file)},
+            )
             result["skipped"] += 1
             return
 
