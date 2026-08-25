@@ -581,6 +581,74 @@ async def test_search_no_backfill_when_first_page_fills() -> None:
     assert vector_store.calls == [4]
 
 
+class _RescoreRecordingStore:
+    """Records every over-fetch round and every ``score_ids`` batch (#20874)."""
+
+    def __init__(self, results: list[tuple[str, float]], scores: dict[str, float]) -> None:
+        self._results = results
+        self._scores = scores
+        self.search_calls: list[int] = []
+        self.score_calls: list[list[str]] = []
+
+    async def search(
+        self,
+        query_embedding: list[float],
+        limit: int = 10,
+        filters: dict[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> list[tuple[str, float]]:
+        self.search_calls.append(limit)
+        return self._results[:limit]
+
+    async def score_ids(
+        self,
+        query_embedding: list[float],
+        ids: list[str],
+        timeout: float | None = None,
+    ) -> dict[str, float]:
+        self.score_calls.append(list(ids))
+        return {
+            memory_id: self._scores[memory_id] for memory_id in ids if memory_id in self._scores
+        }
+
+
+@pytest.mark.asyncio
+async def test_backfill_rounds_do_not_rescore_ids_already_scored() -> None:
+    """A backfill round pays ``score_ids`` only for ids no earlier round asked about.
+
+    Every round re-merges the same keyword ids from its wider window, so before
+    #20874 each of them went back to ``score_ids`` every round. Round 0 asks
+    about both keyword hits -- kw-a has a stored vector, kw-b has none -- and
+    round 1 must issue no ``score_ids`` call at all: the memo replays kw-a's
+    cosine into the round's map and remembers kw-b is scoreless.
+    """
+    hidden = [f"h{index}" for index in range(6)]
+    vector_store = _RescoreRecordingStore(
+        [(mid, 0.95 - index * 0.01) for index, mid in enumerate(hidden)],
+        scores={"kw-a": 0.8},
+    )
+    keyword_ids = ["kw-a", "kw-b"]
+    service = _service(
+        [],
+        vector_store=vector_store,
+        storage=_FilteringStorage(keyword_ids),
+        keyword_search=lambda query, limit, project_id, *, include_global=True: [
+            (memory_id, 1.0) for memory_id in keyword_ids
+        ],
+    )
+
+    results = await service.search("query", limit=3)
+
+    # Two rounds actually ran: the hidden window starved round 0's hydration.
+    assert vector_store.search_calls == [6, 12]
+    assert vector_store.score_calls == [["kw-a", "kw-b"]]
+    by_id = {memory.id: memory for memory in results}
+    # Round 1 built kw-a from the memo's replayed cosine, not a second fetch.
+    assert by_id["kw-a"].raw_semantic_score == 0.8
+    # A keyword hit with no stored vector stays unscored rather than re-asked.
+    assert by_id["kw-b"].similarity is None
+
+
 def _fallback_service(
     memory_ids: list[str],
     *,
@@ -625,6 +693,11 @@ async def test_keyword_fallback_emits_debug_snapshot_with_join_keys() -> None:
 
     assert [mem.id for mem in results] == ["kw"]
     assert results[0].search_via == "keyword"
+    # The normalized BM25 rank travels as ranking_score, never as similarity:
+    # with no vector store there is nothing to put these hits on the cosine
+    # axis, so recall's null-similarity backstop must see them unscored (#20874).
+    assert results[0].similarity is None
+    assert results[0].ranking_score == 0.7
     assert snapshots == [
         SearchDebugSnapshot(
             merged_ids=["kw"],
@@ -640,10 +713,10 @@ async def test_keyword_fallback_emits_debug_snapshot_with_join_keys() -> None:
                     memory_id="kw",
                     rank=0,
                     search_via="keyword",
-                    similarity=0.7,
+                    similarity=None,
                     raw_semantic_score=None,
                     temporal_decay_factor=None,
-                    ranking_score=None,
+                    ranking_score=0.7,
                     ranking_mode=None,
                     graph_score=None,
                     content_hash="103c54b6c5b1ad282520a33d86320b77259e797cabe194b9200fb23d965561a3",

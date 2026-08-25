@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from gobby.memory.services._search_models import _Candidates
@@ -64,6 +65,24 @@ def _qdrant_hits_or_empty(
     return []
 
 
+@dataclass
+class _RescoreMemo:
+    """Cross-round memo of what one search request already asked ``score_ids``.
+
+    Each backfill round rebuilds its candidate set from a wider window, so the
+    ids the earlier rounds rescored come back in every later round's merge.
+    Without the memo each round pays ``score_ids`` for the same ids again --
+    including the ones the collection already said it cannot score (#20874).
+    ``scores`` replays known cosines into the round's map; ``attempted`` keeps
+    a scoreless id (no stored vector) from being asked about twice. A batch
+    that failed outright is deliberately not marked attempted, so a transient
+    vector-store failure may recover on the next round.
+    """
+
+    scores: dict[str, float] = field(default_factory=dict)
+    attempted: set[str] = field(default_factory=set)
+
+
 async def _score_unwindowed_candidates(
     *,
     vector_store: VectorStore,
@@ -73,6 +92,7 @@ async def _score_unwindowed_candidates(
     caller: str,
     project_id: str | None,
     path: str,
+    memo: _RescoreMemo,
 ) -> None:
     """Give every merged candidate the collection can score its real cosine.
 
@@ -93,30 +113,40 @@ async def _score_unwindowed_candidates(
         for memory_id in dict.fromkeys(memory_id for ranked in other_ranked for memory_id in ranked)
         if memory_id not in qdrant_score_map
     ]
-    if not unscored:
-        return
-    try:
-        qdrant_score_map.update(
-            await vector_store.score_ids(
+    for memory_id in unscored:
+        if memory_id in memo.scores:
+            qdrant_score_map[memory_id] = memo.scores[memory_id]
+    to_score = [
+        memory_id
+        for memory_id in unscored
+        if memory_id not in qdrant_score_map and memory_id not in memo.attempted
+    ]
+    if to_score:
+        try:
+            fetched = await vector_store.score_ids(
                 query_embedding,
-                unscored,
+                to_score,
                 timeout=_HYBRID_QDRANT_TIMEOUT_SECONDS,
             )
-        )
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:
-        logger.warning(
-            "Scoring merged candidates failed; unscored hits keep synthetic similarity",
-            extra={
-                "caller": caller,
-                "project_id": project_id,
-                "unscored": len(unscored),
-                "path": path,
-                "error": str(exc),
-            },
-            exc_info=exc,
-        )
+            qdrant_score_map.update(fetched)
+            memo.attempted.update(to_score)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "Scoring merged candidates failed; unscored hits keep synthetic similarity",
+                extra={
+                    "caller": caller,
+                    "project_id": project_id,
+                    "unscored": len(to_score),
+                    "path": path,
+                    "error": str(exc),
+                },
+                exc_info=exc,
+            )
+    # The window's own cosines are real too; remember them so an id a later,
+    # wider round happens to drop from its window is never re-scored.
+    memo.scores.update(qdrant_score_map)
 
 
 class SearchPathHost(Protocol):
@@ -214,6 +244,7 @@ async def search_with_graph(
 ) -> list[Memory]:
     """Run vector, graph, and keyword search, then materialize active memories."""
     vector_store = service._require_vector_store()
+    rescore_memo = _RescoreMemo()
 
     async def _collect(candidate_limit: int) -> _Candidates:
         qdrant_coro = vector_store.search(
@@ -304,6 +335,7 @@ async def search_with_graph(
                 caller=caller,
                 project_id=project_id,
                 path="qdrant_graph_keyword",
+                memo=rescore_memo,
             )
 
         rrf_lists = [ranked for ranked in (qdrant_ranked, graph_ranked, keyword_ranked) if ranked]
@@ -407,6 +439,7 @@ async def search_qdrant_keyword(
 ) -> list[Memory]:
     """Run vector plus keyword search, then materialize active memories."""
     vector_store = service._require_vector_store()
+    rescore_memo = _RescoreMemo()
 
     async def _collect(candidate_limit: int) -> _Candidates:
         qdrant_coro = vector_store.search(
@@ -465,6 +498,7 @@ async def search_qdrant_keyword(
                 caller=caller,
                 project_id=project_id,
                 path="qdrant_keyword",
+                memo=rescore_memo,
             )
 
         if qdrant_ranked and keyword_ranked:
