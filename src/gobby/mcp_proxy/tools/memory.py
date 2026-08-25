@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.memory_dream import register_memory_dream_tools
 from gobby.mcp_proxy.tools.memory_recall import register_memory_recall_tool
+from gobby.mcp_proxy.tools.memory_review import register_memory_review_tools
 from gobby.mcp_proxy.tools.memory_scope import (
     get_current_project_id,
     memory_owned_by_current_project,
@@ -54,6 +55,7 @@ def create_memory_registry(
     startup_config: DaemonConfig | None = None,
     config_resolver: Callable[[], DaemonConfig | None] | None = None,
     dream_coordinator_resolver: Callable[[], MemoryDreamCoordinator | None] | None = None,
+    task_manager: Any | None = None,
 ) -> InternalToolRegistry:
     """
     Create a memory tool registry with all memory-related tools.
@@ -68,13 +70,17 @@ def create_memory_registry(
         config_resolver: per-operation current DaemonConfig resolver
         dream_coordinator_resolver: resolves the daemon-owned dream coordinator
             for the memory_dream tools (optional)
+        task_manager: Task manager used to resolve and authorize closed-task reviews
 
     Returns:
         InternalToolRegistry with memory tools registered
     """
     registry = InternalToolRegistry(
         name="gobby-memory",
-        description="Memory management - create_memory, search_memories, delete_memory, get_related_memories",
+        description=(
+            "Memory management - create_memory, search_memories, review_task_memories, "
+            "delete_memory, get_related_memories"
+        ),
     )
 
     def _memory_manager() -> MemoryManager:
@@ -96,6 +102,12 @@ def create_memory_registry(
         return config if config is not None else startup_config
 
     register_memory_write_tools(registry, _memory_manager)
+    register_memory_review_tools(
+        registry,
+        _memory_manager,
+        task_manager=task_manager,
+        session_manager=session_manager,
+    )
 
     @registry.tool(
         name="search_memories",

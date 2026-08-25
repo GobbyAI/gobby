@@ -537,7 +537,7 @@ summary through `get_handoff_context` regardless of status.
 
 ## Memory (`gobby-memory`)
 
-19 tools for persistent knowledge across sessions, including embeddings
+20 tools for persistent knowledge across sessions, including embeddings
 and the optional FalkorDB knowledge graph.
 
 ### Core
@@ -550,6 +550,7 @@ and the optional FalkorDB knowledge graph.
 | `delete_memory` | Delete a memory by ID. |
 | `list_memories` | List memories with filters. |
 | `search_memories` | Search by query and tags. |
+| `review_task_memories` | Review memories related to a task closed by the calling session. |
 | `get_related_memories` | Memories linked via cross-references. |
 | `memory_stats` | Statistics about the memory system. |
 

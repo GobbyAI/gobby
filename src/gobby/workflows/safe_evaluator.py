@@ -509,6 +509,7 @@ def build_condition_helpers(
         touches_docker_policy_path,
         touches_ui_design_path,
     )
+    from .memory_review_conditions import queue_memory_review_close
     from .monolith_guard import (
         outstanding_monolith_paths,
         projected_monolith_paths,
@@ -761,6 +762,16 @@ def build_condition_helpers(
         is_pending_memory_recall_call(
             tool_input if tool_input is not None else ctx.get("tool_input"),
             pending_memory_recall_request_id(_get_variables(ctx)),
+        )
+    )
+    funcs["queue_memory_review_close"] = lambda event_data=None, tool_input=None: (
+        queue_memory_review_close(
+            task_manager,
+            event_data
+            if isinstance(event_data, Mapping)
+            else _event_field(ctx.get("event"), "data", {}),
+            tool_input if isinstance(tool_input, Mapping) else ctx.get("tool_input", {}),
+            _get_variables(ctx),
         )
     )
 

@@ -158,6 +158,22 @@ class TestSyncBundledSkills:
         assert skill.name == "memory"
         assert len(skill.content) > 0
 
+    def test_memory_skill_documents_layered_recall_and_optional_writes(
+        self, db: HubDatabase, skill_manager: LocalSkillManager
+    ) -> None:
+        from gobby.skills.sync import sync_bundled_skills
+
+        sync_bundled_skills(db)
+        skill = skill_manager.get_by_name("memory")
+        assert skill is not None
+
+        assert "one attempt per turn" in skill.content
+        assert "at most three results" in skill.content
+        assert "current context epoch" in skill.content
+        assert "Call `search_memories`" in skill.content
+        assert "review_task_memories(task_id, changes_summary)" in skill.content
+        assert "Most turns and most completed tasks need no memory write" in skill.content
+
     def test_removed_bundled_skill_directories_do_not_sync(
         self, db: HubDatabase, skill_manager: LocalSkillManager
     ) -> None:

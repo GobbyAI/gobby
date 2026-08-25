@@ -181,7 +181,7 @@ class TestSkillDiscoverySync:
                 assert body.event is not None
                 assert body.effects
 
-    def test_reset_skill_injection_clears_loaded_skills_and_memory_nudge(self, db, manager) -> None:
+    def test_reset_skill_injection_clears_only_skill_ledgers(self, db, manager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("reset-skill-injection")
         assert row is not None
@@ -194,7 +194,8 @@ class TestSkillDiscoverySync:
             if effect.type == "set_variable"
         }
         assert set_variables["loaded_skills"] == []
-        assert set_variables["memory_nudge_fired"] is False
+        assert set_variables["workflow_requested_skills"] == []
+        assert "memory_nudge_fired" not in set_variables
 
 
 # --- discover-skill-hubs-on-turn-start ---

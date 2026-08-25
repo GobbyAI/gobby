@@ -15,7 +15,9 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -904,6 +906,22 @@ class TestPreserveContextOnCompact:
         assert len(memory_reset) == 1
         assert memory_reset[0].value == []
 
+    def test_preserves_layered_memory_gate_and_pending_reviews(
+        self,
+        db: HubDatabase,
+        manager: RuleDefinitionManager,
+    ) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("preserve-context-on-compact")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+        reset_variables = {
+            effect.variable for effect in body.resolved_effects if effect.type == "set_variable"
+        }
+
+        assert "_memory_initial_stop_checked" not in reset_variables
+        assert "_memory_pending_task_reviews" not in reset_variables
+
     def test_sets_pending_context_reset(
         self,
         db: HubDatabase,
@@ -1428,7 +1446,9 @@ class TestAutoCompactAfterTaskClose:
         assert response.metadata.get("mcp_calls", []) == []
 
     @pytest.mark.asyncio
-    async def test_terminal_conditional_close_queues_compact_self_once(self, db) -> None:
+    async def test_terminal_conditional_close_queues_compact_self_once(
+        self, db: HubDatabase
+    ) -> None:
         _sync_bundled(db)
         engine = RuleEngine(db)
         variables = {
@@ -1516,7 +1536,12 @@ _CLOSE_PAYLOAD_TEXT = json.dumps({"success": True, "result": {"closed": True, "t
 _WRAPPER_INPUT: dict[str, Any] = {
     "server_name": "gobby-tasks",
     "tool_name": "close_task",
-    "arguments": {"task_id": "#42", "commit_sha": "abc123"},
+    "arguments": {
+        "task_id": "#42",
+        "commit_sha": "abc123",
+        "changes_summary": "Implemented and verified layered memory guidance.",
+        "preview": True,
+    },
 }
 _MCP_RESULT_ENVELOPE: dict[str, Any] = {
     "content": [{"type": "text", "text": _CLOSE_PAYLOAD_TEXT}],
@@ -1679,6 +1704,62 @@ class TestAutoCompactAfterTaskCloseAcrossClis:
         ]
         assert len(compact_calls) == 1, label
         assert compact_calls[0]["arguments"] == {"rule_name": "auto-compact-after-task-close"}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("label", "build_event"),
+        [
+            (
+                "claude-content-block-list",
+                lambda: _claude_close_event([{"type": "text", "text": _CLOSE_PAYLOAD_TEXT}]),
+            ),
+            ("claude-dict-envelope", lambda: _claude_close_event(dict(_MCP_RESULT_ENVELOPE))),
+            ("codex-app-server-mcp-tool-call", _codex_app_server_close_event),
+            ("codex-hooks-json", _codex_hooks_close_event),
+            ("grok-dict-tool-result", lambda: _grok_close_event(dict(_MCP_RESULT_ENVELOPE))),
+            ("grok-string-tool-result", lambda: _grok_close_event(_CLOSE_PAYLOAD_TEXT)),
+            ("qwen-post-tool-use", _qwen_close_event),
+            ("droid-post-tool-use", _droid_close_event),
+        ],
+    )
+    async def test_native_close_payload_queues_memory_review(
+        self,
+        db: HubDatabase,
+        label: str,
+        build_event: Any,
+    ) -> None:
+        _sync_bundled(db)
+        event = build_event()
+        assert event is not None, f"{label}: adapter did not translate the payload"
+        task = SimpleNamespace(
+            id="22222222-2222-4222-8222-222222220001",
+            seq_num=42,
+            task_type="task",
+            category="code",
+            closed_reason="completed",
+            closed_at=datetime(2026, 8, 25, tzinfo=UTC),
+            commits=["abc123"],
+        )
+        task_manager = MagicMock()
+        task_manager.get_task.return_value = task
+        task_manager.list_tasks.return_value = []
+        variables: dict[str, Any] = {"_memory_pending_task_reviews": []}
+
+        response = await RuleEngine(db, task_manager=task_manager).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+
+        assert response.decision == "allow", label
+        assert variables["_memory_pending_task_reviews"] == [
+            {
+                "closure_id": ("22222222-2222-4222-8222-222222220001:2026-08-25T00:00:00+00:00"),
+                "task_id": "22222222-2222-4222-8222-222222220001",
+                "task_ref": "#42",
+                "changes_summary": "Implemented and verified layered memory guidance.",
+            }
+        ]
 
     @pytest.mark.asyncio
     async def test_non_json_list_output_evaluates_cleanly_to_no_fire(

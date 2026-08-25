@@ -422,7 +422,7 @@ async def test_class_injection_agent_scoping(temp_db: HubDatabase) -> None:
         "brevity_disabled": True,
         "restraint_disabled": True,
         "skill_discovery_instructions_shown": True,
-        "memory_nudge_fired": True,
+        "_memory_initial_stop_checked": True,
         "servers_listed": True,
     }
     for agent_type, (lesson_domain, lesson_types) in expected_by_agent.items():
