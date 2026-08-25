@@ -9,19 +9,32 @@ import subprocess
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
 
 import click
 
 from gobby.cli.daemon import restart
-from gobby.cli.utils import get_gobby_home
+from gobby.cli.install_setup_gdaemon import (
+    _IDENTITY_STAMP,
+    GdaemonInstallError,
+    _codesign,
+    _probe_version,
+)
+from gobby.install.bin_freshness_github import SourceUnavailableError, platform_target
+from gobby.install.bin_freshness_models import managed_bin_specs
+from gobby.storage.schema_identity_pin import (
+    SchemaIdentityError,
+    pin_bytes,
+    probe_identity,
+    stamp_bytes,
+)
+from gobby.utils.native_bin import native_bin_dir, native_bin_name
 
 _PACKAGES = ("gobby-code", "gobby-daemon", "gobby-hooks", "gobby-wiki")
 _BINARY_NAMES = ("gcode", "gdaemon", "ghook", "gwiki")
 _PIN_PATH = Path("src/gobby/storage/schema_expected_identity.json")
-_INTEGER_IDENTITY_FIELDS = ("runner_protocol", "baseline_version", "latest_version")
-_STRING_IDENTITY_FIELDS = ("baseline_checksum", "latest_checksum", "assets_root_hash")
+_INSTALL_METHOD = "workspace-cutover"
 
 
 class CutoverError(RuntimeError):
@@ -34,7 +47,7 @@ class _Replacement:
     staging_dir: Path
     staged: Path
     backup: Path
-    original_moved: bool = False
+    backed_up: bool = False
     promoted: bool = False
 
     def cleanup(self) -> None:
@@ -69,8 +82,11 @@ class _ReplacementSet:
         for replacement in self.replacements:
             if replacement.promoted:
                 continue
-            os.replace(replacement.destination, replacement.backup)
-            replacement.original_moved = True
+            if os.path.lexists(replacement.destination):
+                # Hard-link the live inode as the backup so the destination never
+                # disappears: a hook exec between two renames would hit ENOENT.
+                os.link(replacement.destination, replacement.backup, follow_symlinks=False)
+                replacement.backed_up = True
             os.replace(replacement.staged, replacement.destination)
             replacement.promoted = True
 
@@ -78,51 +94,50 @@ class _ReplacementSet:
         errors: list[str] = []
         for replacement in reversed(self.replacements):
             try:
-                if replacement.promoted and os.path.lexists(replacement.destination):
-                    replacement.destination.unlink()
-                if replacement.original_moved and os.path.lexists(replacement.backup):
+                if replacement.backed_up:
                     os.replace(replacement.backup, replacement.destination)
+                elif replacement.promoted and os.path.lexists(replacement.destination):
+                    replacement.destination.unlink()
             except OSError as exc:
                 errors.append(f"{replacement.destination}: {exc}")
-        self.cleanup()
         if errors:
-            raise CutoverError("cutover rollback failed: " + "; ".join(errors))
+            kept = ", ".join(
+                str(replacement.backup)
+                for replacement in self.replacements
+                if os.path.lexists(replacement.backup)
+            )
+            raise CutoverError(
+                "cutover rollback failed: " + "; ".join(errors) + f"; backups kept at: {kept}"
+            )
+        self.cleanup()
 
     def cleanup(self) -> None:
         for replacement in self.replacements:
             replacement.cleanup()
 
 
-def _stage_file(source: Path, destination: Path, *, mode: int) -> _Replacement:
+def _stage(destination: Path, write: Callable[[Path], object], *, mode: int) -> _Replacement:
     destination.parent.mkdir(parents=True, exist_ok=True)
     staging_dir = Path(
         tempfile.mkdtemp(prefix=f".{destination.name}-cutover-", dir=destination.parent)
     )
     try:
-        staged = staging_dir / "staged"
-        backup = staging_dir / "original"
-        shutil.copy2(source, staged)
+        staged = staging_dir / destination.name
+        write(staged)
         staged.chmod(mode)
+        backup = staging_dir / f"{destination.name}.backup"
         return _Replacement(destination, staging_dir, staged, backup)
     except BaseException:
         shutil.rmtree(staging_dir, ignore_errors=True)
         raise
+
+
+def _stage_file(source: Path, destination: Path, *, mode: int) -> _Replacement:
+    return _stage(destination, lambda staged: shutil.copy2(source, staged), mode=mode)
 
 
 def _stage_bytes(content: bytes, destination: Path, *, mode: int) -> _Replacement:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    staging_dir = Path(
-        tempfile.mkdtemp(prefix=f".{destination.name}-cutover-", dir=destination.parent)
-    )
-    try:
-        staged = staging_dir / "staged"
-        backup = staging_dir / "original"
-        staged.write_bytes(content)
-        staged.chmod(mode)
-        return _Replacement(destination, staging_dir, staged, backup)
-    except BaseException:
-        shutil.rmtree(staging_dir, ignore_errors=True)
-        raise
+    return _stage(destination, lambda staged: staged.write_bytes(content), mode=mode)
 
 
 def _workspace_root(path: Path) -> Path:
@@ -135,11 +150,30 @@ def _workspace_root(path: Path) -> Path:
 
 
 def _require_existing_install(bin_dir: Path) -> None:
-    missing = [str(bin_dir / name) for name in _BINARY_NAMES if not (bin_dir / name).is_file()]
+    missing: list[str] = []
+    symlinked: list[str] = []
+    for name in _BINARY_NAMES:
+        path = bin_dir / native_bin_name(name)
+        if path.is_symlink():
+            symlinked.append(str(path))
+        elif not path.is_file():
+            missing.append(str(path))
     if missing:
         raise CutoverError(
             "cutover requires an existing complete native install; missing: " + ", ".join(missing)
         )
+    if symlinked:
+        raise CutoverError(
+            "cutover refuses to replace symlinked dev-install binaries; re-point the link at the "
+            "new build instead: " + ", ".join(symlinked)
+        )
+
+
+def _platform_target() -> str:
+    try:
+        return platform_target()
+    except SourceUnavailableError as exc:
+        raise CutoverError(str(exc)) from exc
 
 
 def _run(
@@ -174,7 +208,9 @@ def _build_artifacts(root: Path) -> dict[str, Path]:
         args.extend(("-p", package))
     _run(args, cwd=root, label="release build", timeout=1800)
 
-    artifacts = {name: root / "target" / "release" / name for name in _BINARY_NAMES}
+    artifacts = {
+        name: root / "target" / "release" / native_bin_name(name) for name in _BINARY_NAMES
+    }
     missing = [str(path) for path in artifacts.values() if not path.is_file()]
     if missing:
         raise CutoverError("release build omitted required artifacts: " + ", ".join(missing))
@@ -182,41 +218,57 @@ def _build_artifacts(root: Path) -> dict[str, Path]:
 
 
 def _read_schema_identity(gdaemon: Path, *, cwd: Path) -> dict[str, int | str]:
-    result = _run(
-        [str(gdaemon), "schema", "version", "--json"],
-        cwd=cwd,
-        label="gdaemon schema identity probe",
-        timeout=30,
-    )
     try:
-        parsed: object = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        raise CutoverError("gdaemon returned invalid schema identity JSON") from exc
-    if not isinstance(parsed, dict):
-        raise CutoverError("gdaemon schema identity must be a JSON object")
-    values = cast(dict[str, object], parsed)
-    expected_fields = {*_INTEGER_IDENTITY_FIELDS, *_STRING_IDENTITY_FIELDS}
-    if set(values) != expected_fields:
-        raise CutoverError(
-            f"gdaemon schema identity must contain exactly {sorted(expected_fields)}"
+        return probe_identity(gdaemon, cwd=cwd)
+    except SchemaIdentityError as exc:
+        raise CutoverError(str(exc)) from exc
+
+
+def _sign(binary: Path) -> None:
+    try:
+        _codesign(binary)
+    except GdaemonInstallError as exc:
+        raise CutoverError(str(exc)) from exc
+
+
+def _installed_version(binary: Path) -> str:
+    version = _probe_version(binary)
+    if version is None:
+        raise CutoverError(f"installed {binary.name} did not report a version")
+    return version
+
+
+def _stage_sidecars(
+    replacements: _ReplacementSet,
+    bin_dir: Path,
+    identity: dict[str, int | str],
+    *,
+    target: str,
+) -> None:
+    """Stage the installer's version stamps, install sidecars, and identity stamp."""
+    installed_at = datetime.now(UTC).isoformat()
+    specs = {spec.name: spec for spec in managed_bin_specs()}
+    for name in _BINARY_NAMES:
+        spec = specs[name]
+        version = _installed_version(bin_dir / native_bin_name(name))
+        sidecar = {
+            "install_method": _INSTALL_METHOD,
+            "install_source_url": None,
+            "installed_version": version,
+            "installed_at": installed_at,
+            "target": target,
+        }
+        replacements.append(
+            _stage_bytes(f"{version}\n".encode(), bin_dir / spec.stamp_name, mode=0o644)
         )
-
-    identity: dict[str, int | str] = {}
-    for field in _INTEGER_IDENTITY_FIELDS:
-        value = values[field]
-        if isinstance(value, bool) or not isinstance(value, int):
-            raise CutoverError(f"gdaemon schema identity field {field} must be an integer")
-        identity[field] = value
-    for field in _STRING_IDENTITY_FIELDS:
-        value = values[field]
-        if not isinstance(value, str) or not value:
-            raise CutoverError(f"gdaemon schema identity field {field} must be a string")
-        identity[field] = value
-    return identity
-
-
-def _pin_content(identity: dict[str, int | str]) -> bytes:
-    return (json.dumps(identity, indent=2, sort_keys=True) + "\n").encode()
+        replacements.append(
+            _stage_bytes(
+                (json.dumps(sidecar, sort_keys=True) + "\n").encode(),
+                bin_dir / spec.sidecar_name,
+                mode=0o644,
+            )
+        )
+    replacements.append(_stage_bytes(stamp_bytes(identity), bin_dir / _IDENTITY_STAMP, mode=0o644))
 
 
 def _smoke_installed_gcode(gcode: Path, *, root: Path) -> None:
@@ -243,29 +295,33 @@ def run_cutover(
     *,
     restart_daemon: Callable[[], None],
 ) -> None:
-    """Build, promote, restart, and smoke one coherent schema-aware binary set."""
+    """Build, sign, promote, stamp, restart, and smoke one coherent schema-aware binary set."""
     _require_existing_install(bin_dir)
+    target = _platform_target()
     artifacts = _build_artifacts(root)
     built_identity = _read_schema_identity(artifacts["gdaemon"], cwd=root)
     replacements = _ReplacementSet.stage(
-        [(artifacts[name], bin_dir / name, 0o755) for name in _BINARY_NAMES]
+        [(artifacts[name], bin_dir / native_bin_name(name), 0o755) for name in _BINARY_NAMES]
     )
 
     activated = False
     try:
+        for replacement in replacements.replacements:
+            _sign(replacement.staged)
         replacements.promote()
         activated = True
-        installed_identity = _read_schema_identity(bin_dir / "gdaemon", cwd=root)
+        installed_identity = _read_schema_identity(bin_dir / native_bin_name("gdaemon"), cwd=root)
         if installed_identity != built_identity:
             raise CutoverError(
                 "installed gdaemon identity differs from the validated release artifact"
             )
+        _stage_sidecars(replacements, bin_dir, installed_identity, target=target)
         replacements.append(
-            _stage_bytes(_pin_content(installed_identity), root / _PIN_PATH, mode=0o644)
+            _stage_bytes(pin_bytes(installed_identity), root / _PIN_PATH, mode=0o644)
         )
         replacements.promote()
         restart_daemon()
-        _smoke_installed_gcode(bin_dir / "gcode", root=root)
+        _smoke_installed_gcode(bin_dir / native_bin_name("gcode"), root=root)
     except BaseException as exc:
         try:
             replacements.rollback()
@@ -295,10 +351,14 @@ def run_cutover(
 def cutover(ctx: click.Context, workspace: Path) -> None:
     """Build and atomically activate all schema-aware native binaries."""
     root = _workspace_root(workspace)
-    bin_dir = get_gobby_home() / "bin"
+    bin_dir = native_bin_dir()
 
     def restart_daemon() -> None:
-        ctx.invoke(restart, verbose=False, docker_flag=False)
+        try:
+            ctx.invoke(restart, verbose=False, docker_flag=False)
+        except SystemExit as exc:
+            if exc.code not in (None, 0):
+                raise CutoverError(f"daemon restart failed (exit {exc.code})") from exc
 
     try:
         run_cutover(root, bin_dir, restart_daemon=restart_daemon)
