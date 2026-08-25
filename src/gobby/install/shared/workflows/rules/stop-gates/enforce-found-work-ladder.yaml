@@ -22,7 +22,7 @@ rules:
         value: "{{ found_work_shirk_confirmed }}"
       - type: block
         reason: >-
-          Rule 4 ladder: fix it now (create_task claim=true), hand it to its active owner via
+          Found-work ladder: fix it now (create_task claim=true), hand it to its active owner via
           send_message, or — edge case — file it labeled needs-decision/clean-window with the
           reason. Don't ask, and don't go silent. This alert fires once per session — act on
           it, or stop again to proceed.
@@ -41,14 +41,14 @@ rules:
     effects:
       - type: block
         reason: |
-          Rule 4 ladder: terminal validation failure remains unresolved:
+          Found-work ladder: terminal validation failure remains unresolved:
           {{ terminal_validation_failure_commands | join('\n') }}
           Fix it now (create_task claim=true), hand a confined foreign failure to its active
           owner via send_message after a scoped green rerun, or file the edge case with a
           needs-decision/clean-window label and reason.
 
   remind-found-work-after-close:
-    description: "Prompt one Rule-4 sweep after each successful task close"
+    description: "Prompt one found-work sweep after each successful task close"
     event: after_tool
     enabled: true
     priority: 42
@@ -67,7 +67,7 @@ rules:
     effects:
       - type: inject_context
         template: >-
-          Task closed. Rule 4 sweep before you stop: anything you noticed this session and didn't
+          Task closed. Found-work sweep before you stop: anything you noticed this session and didn't
           act on? Fix it now (new claimed task), hand it to its active owner via send_message, or —
           edge case only — file it labeled needs-decision/clean-window with the reason. Don't end
           with should-I-fix.

@@ -1,4 +1,4 @@
-"""Rule-4 stop facts for defect deferrals and terminal validation failures."""
+"""Found-work stop facts for defect deferrals and terminal validation failures."""
 
 from __future__ import annotations
 
@@ -106,7 +106,7 @@ _SHIRK_CONFIRM_SCHEMA = {
     "required": ["block", "reason"],
     "additionalProperties": False,
 }
-_SHIRK_SYSTEM_PROMPT = """You classify one coding-agent stop attempt for Rule 4.
+_SHIRK_SYSTEM_PROMPT = """You classify one coding-agent stop attempt against the found-work ladder.
 Return block=true only when the assistant describes an actionable defect it could address and
 ends by asking the user for permission instead of following the supplied Found Work ladder.
 Return block=false for destructive-action confirmations, user-reserved decisions, explicit user
@@ -126,8 +126,8 @@ class FoundWorkStopFacts:
 def capture_turn_prompt(event: HookEvent, variables: dict[str, Any]) -> None:
     """Persist the current user instruction for later stop-time exemptions."""
     variables["_current_user_prompt"] = ""
-    variables["_rule4_owner_handoff_turn"] = False
-    variables["_rule4_fix_commit_turn"] = False
+    variables["_found_work_owner_handoff_turn"] = False
+    variables["_found_work_fix_commit_turn"] = False
     if not isinstance(event.data, dict):
         return
     for key in ("prompt_text", "prompt", "user_prompt"):
@@ -137,7 +137,7 @@ def capture_turn_prompt(event: HookEvent, variables: dict[str, Any]) -> None:
             return
 
 
-def capture_rule4_handoff(event: HookEvent, variables: dict[str, Any]) -> None:
+def capture_found_work_handoff(event: HookEvent, variables: dict[str, Any]) -> None:
     """Track tool activity and successful owner handoff within the current turn.
 
     Only MCP and shell calls can change the analysis (validation runs, handoffs,
@@ -148,8 +148,10 @@ def capture_rule4_handoff(event: HookEvent, variables: dict[str, Any]) -> None:
         return
     if not event.data.get("mcp_server") and not is_shell_tool(event.data.get("tool_name")):
         return
-    revision = variables.get("_rule4_activity_revision", 0)
-    variables["_rule4_activity_revision"] = int(revision) + 1 if isinstance(revision, int) else 1
+    revision = variables.get("_found_work_activity_revision", 0)
+    variables["_found_work_activity_revision"] = (
+        int(revision) + 1 if isinstance(revision, int) else 1
+    )
     if event.data.get("mcp_server") != "gobby-agents":
         return
     if event.data.get("mcp_tool") != "send_message":
@@ -164,7 +166,7 @@ def capture_rule4_handoff(event: HookEvent, variables: dict[str, Any]) -> None:
         provenance="hook_event.metadata.is_failure" if explicit_success is not None else None,
     )
     if outcome.succeeded is True:
-        variables["_rule4_owner_handoff_turn"] = True
+        variables["_found_work_owner_handoff_turn"] = True
 
 
 def is_permission_deferral_candidate(message: str) -> bool:
@@ -235,7 +237,7 @@ def resolve_stop_validation_config(
 
 
 class FoundWorkStopAnalyzer:
-    """Derive Rule-4 facts without persisting policy state."""
+    """Derive found-work facts without persisting policy state."""
 
     def __init__(
         self,
@@ -263,11 +265,11 @@ class FoundWorkStopAnalyzer:
         message = await _assistant_message(event, self._session_manager, session_id)
         user_prompt = str(variables.get("_current_user_prompt") or "")
         cache_key = _analysis_cache_key(message, user_prompt, variables)
-        if variables.get("_rule4_analysis_cache_key") == cache_key:
-            cached_failures = variables.get("_rule4_terminal_validation_failures")
+        if variables.get("_found_work_analysis_cache_key") == cache_key:
+            cached_failures = variables.get("_found_work_terminal_validation_failures")
             return FoundWorkStopFacts(
-                shirk=variables.get("_rule4_found_work_shirk") is True,
-                shirk_confirmed=variables.get("_rule4_found_work_shirk_confirmed") is True,
+                shirk=variables.get("_found_work_shirk") is True,
+                shirk_confirmed=variables.get("_found_work_shirk_confirmed") is True,
                 terminal_validation_failures=(
                     tuple(str(item) for item in cached_failures)
                     if isinstance(cached_failures, list | tuple)
@@ -282,8 +284,8 @@ class FoundWorkStopAnalyzer:
         task_disposition = bool(variables.get("task_claimed")) or labeled_deferral
         primary_compliance = bool(
             task_disposition
-            or variables.get("_rule4_fix_commit_turn")
-            or variables.get("_rule4_owner_handoff_turn")
+            or variables.get("_found_work_fix_commit_turn")
+            or variables.get("_found_work_owner_handoff_turn")
         )
         shirk = False
         shirk_confirmed = False
@@ -303,10 +305,10 @@ class FoundWorkStopAnalyzer:
                 project_path=project_path,
                 project_id=event.project_id,
             )
-        variables["_rule4_analysis_cache_key"] = cache_key
-        variables["_rule4_found_work_shirk"] = shirk
-        variables["_rule4_found_work_shirk_confirmed"] = shirk_confirmed
-        variables["_rule4_terminal_validation_failures"] = list(failures)
+        variables["_found_work_analysis_cache_key"] = cache_key
+        variables["_found_work_shirk"] = shirk
+        variables["_found_work_shirk_confirmed"] = shirk_confirmed
+        variables["_found_work_terminal_validation_failures"] = list(failures)
         return FoundWorkStopFacts(
             shirk=shirk,
             shirk_confirmed=shirk_confirmed,
@@ -319,7 +321,7 @@ class FoundWorkStopAnalyzer:
         try:
             links = self._session_task_manager.get_session_tasks(session_id)
         except Exception:
-            logger.debug("Could not inspect session tasks for Rule-4 deferrals", exc_info=True)
+            logger.debug("Could not inspect session tasks for found-work deferrals", exc_info=True)
             return False
         for link in links:
             task = link.get("task") if isinstance(link, Mapping) else None
@@ -366,7 +368,7 @@ class FoundWorkStopAnalyzer:
             )
         except Exception:
             logger.debug(
-                "Rule-4 shirk confirmation unavailable; using fast-path verdict", exc_info=True
+                "Found-work shirk confirmation unavailable; using fast-path verdict", exc_info=True
             )
             return None
         if isinstance(payload, Mapping) and isinstance(payload.get("block"), bool):
@@ -400,13 +402,13 @@ class FoundWorkStopAnalyzer:
                 project_path,
             )
         except TranscriptEvidenceUnavailable:
-            logger.debug("Rule-4 validation evidence unavailable for session %s", session_id)
+            logger.debug("Found-work validation evidence unavailable for session %s", session_id)
             return ()
         except Exception:
-            logger.debug("Could not derive Rule-4 validation evidence", exc_info=True)
+            logger.debug("Could not derive found-work validation evidence", exc_info=True)
             return ()
 
-        owner_handoff = variables.get("_rule4_owner_handoff_turn") is True
+        owner_handoff = variables.get("_found_work_owner_handoff_turn") is True
         foreign_paths: set[str] = set()
         if owner_handoff and self._db is not None:
             foreign_paths = await self._foreign_owned_dirty_paths(
@@ -513,10 +515,10 @@ def _analysis_cache_key(
     payload = {
         "message": message,
         "prompt": user_prompt,
-        "activity_revision": variables.get("_rule4_activity_revision", 0),
+        "activity_revision": variables.get("_found_work_activity_revision", 0),
         "task_claimed": bool(variables.get("task_claimed")),
-        "fix_commit": variables.get("_rule4_fix_commit_turn") is True,
-        "owner_handoff": variables.get("_rule4_owner_handoff_turn") is True,
+        "fix_commit": variables.get("_found_work_fix_commit_turn") is True,
+        "owner_handoff": variables.get("_found_work_owner_handoff_turn") is True,
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()

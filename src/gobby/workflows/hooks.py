@@ -14,7 +14,7 @@ from gobby.workflows.block_audit import audit_source_block, audit_source_block_s
 from gobby.workflows.enforcement.blocking import is_gobby_call_tool
 from gobby.workflows.found_work_gate import (
     FoundWorkStopAnalyzer,
-    capture_rule4_handoff,
+    capture_found_work_handoff,
     capture_turn_prompt,
 )
 from gobby.workflows.step_context import get_active_step_workflow_context
@@ -377,7 +377,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
             run_observer("detect_commit_link", detect_commit_link, event, variables, session_id)
             run_observer("detect_bash_commit", detect_bash_commit, event, variables, session_id)
             run_observer("detect_mcp_call", detect_mcp_call, event, variables, session_id)
-            run_observer("capture_rule4_handoff", capture_rule4_handoff, event, variables)
+            run_observer("capture_found_work_handoff", capture_found_work_handoff, event, variables)
             run_observer(
                 "detect_mid_turn_context_compact_guidance",
                 detect_mid_turn_context_compact_guidance,

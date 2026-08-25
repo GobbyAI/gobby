@@ -1,4 +1,4 @@
-"""Focused tests for Rule-4 Found Work stop enforcement."""
+"""Focused tests for found-work stop enforcement."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.found_work_gate import (
     FoundWorkStopAnalyzer,
     FoundWorkStopFacts,
-    capture_rule4_handoff,
+    capture_found_work_handoff,
     capture_turn_prompt,
     is_permission_deferral_candidate,
     resolve_stop_validation_config,
@@ -134,15 +134,15 @@ class TestPermissionDeferralFastPath:
             variables,
         )
         assert variables["_current_user_prompt"] == "Only audit this code."
-        assert variables["_rule4_owner_handoff_turn"] is False
-        assert variables["_rule4_fix_commit_turn"] is False
+        assert variables["_found_work_owner_handoff_turn"] is False
+        assert variables["_found_work_fix_commit_turn"] is False
 
         capture_turn_prompt(_event(HookEventType.BEFORE_AGENT), variables)
         assert variables["_current_user_prompt"] == ""
 
     def test_successful_owner_handoff_is_tracked_for_current_turn(self) -> None:
         variables: dict[str, Any] = {}
-        capture_rule4_handoff(
+        capture_found_work_handoff(
             _event(
                 HookEventType.AFTER_TOOL,
                 {
@@ -154,29 +154,29 @@ class TestPermissionDeferralFastPath:
             ),
             variables,
         )
-        assert variables["_rule4_owner_handoff_turn"] is True
+        assert variables["_found_work_owner_handoff_turn"] is True
 
     def test_activity_revision_tracks_only_mcp_and_shell_calls(self) -> None:
         variables: dict[str, Any] = {}
-        capture_rule4_handoff(
+        capture_found_work_handoff(
             _event(
                 HookEventType.AFTER_TOOL,
                 {"tool_name": "Read", "tool_input": {"file_path": "src/x.py"}},
             ),
             variables,
         )
-        assert "_rule4_activity_revision" not in variables
+        assert "_found_work_activity_revision" not in variables
 
-        capture_rule4_handoff(
+        capture_found_work_handoff(
             _event(
                 HookEventType.AFTER_TOOL,
                 {"tool_name": "Bash", "tool_input": {"command": "pytest tests/unit"}},
             ),
             variables,
         )
-        assert variables["_rule4_activity_revision"] == 1
+        assert variables["_found_work_activity_revision"] == 1
 
-        capture_rule4_handoff(
+        capture_found_work_handoff(
             _event(
                 HookEventType.AFTER_TOOL,
                 {
@@ -187,7 +187,7 @@ class TestPermissionDeferralFastPath:
             ),
             variables,
         )
-        assert variables["_rule4_activity_revision"] == 2
+        assert variables["_found_work_activity_revision"] == 2
 
 
 def _disabled_validation_config() -> _Config:
@@ -333,8 +333,8 @@ class TestPermissionDeferralConfirmation:
         "variables",
         [
             {"task_claimed": True},
-            {"_rule4_fix_commit_turn": True},
-            {"_rule4_owner_handoff_turn": True},
+            {"_found_work_fix_commit_turn": True},
+            {"_found_work_owner_handoff_turn": True},
         ],
     )
     async def test_ladder_evidence_clears_candidate(self, variables: dict[str, Any]) -> None:
@@ -653,7 +653,7 @@ class TestTerminalValidationFailures:
         facts = await analyzer.analyze(
             event=_event(HookEventType.STOP),
             session_id=SESSION_ID,
-            variables={"_rule4_owner_handoff_turn": True},
+            variables={"_found_work_owner_handoff_turn": True},
             project_path=str(tmp_path),
         )
 
@@ -681,7 +681,7 @@ class TestFoundWorkDeclarativeRules:
         )
 
         assert response.decision == "block"
-        assert "Rule 4 ladder" in (response.reason or "")
+        assert "Found-work ladder" in (response.reason or "")
         assert "send_message" in (response.reason or "")
         assert "needs-decision/clean-window" in (response.reason or "")
         assert "once per session" in (response.reason or "")
@@ -760,7 +760,7 @@ class TestFoundWorkDeclarativeRules:
         response = await handler.evaluate_async(event)
 
         assert response.decision == "block"
-        assert "Rule 4 ladder" in (response.reason or "")
+        assert "Found-work ladder" in (response.reason or "")
         analyze.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -814,7 +814,7 @@ class TestFoundWorkDeclarativeRules:
         )
 
         context = response.context or ""
-        assert context.count("Task closed. Rule 4 sweep") == 1
+        assert context.count("Task closed. Found-work sweep") == 1
         assert "new claimed task" in context
         assert "send_message" in context
         assert "needs-decision/clean-window" in context
@@ -837,7 +837,7 @@ class TestFoundWorkDeclarativeRules:
             variables={},
         )
 
-        assert "Rule 4 sweep" not in (response.context or "")
+        assert "Found-work sweep" not in (response.context or "")
 
     def test_bundled_template_has_no_repo_specific_commands(self) -> None:
         template = (

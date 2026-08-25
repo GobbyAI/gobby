@@ -1476,7 +1476,7 @@ class TestAutoCompactAfterTaskClose:
         assert compact_calls[0]["background"] is True
         assert compact_calls[0]["arguments"] == {"rule_name": "auto-compact-after-task-close"}
         assert response.context is not None
-        assert "Rule 4 sweep" in response.context
+        assert "Found-work sweep" in response.context
         assert "compact_self" not in response.context
         assert variables["_auto_compact_after_task_close_queued_for"] == "#123"
 
