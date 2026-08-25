@@ -5372,3 +5372,98 @@ async def test_reconcile_still_warns_on_a_retryable_termination_failure(
     records = [record for record in caplog.records if run.id in record.getMessage()]
     assert [record.levelno for record in records] == [logging.WARNING]
     assert "failed" in records[0].getMessage()
+
+
+@pytest.mark.parametrize("suggested_action", ["stop", "escalate"])
+async def test_progress_stagnation_after_delivered_result_completes_taskless_run(
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    sample_session: dict[str, Any],
+    suggested_action: str,
+) -> None:
+    """An interactive agent that handed its result to the parent and then idles is done."""
+    monitor, run, _stuck_detector = _make_progress_stagnation_monitor(
+        agent_run_manager=agent_run_manager,
+        temp_db=temp_db,
+        sample_session=sample_session,
+        suggested_action=suggested_action,
+    )
+    delivered = replace(run, result="Round-2 author work complete; artifacts under /tmp")
+
+    with (
+        patch.object(monitor, "_get_active_terminal_runs", return_value=[delivered]),
+        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value=None),
+        patch.object(
+            monitor._cleanup_handler,
+            "cleanup_agent",
+            new_callable=AsyncMock,
+        ) as cleanup_agent,
+        patch.object(
+            monitor._cleanup_handler,
+            "terminalize_successful_run",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as complete,
+    ):
+        handled = await monitor.check_autonomous_stuck_agents()
+
+    assert handled == 1
+    cleanup_agent.assert_not_awaited()
+    complete.assert_awaited_once()
+    assert complete.await_args is not None
+    assert complete.await_args.args == (run.id,)
+    assert complete.await_args.kwargs["notify_result"] == {"status": "completed"}
+    assert "failed" not in complete.await_args.kwargs["message"]
+    assert run.id not in monitor._draft_grace_observations
+
+
+async def test_progress_stagnation_after_delivered_result_keeps_failure_path_for_task_runs(
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    sample_session: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Task-bound runs still fail so task recovery can release their claim."""
+    monitor, run, stuck_detector = _make_progress_stagnation_monitor(
+        agent_run_manager=agent_run_manager,
+        temp_db=temp_db,
+        sample_session=sample_session,
+    )
+    delivered = replace(run, result="progress note", task_id="task-1")
+    caplog.set_level(logging.WARNING, logger=lifecycle_monitor_module.__name__)
+
+    with (
+        patch.object(monitor, "_get_active_terminal_runs", return_value=[delivered]),
+        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value=None),
+        patch.object(
+            monitor._cleanup_handler,
+            "cleanup_agent",
+            new_callable=AsyncMock,
+        ) as cleanup_agent,
+        patch.object(
+            monitor._cleanup_handler,
+            "terminalize_successful_run",
+            new_callable=AsyncMock,
+        ) as complete,
+    ):
+        handled = await monitor.check_autonomous_stuck_agents()
+
+    assert handled == 1
+    complete.assert_not_awaited()
+    cleanup_agent.assert_awaited_once_with(
+        delivered,
+        terminal_payload="autonomous stuck: No progress events for 634 seconds",
+    )
+    stuck_result = stuck_detector.is_stuck.return_value
+    assert monitor._stuck_interventions[run.id] == monitor._stuck_intervention_fingerprint(
+        stuck_result
+    )
+    assert run.id not in monitor._draft_grace_observations
+    stuck_logs = [
+        record.getMessage()
+        for record in caplog.records
+        if "Autonomous session stuck" in record.getMessage()
+    ]
+    assert len(stuck_logs) == 1
+    assert f"run_id={run.id}" in stuck_logs[0]
+    assert "action=stop" in stuck_logs[0]
