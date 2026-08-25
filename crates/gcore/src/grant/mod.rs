@@ -322,7 +322,7 @@ pub fn fetch_runtime_config(
         cache::normalize_endpoint(base_url),
         RUNTIME_CONFIG_PATH
     );
-    let response = handshake::http_json("GET", &url, None, bearer, Some(grant), timeout)?;
+    let response = handshake::http_json("GET", &url, None, bearer, Some(grant), &[], timeout)?;
     if !(200..300).contains(&response.status) {
         if let Some(error) = GrantError::from_presentation_http(response.status, &response.body) {
             return Err(error);

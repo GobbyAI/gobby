@@ -204,6 +204,7 @@ pub fn challenge_and_handshake(
         Some(challenge_body.to_string()),
         None,
         None,
+        &[],
         remaining,
     )?;
     if let Some(error) = GrantError::from_presentation_http(challenge.status, &challenge.body) {
@@ -241,12 +242,26 @@ pub fn challenge_and_handshake(
     if let Some(overlay) = identity.code_overlay_project_id {
         handshake_body["code_overlay_project_id"] = json!(overlay);
     }
+    // The handshake route binds identity: managed callers must present the
+    // caller-project, session, and owner headers matching their capability
+    // claims, or the daemon treats the call as an operator handshake.
+    let mut identity_headers: Vec<(&str, &str)> = Vec::new();
+    if let Some(claims) = managed {
+        identity_headers.push((CALLER_PROJECT_HEADER, claims.project_id.as_str()));
+        identity_headers.push((SESSION_HEADER, claims.session_id.as_str()));
+        if let Some(run_id) = claims.agent_run_id.as_deref() {
+            identity_headers.push((AGENT_RUN_HEADER, run_id));
+        } else if let Some(execution_id) = claims.managed_execution_id.as_deref() {
+            identity_headers.push((MANAGED_EXECUTION_HEADER, execution_id));
+        }
+    }
     let handshake = http_json(
         "POST",
         &format!("{}{HANDSHAKE_PATH}", trim_url(daemon_url)),
         Some(handshake_body.to_string()),
         Some(bearer),
         None,
+        &identity_headers,
         remaining,
     )?;
     grant_from_handshake(handshake)
@@ -289,6 +304,7 @@ pub fn http_json(
     body: Option<String>,
     bearer: Option<&str>,
     grant: Option<&GrantBundle>,
+    extra_headers: &[(&str, &str)],
     timeout: Duration,
 ) -> Result<HttpResponse, GrantError> {
     let mut request = match method {
@@ -302,6 +318,9 @@ pub fn http_json(
             crate::local_token::AUTHORIZATION_HEADER,
             &crate::local_token::authorization_bearer(token),
         );
+    }
+    for (name, value) in extra_headers {
+        request = request.set(name, value);
     }
     if let Some(grant) = grant {
         request = request.set(GRANT_HEADER, &encode_grant_header(grant)?);

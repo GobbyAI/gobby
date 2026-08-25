@@ -10,7 +10,10 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use super::handshake::CapabilityClaims;
+use super::handshake::{
+    AGENT_RUN_HEADER, CALLER_PROJECT_HEADER, CapabilityClaims, MANAGED_EXECUTION_HEADER,
+    SESSION_HEADER,
+};
 use super::*;
 use crate::local_token::{AUTHORIZATION_HEADER, LOCAL_CLI_TOKEN_FILENAME};
 
@@ -348,6 +351,16 @@ fn has_header(request: &str, name: &str) -> bool {
     request.lines().any(|line| {
         line.split_once(':')
             .is_some_and(|(header, _)| header.eq_ignore_ascii_case(name))
+    })
+}
+
+fn header_value(request: &str, name: &str) -> Option<String> {
+    request.lines().find_map(|line| {
+        line.split_once(':').and_then(|(header, value)| {
+            header
+                .eq_ignore_ascii_case(name)
+                .then(|| value.trim().to_string())
+        })
     })
 }
 
@@ -893,6 +906,11 @@ fn worktree_handshake_sends_overlay_and_caches_under_it() {
         handshake.contains(&format!("\"code_overlay_project_id\":\"{overlay}\"")),
         "handshake body must name the overlay: {handshake}"
     );
+    // Interactive handshakes carry no managed identity headers.
+    assert!(!has_header(handshake, CALLER_PROJECT_HEADER));
+    assert!(!has_header(handshake, SESSION_HEADER));
+    assert!(!has_header(handshake, AGENT_RUN_HEADER));
+    assert!(!has_header(handshake, MANAGED_EXECUTION_HEADER));
     let overlay_cache = interactive_cache_path(
         &harness.home,
         &grant.deployment.token,
@@ -1497,6 +1515,56 @@ fn managed_refresh_uses_envelope_not_operator_on_wire() {
         .expect("handshake");
     assert!(handshake.contains(&format!("Bearer {token}")));
     assert!(!handshake.contains(&format!("Bearer {TOKEN}")));
+}
+
+#[test]
+fn managed_handshake_sends_identity_headers_matching_claims() {
+    let harness = Harness::new();
+    let mut managed = fixture_grant(PrincipalKind::AgentRun);
+    managed.expires_at = NOW - 1;
+    managed = managed.with_checksum();
+    let managed_path = harness.home.join("run.json");
+    write_grant_file(&managed_path, &managed).unwrap();
+    let mut renewed = managed.clone();
+    renewed.expires_at = NOW + 3_000;
+    renewed = renewed.with_checksum();
+    let token = envelope_token(NOW + 60, PROJECT);
+    let claims = parse_capability_token(&token).expect("claims");
+    let scripted = spawn_managed_challenge(&token, renewed);
+    let mut request = harness.request(Some(scripted.url.clone()));
+    request.managed_bootstrap = Some(managed_path);
+    request.managed_envelope = Some(token.clone());
+    acquire_with(&request).expect("refresh");
+    let requests = join(scripted);
+
+    // The daemon's capability matrix binds identity on the handshake route:
+    // the caller-project, session, and owner headers must match the claims.
+    let handshake = requests
+        .iter()
+        .find(|request| request.contains("POST /api/runtime/handshake HTTP"))
+        .expect("handshake");
+    assert_eq!(
+        header_value(handshake, CALLER_PROJECT_HEADER).as_deref(),
+        Some(claims.project_id.as_str())
+    );
+    assert_eq!(
+        header_value(handshake, SESSION_HEADER).as_deref(),
+        Some(claims.session_id.as_str())
+    );
+    assert_eq!(
+        header_value(handshake, AGENT_RUN_HEADER),
+        claims.agent_run_id
+    );
+    assert!(!has_header(handshake, MANAGED_EXECUTION_HEADER));
+
+    // The challenge is a public pre-credential route and carries none of them.
+    let challenge = requests
+        .iter()
+        .find(|request| request.contains("POST /api/runtime/handshake/challenge HTTP"))
+        .expect("challenge");
+    assert!(!has_header(challenge, CALLER_PROJECT_HEADER));
+    assert!(!has_header(challenge, SESSION_HEADER));
+    assert!(!has_header(challenge, AGENT_RUN_HEADER));
 }
 
 #[test]
