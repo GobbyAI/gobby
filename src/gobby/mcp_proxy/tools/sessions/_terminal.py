@@ -169,6 +169,14 @@ def _authorize_send_keys_target(
             "error_code": "send_keys_caller_not_found",
         }
 
+    if caller.agent_run_id:
+        return None, {
+            "success": False,
+            "error": "Autonomous agent sessions cannot use send_keys",
+            "error_code": "send_keys_autonomous_agent_forbidden",
+            "caller_session_id": caller_id,
+        }
+
     try:
         target_id = session_manager.resolve_session_reference(session_ref, caller.project_id)
     except ValueError as exc:
@@ -368,6 +376,7 @@ def register_terminal_tools(
             "Send keystrokes to a session's tmux terminal. "
             "This is for terminal control; use `gobby-agents:send_message` for direct "
             "cross-session agent communication. "
+            "Autonomous agent-run sessions cannot use this tool. "
             "Targets must be the caller, in the same project, or in the same agent tree. "
             "Use literal=true (default) to paste text — one or more trailing \\n characters "
             "produce exactly one Enter after the literal paste settles. "

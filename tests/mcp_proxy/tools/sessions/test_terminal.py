@@ -153,6 +153,7 @@ class TestRegisterTerminalTools:
         session = MagicMock()
         session.id = "session-1"
         session.project_id = "project-1"
+        session.agent_run_id = None
         session.terminal_context = {
             "tmux_pane": "%12",
             "tmux_socket_path": "/tmp/tmux-1000/gobby",
@@ -208,7 +209,7 @@ class TestRegisterTerminalTools:
     def test_send_keys_rejects_target_outside_caller_scope(self) -> None:
         """Cross-project sessions outside the caller's agent tree cannot receive keys."""
         registry = _TestRegistry(name="test", description="test")
-        caller = MagicMock(id="caller-session", project_id="project-1")
+        caller = MagicMock(id="caller-session", project_id="project-1", agent_run_id=None)
         target = MagicMock(id="target-session", project_id="project-2")
 
         session_manager = MagicMock()
@@ -246,11 +247,59 @@ class TestRegisterTerminalTools:
         }
         agent_run_manager.get_by_session.assert_not_called()
 
+    def test_send_keys_rejects_autonomous_agent_caller(self) -> None:
+        """Autonomous agent sessions cannot inject keystrokes into any terminal."""
+        registry = _TestRegistry(name="test", description="test")
+        caller = MagicMock(
+            id="caller-session",
+            project_id="project-1",
+            agent_run_id="agent-run-1",
+        )
+
+        session_manager = MagicMock()
+        session_manager.resolve_session_reference.return_value = "caller-session"
+        session_manager.get.return_value = caller
+
+        agent_run_manager = MagicMock()
+        tmux_manager = MagicMock()
+
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+            return_value=agent_run_manager,
+        ):
+            register_terminal_tools(registry, session_manager, MagicMock())
+
+        send_keys = registry.get_tool("send_keys")
+        assert send_keys is not None
+
+        with (
+            patch(
+                "gobby.utils.session_context.get_current_session_id",
+                return_value="caller-session",
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
+                return_value=tmux_manager,
+            ) as mock_get_tmux_manager,
+        ):
+            result = asyncio.run(send_keys(session_id="target-session", keys="hello"))
+
+        assert result == {
+            "success": False,
+            "error": "Autonomous agent sessions cannot use send_keys",
+            "error_code": "send_keys_autonomous_agent_forbidden",
+            "caller_session_id": "caller-session",
+        }
+        session_manager.resolve_session_reference.assert_called_once_with("caller-session")
+        session_manager.get.assert_called_once_with("caller-session")
+        agent_run_manager.get_by_session.assert_not_called()
+        mock_get_tmux_manager.assert_not_called()
+
     @pytest.mark.parametrize("relationship", ["same_project", "caller_ancestor", "target_ancestor"])
     def test_send_keys_allows_in_scope_target(self, relationship: str) -> None:
         """Same-project sessions and either direction of an agent lineage can receive keys."""
         registry = _TestRegistry(name="test", description="test")
-        caller = MagicMock(id="caller-session", project_id="project-1")
+        caller = MagicMock(id="caller-session", project_id="project-1", agent_run_id=None)
         target_project = "project-1" if relationship == "same_project" else "project-2"
         target = MagicMock(
             id="target-session",
