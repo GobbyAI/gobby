@@ -19,7 +19,7 @@ from typing import Any, Literal
 
 from gobby.config.validation_detection import (
     ValidationDetectionConfig,
-    classify_validation_command,
+    classify_validation_segments,
 )
 from gobby.sessions.machine_scope import require_local_session_ownership
 from gobby.sessions.transcript_archive import get_archive_dir
@@ -123,6 +123,9 @@ class TranscriptValidationRun:
     unknown_reason: str | None = None
     output: str | None = None
     output_truncated: bool = False
+    #: Normalized argv of every validation segment of ``command`` (wrappers and
+    #: env assignments stripped); empty only for runs built without classification.
+    validation_commands: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -669,9 +672,10 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
     pending = state.pending.get(outcome.outer_call_id)
     direct_pending = pending is not None and _tool_basename(pending.name) != "exec"
     order = state.next_order()
-    match = classify_validation_command(outcome.command, state.detection_config)
-    if match is None:
+    matches = classify_validation_segments(outcome.command, state.detection_config)
+    if not matches:
         return
+    match = matches[0]
     output, output_truncated = _extract_output(outcome.result)
     status, exit_code, unknown_reason = _extract_outcome(
         outcome.result,
@@ -708,6 +712,9 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
             unknown_reason=unknown_reason,
             output=output,
             output_truncated=output_truncated,
+            validation_commands=tuple(
+                dict.fromkeys(segment.normalized_command for segment in matches)
+            ),
         )
     )
 
@@ -724,9 +731,10 @@ def _record_validation_run(
     if _tool_basename(pending.name) not in _SHELL_TOOLS:
         return
     command = _extract_command(pending.arguments)
-    match = classify_validation_command(command, state.detection_config)
-    if match is None:
+    matches = classify_validation_segments(command, state.detection_config)
+    if not matches:
         return
+    match = matches[0]
     output, output_truncated = _extract_output(result)
     outcome, exit_code, unknown_reason = _extract_outcome(
         result,
@@ -754,6 +762,9 @@ def _record_validation_run(
             unknown_reason=unknown_reason,
             output=output,
             output_truncated=output_truncated,
+            validation_commands=tuple(
+                dict.fromkeys(segment.normalized_command for segment in matches)
+            ),
         )
     )
 

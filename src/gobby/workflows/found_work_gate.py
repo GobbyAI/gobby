@@ -507,8 +507,8 @@ def _analysis_cache_key(
 
 
 def _run_covers(success: TranscriptValidationRun, failure: TranscriptValidationRun) -> bool:
-    success_targets = _command_targets(success.command)
-    failure_targets = _command_targets(failure.command)
+    success_targets = _run_targets(success)
+    failure_targets = _run_targets(failure)
     if not success_targets:
         return True
     if not failure_targets:
@@ -540,22 +540,28 @@ def _reported_failure_paths(run: TranscriptValidationRun) -> set[str]:
             paths.add(raw.removeprefix("./").split("::", 1)[0])
     if paths:
         return paths
-    return {target for target in _command_targets(run.command) if Path(target).suffix}
+    return {target for target in _run_targets(run) if Path(target).suffix}
 
 
 def _green_scope_avoids_foreign_paths(
     run: TranscriptValidationRun,
     foreign_paths: AbstractSet[str],
 ) -> bool:
-    targets = tuple(
-        target for target in _command_targets(run.command) if not target.startswith("-")
-    )
+    targets = tuple(target for target in _run_targets(run) if not target.startswith("-"))
     if not targets:
         return False
     return all(
         not _target_covers(target, foreign_path) and not _target_covers(foreign_path, target)
         for target in targets
         for foreign_path in foreign_paths
+    )
+
+
+def _run_targets(run: TranscriptValidationRun) -> tuple[str, ...]:
+    """Cover targets of the validation segments only; the whole command when unclassified."""
+    commands = run.validation_commands or (run.command,)
+    return tuple(
+        dict.fromkeys(target for command in commands for target in _command_targets(command))
     )
 
 
@@ -599,11 +605,17 @@ def _is_cover_target(token: str) -> bool:
 
 
 def _target_covers(success: str, failure: str) -> bool:
+    """Return whether the green target's scope contains the red target's scope.
+
+    A file or directory covers every node id beneath it; a node id covers only
+    itself.
+    """
     if success == failure:
         return True
-    if success.startswith("-") or failure.startswith("-"):
+    if success.startswith("-") or failure.startswith("-") or "::" in success:
         return False
-    return failure.startswith(success.rstrip("/") + "/")
+    failure_path = failure.split("::", 1)[0]
+    return failure_path == success or failure_path.startswith(success.rstrip("/") + "/")
 
 
 def _project_verification_commands(project_path: str | None) -> dict[str, str]:

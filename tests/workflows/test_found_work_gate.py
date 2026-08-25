@@ -11,7 +11,10 @@ from unittest.mock import AsyncMock
 import pytest
 
 from gobby.config.tasks import TaskValidationConfig
-from gobby.config.validation_detection import classify_validation_command
+from gobby.config.validation_detection import (
+    classify_validation_command,
+    classify_validation_segments,
+)
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.tasks.transcript_evidence import (
@@ -73,6 +76,9 @@ def _run(
         order=order,
         exit_code=0 if outcome == "success" else 1,
         output=output,
+        validation_commands=tuple(
+            match.normalized_command for match in classify_validation_segments(command)
+        ),
     )
 
 
@@ -397,6 +403,49 @@ class TestTerminalValidationFailures:
             _run(2, "success", "uv run pytest tests/cli/test_uninstall.py"),
         ]
         assert unresolved_validation_failures(runs, owner_handoff=False) == (runs[0],)
+
+    def test_stash_wrapped_pytest_failure_is_covered_by_later_pytest_of_same_file(self) -> None:
+        """Cover targets come from the validation segment, never from git/shell segments."""
+        failed = (
+            'git stash push -m "authfix-tmp" src/gobby/servers/grant_auth.py '
+            "src/gobby/servers/auth_service.py src/gobby/servers/middleware/auth.py -q\n"
+            "GOBBY_TEST_PROTECT=1 uv run pytest "
+            "tests/servers/test_auth_service.py::test_agent_capability_survives_ref -q\n"
+            "git stash pop -q\n"
+            "git status --short"
+        )
+        runs = [
+            _run(1, "failure", failed),
+            _run(
+                2,
+                "success",
+                "GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/test_auth_service.py -q",
+            ),
+        ]
+        assert unresolved_validation_failures(runs, owner_handoff=False) == ()
+
+    def test_file_green_covers_node_id_failure_but_not_the_reverse(self) -> None:
+        node_id = "pytest tests/unit/test_widget.py::test_case"
+        whole_file = "pytest tests/unit/test_widget.py"
+        assert (
+            unresolved_validation_failures(
+                [_run(1, "failure", node_id), _run(2, "success", whole_file)],
+                owner_handoff=False,
+            )
+            == ()
+        )
+        runs = [_run(1, "failure", whole_file), _run(2, "success", node_id)]
+        assert unresolved_validation_failures(runs, owner_handoff=False) == (runs[0],)
+
+    def test_every_validation_segment_of_a_compound_failure_needs_cover(self) -> None:
+        failed = "uv run pytest tests/unit/test_a.py && uv run pytest tests/unit/test_b.py"
+        runs = [
+            _run(1, "failure", failed),
+            _run(2, "success", "uv run pytest tests/unit/test_a.py"),
+        ]
+        assert unresolved_validation_failures(runs, owner_handoff=False) == (runs[0],)
+        runs.append(_run(3, "success", "uv run pytest tests/unit"))
+        assert unresolved_validation_failures(runs, owner_handoff=False) == ()
 
     def test_project_verification_command_extends_detection(self, tmp_path: Path) -> None:
         project_dir = tmp_path / ".gobby"

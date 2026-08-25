@@ -1363,3 +1363,34 @@ async def test_pre_window_history_does_not_change_derived_evidence(tmp_path: Pat
         "uv run pytest tests/tasks/test_example.py"
     ]
     assert [run.outcome for run in evidence.validation_runs] == ["success"]
+
+
+@pytest.mark.asyncio
+async def test_compound_run_records_only_its_validation_segments(tmp_path: Path) -> None:
+    """Cover scoping needs the validation argv, not the git/shell segments around it."""
+    transcript = tmp_path / "compound.jsonl"
+    _write_jsonl(
+        transcript,
+        _claude_tool_pair(
+            command=(
+                'git stash push -m "tmp" src/gobby/servers/auth.py -q\n'
+                "GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/test_auth.py -q\n"
+                "git stash pop -q"
+            ),
+            call_id="red-1",
+            start=BASE_TIME,
+            result={"exit_code": 1, "stdout": _RED_PYTEST_OUTPUT},
+        ),
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [run.validation_commands for run in evidence.validation_runs] == [
+        ("pytest tests/servers/test_auth.py -q",)
+    ]
