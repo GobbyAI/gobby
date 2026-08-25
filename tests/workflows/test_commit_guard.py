@@ -22,6 +22,8 @@ from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.commit_guard import (
     DirtyEditOwnershipInspectionError,
+    ForeignPathOwner,
+    _format_dirty_edit_reason,
     _format_ref,
     parse_git_commit_invocations,
 )
@@ -281,6 +283,22 @@ async def test_dirty_foreign_edit_blocks_with_recovery_guidance(
     assert "gobby-worktrees" in response.reason
     assert "claim_task" in response.reason
     assert "force=true" in response.reason
+
+
+def test_dirty_edit_reason_lists_one_reclaim_hint_per_task() -> None:
+    reason = _format_dirty_edit_reason(
+        {
+            ForeignPathOwner(path="docs/a.md", session_ref="#2", task_ref="#7"),
+            ForeignPathOwner(path="src/b.py", session_ref="#2", task_ref="#7"),
+            ForeignPathOwner(path="src/c.py", session_ref="#3", task_ref="#9"),
+        }
+    )
+
+    assert "- docs/a.md — session #2, task #7" in reason
+    assert "- src/b.py — session #2, task #7" in reason
+    assert "- src/c.py — session #3, task #9" in reason
+    assert reason.count('claim_task(task_id="#7", force=true)') == 1
+    assert reason.count('claim_task(task_id="#9", force=true)') == 1
 
 
 @pytest.mark.asyncio

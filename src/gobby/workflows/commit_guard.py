@@ -443,8 +443,8 @@ def _format_dirty_edit_reason(conflicts: set[ForeignPathOwner]) -> str:
             "For work that cannot be committed, migrate it through `gobby-worktrees`.",
             "For a stale owner, reclaim its task with:",
             *[
-                f"- `gobby-tasks.claim_task(task_id={json.dumps(owner.task_ref)}, force=true)`"
-                for owner in ordered_conflicts
+                f"- `gobby-tasks.claim_task(task_id={json.dumps(task_ref)}, force=true)`"
+                for task_ref in dict.fromkeys(owner.task_ref for owner in ordered_conflicts)
             ],
         ]
     )
