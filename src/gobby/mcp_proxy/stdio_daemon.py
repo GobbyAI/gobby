@@ -106,35 +106,24 @@ async def ensure_daemon_running(
         return
 
     if effective_deps.is_daemon_running():
-        last_health_response = None
-        for attempt in range(DAEMON_HEALTH_ATTEMPTS):
-            last_health_response = await effective_deps.check_daemon_http_health(
-                port,
-                timeout=DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS,
-                base_url=dial_url,
-            )
-            if last_health_response:
-                return
-            if attempt < DAEMON_HEALTH_ATTEMPTS - 1:
-                effective_deps.logger.warning(
-                    "Daemon health check failed (attempt %s/%s), retrying in %.1fs...",
-                    attempt + 1,
-                    DAEMON_HEALTH_ATTEMPTS,
-                    DAEMON_HEALTH_RETRY_DELAY_SECONDS,
-                )
-                await asyncio.sleep(DAEMON_HEALTH_RETRY_DELAY_SECONDS)
-
-        pid = effective_deps.get_daemon_pid()
-        effective_deps.logger.error(
-            "Running daemon did not become healthy; refusing stdio restart",
-            extra={
-                "pid": pid,
-                "port": port,
-                "ws_port": ws_port,
-                "attempts": DAEMON_HEALTH_ATTEMPTS,
-                "last_health_response": last_health_response,
-            },
+        # Serve stdio immediately: MCP clients budget startup (Codex kills
+        # registration at 120s), and a health wait here cannot change the
+        # outcome — the daemon is already running, so proxied calls simply
+        # fail transiently until it responds. One probe, logging only.
+        healthy = await effective_deps.check_daemon_http_health(
+            port,
+            timeout=DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS,
+            base_url=dial_url,
         )
+        if not healthy:
+            effective_deps.logger.warning(
+                "Running daemon did not answer health probe; serving stdio anyway",
+                extra={
+                    "pid": effective_deps.get_daemon_pid(),
+                    "port": port,
+                    "ws_port": ws_port,
+                },
+            )
         return
 
     if os.environ.get("GOBBY_AGENT_RUN_ID"):

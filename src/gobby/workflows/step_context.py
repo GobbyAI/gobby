@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import Literal
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
@@ -22,6 +23,8 @@ class StepWorkflowContext:
     status_message: str | None
     exit_condition: str | None
     agent_name: str | None = None
+    allowed_tools: list[str] | Literal["all"] = "all"
+    is_entry_step: bool = False
 
 
 @dataclass(frozen=True)
@@ -65,6 +68,10 @@ def _get_active_step_workflow_context(
             status_message=step.status_message,
             exit_condition=instance.snapshot.exit_condition,
             agent_name=instance.agent_name,
+            allowed_tools=step.allowed_tools,
+            is_entry_step=bool(
+                instance.snapshot.steps and instance.current_step == instance.snapshot.steps[0].name
+            ),
         )
 
     return None

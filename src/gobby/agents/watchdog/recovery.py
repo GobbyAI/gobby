@@ -17,6 +17,7 @@ from gobby.agents.watchdog.completed_turn_recovery import (
     recover_completed_turn,
 )
 from gobby.agents.watchdog.models import CapacityRecoveryState, CompletedTurnRecoveryState
+from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_context import (
     StepWorkflowContext,
     first_incomplete_step_workflow,
@@ -287,6 +288,34 @@ class WatchdogRecoveryCoordinator:
             )
             return None, False
         return step_context, True
+
+    async def _session_made_successful_mcp_call(self, run: AgentRun) -> bool | None:
+        """Whether the run's child session ever completed a successful Gobby MCP call.
+
+        Reads the session's ``mcp_calls`` variable, which the workflow observer
+        records on every successful proxied call. Returns None when the lookup
+        fails so callers fail open to the reprompt path.
+        """
+        session_id = run.child_session_id
+        if not session_id:
+            return None
+        try:
+            variables = await self._run_db(
+                SessionVariableManager(self.db).get_variables,
+                session_id,
+            )
+        except psycopg.DatabaseError:
+            logger.warning(
+                "Database error loading session variables for MCP-availability check on "
+                "run %s session %s",
+                run.id,
+                session_id,
+                exc_info=True,
+            )
+            return None
+        if not isinstance(variables, dict):
+            return None
+        return bool(variables.get("mcp_calls"))
 
     async def _idle_reprompt_message(
         self,

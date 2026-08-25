@@ -52,6 +52,8 @@ class CompletedTurnRecoveryHost(Protocol):
 
     async def _fail_idle_agent(self, run: AgentRun, reason: str) -> None: ...
 
+    async def _session_made_successful_mcp_call(self, run: AgentRun) -> bool | None: ...
+
     async def _complete_if_step_workflow_finished(self, run: AgentRun) -> bool: ...
 
     async def _log_transcript_snapshot(
@@ -62,6 +64,19 @@ class CompletedTurnRecoveryHost(Protocol):
         snapshot: WatchdogTranscriptSnapshot | None = None,
         level: int = logging.WARNING,
     ) -> None: ...
+
+
+_GOBBY_PROXY_TOOL_PREFIX = "mcp__gobby__"
+
+
+def step_requires_gobby_proxy(step_context: StepWorkflowContext | None) -> bool:
+    """True when the current step's only allowed tools are Gobby MCP proxy tools."""
+    if step_context is None:
+        return False
+    allowed = step_context.allowed_tools
+    if not isinstance(allowed, list) or not allowed:
+        return False
+    return all(tool.startswith(_GOBBY_PROXY_TOOL_PREFIX) for tool in allowed)
 
 
 def workflow_fingerprint(
@@ -124,6 +139,35 @@ async def recover_completed_turn(
         return 0
 
     step_context, lookup_succeeded = await host._load_step_workflow_context(run)
+    if (
+        lookup_succeeded
+        and step_context is not None
+        and step_context.is_entry_step
+        and step_requires_gobby_proxy(step_context)
+        and await host._session_made_successful_mcp_call(run) is False
+    ):
+        # The workflow's entry step admits only Gobby MCP proxy tools and the
+        # session has never completed one — the tools were almost certainly
+        # never registered in the provider runtime (e.g. Codex's MCP startup
+        # timeout), so no number of reprompts can produce workflow progress.
+        # Later MCP-only steps are excluded: a session can legitimately reach
+        # them with zero MCP calls when earlier steps used native tools, and
+        # there a reprompt can still help.
+        reason = (
+            "Gobby MCP proxy tools unavailable: session made no successful Gobby MCP "
+            f"call while pinned in MCP-only entry step '{step_context.current_step}' "
+            "(likely stdio bridge startup failure)"
+        )
+        logger.error("Failing idle agent %s without reprompts: %s", run.id, reason)
+        await host._log_transcript_snapshot(
+            run,
+            reason="failing toolless run pinned in MCP-only step",
+            snapshot=snapshot,
+            level=logging.ERROR,
+        )
+        await host._fail_idle_agent(run, reason=reason)
+        return 1
+
     fingerprint = workflow_fingerprint(
         run.id,
         step_context,

@@ -649,48 +649,18 @@ class TestEnsureDaemonRunning:
             assert mock_health.await_count == 1
 
     @pytest.mark.asyncio
-    async def test_waits_for_unhealthy_daemon_without_restart(self) -> None:
-        """Test waits for an unhealthy daemon instead of restarting it."""
+    async def test_serves_immediately_when_running_daemon_unhealthy(self) -> None:
+        """A running-but-unhealthy daemon must not delay stdio serving.
+
+        MCP clients budget startup (Codex abandons registration at 120s), so the
+        bridge takes one telemetry probe and serves instead of health-gating.
+        """
         with patch("gobby.mcp_proxy.stdio.load_bootstrap") as mock_config:
             mock_config.return_value = BootstrapConfig(daemon_port=60887, websocket_port=60888)
             with patch(
                 "gobby.mcp_proxy.stdio.is_daemon_running",
                 return_value=True,
             ) as mock_running:
-                health_checks = [False, False, True]
-                with patch(
-                    "gobby.mcp_proxy.stdio.check_daemon_http_health",
-                    new_callable=AsyncMock,
-                    side_effect=health_checks,
-                ) as mock_health:
-                    with patch(
-                        "gobby.mcp_proxy.stdio.restart_daemon_process",
-                        new_callable=AsyncMock,
-                        return_value={"success": True},
-                    ) as mock_restart:
-                        with patch("gobby.mcp_proxy.stdio.get_daemon_pid", return_value=12345):
-                            with patch(
-                                "gobby.mcp_proxy.stdio.asyncio.sleep",
-                                new_callable=AsyncMock,
-                            ) as mock_sleep:
-                                from gobby.mcp_proxy.stdio import ensure_daemon_running
-
-                                result = await cast(
-                                    Callable[[], Awaitable[object]], ensure_daemon_running
-                                )()
-                                assert result is None
-                                mock_config.assert_called_once_with(resolve_database_url=False)
-                                mock_running.assert_called_once_with()
-                                assert mock_health.await_count == 3
-                                mock_restart.assert_not_called()
-                                assert mock_sleep.await_count == 2
-
-    @pytest.mark.asyncio
-    async def test_keeps_stdio_alive_for_persistently_unhealthy_daemon(self) -> None:
-        """Test stdio MCP clients do not restart or exit on a busy or unhealthy daemon."""
-        with patch("gobby.mcp_proxy.stdio.load_bootstrap") as mock_config:
-            mock_config.return_value = BootstrapConfig(daemon_port=60887, websocket_port=60888)
-            with patch("gobby.mcp_proxy.stdio.is_daemon_running", return_value=True):
                 with patch(
                     "gobby.mcp_proxy.stdio.check_daemon_http_health",
                     new_callable=AsyncMock,
@@ -708,18 +678,17 @@ class TestEnsureDaemonRunning:
                                 "gobby.mcp_proxy.stdio.asyncio.sleep",
                                 new_callable=AsyncMock,
                             ) as mock_sleep:
-                                from gobby.mcp_proxy.stdio import (
-                                    DAEMON_HEALTH_ATTEMPTS,
-                                    ensure_daemon_running,
-                                )
+                                from gobby.mcp_proxy.stdio import ensure_daemon_running
 
                                 result = await cast(
                                     Callable[[], Awaitable[object]], ensure_daemon_running
                                 )()
 
                                 assert result is None
-                                assert mock_health.await_count == DAEMON_HEALTH_ATTEMPTS
-                                assert mock_sleep.await_count == DAEMON_HEALTH_ATTEMPTS - 1
+                                mock_config.assert_called_once_with(resolve_database_url=False)
+                                mock_running.assert_called_once_with()
+                                assert mock_health.await_count == 1
+                                assert mock_sleep.await_count == 0
                                 mock_pid.assert_called_once_with()
                                 mock_restart.assert_not_called()
 
