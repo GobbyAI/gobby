@@ -1587,6 +1587,50 @@ fn lock_and_recovery_tests_database_apply_lock_serializes_schemas() -> anyhow::R
 }
 
 #[test]
+fn lock_and_recovery_tests_failed_apply_releases_database_apply_lock() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+    install_baseline(&mut client)?;
+    client.execute(
+        "UPDATE schema_migrations SET checksum = 'unrecognized' WHERE version = $1",
+        &[&BASELINE_VERSION],
+    )?;
+
+    let error = SchemaRunner::new(&mut client, "public")?
+        .apply()
+        .expect_err("a corrupt receipt must fail inside the locked apply section");
+    assert!(
+        error
+            .to_string()
+            .contains("recreate from a verified backup"),
+        "failure must come from apply_locked, got: {error}"
+    );
+
+    // The session-level lock lives on the runner's connection, so a fresh
+    // connection can only take it if the failed apply released it.
+    let mut probe = database.connect()?;
+    let acquired: bool = probe
+        .query_one(
+            "SELECT pg_try_advisory_lock(hashtext('postgres_migrations_apply'), 0)",
+            &[],
+        )?
+        .get(0);
+    assert!(
+        acquired,
+        "a failed apply must release the database apply lock"
+    );
+    probe.query_one(
+        "SELECT pg_advisory_unlock(hashtext('postgres_migrations_apply'), 0)",
+        &[],
+    )?;
+    Ok(())
+}
+
+#[test]
 fn gate_tests_destructive_apply_requires_a_verified_v2_backup() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
