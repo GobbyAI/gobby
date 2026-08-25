@@ -28,6 +28,7 @@ from gobby.memory.recall import (
     _memory_to_payload,
     scrub_memory_recall_query,
 )
+from gobby.memory.services._search_keyword import keyword_fallback
 from gobby.memory.services._search_results import build_results
 from gobby.review_learning.fingerprint import build_occurrence_key
 from gobby.review_learning.lessons import normalize_lesson
@@ -694,6 +695,100 @@ async def test_a_keyword_hit_with_a_stored_vector_is_judged_at_the_threshold(
         "drop_reason": "other",
         "drop_detail": "selection_min_score",
     }
+
+
+class _NoVectorStorage:
+    """`keyword_fallback` storage: every memory exists and none carries a score."""
+
+    def get_memory(self, memory_id: str) -> Memory:
+        return _memory(memory_id, similarity=None, temporal_decay_factor=None)
+
+
+@pytest.mark.asyncio
+async def test_a_no_vector_deployments_top_keyword_hit_is_not_injected(
+    temp_db: HubDatabase,
+    persisted_session: None,
+) -> None:
+    """The fallback's max-normalized top hit is a rank, not a similarity (#20874).
+
+    Keyword scores are max-normalized, so the best hit scores exactly 1.0
+    whatever its relevance; carried as `similarity` it cleared the 0.70 floor
+    unconditionally and injected every turn, against the invariant #20858
+    pinned. Built through the real `keyword_fallback` because that producer is
+    where the fabricated similarity came from: with no vector store there is
+    genuinely no stored vector to score, which is exactly the case #20873
+    narrowed the null-similarity backstop to, so every hit is dropped there.
+    """
+
+    async def run_storage(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        return func(*args, **kwargs)
+
+    candidates = await keyword_fallback(
+        run_storage=run_storage,
+        storage=cast(Any, _NoVectorStorage()),
+        keyword_search=lambda query, limit, project_id, *, include_global=True: [
+            ("top-hit", 1.0),
+            ("runner-up", 0.4),
+        ],
+        query="parser fix",
+        limit=5,
+        project_id=PROJECT_ID,
+        memory_type=None,
+        tags_all=None,
+        tags_any=None,
+        tags_none=None,
+    )
+    assert [memory.ranking_score for memory in candidates] == [1.0, 0.4]
+    assert all(memory.similarity is None for memory in candidates)
+    manager = FakeMemoryManager(candidates, record_outcomes=True)
+
+    result = await _runner(temp_db, manager).run(_event(), SESSION_ID, _variables())
+
+    assert result is None
+    assert _drop_row(temp_db, "top-hit") == {
+        "drop_reason": "other",
+        "drop_detail": "null_similarity",
+    }
+
+
+class _HangingManager(FakeMemoryManager):
+    """Search that outlives any reasonable turn, recording its cancellation."""
+
+    def __init__(self) -> None:
+        super().__init__([])
+        self.cancelled = False
+
+    async def search_memories(self, **kwargs: Any) -> list[Memory]:
+        self.calls.append(kwargs)
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        return []
+
+
+@pytest.mark.asyncio
+async def test_recall_search_is_bounded_by_an_outer_deadline(
+    temp_db: HubDatabase,
+    persisted_session: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One wall-clock bound covers the whole search, backfill rounds included (#20874).
+
+    The search's own timeouts are per leg -- 10s Qdrant search plus 10s rescore
+    per round, across up to four backfill rounds -- so a slow-but-succeeding
+    search could hold the user's turn for their whole stack. The runner bounds
+    the call as a whole, cancels the in-flight search, and fails open to
+    injecting nothing.
+    """
+    monkeypatch.setattr(recall_module, "RECALL_SEARCH_DEADLINE_SECONDS", 0.05)
+    manager = _HangingManager()
+
+    result = await _runner(temp_db, manager).run(_event(), SESSION_ID, _variables())
+
+    assert result is None
+    assert manager.cancelled is True
 
 
 # The candidate set session d404a7c9-8f8c-4f4a-9f9a-... recorded for the query

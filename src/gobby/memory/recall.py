@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import re
@@ -32,6 +33,15 @@ logger = logging.getLogger(__name__)
 MAX_RECALL_MEMORIES = 3
 MAX_QUERY_TERMS = 80
 MAX_QUERY_CHARS = 1_200
+
+# Outer wall-clock bound on one recall search, across every backfill round.
+# The search's own timeouts are per leg (10s Qdrant search, 10s rescore), so
+# the success path could stack up to eight of them across the four rounds the
+# backfill loop may run -- recall holds the user's turn, and befaf3e652 bounded
+# only the failing leg (#20874). 20s admits one full worst-case round's two
+# sequential vector-store legs and refuses the stack; recall fails open to
+# injecting nothing, exactly as it does when the search errors.
+RECALL_SEARCH_DEADLINE_SECONDS = 20.0
 
 # A scrubbed bag this thin carries too little for an embedding to match, so the
 # tail of the previous turn is appended as context. Measured on the term bag
@@ -390,17 +400,24 @@ class MemoryRecallRunner:
         embed_text: str,
     ) -> list[Memory]:
         try:
-            return await self.memory_manager.search_memories(
-                query=query,
-                project_id=project_id,
-                limit=self.config.candidate_limit,
-                min_score=self.config.min_score,
-                tags_none=[REVIEW_LESSON_TAG],
-                embed_text=embed_text,
-                session_id=session_id,
-                recall_request_id=recall_request_id,
-                caller="memory.recall",
+            async with asyncio.timeout(RECALL_SEARCH_DEADLINE_SECONDS):
+                return await self.memory_manager.search_memories(
+                    query=query,
+                    project_id=project_id,
+                    limit=self.config.candidate_limit,
+                    min_score=self.config.min_score,
+                    tags_none=[REVIEW_LESSON_TAG],
+                    embed_text=embed_text,
+                    session_id=session_id,
+                    recall_request_id=recall_request_id,
+                    caller="memory.recall",
+                )
+        except TimeoutError:
+            self.logger.warning(
+                "Memory recall search exceeded its %.0fs deadline; injecting nothing this turn",
+                RECALL_SEARCH_DEADLINE_SECONDS,
             )
+            return []
         except Exception as exc:  # noqa: BLE001 - recall must fail open
             self.logger.warning("Memory recall hybrid search failed: %s", exc)
             return []

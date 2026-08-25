@@ -59,7 +59,12 @@ async def keyword_fallback(
     tags_none: list[str] | None,
     include_global: bool = True,
 ) -> list[Memory]:
-    """Keyword search fallback when vector search is unavailable."""
+    """Keyword search fallback when vector search is unavailable.
+
+    Returned memories carry their normalized BM25 score as ``ranking_score``
+    and no ``similarity``: with no vector store nothing can put them on the
+    cosine axis, so recall's null-similarity backstop judges them (#20873).
+    """
     keyword_results = cast(
         list[tuple[str, float]],
         await run_storage(
@@ -87,7 +92,15 @@ async def keyword_fallback(
             continue
         if tags_none and any(tag in (mem.tags or []) for tag in tags_none):
             continue
-        mem.similarity = score
+        # The keyword score is a max-normalized BM25 rank statistic -- the top
+        # hit is exactly 1.0 whatever its relevance -- not a cosine, so it must
+        # not travel as `similarity`: recall's selection gate judges that axis
+        # against a cosine floor, and a fabricated 1.0 injected the top hit
+        # unconditionally every turn (#20874). With no vector store there is no
+        # stored vector to score, which is exactly the case #20873 narrowed the
+        # null-similarity backstop to, so these hits carry no similarity and
+        # their rank travels as `ranking_score` instead.
+        mem.ranking_score = score
         mem.search_via = "keyword"
         memories.append(mem)
         if len(memories) >= limit:

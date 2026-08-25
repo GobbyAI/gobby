@@ -157,12 +157,20 @@ class MemoryRecallConfig(FeatureDefaultConfig):
         ge=0.0,
         le=1.0,
         description=(
-            "Minimum decayed semantic similarity the hybrid search itself applies. "
-            "The backfill loop doubles the candidate pool until candidate_limit hits "
-            "clear this floor, so raising it sharpens the pool without reducing how "
-            "much a turn injects. Default 0.55 sits at the 25th percentile of the "
-            "logged recall_signal similarity distribution (memory.recall caller, "
-            "2026-07 through 2026-08: p10=0.45, p25=0.50)."
+            "Minimum UNDECAYED semantic similarity the hybrid search itself applies, "
+            "recovered as similarity / temporal_decay_factor just like "
+            "selection_min_score (#20858): age orders candidates, it no longer "
+            "decides search eligibility. The backfill loop doubles the candidate "
+            "pool until candidate_limit hits clear this floor, so raising it "
+            "sharpens the pool without reducing how much a turn injects. A "
+            "graph-expander find is gated on its entity-match confidence (search "
+            "floor 0.611) instead of this axis, and a candidate with no score at "
+            "all passes here and is judged by the selection gate's "
+            "null-similarity backstop (#20873). Default 0.55 was calibrated "
+            "against the DECAYED recall_signal similarity distribution "
+            "(memory.recall caller, 2026-07 through 2026-08: p10=0.45, "
+            "p25=0.50), so it is off-axis and provisional; the Phase 4 refit "
+            "re-fits it together with selection_min_score."
         ),
     )
     selection_min_score: float = Field(
@@ -171,8 +179,8 @@ class MemoryRecallConfig(FeatureDefaultConfig):
         le=1.0,
         description=(
             "Minimum UNDECAYED similarity a candidate must carry to be injected, "
-            "recovered as similarity / temporal_decay_factor. Unlike min_score, "
-            "which reads the decayed value, this is the last gate before the "
+            "recovered as similarity / temporal_decay_factor -- the same axis "
+            "min_score reads since #20858. This is the last gate before the "
             "model, so it asks only whether a memory is on topic and leaves "
             "temporal decay to order candidates (#20831); on the decayed axis a "
             "30-day half-life demanded score * boost >= 1.30 to inject at all. "
@@ -182,7 +190,9 @@ class MemoryRecallConfig(FeatureDefaultConfig):
             "admitted; since #20858 rescored every candidate the collection can "
             "score, that is now only a memory with no stored vector, and a "
             "keyword-found hit carrying one is judged here like any other "
-            "(#20873). A graph-expander find is judged on its entity-match "
+            "(#20873). In a deployment with no vector store that is every hit "
+            "-- a normalized BM25 rank is not a similarity -- so keyword-only "
+            "search never injects (#20874). A graph-expander find is judged on its entity-match "
             "confidence instead, because its cosine is what the vector leg "
             "already missed it on; that floor is 0.653, the p90 of the 2026-08 "
             "confidence distribution (n=17,975), provisional and owned by the "

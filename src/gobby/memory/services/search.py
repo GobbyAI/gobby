@@ -503,7 +503,7 @@ class SearchService:
             merged_ids=[mem.id for mem in memories],
             returned=memories,
             ranking_score_map={
-                mem.id: mem.similarity for mem in memories if mem.similarity is not None
+                mem.id: mem.ranking_score for mem in memories if mem.ranking_score is not None
             },
             rrf_applied=False,
         )
