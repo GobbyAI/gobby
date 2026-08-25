@@ -14,6 +14,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from gobby.cli.services import is_qdrant_healthy
 from gobby.hooks.runtime_compat import read_ghook_runtime_diagnostic
+from gobby.paths import get_install_dir
 from gobby.telemetry.instruments import get_all_metrics, set_gauge, update_daemon_metrics
 
 if TYPE_CHECKING:
@@ -146,6 +147,9 @@ async def _get_falkordb_memory_status(server: "HTTPServer") -> dict[str, Any]:
 def create_health_router(server: "HTTPServer") -> APIRouter:
     """Public liveness probe at ``/api/health``, mounted outside the admin prefix."""
     router = APIRouter(prefix="/api", tags=["health"])
+    # The checkout this daemon serves bundled content from; `gobby sync` compares
+    # its own checkout against it before overwriting the shared installed rows.
+    install_dir = str(get_install_dir())
 
     @router.get("/health")
     async def health_check() -> dict[str, Any]:
@@ -161,6 +165,7 @@ def create_health_router(server: "HTTPServer") -> APIRouter:
             "status": "degraded" if hook_runtime.is_degraded or degraded_services else "ok",
             "degraded_services": degraded_services,
             "hook_runtime": hook_runtime.to_dict(),
+            "install_dir": install_dir,
         }
 
     return router

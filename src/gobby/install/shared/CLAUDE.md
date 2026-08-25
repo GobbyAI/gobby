@@ -13,6 +13,9 @@ Everything in this directory is a **template**, not active enforcement.
 - User/project-owned rows and project-local override copies are preserved by sync
 - The `deprecated/` subdirectories are excluded from sync entirely
 - The database is the source of truth for what's active, not these YAML files
+- Installed rows belong to the checkout the running daemon serves. `gobby sync` from
+  another checkout (a worktree on a branch) is refused unless `--force`, because the
+  daemon keeps running its own code against the overwritten rows
 
 ## Configurability Convention
 

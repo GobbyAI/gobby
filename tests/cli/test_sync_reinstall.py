@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -20,6 +21,13 @@ pytestmark = pytest.mark.unit
 @pytest.fixture
 def runner() -> CliRunner:
     return CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def no_running_daemon() -> Iterator[None]:
+    """Default to "no daemon answered" so the checkout gate stays out of the way."""
+    with patch("gobby.cli.sync._running_daemon_install_dir", return_value=None):
+        yield
 
 
 @patch("gobby.sync_registry.sync_bundled_content_to_db")

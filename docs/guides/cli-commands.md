@@ -770,6 +770,14 @@ gobby comms channels add CHANNEL_TYPE NAME
 gobby comms channels remove NAME
 ```
 
+`gobby sync` writes the shared installed rows that every session reads. While a
+daemon is running it refuses to sync from any checkout other than the one the
+daemon serves (`install_dir` on `GET /api/health`), because the daemon keeps
+running its own code against the overwritten rows; `--force` overwrites anyway
+and prints a banner naming both checkouts. With no daemon reachable the sync
+proceeds. `gobby install` re-points the service at the invoking checkout, so
+its sync is a deliberate whole-checkout cutover.
+
 ## ID Resolution
 
 Task and session commands accept project-scoped sequence references such as
