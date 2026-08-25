@@ -156,7 +156,7 @@ def test_guard_collection_reads_the_scoped_rows_end_to_end(
         temp_db, sample_project, title="Current", parent_task_id=epic.id, category="code"
     )
 
-    paths, sources, errors = collect_epic_guard_paths(
+    paths, sources, errors, _deleted = collect_epic_guard_paths(
         task_manager=manager,
         task=manager.get_task(current.id),
         repo_path=str(tmp_path),

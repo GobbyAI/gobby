@@ -99,7 +99,7 @@ async def evaluate_epic_guards(
     # so it stays off the loop. Left on it, the project-wide walk this replaced
     # held the daemon for 66 seconds on a ~15k-task project, with every route
     # including liveness timing out (#20841).
-    paths, source_task_ids, collection_errors = await asyncio.to_thread(
+    paths, source_task_ids, collection_errors, sibling_deleted = await asyncio.to_thread(
         collect_epic_guard_paths,
         task_manager=task_manager,
         task=task,
@@ -133,15 +133,16 @@ async def evaluate_epic_guards(
         )
     missing = tuple(path for path in paths if not Path(repo_path, path).is_file())
     if missing:
-        # A guard test deleted by the closing task's own linked commits left
+        # A guard test deleted by the closing task's own linked commits -- or
+        # by a closed sibling's, whose close gates vetted the deletion -- left
         # with the feature it covered; only unexplained absences block.
-        deleted_by_task: set[str] = set()
+        deleted_by_commits: set[str] = set(sibling_deleted)
         for sha in closing_commit_shas:
             try:
-                deleted_by_task.update(await asyncio.to_thread(_deleted_files, sha, repo_path))
+                deleted_by_commits.update(await asyncio.to_thread(_deleted_files, sha, repo_path))
             except RuntimeError:
                 break
-        still_missing = tuple(path for path in missing if path not in deleted_by_task)
+        still_missing = tuple(path for path in missing if path not in deleted_by_commits)
         if still_missing:
             return _result(
                 passed=False,
@@ -152,13 +153,16 @@ async def evaluate_epic_guards(
                 source_task_ids=source_task_ids,
                 template=template,
             )
-        paths = tuple(path for path in paths if path not in deleted_by_task)
+        paths = tuple(path for path in paths if path not in missing)
         if not paths:
             return _result(
                 passed=True,
                 skipped=True,
                 error_type=None,
-                message="Every guard test was deleted by this task's linked commits.",
+                message=(
+                    "Every guard test was deleted by linked commits of this "
+                    "task or closed siblings."
+                ),
             )
 
     quoted_paths = " ".join(shlex.quote(path) for path in paths)
@@ -356,15 +360,20 @@ def collect_epic_guard_paths(
     task_manager: LocalTaskManager,
     task: Task,
     repo_path: str,
-) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
-    """Collect test refs and added test-convention files from prior closed leaves."""
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    """Collect test refs and added test-convention files from prior closed leaves.
+
+    The fourth element is every path deleted by a closed leaf's linked
+    commits: a deletion that passed its own task's close gates retires the
+    guard for the whole epic (#20904).
+    """
     # The task's ancestors and its nearest epic's subtree, nothing else. Paging
     # the whole project here cost ~105s per close_task preview (#20847).
     tasks = task_manager.list_epic_guard_scope(task.id)
     by_id = {item.id: item for item in tasks}
     epic = _nearest_epic(task, by_id)
     if epic is None:
-        return (), (), ()
+        return (), (), (), ()
 
     descendants = _descendant_ids(epic.id, tasks)
     child_parents = {item.parent_task_id for item in tasks if item.parent_task_id}
@@ -380,6 +389,7 @@ def collect_epic_guard_paths(
         key=lambda item: (item.closed_at, item.id),
     )
     paths: set[str] = set()
+    deleted: set[str] = set()
     source_ids: list[str] = []
     errors: list[str] = []
     for leaf in leaves:
@@ -394,10 +404,11 @@ def collect_epic_guard_paths(
             contributed = True
         for sha in leaf.commits or ([leaf.closed_commit_sha] if leaf.closed_commit_sha else []):
             try:
-                added = _added_files(sha, repo_path)
+                added, removed = _changed_files(sha, repo_path)
             except RuntimeError as exc:
                 errors.append(f"Cannot inspect guard commit {sha}: {exc}")
                 continue
+            deleted.update(removed)
             for path in added:
                 if not is_test_convention_path(path):
                     continue
@@ -411,7 +422,7 @@ def collect_epic_guard_paths(
                 contributed = True
         if contributed:
             source_ids.append(leaf.id)
-    return tuple(sorted(paths)), tuple(source_ids), tuple(errors)
+    return tuple(sorted(paths)), tuple(source_ids), tuple(errors), tuple(sorted(deleted))
 
 
 def _nearest_epic(task: Task, by_id: dict[str, Task]) -> Task | None:
@@ -444,18 +455,20 @@ def _descendant_ids(parent_id: str, tasks: list[Task]) -> set[str]:
     return descendants
 
 
-def _added_files(sha: str, repo_path: str) -> tuple[str, ...]:
-    return _named_files(sha, repo_path, diff_filter="A")
-
-
 def _deleted_files(sha: str, repo_path: str) -> tuple[str, ...]:
-    return _named_files(sha, repo_path, diff_filter="D")
+    _, deleted = _changed_files(sha, repo_path)
+    return deleted
 
 
-def _named_files(sha: str, repo_path: str, *, diff_filter: str) -> tuple[str, ...]:
+def _changed_files(sha: str, repo_path: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Added and deleted paths for one commit from a single name-status listing.
+
+    Renames are decomposed (--no-renames) so a guard renamed away counts as a
+    deletion of its old path and an addition of the new one.
+    """
     try:
         result = subprocess.run(
-            ["git", "show", "--format=", "--name-only", f"--diff-filter={diff_filter}", sha],
+            ["git", "show", "--format=", "--name-status", "--no-renames", sha],
             cwd=repo_path,
             text=True,
             capture_output=True,
@@ -466,7 +479,18 @@ def _named_files(sha: str, repo_path: str, *, diff_filter: str) -> tuple[str, ..
         raise RuntimeError(str(exc)) from exc
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or f"git show exited {result.returncode}")
-    return tuple(path.strip() for path in result.stdout.splitlines() if path.strip())
+    added: list[str] = []
+    deleted: list[str] = []
+    for line in result.stdout.splitlines():
+        status, _, path = line.partition("\t")
+        path = path.strip()
+        if not path:
+            continue
+        if status.startswith("A"):
+            added.append(path)
+        elif status.startswith("D"):
+            deleted.append(path)
+    return tuple(added), tuple(deleted)
 
 
 def is_test_convention_path(path: str) -> bool:

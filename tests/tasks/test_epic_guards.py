@@ -228,7 +228,40 @@ async def test_guard_file_deleted_by_the_closing_commits_is_exempt(tmp_path: Pat
     )
     assert exempt.passed is True
     assert exempt.skipped is True
-    assert "deleted by this task's linked commits" in exempt.message
+    assert "deleted by linked commits" in exempt.message
+
+
+@pytest.mark.asyncio
+async def test_guard_file_deleted_by_a_closed_siblings_commit_is_exempt(tmp_path: Path) -> None:
+    """A guard retired by a closed sibling's vetted commit must not block the epic (#20904)."""
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.email", "tests@example.com")
+    _git(tmp_path, "config", "user.name", "Tests")
+    guard = Path(tmp_path, "tests", "test_retired_guard.py")
+    guard.parent.mkdir()
+    guard.write_text("def test_guard(): pass\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "add guard")
+    _git(tmp_path, "rm", "-q", "tests/test_retired_guard.py")
+    _git(tmp_path, "commit", "-m", "retire guard")
+    deleting_sha = _git(tmp_path, "rev-parse", "HEAD").strip()
+    _write_project(tmp_path, "printf '%s' {test_files}")
+    epic, prior, current = _task_tree(criteria="test: tests/test_retired_guard.py::test_guard")
+    deleter = _task("deleter", parent=epic.id, now=datetime(2026, 8, 21, tzinfo=UTC), closed=True)
+    deleter.commits = [deleting_sha]
+    manager = cast(LocalTaskManager, _TaskManager([epic, prior, deleter, current]))
+
+    # The closing task carries no commits of its own -- the deletion is the
+    # sibling's, and its close gates already vetted it.
+    exempt = await evaluate_epic_guards(
+        task_manager=manager,
+        task=current,
+        repo_path=str(tmp_path),
+    )
+
+    assert exempt.passed is True
+    assert exempt.skipped is True
+    assert "closed siblings" in exempt.message
 
 
 @pytest.mark.asyncio
@@ -252,7 +285,7 @@ async def test_guard_runner_timeout_fails_closed(tmp_path: Path) -> None:
 def test_guard_collection_rejects_path_traversal(tmp_path: Path) -> None:
     epic, prior, current = _task_tree(criteria="test: ../outside.py::test_escape")
 
-    paths, _sources, errors = collect_epic_guard_paths(
+    paths, _sources, errors, _deleted = collect_epic_guard_paths(
         task_manager=cast(LocalTaskManager, _TaskManager([epic, prior, current])),
         task=current,
         repo_path=str(tmp_path),
@@ -277,7 +310,7 @@ def test_guard_collection_includes_test_convention_files_added_by_commit(
     epic, prior, current = _task_tree(criteria="No explicit test reference.")
     prior.commits = [sha]
 
-    paths, sources, errors = collect_epic_guard_paths(
+    paths, sources, errors, _deleted = collect_epic_guard_paths(
         task_manager=cast(LocalTaskManager, _TaskManager([epic, prior, current])),
         task=current,
         repo_path=str(tmp_path),
@@ -309,7 +342,7 @@ def test_guard_collection_never_lists_the_whole_project(tmp_path: Path) -> None:
         "def test_guard(): pass\n", encoding="utf-8"
     )
 
-    paths, sources, errors = collect_epic_guard_paths(
+    paths, sources, errors, _deleted = collect_epic_guard_paths(
         task_manager=cast(LocalTaskManager, _ScopeOnlyTaskManager([epic, prior, current])),
         task=current,
         repo_path=str(tmp_path),
