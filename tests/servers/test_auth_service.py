@@ -476,6 +476,41 @@ def test_agent_capability_survives_ref_spelled_path_segment(
         _request(identity, method="POST", path="/api/sessions/#11064/variables/set")
     )
 
+    # End-to-end through AuthMiddleware: the request spells the session as a
+    # percent-encoded "#N" ref on the wire and must reach the handler (200),
+    # not the generic 401.
+    import asyncio
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from gobby.servers.middleware.auth import AuthMiddleware
+
+    async def _run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        return await asyncio.to_thread(func, *args, **kwargs)
+
+    app = FastAPI()
+    app.add_middleware(
+        AuthMiddleware,
+        server=cast(
+            "http_module.HTTPServer",
+            SimpleNamespace(auth_service=service, run_db=_run_db),
+        ),
+    )
+
+    @app.post("/api/sessions/{session_id}/variables/set")
+    async def set_variable(session_id: str) -> dict[str, str]:
+        return {"session_id": session_id}
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/sessions/%2311064/variables/set",
+        headers=identity,
+        json={"name": "probe", "value": "x"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"session_id": "#11064"}
+
 
 def test_tool_capability_is_bound_to_live_managed_execution(
     temp_db: HubDatabase,
