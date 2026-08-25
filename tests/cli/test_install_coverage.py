@@ -24,6 +24,7 @@ from gobby.cli.install import (
     _is_codex_cli_installed,
     install,
 )
+from gobby.cli.install_setup_rtk import RtkCleanupReport, RtkInstallStatus
 from gobby.cli.uninstall import uninstall
 from gobby.ui_exposure import UiExposeError
 
@@ -56,6 +57,20 @@ def runner(monkeypatch: pytest.MonkeyPatch) -> CliRunner:
     monkeypatch.setattr(install_module, "AuthStore", MagicMock())
     monkeypatch.setattr(install_module, "_provision_local_api_token", MagicMock())
     monkeypatch.setattr(install_module, "_provision_gdaemon_for_services", MagicMock())
+    monkeypatch.setattr(
+        install_module,
+        "reconcile_rtk",
+        MagicMock(
+            return_value=RtkInstallStatus(
+                binary_path=None,
+                version=None,
+                rule_enabled=False,
+                direct_artifact_conflicts=(),
+                health="disabled",
+                managed_binary=False,
+            )
+        ),
+    )
     monkeypatch.setattr(install_module, "_run_install_preflight", lambda **_kwargs: ([], []))
     monkeypatch.setattr(install_module, "_maybe_start_daemon_after_install", MagicMock())
     monkeypatch.setattr(
@@ -214,13 +229,12 @@ class TestInstallCommand:
                 return_value=Path("/tmp/gobby-files-home/_personal/.gobby/project.json"),
             ),
             patch("gobby.cli.install.peek_install_bootstrap", return_value={}),
-            patch(
-                "gobby.cli.install.ensure_install_identity",
-                return_value=MagicMock(email="owner@example.com"),
-            ),
             patch("gobby.cli.install._configure_secret_kek_posture", lambda *_a, **_k: None),
-            patch("gobby.cli.install._provision_local_api_token", lambda *_a, **_k: None),
         ):
+            # ``ensure_install_identity`` and ``_provision_local_api_token`` are
+            # patched by the ``runner`` fixture's monkeypatch; patching them here
+            # too leaks the stubs, because the module-level ``monkeypatch`` undo
+            # runs after this ``patch`` block exits.
             yield
 
     def test_install_config_only_skips_hooks_and_provisions_services(
@@ -385,6 +399,124 @@ class TestInstallCommand:
         voice_install.assert_not_called()
         full_summary.assert_not_called()
         _config.assert_not_called()
+        _setup.assert_not_called()
+
+    @patch("gobby.cli.install.run_daemon_setup")
+    @patch(
+        "gobby.cli.install._ensure_daemon_config", return_value={"created": False, "path": "/fake"}
+    )
+    @patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install"))
+    @patch("gobby.cli.install.reconcile_rtk")
+    def test_install_rtk_flag_alone_reconciles_rtk_only(
+        self,
+        mock_reconcile: MagicMock,
+        _install_dir: MagicMock,
+        _config: MagicMock,
+        _setup: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        mock_reconcile.return_value = RtkInstallStatus(
+            binary_path=Path("/fake/bin/rtk"),
+            version="0.45.0",
+            rule_enabled=True,
+            direct_artifact_conflicts=("~/.claude/settings.json still calls a direct rtk hook",),
+            health="conflicted",
+            managed_binary=True,
+        )
+        runtime = MagicMock()
+        with (
+            patch("gobby.cli.install.get_cli_runtime", return_value=runtime),
+            patch("gobby.cli.install._install_required_stack") as required_stack,
+            patch("gobby.cli.install._should_initialize_project") as initialize_project,
+            patch("gobby.cli.install._echo_install_summary") as full_summary,
+            patch("gobby.cli.install.install_git_hooks") as git_hooks,
+            patch("gobby.cli.install.install_claude") as install_claude,
+        ):
+            result = runner.invoke(install, ["--rtk"], catch_exceptions=False)
+
+        assert result.exit_code == 0, result.output
+        assert "RTK maintenance complete." in result.output
+        assert (
+            "RTK: conflicted; rule=enabled; binary=/fake/bin/rtk; version=0.45.0" in result.output
+        )
+        assert "Warning: ~/.claude/settings.json still calls a direct rtk hook" in result.output
+        assert "Gobby Installation" not in result.output
+        mock_reconcile.assert_called_once()
+        assert mock_reconcile.call_args.args[:2] == (runtime.require_database.return_value, True)
+        assert mock_reconcile.call_args.kwargs["no_interactive"] is False
+        runtime.close.assert_called_once()
+        for untouched in (
+            required_stack,
+            initialize_project,
+            full_summary,
+            git_hooks,
+            install_claude,
+            _config,
+            _setup,
+        ):
+            untouched.assert_not_called()
+
+    @patch("gobby.cli.install.run_daemon_setup")
+    @patch(
+        "gobby.cli.install._ensure_daemon_config", return_value={"created": False, "path": "/fake"}
+    )
+    @patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install"))
+    @patch("gobby.cli.install.reconcile_rtk")
+    def test_install_no_rtk_flag_alone_disables_rtk_only(
+        self,
+        mock_reconcile: MagicMock,
+        _install_dir: MagicMock,
+        _config: MagicMock,
+        _setup: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        mock_reconcile.return_value = RtkInstallStatus(
+            binary_path=None,
+            version=None,
+            rule_enabled=False,
+            direct_artifact_conflicts=(),
+            health="disabled",
+            managed_binary=False,
+        )
+        runtime = MagicMock()
+        with (
+            patch("gobby.cli.install.get_cli_runtime", return_value=runtime),
+            patch("gobby.cli.install._install_required_stack") as required_stack,
+        ):
+            result = runner.invoke(
+                install, ["--no-rtk", "--no-interactive"], catch_exceptions=False
+            )
+
+        assert result.exit_code == 0, result.output
+        assert "RTK: disabled; rule=disabled; binary=unavailable; version=unknown" in result.output
+        assert "RTK maintenance complete." in result.output
+        assert mock_reconcile.call_args.args[1] is False
+        assert mock_reconcile.call_args.kwargs["no_interactive"] is True
+        required_stack.assert_not_called()
+        _setup.assert_not_called()
+
+    @patch("gobby.cli.install.run_daemon_setup")
+    @patch(
+        "gobby.cli.install._ensure_daemon_config", return_value={"created": False, "path": "/fake"}
+    )
+    @patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install"))
+    @patch("gobby.cli.install.reconcile_rtk", side_effect=RuntimeError("download failed"))
+    def test_install_rtk_flag_alone_reports_reconcile_failure(
+        self,
+        _mock_reconcile: MagicMock,
+        _install_dir: MagicMock,
+        _config: MagicMock,
+        _setup: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        runtime = MagicMock()
+        with patch("gobby.cli.install.get_cli_runtime", return_value=runtime):
+            result = runner.invoke(install, ["--rtk"])
+
+        assert result.exit_code == 1
+        assert "RTK reconciliation failed: download failed" in result.output
+        assert "RTK maintenance complete." not in result.output
+        runtime.close.assert_called_once()
         _setup.assert_not_called()
 
     def test_expose_ui_failure_warns_and_install_continues(
@@ -795,6 +927,47 @@ class TestUninstallCommand:
         result = runner.invoke(uninstall, ["--codex", "--yes"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "Codex" in result.output
+
+    @patch("gobby.cli.uninstall.remove_managed_rtk")
+    @patch("gobby.cli.uninstall.disable_rule_if_present")
+    @patch("gobby.cli.uninstall.get_cli_runtime")
+    def test_uninstall_rtk_flag_alone_removes_rtk_only(
+        self,
+        mock_runtime_factory: MagicMock,
+        mock_disable_rule: MagicMock,
+        mock_remove_rtk: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        runtime = MagicMock()
+        mock_runtime_factory.return_value = runtime
+        mock_remove_rtk.return_value = RtkCleanupReport(
+            removed=(Path("/fake/.gobby/bin/rtk"),),
+            backups=(),
+            conflicts=("~/.claude/settings.json still calls a direct rtk hook",),
+        )
+        with (
+            patch("gobby.cli.uninstall.uninstall_claude") as uninstall_claude,
+            patch("gobby.cli.uninstall.remove_impeccable_runtime") as remove_tools,
+            patch("gobby.cli.uninstall._teardown_ui_exposure") as teardown_ui,
+        ):
+            result = runner.invoke(uninstall, ["--rtk", "--yes"], catch_exceptions=False)
+
+        assert result.exit_code == 0, result.output
+        assert "Removed managed artifact: /fake/.gobby/bin/rtk" in result.output
+        assert "Warning: ~/.claude/settings.json still calls a direct rtk hook" in result.output
+        assert "RTK maintenance complete." in result.output
+        assert "Gobby Hooks Uninstallation" not in result.output
+        mock_disable_rule.assert_called_once_with(runtime.require_database.return_value)
+        runtime.close.assert_called_once()
+        mock_remove_rtk.assert_called_once()
+        uninstall_claude.assert_not_called()
+        remove_tools.assert_not_called()
+        teardown_ui.assert_not_called()
+
+    def test_uninstall_rtk_rejects_project_scope(self, runner: CliRunner) -> None:
+        result = runner.invoke(uninstall, ["--rtk", "--project", "--yes"])
+        assert result.exit_code == 2
+        assert "--rtk cannot be combined with --project" in result.output
 
     def test_uninstall_rejects_falkordb_target(self, runner: CliRunner) -> None:
         result = runner.invoke(uninstall, ["--falkordb", "--yes"])

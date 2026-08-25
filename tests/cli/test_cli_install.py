@@ -1178,6 +1178,13 @@ def test_remote_mode_skips_datastore_provisioning(
 
     with (
         patch("gobby.cli.install.load_bootstrap", return_value=bootstrap),
+        patch(
+            "gobby.cli.install.peek_install_bootstrap",
+            return_value={
+                "datastore_mode": "remote",
+                "database_url": bootstrap.database_url,
+            },
+        ),
         patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install")),
         patch(
             "gobby.cli.install._ensure_daemon_config",
@@ -1210,6 +1217,7 @@ def test_remote_mode_skips_datastore_provisioning(
         managed_services=False,
         datastore_mode="remote",
         database_url=bootstrap.database_url,
+        hub_daemon_url=None,
     )
 
 

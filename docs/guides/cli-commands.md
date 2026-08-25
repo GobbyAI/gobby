@@ -173,7 +173,7 @@ gobby uninstall [OPTIONS]
 | `--falkordb-password-stdin` | Read the FalkorDB password from standard input. |
 | `--project` | Install project-scoped configuration. |
 | `--voice` | Install voice support assets. |
-| `--rtk`, `--no-rtk` | Enable or disable RTK command rewriting through Gobby's hook proxy. |
+| `--rtk`, `--no-rtk` | Enable or disable RTK command rewriting through Gobby's hook proxy. Alone, an RTK-only maintenance run. |
 | `--embedding-url URL` | Use a custom embedding API endpoint. |
 | `--embedding-provider PROVIDER` | Force embedding provider compatibility mode (`lmstudio`, `ollama`, `openai-compatible`, `vllm`). |
 | `--embedding-model MODEL` | Override the embedding model. |
@@ -206,6 +206,11 @@ installed `rtk-command-rewrite` rule state as the default; fresh
 `--no-interactive` installs leave it disabled. `--rtk` accepts a compatible stock
 RTK 0.45.0 or newer from PATH, uses Homebrew when available, or installs a
 checksum-verified fallback in `~/.gobby/bin/`. Gobby never invokes `rtk init`.
+`gobby install --rtk` or `--no-rtk` with no other scope flag is a maintenance
+run like `--hooks`: it reconciles the binary and the rule, prints the RTK status
+line, and stops without provisioning services, prompting for the web UI, or
+re-running daemon setup. Combined with CLI flags it still runs inside that
+install.
 
 When enabled, `ghook` remains every CLI's installed hook. Gobby calls
 `rtk rewrite -- <command>` only for synchronous `before_tool` shell-command
@@ -226,7 +231,9 @@ removes exact RTK-generated direct hooks, legacy scripts, instruction blocks, an
 generated files; modified or unrelated content is preserved and reported.
 Global uninstall disables the rule. `gobby uninstall --tools` also removes the
 checksum-matching Gobby fallback, while Homebrew and other user-managed RTK
-installations remain installed.
+installations remain installed. `gobby uninstall --rtk` alone disables the rule
+and removes the managed fallback, leaving CLI hooks, other tools, and the
+service in place.
 
 The V1 handler registry is internal and contains only `rtk`. Future versions may
 add named trusted handlers, broader hook-event capabilities, and dedicated
@@ -244,8 +251,7 @@ management surfaces.
 | `--qwen` | Remove QwenCode integration assets. |
 | `--all` | Remove all supported integration assets. |
 | `--tools` | Remove Gobby-owned managed tool artifacts, including the RTK fallback. |
-| `--falkordb` | Remove FalkorDB graph backend data and configuration. |
-| `--volumes` | Remove service volumes where supported. |
+| `--rtk` | Disable RTK rewriting and remove the managed RTK fallback only. |
 | `--project` | Remove project-scoped configuration. |
 | `-C`, `--path PATH` | Uninstall from a specific path. |
 

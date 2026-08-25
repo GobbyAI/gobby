@@ -25,6 +25,7 @@ from gobby.config.bootstrap import BootstrapConfigError, DatastoreMode, load_boo
 from gobby.config.persistence import validate_falkordb_password
 from gobby.storage.auth import AuthStore, ensure_local_api_token
 from gobby.storage.config_store import ConfigStore
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import ensure_personal_project_identity
 from gobby.storage.secrets import (
     POSTURE_KEY_FILE,
@@ -199,6 +200,44 @@ def _provision_gdaemon_for_services() -> None:
         ensure_gdaemon()
     except (GdaemonInstallError, OSError, ValueError) as exc:
         raise click.ClickException(f"Failed to provision gdaemon: {exc}") from exc
+
+
+def _reconcile_rtk_step(
+    db: HubDatabase,
+    rtk_flag: bool | None,
+    *,
+    no_interactive: bool,
+) -> RtkInstallStatus:
+    """Reconcile RTK for the install and report its status on stdout."""
+    try:
+        rtk_status = reconcile_rtk(
+            db,
+            rtk_flag,
+            no_interactive=no_interactive,
+            confirm=click.confirm,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        if rtk_flag is not None or not no_interactive:
+            raise click.ClickException(f"RTK reconciliation failed: {exc}") from exc
+        logger.warning("RTK state unavailable during noninteractive install: %s", exc)
+        rtk_status = RtkInstallStatus(
+            binary_path=None,
+            version=None,
+            rule_enabled=False,
+            direct_artifact_conflicts=(),
+            health="disabled",
+            managed_binary=False,
+        )
+    click.echo(
+        "RTK: "
+        f"{rtk_status.health}; rule="
+        f"{'enabled' if rtk_status.rule_enabled else 'disabled'}; "
+        f"binary={rtk_status.binary_path or 'unavailable'}; "
+        f"version={rtk_status.version or 'unknown'}"
+    )
+    for conflict in rtk_status.direct_artifact_conflicts:
+        click.echo(f"Warning: {conflict}", err=True)
+    return rtk_status
 
 
 def _resolve_ide_settings_consent(
@@ -471,17 +510,32 @@ def install(
             "AGY integration does not support --project; install AGY globally without --project."
         )
 
-    if (
-        not claude_flag
-        and not grok_flag
-        and not agy_flag
-        and not qwen_flag
-        and not codex_flag
-        and not droid_flag
-        and not hooks_flag
-        and not all_flag
-        and not config_only_flag
-    ):
+    explicit_scope = (
+        claude_flag
+        or grok_flag
+        or agy_flag
+        or qwen_flag
+        or codex_flag
+        or droid_flag
+        or hooks_flag
+        or all_flag
+        or config_only_flag
+    )
+    # `--rtk`/`--no-rtk` as the only scope flag is RTK maintenance, not a full
+    # install: reconcile the binary and rule, then stop.
+    rtk_only_maintenance = (
+        rtk_flag is not None
+        and not explicit_scope
+        and not voice_flag
+        and not falkordb_password_stdin
+        and not any(
+            value is not None
+            for value in (embedding_url, embedding_provider, embedding_model, embedding_dim)
+        )
+        and ide_settings_flag is None
+        and expose_ui_flag is not True
+    )
+    if not explicit_scope and not rtk_only_maintenance:
         all_flag = True
     clis_to_install: list[str] = []
 
@@ -628,6 +682,21 @@ def install(
             if install_claim is not None:
                 install_claim.release()
 
+    if rtk_only_maintenance:
+        rtk_runtime = get_cli_runtime()
+        try:
+            _reconcile_rtk_step(
+                rtk_runtime.require_database(),
+                rtk_flag,
+                no_interactive=no_interactive_flag,
+            )
+            click.echo("RTK maintenance complete.")
+            return
+        finally:
+            if install_claim is not None:
+                install_claim.release()
+            rtk_runtime.close()
+
     initialize_project_after_setup = not config_only_flag and _should_initialize_project(
         project_path,
         no_interactive=no_interactive_flag,
@@ -678,25 +747,7 @@ def install(
         except (OSError, RuntimeError, ValueError) as exc:
             raise click.ClickException(f"Failed to establish account identity: {exc}") from exc
         click.echo(f"Account identity: {installed_user.email}")
-        try:
-            rtk_status = reconcile_rtk(
-                db,
-                rtk_flag,
-                no_interactive=no_interactive_flag,
-                confirm=click.confirm,
-            )
-        except (OSError, RuntimeError, ValueError) as exc:
-            if rtk_flag is not None or not no_interactive_flag:
-                raise click.ClickException(f"RTK reconciliation failed: {exc}") from exc
-            logger.warning("RTK state unavailable during noninteractive install: %s", exc)
-            rtk_status = RtkInstallStatus(
-                binary_path=None,
-                version=None,
-                rule_enabled=False,
-                direct_artifact_conflicts=(),
-                health="disabled",
-                managed_binary=False,
-            )
+        rtk_status = _reconcile_rtk_step(db, rtk_flag, no_interactive=no_interactive_flag)
         results["rtk"] = {
             "success": rtk_status.health != "unavailable",
             "path": str(rtk_status.binary_path) if rtk_status.binary_path else None,
@@ -705,15 +756,6 @@ def install(
             "health": rtk_status.health,
             "conflicts": list(rtk_status.direct_artifact_conflicts),
         }
-        click.echo(
-            "RTK: "
-            f"{rtk_status.health}; rule="
-            f"{'enabled' if rtk_status.rule_enabled else 'disabled'}; "
-            f"binary={rtk_status.binary_path or 'unavailable'}; "
-            f"version={rtk_status.version or 'unknown'}"
-        )
-        for conflict in rtk_status.direct_artifact_conflicts:
-            click.echo(f"Warning: {conflict}", err=True)
         if initialize_project_after_setup:
             _initialize_project_after_setup(project_path)
         exposure_result: UiExposeResult | None = None

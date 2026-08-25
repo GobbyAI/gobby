@@ -97,6 +97,12 @@ def _teardown_ui_exposure() -> None:
     help="Remove Gobby-managed tools and their owned materialization caches",
 )
 @click.option(
+    "--rtk",
+    "rtk_flag",
+    is_flag=True,
+    help="Disable RTK command rewriting and remove the managed RTK binary only",
+)
+@click.option(
     "--project",
     "project_flag",
     is_flag=True,
@@ -120,6 +126,7 @@ def uninstall(
     qwen_flag: bool,
     all_flag: bool,
     tools_flag: bool,
+    rtk_flag: bool,
     project_flag: bool,
     working_dir: Path | None,
 ) -> None:
@@ -129,9 +136,13 @@ def uninstall(
     Use --project to uninstall per-project hooks from the current directory.
     Use --claude, --grok, --agy, --qwen, or --codex to uninstall only from
     specific CLIs.
+    Use --rtk alone to disable RTK rewriting and remove the managed binary
+    without touching hooks or other tools.
     """
     if tools_flag and project_flag:
         raise click.UsageError("--tools cannot be combined with --project")
+    if rtk_flag and project_flag:
+        raise click.UsageError("--rtk cannot be combined with --project")
     project_path = working_dir.resolve() if working_dir else Path.cwd()
 
     if (
@@ -143,6 +154,7 @@ def uninstall(
         and not droid_flag
         and not all_flag
         and not tools_flag
+        and not rtk_flag
     ):
         all_flag = True
 
@@ -164,12 +176,15 @@ def uninstall(
             click.echo(f"Removed managed artifact: {path}")
         for warning in cleanup.skipped:
             click.echo(f"Warning: {warning}", err=True)
+    if tools_flag or rtk_flag:
         rtk_cleanup = remove_managed_rtk()
         for path in rtk_cleanup.removed:
             click.echo(f"Removed managed artifact: {path}")
         for warning in rtk_cleanup.conflicts:
             click.echo(f"Warning: {warning}", err=True)
         if not any((claude_flag, grok_flag, agy_flag, qwen_flag, codex_flag, droid_flag, all_flag)):
+            if rtk_flag:
+                click.echo("RTK maintenance complete.")
             return
 
     clis_to_uninstall: list[str] = []
