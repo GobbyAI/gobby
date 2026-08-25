@@ -92,6 +92,7 @@ def test_probe_accepts_minimum_hook_check_contract(tmp_path: Path) -> None:
     ("version", "valid_contract", "error"),
     [
         ("0.44.9", True, "0.45.0 or newer"),
+        ("0.45.0-beta.1", True, "0.45.0 or newer"),
         ("0.45.0", False, "hook-check contract"),
     ],
 )

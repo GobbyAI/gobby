@@ -16,7 +16,10 @@ RTK_MINIMUM_VERSION = (0, 45, 0)
 RTK_RULE_NAME = "rtk-command-rewrite"
 RTK_VERSION = "0.45.0"
 
-_VERSION_RE = re.compile(r"^rtk\s+(\d+)\.(\d+)\.(\d+)(?:[-+][^\s]+)?$", re.IGNORECASE)
+_VERSION_RE = re.compile(
+    r"^rtk\s+(\d+)\.(\d+)\.(\d+)(?P<suffix>[-+][^\s]+)?$",
+    re.IGNORECASE,
+)
 _PROBE_OUTPUT_LIMIT = 32 * 1024
 
 
@@ -134,9 +137,13 @@ def probe_rtk(path: Path, *, timeout: float = 1.0) -> RtkProbe:
     match = _VERSION_RE.fullmatch(version_text)
     if code != 0 or match is None:
         return RtkProbe(resolved, None, False, "executable identity probe failed")
-    version_tuple = tuple(int(part) for part in match.groups())
-    version = ".".join(match.groups())
-    if version_tuple < RTK_MINIMUM_VERSION:
+    version_parts = match.group(1, 2, 3)
+    version_tuple = tuple(int(part) for part in version_parts)
+    suffix = match.group("suffix") or ""
+    version = ".".join(version_parts) + suffix
+    if version_tuple < RTK_MINIMUM_VERSION or (
+        version_tuple == RTK_MINIMUM_VERSION and suffix.startswith("-")
+    ):
         return RtkProbe(resolved, version, False, "RTK 0.45.0 or newer is required")
 
     contract_result = _run_probe(
