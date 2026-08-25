@@ -71,7 +71,6 @@ if TYPE_CHECKING:
     from gobby.storage.worktrees import LocalWorktreeManager
     from gobby.sync.memories import MemoryBackupManager
     from gobby.tasks.validation import TaskValidator
-    from gobby.telemetry.loop_stack_sampler import LoopStackSampler
     from gobby.wiki.watcher import WikiWatcher
     from gobby.workflows.pipeline_executor import PipelineExecutor
     from gobby.workflows.pipeline_loader import PipelineLoader
@@ -119,8 +118,6 @@ class GobbyRunner:
     _span_cleanup_task: asyncio.Task[None] | None
     _unmodeled_observations_cleanup_task: asyncio.Task[None] | None
     _metrics_archive_task: asyncio.Task[None] | None
-    _loop_lag_task: asyncio.Task[None] | None
-    _loop_stack_sampler: LoopStackSampler | None
     _metric_snapshot_task: asyncio.Task[None] | None
     _resource_monitor_task: asyncio.Task[None] | None
     _hook_inbox_task: asyncio.Task[None] | None

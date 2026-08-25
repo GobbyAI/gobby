@@ -188,7 +188,6 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
         "_tool_results_cleanup_task",
         "_workflow_audit_cleanup_task",
         "_metrics_archive_task",
-        "_loop_lag_task",
         "_model_metadata_refresh_task",
         "_provider_capability_refresh_task",
         "_span_cleanup_task",
@@ -209,13 +208,6 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
         "_tmux_window_repair_task",
         "_wiki_watcher_task",
     )
-
-    # Retire the loop-stack sampler thread before the loop goes away, so it
-    # cannot sample a thread that is on its way out.
-    loop_stack_sampler = getattr(runner, "_loop_stack_sampler", None)
-    if loop_stack_sampler is not None:
-        loop_stack_sampler.stop()
-        runner._loop_stack_sampler = None
 
     code_index_shutdown = getattr(runner, "_code_index_shutdown", None)
     if code_index_shutdown is not None:

@@ -19,7 +19,6 @@ from gobby.config.logging import (
     DAEMON_LOG_FILENAME,
     ERRORS_LOG_FILENAME,
     HOOKS_LOG_FILENAME,
-    LOOP_LAG_LOG_FILENAME,
     MCP_LOG_FILENAME,
     RULE_ALLOW_AUDIT_LOG_FILENAME,
     LoggingSettings,
@@ -405,51 +404,6 @@ def get_parser_error_logger(cli_name: str) -> logging.Logger:
     logger_name = f"{_PARSER_ERROR_NAMESPACE}.{cli_name}"
     _registered_parser_loggers.add(logger_name)
     return _configure_parser_error_logger(logger_name)
-
-
-_LOOP_LAG_LOGGER_NAME = "gobby.loop_lag_report"
-
-
-def loop_lag_log_path() -> Path:
-    """Return the active JSONL sidecar path for loop stall reports."""
-    return _effective_handler_config().logs_dir / LOOP_LAG_LOG_FILENAME
-
-
-def get_loop_lag_logger() -> logging.Logger:
-    """Return the JSONL sidecar logger for loop stall reports (#20886).
-
-    Checked against the active logging directory on every call, so a settings
-    or ``GOBBY_LOGGING_DIR`` change takes effect at the next stall with no
-    coordination. The logger never propagates: a multi-kilobyte report line in
-    daemon.log is exactly the noise the sidecar exists to remove.
-    """
-    config = _effective_handler_config()
-    path = config.logs_dir / LOOP_LAG_LOG_FILENAME
-    sidecar_logger = logging.getLogger(_LOOP_LAG_LOGGER_NAME)
-    sidecar_logger.setLevel(logging.INFO)
-    sidecar_logger.propagate = False
-
-    if len(sidecar_logger.handlers) == 1 and _rotating_handler_matches(
-        sidecar_logger.handlers[0], path, config
-    ):
-        return sidecar_logger
-
-    try:
-        handler: logging.Handler = _create_rotating_handler(
-            path,
-            config,
-            level=logging.INFO,
-            formatter=logging.Formatter("%(message)s"),
-        )
-    except OSError:
-        logging.getLogger(__name__).debug(
-            "Failed to configure the loop lag sidecar log",
-            extra={"path": str(path)},
-            exc_info=True,
-        )
-        handler = logging.NullHandler()
-    _replace_handlers(sidecar_logger, [handler])
-    return sidecar_logger
 
 
 def _create_formatted_handlers(

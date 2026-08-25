@@ -15,7 +15,6 @@ from gobby.config.logging import (
     DAEMON_LOG_FILENAME,
     ERRORS_LOG_FILENAME,
     HOOKS_LOG_FILENAME,
-    LOOP_LAG_LOG_FILENAME,
     MCP_LOG_FILENAME,
     RULE_ALLOW_AUDIT_LOG_FILENAME,
     RUNTIME_LOG_FILENAME,
@@ -28,8 +27,6 @@ from gobby.telemetry.logging import (
     JsonOTelFormatter,
     OTelTraceFormatter,
     classify_log_surface,
-    get_loop_lag_logger,
-    loop_lag_log_path,
     setup_file_logging,
 )
 
@@ -339,51 +336,6 @@ def test_setup_file_logging_suppresses_websockets_info(logging_config: LoggingSe
 
     assert logging.getLogger("websockets").level == logging.WARNING
     assert logging.getLogger("websockets.server").level == logging.WARNING
-
-
-def test_loop_lag_sidecar_follows_the_main_rotation_conventions(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The stall sidecar lives in the logs dir and rotates like the main logs (#20886)."""
-    config = LoggingSettings(dir=str(tmp_path / "logs"), level="debug")
-    monkeypatch.setenv("GOBBY_LOGGING_DIR", config.dir)
-    setup_file_logging(config)
-
-    sidecar_logger = get_loop_lag_logger()
-
-    assert not sidecar_logger.propagate, "the report line must never reach the main logs"
-    [handler] = sidecar_logger.handlers
-    assert isinstance(handler, logging.handlers.RotatingFileHandler)
-    assert Path(handler.baseFilename) == Path(config.dir) / LOOP_LAG_LOG_FILENAME
-    assert handler.maxBytes == config.max_size_mb * 1024 * 1024
-    assert handler.backupCount == config.backup_count
-    assert type(handler.formatter) is logging.Formatter, "sidecar lines carry no log preamble"
-    assert loop_lag_log_path() == Path(config.dir) / LOOP_LAG_LOG_FILENAME
-
-
-def test_loop_lag_sidecar_logger_reuses_its_handler_and_follows_a_moved_logs_dir(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    first = tmp_path / "first"
-    second = tmp_path / "second"
-    monkeypatch.setenv("GOBBY_LOGGING_DIR", str(first))
-    [first_handler] = get_loop_lag_logger().handlers
-
-    assert get_loop_lag_logger().handlers == [first_handler], (
-        "an unchanged configuration must not stack up handlers"
-    )
-
-    monkeypatch.setenv("GOBBY_LOGGING_DIR", str(second))
-    sidecar_logger = get_loop_lag_logger()
-    [second_handler] = sidecar_logger.handlers
-    assert second_handler is not first_handler
-    assert getattr(first_handler, "stream", None) is None, "the replaced handler is closed"
-
-    sidecar_logger.info("%s", '{"probe":1}')
-    assert (second / LOOP_LAG_LOG_FILENAME).read_text() == '{"probe":1}\n'
-    assert (first / LOOP_LAG_LOG_FILENAME).read_text() == ""
 
 
 def test_setup_file_logging_has_no_otel_log_handler(logging_config: LoggingSettings) -> None:
