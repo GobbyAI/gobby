@@ -13,6 +13,7 @@ from .build import build_command
 from .clones import clones
 from .communications import comms
 from .cron import cron
+from .cutover import cutover
 from .daemon import health, restart, start, status, stop
 from .daemon_lease import lease
 from .datastores import datastores as datastores_cli
@@ -124,6 +125,7 @@ cli.add_command(github)
 cli.add_command(linear)
 cli.add_command(clones)
 cli.add_command(cron)
+cli.add_command(cutover)
 cli.add_command(hooks)
 cli.add_command(webhooks)
 cli.add_command(ui)

@@ -214,6 +214,21 @@ repository Git hooks; it skips daemon configuration and managed services.
 | `--project` | Remove project-scoped configuration. |
 | `-C`, `--path PATH` | Uninstall from a specific path. |
 
+### `gobby cutover`
+
+Build and activate one coherent set of the four schema-aware Rust binaries from
+a Gobby source checkout:
+
+```bash
+gobby cutover [--path PATH]
+```
+
+The command builds `gcode`, `gdaemon`, `ghook`, and `gwiki` in release mode,
+installs all four through new inodes, regenerates the packaged schema identity
+pin from the installed `gdaemon`, restarts the daemon, and runs an installed-`gcode`
+grant smoke. A failed promotion, restart, or smoke restores the prior binaries
+and pin before restarting the prior daemon.
+
 ### `gobby auth`
 
 Reset the sole installed user's browser password and manage the install-scoped
