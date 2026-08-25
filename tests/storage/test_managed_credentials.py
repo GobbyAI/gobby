@@ -901,6 +901,77 @@ def test_interactive_reuse_refreshes_expired_role(
         store.db.close()
 
 
+def test_interactive_issue_rolls_generation_past_credential_age_bound(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    """An aged binding rolls to a new generation instead of tripping the 24h guard (#20894)."""
+    fixture = authorization_fixture
+    manager = _manager(fixture, tmp_path / "managed-aged")
+    store = _secret_store(fixture)
+    token = "f1f1f1f1f1f1f1f1"
+    try:
+        first = manager.issue_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            session_id=fixture.session_id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            secret_store=store,
+        )
+        # Age the binding past the 24h credential bound the way the live
+        # dead-end arose: issued yesterday, expiry already behind us. Both
+        # columns move together so the lifetime guard accepts the backdate.
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            admin.execute(
+                f"UPDATE {AUTH_SCHEMA}.principal_bindings "
+                "SET issued_at = NOW() - INTERVAL '25 hours', "
+                "expires_at = NOW() - INTERVAL '1 hour' "
+                "WHERE managed_execution_id = %s",
+                (first.managed_execution_id,),
+            )
+
+        renewed = manager.issue_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            session_id=fixture.session_id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            secret_store=store,
+        )
+
+        assert renewed.reused is False
+        assert renewed.credential_generation == first.credential_generation + 1
+        assert renewed.role_name != first.role_name
+        with psycopg.connect(renewed.dsn) as conn:
+            assert conn.execute("SELECT 1").fetchone() == (1,)
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            bindings = admin.execute(
+                "SELECT credential_generation, predecessor_drain_deadline IS NOT NULL, "
+                "revocation_requested_at IS NOT NULL "
+                f"FROM {AUTH_SCHEMA}.principal_bindings "
+                "WHERE deployment_token = %s AND project_id = %s AND revoked_at IS NULL "
+                "ORDER BY credential_generation",
+                (token, fixture.project_id),
+            ).fetchall()
+            audit = admin.execute(
+                f"SELECT event_type FROM {AUTH_SCHEMA}.principal_audit_events "
+                "WHERE role_name = %s AND credential_generation = %s",
+                (renewed.role_name, renewed.credential_generation),
+            ).fetchall()
+        assert bindings == [
+            (first.credential_generation, True, True),
+            (renewed.credential_generation, False, False),
+        ]
+        assert audit == [("rotate",)]
+    finally:
+        manager.revoke_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            reason="test-cleanup",
+        )
+        manager.close()
+        store.db.close()
+
+
 def test_concurrent_interactive_issue_waits_for_sealed_material(
     authorization_fixture: AuthorizationFixture,
     tmp_path: Path,

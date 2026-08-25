@@ -219,6 +219,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "66f92eeb9603f89303a7c5628ab68aa3f3f3971ffc3d0cedf21c04154d9d7d93",
         sql: include_str!("../../assets/schema/migrations/405_maintenance_overlay_principal.sql"),
     },
+    EmbeddedMigration {
+        version: 406,
+        filename: "406_interactive_generation_roll.sql",
+        checksum: "95a19015d5804ef3f82390739898f5019ced3572135fe8ce6f8a55b5b26ca3cb",
+        sql: include_str!("../../assets/schema/migrations/406_interactive_generation_roll.sql"),
+    },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 
