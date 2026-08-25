@@ -254,6 +254,17 @@ def start_periodic_tasks(
                 name="provider-capability-refresh",
             )
 
+    runner._generation_endpoint_health_task = None
+    generation_endpoint_health = getattr(services, "generation_endpoint_health", None)
+    if generation_endpoint_health is not None:
+        run = getattr(generation_endpoint_health, "run", None)
+        refresh_loop = run(lambda: runner._shutdown_requested) if callable(run) else None
+        if inspect.iscoroutine(refresh_loop):
+            runner._generation_endpoint_health_task = asyncio.create_task(
+                refresh_loop,
+                name="generation-endpoint-health",
+            )
+
     runner._span_cleanup_task = asyncio.create_task(
         loops["span_cleanup_loop"](
             runner.database,
@@ -447,6 +458,7 @@ def start_periodic_tasks(
             runner._metrics_archive_task,
             runner._model_metadata_refresh_task,
             runner._provider_capability_refresh_task,
+            runner._generation_endpoint_health_task,
             runner._span_cleanup_task,
             runner._unmodeled_observations_cleanup_task,
             getattr(runner, "_memory_reconcile_task", None),

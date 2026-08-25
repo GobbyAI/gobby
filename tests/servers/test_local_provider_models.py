@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import gzip
 import logging
+import threading
+from collections.abc import Iterator
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -124,6 +127,35 @@ class _FakeAsyncClient:
         response = self.show_responses.get(model)
         if response is None:
             raise httpx.ConnectError("missing fixture", request=httpx.Request("POST", url))
+        return response
+
+
+class _FakeSyncClient:
+    def __init__(
+        self,
+        responses: dict[str, _FakeResponse],
+        *,
+        error: Exception | None = None,
+    ) -> None:
+        self.responses = responses
+        self.error = error
+        self.timeouts: list[float] = []
+
+    def __enter__(self) -> _FakeSyncClient:
+        return self
+
+    def __exit__(self, *_args: Any) -> None:
+        return None
+
+    def get(self, url: str, **kwargs: Any) -> _FakeResponse:
+        timeout = kwargs.get("timeout")
+        if isinstance(timeout, int | float):
+            self.timeouts.append(float(timeout))
+        if self.error is not None:
+            raise self.error
+        response = self.responses.get(url)
+        if response is None:
+            raise httpx.ConnectError("missing fixture", request=httpx.Request("GET", url))
         return response
 
 
@@ -1031,10 +1063,12 @@ async def test_probe_generation_endpoint_vllm_resolves_auto_served_model(
         model="auto",
     )
 
-    single = _FakeAsyncClient(
+    single = _FakeSyncClient(
         {_VLLM_MODELS_URL: _FakeResponse(_VLLM_MODELS_URL, {"data": [{"id": _VLLM_PROBED_ID}]})}
     )
-    monkeypatch.setattr("gobby.servers.local_provider_models.httpx.AsyncClient", lambda: single)
+    monkeypatch.setattr(
+        "gobby.servers.local_provider_models.httpx.Client", lambda **_kwargs: single
+    )
     result = await probe_generation_endpoint("vllm", endpoint)
     assert result["healthy"] is True
     assert result["served_model"] == _VLLM_PROBED_ID
@@ -1043,7 +1077,7 @@ async def test_probe_generation_endpoint_vllm_resolves_auto_served_model(
     assert result["provider_label"] == "vLLM"
     assert result["wire_api"] == "chat-completions"
 
-    multi = _FakeAsyncClient(
+    multi = _FakeSyncClient(
         {
             _VLLM_MODELS_URL: _FakeResponse(
                 _VLLM_MODELS_URL,
@@ -1051,15 +1085,15 @@ async def test_probe_generation_endpoint_vllm_resolves_auto_served_model(
             )
         }
     )
-    monkeypatch.setattr("gobby.servers.local_provider_models.httpx.AsyncClient", lambda: multi)
+    monkeypatch.setattr("gobby.servers.local_provider_models.httpx.Client", lambda **_kwargs: multi)
     result = await probe_generation_endpoint("vllm", endpoint)
     assert result["healthy"] is False
     assert result["error"] is not None
     assert _VLLM_PROBED_ID in result["error"]
     assert _VLLM_OTHER_ID in result["error"]
 
-    down = _FakeAsyncClient({})
-    monkeypatch.setattr("gobby.servers.local_provider_models.httpx.AsyncClient", lambda: down)
+    down = _FakeSyncClient({})
+    monkeypatch.setattr("gobby.servers.local_provider_models.httpx.Client", lambda **_kwargs: down)
     result = await probe_generation_endpoint("vllm", endpoint)
     assert result["healthy"] is False
     assert result["error"]
@@ -1078,10 +1112,10 @@ async def test_probe_generation_endpoints_reports_configured_model_and_never_rai
         model="qwen-coder",
     )
     models_url = "http://localhost:1234/v1/models"
-    fake = _FakeAsyncClient(
+    fake = _FakeSyncClient(
         {models_url: _FakeResponse(models_url, {"data": [{"id": "qwen-coder"}]})}
     )
-    monkeypatch.setattr("gobby.servers.local_provider_models.httpx.AsyncClient", lambda: fake)
+    monkeypatch.setattr("gobby.servers.local_provider_models.httpx.Client", lambda **_kwargs: fake)
 
     results = await probe_generation_endpoints({"studio": studio})
 
@@ -1089,3 +1123,196 @@ async def test_probe_generation_endpoints_reports_configured_model_and_never_rai
     assert results[0]["name"] == "studio"
     assert results[0]["healthy"] is True
     assert results[0]["served_model"] == "qwen-coder"
+
+
+@pytest.mark.asyncio
+async def test_probe_generation_endpoint_runs_body_and_json_work_off_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    endpoint = GenerationEndpointConfig(
+        protocol="openai-compatible",
+        api_base="https://models.example/v1",
+        model="configured-model",
+    )
+    loop_thread = threading.get_ident()
+    body_threads: list[int] = []
+    json_threads: list[int] = []
+    compressed = gzip.compress(b'{"data":[{"id":"served-model"}]}')
+
+    class RecordingStream(httpx.SyncByteStream):
+        def __iter__(self) -> Iterator[bytes]:
+            body_threads.append(threading.get_ident())
+            yield compressed
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-encoding": "gzip"},
+            stream=RecordingStream(),
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    original_json = httpx.Response.json
+
+    def recording_json(response: httpx.Response, **kwargs: Any) -> Any:
+        json_threads.append(threading.get_ident())
+        return original_json(response, **kwargs)
+
+    monkeypatch.setattr(
+        "gobby.servers.local_provider_models.httpx.Client", lambda **_kwargs: client
+    )
+    monkeypatch.setattr(httpx.Response, "json", recording_json)
+
+    result = await probe_generation_endpoint("remote", endpoint)
+
+    assert result["healthy"] is True
+    assert result["served_model"] == "configured-model"
+    assert result["model_count"] == 1
+    assert body_threads and all(thread_id != loop_thread for thread_id in body_threads)
+    assert json_threads and all(thread_id != loop_thread for thread_id in json_threads)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response", "expected_error"),
+    [
+        pytest.param(
+            _FakeResponse("http://localhost:1234/v1/models", {}, status_code=503),
+            "503 error",
+            id="http-error",
+        ),
+        pytest.param(
+            MagicMock(
+                raise_for_status=MagicMock(),
+                json=MagicMock(side_effect=ValueError("malformed models payload")),
+            ),
+            "malformed models payload",
+            id="malformed-json",
+        ),
+    ],
+)
+async def test_probe_generation_endpoint_reports_response_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    response: _FakeResponse,
+    expected_error: str,
+) -> None:
+    endpoint = GenerationEndpointConfig(
+        protocol="lmstudio",
+        api_base="http://localhost:1234/v1",
+        model="configured-model",
+    )
+    models_url = "http://localhost:1234/v1/models"
+    client = _FakeSyncClient({models_url: response})
+    monkeypatch.setattr(
+        "gobby.servers.local_provider_models.httpx.Client", lambda **_kwargs: client
+    )
+
+    result = await probe_generation_endpoint("studio", endpoint)
+
+    assert result["healthy"] is False
+    assert result["served_model"] is None
+    assert result["model_count"] is None
+    assert expected_error in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_probe_generation_endpoint_applies_httpx_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    endpoint = GenerationEndpointConfig(
+        protocol="openai-compatible",
+        api_base="http://localhost:8000/v1",
+        model="configured-model",
+    )
+    request = httpx.Request("GET", "http://localhost:8000/v1/models")
+    client = _FakeSyncClient({}, error=httpx.ReadTimeout("worker timeout", request=request))
+    constructor_timeouts: list[float] = []
+
+    def client_factory(*, timeout: float) -> _FakeSyncClient:
+        constructor_timeouts.append(timeout)
+        return client
+
+    monkeypatch.setattr("gobby.servers.local_provider_models.httpx.Client", client_factory)
+
+    result = await probe_generation_endpoint("remote", endpoint, timeout=0.25)
+
+    assert result["healthy"] is False
+    assert result["error"] == "worker timeout"
+    assert constructor_timeouts == [0.25]
+    assert client.timeouts == [0.25]
+
+
+@pytest.mark.asyncio
+async def test_probe_generation_endpoint_caller_timeout_uses_independent_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    endpoint = GenerationEndpointConfig(
+        protocol="openai-compatible",
+        api_base="http://localhost:8000/v1",
+        model="configured-model",
+    )
+    release = threading.Event()
+    worker_done = threading.Event()
+    response = _FakeResponse(
+        "http://localhost:8000/v1/models",
+        {"data": [{"id": "served-model"}]},
+    )
+
+    class BlockingClient(_FakeSyncClient):
+        def get(self, url: str, **kwargs: Any) -> _FakeResponse:
+            release.wait(timeout=1)
+            return super().get(url, **kwargs)
+
+        def __exit__(self, *_args: Any) -> None:
+            worker_done.set()
+
+    client = BlockingClient({"http://localhost:8000/v1/models": response})
+    monkeypatch.setattr(
+        "gobby.servers.local_provider_models.httpx.Client", lambda **_kwargs: client
+    )
+
+    result = await probe_generation_endpoint("remote", endpoint, timeout=0.01)
+    assert result["healthy"] is False
+    assert result["error"] == "TimeoutError"
+
+    release.set()
+    assert await asyncio.to_thread(worker_done.wait, 1)
+    assert result["healthy"] is False
+    assert result["served_model"] is None
+    assert result["model_count"] is None
+
+
+@pytest.mark.asyncio
+async def test_probe_generation_endpoints_never_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    endpoint = GenerationEndpointConfig(
+        protocol="openai-compatible",
+        api_base="http://localhost:8000/v1",
+        model="configured-model",
+    )
+
+    async def fail_probe(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise RuntimeError("probe exploded")
+
+    monkeypatch.setattr(
+        "gobby.servers.local_provider_models.probe_generation_endpoint",
+        fail_probe,
+    )
+
+    results = await probe_generation_endpoints({"remote": endpoint})
+
+    assert results == [
+        {
+            "name": "remote",
+            "protocol": "openai-compatible",
+            "provider_label": "OpenAI Compatible",
+            "wire_api": "chat-completions",
+            "api_base": "http://localhost:8000/v1",
+            "model": "configured-model",
+            "healthy": False,
+            "served_model": None,
+            "model_count": None,
+            "error": "probe exploded",
+        }
+    ]

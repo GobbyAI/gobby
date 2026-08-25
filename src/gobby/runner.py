@@ -132,6 +132,7 @@ class GobbyRunner:
     _websocket_task: asyncio.Task[None] | None
     _subsystem_init_task: asyncio.Task[None] | None
     _provider_capability_refresh_task: asyncio.Task[None] | None
+    _generation_endpoint_health_task: asyncio.Task[None] | None
     _model_metadata_refresh_task: asyncio.Task[None] | None
     _pending_tasks: set[asyncio.Task[Any]]
     degraded_services: set[str]

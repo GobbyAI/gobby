@@ -176,12 +176,21 @@ async def test_startup_registers_config_event_publisher() -> None:
         published_revisions.append(revision)
 
     websocket = SimpleNamespace(broadcast_config_event=publish_revision)
-    runner = SimpleNamespace(config_runtime=runtime, websocket_server=websocket)
+    endpoint_health = SimpleNamespace(configuration_changed=MagicMock())
+    http_server = SimpleNamespace(
+        services=SimpleNamespace(generation_endpoint_health=endpoint_health)
+    )
+    runner = SimpleNamespace(
+        config_runtime=runtime,
+        websocket_server=websocket,
+        http_server=http_server,
+    )
 
     register_config_event_publisher(cast(GobbyRunner, runner))
     await runtime.reconcile(17)
 
     assert published_revisions == [17]
+    endpoint_health.configuration_changed.assert_called_once_with()
 
 
 async def test_startup_closes_subscription_window(monkeypatch: pytest.MonkeyPatch) -> None:
