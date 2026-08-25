@@ -42,7 +42,8 @@ CLIs serialize the first prompt before the first tool call of that turn, so
 the overlap is theoretical. No claim, barrier, or epoch exists. A crash inside
 activation leaves the row exactly as a crash inside today's SessionStart
 handler would, and the existing `reconcile_session_activation` backstop heals
-agent/workflow invariants on the next BEFORE_AGENT / BEFORE_TOOL.
+agent/workflow invariants on the next BEFORE_AGENT / BEFORE_TOOL — the
+startup packet is not replayed.
 
 **Idle vs any-event materialization.** SessionStart(startup) plus a later
 SESSION_END with nothing in between creates no row (SESSION_END already skips
@@ -271,9 +272,12 @@ Owned consumers that change with this work: `HookManager._handle_after_daemon_re
 Non-goals: changing Grok itself; MCP `call_tool` result injection (the
 retired #20635 design); Codex app-server follow-up messages; AGY
 PreInvocation beyond using the shared materialize path; crash-hardening
-beyond today's SessionStart parity — a crash inside activation is recovered
-by the existing reconciliation backstop, a ghook stdout failure by the ack
-requeue, and nothing else is added.
+beyond today's SessionStart parity — after a crash, exception, or block
+inside first-activity activation the existing reconciliation backstop
+repairs agent/workflow invariants only, and that session's startup packet,
+copied rules, and `session_start` webhooks are lost exactly as with today's
+SessionStart handler (user decision, round 11 F08); a ghook stdout failure
+is healed by the ack requeue; nothing else is added.
 
 ## P1: Grok wire contract
 `kind: framing`
@@ -564,7 +568,14 @@ with a `dropped_field` log until 4.1 stashes it.
 activation or copied evaluation logs and fails open (`Handler error` →
 allow) for the current hook, the row exists, and the next BEFORE_AGENT /
 BEFORE_TOOL's `reconcile_session_activation` repairs agent and step state.
-No per-step guards, retry markers, or per-class outcomes are added.
+Nothing replays the startup packet, the copied session-start rules, or the
+`session_start` webhooks for that session: `_session_just_materialized` is
+request-local, `reconcile_session_activation` deliberately avoids prompt and
+context side effects, and a copied-rule block or blocking-webhook block that
+returns before step 3 has the same effect. That is the loss a crash inside
+today's SessionStart handler already causes (user decision, round 11 F08:
+option B). No per-step guards, retry markers, startup-pending phase, or
+per-class outcomes are added.
 
 **Concurrent first hooks.** Row creation is serialized by the lookup lock;
 only the creating request sees `_session_just_materialized`, so activation
@@ -612,7 +623,7 @@ additionalContext back in `ACPHookAdapter` / `ClaudeCodeAdapter`.
 - 3.1.10 - Compact, resume, clear, web-chat, and pre-created SessionStart paths each bind or create the intended canonical row without duplication. test: `tests/hooks/test_session_events_coverage.py::test_session_start_binding_matrix`.
 - 3.1.11 - A sessionless startup SessionStart dispatches no session_start webhooks; first-activity copied processing dispatches blocking and non-blocking session_start webhooks once on the synthetic event, and a blocking endpoint's block gates the live response. test: `tests/hooks/test_webhooks.py`.
 - 3.1.12 - A parameterized provider matrix delivers the first-activity startup packet (banner system message, claimed-task context, copied-rule context) through the expected native channel for Claude, Qwen, Droid, and Codex, exercises the supported AGY shared-materialization path, and shows Grok emitting nothing on its observe hooks until 4.1. test: `tests/hooks/test_hooks_manager.py::test_first_activity_startup_context_provider_matrix`.
-- 3.1.13 - An exception inside activation fails the current hook open, leaves the row, and the next BEFORE_AGENT's `reconcile_session_activation` repairs agent state. test: `tests/hooks/test_hooks_manager.py`.
+- 3.1.13 - An exception inside activation fails the current hook open, leaves the row, and the next BEFORE_AGENT's `reconcile_session_activation` repairs agent state; the startup packet is not replayed. test: `tests/hooks/test_hooks_manager.py`.
 - 3.1.14 - `_resolve_uncached_session_id` skips NOTIFICATION like SESSION_END and sets `_session_just_materialized` only on the create branch. test: `tests/hooks/test_session_lookup_metadata.py`.
 
 ## P4: Grok pending-context flush
@@ -1244,4 +1255,284 @@ After all leaves:
 
 ```json plan-review-round
 {"evidence_id":"e6366a2e-5dbf-41ac-90e0-f6d59c848dca","plan_hash":"8c4f18b3ebca6d9b45f2b2aacb23d7c4c02a8772216545d8674eefa0ebe138c9","round_number":11,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"19953404ce5090b2949e79c3257f969a279982739375b0bbd9165641a86a1573","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":4,"emitted_findings":10,"total":14},"evidence_id":"e6366a2e-5dbf-41ac-90e0-f6d59c848dca","lanes":[{"candidate_count":3,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":4,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":7,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":5,"manifest_digest":"730a05a149fbc841bac70407f2181117e297a991f160f88dcf922b2be1df599e","status":"valid"},"source_digest":"6289be02c29194edf66da41ed530023217157e77b18fcbe52463439cb16409c8","version":1},"findings":[{"category":"missing-requirement","causal_finding_id":"GHDM-RESTRAINT-PASS-2026-08-25","causal_section_ids":["Collision with compact-summary-fidelity (#20724) — retired 2026-08-25","V2"],"check_key":"bootstrap-ledger-root-identity","description":"Introduced by the round-10 restraint pass. The companion ledger still carries `root_task_ref: SEALED-BY-COORDINATOR`; `verify_bootstrap_ledger` treats that literal as the root identity and has no sentinel-resolution branch. The cut record says root-ledger sealing was removed, so expansion QA will compare the sentinel against the real plan/root manifest and fail.","finding_id":"GHDM-R11-F01","fix":"Restore one bounded coordinator step only: after the paused root exists and before `gobby-plans:create_plan` or expansion QA, atomically replace the ledger's root-task sentinel with that normalized root ref and verify the ledger and generated manifest headers agree. Keep the removed namespace inventory and recovery protocols out.","introduced_in_round":10,"location":"Collision record / companion coverage-ledger handoff","prevention":"For every retained companion artifact, enumerate unresolved sentinels and name the exact writer, timing, and readback gate.","principle":"Every mandatory bootstrap identity must have one executable owner that replaces planning-time sentinels before enforcement reads them.","root_cause":"The restraint cut removed the only root-task substitution step while retaining the mandatory companion ledger and its strict verifier.","section_id":"Collision with compact-summary-fidelity (#20724) — retired 2026-08-25","severity":"blocking"},{"category":"weak-testability","check_key":"grok-stop-briefing-parity","description":"Earlier-lineage defect. Locked decision 4 and §4.1 require leftover briefing on a text-only turn to block Stop once even without a real stop gate; 5.1.3 says Stop `block` is only for real gates, and the smoke never exercises briefing-only Stop. Both promises cannot pass the same implementation.","finding_id":"GHDM-R11-F02","fix":"Change smoke step 6 and 5.1.3 to allow Stop block for either a real gate or leftover briefing, retain the turn-context-only allow case, and add a focused assertion that briefing-only Stop emits `block` plus `additionalContext` once and the following Stop allows.","location":"P4 §4.1 briefing-only Stop branch versus P5 §5.1 smoke step 6 and acceptance 5.1.3","prevention":"Cross-check each acceptance sentence against every branch in the locked gate table, including briefing-only and turn-context-only states.","principle":"Acceptance must distinguish every behaviorally different gate input using the same vocabulary as the locked decision.","root_cause":"The smoke retained an older real-gate-only sentence after briefing-only Stop delivery became a required fallback.","section_id":"5.1","severity":"blocking"},{"category":"traceability","check_key":"grok-stop-stdout-mapping","description":"Earlier-lineage defect. Current ghook discards Grok Stop/SubagentStop JSON—including `hookSpecificOutput.additionalContext`—and emits only stderr with exit 2. Section 4.1 does not own that mapper, so its stdout-result change cannot make briefing-only Stop visible to Grok and cannot produce a valid post-stdout acknowledgment.","finding_id":"GHDM-R11-F03","fix":"In §4.1, give `action_from_success_response` a Grok Stop/SubagentStop branch that emits the complete serialized provider JSON on stdout with the provider-required success exit behavior; update the existing lowercase-Stop unit case and prove the process writes and flushes `additionalContext` before unlink.","location":"P4 §4.1 ghook post-stdout acknowledgment path","prevention":"Trace each provider gate from adapter dict through success mapping, stdout write, exit code, and inbox unlink before declaring the wire path complete.","principle":"The process-side success mapper must preserve the provider-native body that the adapter deliberately produced.","repairs":[{"entries":["`crates/ghook/src/action.rs::action_from_success_response`"],"kind":"add_targets","section_id":"4.1"},{"items":[{"artifact":"test: `crates/ghook/tests/contract.rs`","prose":"Grok Stop and SubagentStop block responses retain the complete provider JSON on stdout with success exit behavior, and ghook unlinks only after write and flush"}],"kind":"add_acceptance","section_id":"4.1"}],"root_cause":"`action_from_success_response` still treats lowercase Grok Stop block as stderr plus exit 2, while the plan changes only `emit_action` and deletion timing.","section_id":"4.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-RESTRAINT-PASS-2026-08-25","causal_section_ids":["Locked decisions","4.1","5.1"],"check_key":"durable-delivery-ack-identity","description":"Introduced by the round-10 restraint pass. `_grok_delivery` exists only on `HookResponse.metadata`, while ACP/Grok translation returns a provider dict and the route stores that dict as the terminal response; the drain therefore cannot observe the promised marker and may unlink before stdout. The enqueue-failure fallback also direct-POSTs without `source_event_id`, leaving a claim with no file-backed acknowledgment identity.","finding_id":"GHDM-R11-F04","fix":"Reuse existing durable state instead of restoring the removed typed worker-result layer: have the processed-envelope drain load the retained envelope, resolve its session, and retain it when `grok_pending_delivery.envelope_id` matches. When `source_event_id` is absent, present any gate response without claiming components or running acknowledgment effects, leaving them queued for a later durable envelope. Add drain-before-stdout and enqueue-failure/stdout-failure tests.","introduced_in_round":10,"location":"P4 §4.1 `_grok_delivery` terminal marker and enqueue-failure direct POST","prevention":"For every ingress branch, trace one envelope ID through HookEvent, claim state, terminal dedupe state, drain inspection, stdout, and settlement.","principle":"File absence proves provider emission only when the claim has a durable envelope identity and the daemon can read that identity from retained state.","root_cause":"The cut relies on metadata that provider translation discards and leaves the no-envelope direct-POST branch unspecified.","section_id":"4.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-RESTRAINT-PASS-2026-08-25","causal_section_ids":["4.1","5.1"],"check_key":"ack-retention-coupling","description":"Introduced by the round-10 restraint pass. `prune_hook_inbox` prunes processed markers and temp files only, so the plan's claim that it bounds retained acknowledgment files is false. After a marker expires, the drain re-posts the still-retained envelope and unlinks it on daemon 2xx; the next hook then treats that daemon-created absence as successful CLI stdout and permanently drops briefing/P2P content.","finding_id":"GHDM-R11-F05","fix":"Couple existing retention state: keep a processed marker while its inbox JSON remains acknowledgment-pending; at the retention bound, use the existing session-variable advisory lock to requeue the matching claimed components, then remove the marker and file together. Add a long-idle test that crosses marker retention before the next Grok hook.","introduced_in_round":10,"location":"P4 §4.1 age-based pruning claim","prevention":"Advance every acknowledgment test beyond marker retention and verify the retained file, dedupe marker, and session claim transition atomically.","principle":"Acknowledgment evidence and its retained payload must share one retention lifecycle.","root_cause":"Processed-marker pruning is independent of retained inbox JSON, and the stated prune does not remove or settle normal inbox envelopes.","section_id":"4.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-RESTRAINT-PASS-2026-08-25","causal_section_ids":["Locked decisions","3.1","4.1","5.1"],"check_key":"first-gate-capture-ordering","description":"Introduced by the round-10 restraint pass. The stash paragraph excludes PreToolUse, Stop, and SubagentStop, yet 4.1.8 requires a materializing first PreToolUse to stash and deny with the packet on that response; first Stop has the same gap. On workflow/webhook blocks, `_complete_response` enriches only the observer copy, so the specified returned original also lacks fresh context before Grok processing.","finding_id":"GHDM-R11-F06","fix":"Define one pre-flush capture step on the adapter-returned object: for a newly materialized or binding startup packet, capture briefing even on gate hooks; under `preserve_original`, transfer only enriched context/system-message fields from the observer copy while retaining the original decision/reason. Then flush on that same object. Cover first PreToolUse, first Stop, workflow block, and webhook block with fresh context.","introduced_in_round":10,"location":"P4 §4.1 stash predicate, preserve_original ownership, and same-response flush","prevention":"For each gate class, test newly produced startup, workflow, and webhook context through enrich, returned-object selection, stash, flush, translation, and stdout.","principle":"A gate can flush context produced by its own request only after that context has been transferred to the adapter-returned response and durably captured.","root_cause":"The cut excludes every gate from stash and selects the untouched original response on preserve_original paths, while both same-response delivery promises require the opposite ordering.","section_id":"4.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-RESTRAINT-PASS-2026-08-25","causal_section_ids":["Locked decisions","3.1","4.1","5.1"],"check_key":"first-activity-agent-context-parity","description":"Introduced by the round-10 restraint pass. Locked decision 4 classifies agent instructions as briefing, but `compose_session_response` builds the banner and supplied context only; `_inject_agent_instructions_if_needed` runs from BEFORE_AGENT. If PreToolUse or Stop is the first real hook, the packet can never contain the active agent contract even after same-response stash is repaired.","finding_id":"GHDM-R11-F07","fix":"Reuse `_inject_agent_instructions_if_needed` while composing a newly materialized packet when the creating event is outside BEFORE_AGENT, before the activity pulse makes the row look old; persist its existing `_agent_context_injected` marker so a later UPS does not duplicate it. Add the agent preamble to the no-UPS PreToolUse and first-Stop assertions.","introduced_in_round":10,"location":"P3 §3.1 no-UPS first PreToolUse/Stop startup packet","prevention":"Run the startup-component matrix across BEFORE_AGENT, BEFORE_TOOL, and Stop, asserting banner, claimed task, copied rules, profile, and agent instructions independently.","principle":"Every allowed first-activity class must compose every component that the locked startup-packet inventory promises.","root_cause":"Agent instructions are produced only by the BEFORE_AGENT handler, while the fallback packet composer does not include them.","section_id":"3.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-RESTRAINT-PASS-2026-08-25","causal_section_ids":["Constraints","Locked decisions","3.1","5.1"],"check_key":"first-activity-activation-recovery","description":"Introduced by the round-10 restraint pass and beyond the accepted residual-risk boundary. After `register_session` commits, an exception, process crash, copied-rule block, or blocking-webhook block can exit before packet stash/merge; later lookups hit the row and never reconstruct `_session_just_materialized`. `reconcile_session_activation` explicitly avoids prompt/context effects, so copied rules, async webhooks, and the startup packet have no heal path.","finding_id":"GHDM-R11-F08","fix":"Persist one minimal startup-pending phase in existing row/session metadata in the same transaction as creation, and clear it only after copied evaluation plus packet handoff to `_complete_response`. Later eligible hooks resume that phase; blocked copied evaluation either carries the packet and dispatches async SessionStart webhooks with the final synthetic response or leaves the phase pending. Add boundary-failure and copied-block retry tests without restoring epochs, claims, or takeover machinery.","introduced_in_round":10,"location":"P3 §3.1 row-create → activation → copied evaluation → packet handoff","prevention":"Inject failure or process loss after each startup boundary and require the next eligible hook to resume the missing packet/rules/webhooks without creating another row.","principle":"A committed row must retain a durable indication of unfinished startup work until every required one-shot side effect has reached its handoff boundary.","root_cause":"`_session_just_materialized` is event-local and disappears after the creating request, while reconciliation intentionally avoids prompt/context side effects.","section_id":"3.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-RESTRAINT-PASS-2026-08-25","causal_section_ids":["3.1","4.1","5.1"],"check_key":"route-timeout-mutation-fence","description":"Introduced by the round-10 restraint pass. On adapter timeout the route stores and returns a terminal fail-open/block response, so ghook may emit it and unlink; the executor thread can continue afterward through activation, buffer stash, or `grok_pending_delivery` claim. That late state has no matching terminal acknowledgment record and can wedge or silently lose the startup packet.","finding_id":"GHDM-R11-F09","fix":"Reuse the existing envelope-processing claim and executor future: on timeout, return retry/backpressure without a terminal marker, keep the claim active, and attach completion handling that stores the worker's actual terminal result before a replay can proceed. Add a slow-worker test spanning startup/claim mutation and route timeout; avoid restoring the removed multi-deadline protocol.","introduced_in_round":10,"location":"P3/P4 adapter executor timeout versus durable activation and delivery mutations","prevention":"Force timeout immediately before every durable activation/claim mutation and prove the route neither terminalizes nor acknowledges ahead of worker completion.","principle":"A terminal envelope response must describe the final durable state of its worker.","root_cause":"`asyncio.wait_for` times out the await but cannot stop the synchronous executor thread, and the cut removed the completion fence around its durable mutations.","section_id":"4.1","severity":"blocking"},{"category":"traceability","check_key":"ghook-docs-ack-order-parity","description":"Earlier-lineage defect. `docs/guides/ghook-user-guide.md` and `docs/guides/ghook-development-guide.md` both say a daemon 2xx deletes the inbox file before provider output; §4.1 reverses that order but omits both guides, leaving the documented recovery model false.","finding_id":"GHDM-R11-F10","fix":"Add both ghook guides to §4.1 and rewrite their diagrams/cleanup text to map the 2xx response, write and flush the provider action, then remove the envelope; mapping or stdout failure retains it.","location":"P4 §4.1 documentation inventory","prevention":"Search live documentation for each changed state-transition verb and include every contradictory contract in the owning deliverable.","principle":"Every live guide that states a changed durability order must move with the implementation contract.","repairs":[{"entries":["`docs/guides/ghook-user-guide.md`","`docs/guides/ghook-development-guide.md`"],"kind":"add_targets","section_id":"4.1"},{"items":[{"artifact":"file: `docs/guides/ghook-user-guide.md`","prose":"The ghook user guide documents provider-action write and flush before inbox-envelope removal, with mapping or stdout failure retaining the file"},{"artifact":"file: `docs/guides/ghook-development-guide.md`","prose":"The ghook development guide documents the same post-stdout acknowledgment and retained-file recovery order"}],"kind":"add_acceptance","section_id":"4.1"}],"root_cause":"The plan updates session-facing docs while omitting ghook's two own flow/cleanup guides.","section_id":"4.1","severity":"blocking"}],"reviewer_session":"#11104","round":11,"round_number":11,"verdict":"needs_review"},"session_id":"ec1cd52b-590d-4658-9bbd-6a37a5ddb086"}
+```
+
+**User approval — 2026-08-25** `kind: verification`
+
+- author_session: #11061 (coordinator)
+- basis: user decision after round 11 — GHDM-R11-F08 resolved as option B (keep the cut; 3.1 Failures, Constraints, and Non-goals now state that the startup packet, copied rules, and session_start webhooks are not replayed after a crash or block inside first-activity activation, matching today's SessionStart handler); no further adversary rounds authorized
+- disposition: plan approved by the user for expansion on this artifact; the M1 Task Manifest is derived and applied by the coordinator through `derive_plan_handoff_manifest` / `apply_plan_handoff_manifest` (explicit human handoff) rather than by an approving adversary round
+- state: nine of ten round-11 findings repaired at 61cd0b11da; validation clean in both modes; plan-mechanic zero repairs; companion ledger re-sealed to the final artifact hash after the manifest apply
+- next_step: #20917 — create the paused root epic, seal the ledger `root_task_ref`, expand, expansion QA, then `gobby build` as the only automation opt-in
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Align Grok capabilities and Stop translation
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: Grok capability table lists additionalContext only
+    on stop and subagent_stop. symbol: `_grok_capabilities`.
+
+    1.1.2: Grok Stop block emits `decision: "block"` and `continue: true`. test: `tests/adapters/test_acp_hook_translation.py::TestBlockToDenyMapping.test_block_maps_to_deny_hard_stop`.
+
+    1.1.3: Grok observe hooks with context do not emit additionalContext. test: `tests/adapters/test_acp_hook_translation.py`.
+
+    1.1.4: Adapter-fidelity Grok row matches the 1.0.5 wire contract. file: `docs/guides/adapter-fidelity.md`.
+
+    1.1.5: Grok system-message compatibility constant is removed and every passive
+    Grok hook exposes ContextChannel.NONE with neither additionalContext nor systemMessage
+    output. test: `tests/adapters/test_capabilities.py`.
+
+    1.1.6: Grok PreToolUse emits only deny reason or updatedInput fields and never
+    additionalContext or systemMessage. test: `tests/adapters/test_acp_hook_translation.py`.'
+  labels:
+  - covers:grok-hook-deferred-materialization:1.1:1.1.1
+  - covers:grok-hook-deferred-materialization:1.1:1.1.2
+  - covers:grok-hook-deferred-materialization:1.1:1.1.3
+  - covers:grok-hook-deferred-materialization:1.1:1.1.4
+  - covers:grok-hook-deferred-materialization:1.1:1.1.5
+  - covers:grok-hook-deferred-materialization:1.1:1.1.6
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Split SessionStart flow and extract activation helpers
+  category: refactor
+  task_type: refactor
+  depends_on: []
+  validation_criteria: '2.1.1: `session_start_should_defer` and `activate_materialized_session`
+    exist with unit coverage; the live SessionStart path still registers and activates
+    exactly as before the split. file: `src/gobby/hooks/event_handlers/_session_start/materialize.py`.
+
+    2.1.2: `flow.py` is under 850 lines after the move. file: `src/gobby/hooks/event_handlers/_session_start/flow.py`.
+
+    2.1.3: The existing SessionStart test surface passes unchanged (behavior-preserving
+    proof), including ACP-child and pre-created paths. test: `tests/hooks/test_session_events_coverage.py`.'
+  labels:
+  - covers:grok-hook-deferred-materialization:2.1:2.1.1
+  - covers:grok-hook-deferred-materialization:2.1:2.1.2
+  - covers:grok-hook-deferred-materialization:2.1:2.1.3
+  tdd: false
+  source_section: '2.1'
+  assigned_agent: backend-developer
+- title: Materialize on first BEFORE_AGENT and inject startup context
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '2.1'
+  validation_criteria: '3.1.1: Startup SessionStart does not create a sessions row.
+    test: `tests/hooks/test_session_events_coverage.py::TestSessionStartAndHelpers::test_handle_session_start_basic`.
+
+    3.1.2: First BEFORE_AGENT creates the row; activation runs outside the lookup
+    lock in the creating request only. file: `src/gobby/hooks/session_materialize.py`.
+
+    3.1.3: Compact/pre-created SessionStart still binds the existing row and still
+    returns its context. test: `tests/hooks/test_session_events_coverage.py::TestSessionStartAndHelpers::test_handle_session_start_pre_created`.
+
+    3.1.4: First PreToolUse without UPS also materializes and carries the startup
+    packet, including the active agent''s instructions when the session has one. test:
+    `tests/hooks/test_hooks_manager.py`.
+
+    3.1.5: `hook_manager.py` stays under the ceiling; first-activity orchestration
+    lives in `session_materialize.py`. file: `src/gobby/hooks/session_materialize.py`.
+
+    3.1.6: Notification does not materialize an idle session; the exclusion is unconditional
+    and the recorded Claude/Grok probe is observational evidence only. test: `tests/hooks/test_hooks_manager.py`.
+
+    3.1.7: A parameterized first-hook matrix materializes every supported non-SessionStart
+    event except SESSION_END and NOTIFICATION, and both exclusions leave an idle startup
+    row absent. test: `tests/hooks/test_hooks_manager.py::test_first_hook_materialization_matrix`.
+
+    3.1.8: Copied evaluation uses the synthetic SessionStart schema (`data.source
+    == ''startup''`, deferred identity fields, no prompt/tool payload); every installed
+    SessionStart lifecycle rule plus one custom session-start rule fires identically
+    to a real startup SessionStart, and a copied rule block or blocking-webhook block
+    is returned as the live response. test: `tests/hooks/test_hooks_manager.py`.
+
+    3.1.9: Concurrent first UPS and PreToolUse for one `external_id` yield one row;
+    activation and copied evaluation run exactly once, in the creating request, and
+    the other request proceeds on the existing row. test: `tests/hooks/test_hooks_manager.py`.
+
+    3.1.10: Compact, resume, clear, web-chat, and pre-created SessionStart paths each
+    bind or create the intended canonical row without duplication. test: `tests/hooks/test_session_events_coverage.py::test_session_start_binding_matrix`.
+
+    3.1.11: A sessionless startup SessionStart dispatches no session_start webhooks;
+    first-activity copied processing dispatches blocking and non-blocking session_start
+    webhooks once on the synthetic event, and a blocking endpoint''s block gates the
+    live response. test: `tests/hooks/test_webhooks.py`.
+
+    3.1.12: A parameterized provider matrix delivers the first-activity startup packet
+    (banner system message, claimed-task context, copied-rule context) through the
+    expected native channel for Claude, Qwen, Droid, and Codex, exercises the supported
+    AGY shared-materialization path, and shows Grok emitting nothing on its observe
+    hooks until 4.1. test: `tests/hooks/test_hooks_manager.py::test_first_activity_startup_context_provider_matrix`.
+
+    3.1.13: An exception inside activation fails the current hook open, leaves the
+    row, and the next BEFORE_AGENT''s `reconcile_session_activation` repairs agent
+    state; the startup packet is not replayed. test: `tests/hooks/test_hooks_manager.py`.
+
+    3.1.14: `_resolve_uncached_session_id` skips NOTIFICATION like SESSION_END and
+    sets `_session_just_materialized` only on the create branch. test: `tests/hooks/test_session_lookup_metadata.py`.'
+  labels:
+  - covers:grok-hook-deferred-materialization:3.1:3.1.1
+  - covers:grok-hook-deferred-materialization:3.1:3.1.2
+  - covers:grok-hook-deferred-materialization:3.1:3.1.3
+  - covers:grok-hook-deferred-materialization:3.1:3.1.4
+  - covers:grok-hook-deferred-materialization:3.1:3.1.5
+  - covers:grok-hook-deferred-materialization:3.1:3.1.6
+  - covers:grok-hook-deferred-materialization:3.1:3.1.7
+  - covers:grok-hook-deferred-materialization:3.1:3.1.8
+  - covers:grok-hook-deferred-materialization:3.1:3.1.9
+  - covers:grok-hook-deferred-materialization:3.1:3.1.10
+  - covers:grok-hook-deferred-materialization:3.1:3.1.11
+  - covers:grok-hook-deferred-materialization:3.1:3.1.12
+  - covers:grok-hook-deferred-materialization:3.1:3.1.13
+  - covers:grok-hook-deferred-materialization:3.1:3.1.14
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: Stash observe context and flush briefing without a Stop loop
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '2.1'
+  - '3.1'
+  validation_criteria: '4.1.1: First-prompt, binding-SessionStart, and continuation-prompt
+    context on Grok is stashed as briefing while ordinary UPS context is stashed as
+    turn-context; neither returns additionalContext or systemMessage. test: `tests/hooks/test_grok_pending_context.py`.
+
+    4.1.2: First Grok PreToolUse after a briefing stash denies once with that reason
+    and claims the components; the identical PreToolUse after ghook''s inbox-file
+    removal allows absent another gate. test: `tests/hooks/test_grok_pending_context.py`.
+
+    4.1.3: Turn-context concatenates onto an already-blocking Stop and is dropped
+    (debug-logged) when Stop allows; Grok Stop with only turn-context and no stop-gate
+    allows the stop. test: `tests/hooks/test_grok_pending_context.py`.
+
+    4.1.4: On Grok, the `inject-compact-handoff-on-prompt` / `inject-clear-handoff-on-prompt`
+    render is captured as a briefing component on the continuation prompt and delivered
+    by the next PreToolUse deny; the rule templates are unchanged. test: `tests/hooks/test_hook_manager.py`.
+
+    4.1.5: Grok wire envelopes for flush outputs (deny reason, Stop block + additionalContext)
+    are asserted at the adapter layer only. test: `tests/adapters/test_acp_hook_translation.py`.
+
+    4.1.6: Briefing and turn-context flush onto workflow-block and webhook-block responses
+    under `preserve_original=True`, on the object returned to the adapter. test: `tests/hooks/test_hook_manager.py`.
+
+    4.1.7: Buffer bounds enforce the named caps: turn-context is drop-oldest at 32
+    components / 16384 bytes and rejects a single component over 8192 bytes; briefing
+    components are deduplicated by id and never cap-evicted; every mutation is one
+    `_mutate_variables` call. test: `tests/hooks/test_grok_pending_context.py`.
+
+    4.1.8: A no-UPS first PreToolUse stashes the startup packet as briefing and deny-once
+    delivers it on that same response. test: `tests/hooks/test_grok_pending_context.py`.
+
+    4.1.9: Grok pending P2P messages enqueue as `p2p:<id>` components without `mark_delivered_batch`,
+    dedupe across concurrent selectors and select-after-claim, are bounded per selection,
+    and are marked delivered only in the acknowledgment; non-Grok inline delivery
+    is unchanged. test: `tests/hooks/test_event_enrichment.py`. test: `tests/hooks/test_pending_message_provider_contracts.py`.
+
+    4.1.10: Acknowledgment on the next hook with a different envelope id treats an
+    absent inbox file as delivered (ack effects run, delivery cleared) and a present
+    file as undelivered (file unlinked, components requeued at the front, delivered
+    again on the next gate). test: `tests/hooks/test_grok_pending_context.py`.
+
+    4.1.11: ghook removes the inbox envelope only after the mapped provider action
+    was written and flushed to stdout; mapping failure or stdout failure leaves the
+    envelope in place. test: `crates/ghook/tests/contract.rs`.
+
+    4.1.12: The daemon drain leaves a leftover envelope whose id equals its session''s
+    `grok_pending_delivery.envelope_id` in place with or without a processed marker,
+    settles it (components requeued at the front, delivery cleared, file and marker
+    unlinked together) once it is older than `GROK_DELIVERY_RETENTION_SECONDS`, and
+    still unlinks other processed leftovers. test: `tests/hooks/test_inbox.py`.
+
+    4.1.13: `grok_pending_briefing`, `grok_pending_turn_context`, and `grok_pending_delivery`
+    are reserved; `is_reserved_workflow_variable` is true for all three. test: `tests/hooks/test_grok_pending_context.py`.
+
+    4.1.14: Session-boundary contract, sessions guide, and variables guide document
+    Grok PreToolUse/Stop delivery, the reserved buffers, and post-stdout acknowledgment.
+    file: `docs/contracts/session-boundary.md`, `docs/guides/sessions.md`, `docs/guides/variables.md`.
+
+    4.1.15: Grok Stop and SubagentStop block responses retain the complete provider
+    JSON on stdout with success exit behavior, and ghook unlinks only after write
+    and flush. test: `crates/ghook/tests/contract.rs`.
+
+    4.1.16: The ghook user guide documents provider-action write and flush before
+    inbox-envelope removal, with mapping or stdout failure retaining the file. file:
+    `docs/guides/ghook-user-guide.md`.
+
+    4.1.17: The ghook development guide documents the same post-stdout acknowledgment
+    and retained-file recovery order. file: `docs/guides/ghook-development-guide.md`.
+
+    4.1.18: Flush without `source_event_id`, or for an envelope whose terminal response
+    is already stored, neither claims nor delivers briefing; the next envelope-backed
+    gate delivers it. test: `tests/hooks/test_grok_pending_context.py`.'
+  labels:
+  - covers:grok-hook-deferred-materialization:4.1:4.1.1
+  - covers:grok-hook-deferred-materialization:4.1:4.1.2
+  - covers:grok-hook-deferred-materialization:4.1:4.1.3
+  - covers:grok-hook-deferred-materialization:4.1:4.1.4
+  - covers:grok-hook-deferred-materialization:4.1:4.1.5
+  - covers:grok-hook-deferred-materialization:4.1:4.1.6
+  - covers:grok-hook-deferred-materialization:4.1:4.1.7
+  - covers:grok-hook-deferred-materialization:4.1:4.1.8
+  - covers:grok-hook-deferred-materialization:4.1:4.1.9
+  - covers:grok-hook-deferred-materialization:4.1:4.1.10
+  - covers:grok-hook-deferred-materialization:4.1:4.1.11
+  - covers:grok-hook-deferred-materialization:4.1:4.1.12
+  - covers:grok-hook-deferred-materialization:4.1:4.1.13
+  - covers:grok-hook-deferred-materialization:4.1:4.1.14
+  - covers:grok-hook-deferred-materialization:4.1:4.1.15
+  - covers:grok-hook-deferred-materialization:4.1:4.1.16
+  - covers:grok-hook-deferred-materialization:4.1:4.1.17
+  - covers:grok-hook-deferred-materialization:4.1:4.1.18
+  tdd: true
+  source_section: '4.1'
+  implementation_domain: backend
+- title: Isolated-daemon smoke plus unit contracts
+  category: test
+  task_type: task
+  depends_on:
+  - '4.1'
+  validation_criteria: '5.1.1: Smoke file asserts Grok/Claude SessionStart does not
+    insert a sessions row. test: `tests/e2e/test_grok_session_deferral.py`.
+
+    5.1.2: Simulator maps grok UPS to `user_prompt_submit`. symbol: `CLIEventSimulator.user_prompt_submit`.
+
+    5.1.3: Smoke asserts Grok first PreToolUse deny carries briefing, Stop `block`
+    fires for a real gate or for leftover briefing (once, with `additionalContext`;
+    the next Stop allows) and never for turn-context alone, and the compact continuation
+    prompt arms a briefing delivered by the next PreToolUse. test: `tests/e2e/test_grok_session_deferral.py`.
+
+    5.1.4: Claude first prompt returns startup context while Grok UPS returns none
+    and leaves a pending briefing. test: `tests/e2e/test_grok_session_deferral.py`.
+
+    5.1.5: With the inbox envelope absent the next hook acknowledges and a second
+    PreToolUse allows absent another gate; with it present the briefing is requeued
+    and the next PreToolUse denies again; Stop with only turn-context allows. test:
+    `tests/e2e/test_grok_session_deferral.py`.
+
+    5.1.6: Compact binding creates no duplicate row; `grok_pending_delivery` and P2P
+    delivered markers change only at acknowledgment. test: `tests/e2e/test_grok_session_deferral.py`.
+
+    5.1.7: All four existing CLIEventSimulator SessionStart consumer suites pass after
+    their row and context assumptions move to first activity. test: `GOBBY_TEST_PROTECT=1
+    uv run pytest tests/e2e/test_full_workflow.py tests/e2e/test_session_tracking.py
+    tests/e2e/test_stateless_ambient_session.py tests/e2e/test_worktrees_e2e.py -q`.'
+  labels:
+  - covers:grok-hook-deferred-materialization:5.1:5.1.1
+  - covers:grok-hook-deferred-materialization:5.1:5.1.2
+  - covers:grok-hook-deferred-materialization:5.1:5.1.3
+  - covers:grok-hook-deferred-materialization:5.1:5.1.4
+  - covers:grok-hook-deferred-materialization:5.1:5.1.5
+  - covers:grok-hook-deferred-materialization:5.1:5.1.6
+  - covers:grok-hook-deferred-materialization:5.1:5.1.7
+  tdd: false
+  source_section: '5.1'
+  assigned_agent: backend-developer
 ```

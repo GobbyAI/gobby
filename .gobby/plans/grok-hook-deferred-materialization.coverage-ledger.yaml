@@ -1,6 +1,6 @@
 project_id: d45545c5-ded5-4335-b115-0245752edacf
 plan_id: grok-hook-deferred-materialization
-plan_hash: f0389d80c570d712c64e11e8b02bae351cce70ed9a471aea8e27a227e435f457
+plan_hash: b7961e1c7f3b551d7921582f9d5cb7de8c9ba5a758cfc4c052e422626f029ef1
 root_task_ref: SEALED-BY-COORDINATOR
 sections:
   '1.1':
@@ -138,7 +138,8 @@ sections:
           owner_agent: backend-developer
       3.1.13:
         text: 'An exception inside activation fails the current hook open, leaves the row, and the next
-          BEFORE_AGENT''s `reconcile_session_activation` repairs agent state. test: `tests/hooks/test_hooks_manager.py`.'
+          BEFORE_AGENT''s `reconcile_session_activation` repairs agent state; the startup packet is not
+          replayed. test: `tests/hooks/test_hooks_manager.py`.'
         expected_leaves:
         - title: Materialize on first BEFORE_AGENT and inject startup context
           owner_agent: backend-developer
@@ -275,12 +276,12 @@ sections:
         text: 'Smoke file asserts Grok/Claude SessionStart does not insert a sessions row. test: `tests/e2e/test_grok_session_deferral.py`.'
         expected_leaves:
         - title: Isolated-daemon smoke plus unit contracts
-          owner_agent: qa-dev
+          owner_agent: backend-developer
       5.1.2:
         text: 'Simulator maps grok UPS to `user_prompt_submit`. symbol: `CLIEventSimulator.user_prompt_submit`.'
         expected_leaves:
         - title: Isolated-daemon smoke plus unit contracts
-          owner_agent: qa-dev
+          owner_agent: backend-developer
       5.1.3:
         text: 'Smoke asserts Grok first PreToolUse deny carries briefing, Stop `block` fires for a real
           gate or for leftover briefing (once, with `additionalContext`; the next Stop allows) and never
@@ -288,26 +289,26 @@ sections:
           next PreToolUse. test: `tests/e2e/test_grok_session_deferral.py`.'
         expected_leaves:
         - title: Isolated-daemon smoke plus unit contracts
-          owner_agent: qa-dev
+          owner_agent: backend-developer
       5.1.4:
         text: 'Claude first prompt returns startup context while Grok UPS returns none and leaves a pending
           briefing. test: `tests/e2e/test_grok_session_deferral.py`.'
         expected_leaves:
         - title: Isolated-daemon smoke plus unit contracts
-          owner_agent: qa-dev
+          owner_agent: backend-developer
       5.1.5:
         text: 'With the inbox envelope absent the next hook acknowledges and a second PreToolUse allows
           absent another gate; with it present the briefing is requeued and the next PreToolUse denies
           again; Stop with only turn-context allows. test: `tests/e2e/test_grok_session_deferral.py`.'
         expected_leaves:
         - title: Isolated-daemon smoke plus unit contracts
-          owner_agent: qa-dev
+          owner_agent: backend-developer
       5.1.6:
         text: 'Compact binding creates no duplicate row; `grok_pending_delivery` and P2P delivered markers
           change only at acknowledgment. test: `tests/e2e/test_grok_session_deferral.py`.'
         expected_leaves:
         - title: Isolated-daemon smoke plus unit contracts
-          owner_agent: qa-dev
+          owner_agent: backend-developer
       5.1.7:
         text: 'All four existing CLIEventSimulator SessionStart consumer suites pass after their row and
           context assumptions move to first activity. test: `GOBBY_TEST_PROTECT=1 uv run pytest tests/e2e/test_full_workflow.py
@@ -315,4 +316,4 @@ sections:
           -q`.'
         expected_leaves:
         - title: Isolated-daemon smoke plus unit contracts
-          owner_agent: qa-dev
+          owner_agent: backend-developer
