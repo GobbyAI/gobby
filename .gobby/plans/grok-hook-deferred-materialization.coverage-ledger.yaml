@@ -1,7 +1,7 @@
 project_id: d45545c5-ded5-4335-b115-0245752edacf
 plan_id: grok-hook-deferred-materialization
 plan_hash: b7961e1c7f3b551d7921582f9d5cb7de8c9ba5a758cfc4c052e422626f029ef1
-root_task_ref: SEALED-BY-COORDINATOR
+root_task_ref: '#20960'
 sections:
   '1.1':
     acceptance_items:
