@@ -7,7 +7,7 @@ and runs in ~1-5ms per query.
 ``extract_keywords`` is CPU-bound synchronous work: async callers on the
 daemon event loop must run it via ``asyncio.to_thread`` (#20868).
 
-Example:
+Example with the configured ``dedup_lim=0.9`` threshold:
     >>> extract_keywords("hey could you maybe look at the webhook handler thing?")
     'handler thing webhook hey'
 """
