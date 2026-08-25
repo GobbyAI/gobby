@@ -21,16 +21,26 @@ task that both blocks and finishes inside the gap shows up as ended rather than
 advanced, which still locates it. A stall with nothing advancing points away
 from tasks altogether -- to a bare ``call_soon`` callback, a signal handler, or
 a C extension holding the thread.
+
+A stall's full report is multi-kilobyte, which made daemon.log unreadable when
+it landed there. It now goes to ``loop_lag.jsonl`` beside the other daemon
+logs, one JSON object per stall, and the main log keeps a single WARNING
+naming the gap and pointing at the sidecar (#20886). The sidecar write runs on
+a worker thread: the watchdog must not become a stall the loop it polices
+would have to report.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from types import FrameType
 
+from gobby.telemetry.logging import get_loop_lag_logger, loop_lag_log_path
 from gobby.telemetry.loop_stack_sampler import LoopStackSampler
 
 logger = logging.getLogger(__name__)
@@ -53,8 +63,6 @@ MAX_CHAIN_FRAMES = 60
 MAX_TRACE_FRAMES = 10
 # A task can finish between the diff and the trace scan a moment later.
 GONE = "<no longer live>"
-# Enough to show where the time concentrated without printing a profile.
-MAX_REPORTED_STACKS = 3
 
 
 @dataclass(frozen=True)
@@ -70,55 +78,51 @@ class LoopLagReport:
     hot_stacks: list[tuple[str, int]] = field(default_factory=list)
     sample_interval_seconds: float = 0.0
 
-    def render(self) -> str:
+    def to_payload(self) -> dict[str, object]:
+        """The whole report as one JSON-ready object, stamped at emit time.
+
+        Values stay primitive -- strings, numbers, flat lists of small dicts --
+        so serialization is one cheap ``json.dumps`` with no default hook. The
+        expected sample count rides along because the sampler is starved during
+        exactly the stalls it exists to explain -- real reports carried 5 to 14
+        samples where the interval predicted hundreds -- so a share of the
+        collected samples is a hypothesis to time, not a diagnosis (#20845).
+        """
+        return {
+            "timestamp": datetime.now(UTC).isoformat(timespec="milliseconds"),
+            "lag_seconds": self.lag_seconds,
+            "threshold_seconds": self.threshold_seconds,
+            "sample_count": sum(count for _, count in self.hot_stacks),
+            "expected_sample_count": (
+                int(self.lag_seconds / self.sample_interval_seconds)
+                if self.sample_interval_seconds > 0
+                else None
+            ),
+            "sample_interval_seconds": self.sample_interval_seconds,
+            "hot_stacks": [{"stack": stack, "samples": count} for stack, count in self.hot_stacks],
+            "advanced": [{"task": task, "trace": trace} for task, trace in self.advanced],
+            "started": [{"task": task, "trace": trace} for task, trace in self.started],
+            "ended": list(self.ended),
+            "bystander_count": len(self.bystanders),
+        }
+
+    def top_hot_frame(self) -> str | None:
+        """The innermost frame of the hottest sampled stack, if any was captured."""
+        if not self.hot_stacks:
+            return None
+        stack, _ = self.hot_stacks[0]
+        return stack.rsplit(" -> ", 1)[-1]
+
+    def summary(self) -> str:
+        """One line for the main log: the fact of the stall, not its contents."""
         head = (
             f"Event loop stalled for {self.lag_seconds:.2f}s "
             f"(threshold {self.threshold_seconds:.2f}s)"
         )
-        parts = []
-        if self.hot_stacks:
-            total = sum(count for _, count in self.hot_stacks)
-            parts.append(
-                f"hot loop-thread stacks ({total} samples{self._coverage()}): "
-                + "; ".join(
-                    f"[{count} samples, {100 * count / total:.0f}%] {stack}"
-                    for stack, count in self.hot_stacks[:MAX_REPORTED_STACKS]
-                )
-            )
-        if self.advanced:
-            parts.append("ran during the stall: " + _render_positions(self.advanced))
-        if self.ended:
-            parts.append("ended during the stall: " + "; ".join(self.ended))
-        if self.started:
-            parts.append("started during the stall: " + _render_positions(self.started))
-        if not self.advanced and not self.ended and not self.started:
-            parts.append(
-                "no task advanced -- suspect a bare callback, signal handler, "
-                "or C extension holding the loop thread"
-            )
-        if self.bystanders:
-            parts.append(f"{len(self.bystanders)} other tasks suspended, unchanged")
-        return head + " | " + " | ".join(parts)
-
-    def _coverage(self) -> str:
-        """Say how much of the stall the samples actually cover.
-
-        The loop thread holds the GIL through long C calls, so the sampler is
-        starved during exactly the stalls it exists to explain -- real reports
-        carried 5 to 14 samples where the interval predicted hundreds. Without
-        the expected count, a "62% of samples" share reads as a diagnosis; two
-        chains that each held a large share of such a report measured 14 and 6
-        microseconds per call when timed directly. A share is a hypothesis to
-        time, not a defect (#20845).
-        """
-        if self.sample_interval_seconds <= 0:
-            return ""
-        expected = int(self.lag_seconds / self.sample_interval_seconds)
-        return f" of ~{expected} expected"
-
-
-def _render_positions(entries: list[tuple[str, str]]) -> str:
-    return "; ".join(f"{name} now at {where}" for name, where in entries)
+        frame = self.top_hot_frame()
+        if frame is None:
+            return f"{head}; no loop-thread samples"
+        return f"{head}; top hot frame: {frame}"
 
 
 async def measure_loop_lag(poll_seconds: float) -> float:
@@ -244,6 +248,28 @@ def _diff_positions(before: dict[str, str], after: dict[str, str]) -> LoopLagRep
     )
 
 
+def _write_report_line(report: LoopLagReport) -> None:
+    """Serialize and append one sidecar line; runs on a worker thread."""
+    line = json.dumps(report.to_payload(), separators=(",", ":"))
+    get_loop_lag_logger().info("%s", line)
+
+
+async def _emit_report(report: LoopLagReport) -> None:
+    """Full report to the JSONL sidecar, one summary WARNING to the main log.
+
+    The sidecar write is file I/O -- handler setup included -- and goes through
+    ``to_thread``: the watchdog lives on the loop it polices, and a
+    multi-kilobyte blocking write in its report path would surface in its own
+    next measurement.
+    """
+    sidecar_path = loop_lag_log_path()
+    try:
+        await asyncio.to_thread(_write_report_line, report)
+    except Exception:  # pragma: no cover - a diagnostic must never take the daemon down
+        logger.debug("Failed to write the loop lag sidecar line", exc_info=True)
+    logger.warning("%s; full report: %s", report.summary(), sidecar_path)
+
+
 def _traces_for(keys: set[str]) -> dict[str, str]:
     """Capture full await chains, but only for the tasks worth reading."""
     if not keys:
@@ -315,7 +341,7 @@ async def loop_lag_watchdog(
             if on_lag is not None:
                 on_lag(report)
             else:
-                logger.warning("%s", report.render())
+                await _emit_report(report)
         except asyncio.CancelledError:
             break
         except Exception:  # pragma: no cover - a diagnostic must never take the daemon down
