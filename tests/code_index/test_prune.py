@@ -426,6 +426,35 @@ async def test_operator_reconciled_is_completed_not_failed(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
+async def test_operator_prune_leaves_live_overlay_selectors_alone(tmp_path: Path) -> None:
+    """A live worktree overlay selector is skipped, never reconciled (#20889)."""
+    from gobby.code_index.eligibility import code_index_id_for_root
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    overlay_id = code_index_id_for_root(worktree)
+
+    class RegistryPruneStorage(PruneStorage):
+        def get_registry_project(self, project_id: str) -> tuple[bool, bool]:
+            assert project_id == overlay_id
+            return False, False
+
+    storage = RegistryPruneStorage()
+    storage.projects = [SimpleNamespace(id=overlay_id, root_path=str(worktree))]
+    context = PruneContext(storage, PruneGateway(), tmp_path / "maintenance.log")
+    pruner = CodeIndexPruner(cast(Any, context))
+
+    outcome = await pruner.run_operator_global_prune()
+
+    assert outcome["failed"] == []
+    assert outcome["completed"] == []
+    assert {"project_id": overlay_id, "reason": "skipped_overlay"} in outcome["skipped"]
+    assert storage.deleted_hub == []
+    assert "delete_project_index" not in context.run_db_calls
+    assert worktree.is_dir()
+
+
+@pytest.mark.asyncio
 async def test_operator_prune_bounds_snapshot_concurrency(tmp_path: Path) -> None:
     root_one = tmp_path / "one"
     root_two = tmp_path / "two"

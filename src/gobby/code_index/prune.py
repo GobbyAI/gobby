@@ -40,7 +40,9 @@ CODE_INDEX_PRUNE_DESCRIPTION = (
 _NO_STALE_PROJECTS = "No stale projects found."
 _DEFAULT_MAINTENANCE_LOG_FILE = "~/.gobby/logs/code-index-maintenance.log"
 _OPERATOR_COMPLETED_SUFFIXES = frozenset({"pruned", "deferred_pending_sync", "reconciled"})
-_OPERATOR_SKIPPED_SUFFIXES = frozenset({"skipped_locked", "skipped_missing_root"})
+_OPERATOR_SKIPPED_SUFFIXES = frozenset(
+    {"skipped_locked", "skipped_missing_root", "skipped_overlay"}
+)
 _OPERATOR_HUB_DELETE_SUFFIXES = frozenset({"pruned"})
 
 
