@@ -48,6 +48,9 @@ async def test_oversized_close_persists_and_launches_one_taskless_validator(
     assert launch_args["model"] == "gpt-5.6-terra"
     # An unpinned candidate inherits the profile default, which is always `auto`.
     assert launch_args["reasoning_effort"] == "auto"
+    assert result["success"] is True
+    assert result["closed"] is False
+    assert result["can_close"] is False
     assert result["error"] == "agentic_review_required"
     assert result["review_status"] == "running"
     assert "run_id" not in result
@@ -78,6 +81,29 @@ async def test_launch_omits_model_overrides_without_validation_config(
     assert "provider" not in launch_args
     assert "model" not in launch_args
     assert "reasoning_effort" not in launch_args
+
+
+@pytest.mark.asyncio
+async def test_failed_validator_launch_remains_unsuccessful(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _Store(_review(status="launching", run_id=None))
+    registry = SimpleNamespace(
+        call=AsyncMock(return_value={"success": False, "error": "validator unavailable"})
+    )
+    monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
+
+    result = await launch_close_review(
+        _ctx(registry=registry),
+        evaluation=_evaluation(),
+        close_arguments=_arguments(),
+    )
+
+    assert result["success"] is False
+    assert result["closed"] is False
+    assert result["can_close"] is False
+    assert result["error"] == "agentic_review_launch_failed"
+    assert result["review_status"] == "error"
 
 
 @pytest.mark.parametrize(
@@ -131,6 +157,9 @@ async def test_concurrent_oversized_close_reuses_active_review(
         close_arguments=_arguments(),
     )
 
+    assert result["success"] is True
+    assert result["closed"] is False
+    assert result["can_close"] is False
     assert result["error"] == "agentic_review_pending"
     assert "run_id" not in result
     assert "Do not poll agent runs or re-call close_task." in result["message"]

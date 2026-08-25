@@ -122,7 +122,7 @@ async def launch_close_review(
             store, review, "Task-close review could not bind its agent run."
         )
     return {
-        "success": False,
+        "success": True,
         "preview": bool(close_arguments.get("preview")),
         "can_close": False,
         "closed": False,
@@ -265,7 +265,7 @@ async def submit_close_review(
 
 def pending_review_response(review: TaskCloseReview) -> dict[str, Any]:
     return {
-        "success": False,
+        "success": True,
         "preview": bool(review.close_arguments.get("preview")),
         "can_close": False,
         "closed": False,
