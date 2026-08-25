@@ -41,11 +41,13 @@ def sample() -> None:
     _write(tmp_path / "generated.py", "# @generated\nvalue = 1  # noqa: F401\n")
     _write(tmp_path / "vendor" / "dependency.py", "value = 1  # noqa: F401\n")
     _write(tmp_path / "build" / "artifact.py", "value = 1  # type: ignore[misc]\n")
+    _write(tmp_path / "tests" / "build" / "test_owned.py", "owned = 1  # noqa: E501\n")
 
     scan = scan_suppressions((tmp_path,), root=tmp_path)
 
-    assert scan.files_scanned == 1
+    assert scan.files_scanned == 2
     assert [(site.directive, site.codes, site.symbol) for site in scan.sites] == [
+        ("noqa", ("E501",), "<module>"),
         ("noqa", ("F401",), "<module>"),
         ("type: ignore", ("assignment",), "sample"),
     ]

@@ -1,0 +1,2747 @@
+{
+  "schema_version": 1,
+  "site_count": 274,
+  "sites": [
+    {
+      "fingerprint": "0f66536411482f1a325ea75a3b12fe585163203aa948bb885f30281b874362a0",
+      "path": "docs/research/memory-recall-spike-17193/harness/ablate.py",
+      "symbol": "<module>",
+      "directive": "noqa",
+      "codes": [
+        "E402"
+      ],
+      "statement": "from judge import ( CONTENT_BUDGET , PROMPT_BUDGET , RESPONSE_BUDGET , call_judge , trunc , )"
+    },
+    {
+      "fingerprint": "efce159ec69b36a7d2ce66b2606eb9028234a8c824498b62acff36ba7a8d590d",
+      "path": "docs/research/memory-recall-spike-17193/harness/ablate.py",
+      "symbol": "main",
+      "directive": "noqa",
+      "codes": [
+        "BLE001"
+      ],
+      "statement": "except Exception as e :"
+    },
+    {
+      "fingerprint": "8127bcf59e2b7363aa386d9b165a8a77b7811cc4dd805f190b97f5a4ca112fdd",
+      "path": "docs/research/memory-recall-spike-17193/harness/judge.py",
+      "symbol": "main",
+      "directive": "noqa",
+      "codes": [
+        "BLE001"
+      ],
+      "statement": "except Exception as e :"
+    },
+    {
+      "fingerprint": "5416a2112ce81c539cbe2f248064195a1d7fe2a34b1ddf070f71df691b36982d",
+      "path": "tests/adapters/test_acp_client_stream_limit.py",
+      "symbol": "test_read_stream_handles_line_larger_than_default_limit",
+      "directive": "type: ignore",
+      "codes": [
+        "assignment"
+      ],
+      "statement": "client . _process = SimpleNamespace ( stdout = _reader_with_lines ( ACP_STREAM_READER_LIMIT_BYTES , notification , final ) )"
+    },
+    {
+      "fingerprint": "a636e09307956e7bd20588f5ca53df795d7e84df16cd804722100371329d2619",
+      "path": "tests/adapters/test_plan_options.py",
+      "symbol": "test_plan_accept_option_is_frozen",
+      "directive": "type: ignore",
+      "codes": [
+        "misc"
+      ],
+      "statement": "opt . id = \"mutated\""
+    },
+    {
+      "fingerprint": "43d99a0c9e7795b57db899f48b85c2d364e54586f2f845a6de58fd405194ea99",
+      "path": "tests/agents/test_agent_cleanup.py",
+      "symbol": "_wrapper_handler",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "handler . post_terminal_cleanup = post_terminal_cleanup"
+    },
+    {
+      "fingerprint": "c3df500fa9ec3317cabd0eebf469b07497f7edb0719098c948135107394541e0",
+      "path": "tests/agents/test_agent_cleanup.py",
+      "symbol": "test_cleanup_agent_failure_persists_child_session_progress_stats",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "handler . post_terminal_cleanup = post_terminal_cleanup"
+    },
+    {
+      "fingerprint": "c3c6b6ad468bed246ab90981276b16e5f873b7c72b4bf40d6c170b502f8a2e05",
+      "path": "tests/agents/test_agents_sync.py",
+      "symbol": "_parse_body",
+      "directive": "type: ignore",
+      "codes": [
+        "attr-defined"
+      ],
+      "statement": "payload = row . definition_json"
+    },
+    {
+      "fingerprint": "5d79edaa535c5c8bd17352a0fca7666cb0261e184567ecd48347ed11b226e7aa",
+      "path": "tests/agents/test_attention_metadata.py",
+      "symbol": "test_live_emit_and_validation",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "broadcaster . broadcast = AsyncMock ( )"
+    },
+    {
+      "fingerprint": "798dc56c1af3ff8ffbbc9fc4660bb4854ef07531081c02dc711077cbcb0f785a",
+      "path": "tests/agents/watchdog/test_close_review_parked_caller.py",
+      "symbol": "<module>",
+      "directive": "noqa",
+      "codes": [
+        "F401"
+      ],
+      "statement": "from tests . agents . test_lifecycle_monitor import ( DETECTION_REGISTRY , TerminalWakeRecorder , _local_machine_identity , _make_terminal_run , _rid , agent_run_manager , sample_session , )"
+    },
+    {
+      "fingerprint": "798dc56c1af3ff8ffbbc9fc4660bb4854ef07531081c02dc711077cbcb0f785a",
+      "path": "tests/agents/watchdog/test_close_review_parked_caller.py",
+      "symbol": "<module>",
+      "directive": "noqa",
+      "codes": [
+        "F401"
+      ],
+      "statement": "from tests . agents . test_lifecycle_monitor import ( DETECTION_REGISTRY , TerminalWakeRecorder , _local_machine_identity , _make_terminal_run , _rid , agent_run_manager , sample_session , )"
+    },
+    {
+      "fingerprint": "798dc56c1af3ff8ffbbc9fc4660bb4854ef07531081c02dc711077cbcb0f785a",
+      "path": "tests/agents/watchdog/test_close_review_parked_caller.py",
+      "symbol": "<module>",
+      "directive": "noqa",
+      "codes": [
+        "F401"
+      ],
+      "statement": "from tests . agents . test_lifecycle_monitor import ( DETECTION_REGISTRY , TerminalWakeRecorder , _local_machine_identity , _make_terminal_run , _rid , agent_run_manager , sample_session , )"
+    },
+    {
+      "fingerprint": "7daf7f153fe7c69eef266c9abe783c27389a94c9ae602d4d6ac2d2686726496e",
+      "path": "tests/agents/watchdog/test_close_review_parked_caller.py",
+      "symbol": "harness",
+      "directive": "noqa",
+      "codes": [
+        "F811"
+      ],
+      "statement": "def harness ( agent_run_manager : LocalAgentRunManager , temp_db : HubDatabase , session_manager : SessionManager , sample_project : dict [ str , Any ] , sample_session : dict [ str , Any ] , ) -> _Harness : return _Harness ( runs = agent_run_manager , temp_db = temp_db , session_manager = session_manager , sample_project = sample_project , session = sample_session , )"
+    },
+    {
+      "fingerprint": "7daf7f153fe7c69eef266c9abe783c27389a94c9ae602d4d6ac2d2686726496e",
+      "path": "tests/agents/watchdog/test_close_review_parked_caller.py",
+      "symbol": "harness",
+      "directive": "noqa",
+      "codes": [
+        "F811"
+      ],
+      "statement": "def harness ( agent_run_manager : LocalAgentRunManager , temp_db : HubDatabase , session_manager : SessionManager , sample_project : dict [ str , Any ] , sample_session : dict [ str , Any ] , ) -> _Harness : return _Harness ( runs = agent_run_manager , temp_db = temp_db , session_manager = session_manager , sample_project = sample_project , session = sample_session , )"
+    },
+    {
+      "fingerprint": "b6135661bf60a0226da921020d2bc28021621763032603eb9b807e9ddf10bb01",
+      "path": "tests/agents/watchdog/test_parked_and_in_flight.py",
+      "symbol": "<module>",
+      "directive": "noqa",
+      "codes": [
+        "F401"
+      ],
+      "statement": "from tests . agents . test_lifecycle_monitor import ( DETECTION_REGISTRY , TerminalWakeRecorder , _local_machine_identity , _make_progress_stagnation_monitor , _make_terminal_run , _rid , agent_run_manager , sample_session , )"
+    },
+    {
+      "fingerprint": "b6135661bf60a0226da921020d2bc28021621763032603eb9b807e9ddf10bb01",
+      "path": "tests/agents/watchdog/test_parked_and_in_flight.py",
+      "symbol": "<module>",
+      "directive": "noqa",
+      "codes": [
+        "F401"
+      ],
+      "statement": "from tests . agents . test_lifecycle_monitor import ( DETECTION_REGISTRY , TerminalWakeRecorder , _local_machine_identity , _make_progress_stagnation_monitor , _make_terminal_run , _rid , agent_run_manager , sample_session , )"
+    },
+    {
+      "fingerprint": "b6135661bf60a0226da921020d2bc28021621763032603eb9b807e9ddf10bb01",
+      "path": "tests/agents/watchdog/test_parked_and_in_flight.py",
+      "symbol": "<module>",
+      "directive": "noqa",
+      "codes": [
+        "F401"
+      ],
+      "statement": "from tests . agents . test_lifecycle_monitor import ( DETECTION_REGISTRY , TerminalWakeRecorder , _local_machine_identity , _make_progress_stagnation_monitor , _make_terminal_run , _rid , agent_run_manager , sample_session , )"
+    },
+    {
+      "fingerprint": "646b8b826d8287b532d23233ad60d30900b1dfeeb5f834b557410cbe761b04dc",
+      "path": "tests/agents/watchdog/test_parked_and_in_flight.py",
+      "symbol": "_idle_monitor",
+      "directive": "noqa",
+      "codes": [
+        "F811"
+      ],
+      "statement": "def _idle_monitor ( agent_run_manager : LocalAgentRunManager , temp_db : HubDatabase , registry : CompletionEventRegistry | None = None , ) -> AgentLifecycleMonitor : return AgentLifecycleMonitor ( detection_registry = DETECTION_REGISTRY , agent_run_manager = agent_run_manager , db = temp_db , completion_registry = registry , tmux_config = TmuxConfig ( idle_check_enabled = True , idle_timeout_seconds = 10 , max_reprompt_attempts = 2 ) , )"
+    },
+    {
+      "fingerprint": "719f868eb3d28d64b2d246bc0c533a5c54319a5bc88d8ab9c6ca4b9da12c06f3",
+      "path": "tests/agents/watchdog/test_parked_and_in_flight.py",
+      "symbol": "test_agent_mid_turn_is_not_reprompted",
+      "directive": "noqa",
+      "codes": [
+        "F811"
+      ],
+      "statement": "async def test_agent_mid_turn_is_not_reprompted ( agent_run_manager : LocalAgentRunManager , temp_db : HubDatabase , sample_session : dict [ str , Any ] , ) -> None : monitor = _idle_monitor ( agent_run_manager , temp_db ) run = _make_terminal_run ( agent_run_manager , sample_session , run_id = _rid ( \"run-thinking\" ) , tmux_session_name = \"gobby-thinking\" , ) monitor . _idle_detector . get_state ( run . id ) . first_idle_at = time . monotonic ( ) - 360 with ( patch . object ( monitor . _tmux , \"capture_pane\" , new_callable = AsyncMock , return_value = THINKING_PANE ) , patch . object ( monitor . _tmux , \"send_keys\" , new = TerminalWakeRecorder ( ) ) as wake , ) : handled = await monitor . check_idle_agents ( ) assert handled == 0 assert wake . calls == [ ] assert monitor . _idle_detector . get_state ( run . id ) . first_idle_at is None"
+    },
+    {
+      "fingerprint": "719f868eb3d28d64b2d246bc0c533a5c54319a5bc88d8ab9c6ca4b9da12c06f3",
+      "path": "tests/agents/watchdog/test_parked_and_in_flight.py",
+      "symbol": "test_agent_mid_turn_is_not_reprompted",
+      "directive": "noqa",
+      "codes": [
+        "F811"
+      ],
+      "statement": "async def test_agent_mid_turn_is_not_reprompted ( agent_run_manager : LocalAgentRunManager , temp_db : HubDatabase , sample_session : dict [ str , Any ] , ) -> None : monitor = _idle_monitor ( agent_run_manager , temp_db ) run = _make_terminal_run ( agent_run_manager , sample_session , run_id = _rid ( \"run-thinking\" ) , tmux_session_name = \"gobby-thinking\" , ) monitor . _idle_detector . get_state ( run . id ) . first_idle_at = time . monotonic ( ) - 360 with ( patch . object ( monitor . _tmux , \"capture_pane\" , new_callable = AsyncMock , return_value = THINKING_PANE ) , patch . object ( monitor . _tmux , \"send_keys\" , new = TerminalWakeRecorder ( ) ) as wake , ) : handled = await monitor . check_idle_agents ( ) assert handled == 0 assert wake . calls == [ ] assert monitor . _idle_detector . get_state ( run . id ) . first_idle_at is None"
+    },
+    {
+      "fingerprint": "04dbf996b38e61a7e9911855ad90b82cc4377c03aaaa8b68a01457faf4d8faea",
+      "path": "tests/agents/watchdog/test_parked_and_in_flight.py",
+      "symbol": "test_live_spinner_defers_stagnation_and_a_frozen_one_does_not",
+      "directive": "noqa",
+      "codes": [
+        "F811"
+      ],
+      "statement": "async def test_live_spinner_defers_stagnation_and_a_frozen_one_does_not ( agent_run_manager : LocalAgentRunManager , temp_db : HubDatabase , sample_session : dict [ str , Any ] , ) -> None : monitor , run , _detector = _make_progress_stagnation_monitor ( agent_run_manager = agent_run_manager , temp_db = temp_db , sample_session = sample_session , ) panes = iter ( [ THINKING_PANE , THINKING_PANE_LATER , THINKING_PANE_LATER ] ) async def capture_pane ( _name : str , lines : int = 15 ) -> str : return next ( panes ) with ( patch . object ( monitor . _tmux , \"capture_pane\" , new = capture_pane ) , patch . object ( monitor . _cleanup_handler , \"cleanup_agent\" , new_callable = AsyncMock ) as cleanup_agent , ) : first = await monitor . check_autonomous_stuck_agents ( ) ticking = await monitor . check_autonomous_stuck_agents ( ) fingerprint , _seen = monitor . _draft_grace_observations [ run . id ] monitor . _draft_grace_observations [ run . id ] = ( fingerprint , time . monotonic ( ) - 3600 ) frozen = await monitor . check_autonomous_stuck_agents ( ) assert [ first , ticking , frozen ] == [ 0 , 0 , 1 ] cleanup_agent . assert_awaited_once_with ( run , terminal_payload = \"autonomous stuck: No progress events for 634 seconds\" , )"
+    },
+    {
+      "fingerprint": "04dbf996b38e61a7e9911855ad90b82cc4377c03aaaa8b68a01457faf4d8faea",
+      "path": "tests/agents/watchdog/test_parked_and_in_flight.py",
+      "symbol": "test_live_spinner_defers_stagnation_and_a_frozen_one_does_not",
+      "directive": "noqa",
+      "codes": [
+        "F811"
+      ],
+      "statement": "async def test_live_spinner_defers_stagnation_and_a_frozen_one_does_not ( agent_run_manager : LocalAgentRunManager , temp_db : HubDatabase , sample_session : dict [ str , Any ] , ) -> None : monitor , run , _detector = _make_progress_stagnation_monitor ( agent_run_manager = agent_run_manager , temp_db = temp_db , sample_session = sample_session , ) panes = iter ( [ THINKING_PANE , THINKING_PANE_LATER , THINKING_PANE_LATER ] ) async def capture_pane ( _name : str , lines : int = 15 ) -> str : return next ( panes ) with ( patch . object ( monitor . _tmux , \"capture_pane\" , new = capture_pane ) , patch . object ( monitor . _cleanup_handler , \"cleanup_agent\" , new_callable = AsyncMock ) as cleanup_agent , ) : first = await monitor . check_autonomous_stuck_agents ( ) ticking = await monitor . check_autonomous_stuck_agents ( ) fingerprint , _seen = monitor . _draft_grace_observations [ run . id ] monitor . _draft_grace_observations [ run . id ] = ( fingerprint , time . monotonic ( ) - 3600 ) frozen = await monitor . check_autonomous_stuck_agents ( ) assert [ first , ticking , frozen ] == [ 0 , 0 , 1 ] cleanup_agent . assert_awaited_once_with ( run , terminal_payload = \"autonomous stuck: No progress events for 634 seconds\" , )"
+    },
+    {
+      "fingerprint": "a3996403db11b57e1aaa79014c3fc86e37219ded66d5dc3b7e32c0d42dcd287a",
+      "path": "tests/agents/watchdog/test_parked_and_in_flight.py",
+      "symbol": "test_parked_agent_is_never_reprompted_until_its_wait_resolves",
+      "directive": "noqa",
+      "codes": [
+        "F811"
+      ],
+      "statement": "async def test_parked_agent_is_never_reprompted_until_its_wait_resolves ( agent_run_manager : LocalAgentRunManager , temp_db : HubDatabase , sample_session : dict [ str , Any ] , ) -> None : registry = CompletionEventRegistry ( ) monitor = _idle_monitor ( agent_run_manager , temp_db , registry ) run = _make_terminal_run ( agent_run_manager , sample_session , run_id = _rid ( \"run-parked\" ) , tmux_session_name = \"gobby-parked\" , child_session_id = sample_session [ \"id\" ] , ) registry . register ( _rid ( \"validator-run\" ) , subscribers = [ sample_session [ \"id\" ] ] ) monitor . _idle_detector . get_state ( run . id ) . first_idle_at = time . monotonic ( ) - 360 with ( patch . object ( monitor . _tmux , \"capture_pane\" , new_callable = AsyncMock , return_value = \"\u276f\\n\" ) , patch . object ( monitor . _tmux , \"send_keys\" , new = TerminalWakeRecorder ( ) ) as wake , ) : parked = await monitor . check_idle_agents ( ) await registry . notify ( _rid ( \"validator-run\" ) , { \"status\" : \"success\" } ) monitor . _idle_detector . get_state ( run . id ) . first_idle_at = time . monotonic ( ) - 360 resolved = await monitor . check_idle_agents ( ) assert parked == 0 assert resolved == 1 assert [ keys for _session , keys , _literal in wake . calls ] [ 0 ] == \"Escape\""
+    },
+    {
+      "fingerprint": "a3996403db11b57e1aaa79014c3fc86e37219ded66d5dc3b7e32c0d42dcd287a",
+      "path": "tests/agents/watchdog/test_parked_and_in_flight.py",
+      "symbol": "test_parked_agent_is_never_reprompted_until_its_wait_resolves",
+      "directive": "noqa",
+      "codes": [
+        "F811"
+      ],
+      "statement": "async def test_parked_agent_is_never_reprompted_until_its_wait_resolves ( agent_run_manager : LocalAgentRunManager , temp_db : HubDatabase , sample_session : dict [ str , Any ] , ) -> None : registry = CompletionEventRegistry ( ) monitor = _idle_monitor ( agent_run_manager , temp_db , registry ) run = _make_terminal_run ( agent_run_manager , sample_session , run_id = _rid ( \"run-parked\" ) , tmux_session_name = \"gobby-parked\" , child_session_id = sample_session [ \"id\" ] , ) registry . register ( _rid ( \"validator-run\" ) , subscribers = [ sample_session [ \"id\" ] ] ) monitor . _idle_detector . get_state ( run . id ) . first_idle_at = time . monotonic ( ) - 360 with ( patch . object ( monitor . _tmux , \"capture_pane\" , new_callable = AsyncMock , return_value = \"\u276f\\n\" ) , patch . object ( monitor . _tmux , \"send_keys\" , new = TerminalWakeRecorder ( ) ) as wake , ) : parked = await monitor . check_idle_agents ( ) await registry . notify ( _rid ( \"validator-run\" ) , { \"status\" : \"success\" } ) monitor . _idle_detector . get_state ( run . id ) . first_idle_at = time . monotonic ( ) - 360 resolved = await monitor . check_idle_agents ( ) assert parked == 0 assert resolved == 1 assert [ keys for _session , keys , _literal in wake . calls ] [ 0 ] == \"Escape\""
+    },
+    {
+      "fingerprint": "21bd6d9ee9f856d49b3fba1616c6f795ebf607336bd8d4063a575af85ece151a",
+      "path": "tests/agents/watchdog/test_parked_and_in_flight.py",
+      "symbol": "test_parked_agent_is_not_stagnant_until_its_wait_resolves",
+      "directive": "noqa",
+      "codes": [
+        "F811"
+      ],
+      "statement": "async def test_parked_agent_is_not_stagnant_until_its_wait_resolves ( agent_run_manager : LocalAgentRunManager , temp_db : HubDatabase , sample_session : dict [ str , Any ] , ) -> None : registry = CompletionEventRegistry ( ) monitor , run , _detector = _make_progress_stagnation_monitor ( agent_run_manager = agent_run_manager , temp_db = temp_db , sample_session = sample_session , ) monitor . _completion_registry = registry registry . register ( _rid ( \"validator-run-2\" ) , subscribers = [ sample_session [ \"id\" ] ] ) with ( patch . object ( monitor . _tmux , \"capture_pane\" , new_callable = AsyncMock , return_value = \"\u276f\\n\" ) , patch . object ( monitor . _cleanup_handler , \"cleanup_agent\" , new_callable = AsyncMock ) as cleanup_agent , ) : parked = await monitor . check_autonomous_stuck_agents ( ) await registry . notify ( _rid ( \"validator-run-2\" ) , { \"status\" : \"success\" } ) resolved = await monitor . check_autonomous_stuck_agents ( ) assert parked == 0 assert resolved == 1 cleanup_agent . assert_awaited_once ( )"
+    },
+    {
+      "fingerprint": "21bd6d9ee9f856d49b3fba1616c6f795ebf607336bd8d4063a575af85ece151a",
+      "path": "tests/agents/watchdog/test_parked_and_in_flight.py",
+      "symbol": "test_parked_agent_is_not_stagnant_until_its_wait_resolves",
+      "directive": "noqa",
+      "codes": [
+        "F811"
+      ],
+      "statement": "async def test_parked_agent_is_not_stagnant_until_its_wait_resolves ( agent_run_manager : LocalAgentRunManager , temp_db : HubDatabase , sample_session : dict [ str , Any ] , ) -> None : registry = CompletionEventRegistry ( ) monitor , run , _detector = _make_progress_stagnation_monitor ( agent_run_manager = agent_run_manager , temp_db = temp_db , sample_session = sample_session , ) monitor . _completion_registry = registry registry . register ( _rid ( \"validator-run-2\" ) , subscribers = [ sample_session [ \"id\" ] ] ) with ( patch . object ( monitor . _tmux , \"capture_pane\" , new_callable = AsyncMock , return_value = \"\u276f\\n\" ) , patch . object ( monitor . _cleanup_handler , \"cleanup_agent\" , new_callable = AsyncMock ) as cleanup_agent , ) : parked = await monitor . check_autonomous_stuck_agents ( ) await registry . notify ( _rid ( \"validator-run-2\" ) , { \"status\" : \"success\" } ) resolved = await monitor . check_autonomous_stuck_agents ( ) assert parked == 0 assert resolved == 1 cleanup_agent . assert_awaited_once ( )"
+    },
+    {
+      "fingerprint": "e4103eddcab2975c47db06eeb42190f90eb3d1dcfe37dce70f05b2dae41390fa",
+      "path": "tests/ai/test_agy_probe.py",
+      "symbol": "test_agy_json_probe",
+      "directive": "type: ignore",
+      "codes": [
+        "attr-defined"
+      ],
+      "statement": "result = await service . generate_json ( _request ( f' Return exactly this JSON object with no prose: { \"ok\": true, \"tier\": \" { tier } \"} ' , model , ) )"
+    },
+    {
+      "fingerprint": "80f4e26d44a416777291da4e229cee7fbcce389e16da32c7144f1e2c9569da32",
+      "path": "tests/ai/test_agy_probe.py",
+      "symbol": "test_agy_text_probe",
+      "directive": "type: ignore",
+      "codes": [
+        "attr-defined"
+      ],
+      "statement": "result = await service . generate_result ( _request ( f\" Reply with one short sentence identifying  { tier } . \" , model ) )"
+    },
+    {
+      "fingerprint": "c458dadcfdc42be154095057fc7ad1ab30780baa39ed4a398c7131e0d9fdf87f",
+      "path": "tests/ai/test_embedding_switch_daemon_lifecycle.py",
+      "symbol": "test_generation_gc_waits_for_acknowledgements",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "await vector_store . _call_client ( object ( ) , \"count\" )"
+    },
+    {
+      "fingerprint": "dcc4e9659251d98e225fd7b162f5799166db7e744371ab12f0d433c5f30294b7",
+      "path": "tests/ai/test_embedding_switch_runner.py",
+      "symbol": "test_abort_cleanup_failure_keeps_durable_aborted_journal_for_retry",
+      "directive": "type: ignore",
+      "codes": [
+        "union-attr"
+      ],
+      "statement": "assert get_switch_status ( store ) . phase == PHASE_ABORTED"
+    },
+    {
+      "fingerprint": "86f79c1403b43cb52b7aa5946219580ab11f39d4a241b387a897a35585001f0c",
+      "path": "tests/build/test_dispatcher_stage_wake.py",
+      "symbol": "test_final_worker_submit_for_review_dispatches_reviewer_without_manual_tick",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "loop . dispatch_project_once = dispatch_project_once"
+    },
+    {
+      "fingerprint": "a1a47dc634e16c2b8b6a7b2941c70fac861835fa44bebec1affb800595075f6f",
+      "path": "tests/cli/hub_backup/test_manifest.py",
+      "symbol": "_identity",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "return SourceIdentity ( ** values )"
+    },
+    {
+      "fingerprint": "5de237df8c1771886110bd7be32e423fec326d7ca0d3532c9679c76a9f7dbd42",
+      "path": "tests/cli/test_install_state.py",
+      "symbol": "test_prepare_existing_state_prints_each_section",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "prepare_install_state ( _ConfigStore ( _configured_values ( ) ) , _SecretStore ( { \"embedding-key\" , \"falkor-key\" } ) , )"
+    },
+    {
+      "fingerprint": "5de237df8c1771886110bd7be32e423fec326d7ca0d3532c9679c76a9f7dbd42",
+      "path": "tests/cli/test_install_state.py",
+      "symbol": "test_prepare_existing_state_prints_each_section",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "prepare_install_state ( _ConfigStore ( _configured_values ( ) ) , _SecretStore ( { \"embedding-key\" , \"falkor-key\" } ) , )"
+    },
+    {
+      "fingerprint": "845b893a3ee967806bdf2341a5ba7b2b18afbf265cca45214e88263879762b8b",
+      "path": "tests/cli/test_install_state.py",
+      "symbol": "test_snapshot_rejects_plaintext_canonical_secret_value",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "state = snapshot_install_state ( _ConfigStore ( values ) , _SecretStore ( { \"falkor-key\" } ) , )"
+    },
+    {
+      "fingerprint": "845b893a3ee967806bdf2341a5ba7b2b18afbf265cca45214e88263879762b8b",
+      "path": "tests/cli/test_install_state.py",
+      "symbol": "test_snapshot_rejects_plaintext_canonical_secret_value",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "state = snapshot_install_state ( _ConfigStore ( values ) , _SecretStore ( { \"falkor-key\" } ) , )"
+    },
+    {
+      "fingerprint": "019e4f44a0acd906a2bdf345445d720455dfe3a5629e27280f4dd48d5c677da8",
+      "path": "tests/cli/test_install_state.py",
+      "symbol": "test_snapshot_reports_complete_sections_and_secret_presence",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "state = snapshot_install_state ( _ConfigStore ( _configured_values ( ) ) , _SecretStore ( { \"embedding-key\" , \"falkor-key\" } ) , )"
+    },
+    {
+      "fingerprint": "019e4f44a0acd906a2bdf345445d720455dfe3a5629e27280f4dd48d5c677da8",
+      "path": "tests/cli/test_install_state.py",
+      "symbol": "test_snapshot_reports_complete_sections_and_secret_presence",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "state = snapshot_install_state ( _ConfigStore ( _configured_values ( ) ) , _SecretStore ( { \"embedding-key\" , \"falkor-key\" } ) , )"
+    },
+    {
+      "fingerprint": "55727ec444282fd41614cab33f4eece59cd897390e7b557505dcabb312392af9",
+      "path": "tests/cli/test_services.py",
+      "symbol": "TestIsFalkorDBInstalled.test_injected_database_is_required",
+      "directive": "type: ignore",
+      "codes": [
+        "call-arg"
+      ],
+      "statement": "is_falkordb_installed ( )"
+    },
+    {
+      "fingerprint": "18b1ef1ec6538ce4ba885fc0e8588985ad2ab84aa17863e9bd75691222334b20",
+      "path": "tests/code_index/test_code_index_maintenance.py",
+      "symbol": "test_summarize_unsummarized_marks_failures_and_logs_aggregate",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "await _summarize_unsummarized ( cast ( CodeIndexContext , context ) , SimpleNamespace ( id = \"proj-1\" , root_path = str ( tmp_path ) ) , Summarizer ( ) , batch_size = 3 , )"
+    },
+    {
+      "fingerprint": "79cd902649f6aac97c375b8c1b8af55b95f1e00dfdd8562453b2831ea9d266a8",
+      "path": "tests/code_index/test_nightly_repair.py",
+      "symbol": "test_nightly_repair_concurrency_and_timeout_failure",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "repairer = CodeIndexNightlyRepairer ( context )"
+    },
+    {
+      "fingerprint": "32c4cacbcccea53088205762c7db9e13733929b3112faec04c5b5f4234ec3cbf",
+      "path": "tests/code_index/test_nightly_repair.py",
+      "symbol": "test_nightly_repair_isolates_per_project_exception",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "repairer = CodeIndexNightlyRepairer ( context )"
+    },
+    {
+      "fingerprint": "942bd94d8b08bef96f1cc5433ca3e086ae44ef8e775dfe3b57a6d19ad2315228",
+      "path": "tests/code_index/test_nightly_repair.py",
+      "symbol": "test_nightly_repair_runs_per_project_command_and_writes_log",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "repairer = CodeIndexNightlyRepairer ( context )"
+    },
+    {
+      "fingerprint": "6b6a93ae784262f92b6d283b232b5c7cfd08ef3851d6fead32632faac235f436",
+      "path": "tests/code_index/test_nightly_repair.py",
+      "symbol": "test_nightly_repair_single_flight_skips_concurrent_run",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "repairer = CodeIndexNightlyRepairer ( context )"
+    },
+    {
+      "fingerprint": "6c0d816c9f2279c7ef213694e5fb0604be816bfdf48c4e5e5dbfaf47f34c62d2",
+      "path": "tests/code_index/test_nightly_repair.py",
+      "symbol": "test_register_nightly_repair_cron_creates_global_system_job",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "register_code_index_nightly_repair_cron ( cron_storage = storage , cron_executor = executor , repairer = repairer , config = config , project_id = \"personal\" , )"
+    },
+    {
+      "fingerprint": "b187bc6962323de0765f6e412e5184a0bb12f6deece35bec0b1cae64604354b4",
+      "path": "tests/code_index/test_nightly_repair.py",
+      "symbol": "test_register_nightly_repair_cron_creates_global_system_job",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "repairer = CodeIndexNightlyRepairer ( NightlyContext ( projects = [ ] , gateway = NightlyGateway ( ) , log_file = Path ( \"/tmp/log\" ) ) )"
+    },
+    {
+      "fingerprint": "ae75c5f60d553b76a5681159270c4e22284f1a99c262952733a14be2b08b678b",
+      "path": "tests/code_index/test_nightly_repair.py",
+      "symbol": "test_register_nightly_repair_cron_reconciles_timeout",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "register_code_index_nightly_repair_cron ( cron_storage = storage , cron_executor = CronExecutor ( ) , repairer = repairer , config = CodeIndexConfig ( ) , project_id = \"personal\" , )"
+    },
+    {
+      "fingerprint": "07216ba4f1fc4cf9418998781c71d4ab7b94550220fce7afb396318033877340",
+      "path": "tests/code_index/test_nightly_repair.py",
+      "symbol": "test_register_nightly_repair_cron_reconciles_timeout",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "repairer = CodeIndexNightlyRepairer ( NightlyContext ( projects = [ ] , gateway = NightlyGateway ( ) , log_file = Path ( \"/tmp/log\" ) ) )"
+    },
+    {
+      "fingerprint": "ab13ceafc436be2bc52731df0ff2865d206bac21d2b97403c42dc54c4161e1c6",
+      "path": "tests/code_index/test_prune.py",
+      "symbol": "test_dirty_prune_drains_until_storage_is_empty",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "pruner = CodeIndexPruner ( context )"
+    },
+    {
+      "fingerprint": "f8da0fcbda2beb97794c455b86cd659a6ed5a03ce7323f1951c25afe200f5009",
+      "path": "tests/code_index/test_prune.py",
+      "symbol": "test_dirty_prune_respects_limit",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "pruner = CodeIndexPruner ( context )"
+    },
+    {
+      "fingerprint": "6ceb129318cfa7028927fbd4b3ea2069927ce30c68576f4fcb958fe79170fc9b",
+      "path": "tests/code_index/test_prune.py",
+      "symbol": "test_dirty_prune_touches_deferred_rows_after_scan",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "pruner = CodeIndexPruner ( context )"
+    },
+    {
+      "fingerprint": "19796a04cd1f4330fb89697a5f73d1ffb59ce4a652852b64eb042094def7eb5e",
+      "path": "tests/code_index/test_prune.py",
+      "symbol": "test_global_prune_failure_leaves_project_dirty",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "pruner = CodeIndexPruner ( context )"
+    },
+    {
+      "fingerprint": "89bd7be8113844ce7993a639dd8a375ec7d5dd575138ae2016ec765f36f18cf9",
+      "path": "tests/code_index/test_prune.py",
+      "symbol": "test_global_prune_force_and_retention_reach_prune_project",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "pruner = CodeIndexPruner ( context )"
+    },
+    {
+      "fingerprint": "686eccc21aa65b6beda0ca2d42bba7a652063ea9dd657c1b2a53ee139c28c8e8",
+      "path": "tests/code_index/test_prune.py",
+      "symbol": "test_global_prune_held_lock_returns_successful_skip",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "pruner = CodeIndexPruner ( context )"
+    },
+    {
+      "fingerprint": "23f1fe48f56463717326066c86e95d8833f44b9f97d4f79be2f28ee77c14e915",
+      "path": "tests/code_index/test_prune.py",
+      "symbol": "test_global_prune_runs_in_process_and_clears_dirty_projects",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "pruner = CodeIndexPruner ( context )"
+    },
+    {
+      "fingerprint": "eeaf11597d7ef95c8de9e371cd90cd86b7d63c0269bcfa807538a8b1ab11fb49",
+      "path": "tests/code_index/test_prune.py",
+      "symbol": "test_operator_prune_forwards_retention_days",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "pruner = CodeIndexPruner ( context )"
+    },
+    {
+      "fingerprint": "aa664d54357346d845d787b4d3ed4bc16825cde8052bae9a819cc169e5751eec",
+      "path": "tests/code_index/test_prune.py",
+      "symbol": "test_operator_prune_skips_locked_unless_forced",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "pruner = CodeIndexPruner ( context )"
+    },
+    {
+      "fingerprint": "aeb24cf88b0155f34af89889ec7befd11d5b71b6af314b512967a96aada5a2f0",
+      "path": "tests/code_index/test_prune.py",
+      "symbol": "test_register_code_index_prune_cron_creates_hourly_system_job",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "pruner = CodeIndexPruner ( context )"
+    },
+    {
+      "fingerprint": "eba46532dd275a138c6999f60b5262d066b38fadc0aa5dca46ba6ec3b3711a21",
+      "path": "tests/code_index/test_prune.py",
+      "symbol": "test_register_code_index_prune_cron_creates_hourly_system_job",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "register_code_index_prune_cron ( cron_storage = storage , cron_executor = executor , pruner = pruner , project_id = \"personal\" , )"
+    },
+    {
+      "fingerprint": "85bc5a457d0e6a2396374dd6319bed3c269d774266a5189abb18a92ab6e7ebb8",
+      "path": "tests/code_index/test_prune.py",
+      "symbol": "test_register_code_index_prune_cron_preserves_disabled_job",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "pruner = CodeIndexPruner ( context )"
+    },
+    {
+      "fingerprint": "7b34d115fa9d9b324f9e45195a605a22ebcca1b5b5cd2347bb140af252923872",
+      "path": "tests/code_index/test_prune.py",
+      "symbol": "test_register_code_index_prune_cron_preserves_disabled_job",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "register_code_index_prune_cron ( cron_storage = storage , cron_executor = CronExecutor ( ) , pruner = pruner , project_id = \"personal\" , )"
+    },
+    {
+      "fingerprint": "706235e7eb5b29010a8c9d8ce4249a355ebd5dc95acc6c95e26eb233d8f0d8e9",
+      "path": "tests/code_index/test_prune.py",
+      "symbol": "test_register_code_index_prune_cron_wakes_enabled_job_without_next_run",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "pruner = CodeIndexPruner ( context )"
+    },
+    {
+      "fingerprint": "c11234f30364496db9756456868d23c1bc62576706f9e37b40974bff94c802bc",
+      "path": "tests/code_index/test_prune.py",
+      "symbol": "test_register_code_index_prune_cron_wakes_enabled_job_without_next_run",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "register_code_index_prune_cron ( cron_storage = storage , cron_executor = CronExecutor ( ) , pruner = pruner , project_id = \"personal\" , )"
+    },
+    {
+      "fingerprint": "adde4054782cca7f2b6e6a42062666a96b8f2b57c7117440d8a614b6824f31fd",
+      "path": "tests/code_index/test_prune.py",
+      "symbol": "test_targeted_retry_defers_while_sync_file_work_is_pending",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "pruner = CodeIndexPruner ( PruneContext ( storage , gateway , tmp_path / \"maintenance.log\" ) )"
+    },
+    {
+      "fingerprint": "46399d8f2cfb8353ddb93954d3e185e7a2eea33bf38d9af443c59484c9c33225",
+      "path": "tests/code_index/test_sync_worker_breaker.py",
+      "symbol": "test_daemon_config_failure_resolves_consumed_vector_probe",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "await _sync_pass ( storage = storage , gcode_gateway = gateway , config = _config ( ) , batch_size = 50 , vector_breaker = vector_breaker , gateway_breaker = gateway_breaker , )"
+    },
+    {
+      "fingerprint": "a0f4a0ded64e373fcca782bbb907d3293a53a03c42d65ca522198561ab86cdbf",
+      "path": "tests/code_index/test_sync_worker_breaker.py",
+      "symbol": "test_daemon_config_failure_stops_subprocesses_and_preserves_pending_work",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "await _sync_pass ( storage = storage , gcode_gateway = gateway , config = _config ( graph_enabled = True ) , batch_size = 50 , gateway_breaker = gateway_breaker , )"
+    },
+    {
+      "fingerprint": "a0f4a0ded64e373fcca782bbb907d3293a53a03c42d65ca522198561ab86cdbf",
+      "path": "tests/code_index/test_sync_worker_breaker.py",
+      "symbol": "test_daemon_config_failure_stops_subprocesses_and_preserves_pending_work",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "await _sync_pass ( storage = storage , gcode_gateway = gateway , config = _config ( graph_enabled = True ) , batch_size = 50 , gateway_breaker = gateway_breaker , )"
+    },
+    {
+      "fingerprint": "e59fb7299c5a6e416ffa7a2370edb42b23c256875ca80059407d152cccfd0b8b",
+      "path": "tests/code_index/test_sync_worker_breaker.py",
+      "symbol": "test_daemon_config_half_open_allows_one_probe_then_resumes",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "await _sync_pass ( storage = storage , gcode_gateway = gateway , config = _config ( graph_enabled = True ) , batch_size = 50 , gateway_breaker = gateway_breaker , )"
+    },
+    {
+      "fingerprint": "e59fb7299c5a6e416ffa7a2370edb42b23c256875ca80059407d152cccfd0b8b",
+      "path": "tests/code_index/test_sync_worker_breaker.py",
+      "symbol": "test_daemon_config_half_open_allows_one_probe_then_resumes",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "await _sync_pass ( storage = storage , gcode_gateway = gateway , config = _config ( graph_enabled = True ) , batch_size = 50 , gateway_breaker = gateway_breaker , )"
+    },
+    {
+      "fingerprint": "a7eabf0a5810335f2574e2beae9ac7226e46d1e34d0fa5b1fafa45bf4a1be4c1",
+      "path": "tests/code_index/test_sync_worker_breaker.py",
+      "symbol": "test_embedding_transport_failure_does_not_block_graph_sync",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "await _sync_pass ( storage = storage , gcode_gateway = gateway , config = _config ( graph_enabled = True ) , batch_size = 50 , vector_breaker = vector_breaker , gateway_breaker = gateway_breaker , )"
+    },
+    {
+      "fingerprint": "196df53c125f13902165fa2735d8cfa92c0ab9e0aab9bcbb41101a791693a4c5",
+      "path": "tests/code_index/test_sync_worker_breaker.py",
+      "symbol": "test_half_open_probes_single_file_then_reopens",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "await _sync_pass ( storage = storage , gcode_gateway = gateway , config = _config ( ) , batch_size = 50 , vector_breaker = breaker , )"
+    },
+    {
+      "fingerprint": "f07f163ee41dba5def8c968bb8272312b5f5fe7886f9feaa49fca444307a04a6",
+      "path": "tests/code_index/test_sync_worker_breaker.py",
+      "symbol": "test_open_breaker_fetches_graph_only_batches",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "await _sync_pass ( storage = storage , gcode_gateway = gateway , config = _config ( ) , batch_size = 50 , vector_breaker = breaker , )"
+    },
+    {
+      "fingerprint": "fb7424cc863d58034653b552c5dc70bfaa262fa8355513c8963c01df88636056",
+      "path": "tests/code_index/test_sync_worker_breaker.py",
+      "symbol": "test_open_daemon_config_breaker_allows_graph_terminal_bookkeeping",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "await _sync_pass ( storage = storage , gcode_gateway = gateway , config = _config ( embedding_enabled = False , graph_enabled = True ) , batch_size = 50 , gateway_breaker = gateway_breaker , )"
+    },
+    {
+      "fingerprint": "831e09803c380767d60bae5540ffb8ff05e993ce5f4fec97925cadc43c3d3fc6",
+      "path": "tests/code_index/test_sync_worker_breaker.py",
+      "symbol": "test_per_file_errors_do_not_trip_breaker",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "await _sync_pass ( storage = storage , gcode_gateway = gateway , config = _config ( ) , batch_size = 50 , vector_breaker = breaker , gateway_breaker = gateway_breaker , )"
+    },
+    {
+      "fingerprint": "ada62ec44e21ed027eb4598b44839c4d239a662a60e76721aa0f97ed03b70945",
+      "path": "tests/code_index/test_sync_worker_breaker.py",
+      "symbol": "test_successful_probe_closes_and_pass_resumes",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "await _sync_pass ( storage = storage , gcode_gateway = gateway , config = _config ( ) , batch_size = 50 , vector_breaker = breaker , )"
+    },
+    {
+      "fingerprint": "5bf8cb9479fbfa73be751fb88b5c73925b4e9274db51e1baca952e44a6fad60f",
+      "path": "tests/communications/adapters/test_communications_adapters_email.py",
+      "symbol": "test_imap_oauth2_login_rejects_non_ok_response",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "await adapter . _imap_login ( imap_client )"
+    },
+    {
+      "fingerprint": "ff8282caf4ccc8e368db9a19546f4ed473c732537456958a0a3b41199052e646",
+      "path": "tests/communications/adapters/test_communications_adapters_email.py",
+      "symbol": "test_imap_oauth2_login_uses_aioimaplib_xoauth2",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "await adapter . _imap_login ( imap_client )"
+    },
+    {
+      "fingerprint": "9de108044fdc1ea011b6541ac4373f09d7c0b612582873a89cbac4d6ec1617e8",
+      "path": "tests/communications/adapters/test_identity_contract.py",
+      "symbol": "test_email_poll_populates_identity_contract",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "adapter . _ensure_imap_connected = AsyncMock ( )"
+    },
+    {
+      "fingerprint": "57a65f17899b9bcecfc553f6d5e3b71680a7f64bd5a85b22531487f13bff8d2b",
+      "path": "tests/communications/test_reactions.py",
+      "symbol": "test_handle_reaction_lookups_run_off_event_loop",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "handler . _execute_action = AsyncMock ( )"
+    },
+    {
+      "fingerprint": "6292774e0edb5379c73b38fb85282be06ebbb62a56ee97e074be17340c6214a3",
+      "path": "tests/dispatch/test_daemon_resume.py",
+      "symbol": "test_dirty_daemon_stop_workspace_resumes_before_fresh_spawn",
+      "directive": "type: ignore",
+      "codes": [
+        "index"
+      ],
+      "statement": "assert captured [ \"metadata\" ] [ \"model\" ] == \"gpt-5\""
+    },
+    {
+      "fingerprint": "3e39104e3784af7f6a7b1921afb1f9775b04c933b0e9b969c22e4b1342a1ae93",
+      "path": "tests/dispatch/test_workspace_merge.py",
+      "symbol": "test_integration_mutex_allows_exactly_one_concurrent_lease_holder.acquire",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "return _acquire_integration_mutex ( db , \"epic:123\" )"
+    },
+    {
+      "fingerprint": "d5b44280ca99e548b83da36bc3bb83cb34bc6bdc33b63218f57c70a0f8248170",
+      "path": "tests/e2e/conftest.py",
+      "symbol": "_ValidationLLMHandler.do_POST",
+      "directive": "noqa",
+      "codes": [
+        "N802"
+      ],
+      "statement": "def do_POST ( self ) -> None :"
+    },
+    {
+      "fingerprint": "bb40af065b49e8f65a0ada40b12cf6f650fb4c155298d5b90b77b288302790c3",
+      "path": "tests/e2e/test_build_dispatcher_autonomy.py",
+      "symbol": "MiniBuildHarness.assert_clean_final_state",
+      "directive": "noqa",
+      "codes": [
+        "SLF001"
+      ],
+      "statement": "await wait_for_async_condition ( lambda : not self . loop . _project_tasks , timeout = 2.0 , description = \"scheduled dispatcher tasks drained\" , )"
+    },
+    {
+      "fingerprint": "e563dd40fcdc6d49f14767c983ee600da816a47d6f1231a1307fea6bdb318c97",
+      "path": "tests/e2e/test_build_dispatcher_autonomy.py",
+      "symbol": "MiniBuildHarness.seed",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "self . task_manager . stage_states . initialize_manifest ( self . root_id , resolve_stage_manifest_specs ( self . task_manager , root , \"plan_file\" , BuildOptions ( isolation = \"none\" , skip_stages = self . skipped_stages ) , skip_stages = self . skipped_stages , ) , by_session_id = None , )"
+    },
+    {
+      "fingerprint": "2cc2bff1e987c33fb412a28eae4a5846cd7c7e621e34a897a70c40f7b33f30fc",
+      "path": "tests/e2e/test_plan_coverage_responsiveness.py",
+      "symbol": "test_http_plane_responsive_during_coverage_regeneration._update",
+      "directive": "noqa",
+      "codes": [
+        "BLE001"
+      ],
+      "statement": "except BaseException as exc :"
+    },
+    {
+      "fingerprint": "1fa07d450ffcf78c753cf8748e6592d818625afb9fb93e0363b09c6452f228b9",
+      "path": "tests/github_triage/test_issue_index.py",
+      "symbol": "test_issue_index_holds_project_admission_from_embedding_through_upsert",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "vector_store = ProjectFencedVectorStore ( inner , fence )"
+    },
+    {
+      "fingerprint": "4c0bc752508ae1a605d12ddc4c92a1c7b793b6ca5a23158eea4244b98a7f1ac2",
+      "path": "tests/hooks/event_handlers/test_session_variable_preservation.py",
+      "symbol": "_make_real_event_handlers",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "return EventHandlers ( session_manager = SessionManager ( db ) , get_machine_id = lambda : \"21000000-0000-4000-8000-000000000001\" , resolve_project_id = lambda _project_id , _cwd : project_id , logger = logging . getLogger ( \"test\" ) , )"
+    },
+    {
+      "fingerprint": "5c72b6fe430cc734e585a86c79f973c71bf990ed93684d30e0795559f59e4fcb",
+      "path": "tests/hooks/event_handlers/test_session_variable_preservation.py",
+      "symbol": "test_pre_created_web_chat_seeds_profile_when_activation_skipped",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "handlers = EventHandlers ( session_manager = session_manager , get_machine_id = lambda : \"21000000-0000-4000-8000-000000000001\" , logger = logging . getLogger ( \"test\" ) , )"
+    },
+    {
+      "fingerprint": "c75c086b43f06d6cb66013c7049b0fe54c98a4b1f9b31d3e9f652051220c6783",
+      "path": "tests/hooks/event_handlers/test_session_variable_preservation.py",
+      "symbol": "test_variables_seeded_in_pre_created_session_flow",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "handlers = EventHandlers ( session_manager = session_manager , get_machine_id = lambda : \"21000000-0000-4000-8000-000000000001\" , logger = logging . getLogger ( \"test\" ) , )"
+    },
+    {
+      "fingerprint": "918ae4f087a0809c4d99e514f31f8967c1faa28ccc561856ff178a4e4740aad9",
+      "path": "tests/hooks/test_session_activation_reconciliation.py",
+      "symbol": "handlers",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "return EventHandlers ( session_manager = session_manager )"
+    },
+    {
+      "fingerprint": "28f4de9acc3001fddd0e3b536d839aba3a3b69db2248641e9e8a5a3dd186feb8",
+      "path": "tests/hooks/test_skill_manager.py",
+      "symbol": "TestProjectScopedSkillCache.test_cache_expires_and_mutation_refreshes_immediately",
+      "directive": "type: ignore",
+      "codes": [
+        "attr-defined"
+      ],
+      "statement": "assert manager . _load_from_db . call_count == 1"
+    },
+    {
+      "fingerprint": "31c689a13b249533b31ac08d297fd8f00e5f74103c5bb5856292532117a3cd7e",
+      "path": "tests/hooks/test_skill_manager.py",
+      "symbol": "TestProjectScopedSkillCache.test_cache_expires_and_mutation_refreshes_immediately",
+      "directive": "type: ignore",
+      "codes": [
+        "attr-defined"
+      ],
+      "statement": "assert manager . _load_from_db . call_count == 2"
+    },
+    {
+      "fingerprint": "b1dda7f86b97c6537bd899255ef687302d31c8f7ee83adb6d5750a2e48130c56",
+      "path": "tests/hooks/test_skill_manager.py",
+      "symbol": "TestProjectScopedSkillCache.test_cache_expires_and_mutation_refreshes_immediately",
+      "directive": "type: ignore",
+      "codes": [
+        "attr-defined"
+      ],
+      "statement": "assert manager . _load_from_db . call_count == 3"
+    },
+    {
+      "fingerprint": "12b64a45434bb2a85b34227f10218be37e07c58c3b0bd72b5f79e8912a40fe1e",
+      "path": "tests/hooks/test_skill_manager.py",
+      "symbol": "TestProjectScopedSkillCache.test_cache_expires_and_mutation_refreshes_immediately",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "manager . _load_from_db = MagicMock ( return_value = [ ] )"
+    },
+    {
+      "fingerprint": "441313df9467b0c96c046606b079dcb914ac1736ef174fd1a97662135be30fcf",
+      "path": "tests/hooks/test_skill_manager.py",
+      "symbol": "TestProjectScopedSkillCache.test_filesystem_fallback_is_never_cached",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "manager . _load_from_db = MagicMock ( side_effect = RuntimeError ( \"transient\" ) )"
+    },
+    {
+      "fingerprint": "c02ac4065099d3ea12ffd9ac62139d20bd7a94a5e27b23bc50fd82c3a0e10e4a",
+      "path": "tests/hooks/test_skill_manager.py",
+      "symbol": "TestProjectScopedSkillCache.test_project_skill_is_cached_only_for_its_project",
+      "directive": "type: ignore",
+      "codes": [
+        "attr-defined"
+      ],
+      "statement": "assert manager . _load_from_db . call_args_list == [ call ( \"project-a\" ) , call ( \"project-b\" ) , ]"
+    },
+    {
+      "fingerprint": "e793753a7f7c7cdf41c8a8d111279d8060d9d395a606ed8ae61484ccb20c716e",
+      "path": "tests/hooks/test_skill_manager.py",
+      "symbol": "TestProjectScopedSkillCache.test_project_skill_is_cached_only_for_its_project",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "manager . _load_from_db = MagicMock ( side_effect = lambda project_id : [ project_skill ] if project_id == \"project-a\" else [ ] )"
+    },
+    {
+      "fingerprint": "3ff13553e4eefbaa8d9f3eb92c1d91e58f02648a97f1428760d0b721cdf75279",
+      "path": "tests/install/test_postgres_phase1_dependencies.py",
+      "symbol": "_version_tuple",
+      "directive": "type: ignore",
+      "codes": [
+        "return-value"
+      ],
+      "statement": "return tuple ( int ( part ) for part in parts [ : 3 ] )"
+    },
+    {
+      "fingerprint": "2efa1d2b158ed13fd1c6c9c73dea036ff911bf7fd03eeca0f44cc229af3008c1",
+      "path": "tests/integrations/test_integrations_linear_graphql.py",
+      "symbol": "test_from_database_async_reads_secret_off_event_loop",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "client = await LinearGraphQLClient . from_database_async ( object ( ) )"
+    },
+    {
+      "fingerprint": "193eaefbae01a2a084688a8d468e5be352b5f47c501f29cec648cc97ae2a0282",
+      "path": "tests/llm/test_context_window.py",
+      "symbol": "TestResolveContextWindow.test_rejects_invalid_model",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "resolve_context_window ( 123 )"
+    },
+    {
+      "fingerprint": "9198a56764469f42319457460ec87d72bf091e79e2eaba2a855cd04634529617",
+      "path": "tests/llm/test_context_window.py",
+      "symbol": "TestResolveContextWindow.test_rejects_invalid_overrides",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "resolve_context_window ( None , overrides = [ ] )"
+    },
+    {
+      "fingerprint": "6222889e12078524e8215aa5be2ac6af16d652d62af0341b2c07692ba4d03441",
+      "path": "tests/mcp_proxy/services/test_direct_tool_session_activation.py",
+      "symbol": "_DirectToolService.__init__",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "event_handlers = EventHandlers ( session_manager = session_manager )"
+    },
+    {
+      "fingerprint": "e455d90bc66a69d741e88d83b6ee0f31a737ac364be7e6bc7b58a787135cb2ca",
+      "path": "tests/mcp_proxy/test_semantic_search.py",
+      "symbol": "test_tool_embedding_holds_project_admission_from_embedding_through_upsert",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "vector_store = ProjectFencedVectorStore ( inner , fence )"
+    },
+    {
+      "fingerprint": "5963f86481f8317d45482d63357c47278165f9eb1fd6f06332ab7f2992c56dc3",
+      "path": "tests/mcp_proxy/tools/tasks/test_close_checklist.py",
+      "symbol": "test_escalated_close_without_justification_still_fails_tdd_evidence",
+      "directive": "type: ignore",
+      "codes": [
+        "attr-defined"
+      ],
+      "statement": "assert _gate ( evaluation , 12 ) . status == \"failed\""
+    },
+    {
+      "fingerprint": "e90ba739581c4bc5d54b3942ed358665091e23bd87141884966b5ce5e1672dee",
+      "path": "tests/mcp_proxy/tools/tasks/test_close_checklist.py",
+      "symbol": "test_unescalated_close_with_justification_still_fails_tdd_evidence",
+      "directive": "type: ignore",
+      "codes": [
+        "attr-defined"
+      ],
+      "statement": "assert _gate ( evaluation , 12 ) . status == \"failed\""
+    },
+    {
+      "fingerprint": "d2d2d71f5a3c3dd6688f22ea3ff87d25720cea4962f1e02799d946e471665ca1",
+      "path": "tests/mcp_proxy/transports/test_negotiation.py",
+      "symbol": "_assert_session_usable",
+      "directive": "type: ignore",
+      "codes": [
+        "union-attr"
+      ],
+      "statement": "assert result . content [ 0 ] . text == \"ping\""
+    },
+    {
+      "fingerprint": "28124ad1a3104c940c8a38a0a3948a2738aba5b7b3cd4ec71b2f569c9c5dc00b",
+      "path": "tests/memory/test_cooccurrence_densify.py",
+      "symbol": "_densify",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "return await densify_cooccurrence ( falkor , writer , project_id , weighted = weighted , batch_size = batch_size , max_entities_per_memory = max_entities_per_memory , )"
+    },
+    {
+      "fingerprint": "f4b635c45f00e3097b3513fc3144d44f4a42c1306533a50afd22e98c3aa70a2b",
+      "path": "tests/memory/test_cooccurrence_densify.py",
+      "symbol": "_densify",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "writer = KnowledgeGraphWriter ( falkor )"
+    },
+    {
+      "fingerprint": "1ad6773ed7591bb0654dad90c8a12a5beac2e1b15f708684976b1e2c9509449c",
+      "path": "tests/memory/test_dream_related.py",
+      "symbol": "test_temporal_direction",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "result = _attach_candidate_evidence ( candidate , [ memory . id for memory in memories ] , { memory . id : memory for memory in memories } , keyword_ids = { memory . id for memory in memories } , vector_ids = set ( ) , top_k = 5 , temporal_direction = direction , anchor_at = anchor , scope = RetrievalScope . project_only ( \"project-a\" ) , )"
+    },
+    {
+      "fingerprint": "246d593fef117d92f151e16d63ab661cf43c5b5784ef9e7ee83c4e9d5f046ca8",
+      "path": "tests/memory/test_graph_edge_weighting.py",
+      "symbol": "_reader",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "return KnowledgeGraphReader ( falkor , None , embedding_dim = 8 , graph_edge_decay = graph_edge_decay , edge_half_life_days = edge_half_life_days , cluster_recall_expansion = cluster_recall_expansion , cluster_expansion_per_entity = cluster_expansion_per_entity , )"
+    },
+    {
+      "fingerprint": "c242fd0fd2588aa634ea8ab94580e754df88dbe5dab6f34753e229f1da2b0982",
+      "path": "tests/memory/test_graph_edge_weighting.py",
+      "symbol": "test_fetch_existing_relations_deduplicates_overlap_in_first_seen_order",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "writer = KnowledgeGraphWriter ( RecordingFalkor ( responder ) )"
+    },
+    {
+      "fingerprint": "3c6904fd78747dcb6bbf63299d54ed241943757410c93dbd27e6ef3d74f7e2e4",
+      "path": "tests/memory/test_graph_edge_weighting.py",
+      "symbol": "test_fetch_existing_relations_empty_keys_skips_queries",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "writer = KnowledgeGraphWriter ( falkor )"
+    },
+    {
+      "fingerprint": "c4b9f8176b2c9bce4585555e765f8c76c850fc9becb84e07002d184062e1d636",
+      "path": "tests/memory/test_graph_edge_weighting.py",
+      "symbol": "test_fetch_existing_relations_propagates_directional_failures",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "writer = KnowledgeGraphWriter ( RecordingFalkor ( responder ) )"
+    },
+    {
+      "fingerprint": "6db681aa1c170975fff589d22413b38dc527e28507e270f9726182a971fc3d92",
+      "path": "tests/memory/test_graph_edge_weighting.py",
+      "symbol": "test_fetch_existing_relations_uses_index_anchored_directional_queries",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "writer = KnowledgeGraphWriter ( falkor )"
+    },
+    {
+      "fingerprint": "725b84aa626b5daed4af389acc0d618619b14fe7fcae2c128b1f4a12cef4f699",
+      "path": "tests/memory/test_graph_edge_weighting.py",
+      "symbol": "test_merge_cooccurrence_edges_idempotent_support_no_inflation",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "writer = KnowledgeGraphWriter ( falkor )"
+    },
+    {
+      "fingerprint": "c86c572e33c1dea01530429217d02c4b4e9aa631372ccb806556386ea347d718",
+      "path": "tests/memory/test_graph_edge_weighting.py",
+      "symbol": "test_merge_cooccurrence_edges_idempotent_support_no_inflation",
+      "directive": "type: ignore",
+      "codes": [
+        "index"
+      ],
+      "statement": "row = falkor . find ( \"MERGE (a)-[r:CO_OCCURS]->(b)\" ) [ 0 ] [ 1 ] [ \"rows\" ] [ 0 ]"
+    },
+    {
+      "fingerprint": "2193cbebc0fbb28c13c62e385a55a234332ff75884cab957a115fa58a960dc3f",
+      "path": "tests/memory/test_graph_edge_weighting.py",
+      "symbol": "test_merge_cooccurrence_edges_unweighted_omits_weight_property",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "writer = KnowledgeGraphWriter ( falkor )"
+    },
+    {
+      "fingerprint": "1e4982c6a7a85ca613372818303cf1ab76f77915b5ac948f63c399125ceaf73d",
+      "path": "tests/memory/test_graph_edge_weighting.py",
+      "symbol": "test_merge_cooccurrence_edges_writes_canonical_weighted_edge",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "writer = KnowledgeGraphWriter ( falkor )"
+    },
+    {
+      "fingerprint": "c0ecb974c17d224f0a311624d62eb16efad4b9454637c201399726fb5f048390",
+      "path": "tests/memory/test_graph_edge_weighting.py",
+      "symbol": "test_merge_cooccurrence_edges_zero_support_deletes_and_skips_write",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "writer = KnowledgeGraphWriter ( falkor )"
+    },
+    {
+      "fingerprint": "e343b50ca022b75899322d194fa1b5b5bb9062c6d96edbc3e503f763287c421f",
+      "path": "tests/memory/test_graph_edge_weighting.py",
+      "symbol": "test_service_recluster_uses_configured_density_params",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "service = service_mod . KnowledgeGraphService ( falkor_client = RecordingFalkor ( ) , embed_fn = None , prompt_loader = MagicMock ( ) , llm_service = MagicMock ( ) , feature_config = MemoryKnowledgeGraphConfig ( ) , cluster_min_cluster_size = 7 , cluster_min_samples = None , )"
+    },
+    {
+      "fingerprint": "e06d2df507f1bf43c6bde7e991f91138449d5b20feb5ddf3bde8ca21bf84e8bd",
+      "path": "tests/memory/test_graph_edge_weighting.py",
+      "symbol": "test_service_wires_cluster_recall_flags_to_reader",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "service = service_mod . KnowledgeGraphService ( falkor_client = RecordingFalkor ( ) , embed_fn = None , prompt_loader = MagicMock ( ) , llm_service = MagicMock ( ) , feature_config = MemoryKnowledgeGraphConfig ( ) , cluster_recall_expansion = True , cluster_expansion_per_entity = 9 , )"
+    },
+    {
+      "fingerprint": "3c53e804ca827e3cc4ced3dc76acec7db24d382ff86ab35f611ad52b8df5d933",
+      "path": "tests/memory/test_graph_edge_weighting.py",
+      "symbol": "test_write_entity_clusters_sets_labels_and_clears_noise",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "writer = KnowledgeGraphWriter ( falkor )"
+    },
+    {
+      "fingerprint": "a2714bf4d6489188b1378c2db19bb585f9515815a96e0f334f8c2cc145a3cebd",
+      "path": "tests/memory/test_indexing_service.py",
+      "symbol": "test_global_reindex_acquires_admission_before_source_snapshot",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "service . fetch_all_memories = fetch"
+    },
+    {
+      "fingerprint": "87b9abcdc40945cbad943324a29d666094c7bfc98e57854d4fe1933e48b5ce5d",
+      "path": "tests/memory/test_indexing_service.py",
+      "symbol": "test_global_reindex_routes_rowless_cleanup_through_recreate_fence",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "service . fetch_all_memories = fetch"
+    },
+    {
+      "fingerprint": "56a3d19c8fff90394647da8457d63353dac22b8ed9c8bb20b9e39c46f7733596",
+      "path": "tests/memory/test_indexing_service.py",
+      "symbol": "test_project_reindex_holds_writer_admission_across_embedding_and_batch",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "service = _service ( _MemoryStorage ( [ _memory ( \"mem-1\" , \"alpha\" ) ] ) , vector_store , embed_fn = embed )"
+    },
+    {
+      "fingerprint": "7ea52588c12430259130b2a10ffb0cceec0be73b35e9bca3226b5c336a97f0d3",
+      "path": "tests/memory/test_indexing_service.py",
+      "symbol": "test_project_reindex_holds_writer_admission_across_embedding_and_batch",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "vector_store = ProjectFencedVectorStore ( inner , fence )"
+    },
+    {
+      "fingerprint": "66f007891a305545bf9b88a270d86881f56dcfca71be82631ef455561bfbb8d7",
+      "path": "tests/memory/test_indexing_service.py",
+      "symbol": "test_reconcile_backfill_holds_global_admission_across_embedding_and_batch",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "service = _service ( _MemoryStorage ( [ _memory ( \"missing\" , \"alpha\" ) ] ) , vector_store , embed_fn = embed )"
+    },
+    {
+      "fingerprint": "823eb59a02de35f0a8b9c0c6c40ae666a1570ca5e0cbe9b8d80ef7f7c5f2adb7",
+      "path": "tests/memory/test_indexing_service.py",
+      "symbol": "test_reconcile_backfill_holds_global_admission_across_embedding_and_batch",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "vector_store = ProjectFencedVectorStore ( inner , fence )"
+    },
+    {
+      "fingerprint": "6997018f2dd29f8ec70237849c2762c827a06be117b3aaab63873bdf354e050c",
+      "path": "tests/memory/test_knowledge_graph.py",
+      "symbol": "TestEntityGraphActiveFiltering.test_get_entity_graph_drops_hidden_only_entities_and_relationships",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "reader = KnowledgeGraphReader ( falkor , embed_fn = None , embedding_dim = 768 , active_memory_lookup = _lookup , )"
+    },
+    {
+      "fingerprint": "fe3f58cf5a65e8da1cec0d259649689deb63447107b6a2d6b6a1dd3157a23b98",
+      "path": "tests/memory/test_knowledge_graph.py",
+      "symbol": "TestEntityGraphActiveFiltering.test_get_entity_graph_fails_open_when_backing_lookup_errors",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "reader = KnowledgeGraphReader ( _ErrFalkor ( ) , embed_fn = None , embedding_dim = 768 , active_memory_lookup = _lookup , )"
+    },
+    {
+      "fingerprint": "9b947ac8e3a126e7c013b4e77a46451cf004bb51e35d96a3d294f9e50c6285aa",
+      "path": "tests/memory/test_knowledge_graph.py",
+      "symbol": "TestEntityGraphActiveFiltering.test_get_entity_graph_without_filter_returns_raw",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "reader = KnowledgeGraphReader ( _Falkor ( ) , embed_fn = None , embedding_dim = 768 , )"
+    },
+    {
+      "fingerprint": "e022f77329f70bbcb9ac5d17da3cff2548fca5d847390821d56f71768b940fcd",
+      "path": "tests/memory/test_knowledge_graph_clustering.py",
+      "symbol": "test_recluster_project_entities_passes_density_params",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "result = await clustering_mod . recluster_project_entities ( Reader ( ) , Writer ( ) , \"project-1\" , is_global = False , min_cluster_size = 7 , min_samples = None , )"
+    },
+    {
+      "fingerprint": "e022f77329f70bbcb9ac5d17da3cff2548fca5d847390821d56f71768b940fcd",
+      "path": "tests/memory/test_knowledge_graph_clustering.py",
+      "symbol": "test_recluster_project_entities_passes_density_params",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "result = await clustering_mod . recluster_project_entities ( Reader ( ) , Writer ( ) , \"project-1\" , is_global = False , min_cluster_size = 7 , min_samples = None , )"
+    },
+    {
+      "fingerprint": "e13b74661575bb3afce02dcc1bfa80dd290240d169e33401bdb3fe40b6bba2d8",
+      "path": "tests/memory/test_recall.py",
+      "symbol": "_runner",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "return MemoryRecallRunner ( db = db , memory_manager = manager , config = MemoryRecallConfig ( ) , )"
+    },
+    {
+      "fingerprint": "11a8948a4c4c80c0c0aa9dab8d801a0bf780a465a4a5dad1ab0693a6ed29aade",
+      "path": "tests/memory/test_recall_benchmark.py",
+      "symbol": "_run_arm",
+      "directive": "type: ignore",
+      "codes": [
+        "assignment"
+      ],
+      "statement": "service . _extractor = _StubExtractor ( by_content )"
+    },
+    {
+      "fingerprint": "cb88596f98600a9640c1f49ac69eb64fd17d586ccdb70f2ba0015bce6590e59e",
+      "path": "tests/memory/test_recall_benchmark_e2e.py",
+      "symbol": "_build_service",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "search_service = SearchService ( storage = _MemoryStorage ( corpus , id_map ) , vector_store = vector_store , embed_fn = embed_fn , kg_service = service , keyword_search = lambda query , limit , project_id , * , include_global = True : [ ] , config = MemoryConfig ( cluster_recall_expansion = arm . cluster_recall_expansion , cluster_expansion_per_entity = arm . cluster_expansion_per_entity , ) , falkordb_graph_search = arm . falkordb_graph_search , falkordb_graph_min_score = _GRAPH_MIN_SCORE , rrf_k = 60 , falkordb_rrf_k = 60 , vector_store_failure_logger = lambda message , error : None , run_db = None , search_debug_sink = snapshots . append , )"
+    },
+    {
+      "fingerprint": "e4c8851c9e2d0c98e348fc0adbb6134365280654bcdb5cfc4c9540abbabc56ef",
+      "path": "tests/memory/test_recall_benchmark_e2e.py",
+      "symbol": "_build_service",
+      "directive": "type: ignore",
+      "codes": [
+        "assignment"
+      ],
+      "statement": "service . _extractor = _StubExtractor ( { mem . memory_id : mem for mem in corpus } )"
+    },
+    {
+      "fingerprint": "de005840292be1d1e00aa0f32b909f972a59922fc3f871dfe2513dda87504b7c",
+      "path": "tests/memory/test_recall_benchmark_e2e.py",
+      "symbol": "_run_arm",
+      "directive": "type: ignore",
+      "codes": [
+        "misc"
+      ],
+      "statement": "query_embedding = await search_service . _embed_fn ( query , is_query = True )"
+    },
+    {
+      "fingerprint": "1306c08caa7d2598432446dc9e84219fbe8f238b64eff79c211f3d2d7e693d41",
+      "path": "tests/memory/test_recall_fit.py",
+      "symbol": "TestReplayParamsValidation.test_rejects_out_of_range_params",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "ReplayParams ( ** kwargs )"
+    },
+    {
+      "fingerprint": "68c6c030a3a8a276db738f78b603b572658cac2ce5afadfd17b30e9f9e20a601",
+      "path": "tests/memory/test_recall_fit.py",
+      "symbol": "_semantic_row",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "return _row ( similarity = raw * boost * decay , raw_semantic_score = raw , temporal_decay_factor = decay , ranking_mode = \"semantic_only\" , ranking_score = ranking_score , ** kwargs , )"
+    },
+    {
+      "fingerprint": "e8a9945ba12a56247a20429f74515415931d236d2b6f347f1e46d1745b891f08",
+      "path": "tests/memory/test_search_ranking.py",
+      "symbol": "_fallback_service",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "return SearchService ( storage = _Storage ( memory_ids ) , vector_store = None , embed_fn = None , kg_service = None , keyword_search = lambda query , limit , project_id , * , include_global = True : keyword_results , config = MemoryConfig ( ) , falkordb_graph_search = False , falkordb_graph_min_score = 0.0 , rrf_k = 60 , falkordb_rrf_k = 60 , vector_store_failure_logger = lambda message , error : None , run_db = None , search_debug_sink = search_debug_sink , )"
+    },
+    {
+      "fingerprint": "eb6f2dd988b868ec6b9301a72a3aa7f70dfbcb74359a614970dcf0c0351b5bdb",
+      "path": "tests/memory/test_search_ranking.py",
+      "symbol": "_service",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "return SearchService ( storage = storage or _Storage ( memory_ids ) , vector_store = vector_store or _VectorStore ( vector_results or [ ] ) , embed_fn = embed_fn or _embed , kg_service = object ( ) if falkordb_graph_search else None , keyword_search = keyword_search or ( lambda query , limit , project_id , * , include_global = True : [ ] ) , config = MemoryConfig ( ) , falkordb_graph_search = falkordb_graph_search , falkordb_graph_min_score = 0.0 , rrf_k = 60 , falkordb_rrf_k = 60 , vector_store_failure_logger = lambda message , error : None , run_db = None , search_debug_sink = search_debug_sink , recall_constants = recall_constants , )"
+    },
+    {
+      "fingerprint": "eb6f2dd988b868ec6b9301a72a3aa7f70dfbcb74359a614970dcf0c0351b5bdb",
+      "path": "tests/memory/test_search_ranking.py",
+      "symbol": "_service",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "return SearchService ( storage = storage or _Storage ( memory_ids ) , vector_store = vector_store or _VectorStore ( vector_results or [ ] ) , embed_fn = embed_fn or _embed , kg_service = object ( ) if falkordb_graph_search else None , keyword_search = keyword_search or ( lambda query , limit , project_id , * , include_global = True : [ ] ) , config = MemoryConfig ( ) , falkordb_graph_search = falkordb_graph_search , falkordb_graph_min_score = 0.0 , rrf_k = 60 , falkordb_rrf_k = 60 , vector_store_failure_logger = lambda message , error : None , run_db = None , search_debug_sink = search_debug_sink , recall_constants = recall_constants , )"
+    },
+    {
+      "fingerprint": "eb6f2dd988b868ec6b9301a72a3aa7f70dfbcb74359a614970dcf0c0351b5bdb",
+      "path": "tests/memory/test_search_ranking.py",
+      "symbol": "_service",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "return SearchService ( storage = storage or _Storage ( memory_ids ) , vector_store = vector_store or _VectorStore ( vector_results or [ ] ) , embed_fn = embed_fn or _embed , kg_service = object ( ) if falkordb_graph_search else None , keyword_search = keyword_search or ( lambda query , limit , project_id , * , include_global = True : [ ] ) , config = MemoryConfig ( ) , falkordb_graph_search = falkordb_graph_search , falkordb_graph_min_score = 0.0 , rrf_k = 60 , falkordb_rrf_k = 60 , vector_store_failure_logger = lambda message , error : None , run_db = None , search_debug_sink = search_debug_sink , recall_constants = recall_constants , )"
+    },
+    {
+      "fingerprint": "d6a71dff0a2fa5d968a4b2a94fff825ab94f7a8350c968e25df5ae668340b4c6",
+      "path": "tests/memory/test_search_ranking.py",
+      "symbol": "test_qdrant_keyword_search_propagates_keyword_cancellation",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "service . _keyword_ranked = cancelled_keyword"
+    },
+    {
+      "fingerprint": "cba447c3ac37d2c54b3a4e8e5f60056c40e1db8fa85be3e7687bc7b6baddb87a",
+      "path": "tests/memory/test_search_ranking.py",
+      "symbol": "test_search_with_graph_propagates_graph_cancellation",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "service . _search_graph_scored = cancelled_graph"
+    },
+    {
+      "fingerprint": "a7169a51e1651da80ea022154aa894ea1707f7ef3f788a22114655c6181dd317",
+      "path": "tests/memory/test_search_ranking.py",
+      "symbol": "test_search_with_graph_propagates_keyword_cancellation",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "service . _keyword_ranked = cancelled_keyword"
+    },
+    {
+      "fingerprint": "747fc5b85f75ff5ad0e0a5c8821f097b8aa087c066b16fd9e7c602f8a2260f2c",
+      "path": "tests/memory/test_vectorstore.py",
+      "symbol": "test_rebuild_dimension_mismatch_populates_before_atomic_alias_swap",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "store . _queries . batch_upsert = AsyncMock ( side_effect = batch_upsert )"
+    },
+    {
+      "fingerprint": "d0f68e07abaaf72b1069917decd50370e0f19773c90a6e7af72d8809e7010004",
+      "path": "tests/memory/test_vectorstore.py",
+      "symbol": "test_rebuild_same_dimension_holds_lifecycle_lock_for_expensive_work",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "store . _queries . batch_upsert = AsyncMock ( side_effect = batch_upsert )"
+    },
+    {
+      "fingerprint": "88da57dc7cd73a34fd30b2459e99fd09f043bb5f20fbd318032aa02fb38e9a73",
+      "path": "tests/projects/test_purge_components.py",
+      "symbol": "test_cron_storage_can_park_and_remove_all_project_rows",
+      "directive": "type: ignore",
+      "codes": [
+        "union-attr"
+      ],
+      "statement": "assert storage . get_job ( job . id ) . enabled is False"
+    },
+    {
+      "fingerprint": "3de5e02ba1f9ff947a880ad6194542cb802f62583766786f793fea57424e36b5",
+      "path": "tests/projects/test_purge_components.py",
+      "symbol": "test_shared_vector_writes_hold_project_or_global_fence",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "store = ProjectFencedVectorStore ( Inner ( ) , Fence ( ) )"
+    },
+    {
+      "fingerprint": "35f38713a4d76a8d1655a17764200ad16e5d12a7fc064f4f28edb3fee7cd3591",
+      "path": "tests/projects/test_purge_components.py",
+      "symbol": "test_vector_cleanup_covers_active_and_staged_physical_collections",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "cleaner = ProjectVectorCleaner ( vector_store )"
+    },
+    {
+      "fingerprint": "8f967e214d36b10c27ac062367324a462358c206d3b5928d98698de72bd437a0",
+      "path": "tests/projects/test_write_fence.py",
+      "symbol": "make_lifecycle_service",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "return MemoryLifecycleService ( config = MagicMock ( ) , storage_provider = MagicMock ( ) , backend_provider = MagicMock ( ) , vector_store = vector_store , embed_fn = embed_fn , crossref_service = MagicMock ( ) , dedup_service_provider = lambda : dedup_service , kg_service_provider = lambda : None , background_tasks = background_tasks if background_tasks is not None else set ( ) , record_to_memory = MagicMock ( ) , get_memory = MagicMock ( ) , embed_and_upsert = AsyncMock ( ) , vector_store_failure_logger = MagicMock ( ) , )"
+    },
+    {
+      "fingerprint": "8f967e214d36b10c27ac062367324a462358c206d3b5928d98698de72bd437a0",
+      "path": "tests/projects/test_write_fence.py",
+      "symbol": "make_lifecycle_service",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "return MemoryLifecycleService ( config = MagicMock ( ) , storage_provider = MagicMock ( ) , backend_provider = MagicMock ( ) , vector_store = vector_store , embed_fn = embed_fn , crossref_service = MagicMock ( ) , dedup_service_provider = lambda : dedup_service , kg_service_provider = lambda : None , background_tasks = background_tasks if background_tasks is not None else set ( ) , record_to_memory = MagicMock ( ) , get_memory = MagicMock ( ) , embed_and_upsert = AsyncMock ( ) , vector_store_failure_logger = MagicMock ( ) , )"
+    },
+    {
+      "fingerprint": "f75d77b34e1597e4ad39fb4dd84f422f847396dbee9e1f193127c46352da45d8",
+      "path": "tests/projects/test_write_fence.py",
+      "symbol": "test_memory_writer_finishes_after_purge_claims_exclusive",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "vector_store = ProjectFencedVectorStore ( inner , fence )"
+    },
+    {
+      "fingerprint": "202565ee53da7a491f8f9d5fe254041f43e1d6d31c257a843b23c92a932e9181",
+      "path": "tests/projects/test_write_fence.py",
+      "symbol": "test_spawned_dedup_task_holds_writer_admission_for_full_lifetime",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "vector_store = ProjectFencedVectorStore ( inner , fence )"
+    },
+    {
+      "fingerprint": "c581c43794e2d580493ab6ba0d64398c8ae5100fb64c82bdc31522c5d2a8e5d7",
+      "path": "tests/prompts/test_prompts_loader.py",
+      "symbol": "TestPromptLoader.test_database_is_required",
+      "directive": "type: ignore",
+      "codes": [
+        "call-arg"
+      ],
+      "statement": "PromptLoader ( )"
+    },
+    {
+      "fingerprint": "538bccb1000c16d7e0968d054e64fde7f57e6fabf97ec7d88635d46938647420",
+      "path": "tests/review_learning/test_round_diff.py",
+      "symbol": "<module>",
+      "directive": "noqa",
+      "codes": [
+        "F401"
+      ],
+      "statement": "from tests . storage . stage_review_helpers import ( stage_review_setup as _stage_review_setup , )"
+    },
+    {
+      "fingerprint": "238178418ebc17cc25cca71022ee6c3fd2d311571b973178243e2377dfd6a69d",
+      "path": "tests/runtime_grants/test_revocation.py",
+      "symbol": "_issue",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "return service . issue ( principal = GrantPrincipal ( kind = kind , machine_id = \"machine-1\" , project_id = project_id , execution_id = execution_id , session_id = \"session-1\" , ) , postgres = PostgresDirect ( mode = \"direct\" , dsn = \"postgresql://role:secret@127.0.0.1:5432/gobby\" , role_name = \"gobby_interactive_1\" , credential_generation = 3 , valid_until = now + 3_600 , ) , now = now , ttl_seconds = 3_600 , )"
+    },
+    {
+      "fingerprint": "d363383a35921fb076f5ad0b709bff3e6ae084aa431ac35f723aa21313caf47a",
+      "path": "tests/scheduler/test_system_automation_loop.py",
+      "symbol": "test_automation_tick_timeout_records_failure_and_releases_lock",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "loop . _run_pre_dispatch_maintenance = hang_pre_dispatch"
+    },
+    {
+      "fingerprint": "e46182262bbec9c3347ac1c4f70857924c9a1e4dacca087d3fae9c7a9c0a74a4",
+      "path": "tests/scheduler/test_system_automation_loop.py",
+      "symbol": "test_cancelled_interval_dispatch_cancels_owned_project_task",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "loop . dispatch_project_once = dispatch_project_once"
+    },
+    {
+      "fingerprint": "1aa839d09642178807f284a519f7724d6511b3d6eba45cf28420ffc8eccf3970",
+      "path": "tests/scheduler/test_system_automation_loop.py",
+      "symbol": "test_direct_project_dispatch_wake_queues_followup_when_dispatch_active",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "loop . dispatch_project_once = dispatch_project_once"
+    },
+    {
+      "fingerprint": "072ce08d33058e4addff22cdfa4fca7bfe49ab686ac71832c8551714ceff7718",
+      "path": "tests/scheduler/test_system_automation_loop.py",
+      "symbol": "test_dispatch_projects_isolates_project_failure",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "loop . dispatch_project_once = dispatch_project_once"
+    },
+    {
+      "fingerprint": "1f9c82a9dcec57ef2b6f3ced863730710443f4ec93b94493581c6c88174d6f54",
+      "path": "tests/scheduler/test_system_automation_loop.py",
+      "symbol": "test_dispatch_projects_propagates_project_cancellation",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "loop . dispatch_project_once = dispatch_project_once"
+    },
+    {
+      "fingerprint": "ab0662b98fd2ecf8d334bb9ba2e0b26370b37af8d791392ae7dffd7dc443b2c1",
+      "path": "tests/scheduler/test_system_automation_loop.py",
+      "symbol": "test_interval_dispatches_for_different_projects_run_concurrently",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "loop . dispatch_project_once = dispatch_project_once"
+    },
+    {
+      "fingerprint": "374c2ed6b3bf12fcdb3e50f2a8d72fb4227e29418c95e0047fd05114e7f7ebfe",
+      "path": "tests/scheduler/test_system_automation_loop.py",
+      "symbol": "test_overlapping_interval_dispatches_serialize_and_run_followup",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "loop . dispatch_project_once = dispatch_project_once"
+    },
+    {
+      "fingerprint": "bbd554cb9ea9cc15935b8d08cee21b65a13719af3b2aa99ccbc0736327724ac3",
+      "path": "tests/scheduler/test_system_automation_loop.py",
+      "symbol": "test_queued_project_dispatch_callback_does_no_work_after_stop",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "loop . dispatch_project_once = dispatch_project_once"
+    },
+    {
+      "fingerprint": "4abf2ac81c2b3bc9e551dc659bd9624f1ff7a9b683d0579cca83b2461b4fb6e9",
+      "path": "tests/scheduler/test_system_automation_loop.py",
+      "symbol": "test_queued_targeted_dispatches_merge_task_scope",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "loop . dispatch_project_once = dispatch_project_once"
+    },
+    {
+      "fingerprint": "4f06014ee0531a9f19bc36c58b1d16fb95c5baa36fd2344dd4585a991bf405b3",
+      "path": "tests/servers/routes/test_agents_routes.py",
+      "symbol": "_create_agent_row",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "return manager . upsert_with_steps ( name , dumped , dumped . get ( \"step_workflow\" ) , project_id = project_id , description = body . description , source = source , enabled = enabled , )"
+    },
+    {
+      "fingerprint": "19015640e0b86fb217051b9c0cd10589ae28130791b19c970658e3681b73e31e",
+      "path": "tests/servers/routes/test_code_index_prune_route.py",
+      "symbol": "test_partial_failure_recovery",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "pruner = CodeIndexPruner ( context , max_concurrency = 2 )"
+    },
+    {
+      "fingerprint": "5e56d4830206d1cad68446518c1916edd4a07d17639891744e7cd49259a16548",
+      "path": "tests/servers/routes/test_llm_routes.py",
+      "symbol": "_chat_result",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "return ToolChatResult ( ** base )"
+    },
+    {
+      "fingerprint": "27394148fb78f81b8c60c3ba41baea54280616d1b20e3252588c6af391859d18",
+      "path": "tests/servers/test_app_factory_ui_modes.py",
+      "symbol": "test_proxy_does_not_close_unaccepted_client",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "await app_factory . _proxy_websocket ( websocket , \"ws://localhost:5173/__vite_hmr\" )"
+    },
+    {
+      "fingerprint": "218e2f7e66c7016095942dc75822f46e44cb8bf4e0c522c37af581c969a5f17d",
+      "path": "tests/servers/test_mcp_routes.py",
+      "symbol": "TestSetMCPServerEnabled.test_set_enabled_known_manager_errors_return_failure_response",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "mcp_manager . set_server_enabled = AsyncMock ( side_effect = error )"
+    },
+    {
+      "fingerprint": "3ea2c0b8591be2cf226b7988b5ca321ab60f9648e7d5447cc3a0fda86328c1cd",
+      "path": "tests/servers/test_mcp_routes.py",
+      "symbol": "TestSetMCPServerEnabled.test_set_enabled_not_found",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "mcp_manager . set_server_enabled = AsyncMock ( side_effect = ValueError ( \"MCP server 'nope' not found\" ) )"
+    },
+    {
+      "fingerprint": "3c8528512be0d43cd4310d701dac4cd24a087d22324535dfe66c86ab93e384af",
+      "path": "tests/servers/test_mcp_routes.py",
+      "symbol": "TestSetMCPServerEnabled.test_set_enabled_unexpected_manager_error_propagates",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "mcp_manager . set_server_enabled = AsyncMock ( side_effect = PermissionError ( \"permission denied\" ) )"
+    },
+    {
+      "fingerprint": "449869f56cb71c465f4c9fc6c53d3e88c9356824b9b19c941d11edad878a49c5",
+      "path": "tests/servers/test_websocket_chat_resilience.py",
+      "symbol": "TestClassifyChatError.test_429_status",
+      "directive": "type: ignore",
+      "codes": [
+        "attr-defined"
+      ],
+      "statement": "exc . response = response"
+    },
+    {
+      "fingerprint": "4fbd2863c16cfc48c41d04359174446ef7f1a515c71b2074bd4e9d73f4c3881c",
+      "path": "tests/servers/test_websocket_chat_resilience.py",
+      "symbol": "TestClassifyChatError.test_auth_error",
+      "directive": "type: ignore",
+      "codes": [
+        "attr-defined"
+      ],
+      "statement": "exc . status_code = 401"
+    },
+    {
+      "fingerprint": "ca993d0fa4283b5a0aef3c5dcb07784fa1922504b48579760cda3c8d4573f050",
+      "path": "tests/servers/test_websocket_chat_resilience.py",
+      "symbol": "TestClassifyChatError.test_forbidden",
+      "directive": "type: ignore",
+      "codes": [
+        "attr-defined"
+      ],
+      "statement": "exc . status_code = 403"
+    },
+    {
+      "fingerprint": "8f5ef9c5156f91878b05bf17d15d2a3373e2ed435f28d6fb62b68f113e04c39e",
+      "path": "tests/servers/test_websocket_chat_resilience.py",
+      "symbol": "TestClassifyChatError.test_rate_limit",
+      "directive": "type: ignore",
+      "codes": [
+        "attr-defined"
+      ],
+      "statement": "exc . status_code = 429"
+    },
+    {
+      "fingerprint": "35abdc1d0212b386f9298e64d34fb3ac934e527535f0cbd28d28cd30e47cec72",
+      "path": "tests/servers/websocket/chat/test_acp_plan_revise_loop.py",
+      "symbol": "test_request_changes_then_revised_plan_rebroadcasts_with_feedback",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "await handle_plan_approval_response ( mixin , ws , { \"conversation_id\" : \"conv-1\" , \"decision\" : \"request_changes\" , \"feedback\" : \"Add error handling to step 2\" , } , )"
+    },
+    {
+      "fingerprint": "d1d5061fda754b0a515497c68bd1e96e8d428f541d823040bf07ee97be4062b7",
+      "path": "tests/servers/websocket/chat/test_clear_context_contract.py",
+      "symbol": "test_codex_clear_context_archives_and_starts_fresh_thread",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "backend = CodexWebChatBackend ( client = fake_client )"
+    },
+    {
+      "fingerprint": "54d34e46d2969d105eb77688d94b64f4e46fd2aa3448d64b85171ea99c7528b2",
+      "path": "tests/servers/websocket/chat/test_codex_clear_context.py",
+      "symbol": "_backend_with_fake_client",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "backend = CodexWebChatBackend ( client = fake_client )"
+    },
+    {
+      "fingerprint": "9ffbb4c0bf412813019b187c4cb441bb550500baae85e5ba35837b3623205285",
+      "path": "tests/servers/websocket/chat/test_codex_clear_context.py",
+      "symbol": "test_clear_context_archives_old_thread_and_reattaches",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "backend . attach_session = fake_attach"
+    },
+    {
+      "fingerprint": "63e4a83689da07219a85765f03251391a669e27c292cfb8eac86b6026696ec33",
+      "path": "tests/servers/websocket/chat/test_codex_clear_context.py",
+      "symbol": "test_clear_context_does_not_resume_prior_thread",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "backend = CodexWebChatBackend ( client = fake_client )"
+    },
+    {
+      "fingerprint": "edc3d927a7f792a1c8c7b55a69366657fe54ff068ab46fbcea5f2f3d06765832",
+      "path": "tests/servers/websocket/chat/test_messaging.py",
+      "symbol": "TestClassifyChatError.test_classify",
+      "directive": "type: ignore",
+      "codes": [
+        "attr-defined"
+      ],
+      "statement": "auth_error . status_code = 401"
+    },
+    {
+      "fingerprint": "378fca59a87826d6808cf8b71dfb9b2d0501bf3bc328270eb1f96adcf74be8e4",
+      "path": "tests/servers/websocket/chat/test_messaging.py",
+      "symbol": "TestClassifyChatError.test_classify",
+      "directive": "type: ignore",
+      "codes": [
+        "attr-defined"
+      ],
+      "statement": "rate_limit . status_code = 429"
+    },
+    {
+      "fingerprint": "713dfa28fb42330d44630171325812025c1d4542711d1199f631eb408f5d76b9",
+      "path": "tests/sessions/test_acp_session_mapping.py",
+      "symbol": "test_map_session_info_requires_session_id",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "assert ( map_session_info ( \"not-a-mapping\" , provider = \"grok\" , resolve_project_id = _resolver ( { } ) , ) is None )"
+    },
+    {
+      "fingerprint": "d1b72c472293addda7feddd56682d7123e531a72f0fc640ce695722f48d349c4",
+      "path": "tests/sessions/test_context_usage.py",
+      "symbol": "test_backfill_bumps_under_counted_windows_and_recomputes_ratio",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "result = backfill_session_context_windows ( db )"
+    },
+    {
+      "fingerprint": "ed6c5c259a4defb83dbe8c0ee14be90bc87776ffc374d381a47a93c8391e0e2a",
+      "path": "tests/sessions/test_context_usage.py",
+      "symbol": "test_backfill_dry_run_writes_nothing",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "result = backfill_session_context_windows ( db , dry_run = True )"
+    },
+    {
+      "fingerprint": "31e97d91718c36384d22334f62eb15d38d84a741fa6b3ed4c4b36d0cc4435626",
+      "path": "tests/sessions/test_processor_metadata_exclusion_integration.py",
+      "symbol": "test_live_processor_excludes_metadata_and_persists_observation",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "processor . _broadcast_rendered_session_message = AsyncMock ( side_effect = _capture )"
+    },
+    {
+      "fingerprint": "e507f83f7e90bb509a8696041e23ecb8d9cef9da66441999e8f85dacf43a6f56",
+      "path": "tests/skills/hubs/test_claude_plugins.py",
+      "symbol": "_provider",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "provider . _make_request = AsyncMock ( return_value = { \"skills\" : [ { \"name\" : \"example-skill\" , \"metadata\" : { \"rawFileUrl\" : raw_url } , } ] } )"
+    },
+    {
+      "fingerprint": "be4bcdd652c37e488254ea7f2110bd79accc0123ca97690f13662c0f0a66f0ad",
+      "path": "tests/storage/hub/test_postgres_pool_atexit.py",
+      "symbol": "test_atexit_sweep_continues_past_close_errors",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "failing . close = lambda : ( _ for _ in ( ) ) . throw ( RuntimeError ( \"boom\" ) )"
+    },
+    {
+      "fingerprint": "73e7057f72e41e7bf0311c6aa30ee7faa909d97639f51fdaf9393b74b90493a0",
+      "path": "tests/storage/hub/test_postgres_pool_atexit.py",
+      "symbol": "test_atexit_sweep_continues_past_close_errors",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "failing . close = original_failing_close"
+    },
+    {
+      "fingerprint": "9cefeaa7bae23cd6c2e9002c3a1df91a5b9673235d81f75fa7e8850d88ab5a2f",
+      "path": "tests/storage/sessions/test_lifecycle_expiry.py",
+      "symbol": "test_empty_session_prune_reference_guards_use_postgres_information_schema",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "guards = _build_empty_session_prune_reference_guards ( db )"
+    },
+    {
+      "fingerprint": "fb0084d8c52f8b03e9c686c5706adc7eb6c2573f689ec524be802e32ea3d2b34",
+      "path": "tests/storage/tasks/test_validation_backoff.py",
+      "symbol": "test_get_rejects_unexpected_non_mapping_row_shape",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "store = TaskValidationBackoffStore ( FakeDb ( ) )"
+    },
+    {
+      "fingerprint": "44943f35852feef02435c1103d105ae413e1304ffcd38f0fa338c3d7fb610a6d",
+      "path": "tests/storage/test_context_usage_snapshot.py",
+      "symbol": "test_token_breakdown_ignores_bool_token_values",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "snapshot = ContextUsageSnapshot . from_token_breakdown ( source = \"web_chat\" , context_window = 200_000 , uncached_prompt_tokens = True , cache_read_tokens = False , cache_creation_tokens = True , output_tokens = False , )"
+    },
+    {
+      "fingerprint": "44943f35852feef02435c1103d105ae413e1304ffcd38f0fa338c3d7fb610a6d",
+      "path": "tests/storage/test_context_usage_snapshot.py",
+      "symbol": "test_token_breakdown_ignores_bool_token_values",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "snapshot = ContextUsageSnapshot . from_token_breakdown ( source = \"web_chat\" , context_window = 200_000 , uncached_prompt_tokens = True , cache_read_tokens = False , cache_creation_tokens = True , output_tokens = False , )"
+    },
+    {
+      "fingerprint": "44943f35852feef02435c1103d105ae413e1304ffcd38f0fa338c3d7fb610a6d",
+      "path": "tests/storage/test_context_usage_snapshot.py",
+      "symbol": "test_token_breakdown_ignores_bool_token_values",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "snapshot = ContextUsageSnapshot . from_token_breakdown ( source = \"web_chat\" , context_window = 200_000 , uncached_prompt_tokens = True , cache_read_tokens = False , cache_creation_tokens = True , output_tokens = False , )"
+    },
+    {
+      "fingerprint": "44943f35852feef02435c1103d105ae413e1304ffcd38f0fa338c3d7fb610a6d",
+      "path": "tests/storage/test_context_usage_snapshot.py",
+      "symbol": "test_token_breakdown_ignores_bool_token_values",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "snapshot = ContextUsageSnapshot . from_token_breakdown ( source = \"web_chat\" , context_window = 200_000 , uncached_prompt_tokens = True , cache_read_tokens = False , cache_creation_tokens = True , output_tokens = False , )"
+    },
+    {
+      "fingerprint": "565508ce009654456b05db39e7df7884267d4304782aab72d49cc997d2ceb1ce",
+      "path": "tests/storage/test_context_usage_snapshot.py",
+      "symbol": "test_token_breakdown_ignores_malformed_token_values",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "snapshot = ContextUsageSnapshot . from_token_breakdown ( source = \"web_chat\" , context_window = 200_000 , uncached_prompt_tokens = \"not-a-number\" , cache_read_tokens = object ( ) , cache_creation_tokens = \"5\" , output_tokens = - 3 , )"
+    },
+    {
+      "fingerprint": "565508ce009654456b05db39e7df7884267d4304782aab72d49cc997d2ceb1ce",
+      "path": "tests/storage/test_context_usage_snapshot.py",
+      "symbol": "test_token_breakdown_ignores_malformed_token_values",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "snapshot = ContextUsageSnapshot . from_token_breakdown ( source = \"web_chat\" , context_window = 200_000 , uncached_prompt_tokens = \"not-a-number\" , cache_read_tokens = object ( ) , cache_creation_tokens = \"5\" , output_tokens = - 3 , )"
+    },
+    {
+      "fingerprint": "4c3a757f534daf17129871d7a07e939de30e1f9dc3434447e9f6b0ca3e4ea21c",
+      "path": "tests/storage/test_database_concurrency.py",
+      "symbol": "test_database_concurrency_config_rejects_invalid_values",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "DatabaseConcurrencyConfig ( executor_max_workers = value )"
+    },
+    {
+      "fingerprint": "0b0211e9151e44c8eee7b24cc29817bb9c58a11dff0ea26b89256dc34069ef49",
+      "path": "tests/storage/test_database_concurrency.py",
+      "symbol": "test_watchdog_ignores_sustained_churn_of_fresh_waiters",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "watchdog = DatabaseSaturationWatchdog ( _FakeDatabase ( ) , executor , _FakeCoverage ( ) , resolution , warning_after_seconds = 2 , repeat_seconds = 10 , )"
+    },
+    {
+      "fingerprint": "0b0211e9151e44c8eee7b24cc29817bb9c58a11dff0ea26b89256dc34069ef49",
+      "path": "tests/storage/test_database_concurrency.py",
+      "symbol": "test_watchdog_ignores_sustained_churn_of_fresh_waiters",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "watchdog = DatabaseSaturationWatchdog ( _FakeDatabase ( ) , executor , _FakeCoverage ( ) , resolution , warning_after_seconds = 2 , repeat_seconds = 10 , )"
+    },
+    {
+      "fingerprint": "0b0211e9151e44c8eee7b24cc29817bb9c58a11dff0ea26b89256dc34069ef49",
+      "path": "tests/storage/test_database_concurrency.py",
+      "symbol": "test_watchdog_ignores_sustained_churn_of_fresh_waiters",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "watchdog = DatabaseSaturationWatchdog ( _FakeDatabase ( ) , executor , _FakeCoverage ( ) , resolution , warning_after_seconds = 2 , repeat_seconds = 10 , )"
+    },
+    {
+      "fingerprint": "e578a9f5b0a686b1c7b4dd13a8957d5c60587985c50c2eed6b11a17aaddff140",
+      "path": "tests/storage/test_database_concurrency.py",
+      "symbol": "test_watchdog_logs_sustained_saturation_and_recovery",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "watchdog = DatabaseSaturationWatchdog ( _FakeDatabase ( ) , executor , _FakeCoverage ( ) , resolution , warning_after_seconds = 2 , repeat_seconds = 10 , )"
+    },
+    {
+      "fingerprint": "e578a9f5b0a686b1c7b4dd13a8957d5c60587985c50c2eed6b11a17aaddff140",
+      "path": "tests/storage/test_database_concurrency.py",
+      "symbol": "test_watchdog_logs_sustained_saturation_and_recovery",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "watchdog = DatabaseSaturationWatchdog ( _FakeDatabase ( ) , executor , _FakeCoverage ( ) , resolution , warning_after_seconds = 2 , repeat_seconds = 10 , )"
+    },
+    {
+      "fingerprint": "e578a9f5b0a686b1c7b4dd13a8957d5c60587985c50c2eed6b11a17aaddff140",
+      "path": "tests/storage/test_database_concurrency.py",
+      "symbol": "test_watchdog_logs_sustained_saturation_and_recovery",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "watchdog = DatabaseSaturationWatchdog ( _FakeDatabase ( ) , executor , _FakeCoverage ( ) , resolution , warning_after_seconds = 2 , repeat_seconds = 10 , )"
+    },
+    {
+      "fingerprint": "9c107a6c777e62a82206485b502579e0e84421af78b9486ed512ad9e04bbe07b",
+      "path": "tests/storage/test_datetime_bindings.py",
+      "symbol": "test_memory_access_stats_rejects_invalid_accessed_at_before_transaction",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "access = MemoryQueryMixin ( db )"
+    },
+    {
+      "fingerprint": "47662597b92980a64a6ae0c1b63b2856ab1d3c669772b1c000ea5b876e725cf2",
+      "path": "tests/storage/test_datetime_bindings.py",
+      "symbol": "test_memory_timestamp_writers_and_filters_bind_datetimes",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "access = MemoryQueryMixin ( db )"
+    },
+    {
+      "fingerprint": "716fd0031167ed2b8c0c9d8e8dfe570ac41fa57b51cc8b22f7c77fd55f8f3e34",
+      "path": "tests/storage/test_datetime_bindings.py",
+      "symbol": "test_memory_timestamp_writers_and_filters_bind_datetimes",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "crossrefs = MemoryCrossRefMixin ( db )"
+    },
+    {
+      "fingerprint": "b2c9242a4dc71948b4298c9654e06893c6a62ef628de14fedeb4d2dbd1aac78f",
+      "path": "tests/storage/test_datetime_bindings.py",
+      "symbol": "test_memory_timestamp_writers_and_filters_bind_datetimes",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "dreams = MemoryDreamMixin ( db )"
+    },
+    {
+      "fingerprint": "ac61a800343a37eac061f1be8a65826f4bf4c53caca91178e273782976944a97",
+      "path": "tests/storage/test_datetime_bindings.py",
+      "symbol": "test_metrics_event_store_binds_datetimes_for_filters_and_archive",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "store = MetricsEventStore ( db )"
+    },
+    {
+      "fingerprint": "3bb9d83d595fd0733df91d358831d85267b147a387027c990f34b5d8f0bbdad9",
+      "path": "tests/storage/test_datetime_bindings.py",
+      "symbol": "test_schema_hash_manager_binds_verification_timestamps_as_datetimes",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "manager = SchemaHashManager ( db )"
+    },
+    {
+      "fingerprint": "e2023040872399655abc2775f1df3914706ce580e5c7dda9b09b79b7e89cd66b",
+      "path": "tests/storage/test_datetime_bindings.py",
+      "symbol": "test_task_mutex_acquire_binds_aware_datetime_values",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "manager = TaskDispatchMutexManager ( db )"
+    },
+    {
+      "fingerprint": "eb747b2506fce07a986bf101a36820eca202348458b9abbc998a133874407233",
+      "path": "tests/storage/test_datetime_bindings.py",
+      "symbol": "test_tool_metrics_store_binds_datetimes_for_writes_and_cutoffs",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "store = ToolMetricsStore ( db )"
+    },
+    {
+      "fingerprint": "b4b4f43c2597510afcf726733c8f80f47be5f6ccb6634d0a129555e3d59ce1c5",
+      "path": "tests/storage/test_datetime_bindings.py",
+      "symbol": "test_worktree_and_clone_create_bind_and_return_datetimes",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "clone = LocalCloneManager ( clone_db )"
+    },
+    {
+      "fingerprint": "384421c436f8144c533fa40db1967707267a9adee40fe9214e148bacd322cb71",
+      "path": "tests/storage/test_datetime_bindings.py",
+      "symbol": "test_worktree_and_clone_create_bind_and_return_datetimes",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "worktree = LocalWorktreeManager ( worktree_db )"
+    },
+    {
+      "fingerprint": "a105b3c0a1bf73e354ba3e74e09c5c6f685667eaa32db8920b7846c6009eee6d",
+      "path": "tests/storage/test_embedding_switch_config_contract.py",
+      "symbol": "test_real_config_store_persists_phase_error_and_abort_cleanup_lifecycle",
+      "directive": "type: ignore",
+      "codes": [
+        "union-attr"
+      ],
+      "statement": "assert get_switch_status ( store ) . run_id == journal . run_id"
+    },
+    {
+      "fingerprint": "a6192e8f473a11c6fcef0093528e88376e4e7d70a792f85c6b406a300117d4de",
+      "path": "tests/storage/test_manager_surface_parity.py",
+      "symbol": "test_subtree_cascade_serializes_overlapping_subtrees",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "db . transaction_immediate = recording_transaction"
+    },
+    {
+      "fingerprint": "d0c9b2eba1c8563602c6ac5abe184bda4de7ac8b0dfddb9c9eb6ed4dcf212045",
+      "path": "tests/storage/test_personal_remote_init.py",
+      "symbol": "test_remote_ensure_upserts_sentinel_without_personal_tree",
+      "directive": "type: ignore",
+      "codes": [
+        "attr-defined"
+      ],
+      "statement": "db = project_manager . db"
+    },
+    {
+      "fingerprint": "c75cf0a9250e3499901d55c951ebc40e5de83fc2d5faf69ae850833a26a9108f",
+      "path": "tests/storage/test_secrets_store.py",
+      "symbol": "TestSecretInfo.test_slots",
+      "directive": "noqa",
+      "codes": [
+        "B010"
+      ],
+      "statement": "setattr ( info , \"nonexistent\" , \"value\" )"
+    },
+    {
+      "fingerprint": "5038f5673f5343e01748c198b6d0ef64488dddf5fefbc36c50f7f1c98e70510f",
+      "path": "tests/storage/test_sql_dialect.py",
+      "symbol": "test_completion_notification_query_uses_postgres_jsonb_without_json_valid",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "manager = InterSessionMessageManager ( db )"
+    },
+    {
+      "fingerprint": "d146534bdfe3acde01701eb1e8679a98b6cf8e1b019a08b57473b6aaf2abdd55",
+      "path": "tests/storage/test_sql_dialect.py",
+      "symbol": "test_metric_snapshot_queries_use_postgres_intervals",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "storage = MetricSnapshotStorage ( db )"
+    },
+    {
+      "fingerprint": "d7c4cd613fc3df4ac9a25ca4244eec97c1007264f08a673786638ce95abbebb7",
+      "path": "tests/storage/test_sql_dialect.py",
+      "symbol": "test_skill_list_negative_limit_omits_limit_for_postgres",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "manager = LocalSkillManager ( db )"
+    },
+    {
+      "fingerprint": "5b26c6580a7297da663dc34357f3b898bec16ff7dc77acef54572594f4da923c",
+      "path": "tests/storage/test_sql_dialect.py",
+      "symbol": "test_table_column_names_uses_information_schema_for_postgres",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "db . fetchall = fetchall"
+    },
+    {
+      "fingerprint": "4d052d9d22ae2d0e115a28b8d8fd3e9e6f1d3386b24a45493efaf2d88f852619",
+      "path": "tests/storage/test_sql_dialect.py",
+      "symbol": "test_task_list_label_filter_uses_postgres_jsonb_contains",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "manager = LocalTaskManager ( db )"
+    },
+    {
+      "fingerprint": "0bf962a9b8809e82bb56d8951decd553db26400e3a6bde7b36a131410bee6ea7",
+      "path": "tests/storage/test_sql_dialect.py",
+      "symbol": "test_token_timeseries_uses_postgres_bucket_and_window_sql",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "store = TokenEventStore ( db )"
+    },
+    {
+      "fingerprint": "a5fec0b4ac17fe6adad45359ac88782a89d5054548e6b3f1943f45d91d4f59ec",
+      "path": "tests/storage/test_stage_review_findings.py",
+      "symbol": "<module>",
+      "directive": "noqa",
+      "codes": [
+        "F401"
+      ],
+      "statement": "from tests . storage . stage_review_helpers import ( stage_review_setup as _stage_review_setup , )"
+    },
+    {
+      "fingerprint": "f11d1852f0b3b9cba19b8395623fdc0b6c6ed7ddcbb4611d2180a2de5416d0b0",
+      "path": "tests/storage/test_storage_mcp.py",
+      "symbol": "TestMCPServer.test_upsert_rejects_ambiguous_boolean_string",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "mcp_manager . upsert ( name = \"bad-bool-server\" , transport = \"http\" , url = \"http://localhost:8080\" , enabled = \"maybe\" , project_id = sample_project [ \"id\" ] , )"
+    },
+    {
+      "fingerprint": "ca907e6333db8d6afa1201c8fa263f06c632a0dc7e2ad9051ad8ae4b90c1152b",
+      "path": "tests/storage/test_storage_memories.py",
+      "symbol": "test_storage_create_requires_concrete_owner",
+      "directive": "type: ignore",
+      "codes": [
+        "call-arg"
+      ],
+      "statement": "manager . create_memory ( content = \"owner required\" )"
+    },
+    {
+      "fingerprint": "2d90f1ffead213bbe75afe3e81ec4ff5d87c0944ce6e99a1744b8098a0dcca37",
+      "path": "tests/storage/test_storage_memories.py",
+      "symbol": "test_visibility_predicate_rejects_unknown",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "visibility_predicate ( \"bogus\" )"
+    },
+    {
+      "fingerprint": "ffd1524098e8b8fa5c236ef9ee7305d0b0869228fe62b0d5112dabebe45aa932",
+      "path": "tests/sync/test_linear_sync.py",
+      "symbol": "TestLinearSyncServiceSync.test_pull_updates_counts_permanent_graphql_failure_as_errors",
+      "directive": "type: ignore",
+      "codes": [
+        "attr-defined"
+      ],
+      "statement": "sync_service . _get_graphql_client . assert_awaited_once_with ( )"
+    },
+    {
+      "fingerprint": "4ca0d2300a434838cd5a36a21ff8c044c2d9d1b513a06e92a7f0d1a805b18583",
+      "path": "tests/sync/test_linear_sync.py",
+      "symbol": "TestLinearSyncServiceSync.test_pull_updates_counts_permanent_graphql_failure_as_errors",
+      "directive": "type: ignore",
+      "codes": [
+        "attr-defined"
+      ],
+      "statement": "sync_service . _linear_mcp_has_tool . assert_called_once_with ( \"list_issues\" )"
+    },
+    {
+      "fingerprint": "9cb971373635039b344e8393e4c4d0b6e78c6f48be62814f7fe01156c315a185",
+      "path": "tests/sync/test_linear_sync.py",
+      "symbol": "TestLinearSyncServiceSync.test_pull_updates_defers_transient_graphql_fetch_for_all_linked_tasks",
+      "directive": "type: ignore",
+      "codes": [
+        "attr-defined"
+      ],
+      "statement": "sync_service . _get_graphql_client . assert_awaited_once_with ( )"
+    },
+    {
+      "fingerprint": "b3b84099e005e4b339fbded0561cdb511f844013b38cce71ef797769c1a085fa",
+      "path": "tests/sync/test_linear_sync.py",
+      "symbol": "TestLinearSyncServiceSync.test_pull_updates_defers_transient_graphql_fetch_for_all_linked_tasks",
+      "directive": "type: ignore",
+      "codes": [
+        "attr-defined"
+      ],
+      "statement": "sync_service . _linear_mcp_has_tool . assert_called_once_with ( \"list_issues\" )"
+    },
+    {
+      "fingerprint": "dcccac98d3a4fcd2814c5d2b50e36b53d70a14cf618b548174c7f1330fba3800",
+      "path": "tests/tasks/test_expansion_qa_coverage.py",
+      "symbol": "test_hash_prefixed_root_ref_matches_registry_written_manifest",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "result = qa_module . run_expansion_qa_coverage ( task_manager = task_manager , run = _FakeRun ( ) , repo_path = tmp_path , plan_path = \"plan.md\" , plan_id = \"plan\" , plan_hash = plan_hash , root_task_ref = f\" # { _ROOT_REF } \" , project_id = _PROJECT_ID , evaluator = _evaluator , )"
+    },
+    {
+      "fingerprint": "dcccac98d3a4fcd2814c5d2b50e36b53d70a14cf618b548174c7f1330fba3800",
+      "path": "tests/tasks/test_expansion_qa_coverage.py",
+      "symbol": "test_hash_prefixed_root_ref_matches_registry_written_manifest",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "result = qa_module . run_expansion_qa_coverage ( task_manager = task_manager , run = _FakeRun ( ) , repo_path = tmp_path , plan_path = \"plan.md\" , plan_id = \"plan\" , plan_hash = plan_hash , root_task_ref = f\" # { _ROOT_REF } \" , project_id = _PROJECT_ID , evaluator = _evaluator , )"
+    },
+    {
+      "fingerprint": "d1c29048d526801b1ec0cc1078b1a005fc1afcfa064e3e90dd78717095b68299",
+      "path": "tests/telemetry/test_otel_collector_config.py",
+      "symbol": "_make_otlp_handler._OTLPHandler.do_POST",
+      "directive": "noqa",
+      "codes": [
+        "N802"
+      ],
+      "statement": "def do_POST ( self ) -> None :"
+    },
+    {
+      "fingerprint": "1a9883cd0b356d36135c5ff414ac65aa5d058a93db98889f2dd604f4b865e9e2",
+      "path": "tests/test_runner_model_metadata_refresh.py",
+      "symbol": "test_blocked_connect_terminates_without_running_db_work",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "await replace_model_metadata_async ( SimpleNamespace ( conninfo = \"postgresql://metadata\" ) , [ _model ( ) ] , )"
+    },
+    {
+      "fingerprint": "afa6a9dc9227f423ad2a88f937d60fadb7edd4b321b81d8f5e77f943df85665b",
+      "path": "tests/test_runner_model_metadata_refresh.py",
+      "symbol": "test_blocked_db_statements_terminate_without_post_teardown_activity",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "await replace_model_metadata_async ( SimpleNamespace ( conninfo = \"postgresql://metadata\" ) , [ _model ( ) ] , )"
+    },
+    {
+      "fingerprint": "2477652c145033703c6a6f43fb58543b1ab09f5e4e87413b343252d172d97d26",
+      "path": "tests/test_runner_model_metadata_refresh.py",
+      "symbol": "test_cumulative_delete_insert_deadline_is_end_to_end",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "await replace_model_metadata_async ( SimpleNamespace ( conninfo = \"postgresql://metadata\" ) , [ _model ( ) ] , )"
+    },
+    {
+      "fingerprint": "c4bd5802ff495a2a878989e95be35a1775aa1bc8060fe4857499128a1fcd939b",
+      "path": "tests/test_runner_model_metadata_refresh.py",
+      "symbol": "test_replace_uses_bounded_four_statement_contract",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "inserted = await replace_model_metadata_async ( SimpleNamespace ( conninfo = \"postgresql://metadata\" ) , [ _model ( ) ] , )"
+    },
+    {
+      "fingerprint": "9420b2d4d43b7d52e46c5d2f4dedb9ff5aa4115a28124a8d83d46b23f1e3174e",
+      "path": "tests/test_runner_model_metadata_refresh.py",
+      "symbol": "test_shutdown_cancels_fetch_and_is_idempotent",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "task = asyncio . create_task ( refresh_model_metadata_once ( database ) )"
+    },
+    {
+      "fingerprint": "610f80575378f9adfb69f1cc68315c7cb3348ff0414c9500fa0b5660d4d10a4e",
+      "path": "tests/utils/test_stream_pump.py",
+      "symbol": "test_a_quiet_codex_read_loop_leaves_the_default_executor_free",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "task = asyncio . create_task ( read_loop ( client ) )"
+    },
+    {
+      "fingerprint": "9eb2404610d5b05e4ea3a40d287320684f8ef69a8b47bd18ab4b8979d3cf74b8",
+      "path": "tests/utils/test_stream_pump.py",
+      "symbol": "test_liveness_answers_while_the_default_executor_is_exhausted",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "router = create_health_router ( SimpleNamespace ( get_runner = lambda : None ) )"
+    },
+    {
+      "fingerprint": "71189a8005c2cfd81a09fcf99f44a2f43bd1fc41f331b89dabe169f6f89d7c4c",
+      "path": "tests/utils/test_stream_pump.py",
+      "symbol": "test_liveness_answers_while_the_default_executor_is_exhausted",
+      "directive": "type: ignore",
+      "codes": [
+        "attr-defined"
+      ],
+      "statement": "endpoint = next ( route . endpoint for route in router . routes if route . path == \"/api/health\" )"
+    },
+    {
+      "fingerprint": "7e5983a5930078882953287b86c6b26300b274eab62dfcb4d31f7ef9967be014",
+      "path": "tests/utils/test_stream_pump.py",
+      "symbol": "test_reaping_a_stubborn_codex_child_leaves_the_default_executor_free",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "stopping = asyncio . create_task ( stop ( client ) )"
+    },
+    {
+      "fingerprint": "79c85b1cd5f18e7c7cb95cb83ee28b0413f98f413c7aebd87859e1c2b8e96dc0",
+      "path": "tests/voice/conftest.py",
+      "symbol": "make_fake_torch",
+      "directive": "type: ignore",
+      "codes": [
+        "attr-defined"
+      ],
+      "statement": "fake . backends = SimpleNamespace ( mps = SimpleNamespace ( is_available = lambda : False ) )"
+    },
+    {
+      "fingerprint": "f79eee5a08d8f354d169a6f540bc7cdb6a57d9eec56f2572682c1393791d0e15",
+      "path": "tests/voice/conftest.py",
+      "symbol": "make_fake_torch",
+      "directive": "type: ignore",
+      "codes": [
+        "attr-defined"
+      ],
+      "statement": "fake . cuda = SimpleNamespace ( is_available = lambda : False )"
+    },
+    {
+      "fingerprint": "70a61684945053b6803d0a641c0184366c79868c75c113aadfc40781d8b431ee",
+      "path": "tests/voice/conftest.py",
+      "symbol": "make_fake_torch",
+      "directive": "type: ignore",
+      "codes": [
+        "attr-defined"
+      ],
+      "statement": "fake . mps = SimpleNamespace ( empty_cache = lambda : None , set_per_process_memory_fraction = lambda fraction : None , recommended_max_memory = lambda : 24 * 1024 ** 3 , )"
+    },
+    {
+      "fingerprint": "04afe6a31d1b72ea625b3de7820b84fc9bf98f6cbd80c8f9d1300661bfc30361",
+      "path": "tests/voice/test_tts_chatterbox.py",
+      "symbol": "TestMpsGuardrails.test_apply_mps_memory_cap_converts_absolute_limit_to_fraction",
+      "directive": "type: ignore",
+      "codes": [
+        "attr-defined"
+      ],
+      "statement": "fake_torch . mps = SimpleNamespace ( set_per_process_memory_fraction = calls . append , recommended_max_memory = lambda : 24 * 1024 ** 3 , )"
+    },
+    {
+      "fingerprint": "9ebc8cede3c7b05ccb6e6c601c8158310d2669b03e0fe8ec0d8f4f3044df79be",
+      "path": "tests/voice/test_tts_chatterbox.py",
+      "symbol": "TestMpsGuardrails.test_release_mps_cache_is_never_the_first_mps_touch",
+      "directive": "type: ignore",
+      "codes": [
+        "attr-defined"
+      ],
+      "statement": "fake_torch . mps = SimpleNamespace ( empty_cache = lambda : called . append ( True ) )"
+    },
+    {
+      "fingerprint": "029680316ecf770bb1679390a63eafc0b8df933747be245b4666ff59eb4adb50",
+      "path": "tests/wiki/test_prune_job.py",
+      "symbol": "test_register_wiki_prune_cron_creates_hourly_system_job",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "register_wiki_prune_cron ( cron_storage = storage , cron_executor = executor , gateway = gateway , project_id = \"personal\" , )"
+    },
+    {
+      "fingerprint": "58e2e2263c5ebce712c2f7f41b72abab2647aab6e432516446d5862da44eafb2",
+      "path": "tests/wiki/test_prune_job.py",
+      "symbol": "test_register_wiki_prune_cron_preserves_toggle_and_wakes_only_enabled_rows",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "register_wiki_prune_cron ( cron_storage = storage , cron_executor = RecordingExecutor ( ) , gateway = RecordingGateway ( _result ( ) ) , project_id = \"personal\" , )"
+    },
+    {
+      "fingerprint": "391876174d2715cf13df09b99f59fc991308cdf38fcba9f60b8fde1818b7203b",
+      "path": "tests/wiki/test_prune_job.py",
+      "symbol": "test_registered_wiki_prune_handler_is_callable",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "result = await handler ( SimpleNamespace ( ) )"
+    },
+    {
+      "fingerprint": "f7427cf171cd86b48517d986e510a0dec5bdea075ce859e76c25a3e710208f1e",
+      "path": "tests/wiki/test_prune_job.py",
+      "symbol": "test_wiki_prune_handler_reports_command_failure",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "result = await handler ( SimpleNamespace ( ) )"
+    },
+    {
+      "fingerprint": "f91b93bb63c85f9713dcf51986a61ee39ca7da3072dcd7d70b0a2c8e18f38142",
+      "path": "tests/wiki/test_prune_job.py",
+      "symbol": "test_wiki_prune_handler_reports_timeout_and_unavailable",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "timeout_result = await timed_out ( SimpleNamespace ( ) )"
+    },
+    {
+      "fingerprint": "09b25b74cbb30510ec89b15e5a3a0f92ddcdc25a78567c9e46054c12bdece6cc",
+      "path": "tests/wiki/test_prune_job.py",
+      "symbol": "test_wiki_prune_handler_reports_timeout_and_unavailable",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "unavailable = await create_wiki_prune_handler ( UnavailableGateway ( ) ) ( SimpleNamespace ( ) )"
+    },
+    {
+      "fingerprint": "09b25b74cbb30510ec89b15e5a3a0f92ddcdc25a78567c9e46054c12bdece6cc",
+      "path": "tests/wiki/test_prune_job.py",
+      "symbol": "test_wiki_prune_handler_reports_timeout_and_unavailable",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "unavailable = await create_wiki_prune_handler ( UnavailableGateway ( ) ) ( SimpleNamespace ( ) )"
+    },
+    {
+      "fingerprint": "d166e7588db8538ca7b57e5b09498842810652c443e4f7408541178d64221d6d",
+      "path": "tests/workflows/test_agent_resolver.py",
+      "symbol": "_create_agent",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "return manager . create ( name , payload , project_id = project_id , source = source )"
+    },
+    {
+      "fingerprint": "6adceb3baa2a0ab10becb069408b1c9d5825eeda95dafaec73e2490cd22f6117",
+      "path": "tests/workflows/test_agent_resolver.py",
+      "symbol": "_create_agent",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "return manager . upsert_with_steps ( name , payload , step_workflow , project_id = project_id , source = source , )"
+    },
+    {
+      "fingerprint": "74ab83df420cabc1f9fcc2ba09af017a3168da7e745d85ff41f72fbe5b547206",
+      "path": "tests/workflows/test_condition_helpers_task_state.py",
+      "symbol": "test_task_state_in_matches_current_stage_state",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "assert task_state_in ( manager , task . id , \" NEEDS_REVIEW \" , 42 ) is True"
+    },
+    {
+      "fingerprint": "2cf35001b676f72e07c4a0e679353790afcf0755684ef85b6112127e3ff9e5de",
+      "path": "tests/workflows/test_evaluation_runtime.py",
+      "symbol": "test_init_waits_for_loop_start_so_immediate_run_succeeds.gated_loop",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "loop . run_forever = gated_run_forever"
+    },
+    {
+      "fingerprint": "a44c93b7a5fc9da696a3560baf409b44b05b905722310c969ac3eb0952093360",
+      "path": "tests/workflows/test_evaluation_runtime.py",
+      "symbol": "test_stalled_to_thread_dependency_respects_evaluation_timeout",
+      "directive": "type: ignore",
+      "codes": [
+        "assignment",
+        "method-assign"
+      ],
+      "statement": "handler . _evaluate_rules = evaluate"
+    },
+    {
+      "fingerprint": "68cf1d1f2acbab2953dcffe0786adcbc206ac7ba735f6feb94e3536c0d65a538",
+      "path": "tests/workflows/test_pipeline_executor.py",
+      "symbol": "TestStartDetached.test_start_detached_approval_park_is_not_an_error",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "executor . execute = AsyncMock ( side_effect = ApprovalRequired ( execution_id = \"pe-test-123\" , step_id = \"gate\" , token = \"tok-1\" , message = \"approve me\" , ) )"
+    },
+    {
+      "fingerprint": "197bbf875913aed102e78709cb1fceffa8499fce17e485f53482bd6662580f5d",
+      "path": "tests/workflows/test_pipeline_executor.py",
+      "symbol": "TestStartDetached.test_start_detached_failure_is_logged_and_discarded",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "executor . execute = AsyncMock ( side_effect = RuntimeError ( \"boom\" ) )"
+    },
+    {
+      "fingerprint": "54ca862ea5a3405c3b795257f0fff6670590813af78e75e6fcaa89ec00a879e4",
+      "path": "tests/workflows/test_pipeline_executor.py",
+      "symbol": "TestStartupSweep.test_startup_sweep_excludes_inflight_detached_runs",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "executor . execute = AsyncMock ( side_effect = _blocked_execute )"
+    },
+    {
+      "fingerprint": "88ee245d41762f5cf230f030a30ed8a8933fa90807595834ca51ea38de2fee49",
+      "path": "tests/workflows/test_pipeline_executor_approvals.py",
+      "symbol": "TestApproveReject.test_approve_uses_definition_snapshot_instead_of_edited_pipeline",
+      "directive": "type: ignore",
+      "codes": [
+        "method-assign"
+      ],
+      "statement": "executor . execute = AsyncMock ( return_value = mock_exec )"
+    },
+    {
+      "fingerprint": "721c0c5aa34efdc6a678ecb5feee0014554e8960a7d845fa49da77884d5812ea",
+      "path": "tests/workflows/test_pipeline_loader.py",
+      "symbol": "_seed_pipeline",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "PipelineDefinitionManager ( db ) . create ( name = name , definition_json = body , enabled = enabled , project_id = project_id , tags = tags or [ \"gobby\" ] , source = source , )"
+    },
+    {
+      "fingerprint": "181a5eaf3dea57e5b3c0c4be48c0d6f422a99a5b76b21719dc8b78b6eb9579c3",
+      "path": "tests/workflows/test_rule_engine.py",
+      "symbol": "TestUnmappedEventType.test_unmapped_event_type_allows",
+      "directive": "type: ignore",
+      "codes": [
+        "assignment"
+      ],
+      "statement": "event . event_type = \"custom_unmapped_type\""
+    },
+    {
+      "fingerprint": "93731c557c1fa057b0fc7b5cb721ba2a4d1cead3d27ccb8ae3c0dd7b8cf0e802",
+      "path": "tests/workflows/test_session_variable_manager.py",
+      "symbol": "test_append_to_set_variable_accepts_jsonb_dict_payload",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "mgr = SessionVariableManager ( fake_db )"
+    },
+    {
+      "fingerprint": "b736173d74f546d1a7e60bbe33af6cf674295ab6e82132118d3a20e9945e9d92",
+      "path": "tests/workflows/test_session_variable_manager.py",
+      "symbol": "test_claim_startup_context_accepts_jsonb_dict_payload",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "mgr = SessionVariableManager ( fake_db )"
+    },
+    {
+      "fingerprint": "2e180acec15e33f8e948716bed00ddce701db72a26398b1b6aa9eb6b35f0a3c4",
+      "path": "tests/workflows/test_step_context.py",
+      "symbol": "test_get_active_step_workflow_context_propagates_db_failures",
+      "directive": "type: ignore",
+      "codes": [
+        "arg-type"
+      ],
+      "statement": "get_active_step_workflow_context ( _FailingDb ( ) , \"11111111-1111-4111-8111-111111111111\" , )"
+    }
+  ]
+}

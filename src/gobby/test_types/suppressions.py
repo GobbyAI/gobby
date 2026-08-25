@@ -29,13 +29,11 @@ _EXCLUDED_DIRECTORY_NAMES = frozenset(
         ".ruff_cache",
         ".tox",
         ".venv",
+        "_build",
         "__pycache__",
-        "build",
-        "dist",
         "env",
         "node_modules",
         "site-packages",
-        "target",
         "third_party",
         "vendor",
         "vendored",
@@ -43,6 +41,7 @@ _EXCLUDED_DIRECTORY_NAMES = frozenset(
         "venv",
     }
 )
+_TOP_LEVEL_BUILD_DIRECTORY_NAMES = frozenset({"build", "dist", "target"})
 _GENERATED_MARKERS = ("@generated", "automatically generated", "generated file", "do not edit")
 _SUPPRESSION_RE = re.compile(
     r"^\#\s*(?:"
@@ -252,7 +251,10 @@ def _walk_python_files(target: Path, *, root: Path) -> Iterator[Path]:
 
 
 def _is_excluded_directory(path: Path, *, root: Path) -> bool:
-    return not _EXCLUDED_DIRECTORY_NAMES.isdisjoint(path.relative_to(root).parts)
+    relative_parts = path.relative_to(root).parts
+    if relative_parts and relative_parts[0] in _TOP_LEVEL_BUILD_DIRECTORY_NAMES:
+        return True
+    return not _EXCLUDED_DIRECTORY_NAMES.isdisjoint(relative_parts)
 
 
 def _is_generated_file(path: Path) -> bool:

@@ -133,6 +133,7 @@ def init_servers(runner: GobbyRunner) -> None:
         tool_chat_service=runner.tool_chat_service,
         llm_service=runner.llm_service,
         vector_store=runner.vector_store,
+        managed_credential_manager=runner.managed_credential_manager,
         mcp_manager=runner.mcp_proxy,
         mcp_db_manager=runner.mcp_db_manager,
         metrics_manager=runner.metrics_manager,
