@@ -50,9 +50,10 @@ async def test_oversized_close_persists_and_launches_one_taskless_validator(
     assert launch_args["reasoning_effort"] == "auto"
     assert result["error"] == "agentic_review_required"
     assert result["review_status"] == "running"
-    assert result["run_id"] == "run"
+    assert "run_id" not in result
     assert "spawn_request" not in result
     assert "review_run_id" not in result
+    assert "Do not poll agent runs or re-call close_task." in result["message"]
 
 
 @pytest.mark.asyncio
@@ -131,7 +132,8 @@ async def test_concurrent_oversized_close_reuses_active_review(
     )
 
     assert result["error"] == "agentic_review_pending"
-    assert result["run_id"] == "same-run"
+    assert "run_id" not in result
+    assert "Do not poll agent runs or re-call close_task." in result["message"]
     registry.call.assert_not_awaited()
 
 

@@ -114,7 +114,10 @@ async def evaluate_close_criteria(
         return ValidationResult(
             can_close=False,
             error_type="agentic_review_required",
-            message="Complete close evidence requires a background task-close validator.",
+            message=(
+                "Complete close evidence requires a daemon-managed task-close validator; "
+                "its verdict is applied and delivered automatically."
+            ),
             extra={
                 **result.extra,
                 "deterministic_evidence_fingerprint": result.extra.get("evidence_fingerprint"),

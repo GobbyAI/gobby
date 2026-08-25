@@ -304,8 +304,8 @@ async def test_caller_parked_on_its_close_review_survives_until_the_verdict_land
 ) -> None:
     launched = await harness.close_task()
     assert launched["error"] == "agentic_review_required"
-    validator_run_id = launched["run_id"]
-    assert harness.spawned == [validator_run_id]
+    assert "run_id" not in launched, "the caller must not receive a pollable run handle"
+    [validator_run_id] = harness.spawned
 
     waited = await harness.wait_for_agent(validator_run_id)
     assert waited["success"] is True
@@ -346,7 +346,8 @@ async def test_caller_parked_on_its_close_review_survives_until_the_verdict_land
 
 async def test_caller_retries_close_task_after_an_invalid_verdict(harness: _Harness) -> None:
     first = await harness.close_task()
-    first_run_id = first["run_id"]
+    assert "run_id" not in first
+    [first_run_id] = harness.spawned
     await harness.wait_for_agent(first_run_id)
     assert await harness.watchdogs_tick() == (0, 0, [], 0)
 
@@ -368,8 +369,10 @@ async def test_caller_retries_close_task_after_an_invalid_verdict(harness: _Harn
     retry = await harness.close_task()
     assert retry["error"] == "agentic_review_required"
     assert retry["review_id"] != first["review_id"]
-    assert retry["run_id"] != first_run_id
-    assert harness.spawned == [first_run_id, retry["run_id"]]
+    assert "run_id" not in retry
+    retry_run_id = harness.spawned[-1]
+    assert retry_run_id != first_run_id
+    assert harness.spawned == [first_run_id, retry_run_id]
     store = TaskCloseReviewStore(harness.db)
     assert {
         r.status for r in (store.get(first["review_id"]), store.get(retry["review_id"])) if r
@@ -378,6 +381,6 @@ async def test_caller_retries_close_task_after_an_invalid_verdict(harness: _Harn
         "running",
     }
 
-    waited = await harness.wait_for_agent(retry["run_id"])
+    waited = await harness.wait_for_agent(retry_run_id)
     assert waited["notification_registered"] is True
     assert await harness.watchdogs_tick() == (0, 0, [], 0)
