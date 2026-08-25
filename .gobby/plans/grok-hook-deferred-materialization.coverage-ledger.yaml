@@ -1,0 +1,732 @@
+project_id: d45545c5-ded5-4335-b115-0245752edacf
+plan_id: grok-hook-deferred-materialization
+plan_hash: 688ba5478599dd765d50e9a91959008ff33d9d5fbb536f20694cc8bdab1fd5f5
+root_task_ref: SEALED-BY-COORDINATOR
+sections:
+  '1.1':
+    acceptance_items:
+      1.1.1:
+        text: 'Grok capability table lists additionalContext only on stop and subagent_stop.
+          symbol: `_grok_capabilities`.'
+        expected_leaves:
+        - title: Align Grok capabilities and Stop translation
+          owner_agent: backend-developer
+      1.1.2:
+        text: 'Grok Stop block emits `decision: "block"` and `continue: true`. test: `tests/adapters/test_acp_hook_translation.py::TestBlockToDenyMapping.test_block_maps_to_deny_hard_stop`.'
+        expected_leaves:
+        - title: Align Grok capabilities and Stop translation
+          owner_agent: backend-developer
+      1.1.3:
+        text: 'Grok observe hooks with context do not emit additionalContext. test: `tests/adapters/test_acp_hook_translation.py`.'
+        expected_leaves:
+        - title: Align Grok capabilities and Stop translation
+          owner_agent: backend-developer
+      1.1.4:
+        text: 'Adapter-fidelity Grok row matches the 1.0.5 wire contract. file: `docs/guides/adapter-fidelity.md`.'
+        expected_leaves:
+        - title: Align Grok capabilities and Stop translation
+          owner_agent: backend-developer
+      1.1.5:
+        text: 'Grok system-message compatibility constant is removed and every passive Grok
+          hook exposes ContextChannel.NONE with neither additionalContext nor systemMessage
+          output. test: `tests/adapters/test_capabilities.py`.'
+        expected_leaves:
+        - title: Align Grok capabilities and Stop translation
+          owner_agent: backend-developer
+      1.1.6:
+        text: 'Grok PreToolUse emits only deny reason or updatedInput fields and never additionalContext
+          or systemMessage. test: `tests/adapters/test_acp_hook_translation.py`.'
+        expected_leaves:
+        - title: Align Grok capabilities and Stop translation
+          owner_agent: backend-developer
+  '2.1':
+    acceptance_items:
+      2.1.1:
+        text: '`session_start_should_defer` and `activate_materialized_session` exist with
+          unit coverage; the live SessionStart path still registers and activates exactly
+          as before the split. file: `src/gobby/hooks/event_handlers/_session_start/materialize.py`.'
+        expected_leaves:
+        - title: Split SessionStart flow and extract activation helpers
+          owner_agent: backend-developer
+      2.1.2:
+        text: '`flow.py` is under 850 lines after the move. file: `src/gobby/hooks/event_handlers/_session_start/flow.py`.'
+        expected_leaves:
+        - title: Split SessionStart flow and extract activation helpers
+          owner_agent: backend-developer
+      2.1.3:
+        text: 'The existing SessionStart test surface passes unchanged (behavior-preserving
+          proof), including ACP-child and pre-created paths. test: `tests/hooks/test_session_events_coverage.py`.'
+        expected_leaves:
+        - title: Split SessionStart flow and extract activation helpers
+          owner_agent: backend-developer
+  '3.1':
+    acceptance_items:
+      3.1.1:
+        text: 'Startup SessionStart does not create a sessions row. test: `tests/hooks/test_session_events_coverage.py::TestSessionStartAndHelpers::test_handle_session_start_basic`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.2:
+        text: 'First BEFORE_AGENT creates the row; activation runs outside the lookup lock.
+          file: `src/gobby/hooks/session_materialize.py`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.3:
+        text: 'Compact/pre-created SessionStart still binds the existing row. test: `tests/hooks/test_session_events_coverage.py::TestSessionStartAndHelpers::test_handle_session_start_pre_created`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.4:
+        text: 'First PreToolUse without UPS also materializes. test: `tests/hooks/test_hooks_manager.py`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.5:
+        text: '`hook_manager.py` does not grow; first-prompt orchestration lives in `session_materialize.py`.
+          file: `src/gobby/hooks/session_materialize.py`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.6:
+        text: 'Notification does not materialize an idle session; the exclusion is unconditional
+          and the recorded Claude/Grok probe is observational evidence only. test: `tests/hooks/test_hooks_manager.py`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.7:
+        text: 'A parameterized first-hook matrix materializes every supported non-SessionStart
+          event except SESSION_END and NOTIFICATION, and both exclusions leave an idle startup
+          row absent. test: `tests/hooks/test_hooks_manager.py::test_first_hook_materialization_matrix`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.8:
+        text: 'Copied evaluation uses the synthetic SessionStart schema (`data.source == ''startup''`,
+          deferred identity fields, no prompt/tool payload); every installed SessionStart
+          lifecycle rule plus one custom session-start rule fires identically to a real startup
+          SessionStart. test: `tests/hooks/test_hooks_manager.py`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.9:
+        text: '`_materialize_activation_done`, `_copied_session_start_state`, `_deferred_materialization`,
+          and `_activation_epoch` are reserved; MCP `set_variable` and non-internal rule effects
+          reject writes to them. test: `tests/mcp_proxy/test_top_level_variables.py`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.10:
+        text: 'Concurrent first UPS and PreToolUse both run activation to completion idempotently,
+          and a simulated crash mid-activation is healed by the next hook. test: `tests/hooks/test_hooks_manager.py`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.11:
+        text: 'Every startup, compact, resume, clear, web-chat, and pre-created SessionStart
+          response has empty context and system-message fields. test: `tests/hooks/test_session_events_coverage.py::test_session_start_never_emits_context`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.12:
+        text: 'Copied SessionStart processing follows the phase contract under concurrent
+          first hooks: every racer completes the stateful phase and observes the durable blocking-gate
+          decision before its live rules and handler, in activation → reconciliation → copied
+          state → blocking gate → live evaluation order; the blocking-gate and async external-dispatch
+          claims each have a single owner with crash takeover; a crash between activation
+          completion and copied processing is recovered by the next hook; pre-deploy rows
+          never replay resets, webhooks, or pipelines. test: `tests/hooks/test_hooks_manager.py`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.13:
+        text: 'Transient failures in registration, agent resolution, variable seeding, and
+          transcript setup follow the required/best-effort classification with per-class current-hook
+          outcomes: passive hooks and Stop fail open, PreToolUse returns a retriable deny,
+          no copied processing or startup injects run, and the next hook (or retried call)
+          recovers; best-effort failures log and let activation complete; public `SessionLookupService.resolve`
+          returns `SessionResolutionOutcome` for cache hits, created/existing rows, every
+          exclusion class (SESSION_END, NOTIFICATION, missing project, ACP-child), and registration
+          failure while both register_session interfaces retain their string return, and a
+          failed first PreToolUse never follows the sessionless allow path. test: `tests/hooks/test_hooks_manager.py`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.14:
+        text: 'Non-Grok compact: SessionStart emits nothing and arms pending state retaining
+          the summary and skill lists; the first turn_start renders the complete continuation
+          including skill reloads and clears only the fields it included. test: `tests/workflows/test_context_handoff_rules.py`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.15:
+        text: 'Bundled-content manifest exactly matches the committed shared-template tree
+          after this leaf''s template change. test: `tests/install/test_bundled_content_manifest.py::test_bundled_content_manifest_matches_tree`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.16:
+        text: 'Compact, resume, clear, web-chat, and pre-created SessionStart paths each bind
+          or create the intended canonical row without duplication. test: `tests/hooks/test_session_events_coverage.py::test_session_start_binding_matrix`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.17:
+        text: 'HTTP session-variable writes reject every runtime-reserved materialization
+          marker. test: `tests/servers/routes/test_session_variables.py`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.18:
+        text: 'Non-internal workflow set_variable effects reject every runtime-reserved materialization
+          marker. test: `tests/workflows/test_hooks.py`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.19:
+        text: 'The structured-component `enqueue_if_absent` primitive exists in `grok_pending_context.py`,
+          is wired as an activation step, and an interleaved first UPS/PreToolUse stages exactly
+          one startup-briefing component. test: `tests/hooks/test_hooks_manager.py`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.20:
+        text: 'A sessionless startup SessionStart dispatches no session_start webhooks; first-activity
+          copied processing dispatches blocking webhooks through the durable blocking-gate
+          step and non-blocking webhooks through the async external-dispatch claim — exactly
+          once in crash-free operation, at-least-once with the stable session-id + activation-epoch
+          delivery key across crash takeover — and a durable blocking decision gates every
+          racer''s live event, proven by a two-racer test where the claim loser''s PreToolUse
+          cannot execute while the gate is blocked. test: `tests/hooks/test_webhooks.py`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.21:
+        text: 'The SessionStart output barrier strips handler- and rule-merged context on
+          every SESSION_START path, and `pending_context_reset` survives an empty compact
+          SessionStart, cleared only by the confirmed delivery owner. test: `tests/workflows/test_context_handoff_rules.py`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.22:
+        text: 'The `_deferred_materialization` discriminator and fresh `_activation_epoch`
+          value 1 persist in the same storage write as row creation; a simulated crash immediately
+          after `register_session` leaves a row recovery classifies as deferred with one durable
+          epoch, never as pre-deploy or epochless. test: `tests/storage/sessions/test_storage_sessions_registration.py`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.23:
+        text: '`run_pipeline` rejects a duplicate dispatch bearing the same idempotency key
+          and returns the existing run; a crash-takeover redispatch yields exactly one pipeline
+          execution. test: `tests/mcp_proxy/tools/workflows/test_mcp_proxy_tools_workflows_pipelines.py`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.24:
+        text: 'A parameterized provider matrix delivers first-activity startup context through
+          the expected native channel for Claude, Qwen, Droid, and Codex, exercises the supported
+          AGY shared-materialization path, and retains Grok as the pending-briefing exception.
+          test: `tests/hooks/test_hooks_manager.py::test_first_activity_startup_context_provider_matrix`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.25:
+        text: 'Concurrent pipeline execution creation with one idempotency key persists exactly
+          one execution and every caller receives that existing execution across process restart.
+          test: `tests/storage/test_pipeline_storage.py::test_create_execution_idempotency_key_is_concurrent_and_durable`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.26:
+        text: 'The deferred discriminator is inserted inside the low-level fresh-row transaction
+          while unique-conflict recovery and existing-row reuse never relabel pre-deploy rows.
+          test: `tests/storage/sessions/test_storage_sessions_registration.py::test_deferred_seed_is_atomic_across_insert_conflict_and_reuse`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.27:
+        text: 'Migration 408 is frozen and the implemented embedded inventory/count and grant
+          schema-head assertions prove it is exactly one above committed version 407; the
+          separate coordinator-owned `observe_frozen_migration_408` evidence ran before every
+          coordinator mutation and was revalidated immediately before plan binding and expansion,
+          with each mismatch branch proving a zero state diff. test: `crates/gcore/src/schema/runner_tests.rs`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.28:
+        text: 'Every positive runtime-grant golden is regenerated and re-signed for frozen
+          schema identity 408 while the intentional skew golden remains negative. test: `tests/runtime_grants/test_golden_vectors.py::test_config_revision_signed`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.29:
+        text: 'Copied non-blocking webhook and background MCP dispatches remain `external:
+          running` through scheduling and execution and reach `done` only through the current
+          owner''s successful completion-handle callback; crash-before-schedule, crash-after-schedule-before-execution,
+          asynchronous failure, and stale callbacks stay retryable without corrupting a takeover.
+          test: `tests/hooks/test_dispatch_mcp_calls.py`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.30:
+        text: 'Copied blocking webhooks return endpoint-bearing `CopiedGateResult` values
+          that distinguish allowed, blocked, failed, and deadline_exhausted; only allowed/blocked
+          persist done, and fail-open versus fail-closed endpoint errors follow their explicit
+          policy. test: `tests/hooks/test_webhooks.py`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.31:
+        text: 'Copied gate owner, loser, and takeover use `gate_deadline = min(aggregate_deadline,
+          outer_deadline - COPIED_GATE_LIVE_RESERVE_SECONDS)` with the ratified 15-second
+          aggregate deadline, 1-second live-rule reserve, and 50-ms polls; controlled-clock
+          cases below, at, and above `aggregate_deadline + COPIED_GATE_LIVE_RESERVE_SECONDS`
+          prove the above case retains the full 15 seconds, while route cancellation and late
+          completion prove token-fenced release/takeover before every unresolved class short-circuits
+          without live rules/handler. test: `tests/hooks/test_webhooks.py`. test: `tests/servers/test_mcp_routes.py`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.32:
+        text: 'The phase-aware copied evaluator classifies every installed and custom SessionStart
+          effect before execution; supported stateful, blocking, and external effects run
+          only in their owning phase, while run_command and unknown custom effects are rejected
+          atomically under concurrent first hooks. test: `tests/workflows/test_hooks.py`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.33:
+        text: '`_activation_epoch` is initialized atomically for fresh deferred and clear-successor
+          rows; successful SESSION_END marks an existing row inactive without incrementing,
+          and only stable-keyed resume, clear, and inactive-row re-materialization transitions
+          advance through the single `SessionVariableMutation` CAS owner; same-key retries,
+          daemon restart, and concurrent rollover racers select one epoch while compact and
+          ordinary retries never advance it. test: `tests/hooks/test_session_activation_reconciliation.py`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+      3.1.34:
+        text: 'An epochless pre-deploy row bootstraps `_activation_epoch` exactly once to
+          `{value: 1, transition_key: "bootstrap:<platform-session-id>", status: <current
+          row state>, pending: null}` with empty committed-one-shot, watermark, and resident-class
+          state under the session-lock CAS before its triggering event applies as the next
+          normal transition; each first post-deploy event class (ordinary hook, resume, SESSION_END,
+          PostCompact, re-materialization), duplicate bootstrap attempts, and a restart between
+          bootstrap and the pending transition yield one deterministic epoch namespace. test:
+          `tests/hooks/test_session_activation_reconciliation.py`.'
+        expected_leaves:
+        - title: Materialize on first BEFORE_AGENT and inject startup context
+          owner_agent: backend-developer
+  '4.1':
+    acceptance_items:
+      4.1.1:
+        text: 'Grok startup, agent, wiki, profile, and persona lifecycle producers enqueue
+          stable briefing component IDs directly, while genuine UPS aggregate context appends
+          only to `grok_pending_turn_context`; neither returns additionalContext. test: `tests/hooks/test_grok_pending_context.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.2:
+        text: 'First Grok PreToolUse after briefing denies once with that reason; delivered-state
+          vars remain pending through route commit and flip only when ghook''s inbox-file
+          deletion acknowledges that response. test: `tests/hooks/test_grok_pending_context.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.3:
+        text: 'Turn-context concatenates onto an already-blocking Stop and is dropped (debug-logged)
+          when Stop allows; Grok Stop with only turn-context and no stop-gate allows the stop.
+          test: `tests/hooks/test_grok_pending_context.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.4:
+        text: 'Grok PostCompact and clear-successor bind arm briefing-class continuation.
+          symbol: `MiscEventHandlerMixin.handle_post_compact`. symbol: `_bind_clear_successor`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.5:
+        text: 'Grok wire envelopes for flush outputs (deny reason, Stop block + additionalContext)
+          are asserted at the adapter layer only. test: `tests/adapters/test_acp_hook_translation.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.6:
+        text: 'On Grok, `inject-compact-handoff-on-prompt` and `inject-clear-handoff-on-prompt`
+          do not fire on turn_start and the pending flags survive until confirmed flush; non-Grok
+          CLIs keep the turn_start route. test: `tests/workflows/test_context_handoff_rules.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.7:
+        text: 'Briefing and turn-context merge into workflow-block and webhook-block responses
+          under `preserve_original=True`; the adapter-visible response carries them. test:
+          `tests/hooks/test_grok_pending_context.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.8:
+        text: 'Buffer bounds enforce the named numeric caps: turn-context is drop-oldest at
+          32 components / 16384 serialized UTF-8 bytes and rejects a single component over
+          8192 bytes at enqueue; briefing components are deduplicated by stable key and never
+          cap-evicted; the 16-slot buffer reserves a seven-component finite bound (five lifecycle
+          one-shots, one resident compact, one resident clear) and leaves `P2P_MAX_COMPONENTS
+          = P2P_MAX_CANDIDATES = 9`; and an oversize briefing degrades at flush through the
+          dedicated Grok helper to a non-empty UTF-8-safe head plus its persisted-context
+          reference within the serialized native-response byte budget. test: `tests/hooks/test_grok_pending_context.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.9:
+        text: 'A no-UPS first PreToolUse stages the startup packet as briefing before flush
+          and deny-once delivers it on that same event. test: `tests/hooks/test_grok_pending_context.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.10:
+        text: 'Regenerated bundled-content manifest exactly matches the committed shared-template
+          tree. test: `tests/install/test_bundled_content_manifest.py::test_bundled_content_manifest_matches_tree`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.11:
+        text: '`ACPHookAdapter.handle_native` only translates and returns `PayloadResult`
+          or `ClaimedPayloadResult(payload, opaque_claim_token)`; `execute_hook` exhaustively
+          distinguishes them and, after the immutable deadline check, commits the exact claim
+          or releases it on timeout/cancellation/error, so a late worker cannot commit and
+          no delivered flag flips until ghook acknowledgment executes deferred mutations exactly
+          once. test: `tests/hooks/test_grok_pending_context.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.12:
+        text: 'Grok pending messages stay queued or replay-owned until a briefing deny or
+          already-blocking Stop is acknowledged; `mark_delivered_batch` runs only in the acknowledgment
+          transaction, and an allowing Stop never carries one. test: `tests/hooks/test_pending_message_provider_contracts.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.13:
+        text: 'An interleaved first UPS and PreToolUse (UPS creates the row first, PreToolUse
+          completes activation first, UPS stashes last) stages exactly one startup-briefing
+          component and yields exactly one deny-once delivery. test: `tests/hooks/test_grok_pending_context.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.14:
+        text: 'Grok staged-memory IDs remain retryable through stash, drop, route commit,
+          and replay and are recorded only by ghook delivery acknowledgment. test: `tests/hooks/test_grok_pending_context.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.15:
+        text: 'Agent, wiki, profile, and startup one-shot markers remain unset through Grok
+          composition, stash, route commit, and replay and flip only on ghook delivery acknowledgment.
+          test: `tests/hooks/test_grok_pending_context.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.16:
+        text: 'EventEnricher preserves non-Grok inline delivery while Grok enqueues without
+          acknowledgment across formatting and retry failures. test: `tests/hooks/test_event_enrichment.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.17:
+        text: 'A request-scoped ClaimHandle exists before worker submission and exposes only
+          an opaque token to the typed worker result: timeout before materialization, after
+          claim, during translation, and before late worker completion returns fallback, while
+          `execute_hook` releases now or on later bind after checking the immutable deadline
+          and prevents every late commit; a no-request-ID result releases instead of committing.
+          test: `tests/servers/test_mcp_routes.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.18:
+        text: 'Claims persist owner, timestamp, and a UTC lease deadline computed from the
+          immutable per-request effective route timeout carried with the one outer monotonic
+          deadline through ACP event metadata plus `GROK_CLAIM_LEASE_MARGIN_SECONDS`; a claim
+          orphaned by simulated daemon death is requeued only after lease expiry under a controlled
+          clock, concurrent different timeout overrides compute independent deadlines and
+          leases, commit executes only in the async route after an await within that same
+          deadline, and CAS-loss discards the payload. test: `tests/hooks/test_grok_pending_context.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.19:
+        text: 'Two concurrent eligible hooks selecting the same undelivered P2P row upsert
+          exactly one component by message-derived component_id and produce exactly one delivery.
+          test: `tests/hooks/test_pending_message_provider_contracts.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.20:
+        text: 'Compact and clear arming survive injected crashes at every boundary: same-row
+          arming completes or retries in one transaction; the `compact_continuation.py` public
+          orchestrator remains thin and below 850 lines while `compact_staging.py` owns resolve/peek,
+          source stage, destination take, generation-CAS consume, acknowledgment-triggered
+          admission, and generation-keyed scheduling state; crash before schedule, crash after
+          send before durable recording, duplicate retry, and scheduling failure preserve
+          the staged briefing and source marker under explicit at-least-once scheduling semantics;
+          predecessor→successor clear and a racing second generation retain distinct IDs while
+          only one generation per class is resident. test: `tests/sessions/test_compact_continuation.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.21:
+        text: 'One- and many-contributor oversize briefings deliver in one response through
+          `fit_grok_briefing_response`: full serialized PreToolUse reason and Stop/SubagentStop
+          additionalContext envelopes stay within their asymmetric UTF-8 byte budgets, retain
+          a non-empty character-safe head, full canonical content, and one stable persisted
+          reference; every different-class replay refits with that helper including multibyte
+          text and real-gate prepending, while persistence/reference failure leaves replay
+          identity pending without acknowledgment or denial payload. test: `tests/hooks/test_grok_pending_context.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.22:
+        text: 'Commit atomically persists full canonical delivery content, one stable reference,
+          component classes, origin class, request id, and replay state; same-ID native replay
+          has precedence, every eligible different-class replay calls `fit_grok_briefing_response`
+          for the receiving class before advancing request identity, passive hooks leave it
+          pending, and a real receiving gate is included in the refit budget. Ghook inbox-file
+          absence acknowledges only a mapped provider action whose stdout write and flush
+          succeeded before deletion; mapping/emission/deletion failure retains the envelope,
+          commit-before-emission crash/disconnect replays at least once, and `_drain_hook_inbox_once_locked`
+          retains a provider-ack-pending Grok file on its processed-marker branch. A controlled
+          direct-POST commit → processed marker → daemon drain → ghook stdout-failure race
+          leaves the file and replay pending. test: `tests/hooks/test_grok_pending_context.py`.
+          test: `tests/hooks/test_inbox.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.23:
+        text: 'A second PreToolUse arriving during a live unexpired claim returns a retriable
+          non-payload deny and never allows its tool; after the owner commits or releases,
+          the next PreToolUse proceeds normally; owner-timeout takeover is tested separately
+          from the payload-bearing denial. test: `tests/hooks/test_grok_pending_context.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.24:
+        text: 'A stale racer reaching its enqueue step after the startup component committed
+          finds its finite one-shot identity in the activation-epoch set and does not re-enqueue:
+          the commit-before-late-stash interleaving yields no second briefing denial. test:
+          `tests/hooks/test_grok_pending_context.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.25:
+        text: 'PreToolUse→Stop, Stop→PreToolUse, SubagentStop, same-ID retry, compatible different-ID
+          replay, passive incompatibility, real-gate precedence, asymmetric receiving-class
+          refit, persistence/reference failure, disconnect, ghook mapping/stdout-write/flush
+          failure, stale reclaim, and post-receipt/pre-ack crash follow one canonical replay
+          precedence table with envelope retention, at-least-once emission, and exactly-once
+          ack mutations. test: `tests/servers/test_mcp_routes.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.26:
+        text: 'Terminal dedupe stays bounded over a long session: only five finite lifecycle
+          one-shots occupy the current epoch set, compact/clear retain one generation watermark
+          per active source relation, P2P rechecks delivered_at in the same transaction as
+          enqueue/acknowledgment, and thousands of sequential commits plus activation-epoch
+          rollover neither grow an unbounded collection nor re-enqueue. test: `tests/hooks/test_grok_pending_context.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.27:
+        text: 'Session-boundary contract, sessions guide, and variables guide document Grok
+          PreToolUse/Stop delivery, compact/clear single ownership, and acknowledgment-time
+          clearing semantics. file: `docs/contracts/session-boundary.md`, `docs/guides/sessions.md`,
+          `docs/guides/variables.md`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.28:
+        text: 'P2P acknowledgment first peeks the replay token and P2P IDs without locks,
+          then opens a no-initial-lock immediate transaction, UUID-locks and eligibility-checks
+          those rows, acquires `SessionVariableMutation(session_id)` through connection-aware
+          `_mutate_variables`, revalidates the exact replay token/component ownership, and
+          only then atomically runs `mark_delivered_batch`, all ack mutations, and replay
+          advance/clear; stale peeks and injected failures acknowledge nothing. test: `tests/workflows/test_state_manager.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.29:
+        text: 'Replay eligibility preserves component class: Stop(real block + turn-context
+          only) → ungated PreToolUse leaves replay pending without creating a deny, and PreToolUse(real
+          deny + turn-context only) → allowing Stop follows the explicit drop arm without
+          creating a block or executing ack mutations; briefing-containing replay may create
+          its one delivery gate in both directions. test: `tests/hooks/test_grok_pending_context.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.30:
+        text: 'P2P is briefing-class and never exceeds its nine-slot static ceiling: nine
+          P2P plus five lifecycle one-shots, one resident compact, and one resident clear
+          fill exactly 16; second compact and clear arrivals while the resident is queued,
+          claimed, or replay-owned retain distinct source-staged IDs, enter only on acknowledgment-triggered
+          class-slot release, and later P2P batches drain in `sent_at`/id order without duplicate
+          components, corruption logs, or general retry/backpressure machinery. test: `tests/hooks/test_pending_message_provider_contracts.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.31:
+        text: 'P2P selection first UUID-locks at most nine earliest candidates, then acquires
+          `SessionVariableMutation(session_id)`, recomputes reservation-aware live capacity
+          inside `_mutate_variables`, and enqueues only the earliest fitting eligible prefix;
+          a finite-source enqueue between candidate selection and session-lock acquisition
+          shrinks that prefix while excess rows remain untouched. test: `tests/hooks/test_pending_message_provider_contracts.py`.
+          test: `tests/workflows/test_state_manager.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.32:
+        text: 'In the reverse first-activity interleaving, PreToolUse creates the row and
+          commits briefing first while a losing UPS reaches each lifecycle producer before
+          and after acknowledgment; stable producer IDs yield one briefing identity, zero
+          aggregate-stash turn-context duplicate, and exactly one acknowledgment mutation.
+          test: `tests/hooks/test_grok_pending_context.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.33:
+        text: 'Resume, clear, and inactive-row re-materialization roll activation epoch through
+          one CAS owner: queued, claimed, and replay-owned old-epoch state drains under its
+          existing token/ack contract before a pending rollover advances once; daemon restart
+          plus concurrent rollover/acknowledgment races preserve one epoch, clear committed-one-shot
+          and watermark state only at the atomic advance, keep undelivered P2P rows eligible,
+          and reject stale old-epoch completion. test: `tests/hooks/test_grok_pending_context.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.34:
+        text: 'P2P acknowledgment-versus-enqueue and acknowledgment-versus-legacy-merge races
+          obey the common UUID-row-lock → `SessionVariableMutation` order; replay-token revalidation
+          prevents stale ownership acknowledgment, and rollback preserves delivered rows,
+          ack mutations, canonical replay, and buffer state as one unit. test: `tests/storage/test_inter_session_messages.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.35:
+        text: 'Adapter worker-result constructors and async-route pattern matching exhaustively
+          distinguish ordinary payload from payload plus opaque claim token; `handle_native`
+          has no commit/release path, and only `execute_hook` commits or releases after the
+          immutable deadline check. test: `tests/adapters/test_acp_hook_integration.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.36:
+        text: 'Direct AGY handle_native consumer exhaustively unwraps PayloadResult while
+          preserving the native payload contract. test: `tests/adapters/test_adapters_agy.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.37:
+        text: 'While `_activation_epoch.pending` is set, new P2P component enqueue, turn-context
+          stash, and staged-memory selection are fenced alongside lifecycle, copied-dispatch,
+          and compact/clear producers — only old-epoch release, replay, acknowledgment, explicit
+          drop, and lease recovery proceed; continuous P2P and turn-context arrivals through
+          a pending drain cannot starve rollover, and a final-acknowledgment epoch advance
+          during `_complete_response` re-evaluates the current hook''s uncommitted selection
+          under the new epoch or returns its typed per-class retryable fallback. test: `tests/hooks/test_grok_pending_context.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.38:
+        text: 'At most one live claim or canonical replay exists per session across all hook
+          classes: concurrent PreToolUse-versus-Stop/SubagentStop races in both completion
+          orders prove the losing class never claims or attaches pending components, a real
+          Stop/SubagentStop still emits its own gate content, and every release, timeout,
+          and lease-takeover branch recovers the losing claim without stranding a claimed
+          set. test: `tests/hooks/test_grok_pending_context.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+      4.1.39:
+        text: 'Controlled pre-token persistence, reference, and budget failures CAS-release
+          the newly created claim through `ClaimHandle` before the retryable fallback returns
+          — no live claim remains and the next eligible hook selects the same components —
+          while receiving-class refit/retranslation failure on an already committed canonical
+          replay preserves the replay, its identity, and its stable reference unchanged. test:
+          `tests/hooks/test_grok_pending_context.py`.'
+        expected_leaves:
+        - title: Stash observe context and flush briefing without a Stop loop
+          owner_agent: backend-developer
+  '5.1':
+    acceptance_items:
+      5.1.1:
+        text: 'Smoke file asserts Grok/Claude SessionStart does not insert a sessions row.
+          test: `tests/e2e/test_grok_session_deferral.py`.'
+        expected_leaves:
+        - title: Isolated-daemon smoke plus unit contracts
+          owner_agent: qa-dev
+      5.1.2:
+        text: 'Simulator maps grok UPS to `user_prompt_submit`. symbol: `CLIEventSimulator.user_prompt_submit`.'
+        expected_leaves:
+        - title: Isolated-daemon smoke plus unit contracts
+          owner_agent: qa-dev
+      5.1.3:
+        text: 'Smoke asserts Grok first PreToolUse deny carries briefing, Stop `block` is
+          only for real gates, and PostCompact arms briefing. test: `tests/e2e/test_grok_session_deferral.py`.'
+        expected_leaves:
+        - title: Isolated-daemon smoke plus unit contracts
+          owner_agent: qa-dev
+      5.1.4:
+        text: 'Claude first prompt returns startup context while Grok UPS returns none and
+          leaves a pending briefing. test: `tests/e2e/test_grok_session_deferral.py`.'
+        expected_leaves:
+        - title: Isolated-daemon smoke plus unit contracts
+          owner_agent: qa-dev
+      5.1.5:
+        text: 'After ghook maps the briefing denial, successfully writes and flushes its provider
+          stdout action, and then acknowledges by deleting its inbox envelope, a second PreToolUse
+          allows absent another gate and Stop with only turn-context also allows; mapping,
+          emission, disconnect, or pre-deletion failure retains the envelope and replays the
+          denial at least once, and the direct-POST commit → processed marker → daemon drain
+          → ghook stdout-failure race retains the provider-ack-pending file. test: `tests/e2e/test_grok_session_deferral.py`.'
+        expected_leaves:
+        - title: Isolated-daemon smoke plus unit contracts
+          owner_agent: qa-dev
+      5.1.6:
+        text: 'Compact binding creates no duplicate row and delivered-state markers remain
+          false before flush and after route commit, then become true after ghook acknowledgment.
+          test: `tests/e2e/test_grok_session_deferral.py`.'
+        expected_leaves:
+        - title: Isolated-daemon smoke plus unit contracts
+          owner_agent: qa-dev
+      5.1.7:
+        text: 'All four existing CLIEventSimulator SessionStart consumer suites pass after
+          their row and context assumptions move to first activity. test: `GOBBY_TEST_PROTECT=1
+          uv run pytest tests/e2e/test_full_workflow.py tests/e2e/test_session_tracking.py
+          tests/e2e/test_stateless_ambient_session.py tests/e2e/test_worktrees_e2e.py -q`.'
+        expected_leaves:
+        - title: Isolated-daemon smoke plus unit contracts
+          owner_agent: qa-dev
+      5.1.8:
+        text: 'Saturation smoke proves 9 P2P + 5 lifecycle + one compact + one clear occupy
+          exactly 16 slots; second compact/clear generations remain distinctly staged for
+          queued, claimed, and replay-owned residents and enter only after acknowledgment-triggered
+          release. test: `tests/e2e/test_grok_session_deferral.py`.'
+        expected_leaves:
+        - title: Isolated-daemon smoke plus unit contracts
+          owner_agent: qa-dev
+      5.1.9:
+        text: 'Restart and rollover smoke proves resume/re-materialization waits for old queued,
+          claimed, and replay-owned state, advances exactly once after acknowledgment, and
+          initializes a clear successor to predecessor epoch + 1 without stale completion
+          crossing epochs. test: `tests/e2e/test_grok_session_deferral.py`.'
+        expected_leaves:
+        - title: Isolated-daemon smoke plus unit contracts
+          owner_agent: qa-dev
+      5.1.10:
+        text: 'Focused concurrency and adapter contracts prove acknowledgment''s peek/UUID-lock/session-lock/revalidate
+          protocol against enqueue and legacy merge, plus translation-only typed worker results
+          and async-route-only commit-or-release after the immutable deadline check. test:
+          `tests/workflows/test_state_manager.py`. test: `tests/adapters/test_acp_hook_integration.py`.'
+        expected_leaves:
+        - title: Isolated-daemon smoke plus unit contracts
+          owner_agent: qa-dev
