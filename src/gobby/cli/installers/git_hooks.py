@@ -205,7 +205,7 @@ if [ "$PUBLISH_WIKI" = true ]; then
 
         if [ ! -d "$WIKI_WORKTREE" ]; then
             echo "gobby: wiki publish skipped; missing worktree at $WIKI_WORKTREE" >&2
-            echo "gobby: run 'gobby install --hooks' from $REPO_ROOT to configure it." >&2
+            echo "gobby: run 'gobby install git-hooks' from $REPO_ROOT to configure it." >&2
         elif ! git -C "$WIKI_WORKTREE" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
             echo "gobby: wiki publish skipped; $WIKI_WORKTREE is not a Git worktree" >&2
         elif [ "$(git -C "$WIKI_WORKTREE" branch --show-current 2>/dev/null)" != "wiki" ]; then

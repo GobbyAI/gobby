@@ -58,7 +58,7 @@ def runner(monkeypatch: pytest.MonkeyPatch) -> CliRunner:
     monkeypatch.setattr(install_module, "_provision_local_api_token", MagicMock())
     monkeypatch.setattr(install_module, "_provision_gdaemon_for_services", MagicMock())
     monkeypatch.setattr(
-        install_module,
+        importlib.import_module("gobby.cli.install_components"),
         "reconcile_rtk",
         MagicMock(
             return_value=RtkInstallStatus(
@@ -432,7 +432,7 @@ class TestInstallCommand:
         "gobby.cli.install._ensure_daemon_config", return_value={"created": False, "path": "/fake"}
     )
     @patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install"))
-    @patch("gobby.cli.install.reconcile_rtk")
+    @patch("gobby.cli.install_components.reconcile_rtk")
     def test_install_rtk_flag_alone_reconciles_rtk_only(
         self,
         mock_reconcile: MagicMock,
@@ -487,7 +487,7 @@ class TestInstallCommand:
         "gobby.cli.install._ensure_daemon_config", return_value={"created": False, "path": "/fake"}
     )
     @patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install"))
-    @patch("gobby.cli.install.reconcile_rtk")
+    @patch("gobby.cli.install_components.reconcile_rtk")
     def test_install_no_rtk_flag_alone_disables_rtk_only(
         self,
         mock_reconcile: MagicMock,
@@ -526,7 +526,9 @@ class TestInstallCommand:
         "gobby.cli.install._ensure_daemon_config", return_value={"created": False, "path": "/fake"}
     )
     @patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install"))
-    @patch("gobby.cli.install.reconcile_rtk", side_effect=RuntimeError("download failed"))
+    @patch(
+        "gobby.cli.install_components.reconcile_rtk", side_effect=RuntimeError("download failed")
+    )
     def test_install_rtk_flag_alone_reports_reconcile_failure(
         self,
         _mock_reconcile: MagicMock,
@@ -562,7 +564,7 @@ class TestInstallCommand:
         runtime = MagicMock()
         with (
             patch("gobby.cli.install.get_cli_runtime", return_value=runtime),
-            patch("gobby.cli.install.reconcile_rtk") as reconcile_rtk,
+            patch("gobby.cli.install_components.reconcile_rtk") as reconcile_rtk,
             patch("gobby.cli.install._run_embedding_install") as embedding_install,
             patch("gobby.cli.install._install_required_stack") as required_stack,
             patch("gobby.cli.install._should_initialize_project") as initialize_project,
@@ -627,7 +629,7 @@ class TestInstallCommand:
         runtime = MagicMock()
         with (
             patch("gobby.cli.install.get_cli_runtime", return_value=runtime),
-            patch("gobby.cli.install.reconcile_rtk") as reconcile_rtk,
+            patch("gobby.cli.install_components.reconcile_rtk") as reconcile_rtk,
             patch("gobby.cli.install._run_voice_install") as voice_install,
             patch("gobby.cli.install._install_required_stack") as required_stack,
             patch("gobby.cli.install._should_initialize_project") as initialize_project,

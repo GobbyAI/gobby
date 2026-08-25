@@ -25,7 +25,6 @@ from gobby.config.bootstrap import BootstrapConfigError, DatastoreMode, load_boo
 from gobby.config.persistence import validate_falkordb_password
 from gobby.storage.auth import AuthStore, ensure_local_api_token
 from gobby.storage.config_store import ConfigStore
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import ensure_personal_project_identity
 from gobby.storage.secrets import (
     POSTURE_KEY_FILE,
@@ -79,10 +78,10 @@ from ._install_prompts import (
     _run_voice_install,
 )
 from ._install_state import empty_install_state, prepare_install_state, should_configure_section
+from .install_components import reconcile_rtk_step
 from .install_identity import ensure_install_identity
 from .install_setup import ensure_daemon_config, run_daemon_setup
 from .install_setup_gdaemon import GdaemonInstallError, ensure_gdaemon
-from .install_setup_rtk import RtkInstallStatus, reconcile_rtk
 from .installers import (
     install_agy,
     install_claude,
@@ -200,44 +199,6 @@ def _provision_gdaemon_for_services() -> None:
         ensure_gdaemon()
     except (GdaemonInstallError, OSError, ValueError) as exc:
         raise click.ClickException(f"Failed to provision gdaemon: {exc}") from exc
-
-
-def _reconcile_rtk_step(
-    db: HubDatabase,
-    rtk_flag: bool | None,
-    *,
-    no_interactive: bool,
-) -> RtkInstallStatus:
-    """Reconcile RTK for the install and report its status on stdout."""
-    try:
-        rtk_status = reconcile_rtk(
-            db,
-            rtk_flag,
-            no_interactive=no_interactive,
-            confirm=click.confirm,
-        )
-    except (OSError, RuntimeError, ValueError) as exc:
-        if rtk_flag is not None or not no_interactive:
-            raise click.ClickException(f"RTK reconciliation failed: {exc}") from exc
-        logger.warning("RTK state unavailable during noninteractive install: %s", exc)
-        rtk_status = RtkInstallStatus(
-            binary_path=None,
-            version=None,
-            rule_enabled=False,
-            direct_artifact_conflicts=(),
-            health="disabled",
-            managed_binary=False,
-        )
-    click.echo(
-        "RTK: "
-        f"{rtk_status.health}; rule="
-        f"{'enabled' if rtk_status.rule_enabled else 'disabled'}; "
-        f"binary={rtk_status.binary_path or 'unavailable'}; "
-        f"version={rtk_status.version or 'unknown'}"
-    )
-    for conflict in rtk_status.direct_artifact_conflicts:
-        click.echo(f"Warning: {conflict}", err=True)
-    return rtk_status
 
 
 def _resolve_ide_settings_consent(
@@ -681,7 +642,7 @@ def install(
             maintenance_results: dict[str, dict[str, Any]] = {}
             sections: list[str] = []
             if rtk_flag is not None:
-                _reconcile_rtk_step(maintenance_db, rtk_flag, no_interactive=no_interactive_flag)
+                reconcile_rtk_step(maintenance_db, rtk_flag, no_interactive=no_interactive_flag)
                 sections.append("RTK")
             if embedding_override:
                 _run_embedding_install(
@@ -762,7 +723,7 @@ def install(
         except (OSError, RuntimeError, ValueError) as exc:
             raise click.ClickException(f"Failed to establish account identity: {exc}") from exc
         click.echo(f"Account identity: {installed_user.email}")
-        rtk_status = _reconcile_rtk_step(db, rtk_flag, no_interactive=no_interactive_flag)
+        rtk_status = reconcile_rtk_step(db, rtk_flag, no_interactive=no_interactive_flag)
         results["rtk"] = {
             "success": rtk_status.health != "unavailable",
             "path": str(rtk_status.binary_path) if rtk_status.binary_path else None,
@@ -857,7 +818,6 @@ def install(
                     cli_name,
                     installer_fn,
                     project_path,
-                    mode,
                     results,
                     hook_timeout_seconds=provider_hook_timeout_seconds,
                 )

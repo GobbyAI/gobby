@@ -51,14 +51,13 @@ def test_standard_cli_install_forwards_provider_hook_timeout(tmp_path: Path) -> 
         "claude",
         installer,
         tmp_path,
-        "project",
         results,
         hook_timeout_seconds=150,
     )
 
     installer.assert_called_once_with(
         tmp_path,
-        mode="project",
+        mode="global",
         hook_timeout_seconds=150,
     )
     assert results == {"claude": {"success": False, "error": "expected"}}
@@ -72,12 +71,11 @@ def test_standard_cli_install_keeps_agy_signature_unchanged(tmp_path: Path) -> N
         "agy",
         installer,
         tmp_path,
-        "project",
         results,
         hook_timeout_seconds=150,
     )
 
-    installer.assert_called_once_with(tmp_path, mode="project")
+    installer.assert_called_once_with(tmp_path, mode="global")
     assert results == {"agy": {"success": False, "error": "expected"}}
 
 
