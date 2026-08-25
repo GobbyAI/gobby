@@ -61,15 +61,13 @@ def _get_extractor(language: str, max_keywords: int) -> Any:
     key = (language, max_keywords)
     extractor = cache.get(key)
     if extractor is None:
-        # NOTE: yake>=0.7.3 renamed dedupLim -> dedup_lim and silently ignores the
-        # old spelling, so this runs at the 0.9 default rather than the 0.3 the
-        # original call intended. Preserved as-is because #20868 requires identical
-        # extraction output; restoring aggressive deduplication is tracked in #20882.
+        # Keep YAKE's 0.9 deduplication threshold explicit so dependency defaults
+        # cannot change the extraction behavior established by the golden test.
         extractor = _yake.KeywordExtractor(
             lan=language,
             n=2,  # max n-gram size
             top=max_keywords,
-            dedupLim=0.3,
+            dedup_lim=0.9,
         )
         cache[key] = extractor
     return extractor

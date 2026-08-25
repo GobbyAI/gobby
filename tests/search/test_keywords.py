@@ -55,6 +55,7 @@ def test_extractor_is_reused_within_a_thread() -> None:
     first = keywords._get_extractor("en", 10)
     second = keywords._get_extractor("en", 10)
     assert first is second
+    assert first.config["dedup_lim"] == 0.9
     assert keywords._get_extractor("en", 5) is not first
 
 
