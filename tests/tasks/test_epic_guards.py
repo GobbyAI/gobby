@@ -17,8 +17,8 @@ from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.epic_guards import (
     collect_epic_guard_paths,
     evaluate_epic_guards,
+    is_pytest_module_path,
     is_test_convention_path,
-    is_test_module_path,
 )
 
 
@@ -341,6 +341,7 @@ def test_guard_collection_skips_added_files_the_runner_cannot_collect(tmp_path: 
         "tests/scenario_runner.py": "def run(): pass\n",
         "tests/scenarios/bounded-repair.yaml": "skill: example\n",
         "crates/core/tests/contract.rs": "#[test] fn contract() {}\n",
+        "web/src/login.test.tsx": "test('login', () => {});\n",
     }
     for relative, content in added.items():
         target = Path(tmp_path, relative)
@@ -367,9 +368,10 @@ def test_guard_collection_skips_added_files_the_runner_cannot_collect(tmp_path: 
     ("path", "module", "convention"),
     [
         ("tests/tasks/test_epic_guards.py", True, True),
-        ("web/src/login.test.tsx", True, True),
-        ("web/src/Login.spec.ts", True, True),
-        ("pkg/store_test.go", True, True),
+        ("src/gobby/tasks/guards_test.py", True, True),
+        ("web/src/login.test.tsx", False, True),
+        ("web/src/Login.spec.ts", False, True),
+        ("pkg/store_test.go", False, True),
         ("tests/skills/scenarios/plan-mechanic/bounded-repair.yaml", False, True),
         ("tests/conftest.py", False, True),
         ("tests/skills/scenario_runner.py", False, True),
@@ -377,10 +379,10 @@ def test_guard_collection_skips_added_files_the_runner_cannot_collect(tmp_path: 
         ("src/gobby/tasks/epic_guards.py", False, False),
     ],
 )
-def test_guard_modules_are_named_by_convention_while_edits_use_the_tree(
+def test_guard_modules_are_pytest_files_while_edits_use_the_tree(
     path: str, module: bool, convention: bool
 ) -> None:
-    assert is_test_module_path(path) is module
+    assert is_pytest_module_path(path) is module
     assert is_test_convention_path(path) is convention
 
 

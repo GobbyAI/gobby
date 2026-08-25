@@ -361,7 +361,7 @@ def collect_epic_guard_paths(
     task: Task,
     repo_path: str,
 ) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
-    """Collect test refs and added test modules from prior closed leaves.
+    """Collect test refs and added pytest modules from prior closed leaves.
 
     The fourth element is every path deleted by a closed leaf's linked
     commits: a deletion that passed its own task's close gates retires the
@@ -410,7 +410,7 @@ def collect_epic_guard_paths(
                 continue
             deleted.update(removed)
             for path in added:
-                if not is_test_module_path(path):
+                if not is_pytest_module_path(path):
                     continue
                 error = _path_error(path, repo_path)
                 if error:
@@ -493,22 +493,29 @@ def _changed_files(sha: str, repo_path: str) -> tuple[tuple[str, ...], tuple[str
     return tuple(added), tuple(deleted)
 
 
-def is_test_module_path(path: str) -> bool:
-    """A file named by a test convention, which is what a test runner collects.
+def is_pytest_module_path(path: str) -> bool:
+    """A Python module pytest collects when named on the command line.
 
-    Directory membership alone is not enough for the guard command: a ``tests/``
-    tree also holds fixtures, helpers, and ``conftest.py`` modules that pytest
-    cannot collect from the command line (#20957).
+    The guard template is a pytest command, so only ``test_*.py`` and
+    ``*_test.py`` files may be forwarded to it. Directory membership is not
+    enough: a ``tests/`` tree also holds fixtures, helpers, ``conftest.py``,
+    and other languages' tests, and pytest ends the run with ``ERROR: not
+    found`` for any of them (#20957).
     """
     name = PurePosixPath(path).name.casefold()
-    return name.startswith("test_") or "_test." in name or ".test." in name or ".spec." in name
+    return name.endswith(".py") and (name.startswith("test_") or name.endswith("_test.py"))
 
 
 def is_test_convention_path(path: str) -> bool:
-    """A test module or any file under a test directory; classifies edits."""
+    """A test module in any language or any file under a test directory."""
     pure = PurePosixPath(path)
-    return is_test_module_path(path) or any(
-        part.casefold() in {"test", "tests", "__tests__"} for part in pure.parts[:-1]
+    name = pure.name.casefold()
+    return (
+        any(part.casefold() in {"test", "tests", "__tests__"} for part in pure.parts[:-1])
+        or name.startswith("test_")
+        or "_test." in name
+        or ".test." in name
+        or ".spec." in name
     )
 
 
@@ -587,6 +594,6 @@ __all__ = [
     "EpicGuardResult",
     "collect_epic_guard_paths",
     "evaluate_epic_guards",
+    "is_pytest_module_path",
     "is_test_convention_path",
-    "is_test_module_path",
 ]
