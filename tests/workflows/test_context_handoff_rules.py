@@ -1495,7 +1495,8 @@ class TestAutoCompactAfterTaskClose:
         assert len(compact_calls) == 1
         assert compact_calls[0]["background"] is True
         assert compact_calls[0]["arguments"] == {"rule_name": "auto-compact-after-task-close"}
-        assert response.context is None
+        assert response.context is not None
+        assert "Rule 4 sweep" in response.context
         assert variables["_auto_compact_after_task_close_queued_for"] == "#123"
 
         second_response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
