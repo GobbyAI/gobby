@@ -6,12 +6,13 @@ import asyncio
 import json
 import os
 import shutil
-import subprocess
 import sys
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
+
+import psutil
 
 from gobby.sync.jsonl_io import atomic_write_text, export_file_lock
 
@@ -167,20 +168,9 @@ def write_generation_provenance(generation: Path, value: dict[str, object]) -> N
 def process_start_identity(pid: int) -> str | None:
     """Return a value that distinguishes PID reuse for one process."""
     try:
-        return Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").split()[21]
-    except (IndexError, OSError):
-        pass
-    try:
-        result = subprocess.run(
-            ["ps", "-o", "lstart=", "-p", str(pid)],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=5,
-        )
-    except (OSError, subprocess.SubprocessError):
+        return float(psutil.Process(pid).create_time()).hex()
+    except (OSError, psutil.Error):
         return None
-    return result.stdout.strip() or None
 
 
 def write_process_owner(path: Path, pgid: int) -> None:

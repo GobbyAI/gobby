@@ -19,6 +19,7 @@ import pytest
 
 from gobby.mcp_proxy.tools.skills import create_skills_registry
 from gobby.skills import materialization as materializer
+from gobby.skills import script_cache
 from gobby.skills.materialization import (
     MaterializationTestCommandResult,
     materialization_test_support,
@@ -686,6 +687,16 @@ async def test_lock_waiter_cancellation_leaves_lock_free(tmp_path: Path) -> None
     async with asyncio.timeout(1):
         async with async_export_file_lock(target):
             pass
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process-group contract")
+def test_process_start_identity_does_not_shell_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    def forbidden(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise AssertionError("process identity attempted to shell out")
+
+    monkeypatch.setattr(subprocess, "run", forbidden)
+
+    assert script_cache.process_start_identity(os.getpid()) is not None
 
 
 @pytest.mark.asyncio
