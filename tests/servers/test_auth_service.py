@@ -444,6 +444,39 @@ def test_agent_capability_matrix(
         assert not service.is_request_authenticated(_request(identity, method=method, path=path))
 
 
+def test_agent_capability_survives_ref_spelled_path_segment(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    live_agent_run: AgentRun,
+) -> None:
+    """A percent-decoded "#N" path segment must not truncate route matching.
+
+    Uvicorn decodes %23 to a literal "#" in scope["path"]; request.url.path
+    re-parses the URL string and drops everything after it as a fragment, so
+    capability matching must read the scope path.
+    """
+    token_file = tmp_path / "local_cli_token"
+    token_file.write_text("operator-token")
+    _set_api_token(temp_db, "operator-token")
+    service = AuthService(lambda: temp_db, token_file=token_file)
+    session_uuid = "11111111-2222-3333-4444-555555555555"
+    token = issue_agent_api_token(
+        "operator-token",
+        agent_run_id=live_agent_run.id,
+        session_id=session_uuid,
+        project_id="project-123",
+    )
+    identity = {
+        "Authorization": f"Bearer {token}",
+        "X-Gobby-Agent-Run-Id": live_agent_run.id,
+        "X-Gobby-Session-Id": session_uuid,
+        "X-Gobby-Caller-Project-Id": "project-123",
+    }
+    assert service.is_request_authenticated(
+        _request(identity, method="POST", path="/api/sessions/#11064/variables/set")
+    )
+
+
 def test_tool_capability_is_bound_to_live_managed_execution(
     temp_db: HubDatabase,
     tmp_path: Path,

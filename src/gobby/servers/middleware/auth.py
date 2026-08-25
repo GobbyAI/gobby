@@ -13,6 +13,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from gobby.config.ui import is_loopback_bind_host
+from gobby.servers.auth_service import request_path
 from gobby.servers.grant_auth import admission_required
 from gobby.servers.lease_fence import LeaseNotHeld
 from gobby.servers.responses import JSONResponse
@@ -84,7 +85,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         self.server = server
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        path = request.url.path
+        path = request_path(request)
         remote_hook_requires_auth = _remote_hook_requires_auth(self.server, path)
 
         if not remote_hook_requires_auth and (
@@ -131,7 +132,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request: Request,
         call_next: RequestResponseEndpoint,
     ) -> Response:
-        if not admission_required(request.method, request.url.path):
+        if not admission_required(request.method, request_path(request)):
             return await call_next(request)
         fence = getattr(self.server.auth_service, "effect_fence", None)
         if fence is None:

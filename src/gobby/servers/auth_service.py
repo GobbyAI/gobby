@@ -58,6 +58,19 @@ class _AgentRoute(NamedTuple):
     bind_identity: bool
 
 
+def request_path(request: HTTPConnection) -> str:
+    """Auth decisions must read the ASGI scope path, never request.url.path.
+
+    scope["path"] is percent-decoded, so a "#N" session ref arrives as a
+    literal "#"; request.url.path re-parses the URL string and truncates
+    everything from that "#" as a fragment, which misclassifies the route.
+    """
+    path = request.scope.get("path")
+    if isinstance(path, str):
+        return path
+    return request.url.path
+
+
 # The single enumerated method+route capability matrix for run-scoped agent
 # tokens. "*" matches exactly one path segment; every other segment matches
 # exactly. bind_identity marks context-bearing routes whose identity is
@@ -115,7 +128,7 @@ def _agent_capability_allows(request: HTTPConnection) -> _AgentRoute | None:
     capability. The matrix above is the single source of agent capability.
     """
     method = str(request.scope.get("method", "GET")).upper()
-    segments = request.url.path.strip("/").split("/")
+    segments = request_path(request).strip("/").split("/")
     if not all(segments):
         return None
     for entry in _AGENT_CAPABILITY_MATRIX:
@@ -236,7 +249,7 @@ class AuthService:
     def authenticate(self, request: HTTPConnection) -> AuthDecision:
         grant_route = match_grant_route(
             str(request.scope.get("method", "GET")),
-            request.url.path,
+            request_path(request),
         )
         if grant_route is None:
             if not self._legacy_authenticated(request):
@@ -244,7 +257,7 @@ class AuthService:
             if (
                 admission_required(
                     str(request.scope.get("method", "GET")),
-                    request.url.path,
+                    request_path(request),
                 )
                 and not self._effectful_allowed()
             ):
