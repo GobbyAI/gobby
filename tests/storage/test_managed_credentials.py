@@ -901,6 +901,92 @@ def test_interactive_reuse_refreshes_expired_role(
         store.db.close()
 
 
+def test_sessionless_operator_handshake_persists_null_session_id(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    """A sessionless operator handshake issues through the real chain and stores NULL (#20899).
+
+    End-to-end: HandshakeService.issue_for_operator (what the daemon route
+    calls) -> issue_grant_postgres -> ManagedCredentialManager.issue_interactive
+    -> real principal_bindings row, with no mocks in the issuance path.
+    """
+    import time
+
+    from gobby.runner_init.servers import issue_grant_postgres
+    from gobby.runtime_grants.handshake import HandshakeService
+    from gobby.runtime_grants.schema import GrantPrincipal, PostgresDirect
+    from gobby.runtime_grants.service import DeploymentGrantContext, GrantService
+    from tests.runtime_grants.support import (
+        DEPLOYMENT_TOKEN,
+        FENCING_EPOCH,
+        GOLDEN_SECRET,
+        StaticRuntime,
+        config_snapshot,
+        daemon_config,
+    )
+
+    fixture = authorization_fixture
+    manager = _manager(fixture, tmp_path / "managed-handshake")
+    store = _secret_store(fixture)
+    token = "b3b3b3b3b3b3b3b3"
+    issued_directs: list[PostgresDirect] = []
+
+    def issue_postgres(principal: GrantPrincipal) -> PostgresDirect:
+        direct = issue_grant_postgres(
+            principal,
+            credentials=manager,
+            deployment_token=token,
+            secrets=store,
+            managed_bootstrap_dsn=str,
+        )
+        issued_directs.append(direct)
+        return direct
+
+    grants = GrantService(
+        runtime=StaticRuntime(config_snapshot(daemon_config(), revision=3)),
+        context=DeploymentGrantContext(
+            token=DEPLOYMENT_TOKEN,
+            fencing_epoch=FENCING_EPOCH,
+            signing_secret=GOLDEN_SECRET,
+        ),
+        clock=lambda: int(time.time()),
+    )
+    service = HandshakeService(
+        grants=grants,
+        local_machine_id=str(fixture.machine_id),
+        operator_token="operator-token",
+        issue_postgres=issue_postgres,
+        admitted_projects=frozenset({str(fixture.project_id)}),
+        clock=lambda: int(time.time()),
+    )
+    try:
+        grant = service.issue_for_operator(
+            machine_id=str(fixture.machine_id),
+            project_id=str(fixture.project_id),
+            session_id=None,
+        )
+        assert grant.principal.session_id is None
+        assert len(issued_directs) == 1
+        with psycopg.connect(issued_directs[0].dsn) as conn:
+            assert conn.execute("SELECT 1").fetchone() == (1,)
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            row = admin.execute(
+                f"SELECT session_id FROM {AUTH_SCHEMA}.principal_bindings "
+                "WHERE deployment_token = %s AND project_id = %s AND revoked_at IS NULL",
+                (token, fixture.project_id),
+            ).fetchone()
+        assert row == (None,)
+    finally:
+        manager.revoke_interactive(
+            deployment_token=token,
+            project_id=fixture.project_id,
+            reason="test-cleanup",
+        )
+        manager.close()
+        store.db.close()
+
+
 def test_interactive_issue_without_session_persists_null_session_id(
     authorization_fixture: AuthorizationFixture,
     tmp_path: Path,
