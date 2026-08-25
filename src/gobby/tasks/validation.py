@@ -17,7 +17,11 @@ from gobby.tasks.close_verdict import CloseVerdict, parse_close_verdict
 from gobby.tasks.close_verdict_memo import CloseVerdictMemo
 from gobby.tasks.criteria_contract import split_validation_criteria
 from gobby.tasks.generation_schemas import TASK_CLOSE_VALIDATION_SCHEMA
-from gobby.tasks.validation_evidence import ValidationEvidenceTooLarge, build_close_diff_evidence
+from gobby.tasks.validation_evidence import build_close_diff_evidence
+
+# The diff evidence is never squeezed below this many characters, no matter how
+# large the other prompt artifacts are: a starved reviewer rejects complete work.
+_MIN_DIFF_EVIDENCE_CHARS = 10_000
 
 logger = logging.getLogger(__name__)
 
@@ -181,30 +185,45 @@ class TaskValidator:
         if not criteria:
             raise ValueError("Task-close criteria review requires explicit validation criteria.")
 
-        try:
-            diff_evidence = build_close_diff_evidence(
-                diff_text,
-                criteria=validation_criteria,
-            )
-        except ValidationEvidenceTooLarge as exc:
-            raise ValidationPromptTooLarge(str(exc)) from exc
         criteria_text = "\n".join(
             f"{index}. {criterion}" for index, criterion in enumerate(criteria, start=1)
         )
         facts_text = json.dumps(checklist_facts, sort_keys=True, separators=(",", ":"), default=str)
-        prompt = self._loader.render(
-            self.config.prompt_path or "validation/validate",
-            {
-                "title": title,
-                "description": description,
-                "closure_reason": closure_reason.strip() or "completed",
-                "criteria_text": criteria_text,
-                "changes_summary": changes_summary.strip(),
-                "diff_evidence": diff_evidence.text,
-                "test_bodies": test_bodies,
-                "checklist_facts": facts_text,
-            },
+
+        def render(evidence_text: str) -> str:
+            return self._loader.render(
+                self.config.prompt_path or "validation/validate",
+                {
+                    "title": title,
+                    "description": description,
+                    "closure_reason": closure_reason.strip() or "completed",
+                    "criteria_text": criteria_text,
+                    "changes_summary": changes_summary.strip(),
+                    "diff_evidence": evidence_text,
+                    "test_bodies": test_bodies,
+                    "checklist_facts": facts_text,
+                },
+            )
+
+        diff_evidence = build_close_diff_evidence(diff_text, criteria=validation_criteria)
+        prompt = render(diff_evidence.text)
+        budget = min(
+            self.config.close_review_prompt_budget_chars,
+            self.config.close_review_prompt_max_chars,
         )
+        if len(prompt) > budget:
+            # Artifact budget: the criteria, summary, test bodies, and facts are
+            # never truncated (criteria routinely reference their exact strings),
+            # so the diff evidence absorbs the whole cut — structurally, per
+            # file, and never below its own floor.
+            overhead = len(prompt) - len(diff_evidence.text)
+            diff_budget = max(budget - overhead, _MIN_DIFF_EVIDENCE_CHARS)
+            diff_evidence = build_close_diff_evidence(
+                diff_text,
+                criteria=validation_criteria,
+                budget_chars=diff_budget,
+            )
+            prompt = render(diff_evidence.text)
         evidence_fingerprint = hashlib.sha256(
             json.dumps(
                 {

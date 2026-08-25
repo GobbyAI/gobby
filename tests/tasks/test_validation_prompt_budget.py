@@ -222,3 +222,96 @@ async def test_oversized_review_fingerprint_tracks_every_close_input(
     }
 
     assert len(fingerprints) == 5
+
+
+def _multi_file_diff(paths: list[str], lines_per_file: int) -> str:
+    parts = []
+    for path in paths:
+        parts.append(
+            f"diff --git a/{path} b/{path}\n"
+            f"--- a/{path}\n"
+            f"+++ b/{path}\n"
+            f"@@ -0,0 +{lines_per_file} @@\n"
+        )
+        parts.append(
+            "".join(f"+filler line {index} in {path}\n" for index in range(lines_per_file))
+        )
+    return "".join(parts)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_large_multifile_diff_prompt_lands_under_working_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = TaskValidationConfig()
+    budget = config.close_review_prompt_budget_chars
+    assert budget < config.close_review_prompt_max_chars
+
+    validator, llm_service = _validator(config)
+    monkeypatch.setattr(validator._loader, "render", _render_context)
+    paths = [f"src/pkg/module_{index:02d}.py" for index in range(60)]
+    diff_text = _multi_file_diff(paths, 120)
+    assert len(diff_text) > budget
+
+    await validator.validate_task(
+        task_id="task-1",
+        title="Land a large multi-file change",
+        changes_summary="Reworked every module in src/pkg.",
+        validation_criteria="- Every module in the package is updated coherently.",
+        diff_text=diff_text,
+        checklist_facts={"validation_commands": "focused tests passed"},
+    )
+
+    prompt = llm_service.call_json_feature.await_args.args[1]
+    assert len(prompt) < budget
+    assert "NOTE: diff evidence was truncated" in prompt
+    for path in paths:
+        assert f"- {path} (+120/-0 LOC)" in prompt
+        assert f"diff --git a/{path} b/{path}" in prompt
+        assert f"from {path} to fit the close-review budget" in prompt
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_criteria_named_strings_survive_prompt_truncation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    validator, llm_service = _validator(TaskValidationConfig())
+    monkeypatch.setattr(validator._loader, "render", _render_context)
+
+    planted_command = "+    check('DATABASE_URL=... uv run pytest tests/tasks/test_validation.py')"
+    planted_number = "+    ISOLATED_PORT = 60892"
+    planted_path = "+    touch('src/gobby/tasks/validation_evidence.py')"
+    filler = "".join(f"+filler line {index}\n" for index in range(4_000))
+    diff_text = (
+        "diff --git a/src/huge.py b/src/huge.py\n"
+        "--- a/src/huge.py\n"
+        "+++ b/src/huge.py\n"
+        "@@ -0,0 +4003 @@\n" + filler + f"{planted_command}\n{planted_number}\n{planted_path}\n"
+    )
+    summary = "Measured cold review at 47.3 s before and 12.1 s after."
+
+    await validator.validate_task(
+        task_id="task-1",
+        title="Preserve criteria-named evidence",
+        changes_summary=summary,
+        validation_criteria=(
+            "1. `uv run pytest tests/tasks/test_validation.py` passes.\n"
+            "2. The isolated daemon binds port 60892.\n"
+            "3. src/gobby/tasks/validation_evidence.py truncates per file.\n"
+            "4. The summary reports the measured 47.3 s cold review."
+        ),
+        diff_text=diff_text,
+        checklist_facts={"validation_commands": "focused tests passed"},
+    )
+
+    prompt = llm_service.call_json_feature.await_args.args[1]
+    # Truncation demonstrably happened: deep filler is gone.
+    assert "+filler line 3998" not in prompt
+    # Exact strings the criteria name still surface from the truncated diff.
+    assert "uv run pytest tests/tasks/test_validation.py" in prompt
+    assert "60892" in prompt
+    assert "src/gobby/tasks/validation_evidence.py" in prompt
+    # Measured numbers in the changes summary reach the prompt verbatim.
+    assert summary in prompt

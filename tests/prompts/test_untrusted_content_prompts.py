@@ -55,12 +55,15 @@ def test_delimit_untrusted_content_prevents_delimiter_breakout() -> None:
             "validation/validate",
             {
                 "title": _INJECTION,
+                "description": _INJECTION,
+                "closure_reason": _INJECTION,
                 "criteria_text": _INJECTION,
                 "changes_summary": _INJECTION,
                 "diff_evidence": _INJECTION,
+                "test_bodies": _INJECTION,
                 "checklist_facts": _INJECTION,
             },
-            5,
+            8,
         ),
         ("features/tool_summary", {"description": _INJECTION}, 1),
         (

@@ -1858,6 +1858,17 @@
     },
     {
       "activation": "live",
+      "default": 50000,
+      "description": "Working character budget for the task-close criteria-review prompt. Diff evidence is truncated per file to fit, keeping every changed file represented, declaring omitted spans, and always retaining lines that match strings named by the criteria. close_review_prompt_max_chars remains the hard failure cap.",
+      "key": "gobby_tasks.validation.close_review_prompt_budget_chars",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
       "default": 256000,
       "description": "Maximum rendered character count for the task-close criteria-review prompt.",
       "key": "gobby_tasks.validation.close_review_prompt_max_chars",
