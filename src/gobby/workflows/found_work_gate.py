@@ -22,6 +22,7 @@ from gobby.config.validation_detection import (
     resolve_validation_detection_config,
 )
 from gobby.hooks.events import HookEvent
+from gobby.hooks.normalization import is_shell_tool
 from gobby.tasks.transcript_evidence import (
     TranscriptEvidenceUnavailable,
     TranscriptValidationRun,
@@ -31,24 +32,22 @@ from gobby.tasks.transcript_evidence import (
 
 logger = logging.getLogger(__name__)
 
-RULE_4_LADDER_MESSAGE = (
-    "Rule 4 ladder: fix it now (create_task claim=true), hand it to its active owner via "
-    "send_message, or — edge case — file it labeled needs-decision/clean-window with the "
-    "reason. Don't ask, and don't go silent."
-)
-
 _DEFECT_RE = re.compile(
-    r"\b(?:bug|broken|defect|error|fail(?:ed|ing|ure)?|incorrect|regression|warning|"
-    r"type error|lint error|does(?:n't| not) work|not working)\b",
+    r"\b(?:bugs?|broken|defects?|errors?|fail(?:ed|ing|ures?)?|incorrect|regressions?|"
+    r"warnings?|issues?|type errors?|lint errors?|does(?:n't| not) work|not working)\b",
     re.IGNORECASE,
 )
-_PERMISSION_CLOSER_RE = re.compile(
+_PERMISSION_CLOSER_PATTERN = (
     r"(?:should|shall|can|could|may)\s+i\s+"
     r"(?:fix|repair|address|resolve|investigate|delete|drop|erase|overwrite|reset|remove|purge)|"
     r"(?:would|do)\s+you\s+(?:like|want)\s+me\s+to\s+"
     r"(?:fix|repair|address|resolve|investigate|delete|drop|erase|overwrite|reset|remove|purge)|"
     r"want\s+me\s+to\s+"
-    r"(?:fix|repair|address|resolve|investigate|delete|drop|erase|overwrite|reset|remove|purge)",
+    r"(?:fix|repair|address|resolve|investigate|delete|drop|erase|overwrite|reset|remove|purge)"
+)
+# The closer's own sentence must be the question; later prose may follow it.
+_PERMISSION_QUESTION_RE = re.compile(
+    rf"(?:{_PERMISSION_CLOSER_PATTERN})[^.!?\n]*\?",
     re.IGNORECASE,
 )
 _DESTRUCTIVE_CONFIRMATION_RE = re.compile(
@@ -66,15 +65,10 @@ _USER_DEFERRAL_RE = re.compile(
     r"\b(?:review|assessment|audit|diagnosis|report|q&a)\s+(?:only|deliverable)\b",
     re.IGNORECASE,
 )
-_SCOPE_OPTION_NAMES = {
-    "-k",
-    "-m",
-    "-p",
-    "--filter",
-    "--package",
-    "--run",
-    "-run",
-}
+_SCOPE_OPTION_NAMES = frozenset({"-k", "-m", "--filter", "--run", "-run"})
+# ``-p`` selects a crate for cargo; for pytest it loads a plugin (``-p no:cacheprovider``).
+_CARGO_SCOPE_OPTION_NAMES = _SCOPE_OPTION_NAMES | {"-p", "--package"}
+_PYTHON_LAUNCHER_RE = re.compile(r"^python(?:\d+(?:\.\d+)?)?$")
 _COVER_SUFFIXES = {
     ".py",
     ".pyi",
@@ -125,6 +119,7 @@ class FoundWorkStopFacts:
     """Transient facts consumed by declarative stop-gate rules."""
 
     shirk: bool = False
+    shirk_confirmed: bool = False
     terminal_validation_failures: tuple[str, ...] = ()
 
 
@@ -143,11 +138,18 @@ def capture_turn_prompt(event: HookEvent, variables: dict[str, Any]) -> None:
 
 
 def capture_rule4_handoff(event: HookEvent, variables: dict[str, Any]) -> None:
-    """Track tool activity and successful owner handoff within the current turn."""
-    revision = variables.get("_rule4_activity_revision", 0)
-    variables["_rule4_activity_revision"] = int(revision) + 1 if isinstance(revision, int) else 1
+    """Track tool activity and successful owner handoff within the current turn.
+
+    Only MCP and shell calls can change the analysis (validation runs, handoffs,
+    task lifecycle), so only those bump the activity revision; a Read or Edit
+    leaves the cached verdict — and the session-variable row — untouched.
+    """
     if not isinstance(event.data, dict):
         return
+    if not event.data.get("mcp_server") and not is_shell_tool(event.data.get("tool_name")):
+        return
+    revision = variables.get("_rule4_activity_revision", 0)
+    variables["_rule4_activity_revision"] = int(revision) + 1 if isinstance(revision, int) else 1
     if event.data.get("mcp_server") != "gobby-agents":
         return
     if event.data.get("mcp_tool") != "send_message":
@@ -170,10 +172,7 @@ def is_permission_deferral_candidate(message: str) -> bool:
     if not isinstance(message, str) or not message.strip():
         return False
     tail = message.strip()[-800:]
-    if "?" not in tail:
-        return False
-    closer = _PERMISSION_CLOSER_RE.search(tail)
-    if closer is None or not re.search(r"\?\s*[*_`]*\s*$", tail[closer.start() :]):
+    if "?" not in tail or _PERMISSION_QUESTION_RE.search(tail) is None:
         return False
     return bool(_DEFECT_RE.search(message))
 
@@ -268,6 +267,7 @@ class FoundWorkStopAnalyzer:
             cached_failures = variables.get("_rule4_terminal_validation_failures")
             return FoundWorkStopFacts(
                 shirk=variables.get("_rule4_found_work_shirk") is True,
+                shirk_confirmed=variables.get("_rule4_found_work_shirk_confirmed") is True,
                 terminal_validation_failures=(
                     tuple(str(item) for item in cached_failures)
                     if isinstance(cached_failures, list | tuple)
@@ -286,9 +286,14 @@ class FoundWorkStopAnalyzer:
             or variables.get("_rule4_owner_handoff_turn")
         )
         shirk = False
+        shirk_confirmed = False
         if not primary_compliance and is_permission_deferral_candidate(message):
             if not _deterministic_exemption(message, user_prompt):
-                shirk = await self._confirm_shirk(message, user_prompt)
+                # An LLM "no" clears the candidate; a "yes" or an unavailable
+                # confirmation both alert (the stop gate alerts once per session).
+                confirmed = await self._confirm_shirk(message, user_prompt)
+                shirk = confirmed is not False
+                shirk_confirmed = confirmed is True
 
         failures: tuple[str, ...] = ()
         if not task_disposition:
@@ -300,8 +305,13 @@ class FoundWorkStopAnalyzer:
             )
         variables["_rule4_analysis_cache_key"] = cache_key
         variables["_rule4_found_work_shirk"] = shirk
+        variables["_rule4_found_work_shirk_confirmed"] = shirk_confirmed
         variables["_rule4_terminal_validation_failures"] = list(failures)
-        return FoundWorkStopFacts(shirk=shirk, terminal_validation_failures=failures)
+        return FoundWorkStopFacts(
+            shirk=shirk,
+            shirk_confirmed=shirk_confirmed,
+            terminal_validation_failures=failures,
+        )
 
     def _has_labeled_deferral_task(self, session_id: str) -> bool:
         if self._session_task_manager is None:
@@ -324,15 +334,21 @@ class FoundWorkStopAnalyzer:
                     return True
         return False
 
-    async def _confirm_shirk(self, message: str, user_prompt: str) -> bool:
+    async def _confirm_shirk(self, message: str, user_prompt: str) -> bool | None:
+        """LLM verdict on a fast-path candidate.
+
+        ``True`` confirms the shirk, ``False`` clears it, and ``None`` means no
+        confirmation was available (no service, validation disabled, timeout,
+        malformed payload) — the caller then alerts on the fast-path verdict.
+        """
         service = self._llm_service_resolver()
         daemon_config = self._config_resolver()
         if service is None or daemon_config is None:
-            return True
+            return None
         try:
             validation = daemon_config.get_gobby_tasks_config().validation
             if not validation.enabled:
-                return True
+                return None
             prompt = (
                 f"USER INSTRUCTION:\n{user_prompt or '(unavailable)'}\n\n"
                 f"FINAL ASSISTANT MESSAGE:\n{message}"
@@ -352,10 +368,10 @@ class FoundWorkStopAnalyzer:
             logger.debug(
                 "Rule-4 shirk confirmation unavailable; using fast-path verdict", exc_info=True
             )
-            return True
+            return None
         if isinstance(payload, Mapping) and isinstance(payload.get("block"), bool):
             return payload["block"] is True
-        return True
+        return None
 
     async def _terminal_failures(
         self,
@@ -498,7 +514,7 @@ def _analysis_cache_key(
         "message": message,
         "prompt": user_prompt,
         "activity_revision": variables.get("_rule4_activity_revision", 0),
-        "task_claimed": variables.get("task_claimed") is True,
+        "task_claimed": bool(variables.get("task_claimed")),
         "fix_commit": variables.get("_rule4_fix_commit_turn") is True,
         "owner_handoff": variables.get("_rule4_owner_handoff_turn") is True,
     }
@@ -601,12 +617,14 @@ def _run_targets(run: TranscriptValidationRun) -> tuple[str, ...]:
 
 def _command_targets(command: str) -> tuple[str, ...]:
     try:
-        tokens = shlex.split(command)
+        tokens = _drop_python_launcher(shlex.split(command))
     except ValueError:
         return ()
+    program = next((token for token in tokens if "=" not in token), "")
+    scope_options = _CARGO_SCOPE_OPTION_NAMES if program == "cargo" else _SCOPE_OPTION_NAMES
     targets: list[str] = []
     for index, token in enumerate(tokens):
-        if token in _SCOPE_OPTION_NAMES and index + 1 < len(tokens):
+        if token in scope_options and index + 1 < len(tokens):
             value = tokens[index + 1]
             if "/" in value or Path(value).suffix:
                 normalized_value = value.removeprefix("./").rstrip("/")
@@ -621,6 +639,24 @@ def _command_targets(command: str) -> tuple[str, ...]:
         if _is_cover_target(normalized):
             targets.append(normalized)
     return tuple(dict.fromkeys(targets))
+
+
+def _drop_python_launcher(tokens: list[str]) -> list[str]:
+    """Drop ``python -m <module>`` launcher triples; that ``-m`` is no marker selector."""
+    kept: list[str] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if (
+            _PYTHON_LAUNCHER_RE.match(token)
+            and index + 2 < len(tokens)
+            and tokens[index + 1] == "-m"
+        ):
+            index += 3
+            continue
+        kept.append(token)
+        index += 1
+    return kept
 
 
 def _is_cover_target(token: str) -> bool:

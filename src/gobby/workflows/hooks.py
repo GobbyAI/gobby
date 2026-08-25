@@ -695,6 +695,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     return response
 
                 eval_context["found_work_shirk"] = False
+                eval_context["found_work_shirk_confirmed"] = False
                 eval_context["terminal_validation_failure"] = False
                 eval_context["terminal_validation_failure_commands"] = []
                 if (
@@ -710,6 +711,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         project_path=project_path,
                     )
                     eval_context["found_work_shirk"] = facts.shirk
+                    eval_context["found_work_shirk_confirmed"] = facts.shirk_confirmed
                     eval_context["terminal_validation_failure"] = bool(
                         facts.terminal_validation_failures
                     )

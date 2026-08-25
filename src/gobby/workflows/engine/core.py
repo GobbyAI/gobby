@@ -286,6 +286,7 @@ class RuleEngine(
                 eval_context.setdefault("foreign_dirty_edit_conflict", "")
                 eval_context.setdefault("foreign_staged_commit_conflict", "")
                 eval_context.setdefault("found_work_shirk", False)
+                eval_context.setdefault("found_work_shirk_confirmed", False)
                 eval_context.setdefault("terminal_validation_failure", False)
                 eval_context.setdefault("terminal_validation_failure_commands", [])
                 eval_context.setdefault("_blocking_deadline", blocking_deadline)

@@ -181,6 +181,8 @@ not only by declarative rules:
 | `tool_block_pending` | Set `true` on tool failure, cleared on tool success |
 | `_last_blocked_tool` | Tracks which tool was last blocked |
 | `force_allow_stop` | Set `true` on catastrophic failures (rate limit, billing) |
+| `found_work_shirk_alerted` | Set `true` by the Rule-4 shirk stop gate the first time it blocks a permission-seeking defect deferral; the gate never fires again in that session (session-lifetime, never reset on `turn_start`) |
+| `found_work_shirk_confirmed` | Set alongside `found_work_shirk_alerted`: `true` when the LLM confirmed the deferral, `false` when the alert rested on the fast-path verdict alone |
 | `baseline_dirty_files` | Initialized from the first rule evaluation's git status |
 | `session_edited_files` | Updated by tool observers as the session edits files |
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -106,6 +107,8 @@ class TestPermissionDeferralFastPath:
             "The parser is broken. Should I fix it?",
             "Tests are failing. Would you like me to investigate?",
             "I found a regression. Do you want me to address it?",
+            "Found 3 bugs. Want me to fix them?",
+            "Two tests are failing. Should I fix them? Let me know.",
         ],
     )
     def test_detects_permission_question_about_defect(self, message: str) -> None:
@@ -115,7 +118,7 @@ class TestPermissionDeferralFastPath:
         "message",
         [
             "The parser is broken. I fixed it and tests pass.",
-            "The parser is broken. Should I fix it? I will proceed.",
+            "Should I fix it, you asked earlier. It is fixed now and tests pass. Anything else?",
             "Would you like a new dashboard theme?",
             "Should I explain how this works?",
             "Fixed the failing test.",
@@ -153,6 +156,45 @@ class TestPermissionDeferralFastPath:
         )
         assert variables["_rule4_owner_handoff_turn"] is True
 
+    def test_activity_revision_tracks_only_mcp_and_shell_calls(self) -> None:
+        variables: dict[str, Any] = {}
+        capture_rule4_handoff(
+            _event(
+                HookEventType.AFTER_TOOL,
+                {"tool_name": "Read", "tool_input": {"file_path": "src/x.py"}},
+            ),
+            variables,
+        )
+        assert "_rule4_activity_revision" not in variables
+
+        capture_rule4_handoff(
+            _event(
+                HookEventType.AFTER_TOOL,
+                {"tool_name": "Bash", "tool_input": {"command": "pytest tests/unit"}},
+            ),
+            variables,
+        )
+        assert variables["_rule4_activity_revision"] == 1
+
+        capture_rule4_handoff(
+            _event(
+                HookEventType.AFTER_TOOL,
+                {
+                    "tool_name": "mcp__gobby__call_tool",
+                    "mcp_server": "gobby-tasks",
+                    "mcp_tool": "close_task",
+                },
+            ),
+            variables,
+        )
+        assert variables["_rule4_activity_revision"] == 2
+
+
+def _disabled_validation_config() -> _Config:
+    config = _Config()
+    config.validation = TaskValidationConfig(enabled=False)
+    return config
+
 
 class TestPermissionDeferralConfirmation:
     @pytest.mark.asyncio
@@ -179,6 +221,7 @@ class TestPermissionDeferralConfirmation:
         )
 
         assert facts.shirk is True
+        assert facts.shirk_confirmed is True
         llm.call_json_feature.assert_awaited_once()
 
         repeated = await analyzer.analyze(
@@ -191,7 +234,46 @@ class TestPermissionDeferralConfirmation:
             project_path=None,
         )
         assert repeated.shirk is True
+        assert repeated.shirk_confirmed is True
         llm.call_json_feature.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("llm", "config_resolver"),
+        [
+            (None, _Config),
+            (SimpleNamespace(call_json_feature=AsyncMock()), lambda: None),
+            (SimpleNamespace(call_json_feature=AsyncMock()), _disabled_validation_config),
+            (SimpleNamespace(call_json_feature=AsyncMock(side_effect=TimeoutError())), _Config),
+            (SimpleNamespace(call_json_feature=AsyncMock(return_value={"verdict": 1})), _Config),
+        ],
+        ids=["no-service", "no-config", "validation-disabled", "timeout", "malformed"],
+    )
+    async def test_unavailable_confirmation_alerts_without_confirming(
+        self,
+        llm: Any,
+        config_resolver: Callable[[], Any],
+    ) -> None:
+        """No LLM verdict still alerts (once, via the gate) but records no confirmation."""
+        analyzer = FoundWorkStopAnalyzer(
+            llm_service_resolver=lambda: llm,
+            config_resolver=config_resolver,
+            session_manager=None,
+            session_task_manager=None,
+        )
+
+        facts = await analyzer.analyze(
+            event=_event(
+                HookEventType.STOP,
+                {"last_assistant_message": "The parser is broken. Should I fix it?"},
+            ),
+            session_id=SESSION_ID,
+            variables={"_current_user_prompt": "Implement the parser."},
+            project_path=None,
+        )
+
+        assert facts.shirk is True
+        assert facts.shirk_confirmed is False
 
     @pytest.mark.asyncio
     async def test_llm_can_confirm_user_reserved_decision(self) -> None:
@@ -216,6 +298,7 @@ class TestPermissionDeferralConfirmation:
         )
 
         assert facts.shirk is False
+        assert facts.shirk_confirmed is False
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -506,6 +589,34 @@ class TestTerminalValidationFailures:
         ]
         assert unresolved_validation_failures(runs, owner_handoff=False) == ()
 
+    def test_pytest_plugin_flag_is_not_a_scope_selector(self) -> None:
+        runs = [
+            _run(1, "failure", "pytest tests/unit/test_widget.py"),
+            _run(2, "success", "uv run pytest -p no:cacheprovider tests/unit/test_widget.py"),
+        ]
+        assert unresolved_validation_failures(runs, owner_handoff=False) == ()
+
+    def test_python_module_launcher_is_not_a_marker_selector(self) -> None:
+        runs = [
+            _run(1, "failure", "pytest tests/unit/test_widget.py"),
+            _run(2, "success", "python -m pytest tests/unit/test_widget.py"),
+        ]
+        assert unresolved_validation_failures(runs, owner_handoff=False) == ()
+
+    def test_cargo_package_selector_still_narrows(self) -> None:
+        runs = [
+            _run(1, "failure", "cargo test"),
+            _run(2, "success", "cargo test -p gobby-core"),
+        ]
+        assert unresolved_validation_failures(runs, owner_handoff=False) == (runs[0],)
+
+    def test_pytest_marker_selector_still_narrows(self) -> None:
+        runs = [
+            _run(1, "failure", "pytest tests/unit/test_widget.py"),
+            _run(2, "success", "pytest tests/unit/test_widget.py -m slow"),
+        ]
+        assert unresolved_validation_failures(runs, owner_handoff=False) == (runs[0],)
+
     def test_project_verification_command_extends_detection(self, tmp_path: Path) -> None:
         project_dir = tmp_path / ".gobby"
         project_dir.mkdir()
@@ -556,18 +667,79 @@ class TestFoundWorkDeclarativeRules:
         sync_bundled_rules(temp_db, get_bundled_rules_path())
 
     @pytest.mark.asyncio
-    async def test_permission_deferral_fact_blocks_with_ladder(self, temp_db: HubDatabase) -> None:
-        response = await RuleEngine(temp_db).evaluate(
+    async def test_permission_deferral_fact_blocks_once_then_allows(
+        self, temp_db: HubDatabase
+    ) -> None:
+        engine = RuleEngine(temp_db)
+        variables: dict[str, Any] = {}
+
+        response = await engine.evaluate(
             _event(HookEventType.STOP),
             session_id=SESSION_ID,
-            variables={},
-            eval_context={"found_work_shirk": True},
+            variables=variables,
+            eval_context={"found_work_shirk": True, "found_work_shirk_confirmed": False},
         )
 
         assert response.decision == "block"
         assert "Rule 4 ladder" in (response.reason or "")
         assert "send_message" in (response.reason or "")
         assert "needs-decision/clean-window" in (response.reason or "")
+        assert "once per session" in (response.reason or "")
+        assert variables["found_work_shirk_alerted"] is True
+        assert variables["found_work_shirk_confirmed"] is False
+
+        second = await engine.evaluate(
+            _event(HookEventType.STOP),
+            session_id=SESSION_ID,
+            variables=variables,
+            eval_context={"found_work_shirk": True, "found_work_shirk_confirmed": False},
+        )
+
+        assert second.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_confirmed_shirk_records_confirmation(self, temp_db: HubDatabase) -> None:
+        variables: dict[str, Any] = {}
+
+        response = await RuleEngine(temp_db).evaluate(
+            _event(HookEventType.STOP),
+            session_id=SESSION_ID,
+            variables=variables,
+            eval_context={"found_work_shirk": True, "found_work_shirk_confirmed": True},
+        )
+
+        assert response.decision == "block"
+        assert variables["found_work_shirk_alerted"] is True
+        assert variables["found_work_shirk_confirmed"] is True
+
+    @pytest.mark.asyncio
+    async def test_prior_shirk_alert_allows_stop(self, temp_db: HubDatabase) -> None:
+        variables: dict[str, Any] = {"found_work_shirk_alerted": True}
+
+        response = await RuleEngine(temp_db).evaluate(
+            _event(HookEventType.STOP),
+            session_id=SESSION_ID,
+            variables=variables,
+            eval_context={"found_work_shirk": True, "found_work_shirk_confirmed": True},
+        )
+
+        assert response.decision == "allow"
+        assert "found_work_shirk_confirmed" not in variables
+
+    @pytest.mark.asyncio
+    async def test_stop_attempt_cap_releases_both_gates(self, temp_db: HubDatabase) -> None:
+        response = await RuleEngine(temp_db).evaluate(
+            _event(HookEventType.STOP),
+            session_id=SESSION_ID,
+            variables={"stop_attempts": 20},
+            eval_context={
+                "found_work_shirk": True,
+                "terminal_validation_failure": True,
+                "terminal_validation_failure_commands": ["pytest tests/unit"],
+            },
+        )
+
+        assert response.decision == "allow"
 
     @pytest.mark.asyncio
     async def test_workflow_handler_feeds_analyzer_facts_to_rules(

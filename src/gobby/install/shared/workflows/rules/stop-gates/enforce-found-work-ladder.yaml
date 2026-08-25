@@ -2,21 +2,30 @@ tags: [stop-gates, enforcement, lifecycle, found-work, gobby, default]
 
 rules:
   block-found-work-permission-deferral:
-    description: "Block permission-seeking deferral of an actionable defect"
+    description: "Alert once per session on permission-seeking deferral of an actionable defect"
     event: turn_end
     enabled: true
     priority: 42
     when: >
       found_work_shirk
+      and not variables.get('found_work_shirk_alerted')
       and not variables.get('plan_mode')
       and not variables.get('is_spawned_agent')
       and not has_active_agent_wait()
+      and variables.get('stop_attempts', 0) < variables.get('max_stop_attempts', 8)
     effects:
+      - type: set_variable
+        variable: found_work_shirk_alerted
+        value: true
+      - type: set_variable
+        variable: found_work_shirk_confirmed
+        value: "{{ found_work_shirk_confirmed }}"
       - type: block
         reason: >-
           Rule 4 ladder: fix it now (create_task claim=true), hand it to its active owner via
           send_message, or — edge case — file it labeled needs-decision/clean-window with the
-          reason. Don't ask, and don't go silent.
+          reason. Don't ask, and don't go silent. This alert fires once per session — act on
+          it, or stop again to proceed.
 
   block-terminal-validation-failure:
     description: "Block stop while a validation failure has no covering green run or disposition"
@@ -28,6 +37,7 @@ rules:
       and not variables.get('plan_mode')
       and not variables.get('is_spawned_agent')
       and not has_active_agent_wait()
+      and variables.get('stop_attempts', 0) < variables.get('max_stop_attempts', 8)
     effects:
       - type: block
         reason: |
