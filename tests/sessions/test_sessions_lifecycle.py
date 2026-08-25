@@ -42,8 +42,8 @@ class EmptyTokenEventStore:
             "cache_read_tokens": 0,
         }
 
-    def record(self, _event: object) -> bool:
-        return False
+    def record_batch(self, events: list[object]) -> list[bool]:
+        return [False for _ in events]
 
 
 def _set_llm_service(manager: SessionLifecycleManager, llm: Any) -> Any:
@@ -281,6 +281,138 @@ class TestSessionLifecycleManager:
         assert loop_thread not in query_threads, (
             "the pending-transcript query ran on the event loop thread"
         )
+
+    @pytest.mark.asyncio
+    async def test_transcript_token_event_db_work_runs_off_the_event_loop_thread(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
+        """The token-event path is synchronous psycopg reached from the loop
+        thread; per-event record() alone was 72% of the hot samples in a
+        10.61s loop stall (#20885). Every store call must run off-loop."""
+        from gobby.sessions.transcripts.base import ParsedMessage, TokenUsage
+
+        transcript_path = tmp_path / "transcript.jsonl"
+        transcript_path.write_text('{"type": "message"}\n')
+
+        session = MagicMock()
+        session.source = "claude"
+        session.project_id = "proj-1"
+        session.context_window = None
+        session.model = None
+        manager.session_manager.get.return_value = session
+
+        db_threads: dict[str, list[int]] = {
+            "delete_session_events": [],
+            "get_session_totals": [],
+            "record_batch": [],
+        }
+
+        class _ThreadRecordingStore:
+            def delete_session_events(self, _session_id: str, *, origin: str) -> int:
+                _ = origin
+                db_threads["delete_session_events"].append(threading.get_ident())
+                return 0
+
+            def get_session_totals(self, _session_id: str) -> dict[str, int]:
+                db_threads["get_session_totals"].append(threading.get_ident())
+                return {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cache_creation_tokens": 0,
+                    "cache_read_tokens": 0,
+                }
+
+            def record_batch(self, events: list[object]) -> list[bool]:
+                db_threads["record_batch"].append(threading.get_ident())
+                return [True] * len(events)
+
+        manager.token_event_store = _ThreadRecordingStore()
+
+        msg = MagicMock(spec=ParsedMessage)
+        msg.model = "claude-sonnet-4-6"
+        msg.raw_json = {}
+        msg.usage = TokenUsage(input_tokens=11, output_tokens=7)
+        msg.timestamp = None
+        msg.message_id = "msg-1"
+        msg.content_type = "text"
+        loop_thread = threading.get_ident()
+
+        with patch("gobby.sessions.transcript_processing.ClaudeTranscriptParser") as parser:
+            parser.return_value.parse_lines.return_value = [msg]
+            await manager._process_session_transcript("s1", str(transcript_path))
+
+        for method, threads in db_threads.items():
+            assert threads, f"{method} never ran"
+            assert loop_thread not in threads, f"{method} ran on the event loop thread"
+
+    @pytest.mark.asyncio
+    async def test_transcript_token_events_are_recorded_in_batches_not_per_event(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
+        """A transcript pass with many usage events issues a bounded number of
+        store operations — one record_batch call plus the fixed delete/totals
+        bookkeeping — never one insert per event (#20885)."""
+        from gobby.sessions.transcripts.base import ParsedMessage, TokenUsage
+
+        transcript_path = tmp_path / "transcript.jsonl"
+        transcript_path.write_text('{"type": "message"}\n')
+
+        session = MagicMock()
+        session.source = "claude"
+        session.project_id = "proj-1"
+        session.context_window = None
+        session.model = None
+        manager.session_manager.get.return_value = session
+
+        class _CountingStore:
+            """Intentionally has no record(): a per-event insert fails loudly."""
+
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+                self.batch_sizes: list[int] = []
+
+            def delete_session_events(self, _session_id: str, *, origin: str) -> int:
+                _ = origin
+                self.calls.append("delete_session_events")
+                return 0
+
+            def get_session_totals(self, _session_id: str) -> dict[str, int]:
+                self.calls.append("get_session_totals")
+                return {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cache_creation_tokens": 0,
+                    "cache_read_tokens": 0,
+                }
+
+            def record_batch(self, events: list[object]) -> list[bool]:
+                self.calls.append("record_batch")
+                self.batch_sizes.append(len(events))
+                return [True] * len(events)
+
+        store = _CountingStore()
+        manager.token_event_store = store
+
+        messages = []
+        for i in range(40):
+            msg = MagicMock(spec=ParsedMessage)
+            msg.model = "claude-sonnet-4-6"
+            msg.raw_json = {}
+            msg.usage = TokenUsage(input_tokens=10 + i, output_tokens=5)
+            msg.timestamp = None
+            msg.message_id = f"msg-{i}"
+            msg.content_type = "text"
+            messages.append(msg)
+
+        with patch("gobby.sessions.transcript_processing.ClaudeTranscriptParser") as parser:
+            parser.return_value.parse_lines.return_value = messages
+            await manager._process_session_transcript("s1", str(transcript_path))
+
+        assert store.batch_sizes == [40]
+        # Two origin-scoped deletes, two totals reads, one batched insert:
+        # bounded bookkeeping, independent of the 40 events.
+        assert store.calls.count("record_batch") == 1
+        assert len(store.calls) == 5
 
     @pytest.mark.asyncio
     async def test_process_pending_transcripts_success(
@@ -1522,11 +1654,11 @@ class TestProcessSessionTranscriptParsers:
             dict(zero_totals),
             dict(zero_totals),
         ]
-        manager.token_event_store.record.return_value = True
+        manager.token_event_store.record_batch.side_effect = lambda events: [True] * len(events)
 
         await manager._process_session_transcript("s1", str(transcript_path))
 
-        event = manager.token_event_store.record.call_args.args[0]
+        event = manager.token_event_store.record_batch.call_args.args[0][0]
         assert event.session_id == "s1"
         assert event.project_id == "project-id"
         assert event.source == "droid"
@@ -1593,11 +1725,11 @@ class TestProcessSessionTranscriptParsers:
             dict(zero_totals),
             dict(zero_totals),
         ]
-        manager.token_event_store.record.return_value = True
+        manager.token_event_store.record_batch.side_effect = lambda events: [True] * len(events)
 
         await manager._process_session_transcript("s1", str(transcript_path))
 
-        event = manager.token_event_store.record.call_args.args[0]
+        event = manager.token_event_store.record_batch.call_args.args[0][0]
         assert event.input_tokens == 11392
         assert event.output_tokens == 342
         assert event.cache_read_tokens == 93568
@@ -1850,7 +1982,7 @@ class TestProcessSessionTranscriptTokenPreservation:
                 "cache_read_tokens": 0,
             },
         ]
-        manager.token_event_store.record.return_value = True
+        manager.token_event_store.record_batch.side_effect = lambda events: [True] * len(events)
         message = MagicMock(spec=ParsedMessage)
         message.model = "claude-opus-4-8"
         message.raw_json = {}
@@ -1860,7 +1992,7 @@ class TestProcessSessionTranscriptTokenPreservation:
             parser.return_value.parse_lines.return_value = [message]
             await manager._process_session_transcript("s1", str(transcript_path))
 
-        event = manager.token_event_store.record.call_args.args[0]
+        event = manager.token_event_store.record_batch.call_args.args[0][0]
         assert event.model == "claude-opus-4-8[1m]"
         assert event.context_window == 1_000_000
         update = manager.session_manager.update_usage.call_args

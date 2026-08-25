@@ -122,6 +122,52 @@ def _row_value(row: Any, key: str, default: Any = None) -> Any:
     return default
 
 
+_TOKEN_EVENT_COLUMNS = (
+    "session_id",
+    "project_id",
+    "message_id",
+    "source",
+    "origin",
+    "model",
+    "model_family",
+    "input_tokens",
+    "output_tokens",
+    "cache_creation_tokens",
+    "cache_read_tokens",
+    "context_window",
+    "event_at",
+    "metadata",
+)
+_TOKEN_EVENT_VALUES_ROW = "(" + ", ".join(["%s"] * len(_TOKEN_EVENT_COLUMNS)) + ")"
+_TOKEN_EVENT_CONFLICT_CLAUSE = (
+    "ON CONFLICT (session_id, message_id) WHERE message_id IS NOT NULL DO NOTHING"
+)
+
+# Rows per INSERT statement in record_batch. 14 parameters per row keeps this
+# far under the 65,535-parameter statement limit while bounding statement size.
+RECORD_BATCH_CHUNK_SIZE = 500
+
+
+def _record_params(event: TokenEvent) -> tuple[Any, ...]:
+    """Positional parameters for one token_events row, in column order."""
+    return (
+        event.session_id,
+        event.project_id,
+        event.message_id,
+        event.source,
+        event.origin,
+        event.model,
+        event.normalized_model_family(),
+        event.input_tokens,
+        event.output_tokens,
+        event.cache_creation_tokens,
+        event.cache_read_tokens,
+        event.context_window,
+        canonicalize_event_timestamp(event.event_at),
+        json.dumps(event.metadata) if event.metadata is not None else None,
+    )
+
+
 class TokenEventStore:
     """Token event ledger and aggregation facade."""
 
@@ -131,47 +177,66 @@ class TokenEventStore:
     def record(self, event: TokenEvent) -> bool:
         """Insert a token event row idempotently."""
         cursor = self.db.execute(
-            """
-            INSERT INTO token_events (
-                session_id,
-                project_id,
-                message_id,
-                source,
-                origin,
-                model,
-                model_family,
-                input_tokens,
-                output_tokens,
-                cache_creation_tokens,
-                cache_read_tokens,
-                context_window,
-                event_at,
-                metadata
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (session_id, message_id) WHERE message_id IS NOT NULL DO NOTHING
+            f"""
+            INSERT INTO token_events ({", ".join(_TOKEN_EVENT_COLUMNS)})
+            VALUES {_TOKEN_EVENT_VALUES_ROW}
+            {_TOKEN_EVENT_CONFLICT_CLAUSE}
             """,
-            (
-                event.session_id,
-                event.project_id,
-                event.message_id,
-                event.source,
-                event.origin,
-                event.model,
-                event.normalized_model_family(),
-                event.input_tokens,
-                event.output_tokens,
-                event.cache_creation_tokens,
-                event.cache_read_tokens,
-                event.context_window,
-                canonicalize_event_timestamp(event.event_at),
-                json.dumps(event.metadata) if event.metadata is not None else None,
-            ),
+            _record_params(event),
         )
         rowcount = getattr(cursor, "rowcount", None)
         if isinstance(rowcount, int):
             return rowcount > 0
         return True
+
+    def record_batch(self, events: Sequence[TokenEvent]) -> list[bool]:
+        """Insert token events idempotently in chunked multi-row statements.
+
+        Returns one flag per event, in input order, reporting exactly what
+        sequential ``record`` calls would have reported: ``True`` when the
+        event inserted a row, ``False`` when its ``(session_id, message_id)``
+        already existed — in the table or earlier in ``events``. Events
+        without a ``message_id`` never conflict and always insert.
+
+        Statement count is bounded by ``ceil(len(events) /
+        RECORD_BATCH_CHUNK_SIZE)``, not by the number of events.
+        """
+        flags = [False] * len(events)
+        for start in range(0, len(events), RECORD_BATCH_CHUNK_SIZE):
+            chunk = events[start : start + RECORD_BATCH_CHUNK_SIZE]
+            params: list[Any] = []
+            for event in chunk:
+                params.extend(_record_params(event))
+            values = ", ".join([_TOKEN_EVENT_VALUES_ROW] * len(chunk))
+            rows = self.db.fetchall(
+                f"""
+                INSERT INTO token_events ({", ".join(_TOKEN_EVENT_COLUMNS)})
+                VALUES {values}
+                {_TOKEN_EVENT_CONFLICT_CLAUSE}
+                RETURNING session_id, message_id
+                """,
+                params,
+            )
+            inserted_keys: set[tuple[str, str]] = set()
+            for row in rows:
+                row_message_id = _row_value(row, "message_id")
+                if isinstance(row_message_id, str):
+                    inserted_keys.add((str(_row_value(row, "session_id")), row_message_id))
+            chunk_seen: set[tuple[str, str]] = set()
+            for offset, event in enumerate(chunk):
+                if event.message_id is None:
+                    # The conflict target requires a non-null message_id, so
+                    # these rows cannot be skipped by DO NOTHING.
+                    flags[start + offset] = True
+                    continue
+                key = (event.session_id, event.message_id)
+                if key in chunk_seen:
+                    # An earlier occurrence in this statement won the insert;
+                    # sequential record() would have reported False here.
+                    continue
+                chunk_seen.add(key)
+                flags[start + offset] = key in inserted_keys
+        return flags
 
     def delete_session_events(self, session_id: str, *, origin: str | None = None) -> int:
         """Delete token events for a session."""

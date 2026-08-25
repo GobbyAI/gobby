@@ -7,7 +7,7 @@ from typing import Protocol, cast
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.token_events import TokenEventStore, _row_value, merge_event_totals
+from gobby.storage.token_events import TokenEvent, TokenEventStore, _row_value, merge_event_totals
 
 pytestmark = pytest.mark.unit
 
@@ -139,3 +139,91 @@ def test_merge_event_totals_coerces_invalid_values() -> None:
         "cache_creation_tokens": 5,
         "cache_read_tokens": 4,
     }
+
+
+def _event(message_id: str | None, *, session_id: str = "s1") -> TokenEvent:
+    return TokenEvent(
+        session_id=session_id,
+        project_id=None,
+        message_id=message_id,
+        source="claude",
+        origin="transcript",
+        model=None,
+        input_tokens=1,
+        output_tokens=2,
+        cache_creation_tokens=0,
+        cache_read_tokens=0,
+        event_at=datetime(2026, 8, 24, 12, 0, tzinfo=UTC),
+    )
+
+
+class _RecordBatchDb:
+    """Simulates multi-row INSERT ... ON CONFLICT DO NOTHING ... RETURNING.
+
+    Rows whose (session_id, message_id) key is already present — from a prior
+    statement or earlier in the same statement — are omitted from the returned
+    rows, exactly like the real conflict clause. NULL message_id rows never
+    conflict.
+    """
+
+    def __init__(self, existing: set[tuple[str, str]] | None = None) -> None:
+        self.existing: set[tuple[str, str]] = set(existing or set())
+        self.statements: list[tuple[str, tuple[object, ...]]] = []
+
+    def fetchall(
+        self, sql: str, params: tuple[object, ...] | list[object] = ()
+    ) -> list[dict[str, object]]:
+        self.statements.append((sql, tuple(params)))
+        rows: list[dict[str, object]] = []
+        for start in range(0, len(params), 14):
+            session_id = params[start]
+            message_id = params[start + 2]
+            if message_id is None:
+                rows.append({"session_id": session_id, "message_id": None})
+                continue
+            key = (str(session_id), str(message_id))
+            if key in self.existing:
+                continue
+            self.existing.add(key)
+            rows.append({"session_id": session_id, "message_id": message_id})
+        return rows
+
+
+def test_record_batch_issues_statements_per_chunk_not_per_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("gobby.storage.token_events.RECORD_BATCH_CHUNK_SIZE", 4)
+    db = _RecordBatchDb()
+    store = TokenEventStore(db=cast(HubDatabase, db))
+
+    flags = store.record_batch([_event(f"msg-{i}") for i in range(10)])
+
+    assert flags == [True] * 10
+    assert len(db.statements) == 3
+    row_counts = [len(params) // 14 for _sql, params in db.statements]
+    assert row_counts == [4, 4, 2]
+
+
+def test_record_batch_reports_per_event_dedup_flags() -> None:
+    db = _RecordBatchDb(existing={("s1", "msg-live")})
+    store = TokenEventStore(db=cast(HubDatabase, db))
+
+    flags = store.record_batch(
+        [
+            _event("msg-a"),
+            _event("msg-a"),  # intra-batch duplicate: first occurrence wins
+            _event("msg-live"),  # already recorded (e.g. live-origin row)
+            _event(None),  # no message_id: never conflicts
+        ]
+    )
+
+    assert flags == [True, False, False, True]
+    assert len(db.statements) == 1
+
+
+def test_record_batch_with_no_events_issues_no_statements() -> None:
+    db = _RecordBatchDb()
+    store = TokenEventStore(db=cast(HubDatabase, db))
+
+    assert store.record_batch([]) == []
+    assert db.statements == []

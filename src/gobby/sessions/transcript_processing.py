@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import os
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -34,6 +35,7 @@ from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.sessions.transcripts.droid import DroidTranscriptParser
 from gobby.sessions.transcripts.grok import GrokTranscriptParser
 from gobby.sessions.transcripts.qwen import QwenTranscriptParser
+from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.token_events import (
@@ -73,6 +75,20 @@ def _message_context_window(message: ParsedMessage) -> int | None:
 
 def _session_artifacts_complete(session: Any) -> bool:
     return is_summary_markdown_valid(session.summary_markdown)
+
+
+@dataclass(slots=True)
+class _PendingTokenEvent:
+    """A parsed usage event awaiting its batched off-loop insert.
+
+    Carries everything the post-insert pass needs so that running totals,
+    the context snapshot, and the websocket broadcast replay the exact
+    per-event semantics the sequential ``record`` loop had.
+    """
+
+    event: TokenEvent
+    snapshot: ContextUsageSnapshot | None
+    payload: dict[str, Any]
 
 
 class TranscriptProcessingMixin:
@@ -387,23 +403,31 @@ class TranscriptProcessingMixin:
             )
 
         # Replace any synthetic migration rows with real transcript events as soon as
-        # we have a parseable transcript for this session.
-        self.token_event_store.delete_session_events(session_id, origin="backfill")
-        self.token_event_store.delete_session_events(session_id, origin="transcript")
+        # we have a parseable transcript for this session. The deletes and the
+        # totals read are synchronous psycopg, and this coroutine runs on the
+        # event loop thread, so all three share one off-loop hop (#20885).
+        def _reset_transcript_events() -> dict[str, int]:
+            self.token_event_store.delete_session_events(session_id, origin="backfill")
+            self.token_event_store.delete_session_events(session_id, origin="transcript")
+            return self.token_event_store.get_session_totals(session_id)
 
         session_project_id = session.project_id if isinstance(session.project_id, str) else None
         session_source = session.source if isinstance(session.source, str) else "unknown"
         session_context_window = _coerce_context_window(session.context_window)
         session_model = session.model if isinstance(session.model, str) and session.model else None
         last_model: str | None = session_model
-        running_totals = self.token_event_store.get_session_totals(session_id)
+        running_totals = await asyncio.to_thread(_reset_transcript_events)
         ws_server = None
         app_ctx = get_app_context()
         if app_ctx is not None:
             ws_server = app_ctx.websocket_server
         saw_usage = False
-        latest_context_snapshot = None
+        latest_context_snapshot: ContextUsageSnapshot | None = None
 
+        # Pass 1 (on-loop, pure compute): fold every message into a
+        # message-ordered plan — either a window-metadata snapshot entry or a
+        # pending token event. Nothing in this pass touches the database.
+        snapshot_plan: list[_PendingTokenEvent | ContextUsageSnapshot | None] = []
         for msg in messages:
             message_model = msg.model if isinstance(msg.model, str) and msg.model else None
             observed_context_window = _message_context_window(msg)
@@ -424,10 +448,12 @@ class TranscriptProcessingMixin:
             usage = msg.usage
             if usage is None:
                 if session_source in _WINDOW_ONLY_CONTEXT_SOURCES:
-                    latest_context_snapshot = snapshot_from_window_metadata(
-                        source=session_source,
-                        context_window=message_context_window,
-                        model=message_model or last_model,
+                    snapshot_plan.append(
+                        snapshot_from_window_metadata(
+                            source=session_source,
+                            context_window=message_context_window,
+                            model=message_model or last_model,
+                        )
                     )
                 continue
 
@@ -449,10 +475,12 @@ class TranscriptProcessingMixin:
                 and usage.cache_read_tokens == 0
             ):
                 if session_source in _WINDOW_ONLY_CONTEXT_SOURCES:
-                    latest_context_snapshot = snapshot_from_window_metadata(
-                        source=session_source,
-                        context_window=message_context_window,
-                        model=message_model or last_model,
+                    snapshot_plan.append(
+                        snapshot_from_window_metadata(
+                            source=session_source,
+                            context_window=message_context_window,
+                            model=message_model or last_model,
+                        )
                     )
                 continue
             saw_usage = True
@@ -482,46 +510,78 @@ class TranscriptProcessingMixin:
                 event_at=canonicalize_event_timestamp(event_timestamp),
                 metadata=metadata,
             )
-            inserted = self.token_event_store.record(event)
-            if inserted:
-                running_totals["input_tokens"] += usage.input_tokens
-                running_totals["output_tokens"] += usage.output_tokens
-                running_totals["cache_creation_tokens"] += usage.cache_creation_tokens
-                running_totals["cache_read_tokens"] += usage.cache_read_tokens
-                latest_context_snapshot = snapshot_from_token_usage(
-                    source=session_source,
-                    context_window=message_context_window,
-                    usage=usage,
-                    model=event_model,
+            snapshot_plan.append(
+                _PendingTokenEvent(
+                    event=event,
+                    snapshot=snapshot_from_token_usage(
+                        source=session_source,
+                        context_window=message_context_window,
+                        usage=usage,
+                        model=event_model,
+                    ),
+                    payload={
+                        "session_id": session_id,
+                        "project_id": session_project_id,
+                        "message_id": message_id,
+                        "source": session_source,
+                        "origin": "transcript",
+                        "event_at": canonicalize_event_timestamp(event_timestamp),
+                        "model": event_model,
+                        "model_family": event.normalized_model_family(),
+                        "input_tokens": usage.input_tokens,
+                        "output_tokens": usage.output_tokens,
+                        "cache_creation_tokens": usage.cache_creation_tokens,
+                        "cache_read_tokens": usage.cache_read_tokens,
+                        "context_window": message_context_window,
+                    },
                 )
+            )
 
-                if ws_server is not None:
-                    try:
-                        await ws_server.broadcast_token_event(
-                            build_token_event_payload(
-                                {
-                                    "session_id": session_id,
-                                    "project_id": session_project_id,
-                                    "message_id": message_id,
-                                    "source": session_source,
-                                    "origin": "transcript",
-                                    "event_at": canonicalize_event_timestamp(event_timestamp),
-                                    "model": event_model,
-                                    "model_family": event.normalized_model_family(),
-                                    "input_tokens": usage.input_tokens,
-                                    "output_tokens": usage.output_tokens,
-                                    "cache_creation_tokens": usage.cache_creation_tokens,
-                                    "cache_read_tokens": usage.cache_read_tokens,
-                                    "context_window": message_context_window,
-                                },
-                                session_totals=running_totals,
-                            )
+        # Pass 2 (off-loop): one batched hop for every insert. Per-event
+        # sequential record() calls were synchronous psycopg on the loop
+        # thread — the sampler caught them at 72% of a 10.61s stall (#20885).
+        # The returned flags preserve the per-event dedup feedback.
+        pending_events = [entry for entry in snapshot_plan if isinstance(entry, _PendingTokenEvent)]
+        inserted_flags: list[bool] = []
+        if pending_events:
+            inserted_flags = await asyncio.to_thread(
+                self.token_event_store.record_batch,
+                [entry.event for entry in pending_events],
+            )
+
+        # Pass 3 (on-loop): replay the sequential semantics in message order —
+        # a window entry always overwrites the latest snapshot; an event entry
+        # updates totals and the snapshot, and broadcasts, only when its row
+        # actually inserted.
+        event_position = 0
+        for entry in snapshot_plan:
+            if not isinstance(entry, _PendingTokenEvent):
+                latest_context_snapshot = entry
+                continue
+            inserted = inserted_flags[event_position]
+            event_position += 1
+            if not inserted:
+                continue
+            inserted_event = entry.event
+            running_totals["input_tokens"] += inserted_event.input_tokens
+            running_totals["output_tokens"] += inserted_event.output_tokens
+            running_totals["cache_creation_tokens"] += inserted_event.cache_creation_tokens
+            running_totals["cache_read_tokens"] += inserted_event.cache_read_tokens
+            latest_context_snapshot = entry.snapshot
+
+            if ws_server is not None:
+                try:
+                    await ws_server.broadcast_token_event(
+                        build_token_event_payload(
+                            entry.payload,
+                            session_totals=running_totals,
                         )
-                    except Exception:
-                        logger.exception(
-                            "Failed to broadcast transcript token event for session %s",
-                            session_id,
-                        )
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to broadcast transcript token event for session %s",
+                        session_id,
+                    )
 
         if not saw_usage and (
             _session_int(getattr(session, "usage_input_tokens", 0)) > 0
@@ -537,7 +597,7 @@ class TranscriptProcessingMixin:
             )
             return
 
-        totals = self.token_event_store.get_session_totals(session_id)
+        totals = await asyncio.to_thread(self.token_event_store.get_session_totals, session_id)
         if saw_usage and not any(totals.values()) and any(running_totals.values()):
             totals = dict(running_totals)
         session_totals = totals
