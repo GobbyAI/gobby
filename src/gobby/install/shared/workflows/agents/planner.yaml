@@ -133,6 +133,9 @@ workflows:
 step_workflow:
   variables:
     task_claimed: false
+    required_skills:
+      - restraint
+      - plan-draft
     restraint_loaded: false
     skill_loaded: false
     plan_handoff_complete: false

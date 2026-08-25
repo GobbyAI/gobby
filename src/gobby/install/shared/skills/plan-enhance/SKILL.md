@@ -17,8 +17,9 @@ metadata:
 > `plan-enhancer-taskless` agent (interactive `/gobby plan`) and the
 > `plan-enhancer` agent (stage-native dispatch). Not a user-facing command. Load
 > the shared **`restraint`** and **`proportionality`** skills alongside it: every
-> suggestion walks the restraint decision ladder before it is recorded, and one
-> that stops at a lower rung than the mechanism it proposes is dropped.
+> suggestion walks the restraint decision ladder before it is recorded, each
+> recorded suggestion names the rung it stopped at, and one that stops at a
+> lower rung than the mechanism it proposes is dropped.
 
 This skill is the single source of truth for **how to enhance a gobby plan**. It
 is the constructive counterweight to `plan-review`: where the adversary hunts for

@@ -53,8 +53,9 @@ prompts:
     get_skill(name="plan-enhance"), and get_skill(name="proportionality") on
     gobby-skills, then continue. Every suggestion walks `restraint`'s decision
     ladder before it is recorded — rung 1 asks whether it needs to exist at all,
-    and a suggestion that stops at a lower rung than the mechanism it proposes
-    is not recorded. Follow
+    each recorded suggestion names the rung it stopped at, and a suggestion
+    that stops at a lower rung than the mechanism it proposes is not recorded.
+    Follow
     `plan-enhance`'s methodology — the two lenses (Better = strengthen
     in-scope work; Bigger = net-new scope the parent intent justifies), the
     no-quota honesty rule, the impact-vs-effort ranking, and the advisory output
@@ -123,6 +124,10 @@ workflows:
 step_workflow:
   variables:
     task_claimed: false
+    required_skills:
+      - restraint
+      - plan-enhance
+      - proportionality
     restraint_loaded: false
     skill_loaded: false
     proportionality_loaded: false

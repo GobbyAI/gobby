@@ -34,8 +34,9 @@ prompts:
     Use only the Gobby MCP proxy tools for this — native Skill, GitHub/app
     connector, and Computer Use tools bypass Gobby's skill tracking.
     `restraint` is the decision ladder every suggestion walks before it is
-    recorded — rung 1 asks whether it needs to exist at all, and a suggestion
-    that stops at a lower rung than the mechanism it proposes is dropped.
+    recorded — rung 1 asks whether it needs to exist at all, each recorded
+    suggestion names the rung it stopped at, and a suggestion that stops at a
+    lower rung than the mechanism it proposes is dropped.
     `plan-enhance` is the
     constructive Better/Bigger methodology you follow; `proportionality`
     is the shared anti-Rube-Goldberg criterion you run on your own suggestions
@@ -85,6 +86,10 @@ workflows:
 
 step_workflow:
   variables:
+    required_skills:
+      - restraint
+      - plan-enhance
+      - proportionality
     restraint_loaded: false
     skill_loaded: false
     proportionality_loaded: false

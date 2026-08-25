@@ -259,6 +259,10 @@ workflows:
 step_workflow:
   variables:
     task_claimed: false
+    required_skills:
+      - restraint
+      - plan-review
+      - proportionality
     restraint_loaded: false
     skill_loaded: false
     proportionality_loaded: false
