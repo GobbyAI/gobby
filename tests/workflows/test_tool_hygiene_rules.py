@@ -39,11 +39,11 @@ def manager(db: HubDatabase) -> RuleDefinitionManager:
     return RuleDefinitionManager(db)
 
 
-def _sync_bundled(db):
+def _sync_bundled(db: HubDatabase) -> None:
     """Sync bundled rules from the real rules directory."""
     from gobby.workflows.sync_rules import get_bundled_rules_path
 
-    return sync_bundled_rules(db, get_bundled_rules_path())
+    sync_bundled_rules(db, get_bundled_rules_path())
 
 
 class TestToolHygieneSync:
@@ -441,3 +441,59 @@ class TestRequireUvShouldBlock:
         engine = RuleEngine(db)
         event = _make_shell_alias_event("exec_command", "python3.13 -m pip install x")
         assert engine._should_block(_require_uv_effect(), event) is True
+
+
+class TestBlockWebChatSendKeys:
+    def test_rule_syncs_enabled_with_send_keys_matcher(
+        self,
+        db: HubDatabase,
+        manager: RuleDefinitionManager,
+    ) -> None:
+        _sync_bundled(db)
+
+        row = manager.get_by_name("block-web-chat-send-keys")
+        assert row is not None
+        assert row.enabled is True
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.when == "event.metadata.get('session_type') == 'web_chat'"
+        assert body.resolved_effects[0].mcp_tools == ["gobby-sessions:send_keys"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("session_type", "expected_decision"),
+        [("web_chat", "block"), ("terminal", "allow")],
+    )
+    async def test_rule_applies_only_to_web_chat(
+        self,
+        db: HubDatabase,
+        session_type: str,
+        expected_decision: str,
+    ) -> None:
+        _sync_bundled(db)
+        data: dict[str, object] = {
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": "gobby-sessions",
+                "tool_name": "send_keys",
+                "arguments": {
+                    "session_id": "#42",
+                    "keys": "hello",
+                },
+            },
+        }
+        normalize_tool_fields(data)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data=data,
+            metadata={"session_type": session_type},
+        )
+
+        response = await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables={})
+
+        assert response.decision == expected_decision
+        if expected_decision == "block":
+            assert response.reason is not None
+            assert "block-web-chat-send-keys" in response.reason

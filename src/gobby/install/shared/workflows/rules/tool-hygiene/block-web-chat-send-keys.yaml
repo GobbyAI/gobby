@@ -1,0 +1,13 @@
+tags: [tool-hygiene, enforcement, gobby, default]
+
+rules:
+  block-web-chat-send-keys:
+    description: "Block web-chat sessions from controlling tmux terminals"
+    event: before_tool
+    enabled: true
+    priority: 10
+    when: "event.metadata.get('session_type') == 'web_chat'"
+    effects:
+      - type: block
+        mcp_tools: ["gobby-sessions:send_keys"]
+        reason: "Web-chat sessions cannot control tmux terminals."
