@@ -2436,6 +2436,28 @@
     },
     {
       "activation": "live",
+      "default": 5,
+      "description": "Number of rotated feature LLM log files to keep",
+      "key": "logging.llm_backup_count",
+      "machineExport": false,
+      "namespace": "logging",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 50,
+      "description": "Maximum feature LLM log file size in MB",
+      "key": "logging.llm_max_size_mb",
+      "machineExport": false,
+      "namespace": "logging",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
       "default": 10,
       "description": "Maximum rotating log file size in MB",
       "key": "logging.max_size_mb",
