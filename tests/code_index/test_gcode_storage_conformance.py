@@ -7,6 +7,7 @@ import os
 import subprocess
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -24,6 +25,7 @@ from gobby.runtime_grants.schema import (
     UnavailableCapability,
 )
 from gobby.runtime_grants.signing import payload_checksum
+from gobby.servers.lease_fence import bind_fenced_writer
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.schema_contract import expected_schema_identity
 from gobby.utils.machine_id import get_machine_id
@@ -158,6 +160,17 @@ def test_real_gcode_writer_matches_python_model_contract(
     code_db = PostgresHubDatabase(scoped_database_url)
     code_db.apply_migrations()
     request.addfinalizer(code_db.close)
+    fence_token = "c0de1ndexfenced"
+    code_db.execute(
+        """
+        INSERT INTO deployment_runtime (deployment_token, fencing_epoch, grant_signing_secret)
+        VALUES (%s, 1, 'secret')
+        ON CONFLICT (deployment_token) DO UPDATE
+           SET fencing_epoch = 1, grant_signing_secret = EXCLUDED.grant_signing_secret
+        """,
+        (fence_token,),
+    )
+    bind_fenced_writer(code_db, SimpleNamespace(deployment_token=fence_token, fencing_epoch=1))
     code_storage = CodeIndexStorage(code_db)
 
     env = os.environ.copy()
