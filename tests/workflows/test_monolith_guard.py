@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -341,7 +342,18 @@ def test_bundled_rules_cover_commit_transitions_turn_end_and_required_guidance(
     commit = bodies[RULE_NAMES[1]]
     commit_effect = commit.resolved_effects[0]
     assert commit_effect.tools == ["Bash"]
-    assert commit_effect.command_pattern == r"\bgit\s+commit\b"
+    # The pattern is the shared command-position idiom (#20825): a git commit
+    # invocation matches at the start of any shell segment, including behind
+    # git's global options, while a prose mention inside a string does not.
+    assert commit_effect.command_pattern is not None
+    commit_pattern = re.compile(commit_effect.command_pattern)
+    for command in (
+        "git commit -m x",
+        "make lint && git commit -m x",
+        "git -C /repo commit -m x",
+    ):
+        assert commit_pattern.search(command), command
+    assert commit_pattern.search('echo "git commit"') is None
 
     transition_effect = bodies[RULE_NAMES[2]].resolved_effects[0]
     assert set(transition_effect.mcp_tools or []) == {
