@@ -189,6 +189,49 @@ async def test_deleted_guard_file_blocks_close(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_guard_file_deleted_by_the_closing_commits_is_exempt(tmp_path: Path) -> None:
+    """A guard test retired with its feature by this task's commits must not block (#20902)."""
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.email", "tests@example.com")
+    _git(tmp_path, "config", "user.name", "Tests")
+    guard = Path(tmp_path, "tests", "test_retired_guard.py")
+    guard.parent.mkdir()
+    guard.write_text("def test_guard(): pass\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "add guard")
+    _git(tmp_path, "rm", "-q", "tests/test_retired_guard.py")
+    _git(tmp_path, "commit", "-m", "retire guard")
+    deleting_sha = _git(tmp_path, "rev-parse", "HEAD").strip()
+    _write_project(tmp_path, "printf '%s' {test_files}")
+    epic, prior, current = _task_tree(criteria="test: tests/test_retired_guard.py::test_guard")
+
+    blocked = await evaluate_epic_guards(
+        task_manager=cast(LocalTaskManager, _TaskManager([epic, prior, current])),
+        task=current,
+        repo_path=str(tmp_path),
+    )
+    assert blocked.error_type == "epic_guard_missing"
+
+    unexplained = await evaluate_epic_guards(
+        task_manager=cast(LocalTaskManager, _TaskManager([epic, prior, current])),
+        task=current,
+        repo_path=str(tmp_path),
+        closing_commit_shas=[_git(tmp_path, "rev-parse", "HEAD~1").strip()],
+    )
+    assert unexplained.error_type == "epic_guard_missing"
+
+    exempt = await evaluate_epic_guards(
+        task_manager=cast(LocalTaskManager, _TaskManager([epic, prior, current])),
+        task=current,
+        repo_path=str(tmp_path),
+        closing_commit_shas=[deleting_sha],
+    )
+    assert exempt.passed is True
+    assert exempt.skipped is True
+    assert "deleted by this task's linked commits" in exempt.message
+
+
+@pytest.mark.asyncio
 async def test_guard_runner_timeout_fails_closed(tmp_path: Path) -> None:
     test_path = "tests/test_guard.py"
     Path(tmp_path, test_path).parent.mkdir()

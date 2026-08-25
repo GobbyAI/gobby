@@ -9,6 +9,7 @@ import logging
 import shlex
 import subprocess
 from collections import OrderedDict
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -71,6 +72,7 @@ async def evaluate_epic_guards(
     task_manager: LocalTaskManager,
     task: Task,
     repo_path: str,
+    closing_commit_shas: Sequence[str] = (),
     timeout_seconds: float = _GUARD_TIMEOUT_SECONDS,
 ) -> EpicGuardResult:
     """Collect and run every earlier closed leaf's guard test."""
@@ -131,15 +133,33 @@ async def evaluate_epic_guards(
         )
     missing = tuple(path for path in paths if not Path(repo_path, path).is_file())
     if missing:
-        return _result(
-            passed=False,
-            skipped=False,
-            error_type="epic_guard_missing",
-            message=f"Epic guard file is missing: {missing[0]}",
-            paths=paths,
-            source_task_ids=source_task_ids,
-            template=template,
-        )
+        # A guard test deleted by the closing task's own linked commits left
+        # with the feature it covered; only unexplained absences block.
+        deleted_by_task: set[str] = set()
+        for sha in closing_commit_shas:
+            try:
+                deleted_by_task.update(await asyncio.to_thread(_deleted_files, sha, repo_path))
+            except RuntimeError:
+                break
+        still_missing = tuple(path for path in missing if path not in deleted_by_task)
+        if still_missing:
+            return _result(
+                passed=False,
+                skipped=False,
+                error_type="epic_guard_missing",
+                message=f"Epic guard file is missing: {still_missing[0]}",
+                paths=paths,
+                source_task_ids=source_task_ids,
+                template=template,
+            )
+        paths = tuple(path for path in paths if path not in deleted_by_task)
+        if not paths:
+            return _result(
+                passed=True,
+                skipped=True,
+                error_type=None,
+                message="Every guard test was deleted by this task's linked commits.",
+            )
 
     quoted_paths = " ".join(shlex.quote(path) for path in paths)
     command = template.replace("{test_files}", quoted_paths)
@@ -425,9 +445,17 @@ def _descendant_ids(parent_id: str, tasks: list[Task]) -> set[str]:
 
 
 def _added_files(sha: str, repo_path: str) -> tuple[str, ...]:
+    return _named_files(sha, repo_path, diff_filter="A")
+
+
+def _deleted_files(sha: str, repo_path: str) -> tuple[str, ...]:
+    return _named_files(sha, repo_path, diff_filter="D")
+
+
+def _named_files(sha: str, repo_path: str, *, diff_filter: str) -> tuple[str, ...]:
     try:
         result = subprocess.run(
-            ["git", "show", "--format=", "--name-only", "--diff-filter=A", sha],
+            ["git", "show", "--format=", "--name-only", f"--diff-filter={diff_filter}", sha],
             cwd=repo_path,
             text=True,
             capture_output=True,

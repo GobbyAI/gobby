@@ -573,6 +573,7 @@ async def _evaluate_close(
             task_manager=ctx.task_manager,
             task=task,
             repo_path=repo_path,
+            closing_commit_shas=commit_shas,
         )
         guard_details = guards.details()
         guard_review_facts = guards.review_facts()
