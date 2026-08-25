@@ -155,6 +155,12 @@ class EvaluationMixin:
     ) -> HookResponse:
         """Normalize block responses, log them, and attach tracing fields."""
         if response.decision == "block":
+            # A blocked call never carries an input rewrite: drop any pending
+            # rewrite so it neither reaches the adapter nor persists into the
+            # session variables for the next event.
+            evaluation.variables.pop("_rewrite_input", None)
+            response.modified_input = None
+            response.auto_approve = False
             resolved_rule_name = (
                 rule_name or extract_rule_name(response.reason) or "rule-engine-block"
             )

@@ -15,6 +15,7 @@ from pathlib import Path
 RTK_MINIMUM_VERSION = (0, 45, 0)
 RTK_RULE_NAME = "rtk-command-rewrite"
 RTK_VERSION = "0.45.0"
+REWRITE_CONTRACT_MARKER = "Raw command to rewrite"
 
 _VERSION_RE = re.compile(
     r"^rtk\s+(\d+)\.(\d+)\.(\d+)(?P<suffix>[-+][^\s]+)?$",
@@ -124,7 +125,7 @@ def _run_probe(argv: Sequence[str], *, timeout: float) -> tuple[int, bytes, byte
 
 
 def probe_rtk(path: Path, *, timeout: float = 1.0) -> RtkProbe:
-    """Verify RTK identity, minimum version, and hook-check CLI contract."""
+    """Verify RTK identity, minimum version, and the ``rewrite`` CLI contract."""
     resolved = path.expanduser()
     version_result = _run_probe((str(resolved), "--version"), timeout=timeout)
     if version_result is None:
@@ -146,17 +147,46 @@ def probe_rtk(path: Path, *, timeout: float = 1.0) -> RtkProbe:
     ):
         return RtkProbe(resolved, version, False, "RTK 0.45.0 or newer is required")
 
-    contract_result = _run_probe(
-        (str(resolved), "hook", "check", "--help"),
-        timeout=timeout,
-    )
+    contract_result = _run_probe((str(resolved), "rewrite", "--help"), timeout=timeout)
     if contract_result is None:
-        return RtkProbe(resolved, version, False, "hook-check probe failed")
-    hook_code, hook_stdout, hook_stderr = contract_result
-    help_text = (hook_stdout + hook_stderr).decode("utf-8", errors="replace")
-    if hook_code != 0 or "--agent" not in help_text or "Command to check" not in help_text:
-        return RtkProbe(resolved, version, False, "hook-check contract is unavailable")
+        return RtkProbe(resolved, version, False, "rewrite probe failed")
+    rewrite_code, rewrite_stdout, rewrite_stderr = contract_result
+    help_text = (rewrite_stdout + rewrite_stderr).decode("utf-8", errors="replace")
+    if rewrite_code != 0 or REWRITE_CONTRACT_MARKER not in help_text:
+        return RtkProbe(resolved, version, False, "rewrite contract is unavailable")
     return RtkProbe(resolved.resolve(), version, True)
+
+
+_ProbeSignature = tuple[int, int, int]
+_probe_cache: dict[str, tuple[_ProbeSignature, RtkProbe]] = {}
+
+
+def _stat_signature(path: Path) -> _ProbeSignature | None:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (stat.st_ino, stat.st_size, stat.st_mtime_ns)
+
+
+def clear_probe_cache() -> None:
+    """Forget cached compatible probes (tests and explicit reprovisioning)."""
+    _probe_cache.clear()
+
+
+def _cached_probe(candidate: Path, *, timeout: float) -> RtkProbe:
+    """Probe once per executable identity; re-probe when the file changes."""
+    key = str(candidate)
+    signature = _stat_signature(candidate)
+    cached = _probe_cache.get(key)
+    if cached is not None and signature is not None and cached[0] == signature:
+        return cached[1]
+    probe = probe_rtk(candidate, timeout=timeout)
+    if probe.compatible and signature is not None:
+        _probe_cache[key] = (signature, probe)
+    else:
+        _probe_cache.pop(key, None)
+    return probe
 
 
 def rtk_candidates(
@@ -194,9 +224,10 @@ def resolve_rtk(
 ) -> RtkProbe | None:
     """Resolve the first compatible RTK executable."""
     for candidate in rtk_candidates(env=env, home=home):
-        if not candidate.expanduser().is_file():
+        expanded = candidate.expanduser()
+        if not expanded.is_file():
             continue
-        probe = probe_rtk(candidate, timeout=timeout)
+        probe = _cached_probe(expanded, timeout=timeout)
         if probe.compatible:
             return probe
     return None

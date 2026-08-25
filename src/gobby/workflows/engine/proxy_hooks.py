@@ -18,6 +18,26 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_PROXY_TIMEOUT_SECONDS = 2.0
 _MAX_PROXY_OUTPUT_BYTES = 64 * 1024
+# ``rtk rewrite`` verdicts: 0 allow / 3 ask carry the rewritten command on
+# stdout; 1 passthrough / 2 deny carry nothing. Gobby applies the rewrite and
+# leaves the permission verdict to the host's native flow.
+_RTK_REWRITE_APPLY_CODES = frozenset({0, 3})
+_RTK_REWRITE_PASSTHROUGH_CODES = frozenset({1, 2})
+
+# One WARNING per unavailability episode; DEBUG until RTK resolves again.
+_rtk_unavailable_warned = False
+
+
+def _note_rtk_unavailable(rule_name: str) -> None:
+    global _rtk_unavailable_warned
+    level = logging.DEBUG if _rtk_unavailable_warned else logging.WARNING
+    _rtk_unavailable_warned = True
+    logger.log(level, "proxy_hook[%s]: compatible RTK executable unavailable", rule_name)
+
+
+def _note_rtk_available() -> None:
+    global _rtk_unavailable_warned
+    _rtk_unavailable_warned = False
 
 
 class _OutputTooLarge(Exception):
@@ -142,24 +162,19 @@ class ProxyHooksMixin:
         probe_timeout = min(0.5, max(timeout / 4, 0.05))
         probe = await offload(resolve_rtk, timeout=probe_timeout)
         if probe is None:
-            logger.warning(
-                "proxy_hook[%s]: compatible RTK executable unavailable", invocation.row.name
-            )
+            _note_rtk_unavailable(invocation.row.name)
             return False
+        _note_rtk_available()
 
         timeout = remaining_blocking_effect_seconds(blocking_deadline, maximum=maximum)
         if timeout <= 0:
             logger.warning("proxy_hook[%s]: blocking deadline exhausted", invocation.row.name)
             return False
 
-        argv = [
-            str(probe.path),
-            "hook",
-            "check",
-            "--agent",
-            event.source.value,
-            command,
-        ]
+        # ``rewrite`` is the contract stock RTK host hooks use, so its heredoc,
+        # substitution, and redirect gates apply. ``--`` keeps a command that
+        # starts with a hyphen from being parsed as a flag.
+        argv = [str(probe.path), "rewrite", "--", command]
         cwd = event.cwd if event.cwd else None
         try:
             process = await asyncio.create_subprocess_exec(
@@ -190,9 +205,9 @@ class ProxyHooksMixin:
             await _terminate_process(process)
             raise
 
-        if code == 1:
+        if code in _RTK_REWRITE_PASSTHROUGH_CODES:
             return False
-        if code != 0:
+        if code not in _RTK_REWRITE_APPLY_CODES:
             detail = stderr[:512].decode("utf-8", errors="replace").strip()
             logger.warning(
                 "proxy_hook[%s]: RTK exited %s%s",

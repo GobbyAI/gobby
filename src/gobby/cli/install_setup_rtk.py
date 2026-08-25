@@ -554,7 +554,9 @@ def reconcile_rtk(
         cleanup = reconcile_direct_artifacts(home=home, remove=True)
         for conflict in cleanup.conflicts:
             logger.warning("RTK artifact conflict: %s", conflict)
-    set_rule_state(db, enabled=desired)
+        set_rule_state(db, enabled=True)
+    else:
+        disable_rule_if_present(db)
     return get_rtk_status(db, home=home, env=env)
 
 

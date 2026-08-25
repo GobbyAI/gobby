@@ -4,6 +4,7 @@ import hashlib
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -15,6 +16,7 @@ from gobby.adapters.capabilities import get_provider_capabilities
 from gobby.cli import install_setup_rtk
 from gobby.cli.install_setup_rtk import (
     RtkCleanupReport,
+    RtkInstallError,
     RtkInstallStatus,
     disable_rule_if_present,
     ensure_rtk,
@@ -22,13 +24,16 @@ from gobby.cli.install_setup_rtk import (
     reconcile_rtk,
     remove_managed_rtk,
     resolve_selection,
+    rule_state,
     set_rule_state,
 )
 from gobby.cli.uninstall import uninstall
 from gobby.hooks.events import SessionSource
+from gobby.integrations import rtk as rtk_module
 from gobby.integrations.rtk import (
     RTK_RULE_NAME,
     RtkProbe,
+    clear_probe_cache,
     platform_paths,
     probe_rtk,
     resolve_rtk,
@@ -40,16 +45,21 @@ from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTrig
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def _clear_probe_cache() -> None:
+    clear_probe_cache()
+
+
 def _write_fake_rtk(path: Path, *, version: str = "0.45.0", valid_contract: bool = True) -> None:
-    help_text = "Command to check\\\\n  --agent <AGENT>" if valid_contract else "other help"
+    help_text = "[ARGS]...  Raw command to rewrite" if valid_contract else "other help"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        f"""#!/usr/bin/env python3
+        f"""#!{sys.executable}
 import sys
 if sys.argv[1:] == ["--version"]:
     print("rtk {version}")
     raise SystemExit(0)
-if sys.argv[1:] == ["hook", "check", "--help"]:
+if sys.argv[1:] == ["rewrite", "--help"]:
     print("{help_text}")
     raise SystemExit(0)
 raise SystemExit(1)
@@ -77,7 +87,7 @@ def _ensure_rule(db: HubDatabase, *, enabled: bool = False) -> None:
     )
 
 
-def test_probe_accepts_minimum_hook_check_contract(tmp_path: Path) -> None:
+def test_probe_accepts_minimum_rewrite_contract(tmp_path: Path) -> None:
     binary = tmp_path / "rtk"
     _write_fake_rtk(binary)
 
@@ -93,7 +103,7 @@ def test_probe_accepts_minimum_hook_check_contract(tmp_path: Path) -> None:
     [
         ("0.44.9", True, "0.45.0 or newer"),
         ("0.45.0-beta.1", True, "0.45.0 or newer"),
-        ("0.45.0", False, "hook-check contract"),
+        ("0.45.0", False, "rewrite contract"),
     ],
 )
 def test_probe_rejects_incompatible_rtk(
@@ -122,6 +132,56 @@ def test_resolve_ignores_wrong_package_collision(
     monkeypatch.delenv("GOBBY_RTK_BIN", raising=False)
 
     assert resolve_rtk(home=tmp_path / "home") is None
+
+
+def _count_probes(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
+    probed: list[Path] = []
+    real_probe = rtk_module.probe_rtk
+
+    def counting_probe(path: Path, *, timeout: float = 1.0) -> RtkProbe:
+        probed.append(path)
+        return real_probe(path, timeout=timeout)
+
+    monkeypatch.setattr(rtk_module, "probe_rtk", counting_probe)
+    return probed
+
+
+def test_resolve_reuses_compatible_probe_until_binary_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binary = tmp_path / "rtk"
+    _write_fake_rtk(binary)
+    monkeypatch.setenv("GOBBY_RTK_BIN", str(binary))
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    probed = _count_probes(monkeypatch)
+    home = tmp_path / "home"
+
+    first = resolve_rtk(home=home)
+    second = resolve_rtk(home=home)
+    _write_fake_rtk(binary, version="0.45.10")
+    third = resolve_rtk(home=home)
+
+    assert first is not None and first.version == "0.45.0"
+    assert second is first
+    assert third is not None and third.version == "0.45.10"
+    assert probed == [binary, binary]
+
+
+def test_resolve_does_not_cache_incompatible_probe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binary = tmp_path / "rtk"
+    _write_fake_rtk(binary, valid_contract=False)
+    monkeypatch.setenv("GOBBY_RTK_BIN", str(binary))
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    probed = _count_probes(monkeypatch)
+    home = tmp_path / "home"
+
+    assert resolve_rtk(home=home) is None
+    assert resolve_rtk(home=home) is None
+    assert probed == [binary, binary]
 
 
 def test_platform_paths_match_upstream_directory_rules(tmp_path: Path) -> None:
@@ -296,6 +356,49 @@ def test_reconcile_enables_rule_after_cleanup(
     rule = RuleDefinitionManager(temp_db).get_by_name(RTK_RULE_NAME)
     assert rule is not None
     assert rule.enabled is True
+
+
+def test_reconcile_disable_tolerates_never_synced_rule(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = RtkInstallStatus(None, None, False, (), "disabled", False)
+    monkeypatch.setattr(install_setup_rtk, "get_rtk_status", lambda *args, **kwargs: expected)
+
+    result = reconcile_rtk(
+        temp_db,
+        False,
+        no_interactive=True,
+        confirm=lambda *args, **kwargs: True,
+        home=tmp_path,
+    )
+
+    assert result == expected
+    assert rule_state(temp_db) is None
+
+
+def test_reconcile_enable_requires_synced_rule(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe = RtkProbe(tmp_path / "rtk", "0.45.0", True)
+    monkeypatch.setattr(install_setup_rtk, "ensure_rtk", lambda **kwargs: probe)
+    monkeypatch.setattr(
+        install_setup_rtk,
+        "reconcile_direct_artifacts",
+        lambda **kwargs: RtkCleanupReport((), (), ()),
+    )
+
+    with pytest.raises(RtkInstallError, match="run daemon setup first"):
+        reconcile_rtk(
+            temp_db,
+            True,
+            no_interactive=True,
+            confirm=lambda *args, **kwargs: False,
+            home=tmp_path,
+        )
 
 
 def test_exact_hook_cleanup_backs_up_and_preserves_unrelated_content(tmp_path: Path) -> None:

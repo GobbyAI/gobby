@@ -208,12 +208,17 @@ RTK 0.45.0 or newer from PATH, uses Homebrew when available, or installs a
 checksum-verified fallback in `~/.gobby/bin/`. Gobby never invokes `rtk init`.
 
 When enabled, `ghook` remains every CLI's installed hook. Gobby calls
-`rtk hook check --agent <source> <command>` only for synchronous `before_tool`
-shell-command rewrites on Claude Code, Codex, Qwen, Grok, Droid, and AGY.
-Rewrites preserve each host's native permission flow. RTK failures, timeouts,
-invalid output, and unsupported providers fail open. RTK's existing
-`exclude_commands`, `transparent_prefixes`, global `history.db`, and `tee/`
-configuration remain authoritative.
+`rtk rewrite -- <command>` only for synchronous `before_tool` shell-command
+rewrites on Claude Code, Codex, Qwen, Grok, Droid, and AGY. `rewrite` is the
+same contract stock RTK host hooks use, so RTK's heredoc, command-substitution,
+and file-redirect gates apply: exit 0 (allow) and exit 3 (ask) apply the
+rewritten command from stdout; exit 1 (no equivalent) and exit 2 (deny) pass the
+original command through untouched. Gobby ignores RTK's permission verdict and
+preserves each host's native permission flow. RTK failures, timeouts, invalid
+output, and unsupported providers fail open. RTK's existing `exclude_commands`,
+`transparent_prefixes`, global `history.db`, and `tee/` configuration remain
+authoritative. The compatibility probe (`--version` plus `rewrite --help`) runs
+once per executable and is reused until the binary changes on disk.
 
 `gobby hooks status` reports RTK binary path/version, installed rule state,
 direct-hook conflicts, ownership, and health. Opt-in reconciliation backs up and
