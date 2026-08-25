@@ -137,6 +137,15 @@ def test_cli_requires_explicit_baseline_reduction_after_removal(
     assert reduced.exit_code == 0, reduced.output
     assert json.loads(baseline.read_text(encoding="utf-8"))["site_count"] == 1
 
+    before = baseline.read_text(encoding="utf-8")
+    unchanged_write = runner.invoke(
+        types_command,
+        ["suppressions", ".", "--baseline", str(baseline), "--write-baseline"],
+    )
+    assert unchanged_write.exit_code == 1
+    assert "strict debt reduction" in unchanged_write.output
+    assert baseline.read_text(encoding="utf-8") == before
+
     _write(
         target,
         "first = 1  # noqa: F401\nthird = 3  # type: ignore[misc]\n",

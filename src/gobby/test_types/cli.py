@@ -82,6 +82,10 @@ def suppressions(paths: tuple[Path, ...], baseline: Path, write_baseline: bool) 
             raise click.ClickException(
                 "refusing to expand the suppression baseline; fix every new or changed site"
             )
+        if not diff.stale_entries:
+            raise click.ClickException(
+                "refusing to rewrite the suppression baseline without a strict debt reduction"
+            )
         write_suppression_baseline(baseline, scan.sites)
         click.echo(f"Baseline reduced to {len(scan.sites)} suppression sites.")
         return
