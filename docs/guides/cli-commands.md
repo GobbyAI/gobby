@@ -778,6 +778,14 @@ and prints a banner naming both checkouts. With no daemon reachable the sync
 proceeds. `gobby install` re-points the service at the invoking checkout, so
 its sync is a deliberate whole-checkout cutover.
 
+To test a branch's bundled content before merge: for content-only changes
+(rule and skill edits the running code already understands) run
+`gobby sync --force` from the worktree, test, then restore the shared rows with
+`gobby sync` from the daemon's checkout — the daemon's next restart restores
+them too. Content that needs the branch's code (new effect handlers, new MCP
+tools) needs the cutover above or the merge; forcing it in only produces rows
+the running daemon cannot serve.
+
 ## ID Resolution
 
 Task and session commands accept project-scoped sequence references such as
