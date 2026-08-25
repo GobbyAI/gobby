@@ -91,6 +91,9 @@ COMPACT_TURN_END_BYPASS_PENDING = "_compact_turn_end_bypass_pending"
 
 
 STOP_GATES_RULES = {
+    "block-found-work-permission-deferral",
+    "block-terminal-validation-failure",
+    "remind-found-work-after-close",
     "require-epic-tree-close",
     "require-task-close",
     "require-step-completion",
@@ -131,8 +134,9 @@ class TestStopGatesSync:
         for row in rules:
             if row.name in STOP_GATES_RULES:
                 body = RuleDefinitionBody.model_validate(row.definition_json)
+                assert row.enabled is True
                 for effect in body.resolved_effects:
-                    assert effect.type in {"block", "set_variable"}
+                    assert effect.type in {"block", "inject_context", "set_variable"}
 
 
 class TestStopAttemptsPlumbing:

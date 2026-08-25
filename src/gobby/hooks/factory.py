@@ -666,6 +666,7 @@ class HookManagerFactory:
                 session_task_manager=storage.session_task,
                 config=config,
                 config_resolver=lambda: HookManagerFactory._resolve_config(config, config_runtime),
+                llm_service_resolver=llm_service_resolver,
                 evaluation_runtime=evaluation_runtime,
             )
         except Exception:

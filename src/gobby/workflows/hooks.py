@@ -12,6 +12,11 @@ from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.storage.projects import GLOBAL_PROJECT_ID, ORPHANED_PROJECT_ID, PERSONAL_PROJECT_ID
 from gobby.workflows.block_audit import audit_source_block, audit_source_block_sync
 from gobby.workflows.enforcement.blocking import is_gobby_call_tool
+from gobby.workflows.found_work_gate import (
+    FoundWorkStopAnalyzer,
+    capture_rule4_handoff,
+    capture_turn_prompt,
+)
 from gobby.workflows.step_context import get_active_step_workflow_context
 from gobby.workflows.tool_context import WorkflowToolContextMixin
 
@@ -142,6 +147,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
         session_task_manager: "SessionTaskManager | None" = None,
         config: Any | None = None,
         config_resolver: Callable[[], Any | None] | None = None,
+        llm_service_resolver: Callable[[], Any | None] | None = None,
         evaluation_runtime: "WorkflowEvaluationRuntime | None" = None,
     ):
         self.rule_engine = rule_engine
@@ -150,6 +156,13 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
         self._session_task_manager = session_task_manager
         self._config = config
         self._config_resolver = config_resolver or (lambda: self._config)
+        self._found_work_analyzer = FoundWorkStopAnalyzer(
+            llm_service_resolver=llm_service_resolver or (lambda: None),
+            config_resolver=self._config_resolver,
+            session_manager=session_manager,
+            session_task_manager=session_task_manager,
+            db=rule_engine.db if rule_engine is not None else None,
+        )
         self._evaluation_runtime = evaluation_runtime
         self.timeout = timeout if timeout > 0 else None
         self._enabled = enabled
@@ -364,6 +377,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
             run_observer("detect_commit_link", detect_commit_link, event, variables, session_id)
             run_observer("detect_bash_commit", detect_bash_commit, event, variables, session_id)
             run_observer("detect_mcp_call", detect_mcp_call, event, variables, session_id)
+            run_observer("capture_rule4_handoff", capture_rule4_handoff, event, variables)
             run_observer(
                 "detect_mid_turn_context_compact_guidance",
                 detect_mid_turn_context_compact_guidance,
@@ -374,6 +388,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
 
         # Plan mode detection on the semantic start-of-turn boundary
         if _is_turn_start_event(event.event_type):
+            run_observer("capture_turn_prompt", capture_turn_prompt, event, variables)
             run_observer(
                 "resolve_plan_mode",
                 resolve_plan_mode,
@@ -678,6 +693,29 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         variables=variables,
                     )
                     return response
+
+                eval_context["found_work_shirk"] = False
+                eval_context["terminal_validation_failure"] = False
+                eval_context["terminal_validation_failure_commands"] = []
+                if (
+                    _is_turn_end_event(event.event_type)
+                    and session_id
+                    and not variables.get("plan_mode")
+                    and not variables.get("is_spawned_agent")
+                ):
+                    facts = await self._found_work_analyzer.analyze(
+                        event=event,
+                        session_id=session_id,
+                        variables=variables,
+                        project_path=project_path,
+                    )
+                    eval_context["found_work_shirk"] = facts.shirk
+                    eval_context["terminal_validation_failure"] = bool(
+                        facts.terminal_validation_failures
+                    )
+                    eval_context["terminal_validation_failure_commands"] = list(
+                        facts.terminal_validation_failures
+                    )
 
                 response = await self.rule_engine.evaluate(
                     event=event,
