@@ -115,6 +115,32 @@ def _record_falkordb_success(
     results["falkordb"] = {"success": True}
 
 
+def _record_voice_success(
+    results: dict[str, dict[str, Any]],
+    *_args: object,
+    **_kwargs: object,
+) -> None:
+    results["voice"] = {"success": True, "enabled": True}
+
+
+def _record_voice_failure(
+    results: dict[str, dict[str, Any]],
+    *_args: object,
+    **_kwargs: object,
+) -> None:
+    results["voice"] = {"success": False, "error": "config write failed"}
+
+
+def _record_embedding_success(
+    _installer: object,
+    results: dict[str, dict[str, Any]],
+    *_args: object,
+    **_kwargs: object,
+) -> str:
+    results["embedding"] = {"success": True, "provider": "lmstudio"}
+    return "lmstudio"
+
+
 # ---------------------------------------------------------------------------
 # _echo_install_details / _echo_uninstall_details
 # ---------------------------------------------------------------------------
@@ -518,6 +544,135 @@ class TestInstallCommand:
         assert "RTK maintenance complete." not in result.output
         runtime.close.assert_called_once()
         _setup.assert_not_called()
+
+    @patch("gobby.cli.install.run_daemon_setup")
+    @patch(
+        "gobby.cli.install._ensure_daemon_config", return_value={"created": False, "path": "/fake"}
+    )
+    @patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install"))
+    @patch("gobby.cli.install._run_voice_install", side_effect=_record_voice_success)
+    def test_install_voice_flag_alone_updates_voice_only(
+        self,
+        mock_voice: MagicMock,
+        _install_dir: MagicMock,
+        _config: MagicMock,
+        _setup: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        runtime = MagicMock()
+        with (
+            patch("gobby.cli.install.get_cli_runtime", return_value=runtime),
+            patch("gobby.cli.install.reconcile_rtk") as reconcile_rtk,
+            patch("gobby.cli.install._run_embedding_install") as embedding_install,
+            patch("gobby.cli.install._install_required_stack") as required_stack,
+            patch("gobby.cli.install._should_initialize_project") as initialize_project,
+            patch("gobby.cli.install._echo_install_summary") as full_summary,
+            patch("gobby.cli.install.install_claude") as install_claude,
+        ):
+            result = runner.invoke(install, ["--voice"], catch_exceptions=False)
+
+        assert result.exit_code == 0, result.output
+        assert "Voice maintenance complete." in result.output
+        assert "Gobby Installation" not in result.output
+        mock_voice.assert_called_once()
+        assert mock_voice.call_args.kwargs["voice_flag"] is True
+        assert mock_voice.call_args.kwargs["no_interactive"] is False
+        assert mock_voice.call_args.kwargs["db"] is runtime.require_database.return_value
+        runtime.close.assert_called_once()
+        for untouched in (
+            reconcile_rtk,
+            embedding_install,
+            required_stack,
+            initialize_project,
+            full_summary,
+            install_claude,
+            _config,
+            _setup,
+        ):
+            untouched.assert_not_called()
+
+    @patch("gobby.cli.install.run_daemon_setup")
+    @patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install"))
+    @patch("gobby.cli.install._run_voice_install", side_effect=_record_voice_failure)
+    def test_install_voice_flag_alone_exits_nonzero_when_voice_update_fails(
+        self,
+        _mock_voice: MagicMock,
+        _install_dir: MagicMock,
+        _setup: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        runtime = MagicMock()
+        with patch("gobby.cli.install.get_cli_runtime", return_value=runtime):
+            result = runner.invoke(install, ["--voice", "--no-interactive"])
+
+        assert result.exit_code == 1
+        assert "Voice maintenance complete." not in result.output
+        runtime.close.assert_called_once()
+        _setup.assert_not_called()
+
+    @patch("gobby.cli.install.run_daemon_setup")
+    @patch(
+        "gobby.cli.install._ensure_daemon_config", return_value={"created": False, "path": "/fake"}
+    )
+    @patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install"))
+    @patch("gobby.cli.install._run_embedding_install", side_effect=_record_embedding_success)
+    def test_install_embedding_flags_alone_configure_embedding_only(
+        self,
+        mock_embedding: MagicMock,
+        _install_dir: MagicMock,
+        _config: MagicMock,
+        _setup: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        runtime = MagicMock()
+        with (
+            patch("gobby.cli.install.get_cli_runtime", return_value=runtime),
+            patch("gobby.cli.install.reconcile_rtk") as reconcile_rtk,
+            patch("gobby.cli.install._run_voice_install") as voice_install,
+            patch("gobby.cli.install._install_required_stack") as required_stack,
+            patch("gobby.cli.install._should_initialize_project") as initialize_project,
+            patch("gobby.cli.install._echo_install_summary") as full_summary,
+            patch("gobby.cli.install.install_claude") as install_claude,
+        ):
+            result = runner.invoke(
+                install,
+                [
+                    "--embedding-url",
+                    "http://lan-host:1234/v1",
+                    "--embedding-provider",
+                    "lmstudio",
+                    "--embedding-model",
+                    "text-embedding-qwen3-embedding-4b",
+                    "--embedding-dim",
+                    "2560",
+                    "--no-interactive",
+                ],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        assert "Embedding maintenance complete." in result.output
+        assert "Gobby Installation" not in result.output
+        mock_embedding.assert_called_once()
+        assert mock_embedding.call_args.kwargs == {
+            "no_interactive": True,
+            "api_base_override": "http://lan-host:1234/v1",
+            "model_override": "text-embedding-qwen3-embedding-4b",
+            "dim_override": 2560,
+            "provider_override": "lmstudio",
+        }
+        runtime.close.assert_called_once()
+        for untouched in (
+            reconcile_rtk,
+            voice_install,
+            required_stack,
+            initialize_project,
+            full_summary,
+            install_claude,
+            _config,
+            _setup,
+        ):
+            untouched.assert_not_called()
 
     def test_expose_ui_failure_warns_and_install_continues(
         self,
@@ -927,6 +1082,58 @@ class TestUninstallCommand:
         result = runner.invoke(uninstall, ["--codex", "--yes"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "Codex" in result.output
+
+    @patch("gobby.cli.uninstall.get_cli_runtime")
+    @patch("gobby.cli.uninstall.disable_rule_if_present")
+    @patch("gobby.cli.uninstall.uninstall_claude")
+    def test_uninstall_claude_leaves_rtk_rule(
+        self,
+        mock_uninstall: MagicMock,
+        mock_disable_rule: MagicMock,
+        mock_runtime_factory: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        mock_uninstall.return_value = {
+            "success": True,
+            "hooks_removed": ["hook1"],
+            "files_removed": [],
+        }
+        result = runner.invoke(uninstall, ["--claude", "--yes"], catch_exceptions=False)
+
+        assert result.exit_code == 0, result.output
+        mock_uninstall.assert_called_once()
+        mock_disable_rule.assert_not_called()
+        mock_runtime_factory.assert_not_called()
+
+    @patch("gobby.cli.uninstall._teardown_ui_exposure")
+    @patch("gobby.cli.uninstall.get_cli_runtime")
+    @patch("gobby.cli.uninstall.disable_rule_if_present")
+    @patch("gobby.cli.uninstall.uninstall_claude")
+    def test_uninstall_all_disables_rtk_rule(
+        self,
+        mock_uninstall: MagicMock,
+        mock_disable_rule: MagicMock,
+        mock_runtime_factory: MagicMock,
+        _teardown_ui: MagicMock,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        runtime = MagicMock()
+        mock_runtime_factory.return_value = runtime
+        mock_uninstall.return_value = {"success": True, "hooks_removed": [], "files_removed": []}
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.json").write_text("{}")
+        with patch("gobby.cli.uninstall.Path.home", return_value=tmp_path):
+            result = runner.invoke(uninstall, ["--yes"], catch_exceptions=False)
+
+        assert result.exit_code == 0, result.output
+        assert "Gobby Hooks Uninstallation" in result.output
+        assert "Targets to uninstall: claude" in result.output
+        assert "Removed global hook dispatchers from ~/.gobby/hooks/" in result.output
+        mock_disable_rule.assert_called_once_with(runtime.require_database.return_value)
+        runtime.close.assert_called_once()
+        mock_uninstall.assert_called_once()
+        _teardown_ui.assert_called_once()
 
     @patch("gobby.cli.uninstall.remove_managed_rtk")
     @patch("gobby.cli.uninstall.disable_rule_if_present")

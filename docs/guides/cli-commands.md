@@ -172,14 +172,17 @@ gobby uninstall [OPTIONS]
 | `--config-only` | Configure Gobby and provision required infrastructure without CLI or Git hooks. |
 | `--falkordb-password-stdin` | Read the FalkorDB password from standard input. |
 | `--project` | Install project-scoped configuration. |
-| `--voice` | Install voice support assets. |
+| `--voice` | Enable voice chat in daemon config. Alone, a voice-only maintenance run. |
 | `--rtk`, `--no-rtk` | Enable or disable RTK command rewriting through Gobby's hook proxy. Alone, an RTK-only maintenance run. |
-| `--embedding-url URL` | Use a custom embedding API endpoint. |
+| `--embedding-url URL` | Use a custom embedding API endpoint. Embedding flags alone are an embedding-only maintenance run. |
 | `--embedding-provider PROVIDER` | Force embedding provider compatibility mode (`lmstudio`, `ollama`, `openai-compatible`, `vllm`). |
 | `--embedding-model MODEL` | Override the embedding model. |
 | `--embedding-dim N` | Override the embedding dimension. |
 | `--secret-kek-posture [key-file|passphrase]` | Select daemon-local secret KEK storage. |
+| `--ide-settings`, `--no-ide-settings` | Answer the VS Code-family terminal integration prompt. |
+| `--expose-ui`, `--no-expose-ui` | Answer the Tailscale web UI exposure prompt. |
 | `--container-restarts`, `--no-container-restarts` | Enable or disable `unless-stopped` restart policies for managed service containers (enabled by default). |
+| `--files-home DIR` | Existing absolute directory for hub-owned files (local install). |
 | `--no-interactive` | Run without prompts. |
 | `-C`, `--path PATH` | Install against a specific path. |
 
@@ -197,9 +200,27 @@ local machine before daemon startup. A fresh `--no-interactive` install refuses
 to invent credentials; run one interactive installation first. Reruns preserve
 the existing sole user and idempotently confirm local machine ownership.
 
-CLI-targeted flags and `--hooks` are maintenance operations. In particular,
-`gobby install --hooks` only ensures the personal marker and reinstalls
-repository Git hooks; it skips daemon configuration and managed services.
+The full install runs only when no scope or section flag is given (or with
+`--all`). Section flags given without a scope flag are maintenance runs: they
+configure their own section and stop before the installation banner, daemon
+setup, managed services, and daemon start.
+
+- `--hooks` ensures the personal marker and reinstalls repository Git hooks.
+- `--rtk`/`--no-rtk` reconciles the RTK binary and rule (details below).
+- `--voice` enables voice chat in daemon config.
+- `--embedding-url`, `--embedding-provider`, `--embedding-model`, and
+  `--embedding-dim` configure the embedding provider.
+
+Section flags combine: `gobby install --rtk --voice` runs both sections and
+nothing else. Modifier flags (`--no-interactive`, `-C`/`--path`, `--project`,
+`--files-home`, `--container-restarts`, `--falkordb-password-stdin`,
+`--secret-kek-posture`, `--ide-settings`, `--expose-ui`) select nothing on
+their own, so alone they still run the full install. `--expose-ui`,
+`--ide-settings`, `--no-ide-settings`, and `--falkordb-password-stdin` answer
+full-install prompts, so combining one with a section flag runs the full
+install; `--no-expose-ui` and `--no-interactive` combine with any run.
+CLI-targeted flags (`--claude`, `--codex`, ...) install those hooks plus daemon
+configuration and identity; they skip managed-service provisioning.
 
 RTK integration is opt-in. Interactive installs prompt with the currently
 installed `rtk-command-rewrite` rule state as the default; fresh
@@ -229,7 +250,9 @@ once per executable and is reused until the binary changes on disk.
 direct-hook conflicts, ownership, and health. Opt-in reconciliation backs up and
 removes exact RTK-generated direct hooks, legacy scripts, instruction blocks, and
 generated files; modified or unrelated content is preserved and reported.
-Global uninstall disables the rule. `gobby uninstall --tools` also removes the
+The full global uninstall (no CLI flag, or `--all`) disables the rule;
+targeted CLI uninstalls such as `gobby uninstall --claude` leave it as
+installed. `gobby uninstall --tools` also removes the
 checksum-matching Gobby fallback, while Homebrew and other user-managed RTK
 installations remain installed. `gobby uninstall --rtk` alone disables the rule
 and removes the managed fallback, leaving CLI hooks, other tools, and the

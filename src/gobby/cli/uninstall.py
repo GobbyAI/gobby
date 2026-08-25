@@ -135,7 +135,7 @@ def uninstall(
     By default (no flags), uninstalls global hooks from CLI settings and ~/.gobby/hooks/.
     Use --project to uninstall per-project hooks from the current directory.
     Use --claude, --grok, --agy, --qwen, or --codex to uninstall only from
-    specific CLIs.
+    specific CLIs; the RTK rewrite rule stays as installed.
     Use --rtk alone to disable RTK rewriting and remove the managed binary
     without touching hooks or other tools.
     """
@@ -158,7 +158,9 @@ def uninstall(
     ):
         all_flag = True
 
-    if not project_flag:
+    # The RTK rewrite rule belongs to the full uninstall and the tool-cleanup
+    # paths; targeted CLI uninstalls leave it as installed.
+    if not project_flag and (all_flag or tools_flag or rtk_flag):
         try:
             runtime = get_cli_runtime()
         except RuntimeError:

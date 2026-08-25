@@ -488,6 +488,7 @@ def install(
     Use --claude, --grok, --agy, --qwen, --codex, or --droid to install only
     to specific CLIs.
     Use --hooks alone to reinstall Git hooks without configuration or infrastructure setup.
+    Use --rtk/--no-rtk, --voice, or --embedding-* alone to configure only that section.
     Use --config-only to configure Gobby and required infrastructure without hooks.
     """
     if embedding_provider and not embedding_url:
@@ -521,21 +522,19 @@ def install(
         or all_flag
         or config_only_flag
     )
-    # `--rtk`/`--no-rtk` as the only scope flag is RTK maintenance, not a full
-    # install: reconcile the binary and rule, then stop.
-    rtk_only_maintenance = (
-        rtk_flag is not None
-        and not explicit_scope
-        and not voice_flag
-        and not falkordb_password_stdin
-        and not any(
-            value is not None
-            for value in (embedding_url, embedding_provider, embedding_model, embedding_dim)
-        )
-        and ide_settings_flag is None
-        and expose_ui_flag is not True
+    embedding_override = any(
+        value is not None
+        for value in (embedding_url, embedding_provider, embedding_model, embedding_dim)
     )
-    if not explicit_scope and not rtk_only_maintenance:
+    # Section flags name one installable section (RTK, embedding, voice); with
+    # no scope flag they are a maintenance run of just those sections. Flags
+    # that answer full-install prompts pull the run back into the full install.
+    section_flags = rtk_flag is not None or embedding_override or voice_flag
+    full_install_prompt_answers = (
+        falkordb_password_stdin or ide_settings_flag is not None or expose_ui_flag is True
+    )
+    section_maintenance = section_flags and not explicit_scope and not full_install_prompt_answers
+    if not explicit_scope and not section_maintenance:
         all_flag = True
     clis_to_install: list[str] = []
 
@@ -595,15 +594,8 @@ def install(
         hooks_flag
         and not clis_to_install
         and not is_full_install
-        and not voice_flag
-        and not falkordb_password_stdin
-        and not any(
-            value is not None
-            for value in (embedding_url, embedding_provider, embedding_model, embedding_dim)
-        )
-        and ide_settings_flag is None
-        and expose_ui_flag is not True
-        and rtk_flag is None
+        and not section_flags
+        and not full_install_prompt_answers
     )
 
     # Get install directory info
@@ -682,20 +674,43 @@ def install(
             if install_claim is not None:
                 install_claim.release()
 
-    if rtk_only_maintenance:
-        rtk_runtime = get_cli_runtime()
+    if section_maintenance:
+        maintenance_runtime = get_cli_runtime()
         try:
-            _reconcile_rtk_step(
-                rtk_runtime.require_database(),
-                rtk_flag,
-                no_interactive=no_interactive_flag,
-            )
-            click.echo("RTK maintenance complete.")
+            maintenance_db = maintenance_runtime.require_database()
+            maintenance_results: dict[str, dict[str, Any]] = {}
+            sections: list[str] = []
+            if rtk_flag is not None:
+                _reconcile_rtk_step(maintenance_db, rtk_flag, no_interactive=no_interactive_flag)
+                sections.append("RTK")
+            if embedding_override:
+                _run_embedding_install(
+                    install_embedding,
+                    maintenance_results,
+                    no_interactive=no_interactive_flag,
+                    api_base_override=embedding_url,
+                    model_override=embedding_model,
+                    dim_override=embedding_dim,
+                    provider_override=embedding_provider,
+                )
+                sections.append("Embedding")
+            if voice_flag:
+                _run_voice_install(
+                    maintenance_results,
+                    voice_flag=True,
+                    no_interactive=no_interactive_flag,
+                    db=maintenance_db,
+                )
+                sections.append("Voice")
+            if not all(result.get("success", False) for result in maintenance_results.values()):
+                sys.exit(1)
+            for section in sections:
+                click.echo(f"{section} maintenance complete.")
             return
         finally:
             if install_claim is not None:
                 install_claim.release()
-            rtk_runtime.close()
+            maintenance_runtime.close()
 
     initialize_project_after_setup = not config_only_flag and _should_initialize_project(
         project_path,
@@ -850,10 +865,6 @@ def install(
         if install_hooks:
             _run_git_hooks_install(install_git_hooks, project_path, results)
 
-        embedding_override = any(
-            value is not None
-            for value in (embedding_url, embedding_provider, embedding_model, embedding_dim)
-        )
         configure_embedding = is_full_install and should_configure_section(
             install_state.embedding,
             label="embedding provider/model/endpoint",
