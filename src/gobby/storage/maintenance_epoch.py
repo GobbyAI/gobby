@@ -16,6 +16,8 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from gobby.utils.sql import render_internal_sql
+
 type Campaign = Literal[
     "account-identity-cutover",
     "schema-apply",
@@ -405,13 +407,16 @@ def get_destructive_batch(
         application_name="gobby-maintenance-batch-read",
     ) as connection:
         row = connection.execute(
-            f"""
-            SELECT *
-            FROM destructive_batches
-            WHERE {predicate}
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,  # noqa: S608 - predicate is assembled exclusively from constants
+            render_internal_sql(
+                """
+                SELECT *
+                FROM destructive_batches
+                WHERE {predicate}
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                predicate=predicate,
+            ),
             parameters,
         ).fetchone()
     return _batch_from_row(row) if row is not None else None
@@ -711,14 +716,17 @@ def _update_batch(
         application_name="gobby-maintenance-batch-update",
     ) as connection:
         row = connection.execute(
-            f"""
-            UPDATE destructive_batches
-            SET {assignments}
-            WHERE id = %s
-              AND maintenance_epoch_id = %s
-              AND status = ANY(%s)
-            RETURNING *
-            """,  # noqa: S608 - assignments are module-owned SQL constants
+            render_internal_sql(
+                """
+                UPDATE destructive_batches
+                SET {assignments}
+                WHERE id = %s
+                  AND maintenance_epoch_id = %s
+                  AND status = ANY(%s)
+                RETURNING *
+                """,
+                assignments=assignments,
+            ),
             (
                 *assignment_parameters,
                 normalized_batch,

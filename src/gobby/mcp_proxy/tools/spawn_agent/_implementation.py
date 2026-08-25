@@ -586,6 +586,7 @@ async def spawn_agent_impl(
         try:
             prepared_spawn = prepare_terminal_spawn(
                 session_manager=child_session_manager,
+                credential_manager=runner.run_storage.credential_manager,
                 parent_session_id=parent_session_id,
                 project_id=project_id,
                 machine_id=get_machine_id(),
@@ -639,6 +640,7 @@ async def spawn_agent_impl(
                     agent_run_id=prepared_spawn.agent_run_id,
                     prompt_file=prepared_spawn.prompt_file,
                     managed_credential=prepared_spawn.managed_credential,
+                    credential_manager=runner.run_storage.credential_manager,
                 )
                 task_spawn_lease.release_unattached()
                 await cleanup_created_isolation(
@@ -705,6 +707,7 @@ async def spawn_agent_impl(
                 agent_run_id=prepared_spawn.agent_run_id,
                 prompt_file=prepared_spawn.prompt_file,
                 managed_credential=prepared_spawn.managed_credential,
+                credential_manager=runner.run_storage.credential_manager,
             )
             task_spawn_lease.release_unattached()
             await cleanup_failed_spawn(

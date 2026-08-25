@@ -36,6 +36,4 @@ class LocalAgentRunManager(
         """Initialize with database connection."""
         self.db = db
         self._status_notifier = status_notifier
-        self.credential_manager = credential_manager or getattr(
-            db, "managed_credential_manager", None
-        )
+        self.credential_manager = credential_manager

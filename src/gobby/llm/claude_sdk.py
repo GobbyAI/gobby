@@ -17,6 +17,7 @@ from gobby.llm.base import (
     LLMProviderError,
     LLMTextResult,
 )
+from gobby.llm.claude_errors import ClaudeSDKMaxTurns
 from gobby.llm.claude_models import AgenticGenerationResult
 from gobby.llm.claude_payloads import (
     claude_reasoning_options,
@@ -25,7 +26,6 @@ from gobby.llm.claude_payloads import (
 )
 from gobby.llm.claude_runtime import (
     execute_sdk_query,
-    is_max_turns_error,
     raise_for_error_result,
 )
 from gobby.llm.image_payloads import prepare_image_inputs
@@ -259,8 +259,8 @@ class ClaudeSDKClient:
                         usage = normalize_claude_usage(getattr(message, "usage", None))
                         if usage is not None:
                             attempt_usage = usage
-            except Exception as exc:  # noqa: BLE001 - re-raised unless max-turns
-                if is_max_turns_error(exc) and result_text.strip():
+            except ClaudeSDKMaxTurns:
+                if result_text.strip():
                     captured_usage = attempt_usage
                     tool_breakdown = attempt_tool_breakdown
                     tool_use_count = attempt_tool_use_count

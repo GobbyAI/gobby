@@ -136,7 +136,7 @@ def expire_stale_terminal_sessions_for_context(
         try:
             if not terminal_contexts_match(terminal_context, stored_context):
                 continue
-        except Exception as e:  # noqa: BLE001 - stale scan should fail open
+        except Exception as e:  # Stale context scans are an owned fail-open boundary.
             handler.logger.warning(
                 "Failed to compare stale terminal session context",
                 extra={
@@ -154,7 +154,7 @@ def expire_stale_terminal_sessions_for_context(
                 candidate_id,
                 cause="context_reuse",
             )
-        except Exception as e:  # noqa: BLE001 - stale expiry should fail open
+        except Exception as e:  # One failed expiry must not block the remaining candidates.
             handler.logger.warning(
                 "Failed to expire stale terminal session",
                 extra={

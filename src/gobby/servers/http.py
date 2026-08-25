@@ -116,11 +116,7 @@ class HTTPServer:
             try:
                 services.tool_chat_service = build_daemon_tool_chat_service(
                     self.startup_config,
-                    credential_manager=getattr(
-                        services.database,
-                        "managed_credential_manager",
-                        None,
-                    ),
+                    credential_manager=services.managed_credential_manager,
                 )
             except Exception as e:
                 logger.error("Failed to initialize tool chat service: %s", e)

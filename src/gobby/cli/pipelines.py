@@ -4,7 +4,7 @@ CLI commands for managing Gobby pipelines.
 
 from __future__ import annotations
 
-import asyncio  # noqa: F401 - facade for split pipeline modules
+import asyncio
 import getpass
 import json
 import logging
@@ -13,7 +13,7 @@ from typing import Any
 
 import click
 import httpx
-import yaml  # noqa: F401 - used by pipelines_import through this module facade
+import yaml
 
 from gobby.cli._build_daemon import _daemon_error_detail, _daemon_error_message
 from gobby.cli.pipelines_catalog import (
@@ -36,12 +36,14 @@ from gobby.cli.runtime import require_cli_database
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.daemon_url import DaemonUrlError
 from gobby.utils.json_helpers import json_dumps
-from gobby.workflows.lobster_compat import (  # noqa: F401 - facade for pipelines_import
+from gobby.workflows.lobster_compat import (
     LobsterImporter,
 )
 from gobby.workflows.pipeline_loader import PipelineLoader
 
 logger = logging.getLogger(__name__)
+
+__all__ = ["LobsterImporter", "asyncio", "yaml"]
 
 
 def get_project_path() -> Path | None:

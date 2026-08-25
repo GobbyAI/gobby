@@ -7,20 +7,16 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-try:  # pragma: no cover - selected by platform
-    import fcntl
-except ImportError:  # pragma: no cover - Windows only
-    fcntl = None  # type: ignore[assignment]
-
-try:  # pragma: no cover - selected by platform
+if sys.platform == "win32":  # pragma: no cover - Windows only
     import msvcrt
-except ImportError:  # pragma: no cover - POSIX only
-    msvcrt = None  # type: ignore[assignment]
+else:  # pragma: no branch - POSIX platforms share fcntl
+    import fcntl
 
 from gobby.sync.jsonl_io import atomic_write_text, export_file_lock
 
@@ -290,13 +286,7 @@ async def run_blocking_safely[**P, T](func: Callable[P, T], *args: P.args, **kwa
 
 
 def _try_file_lock(fd: int) -> bool:
-    if fcntl is not None:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return True
-        except BlockingIOError:
-            return False
-    if msvcrt is not None:  # pragma: no cover - Windows only
+    if sys.platform == "win32":  # pragma: no cover - Windows only
         os.ftruncate(fd, 1)
         os.lseek(fd, 0, os.SEEK_SET)
         try:
@@ -304,15 +294,19 @@ def _try_file_lock(fd: int) -> bool:
             return True
         except OSError:
             return False
-    raise RuntimeError("No native file-locking implementation is available")
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except BlockingIOError:
+        return False
 
 
 def _unlock_file(fd: int) -> None:
-    if fcntl is not None:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-    elif msvcrt is not None:  # pragma: no cover - Windows only
+    if sys.platform == "win32":  # pragma: no cover - Windows only
         os.lseek(fd, 0, os.SEEK_SET)
         msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        return
+    fcntl.flock(fd, fcntl.LOCK_UN)
 
 
 @asynccontextmanager

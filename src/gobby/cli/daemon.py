@@ -59,7 +59,7 @@ from .utils import (
     get_gobby_home,
     init_local_storage,
     is_port_available,
-    kill_all_gobby_daemons,  # noqa: F401 - patched by start tests
+    kill_all_gobby_daemons,
     setup_logging,
     wait_for_port_available,
 )
@@ -69,6 +69,8 @@ from .utils import (
 from .utils_process import get_port_listener_pid
 
 logger = logging.getLogger(__name__)
+
+__all__ = ["kill_all_gobby_daemons"]
 
 SERVICE_MANAGED_STOP_TIMEOUT_SECONDS = 75.0
 

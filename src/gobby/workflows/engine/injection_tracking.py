@@ -29,7 +29,7 @@ class InjectionTrackingMixin:
             try:
                 existing_vars = sv_mgr.get_variables(platform_session_id)
                 already = set(existing_vars.get("injected_review_lesson_ids", []) or [])
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:  # Tracking failures never block workflow injection.
                 logger.debug("Failed to read injected_review_lesson_ids for dedup: %s", exc)
 
         seen: set[str] = set()
@@ -52,7 +52,7 @@ class InjectionTrackingMixin:
                     "injected_review_lesson_ids",
                     new_ids,
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:  # Tracking failures never block workflow injection.
                 logger.debug("Failed to append injected_review_lesson_ids: %s", exc)
 
         return new_lessons

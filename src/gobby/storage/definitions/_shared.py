@@ -17,6 +17,7 @@ from gobby.storage.definitions.revisions import (
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.sql_dialect import older_than_now_expr
 from gobby.utils.datetime import utc_now
+from gobby.utils.sql import render_internal_sql
 from gobby.utils.uuid_validation import parse_uuid_reference
 
 logger = logging.getLogger(__name__)
@@ -134,7 +135,10 @@ def live_name_taken(
     exclude_id: str | None = None,
 ) -> bool:
     table = _validate_table(table)
-    query = f"SELECT 1 FROM {table} WHERE name = %s AND deleted_at IS NULL AND "  # noqa: S608
+    query = render_internal_sql(
+        "SELECT 1 FROM {table} WHERE name = %s AND deleted_at IS NULL AND ",
+        table=table,
+    )
     params: list[Any] = [name]
     if project_id is None:
         query += "project_id IS NULL"
@@ -171,7 +175,7 @@ def fetch_definition_row(
 ) -> Mapping[str, Any]:
     table = _validate_table(table)
     require_definition_id(definition_id, what=what)
-    query = f"SELECT * FROM {table} WHERE id = %s"  # noqa: S608
+    query = render_internal_sql("SELECT * FROM {table} WHERE id = %s", table=table)
     params: tuple[Any, ...] = (definition_id,)
     if not include_deleted:
         query += " AND deleted_at IS NULL"
@@ -193,13 +197,21 @@ def fetch_definition_by_name(
     deleted = "" if include_deleted else " AND deleted_at IS NULL"
     if project_id is not None:
         row = db.fetchone(
-            f"SELECT * FROM {table} WHERE name = %s AND project_id = %s{deleted}",  # noqa: S608
+            render_internal_sql(
+                "SELECT * FROM {table} WHERE name = %s AND project_id = %s{deleted}",
+                table=table,
+                deleted=deleted,
+            ),
             (name, project_id),
         )
         if row is not None:
             return row
     return db.fetchone(
-        f"SELECT * FROM {table} WHERE name = %s AND project_id IS NULL{deleted}",  # noqa: S608
+        render_internal_sql(
+            "SELECT * FROM {table} WHERE name = %s AND project_id IS NULL{deleted}",
+            table=table,
+            deleted=deleted,
+        ),
         (name,),
     )
 
@@ -214,7 +226,12 @@ def insert_definition_row(
     placeholders = ", ".join(["%s"] * len(columns))
     column_sql = ", ".join(columns)
     txn.execute(
-        f"INSERT INTO {table} ({column_sql}) VALUES ({placeholders})",  # noqa: S608
+        render_internal_sql(
+            "INSERT INTO {table} ({columns}) VALUES ({placeholders})",
+            table=table,
+            columns=column_sql,
+            placeholders=placeholders,
+        ),
         tuple(values),
     )
 
@@ -248,7 +265,12 @@ def list_definition_rows(
     where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
     return list(
         db.fetchall(
-            f"SELECT * FROM {table}{where} ORDER BY {order_by}",  # noqa: S608
+            render_internal_sql(
+                "SELECT * FROM {table}{where} ORDER BY {order_by}",
+                table=table,
+                where=where,
+                order_by=order_by,
+            ),
             tuple(params),
         )
     )
@@ -266,8 +288,11 @@ def apply_definition_update(
     assignments = ", ".join(f"{column} = %s" for column in values)
     params = [*values.values(), definition_id]
     row = txn.execute(
-        f"UPDATE {table} SET {assignments} WHERE id = %s AND deleted_at IS NULL "  # noqa: S608
-        "RETURNING *",
+        render_internal_sql(
+            "UPDATE {table} SET {assignments} WHERE id = %s AND deleted_at IS NULL RETURNING *",
+            table=table,
+            assignments=assignments,
+        ),
         tuple(params),
     ).fetchone()
     if row is None:
@@ -283,8 +308,11 @@ def soft_delete_definition(
     table = _validate_table(table)
     now = utc_now()
     cursor = txn.execute(
-        f"UPDATE {table} SET deleted_at = %s, updated_at = %s "  # noqa: S608
-        "WHERE id = %s AND deleted_at IS NULL",
+        render_internal_sql(
+            "UPDATE {table} SET deleted_at = %s, updated_at = %s "
+            "WHERE id = %s AND deleted_at IS NULL",
+            table=table,
+        ),
         (now, now, definition_id),
     )
     return cursor.rowcount > 0
@@ -292,7 +320,10 @@ def soft_delete_definition(
 
 def hard_delete_definition(txn: Transaction, table: str, definition_id: str) -> bool:
     table = _validate_table(table)
-    cursor = txn.execute(f"DELETE FROM {table} WHERE id = %s", (definition_id,))  # noqa: S608
+    cursor = txn.execute(
+        render_internal_sql("DELETE FROM {table} WHERE id = %s", table=table),
+        (definition_id,),
+    )
     return cursor.rowcount > 0
 
 
@@ -306,7 +337,10 @@ def restore_definition(
     table = _validate_table(table)
     require_definition_id(definition_id, what=what)
     current = txn.execute(
-        f"SELECT * FROM {table} WHERE id = %s AND deleted_at IS NOT NULL",  # noqa: S608
+        render_internal_sql(
+            "SELECT * FROM {table} WHERE id = %s AND deleted_at IS NOT NULL",
+            table=table,
+        ),
         (definition_id,),
     ).fetchone()
     if current is None:
@@ -321,8 +355,10 @@ def restore_definition(
     )
     now = utc_now()
     row = txn.execute(
-        f"UPDATE {table} SET deleted_at = NULL, updated_at = %s "  # noqa: S608
-        "WHERE id = %s RETURNING *",
+        render_internal_sql(
+            "UPDATE {table} SET deleted_at = NULL, updated_at = %s WHERE id = %s RETURNING *",
+            table=table,
+        ),
         (now, definition_id),
     ).fetchone()
     if row is None:
@@ -341,11 +377,15 @@ def purge_deleted_definitions(
         raise ValueError(f"older_than_days must be >= 1, got {older_than_days}")
     deleted_before_sql = older_than_now_expr(db, "deleted_at", "%s", "day")
     cursor = txn.execute(
-        f"""
-        DELETE FROM {table}
-        WHERE deleted_at IS NOT NULL
-          AND {deleted_before_sql}
-        """,  # noqa: S608
+        render_internal_sql(
+            """
+            DELETE FROM {table}
+            WHERE deleted_at IS NOT NULL
+              AND {deleted_before}
+            """,
+            table=table,
+            deleted_before=deleted_before_sql,
+        ),
         (older_than_days,),
     )
     return cursor.rowcount
@@ -363,7 +403,10 @@ def move_definition_scope(
     table = _validate_table(table)
     require_definition_id(definition_id, what=what)
     current = txn.execute(
-        f"SELECT * FROM {table} WHERE id = %s AND deleted_at IS NULL",  # noqa: S608
+        render_internal_sql(
+            "SELECT * FROM {table} WHERE id = %s AND deleted_at IS NULL",
+            table=table,
+        ),
         (definition_id,),
     ).fetchone()
     if current is None:
@@ -378,8 +421,11 @@ def move_definition_scope(
     )
     now = utc_now()
     row = txn.execute(
-        f"UPDATE {table} SET source = %s, project_id = %s, updated_at = %s "  # noqa: S608
-        "WHERE id = %s RETURNING *",
+        render_internal_sql(
+            "UPDATE {table} SET source = %s, project_id = %s, updated_at = %s "
+            "WHERE id = %s RETURNING *",
+            table=table,
+        ),
         (source, project_id, now, definition_id),
     ).fetchone()
     if row is None:

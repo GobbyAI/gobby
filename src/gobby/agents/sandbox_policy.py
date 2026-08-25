@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -438,7 +439,7 @@ def tmux_socket_roots() -> list[str]:
     """
     if not hasattr(os, "getuid"):
         return []
-    tmux_tmpdir = os.environ.get("TMUX_TMPDIR", "/tmp")  # noqa: S108
+    tmux_tmpdir = os.environ.get("TMUX_TMPDIR", tempfile.gettempdir())
     return canonical_paths([str(Path(tmux_tmpdir) / f"tmux-{os.getuid()}")])
 
 

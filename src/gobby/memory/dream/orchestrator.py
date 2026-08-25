@@ -488,7 +488,7 @@ class DreamSweepOrchestrator:
     async def _reconcile(self, totals: SweepTotals) -> None:
         try:
             totals.reconcile = await self.memory_manager.reconcile_stores(dry_run=False)
-        except Exception as exc:  # noqa: BLE001 - reconcile must not hide applied mutations
+        except Exception as exc:  # Reconciliation must preserve visibility of applied mutations.
             totals.reconcile = {"error": str(exc)}
             logger.warning("Memory dream reconcile failed: %s", exc, exc_info=True)
 

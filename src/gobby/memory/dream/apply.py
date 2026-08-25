@@ -377,7 +377,7 @@ async def _advance_cursor(
 async def _reconcile(memory_manager: MemoryDreamManagerProtocol, summary: dict[str, Any]) -> None:
     try:
         summary["reconcile"] = await memory_manager.reconcile_stores(dry_run=False)
-    except Exception as exc:  # noqa: BLE001 - reconciliation must not hide applied snapshots
+    except Exception as exc:  # Reconciliation must preserve visibility of applied snapshots.
         summary["reconcile_error"] = str(exc)
         logger.warning("Memory dream reconcile failed: %s", exc)
 

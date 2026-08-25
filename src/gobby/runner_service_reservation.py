@@ -4,11 +4,84 @@ from __future__ import annotations
 
 import os
 import stat
+from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 
 class NonceError(Exception):
     """Nonce create or consume failed."""
+
+
+class _Kernel32Adapter:
+    """Typed boundary around the dynamic kernel32 functions used for nonce creation."""
+
+    def __init__(self) -> None:  # pragma: no cover - Windows only
+        import ctypes
+        from ctypes import wintypes
+
+        win_dll = getattr(ctypes, "WinDLL", None)
+        if win_dll is None:
+            raise RuntimeError("kernel32 is available only on Windows")
+        kernel32 = win_dll("kernel32", use_last_error=True)
+
+        create_file = kernel32.CreateFileW
+        create_file.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.HANDLE,
+        ]
+        create_file.restype = wintypes.HANDLE
+        self._create_file = cast(Callable[..., int | None], create_file)
+
+        write_file = kernel32.WriteFile
+        write_file.argtypes = [
+            wintypes.HANDLE,
+            wintypes.LPCVOID,
+            wintypes.DWORD,
+            wintypes.LPDWORD,
+            wintypes.LPVOID,
+        ]
+        write_file.restype = wintypes.BOOL
+        self._write_file = cast(Callable[..., int], write_file)
+
+        close_handle = kernel32.CloseHandle
+        close_handle.argtypes = [wintypes.HANDLE]
+        close_handle.restype = wintypes.BOOL
+        self._close_handle = cast(Callable[[int], int], close_handle)
+
+    def create_file(self, path: str) -> int | None:  # pragma: no cover - Windows only
+        return self._create_file(
+            path,
+            0x40000000,
+            0,
+            None,
+            1,
+            0x80,
+            None,
+        )
+
+    def write_file(self, handle: int, nonce: bytes) -> bool:  # pragma: no cover - Windows only
+        import ctypes
+        from ctypes import wintypes
+
+        written = wintypes.DWORD()
+        return bool(
+            self._write_file(
+                handle,
+                nonce,
+                len(nonce),
+                ctypes.byref(written),
+                None,
+            )
+        )
+
+    def close_handle(self, handle: int) -> None:  # pragma: no cover - Windows only
+        self._close_handle(handle)
 
 
 def service_nonce_path(pid_file: Path) -> Path:
@@ -92,34 +165,18 @@ def _windows_create_file_exclusive(
     user_sid: str,
 ) -> None:  # pragma: no cover - replaced in tests / Windows
     import ctypes
-    from ctypes import wintypes
 
-    generic_write = 0x40000000
-    create_new = 1
-    file_attribute_normal = 0x80
-    handle = ctypes.windll.kernel32.CreateFileW(  # type: ignore[attr-defined]
-        path,
-        generic_write,
-        0,
-        None,
-        create_new,
-        file_attribute_normal,
-        None,
-    )
-    if handle == wintypes.HANDLE(-1).value:
+    kernel32 = _Kernel32Adapter()
+    handle = kernel32.create_file(path)
+    if handle == ctypes.c_void_p(-1).value:
         raise NonceError(f"CREATE_NEW failed for {path}")
+    if handle is None:
+        raise NonceError(f"CreateFileW returned a null handle for {path}")
     try:
-        written = wintypes.DWORD()
-        if not ctypes.windll.kernel32.WriteFile(  # type: ignore[attr-defined]
-            handle,
-            nonce,
-            len(nonce),
-            ctypes.byref(written),
-            None,
-        ):
+        if not kernel32.write_file(handle, nonce):
             raise NonceError(f"WriteFile failed for {path}")
     finally:
-        ctypes.windll.kernel32.CloseHandle(handle)  # type: ignore[attr-defined]
+        kernel32.close_handle(handle)
     _ = user_sid
 
 

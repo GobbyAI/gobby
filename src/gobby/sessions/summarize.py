@@ -425,7 +425,7 @@ async def _generate_session_summary_core(
             session,
             final_summary,
         )
-    except Exception as e:  # noqa: BLE001 — boundary: wiki file must not break summary
+    except Exception as e:  # Wiki persistence must not break an otherwise valid summary.
         logger.warning("Session wiki file write failed for session %s: %s", session_id, e)
         session_wiki_result = {"written": False, "skipped": "error", "error": str(e)}
 

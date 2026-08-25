@@ -345,7 +345,7 @@ class MemoryRecallRunner:
 
         try:
             state = await self.memory_manager.run_db(self._read_session_state, session_id)
-        except Exception as exc:  # noqa: BLE001 - partial state is not a basis for injection
+        except Exception as exc:  # Partial session state is never a basis for injection.
             self.logger.warning(
                 "Memory recall session read failed; injecting nothing this turn: %s", exc
             )
@@ -418,7 +418,7 @@ class MemoryRecallRunner:
                 RECALL_SEARCH_DEADLINE_SECONDS,
             )
             return []
-        except Exception as exc:  # noqa: BLE001 - recall must fail open
+        except Exception as exc:  # Recall is an optional fail-open enrichment boundary.
             self.logger.warning("Memory recall hybrid search failed: %s", exc)
             return []
 
@@ -556,7 +556,7 @@ class MemoryRecallRunner:
         ]
         try:
             await self.memory_manager.run_db(self._outcome_recorder, rows)
-        except Exception:  # noqa: BLE001 - diagnostics must fail open
+        except Exception:  # Selection diagnostics never affect recall delivery.
             self.logger.debug("Failed to record recall selection outcomes", exc_info=True)
 
     def _log_decision(

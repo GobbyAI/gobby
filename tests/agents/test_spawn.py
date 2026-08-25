@@ -143,7 +143,6 @@ class TestPrepareTerminalSpawnMetadata:
         credential = credential_manager.issue.return_value
         credential.bootstrap_path = Path("/private/runtime/bootstrap.json")
         credential.expires_at = issued_at + timedelta(seconds=expected_lifetime_seconds)
-        sm._storage.db.managed_credential_manager = credential_manager
         launch = MagicMock()
         launch.grant_path = Path("/private/runtime/grant.json")
 
@@ -165,6 +164,7 @@ class TestPrepareTerminalSpawnMetadata:
                 machine_id=str(uuid.uuid4()),
                 agent_run_id=run_id,
                 timeout_seconds=timeout_seconds,
+                credential_manager=credential_manager,
             )
 
         credential_manager.issue.assert_called_once_with(
@@ -191,7 +191,6 @@ class TestPrepareTerminalSpawnMetadata:
         credential = MagicMock()
         credential.bootstrap_path = Path("/private/runtime/bootstrap.json")
         credential.expires_at = datetime(2026, 8, 12, tzinfo=UTC) + timedelta(hours=1)
-        sm._storage.db.managed_credential_manager = credential_manager
         run_manager_cls = MagicMock()
         monkeypatch.setattr("gobby.storage.agents.LocalAgentRunManager", run_manager_cls)
         order: list[str] = []
@@ -225,6 +224,7 @@ class TestPrepareTerminalSpawnMetadata:
                 agent_run_id=run_id,
                 worktree_id="wt-1",
                 clone_id=None,
+                credential_manager=credential_manager,
             )
 
         assert order == ["create", "issue"]
@@ -426,7 +426,6 @@ class TestIssuePrelaunchCredential:
     def _session_manager_with_credential(tmp_path: Path) -> tuple[MagicMock, MagicMock]:
         sm = MagicMock()
         manager = MagicMock()
-        sm._storage.db.managed_credential_manager = manager
         credential = MagicMock()
         credential.bootstrap_path = tmp_path / "run" / "credentials.json"
         credential.bootstrap_path.parent.mkdir(parents=True)
@@ -452,7 +451,12 @@ class TestIssuePrelaunchCredential:
                 return_value=launch,
             ) as mock_materialize,
         ):
-            result = _issue_prelaunch_credential(sm, prepared, timeout_seconds=None)
+            result = _issue_prelaunch_credential(
+                sm,
+                prepared,
+                timeout_seconds=None,
+                credential_manager=manager,
+            )
 
         assert result.env_vars[MANAGED_EXECUTION_BOOTSTRAP_ENV] == str(launch.grant_path)
         assert result.managed_credential is manager.issue.return_value
@@ -475,7 +479,12 @@ class TestIssuePrelaunchCredential:
             patch("gobby.agents.spawn.read_local_api_token", return_value=None),
             pytest.raises(RuntimeError, match="operator token"),
         ):
-            _issue_prelaunch_credential(sm, self._prepared(), timeout_seconds=None)
+            _issue_prelaunch_credential(
+                sm,
+                self._prepared(),
+                timeout_seconds=None,
+                credential_manager=manager,
+            )
 
         manager.issue.assert_not_called()
 
@@ -490,7 +499,12 @@ class TestIssuePrelaunchCredential:
             ),
             pytest.raises(RuntimeError, match="lease_unavailable"),
         ):
-            _issue_prelaunch_credential(sm, self._prepared(), timeout_seconds=None)
+            _issue_prelaunch_credential(
+                sm,
+                self._prepared(),
+                timeout_seconds=None,
+                credential_manager=manager,
+            )
 
         manager.issue.assert_not_called()
 
@@ -502,7 +516,12 @@ class TestIssuePrelaunchCredential:
         sm._storage.db = _BareDb()
         prepared = self._prepared()
 
-        result = _issue_prelaunch_credential(sm, prepared, timeout_seconds=None)
+        result = _issue_prelaunch_credential(
+            sm,
+            prepared,
+            timeout_seconds=None,
+            credential_manager=None,
+        )
 
         assert result is prepared
         assert MANAGED_EXECUTION_BOOTSTRAP_ENV not in result.env_vars

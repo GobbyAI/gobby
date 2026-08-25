@@ -32,7 +32,7 @@ from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
 from gobby.utils.local_token import read_local_api_token
 
 if TYPE_CHECKING:
-    from gobby.storage.managed_credentials import ManagedCredential
+    from gobby.storage.managed_credentials import ManagedCredential, ManagedCredentialManager
 
 __all__ = [
     # Result dataclasses
@@ -96,6 +96,7 @@ def cleanup_unlaunched_spawn(
     agent_run_id: str | None = None,
     prompt_file: str | None = None,
     managed_credential: ManagedCredential | None = None,
+    credential_manager: ManagedCredentialManager | None = None,
 ) -> None:
     """Idempotently tear down pre-launch spawn acquisitions.
 
@@ -109,17 +110,15 @@ def cleanup_unlaunched_spawn(
     survivors: list[str] = []
     database = session_manager._storage.db
 
-    if managed_credential is not None:
-        credential_manager = vars(database).get("managed_credential_manager")
-        if credential_manager is not None:
-            try:
-                credential_manager.revoke(
-                    managed_credential.managed_execution_id,
-                    generation=managed_credential.credential_generation,
-                    reason="prelaunch_cleanup",
-                )
-            except Exception as exc:
-                survivors.append(f"credential:{managed_credential.managed_execution_id}:{exc}")
+    if managed_credential is not None and credential_manager is not None:
+        try:
+            credential_manager.revoke(
+                managed_credential.managed_execution_id,
+                generation=managed_credential.credential_generation,
+                reason="prelaunch_cleanup",
+            )
+        except Exception as exc:
+            survivors.append(f"credential:{managed_credential.managed_execution_id}:{exc}")
 
     if session_id is not None:
         try:
@@ -189,6 +188,7 @@ def prepare_terminal_spawn(
     resume_metadata_json: dict[str, Any] | None = None,
     worktree_id: str | None = None,
     clone_id: str | None = None,
+    credential_manager: ManagedCredentialManager | None = None,
 ) -> PreparedSpawn:
     """
     Prepare a terminal spawn by creating the child session.
@@ -305,6 +305,7 @@ def prepare_terminal_spawn(
             session_manager,
             prepared,
             timeout_seconds=timeout_seconds,
+            credential_manager=credential_manager,
         )
     except Exception:
         cleanup_unlaunched_spawn(
@@ -313,6 +314,7 @@ def prepare_terminal_spawn(
             agent_run_id=prepared.agent_run_id if prepared else resolved_run_id,
             prompt_file=prompt_file or (prepared.prompt_file if prepared else None),
             managed_credential=prepared.managed_credential if prepared else None,
+            credential_manager=credential_manager,
         )
         raise
 
@@ -346,6 +348,7 @@ def prepare_terminal_resume(
     resume_metadata_json: dict[str, Any],
     worktree_id: str | None,
     clone_id: str | None,
+    credential_manager: ManagedCredentialManager | None = None,
 ) -> PreparedSpawn:
     """Prepare a successor run against an existing durable child session."""
     child_session = session_manager._storage.get(existing_session_id)
@@ -420,6 +423,7 @@ def prepare_terminal_resume(
         session_manager,
         prepared,
         timeout_seconds=timeout_seconds,
+        credential_manager=credential_manager,
     )
 
 
@@ -428,6 +432,7 @@ def _issue_prelaunch_credential(
     prepared: PreparedSpawn,
     *,
     timeout_seconds: float | None,
+    credential_manager: ManagedCredentialManager | None,
 ) -> PreparedSpawn:
     """Issue a scoped role and a signed grant file before provider launch."""
     from gobby.agents.code_index import (
@@ -436,8 +441,6 @@ def _issue_prelaunch_credential(
     )
     from gobby.runtime_grants.launch import materialize_managed_launch
 
-    database = session_manager._storage.db
-    credential_manager = vars(database).get("managed_credential_manager")
     if credential_manager is None:
         return prepared
     # Grant identity and HMAC come from the live daemon lease; fail closed

@@ -150,11 +150,6 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         machine_id=UUID(runner.machine_id),
         runtime_root=get_gobby_home() / "runtime" / "managed-executions",
     )
-    setattr(  # noqa: B010 - runtime attachment avoids a hub protocol dependency cycle
-        runner.database,
-        "managed_credential_manager",
-        runner.managed_credential_manager,
-    )
     from gobby.storage.hub.postgres import PostgresHubDatabase
     from gobby.storage.secrets import SecretStore
 

@@ -22,7 +22,10 @@ __all__ = ["AgentRunner"]
 if TYPE_CHECKING:
     from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
     from gobby.storage.hub.protocol import HubDatabase
-    from gobby.storage.sessions import SessionManager
+from gobby.storage.sessions import SessionManager
+
+if TYPE_CHECKING:
+    from gobby.storage.managed_credentials import ManagedCredentialManager
     from gobby.workflows.hooks import WorkflowHookHandler
 
 logger = logging.getLogger(__name__)
@@ -43,6 +46,7 @@ class AgentRunner:
         db: HubDatabase,
         session_storage: SessionManager,
         max_agent_depth: int = 1,
+        credential_manager: ManagedCredentialManager | None = None,
     ):
         """
         Initialize AgentRunner.
@@ -61,6 +65,7 @@ class AgentRunner:
         self._run_storage = LocalAgentRunManager(
             db,
             status_notifier=session_storage._notify_status_transition,
+            credential_manager=credential_manager,
         )
         self.logger = logger
 

@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from gobby.events.wake import WakeDispatcher
     from gobby.mcp_proxy.manager import MCPClientManager
     from gobby.memory.dream.coordinator import MemoryDreamCoordinator
+    from gobby.storage.managed_credentials import ManagedCredentialManager
 
 
 @dataclass
@@ -63,6 +64,7 @@ class ServiceContainer:
     tool_chat_service: ToolChatService | None = None
     llm_service: LLMService | None = None
     vector_store: Any | None = None  # VectorStore (Qdrant)
+    managed_credential_manager: ManagedCredentialManager | None = None
 
     # MCP & Agents
     mcp_manager: MCPClientManager | None = None

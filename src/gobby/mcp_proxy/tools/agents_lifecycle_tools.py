@@ -84,7 +84,7 @@ def register_agent_lifecycle_tools(
                     cancelled.append(run.id)
                 else:
                     errors.append({"run_id": run.id, "error": str(result.get("error", "unknown"))})
-            except Exception as e:  # noqa: BLE001 - best-effort cancellation
+            except Exception as e:  # Cancellation continues across independently owned runs.
                 errors.append({"run_id": run.id, "error": str(e)})
                 agents.logger.warning("cancel_stale_helpers: failed to stop %s: %s", run.id, e)
 

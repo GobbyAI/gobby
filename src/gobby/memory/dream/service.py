@@ -497,7 +497,7 @@ class MemoryDreamService:
                     exc_info=True,
                 )
             raise
-        except Exception as exc:  # noqa: BLE001 - failure must be persisted on the run
+        except Exception as exc:  # Persist every terminal failure on the dream run.
             completed_ts = datetime.now(UTC).isoformat()
             run = await asyncio.to_thread(
                 self.store.update_run,

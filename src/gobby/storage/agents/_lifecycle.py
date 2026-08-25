@@ -80,7 +80,9 @@ class _ManagedCredentialRevoker(Protocol):
 class _AgentRunLifecycleHost(Protocol):
     db: HubDatabase
     _status_notifier: SessionStatusTransitionCallback | None
-    credential_manager: _ManagedCredentialRevoker | None
+
+    @property
+    def credential_manager(self) -> _ManagedCredentialRevoker | None: ...
 
     def get(self, run_id: str) -> AgentRun | None: ...
 

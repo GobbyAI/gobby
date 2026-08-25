@@ -102,6 +102,7 @@ def _init_pipeline_heartbeat(runner: GobbyRunner) -> PipelineHeartbeatService | 
             agent_run_manager=LocalAgentRunManager(
                 runner.database,
                 status_notifier=runner.session_manager._notify_status_transition,
+                credential_manager=runner.managed_credential_manager,
             ),
             session_manager=runner.session_manager,
             run_db=runner.db_executor.run,
@@ -213,7 +214,10 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
     from gobby.storage.inter_session_messages import InterSessionMessageManager
 
     ism_manager = InterSessionMessageManager(runner.database)
-    agent_run_manager = LocalAgentRunManager(runner.database)
+    agent_run_manager = LocalAgentRunManager(
+        runner.database,
+        credential_manager=runner.managed_credential_manager,
+    )
     configure_tmux(config.tmux)
 
     def publish_attention_event(payload: dict[str, object]) -> None:
@@ -316,6 +320,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
             db=runner.database,
             session_storage=runner.session_manager,
             max_agent_depth=5,
+            credential_manager=runner.managed_credential_manager,
         )
         logger.debug("AgentRunner initialized")
     except Exception:
@@ -327,7 +332,10 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
     runner.detection_registry = DetectionManifestRegistry(runner.database)
     try:
         runner.agent_lifecycle_monitor = AgentLifecycleMonitor(
-            agent_run_manager=LocalAgentRunManager(runner.database),
+            agent_run_manager=LocalAgentRunManager(
+                runner.database,
+                credential_manager=runner.managed_credential_manager,
+            ),
             db=runner.database,
             detection_registry=runner.detection_registry,
             session_manager=runner.session_manager,

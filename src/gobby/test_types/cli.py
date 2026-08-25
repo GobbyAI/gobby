@@ -19,11 +19,88 @@ from gobby.test_quality.models import Severity
 from gobby.test_types._mypy import MypyInvocationError
 from gobby.test_types.audit import audit_types_paths
 from gobby.test_types.render import render_json, render_text
+from gobby.test_types.suppressions import (
+    SuppressionSite,
+    diff_suppressions,
+    load_suppression_baseline,
+    scan_suppressions,
+    write_suppression_baseline,
+)
 
 
 @click.group(name="test-types")
 def test_types() -> None:
     """Audit Python test types."""
+
+
+@test_types.command("suppressions")
+@click.argument("paths", nargs=-1, type=click.Path(path_type=Path))
+@click.option(
+    "--baseline",
+    required=True,
+    type=click.Path(dir_okay=False, path_type=Path),
+)
+@click.option(
+    "--write-baseline",
+    is_flag=True,
+    help="Rewrite the baseline only when the current sites are a strict subset.",
+)
+def suppressions(paths: tuple[Path, ...], baseline: Path, write_baseline: bool) -> None:
+    """Reject new, changed, or stale Python suppression sites."""
+    if not baseline.exists():
+        raise click.ClickException(f"suppression baseline does not exist: {baseline}")
+    try:
+        scan = scan_suppressions(paths or (Path("."),), root=Path.cwd())
+        loaded_baseline = load_suppression_baseline(baseline)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    diff = diff_suppressions(scan.sites, loaded_baseline)
+
+    click.echo("Python suppression ratchet")
+    click.echo(f"Files scanned: {scan.files_scanned}")
+    click.echo(f"Suppressions: {len(scan.sites)}")
+    click.echo(f"Baseline: {len(loaded_baseline.entries)}")
+    click.echo(f"New: {len(diff.new_sites)}")
+    click.echo(f"Stale: {len(diff.stale_entries)}")
+    _render_suppression_sites("New suppression sites", diff.new_sites)
+    if diff.stale_entries:
+        click.echo("Stale baseline sites:")
+        for entry in diff.stale_entries:
+            codes_value = entry["codes"]
+            if not isinstance(codes_value, list):
+                raise click.ClickException("suppression baseline contains invalid codes")
+            codes = ",".join(str(code) for code in codes_value)
+            directive = str(entry["directive"])
+            suffix = f"[{codes}]" if codes and directive == "type: ignore" else ""
+            suffix = f": {codes}" if codes and directive == "noqa" else suffix
+            click.echo(
+                f"  {entry['path']}::{entry['symbol']}: {directive}{suffix} on {entry['statement']}"
+            )
+
+    if write_baseline:
+        if diff.new_sites:
+            raise click.ClickException(
+                "refusing to expand the suppression baseline; fix every new or changed site"
+            )
+        write_suppression_baseline(baseline, scan.sites)
+        click.echo(f"Baseline reduced to {len(scan.sites)} suppression sites.")
+        return
+    if diff.new_sites or diff.stale_entries:
+        raise click.exceptions.Exit(1)
+
+
+def _render_suppression_sites(title: str, sites: tuple[SuppressionSite, ...]) -> None:
+    if not sites:
+        return
+    click.echo(f"{title}:")
+    for site in sites:
+        codes = ",".join(site.codes)
+        suffix = f"[{codes}]" if codes and site.directive == "type: ignore" else ""
+        suffix = f": {codes}" if codes and site.directive == "noqa" else suffix
+        click.echo(
+            f"  {site.path}:{site.line}::{site.symbol}: {site.directive}{suffix} "
+            f"on {site.statement}"
+        )
 
 
 @test_types.command("audit")

@@ -17,6 +17,7 @@ from gobby.runtime_grants import (
     decode_grant_header,
 )
 from gobby.runtime_grants.schema import BrokerOperation, GrantBundle, GrantPrincipal
+from gobby.runtime_grants.service import ConfigCapture
 from gobby.utils.local_token import AgentApiTokenClaims
 
 if TYPE_CHECKING:
@@ -61,6 +62,18 @@ class GrantPresenter(Protocol):
         now: int | None = None,
         required: RequiredCapability | None = None,
     ) -> GrantBundle: ...
+
+
+class LeaseGrantContext(Protocol):
+    """Live lease fields required to validate presented grants."""
+
+    deployment_token: str
+
+    @property
+    def fencing_epoch(self) -> int | None: ...
+
+    @property
+    def grant_signing_secret(self) -> str | None: ...
 
 
 _GRANT_ROUTES: tuple[GrantRoute, ...] = (
@@ -281,8 +294,8 @@ class LiveLeaseGrantService:
 
     def __init__(
         self,
-        runtime: object,
-        lease: object,
+        runtime: ConfigCapture,
+        lease: LeaseGrantContext,
         clock: Callable[[], int],
         revocations: GrantRevocationStore | None = None,
     ) -> None:
@@ -304,13 +317,13 @@ class LiveLeaseGrantService:
         self._grant_service().revoke(grant)
 
     def _grant_service(self) -> GrantService:
-        epoch = getattr(self._lease, "fencing_epoch", None)
-        secret = getattr(self._lease, "grant_signing_secret", None)
-        token = getattr(self._lease, "deployment_token", None)
+        epoch = self._lease.fencing_epoch
+        secret = self._lease.grant_signing_secret
+        token = self._lease.deployment_token
         if epoch is None or not secret or not token:
             raise StaleEpochGrant("active-daemon lease has no fencing epoch")
         return GrantService(
-            runtime=self._runtime,  # type: ignore[arg-type]
+            runtime=self._runtime,
             context=DeploymentGrantContext(
                 token=str(token),
                 fencing_epoch=int(epoch),

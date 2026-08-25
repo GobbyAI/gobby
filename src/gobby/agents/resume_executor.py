@@ -220,6 +220,7 @@ async def resume_agent_run(
     try:
         spawn_context = prepare_terminal_resume(
             session_manager=runner.child_session_manager,
+            credential_manager=runner.run_storage.credential_manager,
             existing_session_id=child_session_id,
             original_run_id=original_run.id,
             parent_session_id=parent_session_id,
