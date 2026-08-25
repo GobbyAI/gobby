@@ -13,8 +13,11 @@ report itself is the signal the test waits on.
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -115,9 +118,9 @@ async def test_a_blocked_loop_is_reported_with_the_task_that_blocked_it() -> Non
 
     report = reports[0]
     assert report.lag_seconds >= 0.2
-    rendered = report.render()
-    assert "hog-the-loop" in rendered
-    assert "hog_the_loop" in rendered
+    payload_line = json.dumps(report.to_payload())
+    assert "hog-the-loop" in payload_line
+    assert "hog_the_loop" in payload_line
 
 
 async def test_the_task_that_ran_during_the_stall_is_singled_out() -> None:
@@ -187,9 +190,10 @@ async def test_the_task_that_ran_during_the_stall_is_singled_out() -> None:
     assert "merely-waiting" in bystander_names, (
         f"a task that never moved is a bystander; got {report.bystanders!r}"
     )
-    rendered = report.render()
-    assert "ran during the stall" in rendered
-    assert "hog-the-loop" in rendered
+    payload = report.to_payload()
+    assert "hog-the-loop" in json.dumps(payload["advanced"]), (
+        "the payload must carry the suspect with its trace"
+    )
 
 
 async def test_a_stall_is_reported_once_rather_than_every_poll() -> None:
@@ -283,11 +287,11 @@ async def test_the_report_follows_the_await_chain_past_the_outer_task() -> None:
         released.set()
         await asyncio.gather(watchdog, request)
 
-    rendered = reports[0].render()
-    assert "innermost_handler" in rendered, (
-        f"the report must reach the frame doing the work; got {rendered!r}"
+    payload_line = json.dumps(reports[0].to_payload())
+    assert "innermost_handler" in payload_line, (
+        f"the report must reach the frame doing the work; got {payload_line!r}"
     )
-    assert "outer_middleware" in rendered, "and keep the chain that led there"
+    assert "outer_middleware" in payload_line, "and keep the chain that led there"
 
 
 async def test_quiet_polls_cost_nothing_beyond_the_position_scan(
@@ -399,11 +403,12 @@ async def test_a_stall_report_carries_the_hot_python_stack_when_sampling() -> No
         await asyncio.gather(watchdog, hog)
         sampler.stop()
 
-    rendered = reports[0].render()
-    assert "burn_in_a_named_frame" in rendered, (
-        f"the report must name the frame the loop thread burned in; got {rendered!r}"
+    payload = reports[0].to_payload()
+    payload_line = json.dumps(payload["hot_stacks"])
+    assert "burn_in_a_named_frame" in payload_line, (
+        f"the report must name the frame the loop thread burned in; got {payload_line!r}"
     )
-    assert "hot loop-thread stacks" in rendered
+    assert payload["sample_count"], "the report must carry the collected sample count"
 
 
 def test_a_report_discloses_how_little_of_the_stall_it_actually_sampled() -> None:
@@ -424,8 +429,104 @@ def test_a_report_discloses_how_little_of_the_stall_it_actually_sampled() -> Non
         sample_interval_seconds=0.01,
     )
 
-    rendered = report.render()
-    assert "14 samples" in rendered
-    assert "400" in rendered, (
-        f"the report must say how many samples the interval should have produced; got {rendered}"
+    payload = report.to_payload()
+    assert payload["sample_count"] == 14
+    assert payload["expected_sample_count"] == 400, (
+        f"the report must say how many samples the interval should have produced; got {payload}"
     )
+
+
+def test_the_summary_is_one_line_naming_the_gap_and_the_hottest_frame() -> None:
+    """The main log gets the fact of the stall, never its contents (#20886)."""
+    report = LoopLagReport(
+        lag_seconds=1.5,
+        threshold_seconds=0.2,
+        advanced=[("worker", "step@mod.py:10 -> leaf@mod.py:20")],
+        hot_stacks=[("outer@a.py -> middle@b.py -> inner@c.py", 9), ("other@d.py", 5)],
+        sample_interval_seconds=0.01,
+    )
+
+    summary = report.summary()
+    assert summary == ("Event loop stalled for 1.50s (threshold 0.20s); top hot frame: inner@c.py")
+
+    unsampled = LoopLagReport(lag_seconds=1.5, threshold_seconds=0.2)
+    assert unsampled.summary() == (
+        "Event loop stalled for 1.50s (threshold 0.20s); no loop-thread samples"
+    )
+
+
+async def test_a_stall_lands_in_the_sidecar_with_a_one_line_pointer_in_the_main_log(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """One stall: one JSON line in loop_lag.jsonl, one short WARNING in the main log.
+
+    The full report -- stacks and task listings -- used to land in daemon.log as
+    a multi-kilobyte WARNING. The fidelity moves to the JSONL sidecar; the main
+    log keeps a single line naming the gap and pointing at it (#20886).
+    """
+    logs_dir = tmp_path / "logs"
+    monkeypatch.setenv("GOBBY_LOGGING_DIR", str(logs_dir))
+    module_logger = logging.getLogger("gobby.telemetry.loop_lag")
+    caplog.set_level(logging.WARNING, logger=module_logger.name)
+
+    stop = asyncio.Event()
+    reported = asyncio.Event()
+    released = asyncio.Event()
+    warning_messages: list[str] = []
+
+    class CaptureWarnings(logging.Handler):
+        """The WARNING lands after the sidecar write, so it is the completion signal."""
+
+        def emit(self, record: logging.LogRecord) -> None:
+            warning_messages.append(record.getMessage())
+            reported.set()
+
+    capture = CaptureWarnings(level=logging.WARNING)
+    module_logger.addHandler(capture)
+
+    async def hog_the_loop() -> None:
+        burn(0.5)
+        await released.wait()
+
+    sampler = LoopStackSampler(threading.get_ident(), interval_seconds=0.002)
+    sampler.start()
+    watchdog = asyncio.create_task(
+        loop_lag_watchdog(
+            stop.is_set,
+            threshold_seconds=0.2,
+            poll_seconds=0.01,
+            stack_sampler=sampler,
+        )
+    )
+    hog = asyncio.create_task(hog_the_loop(), name="hog-the-loop")
+    try:
+        await asyncio.wait_for(reported.wait(), timeout=WATCHDOG_TIMEOUT_SECONDS)
+    finally:
+        stop.set()
+        released.set()
+        await asyncio.gather(watchdog, hog)
+        sampler.stop()
+        module_logger.removeHandler(capture)
+
+    sidecar = logs_dir / "loop_lag.jsonl"
+    lines = sidecar.read_text().splitlines()
+    assert len(lines) == 1, f"one stall writes exactly one sidecar line; got {len(lines)}"
+    payload = json.loads(lines[0])
+    assert payload["timestamp"]
+    assert payload["lag_seconds"] >= 0.2
+    assert payload["threshold_seconds"] == 0.2
+    assert payload["hot_stacks"], "the sidecar keeps the sampled stacks"
+    assert payload["sample_count"] == sum(entry["samples"] for entry in payload["hot_stacks"])
+    activity = json.dumps(payload["advanced"] + payload["started"])
+    assert "hog-the-loop" in activity, "the sidecar keeps the during-stall task activity"
+
+    assert len(warning_messages) == 1, f"exactly one WARNING per stall; got {warning_messages!r}"
+    message = warning_messages[0]
+    assert "\n" not in message
+    assert f"stalled for {payload['lag_seconds']:.2f}s" in message
+    assert "(threshold 0.20s)" in message
+    assert "top hot frame: " in message
+    assert str(sidecar) in message, "the main log must point at the sidecar"
+    assert " -> " not in message, "the main log must not carry a stack dump"
