@@ -507,15 +507,26 @@ def _analysis_cache_key(
 
 
 def _run_covers(success: TranscriptValidationRun, failure: TranscriptValidationRun) -> bool:
-    success_targets = _run_targets(success)
-    failure_targets = _run_targets(failure)
-    if not success_targets:
-        return True
-    if not failure_targets:
+    """Return whether the green run's scope contains the red run's scope.
+
+    Selector options (``-k``, ``-m``, ...) narrow a run, so the green may carry
+    only selectors the red also carried; paths then compare as file trees.
+    """
+    success_paths, success_selectors = _split_targets(_run_targets(success))
+    failure_paths, failure_selectors = _split_targets(_run_targets(failure))
+    if not success_selectors <= failure_selectors:
         return False
-    return all(
-        any(_target_covers(green, red) for green in success_targets) for red in failure_targets
-    )
+    if not success_paths:
+        return True
+    if not failure_paths:
+        return False
+    return all(any(_target_covers(green, red) for green in success_paths) for red in failure_paths)
+
+
+def _split_targets(targets: Sequence[str]) -> tuple[tuple[str, ...], frozenset[str]]:
+    paths = tuple(target for target in targets if not target.startswith("-"))
+    selectors = frozenset(target for target in targets if target.startswith("-"))
+    return paths, selectors
 
 
 def _verified_foreign_clearance(

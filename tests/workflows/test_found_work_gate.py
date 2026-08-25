@@ -447,6 +447,27 @@ class TestTerminalValidationFailures:
         runs.append(_run(3, "success", "uv run pytest tests/unit"))
         assert unresolved_validation_failures(runs, owner_handoff=False) == ()
 
+    def test_selector_narrowed_green_does_not_hide_broader_failure(self) -> None:
+        runs = [
+            _run(1, "failure", "pytest tests/unit/test_widget.py"),
+            _run(2, "success", "pytest tests/unit/test_widget.py -k widget_a"),
+        ]
+        assert unresolved_validation_failures(runs, owner_handoff=False) == (runs[0],)
+
+    def test_unscoped_green_covers_selector_narrowed_failure(self) -> None:
+        runs = [
+            _run(1, "failure", "pytest tests/unit/test_widget.py -k widget_a"),
+            _run(2, "success", "pytest tests/unit/test_widget.py"),
+        ]
+        assert unresolved_validation_failures(runs, owner_handoff=False) == ()
+
+    def test_identical_selector_green_covers_selector_narrowed_failure(self) -> None:
+        runs = [
+            _run(1, "failure", "pytest tests/unit/test_widget.py -k widget_a"),
+            _run(2, "success", "pytest tests/unit/test_widget.py -k widget_a"),
+        ]
+        assert unresolved_validation_failures(runs, owner_handoff=False) == ()
+
     def test_project_verification_command_extends_detection(self, tmp_path: Path) -> None:
         project_dir = tmp_path / ".gobby"
         project_dir.mkdir()
