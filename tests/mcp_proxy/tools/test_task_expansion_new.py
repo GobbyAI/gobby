@@ -6,7 +6,7 @@ import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -204,6 +204,26 @@ async def _drain_queued_callbacks() -> None:
     await drained
 
 
+class _LoopClosedAtHandoff:
+    """A loop that reads open at resolve time and closed at hand-off time.
+
+    `resolve_background_loop`'s `is_closed()` check and the
+    `call_soon_threadsafe` hand-off are separated in time; this is the loop
+    that closes in between, raising exactly where the real one would.
+    """
+
+    def __init__(self, run_id: str) -> None:
+        self._run_id = run_id
+        self.pending_at_handoff: bool | None = None
+
+    def is_closed(self) -> bool:
+        return False
+
+    def call_soon_threadsafe(self, _callback: Any) -> None:
+        self.pending_at_handoff = is_expansion_run_scheduled(self._run_id)
+        raise RuntimeError("Event loop is closed")
+
+
 class TestExpansionRuns:
     @pytest.mark.asyncio
     async def test_validate_plan_file_returns_semantic_lint_errors(
@@ -315,6 +335,83 @@ class TestExpansionRuns:
         task = _background_run_tasks[run_id]
         # Bounded: a run that ignored the request never ends on its own, and
         # that has to read as a failure rather than a hung suite.
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=1)
+        assert task.cancelled() is True
+        assert is_expansion_run_scheduled(run_id) is False
+
+    @pytest.mark.asyncio
+    async def test_a_failed_loop_handoff_leaves_the_run_schedulable(self) -> None:
+        """A hand-off the loop refuses must not wedge the run (#20872).
+
+        The pending entry goes in just before `call_soon_threadsafe`, and only
+        the queued callback pops it. A loop that closes between the
+        `is_closed()` check and the hand-off raises instead of queueing, so
+        nothing ever popped the entry: the run read as active for the life of
+        the process and resume short-circuited with "already active".
+        """
+        run_id = str(uuid4())
+        loop_stub = _LoopClosedAtHandoff(run_id)
+        outcomes: list[ScheduledRun] = []
+
+        async def _completes_inline() -> str:
+            return "ran-inline"
+
+        def schedule_from_worker() -> None:
+            with internal_tool_background_loop(cast(asyncio.AbstractEventLoop, loop_stub)):
+                outcomes.append(schedule_expansion_run(_completes_inline(), run_id))
+
+        worker = threading.Thread(target=schedule_from_worker)
+        worker.start()
+        worker.join()
+
+        # The raise landed after the entry went in -- the window that leaked.
+        assert loop_stub.pending_at_handoff is True
+        # The failed hand-off cleaned up after itself: the run reads as not
+        # scheduled, so resume can start it instead of refusing.
+        assert is_expansion_run_scheduled(run_id) is False
+        # And the caller got the unreachable-loop contract: an inline run.
+        assert outcomes[0].scheduled is False
+        assert outcomes[0].result == "ran-inline"
+
+    @pytest.mark.asyncio
+    async def test_scheduling_an_already_pending_run_keeps_its_recorded_cancel(self) -> None:
+        """A second hand-off must not erase what the first one recorded (#20872).
+
+        The guard against double scheduling runs in a worker thread, so two
+        schedules can both pass it. The second used to overwrite the pending
+        entry, erasing a `cancel_requested` already on it -- and its second
+        callback then produced an uncancelled task, so the run executed
+        despite the cancel.
+        """
+        loop = asyncio.get_running_loop()
+        run_id = str(uuid4())
+        outcomes: list[ScheduledRun] = []
+
+        def schedule_from_worker() -> None:
+            with internal_tool_background_loop(loop):
+                outcomes.append(schedule_expansion_run(_runs_until_cancelled(), run_id))
+
+        first = threading.Thread(target=schedule_from_worker)
+        first.start()
+        first.join()
+
+        cancel_scheduled_expansion_run(run_id)
+
+        second = threading.Thread(target=schedule_from_worker)
+        second.start()
+        second.join()
+
+        # The duplicate reports the run as scheduled -- it is, by the first
+        # hand-off -- without queueing a second callback.
+        assert outcomes[1].scheduled is True
+
+        await _drain_queued_callbacks()
+
+        task = _background_run_tasks[run_id]
+        # The surviving cancel reaches the one task the run produced. Bounded:
+        # a run that ignored it never ends on its own, and that has to read as
+        # a failure rather than a hung suite.
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(task, timeout=1)
         assert task.cancelled() is True

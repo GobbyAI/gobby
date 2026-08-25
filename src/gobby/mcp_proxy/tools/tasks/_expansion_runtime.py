@@ -222,11 +222,34 @@ def schedule_expansion_run(coro: Any, run_id: str, *, name: str | None = None) -
         on_target_loop = asyncio.get_running_loop() is loop
     except RuntimeError:
         on_target_loop = False
-    _pending_runs[run_id] = _PendingRun()
+    claim = _PendingRun()
+    if _pending_runs.setdefault(run_id, claim) is not claim:
+        # A hand-off for this run is already in flight. The worker-thread
+        # guard against double scheduling is check-then-act, so a second
+        # schedule can get this far; overwriting the entry would erase what
+        # the first one recorded -- a cancel requested in the scheduling
+        # window (#20872). Leave the first hand-off to create the run's task
+        # and drop this duplicate coroutine unstarted.
+        coro.close()
+        return ScheduledRun(scheduled=True)
     if on_target_loop:
         _schedule()
-    else:
+        return ScheduledRun(scheduled=True)
+    try:
         loop.call_soon_threadsafe(_schedule)
+    except RuntimeError:
+        # The loop closed between resolve_background_loop's is_closed() check
+        # and the hand-off, so _schedule will never run and nothing else pops
+        # the entry. Left behind, it keeps is_expansion_run_scheduled true for
+        # the life of the process and resume short-circuits with "already
+        # active" forever (#20872). Drop it and treat the closed loop as the
+        # unreachable-loop case above: run inline, unless a cancel already
+        # arrived for the run.
+        pending = _pending_runs.pop(run_id, None)
+        if pending is not None and pending.cancel_requested:
+            coro.close()
+            return ScheduledRun(scheduled=False)
+        return ScheduledRun(scheduled=False, result=asyncio.run(coro))
     return ScheduledRun(scheduled=True)
 
 
