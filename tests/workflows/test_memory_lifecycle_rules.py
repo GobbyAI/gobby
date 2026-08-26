@@ -844,21 +844,34 @@ class TestPostCloseMemoryReviewRules:
         assert variables["_memory_review_stop_delivered"] is delivered_before
 
     @pytest.mark.asyncio
-    async def test_later_close_rearms_the_compact_gate_after_delivery(
-        self, db: HubDatabase
+    @pytest.mark.parametrize(
+        "rearmed_channel",
+        [
+            pytest.param(HookEventType.BEFORE_TOOL, id="before_tool_compact_self"),
+            pytest.param(HookEventType.STOP, id="turn_end"),
+        ],
+    )
+    async def test_later_close_rearms_both_gates_after_compact_delivery(
+        self, db: HubDatabase, rearmed_channel: HookEventType
     ) -> None:
+        """A close after a compact_self delivery re-arms both delivery channels."""
         _sync_bundled(db)
         variables = _review_variables(
             _pending_review("#42", "Earlier closure."), _gobby_feedback_epoch_reviewed=True
         )
         engine = RuleEngine(db, task_manager=_closed_leaf_task_manager())
         compact = _sessions_tool_event()
+        rearmed_event = (
+            compact if rearmed_channel is HookEventType.BEFORE_TOOL else _turn_end_event()
+        )
 
         delivered = await engine.evaluate(compact, SESSION_ID, variables)
         await engine.evaluate(_close_task_event("#43", "Second closure."), SESSION_ID, variables)
-        rearmed = await engine.evaluate(compact, SESSION_ID, variables)
+        requeued_flag = variables["_memory_review_stop_delivered"]
+        rearmed = await engine.evaluate(rearmed_event, SESSION_ID, variables)
 
         assert delivered.decision == "block"
+        assert requeued_flag is False
         assert rearmed.decision == "block"
         assert f"#43 (task_id `{TASK_ID}`): Second closure." in (rearmed.reason or "")
         assert "Earlier closure." not in (rearmed.reason or "")
