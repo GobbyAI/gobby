@@ -56,6 +56,7 @@ def evaluate_tdd_evidence(
             findings.append(f"{test.reference}: transcript has no edit of the named test")
             continue
         red = None
+        green = None
         for test_edit in test_edits:
             first_non_test_edit = min(
                 (
@@ -66,8 +67,18 @@ def evaluate_tdd_evidence(
                 key=lambda edit: edit.order,
                 default=None,
             )
+            if first_non_test_edit is None:
+                continue
             red = _find_red_run(test, evidence, test_edit.order, first_non_test_edit)
-            if red is not None:
+            if red is None:
+                continue
+            green = _find_green_run(
+                test,
+                evidence,
+                red,
+                after_order=first_non_test_edit.order,
+            )
+            if green is not None:
                 break
         if red is None:
             findings.append(
@@ -76,9 +87,10 @@ def evaluate_tdd_evidence(
             )
             continue
         red_commands.append(red.command)
-        green = _find_green_run(test, evidence, red)
         if green is None:
-            findings.append(f"{test.reference}: assertion-backed red has no later passing run")
+            findings.append(
+                f"{test.reference}: assertion-backed red has no later production edit and pass"
+            )
             continue
         green_commands.append(green.command)
 
@@ -113,9 +125,11 @@ def _find_green_run(
     test: AcceptanceTest,
     evidence: TranscriptEvidence,
     red: TranscriptValidationRun,
+    *,
+    after_order: int,
 ) -> TranscriptValidationRun | None:
     for run in sorted(evidence.validation_runs, key=lambda item: item.order):
-        if run.outcome != "success" or run.order <= red.order:
+        if run.outcome != "success" or run.order <= max(red.order, after_order):
             continue
         if validation_run_covers_test(run.command, run.output, test):
             return run

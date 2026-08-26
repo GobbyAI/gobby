@@ -268,6 +268,30 @@ def test_tdd_evidence_accepts_later_repair_cycle() -> None:
     )
     assert evaluate_tdd_evidence((test,), post_implementation_red).passed is False
 
+    test_only_green = TranscriptEvidence(
+        edits=(
+            _edit("tests/test_feature.py", started, 1),
+            _edit("tests/test_feature.py", started + timedelta(minutes=2), 3),
+        ),
+        validation_runs=(
+            _run(
+                test,
+                started + timedelta(minutes=1),
+                "failure",
+                "FAILED tests/test_feature.py::test_feature\nE assert 0 == 1",
+                2,
+            ),
+            _run(
+                test,
+                started + timedelta(minutes=3),
+                "success",
+                "tests/test_feature.py::test_feature PASSED",
+                4,
+            ),
+        ),
+    )
+    assert evaluate_tdd_evidence((test,), test_only_green).passed is False
+
 
 def test_collection_import_error_is_missing_red_evidence() -> None:
     started = datetime(2026, 8, 21, tzinfo=UTC)
