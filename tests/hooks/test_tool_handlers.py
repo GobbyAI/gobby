@@ -615,6 +615,7 @@ class TestToolHandlerEdgeCases:
             file_path="src/pkg/edited.py",
             project_id="proj-1",
             root_path=str(repo_root.resolve()),
+            code_overlay_project_id=None,
         )
         assert code_index_trigger.notify_file_changed.call_count == 1
         assert code_index_trigger.notify_file_changed.call_args is not None
