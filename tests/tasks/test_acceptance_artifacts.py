@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -23,6 +24,25 @@ from gobby.tasks.transcript_evidence import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_transcript_evidence_imports_in_fresh_interpreter() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import gobby.tasks.transcript_evidence; "
+                "from gobby.mcp_proxy import MCPClientManager, create_mcp_server"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_python_placebo_acceptance_test_is_named(
