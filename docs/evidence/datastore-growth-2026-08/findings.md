@@ -118,9 +118,24 @@ Single `dump.rdb`, 435 MB. Graphs: `gobby_code` 1,502 MB in memory, `gobby_kg`
 - `REINDEX TABLE CONCURRENTLY code_calls` (indexes 2,081 MB → 714 MB; `gobby`
   database 8,109 MB → 6,622 MB).
 
+## #21025 applied (2026-08-26 10:51 CDT)
+
+The first maintenance pass after deploy purged all 19 orphaned path-derived
+projects (projections first under per-project maintenance grants, hub row last):
+`code_indexed_projects` 24 → 5, `code_symbols` 1,011,940 → 814,381, `code_calls`
+2,94M → 2,50M, `code_content_chunks` 282k → 243k; Qdrant 29 → 12 collections
+(`du` on the volume 3.9 GB → 3.2 GB). The live wt-20724 overlay kept its
+selector, 83 files / 2,420 symbols, and its `code_symbols_12307b16…` collection.
+Two blockers surfaced on the way and were fixed: maintenance grants admitted only
+registry projects (`admitted_maintenance_targets` now covers any indexed id), and
+gcore's runtime-config fetch omitted the managed identity headers, so every
+daemon-launched gcode was refused effective AI config (#21038).
+
 ## Follow-up tasks
 
-- #21025 Purge orphaned path-derived code-index projects (Josh: sweep on missing worktree/branch).
+- #21025 Purge orphaned path-derived code-index projects (Josh: sweep on missing worktree/branch) — applied above.
+- #21038 gcore: send managed identity headers on runtime-config fetches — applied above.
+- #21039 gcode: worktree overlay `symbol`/`outline` can serve canonical-checkout source (handoff from #11110).
 - #21026 hub-backup: delete scratch Qdrant snapshots before dropping the verify collection.
 - #21027 pgaudit retention (`needs-decision`).
 - #21028 loop_progress 7-day prune.

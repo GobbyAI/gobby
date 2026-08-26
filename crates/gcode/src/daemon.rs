@@ -147,20 +147,6 @@ fn unique_project_by_name(
     }
 }
 
-pub fn lookup_project_by_id(project_id: &str) -> Result<LookedUpProject, CliError> {
-    let listings = fetch_projects()?;
-    listings
-        .into_iter()
-        .find(|project| project.id == project_id)
-        .and_then(looked_up_project)
-        .ok_or_else(|| CliError {
-            code: "project_not_found",
-            message: format!("Project '{project_id}' not found"),
-            recovery: None,
-            exit_status: 2,
-        })
-}
-
 fn looked_up_project(project: ProjectListing) -> Option<LookedUpProject> {
     let root = project.root_path();
     if root.is_empty() {

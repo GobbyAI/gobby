@@ -122,11 +122,15 @@ fn print_skipped_missing_indexed_file(
     }
 }
 
-pub fn clear(ctx: &Context, format: Format) -> anyhow::Result<()> {
+pub fn clear(ctx: &Context, drop_collection: bool, format: Format) -> anyhow::Result<()> {
     let mut lifecycle = lifecycle_from_context(ctx)?;
     let mut conn = db::connect_readwrite(&ctx.database_url)?;
     db::reset_vectors_sync_for_project(&mut conn, &ctx.project_id)?;
-    let output = lifecycle.clear_project_vectors()?;
+    let output = if drop_collection {
+        lifecycle.drop_project_collection()?
+    } else {
+        lifecycle.clear_project_vectors()?
+    };
     let report = ProjectionSyncReport::ok(0, 0);
     print_lifecycle_output(&output, report, format)
 }

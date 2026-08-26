@@ -463,8 +463,13 @@ pub fn contract() -> CliContract {
                 )
             },
             CommandContract {
+                daemon_consumed: true,
                 positionals: vec![],
-                flags: vec![format_flag()],
+                flags: vec![
+                    FlagContract::value("--project-id", "PROJECT_ID"),
+                    FlagContract::switch("--drop-collection"),
+                    format_flag(),
+                ],
                 json_output_keys: vector_lifecycle_keys(),
                 ..CommandContract::new(
                     "vector clear",

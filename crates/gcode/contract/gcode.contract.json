@@ -1667,9 +1667,25 @@
     {
       "name": "vector clear",
       "summary": "Clear the current project's code-symbol vector projection.",
-      "daemon_consumed": false,
+      "daemon_consumed": true,
       "positionals": [],
       "flags": [
+        {
+          "name": "--project-id",
+          "takes_value": true,
+          "value_name": "PROJECT_ID",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--drop-collection",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
         {
           "name": "--format",
           "takes_value": true,

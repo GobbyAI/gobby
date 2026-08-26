@@ -193,6 +193,10 @@ impl AcquiredGrant {
 #[derive(Clone, Debug)]
 pub struct AcquireRequest<'a> {
     pub project_root: &'a Path,
+    /// Explicit code-index project identity. When set, `project_root` is not
+    /// consulted for identity and no overlay is derived from it, so a caller can
+    /// acquire the grant for a project id whose root no longer exists.
+    pub project_id: Option<String>,
     pub home: Option<&'a Path>,
     pub daemon_url: Option<String>,
     pub now: Option<i64>,
@@ -208,6 +212,7 @@ impl<'a> AcquireRequest<'a> {
     pub fn new(project_root: &'a Path) -> Self {
         Self {
             project_root,
+            project_id: None,
             home: None,
             daemon_url: None,
             now: None,
@@ -241,6 +246,16 @@ impl<'a> AcquireRequest<'a> {
                     .ok()
                     .filter(|value| !value.trim().is_empty())
             });
+        request
+    }
+
+    /// Snapshot process environment for a project id with no project root.
+    ///
+    /// Identity comes from `project_id` alone; managed and interactive sources
+    /// are resolved exactly as `from_process` does for a checkout.
+    pub fn from_process_for_project_id(project_id: &str) -> AcquireRequest<'static> {
+        let mut request = AcquireRequest::from_process(Path::new(""));
+        request.project_id = Some(project_id.to_owned());
         request
     }
 }
@@ -371,11 +386,16 @@ pub fn fetch_runtime_config(
 impl AcquireCtx {
     fn from_request(request: &AcquireRequest<'_>) -> Result<Self, GrantError> {
         let home = resolve_home(request.home)?;
-        let project_id = crate::project::read_project_id(request.project_root)
-            .map_err(|error| GrantError::Malformed(error.to_string()))?;
+        let (project_id, code_overlay_project_id) = match request.project_id.as_deref() {
+            Some(project_id) => (project_id.to_owned(), None),
+            None => (
+                crate::project::read_project_id(request.project_root)
+                    .map_err(|error| GrantError::Malformed(error.to_string()))?,
+                crate::project::code_overlay_project_id(request.project_root),
+            ),
+        };
         let machine_id = crate::machine::read_machine_id_from_home(&home)
             .map_err(|error| GrantError::Malformed(error.to_string()))?;
-        let code_overlay_project_id = crate::project::code_overlay_project_id(request.project_root);
         Ok(Self {
             home,
             project_id,

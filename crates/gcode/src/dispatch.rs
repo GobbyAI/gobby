@@ -197,6 +197,7 @@ fn dispatch_early_command(cli: &Cli, format: output::Format) -> anyhow::Result<b
             command:
                 VectorCommand::Clear {
                     project_id: Some(project_id),
+                    drop_collection,
                 },
         } => {
             let ctx = config::Context::resolve_for_project_id_with_services(
@@ -204,7 +205,7 @@ fn dispatch_early_command(cli: &Cli, format: output::Format) -> anyhow::Result<b
                 cli.quiet,
                 config::ServiceConfigSelection::projection_cleanup(),
             )?;
-            commands::vector::clear(&ctx, format)?;
+            commands::vector::clear(&ctx, *drop_collection, format)?;
             Ok(true)
         }
         _ => Ok(false),
@@ -371,12 +372,18 @@ fn run() -> anyhow::Result<()> {
             commands::vector::sync_file(&ctx, &file, allow_missing_indexed_file, format)
         }
         Command::Vector {
-            command: VectorCommand::Clear { project_id: None },
-        } => commands::vector::clear(&ctx, format),
+            command:
+                VectorCommand::Clear {
+                    project_id: None,
+                    drop_collection,
+                },
+        } => commands::vector::clear(&ctx, drop_collection, format),
         Command::Vector {
-            command: VectorCommand::Clear {
-                project_id: Some(_),
-            },
+            command:
+                VectorCommand::Clear {
+                    project_id: Some(_),
+                    ..
+                },
         } => Ok(()),
         Command::Vector {
             command: VectorCommand::Rebuild,

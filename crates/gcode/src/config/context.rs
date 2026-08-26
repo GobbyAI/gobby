@@ -403,15 +403,57 @@ impl Context {
         })
     }
 
-    /// Resolve selected service configs for a caller-supplied project id without touching cwd identity.
+    /// Resolve selected service configs for a caller-supplied project id from the
+    /// caller's grant alone.
+    ///
+    /// No project root or daemon project listing is consulted, so projection
+    /// lifecycle commands (`graph clear`, `vector clear`, `invalidate`) work for
+    /// indexed projects whose checkout or registry row is already gone. The grant
+    /// must cover `project_id` (as principal project or overlay), which keeps the
+    /// root-less path bound to the caller's authority.
     pub fn resolve_for_project_id_with_services(
         project_id: &str,
         quiet: bool,
         services: ServiceConfigSelection,
     ) -> anyhow::Result<Self> {
         let project_id = normalize_project_id(project_id)?;
-        let looked_up = daemon::lookup_project_by_id(&project_id)?;
-        Self::resolve_from_root(looked_up.root, true, quiet, services)
+        let acquired = grant::acquire_with(&grant::AcquireRequest::from_process_for_project_id(
+            &project_id,
+        ))
+        .map_err(CliError::grant)?;
+        let database_url = db::database_url_from_acquired(&acquired)?;
+        let falkordb = services
+            .falkordb
+            .then(|| db::falkor_from_grant(&acquired.bundle))
+            .flatten();
+        let qdrant = services
+            .qdrant
+            .then(|| db::qdrant_from_grant(&acquired.bundle))
+            .flatten();
+        let (embedding, indexing, code_vectors) =
+            services_from_acquired_settings(&acquired, services)?;
+        let grant_ai = Some(GrantAiRuntime {
+            capabilities: acquired.bundle.capabilities.clone(),
+            daemon_reachable: acquired.daemon_reachable,
+            unexpired: acquired.permits_datastore(),
+            bundle: acquired.bundle.clone(),
+        });
+
+        Ok(Self {
+            database_url,
+            project_root: PathBuf::new(),
+            project_id,
+            quiet,
+            falkordb,
+            qdrant,
+            embedding,
+            code_vectors,
+            runtime_config_capture_degraded: false,
+            indexing,
+            daemon_url: Some(gobby_core::daemon_url::daemon_url()),
+            grant_ai,
+            index_scope: ProjectIndexScope::Single,
+        })
     }
 }
 

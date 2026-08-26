@@ -528,6 +528,9 @@ pub(crate) enum VectorCommand {
         /// Clear vector projection for this project id without resolving cwd project context
         #[arg(long)]
         project_id: Option<String>,
+        /// Delete the project's whole code-symbol collection instead of its points (project purge)
+        #[arg(long)]
+        drop_collection: bool,
     },
     /// Rebuild the current project's code-symbol vector projection from PostgreSQL facts
     Rebuild,

@@ -53,6 +53,7 @@ impl Harness {
     fn request<'a>(&'a self, daemon_url: Option<String>) -> AcquireRequest<'a> {
         AcquireRequest {
             project_root: &self.project_root,
+            project_id: None,
             home: Some(&self.home),
             daemon_url,
             now: Some(NOW),
@@ -95,6 +96,27 @@ fn acquire_with_ignores_process_environment() {
         Some("not-this-test")
     );
     assert_eq!(process.daemon_url.as_deref(), Some("http://127.0.0.1:9"));
+}
+
+#[test]
+fn acquire_with_explicit_project_id_needs_no_project_root() {
+    let harness = Harness::new();
+    let grant = fixture_grant(PrincipalKind::Interactive);
+    write_binding_for(&harness, "http://127.0.0.1:1", &grant.deployment.token);
+    write_cache(&harness, &grant, None);
+
+    let rootless = tempfile::tempdir().expect("rootless dir");
+    let mut request = harness.request(Some("http://127.0.0.1:1".into()));
+    request.project_root = rootless.path();
+    request.project_id = Some(PROJECT.into());
+
+    let acquired = acquire_with(&request).expect("acquire by explicit project id");
+    assert_eq!(acquired.source, GrantSource::Cache);
+    assert_eq!(acquired.bundle.principal.project_id, PROJECT);
+
+    let process = AcquireRequest::from_process_for_project_id(PROJECT);
+    assert_eq!(process.project_id.as_deref(), Some(PROJECT));
+    assert!(process.project_root.as_os_str().is_empty());
 }
 
 struct PoisonedEnv {
@@ -1431,28 +1453,6 @@ fn machine_config_is_grant_presented_and_not_capability() {
     assert_eq!(settings.config_revision, grant.config_revision);
 }
 
-fn spawn_managed_challenge(token: &str, grant: GrantBundle) -> Scripted {
-    let claims = parse_capability_token(token).expect("claims");
-    let secret = claims.signature.clone();
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let requests = thread::spawn(move || {
-        let mut captured = Vec::new();
-        for step in 0..3 {
-            let (mut stream, request) = loop {
-                let Ok((mut stream, _)) = listener.accept() else {
-                    return captured;
-                };
-                let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
-                let request = read_http(&mut stream);
-                if request.contains("HTTP/") {
-                    break (stream, request);
-                }
-            };
-            captured.push(request.clone());
-            let (status, body) = if step == 0 {
-                let nonce = request
-                    .split("\"nonce\":\"")
 #[test]
 fn managed_runtime_config_fetch_sends_identity_headers() {
     let grant = fixture_grant(PrincipalKind::AgentRun);
@@ -1496,6 +1496,28 @@ fn operator_runtime_config_fetch_sends_no_identity_headers() {
     assert!(!has_header(&requests[0], MANAGED_EXECUTION_HEADER));
 }
 
+fn spawn_managed_challenge(token: &str, grant: GrantBundle) -> Scripted {
+    let claims = parse_capability_token(token).expect("claims");
+    let secret = claims.signature.clone();
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let requests = thread::spawn(move || {
+        let mut captured = Vec::new();
+        for step in 0..3 {
+            let (mut stream, request) = loop {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return captured;
+                };
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                let request = read_http(&mut stream);
+                if request.contains("HTTP/") {
+                    break (stream, request);
+                }
+            };
+            captured.push(request.clone());
+            let (status, body) = if step == 0 {
+                let nonce = request
+                    .split("\"nonce\":\"")
                     .nth(1)
                     .and_then(|rest| rest.split('"').next())
                     .unwrap_or_default();

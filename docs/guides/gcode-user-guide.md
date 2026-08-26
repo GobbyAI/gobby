@@ -505,9 +505,16 @@ vector collections:
 
 ```bash
 gcode vector clear
+gcode vector clear --project-id <PROJECT_ID> --drop-collection
 gcode vector rebuild
 gcode vector cleanup-orphans
 ```
+
+`--drop-collection` deletes the project's whole `code_symbols_{project_id}`
+collection instead of its points; the daemon uses it when it purges an indexed
+project that no machine selects any more. The `--project-id` forms of
+`graph clear`, `vector clear`, and `invalidate` resolve from the caller's grant
+alone, so they work for projects whose checkout is already gone.
 
 ## Operating Model
 

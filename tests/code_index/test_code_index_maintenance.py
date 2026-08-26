@@ -123,6 +123,7 @@ class RecordingGcodeGateway:
         self.vector_synced_files: list[tuple[Path, str]] = []
         self.vector_cleared_roots: list[Path] = []
         self.graph_cleared: list[str] = []
+        self.dropped_collections: list[str] = []
         self.maintenance_calls: list[tuple[Path, float | None]] = []
 
     async def maintenance_index(
@@ -156,6 +157,7 @@ class RecordingGcodeGateway:
         project_root: Path | None = None,
         *,
         project_id: str | None = None,
+        drop_collection: bool = False,
         env: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         del env
@@ -163,6 +165,8 @@ class RecordingGcodeGateway:
             self.vector_cleared_roots.append(project_root)
         if project_id is not None:
             self.graph_cleared.append(f"vector:{project_id}")
+            if drop_collection:
+                self.dropped_collections.append(project_id)
         return self.vector_clear_result
 
     async def graph_clear(
@@ -357,6 +361,9 @@ async def test_maintenance_retries_pending_vector_projection_cleanup(tmp_path: P
         def list_indexed_projects(self) -> list[Any]:
             return []
 
+        def list_orphaned_index_projects(self) -> list[str]:
+            return []
+
         def get_project_stats(self, project_id: str) -> IndexedProject:
             assert project_id == "proj-retry"
             return IndexedProject(
@@ -493,6 +500,7 @@ async def test_maintenance_purges_indexed_project_when_gcode_rejects_existing_ro
     assert "Maintenance reindex failed" not in caplog.text
     assert run_db_calls == [
         "list_projection_cleanup_pending",
+        "list_orphaned_index_projects",
         "list_indexed_projects",
         "get_registry_project",
         "delete_project_index",
@@ -806,6 +814,144 @@ async def test_maintenance_calls_delete_project_index_once_on_unexpected_delete_
 
 
 @pytest.mark.asyncio
+def _orphan_sweep_context(
+    storage: Any,
+    gcode_gateway: RecordingGcodeGateway | None,
+    *,
+    graph_enabled: bool = True,
+    embedding_enabled: bool = True,
+) -> CodeIndexContext:
+    async def run_db(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        return func(*args, **kwargs)
+
+    return cast(
+        CodeIndexContext,
+        SimpleNamespace(
+            storage=storage,
+            gcode_gateway=gcode_gateway,
+            launch_factory=DummyLaunchFactory(),
+            daemon_config_breaker=SyncCircuitBreaker(
+                name="test",
+                probe_target="daemon config",
+                operation="maintenance",
+            ),
+            config=SimpleNamespace(
+                graph_enabled=graph_enabled,
+                embedding_enabled=embedding_enabled,
+                maintenance_index_timeout_seconds=900,
+            ),
+            run_db=run_db,
+        ),
+    )
+
+
+def _orphan_storage(orphan_ids: list[str]) -> MagicMock:
+    storage = MagicMock()
+    storage.list_projection_cleanup_pending.return_value = []
+    storage.list_indexed_projects.return_value = []
+    storage.list_orphaned_index_projects.return_value = orphan_ids
+    storage.purge_index_project.return_value = {
+        "files": 1,
+        "symbols": 2,
+        "calls": 0,
+        "content_chunks": 0,
+        "imports": 0,
+        "projects": 1,
+    }
+    return storage
+
+
+async def test_maintenance_purges_orphaned_index_projects_projections_first() -> None:
+    """Orphans (no selector anywhere, no registry row) lose projections, then the hub row."""
+    storage = _orphan_storage(["orphan-1", "orphan-2"])
+    gcode_gateway = RecordingGcodeGateway()
+    cleared_before_purge: list[list[str]] = []
+
+    def purge(project_id: str) -> dict[str, int]:
+        del project_id
+        cleared_before_purge.append(list(gcode_gateway.graph_cleared))
+        return {
+            "files": 1,
+            "symbols": 2,
+            "calls": 0,
+            "content_chunks": 0,
+            "imports": 0,
+            "projects": 1,
+        }
+
+    storage.purge_index_project.side_effect = purge
+
+    await _run_maintenance(_orphan_sweep_context(storage, gcode_gateway))
+
+    assert gcode_gateway.graph_cleared == [
+        "orphan-1",
+        "vector:orphan-1",
+        "orphan-2",
+        "vector:orphan-2",
+    ]
+    assert gcode_gateway.dropped_collections == ["orphan-1", "orphan-2"]
+    assert storage.purge_index_project.call_args_list == [call("orphan-1"), call("orphan-2")]
+    assert cleared_before_purge[0] == ["orphan-1", "vector:orphan-1"]
+
+
+async def test_maintenance_retains_orphaned_index_project_when_projection_cleanup_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    storage = _orphan_storage(["orphan-1"])
+    gcode_gateway = RecordingGcodeGateway(
+        vector_clear_result={"success": False, "error": "qdrant unavailable"}
+    )
+
+    with caplog.at_level(logging.WARNING, logger="gobby.code_index.maintenance"):
+        await _run_maintenance(_orphan_sweep_context(storage, gcode_gateway))
+
+    storage.purge_index_project.assert_not_called()
+    assert gcode_gateway.graph_cleared == ["orphan-1", "vector:orphan-1"]
+    assert "orphan-1 projection cleanup failed; retaining for retry" in caplog.text
+    assert "qdrant unavailable" in caplog.text
+
+
+async def test_maintenance_orphan_sweep_skips_when_a_projection_store_is_disabled() -> None:
+    storage = _orphan_storage(["orphan-1"])
+    gcode_gateway = RecordingGcodeGateway()
+
+    await _run_maintenance(_orphan_sweep_context(storage, gcode_gateway, graph_enabled=False))
+
+    storage.list_orphaned_index_projects.assert_not_called()
+    storage.purge_index_project.assert_not_called()
+    assert gcode_gateway.graph_cleared == []
+    assert gcode_gateway.dropped_collections == []
+
+
+async def test_reconciling_unregistered_selector_purges_the_orphan_in_the_same_pass(
+    tmp_path: Path,
+) -> None:
+    """A vanished path-derived overlay is purged in the pass that drops its selector."""
+    project = IndexedProject(
+        id="overlay-1",
+        root_path=str(tmp_path / "gone-worktree"),
+        total_files=1,
+        total_symbols=1,
+    )
+    storage = _orphan_storage([])
+    storage.get_registry_project.return_value = (False, False)
+    storage.list_indexed_projects.return_value = [project]
+    storage.delete_project_index.return_value = {"projects": 1}
+    # The pass-opening sweep sees nothing; the selector delete makes overlay-1 an orphan.
+    storage.list_orphaned_index_projects.side_effect = [[], ["overlay-1"]]
+    gcode_gateway = RecordingGcodeGateway()
+
+    await _run_maintenance(_orphan_sweep_context(storage, gcode_gateway))
+
+    storage.delete_project_index.assert_called_once_with("overlay-1")
+    storage.purge_index_project.assert_called_once_with("overlay-1")
+    names = [name for name, _args, _kwargs in storage.mock_calls]
+    assert names.index("delete_project_index") < names.index("purge_index_project")
+    assert gcode_gateway.graph_cleared == ["overlay-1", "vector:overlay-1"]
+    assert gcode_gateway.dropped_collections == ["overlay-1"]
+    assert gcode_gateway.maintenance_calls == []
+
+
 async def test_summary_updates_are_concurrency_limited() -> None:
     """Summary DB writes stay bounded even when a batch contains many updates."""
     lock = threading.Lock()

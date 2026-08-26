@@ -107,6 +107,10 @@ class HandshakeService:
     issue_postgres: Callable[[GrantPrincipal], PostgresDirect]
     admitted_projects: frozenset[str] | Callable[[str], bool]
     clock: Callable[[], int]
+    # Maintenance-only admission beyond the registry: indexed project ids whose
+    # registry row never existed (path-derived overlays) or is gone, so the daemon
+    # can still issue the grant that purges their projections.
+    admitted_maintenance_targets: Callable[[str], bool] | None = None
     principal_lock_key: Callable[[str, str, str], tuple[str, ...]] | None = None
     _locks: dict[tuple[str, ...], threading.Lock] = field(default_factory=dict)
     _locks_guard: threading.Lock = field(default_factory=threading.Lock)
@@ -176,7 +180,7 @@ class HandshakeService:
                 "maintenance machine_id must match the daemon machine",
                 code="claims_mismatch",
             )
-        if not self._project_admitted(project_id):
+        if not self._maintenance_target_admitted(project_id):
             raise HandshakeRejection("project is not admitted", code="claims_mismatch")
         code_overlay_project_id = _normalized_overlay_claim(project_id, code_overlay_project_id)
         principal = GrantPrincipal(
@@ -236,6 +240,12 @@ class HandshakeService:
         if callable(admitted):
             return admitted(project_id)
         return project_id in admitted
+
+    def _maintenance_target_admitted(self, project_id: str) -> bool:
+        if self._project_admitted(project_id):
+            return True
+        admitted = self.admitted_maintenance_targets
+        return admitted is not None and admitted(project_id)
 
     def _lock_for(self, key: tuple[str, ...]) -> threading.Lock:
         with self._locks_guard:

@@ -276,6 +276,35 @@ async def test_gateway_builds_incremental_index_args(
     assert result.timeout_seconds == 11
 
 
+async def test_gateway_vector_clear_by_project_id_can_drop_collection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    processes = [
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        FakeProcess(stdout=b'{"status": "ok", "action": "clear"}'),
+    ]
+    calls = _patch_subprocess(monkeypatch, processes)
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    result = await gateway.vector_clear(
+        project_id="11111111-1111-1111-1111-111111111111",
+        drop_collection=True,
+        env={"GOBBY_MANAGED_EXECUTION_BOOTSTRAP": "/tmp/grant.json"},
+    )
+
+    assert result == {"status": "ok", "action": "clear"}
+    assert calls[1] == (
+        "/tmp/gcode",
+        "vector",
+        "clear",
+        "--project-id",
+        "11111111-1111-1111-1111-111111111111",
+        "--drop-collection",
+        "--format",
+        "json",
+    )
+
+
 async def test_gateway_builds_vector_and_prune_args_with_timeouts(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
