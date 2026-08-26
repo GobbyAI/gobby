@@ -13,6 +13,8 @@ from typing import Any
 
 import httpx
 
+from gobby.utils.local_token import daemon_auth_headers
+
 from .utils_process import format_uptime
 
 PROTECTED_RUN_POLL_INTERVAL_SECONDS = 15.0
@@ -25,12 +27,15 @@ FetchFn = Callable[[int], list[dict[str, Any]]]
 def fetch_protected_runs(http_port: int) -> list[dict[str, Any]]:
     """Ask the daemon for its active restart-protected cron runs.
 
-    A daemon that cannot answer holds no lease this process could honor, so
-    transport failures and non-200 responses report no runs.
+    The admin API requires the local CLI token; without it the daemon answers
+    401 and the gate would silently never protect anything. A daemon that
+    cannot answer holds no lease this process could honor, so transport
+    failures and non-200 responses report no runs.
     """
     try:
         response = httpx.get(
             f"http://localhost:{http_port}/api/admin/cron/protected-runs",
+            headers=daemon_auth_headers(),
             timeout=_FETCH_TIMEOUT_SECONDS,
         )
     except httpx.HTTPError:

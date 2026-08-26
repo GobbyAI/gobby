@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -28,6 +28,17 @@ RUN: dict[str, Any] = {
 }
 DESCRIBED = "gobby:memory-dream (running 1h 2m 5s, at most 3h 27m 55s left)"
 ENDPOINT = "http://localhost:60887/api/admin/cron/protected-runs"
+AUTH_HEADERS = {"Authorization": "Bearer test-local-cli-token"}
+
+
+@pytest.fixture(autouse=True)
+def _fake_local_token() -> Generator[None]:
+    """Keep the probe off the real ~/.gobby/local_cli_token."""
+    with patch(
+        "gobby.cli._daemon_protected_runs.daemon_auth_headers",
+        return_value=dict(AUTH_HEADERS),
+    ):
+        yield
 
 
 class _Steps:
@@ -55,14 +66,15 @@ def _response(status_code: int, payload: object = None, *, bad_json: bool = Fals
     return response
 
 
-def test_fetch_protected_runs_returns_the_daemons_run_rows() -> None:
+def test_fetch_protected_runs_authenticates_and_returns_the_daemons_run_rows() -> None:
+    """The admin API is token-gated; an unauthenticated probe would 401 into 'no lease'."""
     with patch(
         "gobby.cli._daemon_protected_runs.httpx.get",
         return_value=_response(200, {"runs": [RUN, "junk"]}),
     ) as get:
         assert fetch_protected_runs(60887) == [RUN]
 
-    get.assert_called_once_with(ENDPOINT, timeout=3.0)
+    get.assert_called_once_with(ENDPOINT, headers=AUTH_HEADERS, timeout=3.0)
 
 
 @pytest.mark.parametrize(
