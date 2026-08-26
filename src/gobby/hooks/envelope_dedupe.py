@@ -318,6 +318,20 @@ def mark_envelope_processed(
             pass
 
 
+def remove_envelope_marker(
+    envelope_id: str,
+    *,
+    processed_dir: Path | None = None,
+) -> bool:
+    """Remove the durable marker for an envelope."""
+    marker = _processed_marker_path(envelope_id, processed_dir=processed_dir)
+    try:
+        marker.unlink()
+    except FileNotFoundError:
+        return False
+    return True
+
+
 def _processed_marker_path(envelope_id: str, *, processed_dir: Path | None = None) -> Path:
     digest = hashlib.sha256(envelope_id.encode("utf-8")).hexdigest()
     return (

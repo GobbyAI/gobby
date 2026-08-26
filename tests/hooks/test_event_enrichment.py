@@ -11,13 +11,20 @@ Covers:
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
 from gobby.hooks.event_enrichment import _PIGGYBACK_EVENTS, EventEnricher
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.storage import workspace_machine_scope
+from gobby.storage.machines import LocalMachineManager
+from gobby.storage.sessions import SessionManager
+from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
 
@@ -340,3 +347,59 @@ class TestSenderResolution:
         assert response.context is not None
         assert "anonymous msg" in response.context
         assert "Session" not in response.context.split("anonymous")[0].split("\n")[-1]
+
+
+def test_grok_messages_enqueue_without_early_ack(
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    machine_id = "fe5f771f-dbc3-48b0-bd35-6a82ab18fdc1"
+    LocalMachineManager(session_manager.db).upsert_seen(machine_id, TEST_USER_ID)
+    monkeypatch.setattr(workspace_machine_scope, "require_machine_id", lambda: machine_id)
+    session_id = session_manager.register_session(
+        external_id="grok-message-recipient",
+        machine_id=machine_id,
+        source="grok",
+        project_id=sample_project["id"],
+    )
+    message = _make_msg(content="queued for active channel", msg_id="message-queued")
+    message_manager = MagicMock()
+    message_manager.get_undelivered_messages.return_value = [message]
+    enricher = EventEnricher(
+        session_manager=session_manager,
+        injected_sessions=set(),
+        inter_session_msg_manager=message_manager,
+    )
+    event = _make_event(HookEventType.BEFORE_AGENT, platform_session_id=session_id)
+    event.source = SessionSource.GROK
+    responses = [
+        HookResponse(decision="allow", context="workflow context"),
+        HookResponse(decision="allow", context="workflow context"),
+    ]
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(enricher.enrich, event, response) for response in responses]
+        for future in futures:
+            future.result()
+
+    assert all(response.context == "workflow context" for response in responses)
+    message_manager.mark_delivered_batch.assert_not_called()
+    variables = SessionVariableManager(session_manager.db)
+    briefing = variables.get_variables(session_id)["grok_pending_briefing"]
+    assert len(briefing) == 1
+    assert briefing[0]["id"] == "p2p:message-queued"
+    assert "queued for active channel" in briefing[0]["text"]
+    assert briefing[0]["message_ids"] == ["message-queued"]
+
+    variables.set_variable(session_id, "grok_pending_briefing", [])
+    variables.set_variable(
+        session_id,
+        "grok_pending_delivery",
+        {"envelope_id": "claimed", "components": briefing},
+    )
+    enricher.enrich(event, HookResponse(decision="allow"))
+
+    stored = variables.get_variables(session_id)
+    assert stored["grok_pending_briefing"] == []
+    assert stored["grok_pending_delivery"]["components"] == briefing

@@ -2808,9 +2808,13 @@ def test_first_activity_startup_context_provider_matrix(
     ):
         response = manager.handle(event)
 
-    assert response.system_message is not None
-    assert "claimed-task-context" in (response.context or "")
-    assert "copied-rule-context" in (response.context or "")
+    if delivery == "drop":
+        assert response.system_message is None
+        assert response.context is None
+    else:
+        assert response.system_message is not None
+        assert "claimed-task-context" in (response.context or "")
+        assert "copied-rule-context" in (response.context or "")
     native = cast(Any, adapters[source]).translate_from_hook_response(
         response,
         hook_type=native_hook,

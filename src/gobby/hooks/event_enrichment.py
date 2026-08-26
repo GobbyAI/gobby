@@ -13,7 +13,8 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from gobby.adapters.capabilities import ContextChannel, get_provider_capabilities
-from gobby.hooks.events import HookEvent, HookEventType, HookResponse
+from gobby.hooks import grok_pending_context
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.pending_messages import render_pending_messages
 
 # Only inject full session metadata (IDs, terminal context) on context-building
@@ -139,10 +140,10 @@ class EventEnricher:
             self._inter_session_msg_manager
             and event.event_type in _PIGGYBACK_EVENTS
             and delivery_session_id
-            and supports_context
+            and (supports_context or event.source == SessionSource.GROK)
         ):
             try:
-                self._inject_pending_messages(delivery_session_id, response)
+                self._inject_pending_messages(event, delivery_session_id, response)
             except Exception as e:
                 logger.debug("Piggyback message injection failed: %s", e)
 
@@ -152,7 +153,12 @@ class EventEnricher:
             session_key = f"{event.metadata['_platform_session_id']}:{event.source.value}"
             self._injected_sessions.discard(session_key)
 
-    def _inject_pending_messages(self, platform_session_id: str, response: HookResponse) -> None:
+    def _inject_pending_messages(
+        self,
+        event: HookEvent,
+        platform_session_id: str,
+        response: HookResponse,
+    ) -> None:
         """Check for and inject undelivered messages into response context.
 
         Groups messages by type (P2P, web_chat, command_result) and adds
@@ -163,6 +169,15 @@ class EventEnricher:
 
         undelivered = self._inter_session_msg_manager.get_undelivered_messages(platform_session_id)
         if not undelivered:
+            return
+
+        if event.source == SessionSource.GROK:
+            grok_pending_context.enqueue_pending_messages(
+                self._session_manager,
+                platform_session_id,
+                undelivered,
+                self._resolve_sender_label,
+            )
             return
 
         rendered = render_pending_messages(

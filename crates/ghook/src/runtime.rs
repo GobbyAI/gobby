@@ -11,6 +11,6 @@ pub(crate) fn write_runtime_stamp() -> Result<()> {
     });
     let bytes = serde_json::to_vec_pretty(&stamp)?;
     transport::atomic_write(&stamp_path, &bytes)?;
-    output::stdout(format_args!("ghook {}\n", diagnose::GHOOK_VERSION));
+    let _ = output::stdout(format_args!("ghook {}\n", diagnose::GHOOK_VERSION));
     Ok(())
 }

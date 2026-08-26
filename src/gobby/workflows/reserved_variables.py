@@ -9,6 +9,9 @@ RESERVED_WORKFLOW_VARIABLES = frozenset(
     {
         "_block_reasons_shown",
         "consecutive_tool_blocks",
+        "grok_pending_briefing",
+        "grok_pending_delivery",
+        "grok_pending_turn_context",
         "listed_servers",
         "max_consecutive_blocked_tool_attempts",
         "open_tool_errors",

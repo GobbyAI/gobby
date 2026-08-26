@@ -16,6 +16,10 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+fn emit_exit(action: HookAction) -> ExitCode {
+    emit_action(action).exit_code
+}
+
 pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
     let (Some(cli), Some(hook_type)) = (args.cli.as_deref(), args.hook_type.as_deref()) else {
         emit_empty_json();
@@ -71,7 +75,7 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
         Ok(v) => v,
         Err(e) => {
             if project_root.is_none() && !managed_by_environment {
-                return emit_action(continue_action(cfg.source, hook_type));
+                return emit_exit(continue_action(cfg.source, hook_type));
             }
             let _ = transport::quarantine_malformed(&stdin_raw, &e.to_string(), is_critical);
             emit_empty_json();
@@ -85,11 +89,11 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
 
     let context = managed_context(project_root.as_deref(), &input_data);
     if !context.managed {
-        return emit_action(continue_action(cfg.source, hook_type));
+        return emit_exit(continue_action(cfg.source, hook_type));
     }
 
     if planned_shutdown::should_skip_dispatch(hook_type) {
-        return emit_action(continue_action(cfg.source, hook_type));
+        return emit_exit(continue_action(cfg.source, hook_type));
     }
 
     let env = build_dispatch_envelope(&cfg, hook_type, input_data, context.project_id.as_deref());
@@ -113,7 +117,7 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
                 detach::detach();
             }
             let daemon_url = gobby_core::daemon_url::daemon_url();
-            // No inbox file exists here; post_and_cleanup ignores remove errors after 2xx.
+            // No inbox file exists on this direct-POST fallback.
             let missing_enqueued_path = PathBuf::new();
             let report = transport::post_and_cleanup(&env, &missing_enqueued_path, &daemon_url);
             match report.outcome {
@@ -152,7 +156,7 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
         Ok(d) => d,
         Err(e) => {
             return match direct_post_after_enqueue_failure(e.to_string()) {
-                Ok(action) => emit_action(action),
+                Ok(action) => emit_exit(action),
                 Err(exit_code) => exit_code,
             };
         }
@@ -161,14 +165,14 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
         Ok(p) => p,
         Err(e) => {
             return match direct_post_after_enqueue_failure(e.to_string()) {
-                Ok(action) => emit_action(action),
+                Ok(action) => emit_exit(action),
                 Err(exit_code) => exit_code,
             };
         }
     };
 
     if args.enqueue_only {
-        return emit_action(continue_action(cfg.source, hook_type));
+        return emit_exit(continue_action(cfg.source, hook_type));
     }
 
     // Detach *after* project walk-up and enqueue — the file on disk is
@@ -177,7 +181,8 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
         detach::detach();
     }
 
-    // Best-effort POST. Enqueue file is deleted on 2xx; otherwise kept.
+    // Best-effort POST. A delivered envelope stays durable until its mapped
+    // provider action has been written and stdout has flushed.
     let daemon_url = gobby_core::daemon_url::daemon_url();
     let report = transport::post_and_cleanup(&env, &enqueued_path, &daemon_url);
     let action = match report.outcome {
@@ -200,7 +205,7 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
             // host CLI continues, even on critical hooks — blocking here would
             // live-lock the CLI against a daemon that keeps asking for retry.
             if report.is_retry_backpressure() {
-                return emit_action(continue_action(cfg.source, hook_type));
+                return emit_exit(continue_action(cfg.source, hook_type));
             }
 
             if planned_shutdown::suppress_after_failed_post(
@@ -208,7 +213,7 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
                 report.failure_kind,
                 &enqueued_path,
             ) {
-                return emit_action(continue_action(cfg.source, hook_type));
+                return emit_exit(continue_action(cfg.source, hook_type));
             }
 
             let failure_kind = report
@@ -239,7 +244,11 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
         }
     };
 
-    emit_action(action)
+    let emitted = emit_action(action);
+    if matches!(report.outcome, transport::DeliveryOutcome::Delivered) && emitted.stdout_succeeded {
+        let _ = fs::remove_file(&enqueued_path);
+    }
+    emitted.exit_code
 }
 
 fn hooks_disabled_by_env() -> bool {
@@ -386,12 +395,7 @@ fn delivered_action(
 ) -> Result<HookAction, ExitCode> {
     let body = report.response_body.as_deref().unwrap_or_default();
     match action_from_success_response(cfg.source, hook_type, body) {
-        Ok(action) => {
-            if let Some(path) = enqueued_path {
-                let _ = fs::remove_file(path);
-            }
-            Ok(action)
-        }
+        Ok(action) => Ok(action),
         Err(error) => {
             let _ = record_delivery_failure(
                 envelope,
@@ -401,9 +405,6 @@ fn delivered_action(
                 success_failure_kind(body),
                 Some(&error),
             );
-            if let Some(path) = enqueued_path {
-                let _ = fs::remove_file(path);
-            }
             output::stderr(format_args!(
                 "ghook: daemon 2xx response could not be mapped for hook '{hook_type}': {error}\n"
             ));

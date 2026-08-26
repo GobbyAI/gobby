@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -24,7 +24,6 @@ CONTEXT_PROVIDER_CASES: tuple[tuple[type[Any], str], ...] = (
     (CodexHooksAdapter, "UserPromptSubmit"),
     (QwenAdapter, "UserPromptSubmit"),
     (DroidAdapter, "UserPromptSubmit"),
-    (GrokAdapter, "user_prompt_submit"),
 )
 
 
@@ -104,10 +103,7 @@ def test_context_capable_providers_share_inline_reference_and_ack_contract(
 
 @pytest.mark.parametrize(
     ("adapter_type", "hook_type"),
-    (
-        (DroidAdapter, "PreToolUse"),
-        (GrokAdapter, "post_tool_use_failure"),
-    ),
+    ((DroidAdapter, "PreToolUse"),),
 )
 def test_hooks_without_context_channels_leave_messages_pending(
     adapter_type: type[Any],
@@ -155,4 +151,29 @@ def test_agy_leaves_messages_pending_without_a_context_capable_hook() -> None:
 
     assert response.context == "existing workflow context"
     message_manager.get_undelivered_messages.assert_not_called()
+    message_manager.mark_delivered_batch.assert_not_called()
+
+
+def test_grok_queues_pending_messages_for_acknowledged_active_delivery() -> None:
+    adapter = GrokAdapter()
+    event = adapter.translate_to_hook_event(_native_event("user_prompt_submit"))
+    event.metadata["_platform_session_id"] = "recipient-session"
+    message_manager = MagicMock()
+    message_manager.get_undelivered_messages.return_value = [_message("queued")]
+    session_manager = MagicMock()
+    response = HookResponse(context="existing workflow context")
+    enricher = EventEnricher(
+        session_manager=session_manager,
+        injected_sessions=set(),
+        inter_session_msg_manager=message_manager,
+    )
+
+    with patch(
+        "gobby.hooks.event_enrichment.grok_pending_context.enqueue_pending_messages",
+        create=True,
+    ) as enqueue:
+        enricher.enrich(event, response)
+
+    assert response.context == "existing workflow context"
+    enqueue.assert_called_once()
     message_manager.mark_delivered_batch.assert_not_called()

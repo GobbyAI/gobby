@@ -775,10 +775,9 @@ fn daemon_success_maps_deny_and_block_bodies() -> TestResult {
     let grok_stop_output = run_temp_ghook("grok", "stop", &grok_stop_url, VALID_STDIN, &[])?;
     let grok_stop_request = join_daemon(grok_stop_daemon)?;
 
-    assert_eq!(grok_stop_output.status.code(), Some(2));
-    assert!(grok_stop_output.stdout.is_empty());
-    let grok_stop_stderr = String::from_utf8(grok_stop_output.stderr)?;
-    assert!(grok_stop_stderr.contains("stop grok"));
+    assert_eq!(grok_stop_output.status.code(), Some(0));
+    assert_json_stdout(&grok_stop_output, serde_json::from_str(grok_stop_body)?)?;
+    assert_stderr_empty(&grok_stop_output, "grok stop response")?;
     assert!(grok_stop_request.contains("\"hook_type\":\"stop\""));
 
     let grok_pre_tool_body = r#"{"decision":"block","reason":"policy"}"#;
@@ -937,7 +936,7 @@ fn valid_daemon_success_removes_envelope_and_writes_no_failure() -> TestResult {
 }
 
 #[test]
-fn daemon_success_with_invalid_json_writes_failure_and_removes_envelope() -> TestResult {
+fn daemon_success_with_invalid_json_writes_failure_and_keeps_envelope() -> TestResult {
     let home = tempfile::tempdir()?;
     let gobby_home = tempfile::tempdir()?;
     let (daemon_url, daemon) = start_daemon(http_ok_json("not json"))?;
@@ -957,9 +956,10 @@ fn daemon_success_with_invalid_json_writes_failure_and_removes_envelope() -> Tes
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr)?;
     assert!(stderr.contains("daemon 2xx response could not be mapped"));
-    assert!(
-        inbox_envelopes(gobby_home.path())?.is_empty(),
-        "invalid 2xx body should remove the envelope only after writing diagnostics"
+    assert_eq!(
+        inbox_envelopes(gobby_home.path())?.len(),
+        1,
+        "invalid 2xx body should retain the envelope for recovery"
     );
 
     let failures = read_failure_artifacts(gobby_home.path())?;
@@ -977,6 +977,54 @@ fn daemon_success_with_invalid_json_writes_failure_and_removes_envelope() -> Tes
             .as_str()
             .is_some_and(|id| !id.is_empty())
     );
+
+    Ok(())
+}
+
+#[test]
+fn grok_stop_block_writes_complete_json_before_removing_envelope() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let body = r#"{"continue":true,"decision":"block","reason":"Keep working","hookSpecificOutput":{"hookEventName":"Stop","additionalContext":"Run tests"}}"#;
+    let (daemon_url, daemon) = start_daemon(http_ok_json(body))?;
+
+    let output = run_ghook_with_dirs(
+        home.path(),
+        gobby_home.path(),
+        Some("grok"),
+        Some("stop"),
+        &daemon_url,
+        VALID_STDIN,
+        &[],
+    )?;
+    let _request = join_daemon(daemon)?;
+
+    assert_eq!(output.status.code(), Some(0));
+    assert_json_stdout(&output, serde_json::from_str(body)?)?;
+    assert_stderr_empty(&output, "grok stop block")?;
+    assert!(inbox_envelopes(gobby_home.path())?.is_empty());
+
+    Ok(())
+}
+
+#[test]
+fn stdout_failure_keeps_successful_daemon_envelope() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let body = r#"{"decision":"deny","reason":"retry"}"#;
+    let (daemon_url, daemon) = start_daemon(http_ok_json(body))?;
+    let output = run_ghook_with_closed_stdout(
+        home.path(),
+        gobby_home.path(),
+        "grok",
+        "pre_tool_use",
+        &daemon_url,
+        VALID_STDIN,
+    )?;
+    let _request = join_daemon(daemon)?;
+
+    assert_eq!(inbox_envelopes(gobby_home.path())?.len(), 1);
+    assert!(output.stderr.is_empty());
 
     Ok(())
 }
@@ -1456,6 +1504,43 @@ fn run_ghook_with_dirs(
             cwd: None,
         },
     )
+}
+
+fn run_ghook_with_closed_stdout(
+    home: &Path,
+    gobby_home: &Path,
+    cli: &str,
+    hook_type: &str,
+    daemon_url: &str,
+    stdin: &str,
+) -> Result<Output, Box<dyn std::error::Error>> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_ghook"))
+        .arg("--gobby-owned")
+        .args(["--cli", cli, "--type", hook_type])
+        .env("HOME", home)
+        .env("GOBBY_HOME", gobby_home)
+        .env("GOBBY_DAEMON_URL", daemon_url)
+        .env_remove("GOBBY_PORT")
+        .env_remove("GOBBY_DAEMON_PORT")
+        .env_remove("GOBBY_HOOKS_DISABLED")
+        .env_remove("GOBBY_PROJECT_ID")
+        .env_remove("GOBBY_SESSION_ID")
+        .env_remove("GOBBY_AGENT_RUN_ID")
+        .env_remove("GOBBY_STATUSLINE_DOWNSTREAM")
+        .env_remove("GOBBY_SHUTDOWN_HOOK_ALLOW_SECONDS")
+        .env_remove("GOBBY_SOURCE")
+        .env_remove("CLAUDE_CODE_ENTRYPOINT")
+        .env_remove("TMUX")
+        .env_remove("TMUX_PANE")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    drop(child.stdout.take());
+    if let Some(mut child_stdin) = child.stdin.take() {
+        write_stdin_allow_broken_pipe(&mut child_stdin, stdin.as_bytes())?;
+    }
+    Ok(child.wait_with_output()?)
 }
 
 struct RunGhookExtras<'a> {

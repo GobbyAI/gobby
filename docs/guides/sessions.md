@@ -361,9 +361,14 @@ lists, memory injection ids) and agent-preamble rehydrate. It does not
 reset `plan_mode` and does not fire pipelines. When `auto_inject_handoff`
 is on, it arms `compact_handoff_inject_pending`. The next `turn_start` /
 `user_prompt_submit` (`BEFORE_AGENT`) fires `inject-compact-handoff-on-prompt`,
-which injects the marked continuation block plus wiki, profile, and task
-via `additionalContext`, then clears the one-shot. If that injected block
-is absent, `wait_for_summary` remains the continuation-prompt fallback.
+which renders the marked continuation block plus wiki, profile, and task and
+clears the one-shot. Gobby stashes that passive-hook render as Grok briefing;
+the next envelope-backed `PreToolUse` denies once with the briefing and asks
+Grok to retry the same tool call. A tool-free turn receives the same briefing
+through one blocking `Stop` / `SubagentStop`. ghook acknowledges delivery by
+removing the inbox envelope after its provider action is written and flushed.
+`wait_for_summary` remains the continuation-prompt fallback when the marked
+render is absent.
 
 ### Handoff Boundaries
 

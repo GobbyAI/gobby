@@ -14,6 +14,7 @@ from gobby.hooks.dispatchers.mcp import run_coro_blocking
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
 from gobby.hooks.session_types import HookSessionManager
+from gobby.storage import workspace_machine_scope
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.projects import PERSONAL_PROJECT_ID
@@ -1833,4 +1834,139 @@ def test_rules_block_delivers_staged_memory_on_returned_response(
         "platform-session",
         "injected_memory_ids",
         ["memory-id"],
+    )
+
+
+def _register_grok_session(
+    session_manager: SessionManager,
+    project_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> str:
+    machine_id = "dd1f91fe-c2d9-4ec0-8ea6-e1959538367c"
+    LocalMachineManager(session_manager.db).upsert_seen(machine_id, TEST_USER_ID)
+    monkeypatch.setattr(workspace_machine_scope, "require_machine_id", lambda: machine_id)
+    return session_manager.register_session(
+        external_id="grok-hook-manager",
+        machine_id=machine_id,
+        source="grok",
+        project_id=project_id,
+    )
+
+
+def test_grok_continuation_prompt_captures_rule_context_as_briefing(
+    manager_with_mocks: HookManager,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_id = _register_grok_session(session_manager, sample_project["id"], monkeypatch)
+    session_manager.update_stats(session_id, message_count=1)
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    variables = SessionVariableManager(session_manager.db)
+    variables.merge_variables(session_id, {"compact_handoff_inject_pending": True})
+    mocks = cast(Any, manager_with_mocks)
+    mocks._session_manager = session_manager
+    mocks._database = session_manager.db
+    mocks._record_machine_ingress = MagicMock()
+    mocks._record_session_activity_pulse = MagicMock()
+
+    def resolve(event: HookEvent, *, apply_session_mutations: bool = True) -> str:
+        event.metadata["_platform_session_id"] = session_id
+        return session_id
+
+    def enrich(
+        _event: HookEvent,
+        response: HookResponse,
+        *,
+        workflow_context: str | None = None,
+    ) -> None:
+        response.context = workflow_context
+
+    mocks._session_lookup.resolve.side_effect = resolve
+    mocks._evaluate_workflow_rules = MagicMock(return_value=("continuation handoff", None))
+    mocks._evaluate_blocking_webhooks = MagicMock(return_value=None)
+    mocks._get_event_handler = MagicMock(return_value=lambda _event: HookResponse(decision="allow"))
+    mocks._enricher.enrich.side_effect = enrich
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_AGENT,
+        session_id="grok-hook-manager",
+        source=SessionSource.GROK,
+        timestamp=datetime.now(UTC),
+        data={"source_event_id": "continuation-envelope"},
+        project_id=sample_project["id"],
+    )
+
+    with patch("gobby.hooks.hook_manager.reconcile_session_activation"):
+        response = manager_with_mocks._handle_after_daemon_ready(event)
+
+    assert response.context is None
+    assert variables.get_variables(session_id)["grok_pending_briefing"] == [
+        {
+            "id": "turn:continuation-envelope",
+            "text": "continuation handoff",
+            "message_ids": [],
+        }
+    ]
+
+
+@pytest.mark.parametrize("gate_kind", ["workflow", "webhook"])
+def test_grok_preserve_original_gate_flushes_pending_context(
+    gate_kind: str,
+    manager_with_mocks: HookManager,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_id = _register_grok_session(session_manager, sample_project["id"], monkeypatch)
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    variables = SessionVariableManager(session_manager.db)
+    variables.merge_variables(
+        session_id,
+        {
+            "grok_pending_briefing": [
+                {"id": "turn:briefing", "text": "briefing", "message_ids": []}
+            ],
+            "grok_pending_turn_context": [
+                {"id": "ctx:turn:1", "text": "turn context", "message_ids": []}
+            ],
+        },
+    )
+    mocks = cast(Any, manager_with_mocks)
+    mocks._session_manager = session_manager
+    mocks._database = session_manager.db
+    mocks._record_machine_ingress = MagicMock()
+    mocks._record_session_activity_pulse = MagicMock()
+
+    def resolve(event: HookEvent, *, apply_session_mutations: bool = True) -> str:
+        event.metadata["_platform_session_id"] = session_id
+        return session_id
+
+    gate = HookResponse(decision="deny", reason=f"{gate_kind} gate")
+    mocks._session_lookup.resolve.side_effect = resolve
+    mocks._evaluate_workflow_rules = MagicMock(
+        return_value=(None, gate if gate_kind == "workflow" else None)
+    )
+    mocks._evaluate_blocking_webhooks = MagicMock(
+        return_value=gate if gate_kind == "webhook" else None
+    )
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id="grok-hook-manager",
+        source=SessionSource.GROK,
+        timestamp=datetime.now(UTC),
+        data={"source_event_id": f"{gate_kind}-envelope"},
+        project_id=sample_project["id"],
+    )
+
+    with patch("gobby.hooks.hook_manager.reconcile_session_activation"):
+        response = manager_with_mocks._handle_after_daemon_ready(event)
+
+    assert response is gate
+    assert response.decision == "deny"
+    assert response.reason == f"briefing\n\nturn context\n\n{gate_kind} gate"
+    assert (
+        variables.get_variables(session_id)["grok_pending_delivery"]["envelope_id"]
+        == f"{gate_kind}-envelope"
     )

@@ -414,6 +414,13 @@ These are set during execution, not initialized from definitions:
 | `handoff_summary_injectable` | string | Budget-bounded copy of the handoff summary for inline `additionalContext` injection; carries a `get_handoff_context` breadcrumb when truncated. Rules inject this rather than `full_session_summary` to avoid Claude Code's ~10K char hard truncation. |
 | `session_summary` | string | Session summary set alongside `full_session_summary` on handoff/compact |
 | `compact_handoff_inject_pending` | bool | One-shot Grok compact rehydrate flag. `apply_in_place_compact_context_loss` sets it on Grok `post_compact` when `auto_inject_handoff` is on. `inject-compact-handoff-on-prompt` injects the marked continuation on the next `turn_start` and clears it. |
+| `grok_pending_briefing` | list | Ordered, id-deduplicated context components waiting for acknowledged Grok PreToolUse/Stop delivery. |
+| `grok_pending_turn_context` | list | Bounded per-turn context components; oldest entries drop at 32 components or 16,384 serialized UTF-8 bytes. |
+| `grok_pending_delivery` | object | Briefing components claimed by one durable ghook inbox envelope until acknowledgment settles. |
+
+The three `grok_pending_*` variables are runtime-reserved. Public
+`set_variable` calls and non-internal rule effects cannot write them; hook
+delivery code mutates them atomically under the session-variable advisory lock.
 
 ---
 

@@ -46,7 +46,7 @@ fn main() -> ExitCode {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 // Still print the version; stamp-write failure is non-fatal.
-                output::stdout(format_args!("ghook {}\n", diagnose::GHOOK_VERSION));
+                let _ = output::stdout(format_args!("ghook {}\n", diagnose::GHOOK_VERSION));
                 output::stderr(format_args!("note: could not write runtime stamp: {e}\n"));
                 ExitCode::SUCCESS
             }
@@ -71,7 +71,7 @@ fn run_diagnose(args: &Args) -> ExitCode {
     let out = diagnose::diagnose(cli, hook_type);
     match serde_json::to_string_pretty(&out) {
         Ok(s) => {
-            output::stdout(format_args!("{s}\n"));
+            let _ = output::stdout(format_args!("{s}\n"));
             ExitCode::SUCCESS
         }
         Err(e) => {
