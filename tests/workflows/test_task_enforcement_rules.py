@@ -1116,11 +1116,6 @@ class TestTouchedFileHelpers:
                 "<<'EOF'\n---\nsession_id: 11103\n---\nEOF\n",
                 id="heredoc-only",
             ),
-            pytest.param(
-                "cat > docs/research/gobby-feedback/inbox/2026-08-26T$(date +%H%M%S)"
-                "-claude-session-11103.md <<'EOF'\n---\nsession_id: 11103\n---\nEOF\n",
-                id="heredoc-only-with-substitution",
-            ),
         ],
     )
     def test_requires_task_for_feedback_inbox_shell_write_shapes(self, command: str) -> None:
@@ -1130,14 +1125,40 @@ class TestTouchedFileHelpers:
         data: dict[str, object] = {"tool_name": "Bash", "tool_input": {"command": command}}
         normalize_tool_fields(data)
 
-        # require-task-before-edit fires only on a canonical repo mutation; a
-        # substituted redirect target with no mkdir is the documented path-less
-        # execute residual and never reaches the helper.
-        gated = bool(data.get("canonical_repo_mutation")) and requires_task_for_any_touched_file(
+        assert data["canonical_repo_mutation"] is True
+        result = requires_task_for_any_touched_file(
             data["tool_input"], source="claude", plan_mode=False, event_data=data
         )
 
-        assert gated is False
+        assert result is False
+
+    def test_substituted_feedback_inbox_heredoc_without_mkdir_is_pathless(self) -> None:
+        """A substituted redirect target is the documented path-less execute residual.
+
+        No repo mutation is recorded, so require-task-before-edit never reaches the
+        helper; the helper alone keeps failing closed on a path-less write.
+        """
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+
+        data: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": (
+                    "cat > docs/research/gobby-feedback/inbox/2026-08-26T$(date +%H%M%S)"
+                    "-claude-session-11103.md <<'EOF'\n---\nsession_id: 11103\n---\nEOF\n"
+                )
+            },
+        }
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "execute"
+        assert "canonical_repo_mutation" not in data
+        assert "canonical_file_paths" not in data
+        result = requires_task_for_any_touched_file(
+            data["tool_input"], source="claude", plan_mode=False, event_data=data
+        )
+
+        assert result is True
 
     def test_requires_task_for_feedback_inbox_mkdir_beside_a_source_write(self) -> None:
         from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
