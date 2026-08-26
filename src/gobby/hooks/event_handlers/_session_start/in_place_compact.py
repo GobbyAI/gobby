@@ -19,11 +19,11 @@ def apply_in_place_compact_context_loss(handler: Any, session_id: str | None) ->
     if not session_id or handler._session_manager is None:
         return
 
-    from gobby.hooks.event_handlers._session_start.flow import (
-        _reset_agent_context_injection,
-    )
     from gobby.hooks.event_handlers._session_start.handoff import (
         _variable_enabled,
+    )
+    from gobby.hooks.event_handlers._session_start.materialize import (
+        _reset_agent_context_injection,
     )
     from gobby.sessions.compact_markers import COMPACT_HANDOFF_INJECT_PENDING_VARIABLE
     from gobby.workflows.state_manager import SessionVariableManager

@@ -13,6 +13,7 @@ from gobby.sessions.tmux_window_naming import schedule_tmux_window_rename
 from .types import AgentActivationResult
 
 if TYPE_CHECKING:
+    from gobby.hooks.event_handlers._session_start.handoff import SessionStartResolution
     from gobby.storage.session_models import Session
 
 SUMMARY_GENERATION_TIMEOUT_S = 120
@@ -78,6 +79,31 @@ class SessionStartMixin(EventHandlersBase):
         from .flow import handle_session_start
 
         return handle_session_start(self, event)
+
+    def _activate_materialized_session(
+        self,
+        event: HookEvent,
+        session_id: str,
+        *,
+        resolution: SessionStartResolution | None = None,
+        session_obj: Any | None = None,
+        project_id: str | None = None,
+        transcript_path: str | None = None,
+        terminal_context: dict[str, Any] | None = None,
+    ) -> list[str]:
+        """Activate a registered session and build its startup context."""
+        from .materialize import activate_materialized_session
+
+        return activate_materialized_session(
+            self,
+            event,
+            session_id,
+            resolution=resolution,
+            session_obj=session_obj,
+            project_id=project_id,
+            transcript_path=transcript_path,
+            terminal_context=terminal_context,
+        )
 
     def _handle_pre_created_session(
         self,

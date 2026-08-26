@@ -15,6 +15,7 @@ from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.event_handlers._session_start import AgentActivationResult
 from gobby.hooks.event_handlers._session_start.context import classify_session_start_context
 from gobby.hooks.event_handlers._session_start.flow import _log_session_start_timing
+from gobby.hooks.event_handlers._session_start.materialize import session_start_should_defer
 from gobby.hooks.event_handlers._session_start.terminal_runtime import (
     expire_stale_terminal_sessions_for_context,
 )
@@ -29,6 +30,48 @@ from gobby.workflows.state_manager import SessionVariableManager
 from ._event_handler_helpers import make_event
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    ("session_source", "existing_session", "terminal_context", "expected"),
+    [
+        ("startup", None, None, True),
+        ("new", None, None, True),
+        ("", None, None, True),
+        ("resume", None, None, False),
+        ("startup", SimpleNamespace(status="active"), None, False),
+        ("startup", SimpleNamespace(status="expired"), None, True),
+        ("startup", None, {"gobby_acp_child": "1"}, False),
+    ],
+)
+def test_session_start_should_defer(
+    session_source: str,
+    existing_session: object | None,
+    terminal_context: dict[str, str] | None,
+    expected: bool,
+) -> None:
+    event = make_event(
+        HookEventType.SESSION_START,
+        source="grok",
+        data={"terminal_context": terminal_context} if terminal_context else {},
+    )
+
+    assert session_start_should_defer(event, existing_session, session_source) is expected
+
+
+def test_session_start_should_not_defer_nested_cli(monkeypatch: pytest.MonkeyPatch) -> None:
+    event = make_event(
+        HookEventType.SESSION_START,
+        source="grok",
+        data={"terminal_context": {"tmux_pane": "%42"}},
+    )
+    completed = SimpleNamespace(returncode=0, stdout="droid\n")
+    monkeypatch.setattr(
+        "gobby.hooks.event_handlers._session_start.terminal_runtime.subprocess.run",
+        lambda *args, **kwargs: completed,
+    )
+
+    assert session_start_should_defer(event, None, "startup") is False
 
 
 def _agent_activation_context() -> AgentActivationResult:
@@ -1181,9 +1224,11 @@ class TestSessionStartNewSession:
         )
 
         with (
-            patch("gobby.hooks.event_handlers._session_start.flow.seed_user_profile_content"),
             patch(
-                "gobby.hooks.event_handlers._session_start.flow.prepare_compact_continuation_variables",
+                "gobby.hooks.event_handlers._session_start.materialize.seed_user_profile_content"
+            ),
+            patch(
+                "gobby.hooks.event_handlers._session_start.materialize.prepare_compact_continuation_variables",
                 side_effect=psycopg.OperationalError("handoff vars unavailable"),
             ),
         ):
