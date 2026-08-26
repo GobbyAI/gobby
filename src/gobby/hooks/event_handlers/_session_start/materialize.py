@@ -47,8 +47,8 @@ def session_start_should_defer(
     session_source: str | None,
 ) -> bool:
     """Return whether this startup SessionStart may defer row creation."""
-    effective_source = session_source if session_source is not None else "startup"
-    if effective_source not in STARTUP_SOURCES:
+    session_source = session_source or "startup"
+    if session_source not in STARTUP_SOURCES:
         return False
     if existing_session is not None and getattr(existing_session, "status", None) not in {
         "expired",
