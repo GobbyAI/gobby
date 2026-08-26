@@ -793,6 +793,23 @@ class TestGrokCurrentHookContract:
         assert result.get("continue") is True
         assert "stopReason" not in result
 
+    def test_pre_tool_use_omits_context_fields(self) -> None:
+        result = GrokAdapter().translate_from_hook_response(
+            HookResponse(
+                decision="allow",
+                context="ignored",
+                modified_input={"command": "git status"},
+            ),
+            hook_type="pre_tool_use",
+        )
+
+        assert result["hookSpecificOutput"] == {
+            "hookEventName": "pre_tool_use",
+            "updatedInput": {"command": "git status"},
+        }
+        assert "additionalContext" not in result
+        assert "systemMessage" not in result
+
     def test_subagent_stop_block_has_non_empty_fallback_reason(self) -> None:
         result = GrokAdapter().translate_from_hook_response(
             HookResponse(decision="block"), hook_type="subagent_stop"
