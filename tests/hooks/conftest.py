@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Iterator
 from typing import Any
@@ -106,9 +107,11 @@ def mock_components() -> MagicMock:
 @pytest.fixture
 def manager_with_mocks(mock_components: MagicMock) -> Iterator[HookManager]:
     """Create a HookManager with all subsystems mocked."""
+    hook_asyncio = MagicMock(wraps=asyncio)
+    hook_asyncio.get_running_loop.side_effect = RuntimeError
     with (
         patch("gobby.hooks.hook_manager.HookManagerFactory") as mock_factory,
-        patch("gobby.hooks.hook_manager.asyncio.get_running_loop", side_effect=RuntimeError),
+        patch("gobby.hooks.hook_manager.asyncio", hook_asyncio),
         patch("gobby.hooks.event_enrichment.EventEnricher"),
         patch("gobby.hooks.session_lookup.SessionLookupService"),
         patch("gobby.storage.inter_session_messages.InterSessionMessageManager"),
