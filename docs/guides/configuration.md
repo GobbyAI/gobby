@@ -683,7 +683,7 @@ constraints include:
 | Port | `1024` through `65535` |
 | Positive timeout | Greater than `0` |
 | Workflow timeout | Greater than `0` |
-| Hook timeout policy | `memory_recall < workflow < adapter < provider` |
+| Hook timeout policy | `workflow < adapter < provider` |
 | Weight or threshold | `0.0` through `1.0` |
 | MCP search mode | `llm`, `semantic`, or `hybrid` |
 | Provider auth mode | `subscription`, `api_key`, or `adc` |

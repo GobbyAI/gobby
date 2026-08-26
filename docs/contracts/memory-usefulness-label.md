@@ -1,6 +1,11 @@
 # Memory-Recall Usefulness Label + Labeled-Row Data Contract
 
 Status: **normative** (epic #17099 Phase 0a gate deliverable, task #17192)
+Data source note (2026-08-26, #21009): automatic prompt-time recall
+(`memory.recall` caller, `MemoryRecallRunner`, `build_memory_context`) was
+retired; rows with that caller are the archived injection cohort. New rows
+come from agent-driven `mcp_proxy.memory.search_memories` requests; the
+outcome and caller vocabulary for that cohort is defined in #21000 L4.
 Owners: memory subsystem
 Consumers: #17193 (retrospective judge + ablation calibration), #17195 (digest
 forward labels), #17196 (hub tables + injection-outcome capture), #17197

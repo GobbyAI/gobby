@@ -327,8 +327,8 @@ async def test_memory_tools_share_inline_result_envelope() -> None:
     assert dispatcher is not None
 
     results = [
-        await dispatcher("gobby-memory", tool, {}, None)
-        for tool in ("recall_memories_for_prompt", "recall_review_lessons_for_files")
+        await dispatcher("gobby-review-learning", tool, {}, None)
+        for tool in ("recall_review_lessons_by_class", "recall_review_lessons_for_files")
     ]
 
     assert [result["success"] for result in results if result is not None] == [True, True]

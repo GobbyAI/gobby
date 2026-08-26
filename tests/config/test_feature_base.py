@@ -327,13 +327,12 @@ class TestFeatureConfigInheritance:
     def test_low_feature_configs(self) -> None:
         from gobby.config.features import ImportMCPServerConfig, ToolSummarizerConfig
         from gobby.config.persistence import MemoryKnowledgeGraphConfig
-        from gobby.config.sessions import DigestConfig, MemoryRecallConfig, SessionSummaryConfig
+        from gobby.config.sessions import DigestConfig, SessionSummaryConfig
 
         for config_cls in (
             DigestConfig,
             ImportMCPServerConfig,
             MemoryKnowledgeGraphConfig,
-            MemoryRecallConfig,
             SessionSummaryConfig,
             ToolSummarizerConfig,
         ):

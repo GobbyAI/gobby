@@ -93,14 +93,12 @@ async def test_collapsed_reason_keeps_directive(
     db: HubDatabase,
     manager: RuleDefinitionManager,
 ) -> None:
-    command = (
-        'call_tool("gobby-memory", "get_recall_memories", {"recall_request_id":"request-123"})'
-    )
+    command = 'call_tool("gobby-skills", "get_skill", {"name":"memory"})'
 
     collapsed = await _evaluate_twice(
         db,
         manager,
-        f"Retrieve the pending memories: {command}, then continue.",
+        f"Load the memory skill: {command}, then continue.",
     )
 
     assert collapsed.startswith(TERSE_REASON)

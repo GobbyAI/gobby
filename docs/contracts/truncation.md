@@ -28,7 +28,7 @@ When a payload is too large to inline, use exactly one of:
 2. **Offload and point** — persist the full bytes; the inline value is an
    envelope, breadcrumb, or path, not a chopped body. Reuse
    `ToolResultOffloader` / `gobby-results`, `get_handoff_context`,
-   `get_agent_capture`, `get_recall_memories`, or `get_session_messages`.
+   `get_agent_capture`, or `get_session_messages`.
 3. **Omit a whole item** that does not fit (a whole memory, message, or
    contributor). Never half-cut one item.
 4. **Intentional tail** — last N lines of a log, labeled as a tail, and only
@@ -60,5 +60,5 @@ These are not the bug. Do not “fix” them under this contract.
 - **#18813** — oversized MCP results offload to `gobby-results`.
 - **#19850** — skill-load bodies must arrive complete.
 - **#20333** — memory overflow between the inline budget and the ship limit
-  queues to `get_recall_memories`.
+  queued to `get_recall_memories` (path retired with automatic recall, #21009).
 - **#20395** — this residual sweep: do not prefix-slice existing outputs.

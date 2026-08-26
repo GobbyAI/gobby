@@ -7,7 +7,6 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from gobby.memory.context import build_memory_context
 from gobby.memory.protocol import MemoryRecord
 from gobby.memory.services.maintenance import export_markdown as _export_markdown
 from gobby.memory.services.maintenance import get_stats as _get_stats
@@ -223,18 +222,6 @@ class MemoryManagerFacadeMethods:
             caller=caller,
             include_global=include_global,
         )
-
-    async def search_memories_as_context(
-        self,
-        project_id: str | None = None,
-        limit: int = DEFAULT_SEARCH_LIMIT,
-    ) -> str:
-        memories = await self.search_memories(
-            project_id=project_id,
-            limit=limit,
-            caller="memory.context",
-        )
-        return build_memory_context(memories)
 
     async def _update_access_stats(self, memories: list[Memory]) -> None:
         await self._search_service.update_access_stats(memories)

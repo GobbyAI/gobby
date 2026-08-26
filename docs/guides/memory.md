@@ -80,8 +80,8 @@ The storage model accepts these common types:
 | `context` | Broader project context that should be injected as prose |
 
 The MCP and CLI accept a string `memory_type`, so additional values may be
-stored, but the formatter groups the four types above into the cleanest
-`<project-memory>` output.
+stored; search results carry the type so an agent can weigh a preference
+differently from a fact.
 
 ### Scope
 
@@ -287,8 +287,8 @@ Search uses the best available local infrastructure:
 4. Result metadata can include `similarity`, `search_via`, `ranking_score`,
    `raw_semantic_score`, `temporal_decay_factor`, and `ranking_mode`.
 
-`search_memories` supports an explicit `min_score` threshold. The automatic
-memory-recall rule currently uses `limit: 2` and `min_score: 0.7`.
+`search_memories` supports an explicit `min_score` threshold. Agents search on
+demand; no rule injects memories automatically.
 
 ### Knowledge Graph
 
@@ -312,7 +312,6 @@ memory:
   crossref_max_links: 5
   access_debounce_seconds: 60
   temporal_decay_half_life_days: 30.0
-  min_recall_score: 0.6
   code_link_min_score: 0.82
   kg:
     profile: feature_low
@@ -379,9 +378,8 @@ sequenceDiagram
     participant Agent
 
     User->>RuleEngine: turn_start(prompt)
-    RuleEngine->>Memory: search_memories(limit=2, min_score=0.7)
-    RuleEngine-->>Agent: inject <project-memory>
     RuleEngine-->>Agent: memory skill on the initial turn, concise reminder later
+    Agent->>Memory: search_memories(query) when the work needs prior knowledge
     Agent-->>User: response
     RuleEngine-->>Agent: post-close review request on turn_end (when tasks closed)
     RuleEngine->>Memory: build_turn_and_digest on turn_end
@@ -391,7 +389,6 @@ Current bundled memory rules:
 
 | Rule | Event | Behavior |
 | --- | --- | --- |
-| `memory-recall-on-prompt` | `turn_start` | Searches relevant memories and injects a `<project-memory>` block. |
 | `load-memory-guidance-on-initial-turn` | `turn_start` | Loads the `memory` skill until the first turn-end check passes. |
 | `check-memory-guidance-on-initial-stop` | `turn_end` | Blocks the first turn end once until the `memory` skill is loaded or its fetch failed. |
 | `remind-memory-guidance-on-later-turns` | `turn_start` | Injects a concise memory reminder once per later parent turn. |
@@ -399,27 +396,19 @@ Current bundled memory rules:
 | `review-closed-task-memories-on-stop` | `turn_end` | Blocks once per queued closure set with a `review_task_memories` request. |
 | `digest-on-response` | `turn_end` | Builds a turn record and appends to the session digest in the background. |
 | `digest-on-plan-turn-end` | `after_tool` | Builds a digest when plan mode ends through supported plan tools. |
-| `reset-memory-tracking-on-start` | `session_start` | Clears injected-memory tracking after clear, compact, or selected resume events. |
+| `reset-memory-tracking-on-start` | `session_start` | Clears injected review-lesson tracking after clear, compact, or selected resume events. |
 | `increment-parent-turn-seq` | `turn_start` | Increments the parent session turn sequence counter. |
 
 Author new lifecycle rules against semantic events such as `turn_start` and
 `turn_end`. Raw provider/runtime hook names are transport details.
 
-## Automatic Injection
+## Retrieval Is Agent-Driven
 
-When the prompt is long enough, `memory-recall-on-prompt` calls
-`search_memories` through the MCP proxy and injects the result:
-
-```markdown
-<project-memory>
-- Use task-linked commits for Gobby work. (score: 0.8123, via: semantic)
-- Markdown guide line count is not subject to the source-file monolith rule.
-</project-memory>
-```
-
-Injected memory IDs are tracked in the `injected_memory_ids` session variable so
-the same memory is not repeatedly injected in one session. Context reset rules
-clear that tracking after compaction or selected resumes.
+No rule injects project memories into a turn. Agents call `search_memories`
+when the work needs prior knowledge and judge each hit by its `similarity`,
+`memory_type`, and `rationale`. The `injected_memory_ids` session variable now
+tracks only rule-delivered review lessons; context reset rules clear it after
+compaction or selected resumes.
 
 ## Backup Format
 
@@ -449,10 +438,10 @@ Use `gobby memory backup` or MCP `backup_memories` to write the file. Use
 
 ## Troubleshooting
 
-### Memories are not injected
+### A search returns nothing useful
 
-Check that memory is enabled, the prompt has enough content to trigger recall,
-and the relevant memories are in the current project scope. Then search manually:
+Check that memory is enabled and the relevant memories are in the current
+project scope, then widen the search:
 
 ```python
 call_tool(server_name="gobby-memory", tool_name="search_memories", arguments={

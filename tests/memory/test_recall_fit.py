@@ -9,14 +9,11 @@ join in ``tests/storage/test_recall_signals.py``.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from collections.abc import Sequence
+from typing import Any
 
 import pytest
 
-from gobby.config.sessions import MemoryRecallConfig
-from gobby.memory.recall import MAX_RECALL_MEMORIES, MemoryRecallRunner
 from gobby.memory.recall_fit import (
     CandidateFilterParams,
     CandidateFilterReplayReport,
@@ -45,9 +42,6 @@ from gobby.memory.recall_fit_shrinkage import (
     select_shrinkage_requests,
 )
 from gobby.memory.services._search_constants import _GRAPH_CONFIDENCE_SELECTION_FLOOR
-from gobby.memory.services._search_results import build_results
-from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.memories import LocalMemoryManager, Memory, MemoryType
 
 pytestmark = pytest.mark.unit
 
@@ -820,74 +814,6 @@ def _signal_row(
 PROJECT_SCOPE = "44444444-4444-4444-8444-444444444444"
 
 
-def _stored_memory(memory_id: str) -> Memory:
-    """One stored memory as `build_results` hydrates it, before any scoring.
-
-    Aged a fixed span rather than pinned to a date, so the decay factor stays
-    meaningfully below 1 forever instead of drifting toward an underflow that
-    would eventually make the undecayed axis unrecoverable.
-    """
-    aged = datetime.now(UTC) - timedelta(days=45)
-    return Memory(
-        id=memory_id,
-        memory_type=MemoryType.FACT,
-        content=f"Recorded candidate {memory_id}.",
-        created_at=aged,
-        updated_at=aged,
-        project_id=PROJECT_SCOPE,
-        tags=["test"],
-    )
-
-
-class _FlatStorage:
-    """The slice of `LocalMemoryManager` that `build_results` actually calls."""
-
-    def __init__(self, memories: Sequence[Memory]) -> None:
-        self._memories = list(memories)
-
-    def get_memories(self, memory_ids: Sequence[str], *, scope: Any = None) -> list[Memory]:
-        wanted = set(memory_ids)
-        return [mem for mem in self._memories if mem.id in wanted]
-
-    def get_memory(self, memory_id: str, *, scope: Any = None) -> Memory:
-        for mem in self._memories:
-            if mem.id == memory_id:
-                return mem
-        raise ValueError(memory_id)
-
-
-def _recorded_rows(
-    candidates: Sequence[Memory], graph_score_map: Mapping[str, float]
-) -> list[dict[str, Any]]:
-    """Log scored candidates the way a recall signal row records them.
-
-    `graph_score` comes from the raw graph map rather than from the candidate,
-    because that is what the live logger writes: every graph-sourced hit gets
-    its undiscounted confidence recorded, including one the vector leg also
-    found. Reconstructing the gate from those rows is exactly what replay does.
-    """
-    presented = [
-        {"memory_id": mem.id, "excerpt": mem.content, "neutral_key": f"M{index + 1}"}
-        for index, mem in enumerate(candidates)
-    ]
-    return [
-        {
-            "recall_request_id": "req-1",
-            "memory_id": mem.id,
-            "project_id": None,
-            "rank": index,
-            "similarity": mem.similarity,
-            "temporal_decay_factor": mem.temporal_decay_factor,
-            "judge_useful": True,
-            "query_text": "recorded candidate set",
-            "presented": presented,
-            "search_via": mem.search_via,
-            "graph_score": graph_score_map.get(mem.id),
-        }
-        for index, mem in enumerate(candidates)
-    ]
-
-
 def _request_rows(
     request_id: str,
     query_text: str,
@@ -1266,79 +1192,6 @@ class TestMatchedStaticThreshold:
         )
 
         assert matched == 0.0
-
-
-# `graph-find` sits in the band where the two axes disagree: live admits it at
-# 0.70 >= 0.653, while judging its discounted cosine would face 0.70 * 0.9 =
-# 0.63 against the 0.70 selection floor and drop it. `graph-find-weak` clears
-# the 0.611 search floor and misses the selection floor, so it reaches the gate
-# and is refused there. `both-legs` carries a confidence high enough to rescue
-# anything, and must not: the vector leg already scored it.
-_GRAPH_SCORES = {"graph-find": 0.70, "graph-find-weak": 0.62, "both-legs": 0.95}
-
-
-class TestReplayMatchesTheLiveGate:
-    """The harness and the live gate agree on a recorded candidate set (#20879)."""
-
-    def _live_candidates(self) -> list[Memory]:
-        """Score one mixed candidate set through the real search result builder.
-
-        Hand-building `Memory(similarity=...)` would let the test assert
-        agreement with a live path it never ran; `build_results` is the step
-        that decides which axis each candidate carries, so the fixture has to
-        go through it.
-        """
-        stored = [
-            _stored_memory("semantic-strong"),
-            _stored_memory("semantic-weak"),
-            _stored_memory("graph-find"),
-            _stored_memory("graph-find-weak"),
-            _stored_memory("both-legs"),
-        ]
-        return build_results(
-            storage=cast(LocalMemoryManager, _FlatStorage(stored)),
-            merged_ids=[mem.id for mem in stored],
-            ranking_score_map={mem.id: 1.0 for mem in stored},
-            qdrant_score_map={
-                "semantic-strong": 0.88,
-                "semantic-weak": 0.60,
-                "both-legs": 0.60,
-            },
-            qdrant_set={"semantic-strong", "semantic-weak", "both-legs"},
-            keyword_set=set(),
-            graph_set={"graph-find", "graph-find-weak", "both-legs"},
-            graph_score_map=_GRAPH_SCORES,
-            rrf_applied=False,
-            project_id=None,
-            memory_type=None,
-            tags_all=None,
-            tags_any=None,
-            tags_none=None,
-            half_life=30.0,
-            effective_min_score=0.55,
-            limit=10,
-        )
-
-    def test_the_replayed_arm_selects_what_the_live_gate_selects(self) -> None:
-        candidates = self._live_candidates()
-
-        runner = MemoryRecallRunner(
-            db=cast(HubDatabase, None),
-            memory_manager=cast(Any, None),
-            config=MemoryRecallConfig(),
-        )
-        live_selected, _drops = runner._filter_ranked(candidates, frozenset())
-        live_ids = [payload["id"] for payload in live_selected]
-
-        replayed = select_by_static_constants(
-            candidate_replay_rows_from_signal_rows(_recorded_rows(candidates, _GRAPH_SCORES)),
-            min_similarity=MemoryRecallConfig().selection_min_score,
-            max_selected=MAX_RECALL_MEMORIES,
-        )
-
-        assert [row.memory_id for row, _score in replayed] == live_ids
-        assert "graph-find" in live_ids, "the fixture must exercise the confidence axis"
-        assert "semantic-strong" in live_ids, "the fixture must exercise the cosine axis"
 
 
 class TestCandidateFilterReplay:

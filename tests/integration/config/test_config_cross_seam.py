@@ -238,7 +238,7 @@ async def test_patch_preserves_switch_installed_overrides(world: _World) -> None
 async def test_yaml_export_import_round_trip(world: _World) -> None:
     await world.patch_and_reconcile(
         {
-            "memory_recall.candidates": [{"candidate": "codex/gpt-5.6-sol"}],
+            "digest.candidates": [{"candidate": "codex/gpt-5.6-sol"}],
             "ai.model_metadata_aliases": [
                 {
                     "provider": "codex",
@@ -254,14 +254,14 @@ async def test_yaml_export_import_round_trip(world: _World) -> None:
     with world.db.transaction() as transaction:
         transaction.execute(
             "UPDATE config_store SET value = %s, revision = %s WHERE key = %s",
-            (sparse_candidates, sparse_revision, "memory_recall.candidates"),
+            (sparse_candidates, sparse_revision, "digest.candidates"),
         )
         transaction.execute(
             "UPDATE config_state SET revision = %s WHERE id = %s",
             (sparse_revision, True),
         )
     await world.runtime.reconcile_local_commit(sparse_revision)
-    assert world.repository.read().overrides["memory_recall.candidates"] == [
+    assert world.repository.read().overrides["digest.candidates"] == [
         {"candidate": "codex/gpt-5.6-sol"}
     ]
 

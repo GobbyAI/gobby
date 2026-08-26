@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 MEMORY_RECALL_PRODUCER = "daemon_memory_recall"
 
-# How `MemoryRecallRunner` assembles the query it embeds. It lives here rather
+# How the recall signal path assembles the query it embeds. It lives here rather
 # than in `recall.py` because `recall.py` already imports `recall_signal_log`,
 # which needs to read this to stamp the cohort fence; defining it there would
 # close an import cycle. This module imports only stdlib.

@@ -95,7 +95,6 @@ def mock_memory_manager() -> MagicMock:
     manager.db = MagicMock()
     manager.content_exists = MagicMock(return_value=False)
     manager.config = MagicMock()
-    manager.config.min_recall_score = 0.0
     return manager
 
 
@@ -476,8 +475,7 @@ class TestSearchMemories:
     async def test_search_memories_does_not_apply_default_threshold(
         self, memory_registry, mock_memory_manager
     ):
-        """Manual search should not apply config.min_recall_score implicitly."""
-        mock_memory_manager.config.min_recall_score = 0.9
+        """Manual search applies no implicit similarity floor."""
         mock_memory_manager.search_memories.return_value = [
             MockMemory(
                 id="21000000-0000-4000-8000-000000000005", content="Memory 1", similarity=0.65

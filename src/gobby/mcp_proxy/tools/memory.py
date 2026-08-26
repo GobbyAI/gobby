@@ -23,7 +23,6 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.memory_dream import register_memory_dream_tools
-from gobby.mcp_proxy.tools.memory_recall import register_memory_recall_tool
 from gobby.mcp_proxy.tools.memory_review import register_memory_review_tools
 from gobby.mcp_proxy.tools.memory_scope import (
     get_current_project_id,
@@ -667,13 +666,6 @@ def create_memory_registry(
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    register_memory_recall_tool(
-        registry,
-        memory_manager_resolver,
-        config_resolver=lambda: (
-            config.memory_recall if (config := _config()) is not None else None
-        ),
-    )
     register_memory_dream_tools(
         registry,
         coordinator_resolver=dream_coordinator_resolver or (lambda: None),

@@ -8,16 +8,13 @@ Active memory-lifecycle rules:
 - digest-on-plan-turn-end: mcp_call on provider-specific plan boundaries
 - digest-catch-up-on-turn-start: mcp_call on turn_start to catch up undigested prior turns
 - reset-memory-tracking-on-start: set_variable on session_start
-- increment-parent-turn-seq: set_variable on turn_start before daemon recall
-- memory-recall-on-prompt: mcp_call on turn_start
+- increment-parent-turn-seq: set_variable on turn_start
 - load-memory-guidance-on-initial-turn: load_skill on the initial turn_start
 - check-memory-guidance-on-initial-stop: acknowledged block on the first turn_end
 - remind-memory-guidance-on-later-turns: inject_context on later parent turn_starts
 - queue-task-memory-review-after-close: set_variable on after_tool close_task
 - review-closed-task-memories-on-stop: acknowledged block on turn_end
 - guard-plan-memory-writes: one-time block on create_memory and update_memory
-- require-memory-recall-before-tool: block on before_tool
-- require-memory-recall-before-turn-end: block on turn_end
 - clear-memory-review-on-create: set_variable on before_tool
 
 """
@@ -50,21 +47,21 @@ MEMORY_RULES = {
     "digest-on-plan-turn-end",
     "reset-memory-tracking-on-start",
     "increment-parent-turn-seq",
-    "memory-recall-on-prompt",
     "load-memory-guidance-on-initial-turn",
     "check-memory-guidance-on-initial-stop",
     "remind-memory-guidance-on-later-turns",
     "queue-task-memory-review-after-close",
     "review-closed-task-memories-on-stop",
     "guard-plan-memory-writes",
-    "require-memory-recall-before-tool",
-    "require-memory-recall-before-turn-end",
 }
 
 REMOVED_HELPER_RULES = {
     "bootstrap-session-title-on-prompt",
     "cancel-stale-memory-recall-helpers",
     "memory-capture-nudge",
+    "memory-recall-on-prompt",
+    "require-memory-recall-before-tool",
+    "require-memory-recall-before-turn-end",
     "spawn-memory-recall-helper",
 }
 
@@ -268,63 +265,6 @@ class TestResetMemoryTrackingOnStart:
         assert "compact" in body.when
 
 
-# memory-recall-on-prompt
-# ═══════════════════════════════════════════════════════════════════════
-
-
-class TestMemoryRecallOnPrompt:
-    """Substantive recall runs synchronously once per parent turn."""
-
-    def test_inline_rule_uses_single_recall_tool_and_attempt_watermark(self, db, manager) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("memory-recall-on-prompt")
-        assert row is not None
-        body = RuleDefinitionBody.model_validate(row.definition_json)
-        assert body.event.value == "turn_start"
-        assert body.when is not None
-        assert "is_spawned_agent" in body.when
-        assert "memory_recall_attempted_turn_seq" in body.when
-        assert body.effects[0].type == "set_variable"
-        assert body.effects[0].variable == "memory_recall_attempted_turn_seq"
-        recall = body.effects[1]
-        assert recall.type == "mcp_call"
-        assert recall.server == "gobby-memory"
-        assert recall.tool == "recall_memories_for_prompt"
-        assert recall.background is False
-        assert recall.inject_result is True
-        assert all(effect.tool != "search_memories" for effect in body.effects)
-
-    def test_duplicate_hook_for_same_parent_turn_is_rejected(self, db, manager) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("memory-recall-on-prompt")
-        body = RuleDefinitionBody.model_validate(row.definition_json)
-        assert body.when is not None
-
-        first = SafeExpressionEvaluator(
-            {
-                "variables": {
-                    "is_spawned_agent": False,
-                    "parent_turn_seq": 7,
-                }
-            },
-            {},
-        )
-        duplicate = SafeExpressionEvaluator(
-            {
-                "variables": {
-                    "is_spawned_agent": False,
-                    "parent_turn_seq": 7,
-                    "memory_recall_attempted_turn_seq": 7,
-                }
-            },
-            {},
-        )
-
-        assert first.evaluate(body.when) is True
-        assert duplicate.evaluate(body.when) is False
-
-
-# ═══════════════════════════════════════════════════════════════════════
 # increment-parent-turn-seq
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -884,7 +824,7 @@ class TestGuardPlanMemoryWrites:
             "write satisfies that boundary."
         )
 
-    def test_condition_covers_planning_contexts_and_recall_precedence(
+    def test_condition_covers_planning_contexts_without_recall_gate(
         self,
         db: HubDatabase,
         manager: RuleDefinitionManager,
@@ -896,7 +836,7 @@ class TestGuardPlanMemoryWrites:
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.when is not None
         assert "variables.get('plan_mode')" in body.when
-        assert "not pending_memory_recall_request_id()" in body.when
+        assert "pending_memory_recall_request_id" not in body.when
         for agent_type in (
             "planner",
             "plan-adversary",
@@ -905,3 +845,97 @@ class TestGuardPlanMemoryWrites:
             "plan-enhancer-taskless",
         ):
             assert f"'{agent_type}'" in body.when
+
+
+# ---------------------------------------------------------------------------
+# guard-plan-memory-writes through the engine
+# ---------------------------------------------------------------------------
+
+_GUARD_SESSION_ID = "287cefb3-355b-4795-a64d-2f52bc4be2a8"
+_GUARD_EXTERNAL_SESSION_ID = "f9d7010b-681c-41cd-8b99-6c778f832831"
+
+
+def _memory_tool_event(tool_name: str) -> HookEvent:
+    return HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id=_GUARD_EXTERNAL_SESSION_ID,
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": "gobby-memory",
+                "tool_name": tool_name,
+                "arguments": {},
+            },
+        },
+        metadata={"_platform_session_id": _GUARD_SESSION_ID},
+    )
+
+
+@pytest.fixture
+def guard_engine(db: HubDatabase) -> RuleEngine:
+    _sync_bundled(db)
+    with db.transaction() as conn:
+        conn.execute("UPDATE rule_definitions SET enabled = FALSE")
+        conn.execute(
+            "UPDATE rule_definitions SET enabled = TRUE WHERE name = %s",
+            ("guard-plan-memory-writes",),
+        )
+    return RuleEngine(db)
+
+
+class TestGuardPlanMemoryWritesEngine:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("memory_tool", ["create_memory", "update_memory"])
+    @pytest.mark.parametrize(
+        "planning_context",
+        [
+            {"plan_mode": True},
+            {"_agent_type": "planner"},
+            {"_agent_type": "plan-enhancer-taskless"},
+        ],
+    )
+    async def test_plan_memory_write_blocks_once_then_allows_retry(
+        self,
+        guard_engine: RuleEngine,
+        memory_tool: str,
+        planning_context: dict[str, object],
+    ) -> None:
+        variables = dict(planning_context)
+        event = _memory_tool_event(memory_tool)
+
+        first = await guard_engine.evaluate(event, _GUARD_SESSION_ID, variables)
+        second = await guard_engine.evaluate(event, _GUARD_SESSION_ID, variables)
+
+        assert first.decision == "block"
+        assert first.reason is not None
+        assert "Use the plan artifact or evidence for plan drafts" in first.reason
+        assert variables["plan_memory_write_nudge_fired"] is True
+        assert second.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_plan_memory_guard_does_not_affect_normal_sessions(
+        self, guard_engine: RuleEngine
+    ) -> None:
+        variables: dict[str, object] = {}
+
+        result = await guard_engine.evaluate(
+            _memory_tool_event("create_memory"), _GUARD_SESSION_ID, variables
+        )
+
+        assert result.decision == "allow"
+        assert "plan_memory_write_nudge_fired" not in variables
+
+    @pytest.mark.asyncio
+    async def test_plan_memory_guard_does_not_affect_non_write_memory_tools(
+        self, guard_engine: RuleEngine
+    ) -> None:
+        variables: dict[str, object] = {"plan_mode": True}
+
+        result = await guard_engine.evaluate(
+            _memory_tool_event("search_memories"), _GUARD_SESSION_ID, variables
+        )
+
+        assert result.decision == "allow"
+        assert "plan_memory_write_nudge_fired" not in variables

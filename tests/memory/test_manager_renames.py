@@ -45,13 +45,6 @@ async def test_search_memories_exists(manager: MemoryManager) -> None:
 
 
 @pytest.mark.asyncio
-async def test_search_memories_as_context_exists(manager: MemoryManager) -> None:
-    """search_memories_as_context() should exist and return a string."""
-    result = await manager.search_memories_as_context(project_id=PROJECT_ID)
-    assert isinstance(result, str)
-
-
-@pytest.mark.asyncio
 async def test_delete_memory_exists(manager: MemoryManager) -> None:
     """delete_memory() should exist and return a bool."""
     result = await manager.delete_memory(MISSING_MEMORY_ID)

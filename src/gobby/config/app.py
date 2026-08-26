@@ -61,7 +61,6 @@ from gobby.config.servers import MCPClientProxyConfig, WebSocketSettings
 from gobby.config.sessions import (
     ChatHistoryConfig,
     DigestConfig,
-    MemoryRecallConfig,
     MemoryUsefulnessConfig,
     MessageTrackingConfig,
     SessionLifecycleConfig,
@@ -165,10 +164,12 @@ class DaemonConfig(BaseModel):
                 raise ValueError(
                     "conductor config has been removed. Remove the top-level conductor section."
                 )
-            if "memory_recall_helper" in data:
-                raise ValueError(
-                    "memory_recall_helper config has been removed. Use memory_recall instead."
-                )
+            for removed_key in ("memory_recall_helper", "memory_recall"):
+                if removed_key in data:
+                    raise ValueError(
+                        f"{removed_key} config has been removed. Automatic memory recall "
+                        "injection no longer exists; agents search gobby-memory directly."
+                    )
             if "memory_sync" in data:
                 raise ValueError("memory_sync config has been removed. Use memory_backup instead.")
             if "local" in data:
@@ -288,10 +289,6 @@ class DaemonConfig(BaseModel):
     digest: DigestConfig = Field(
         default_factory=DigestConfig,
         description="Rolling digest and title generation configuration",
-    )
-    memory_recall: MemoryRecallConfig = Field(
-        default_factory=MemoryRecallConfig,
-        description="Daemon-owned memory recall runner configuration",
     )
     memory_usefulness: MemoryUsefulnessConfig = Field(
         default_factory=MemoryUsefulnessConfig,

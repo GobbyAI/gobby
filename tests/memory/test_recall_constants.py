@@ -279,11 +279,10 @@ class TestSignalLogProvenance:
 
 
 def test_query_construction_version_is_shared_without_an_import_cycle() -> None:
-    """2.2.2: neither recall module owns the version, so 4.1 can read it from here."""
-    from gobby.memory import recall, recall_constants
+    """2.2.2: the constants module owns the version, so 4.1 can read it from here."""
+    from gobby.memory import recall_constants
 
     assert RECALL_QUERY_CONSTRUCTION_VERSION == "nl-embed-v1"
-    assert vars(recall)["RECALL_QUERY_CONSTRUCTION_VERSION"] is RECALL_QUERY_CONSTRUCTION_VERSION
     source = Path(recall_constants.__file__ or "").read_text(encoding="utf-8")
     assert "from gobby.memory.recall import" not in source
     assert "from gobby.memory.recall_signal_log import" not in source

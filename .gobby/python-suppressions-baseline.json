@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "site_count": 249,
+  "site_count": 248,
   "sites": [
     {
       "fingerprint": "0f66536411482f1a325ea75a3b12fe585163203aa948bb885f30281b874362a0",
@@ -1241,16 +1241,6 @@
         "arg-type"
       ],
       "statement": "result = await clustering_mod . recluster_project_entities ( Reader ( ) , Writer ( ) , \"project-1\" , is_global = False , min_cluster_size = 7 , min_samples = None , )"
-    },
-    {
-      "fingerprint": "e13b74661575bb3afce02dcc1bfa80dd290240d169e33401bdb3fe40b6bba2d8",
-      "path": "tests/memory/test_recall.py",
-      "symbol": "_runner",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "return MemoryRecallRunner ( db = db , memory_manager = manager , config = MemoryRecallConfig ( ) , )"
     },
     {
       "fingerprint": "11a8948a4c4c80c0c0aa9dab8d801a0bf780a465a4a5dad1ab0693a6ed29aade",

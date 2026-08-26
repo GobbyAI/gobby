@@ -568,8 +568,12 @@ def drift(
 @click.option(
     "--static-min-similarity",
     type=click.FloatRange(min=0.0, max=1.0),
-    default=None,
-    help="Static-constant arm's similarity floor (defaults to memory_recall.selection_min_score).",
+    default=0.70,
+    show_default=True,
+    help=(
+        "Static-constant arm's undecayed similarity floor. 0.70 is the last live "
+        "selection_min_score the retired inline-recall gate ran under."
+    ),
 )
 @click.option(
     "--static-graph-confidence-min-score",
@@ -603,7 +607,7 @@ def replay_candidate_filter_command(
     candidate_scope: str,
     filter_min_score: float,
     max_selected: int,
-    static_min_similarity: float | None,
+    static_min_similarity: float,
     static_graph_confidence_min_score: float,
     out_path: Path | None,
 ) -> None:
@@ -614,9 +618,6 @@ def replay_candidate_filter_command(
     behind pairwise accuracy. No live-path constant changes: this is an
     offline read of an already-fenced cohort.
     """
-    if static_min_similarity is None:
-        static_min_similarity = get_cli_runtime(ctx).config.memory_recall.selection_min_score
-
     weighting_mode = cast(WeightingMode, candidate_scope)
     cohort = GateCohort(
         label_source=label_source,
