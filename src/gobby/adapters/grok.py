@@ -104,12 +104,19 @@ class GrokAdapter(ACPHookAdapter):
     def translate_from_hook_response(
         self, response: HookResponse, hook_type: str | None = None
     ) -> dict[str, Any]:
-        """Translate Grok observe-only and recoverable subagent responses."""
+        """Translate Grok observe-only and recoverable stop responses."""
         canonical_hook = self.HOOK_EVENT_NAME_MAP.get(hook_type or "", hook_type or "")
-        if canonical_hook in {"permission_denied", "stop_failure", "subagent_start"}:
+        if canonical_hook in GROK_EVENT_MAP and canonical_hook not in {
+            "pre_tool_use",
+            "stop",
+            "subagent_stop",
+        }:
             return {"decision": "allow", "continue": True}
 
-        if canonical_hook == "subagent_stop" and response.decision in {"deny", "block"}:
+        if canonical_hook in {"stop", "subagent_stop"} and response.decision in {
+            "deny",
+            "block",
+        }:
             from gobby.adapters.base import normalize_adapter_response_reason
 
             reason = normalize_adapter_response_reason(
@@ -125,7 +132,7 @@ class GrokAdapter(ACPHookAdapter):
             }
             if response.context:
                 result["hookSpecificOutput"] = {
-                    "hookEventName": "SubagentStop",
+                    "hookEventName": ("Stop" if canonical_hook == "stop" else "SubagentStop"),
                     "additionalContext": truncate_context_for_adapter(
                         response.context,
                         provider=self.source,
@@ -139,19 +146,29 @@ class GrokAdapter(ACPHookAdapter):
             return result
 
         result = super().translate_from_hook_response(response, hook_type)
+        if canonical_hook not in {"pre_tool_use", "stop", "subagent_stop"}:
+            result.pop("hookSpecificOutput", None)
+            result.pop("additionalContext", None)
+            result.pop("systemMessage", None)
         if canonical_hook == "pre_tool_use":
+            result.pop("systemMessage", None)
             permission_decision = response.permission_decision
             if permission_decision is None and response.auto_approve:
                 permission_decision = "allow"
-            if response.modified_input is not None or permission_decision is not None:
+            denied = result.get("decision") == "deny" or permission_decision == "deny"
+            if permission_decision is not None or (
+                response.modified_input is not None and not denied
+            ):
                 hook_output = result.setdefault(
                     "hookSpecificOutput",
                     {"hookEventName": canonical_hook},
                 )
                 if permission_decision is not None:
                     hook_output["permissionDecision"] = permission_decision
-                if response.modified_input is not None and permission_decision != "deny":
+                if response.modified_input is not None and not denied:
                     hook_output["updatedInput"] = response.modified_input
+            if result.get("hookSpecificOutput") == {"hookEventName": canonical_hook}:
+                result.pop("hookSpecificOutput")
             if response.decision == "allow":
                 result.pop("decision", None)
         return result

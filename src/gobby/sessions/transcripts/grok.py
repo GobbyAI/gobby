@@ -15,6 +15,13 @@ from gobby.sessions.transcripts.base import (
     TokenUsage,
     _unknown_block_message,
 )
+from gobby.sessions.transcripts.tool_activity import (
+    ToolActivityEntry,
+    canonical_tool_name,
+    commit_outcome,
+    is_commit_producing,
+    render_tool_activity,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -174,11 +181,18 @@ class GrokTranscriptParser(BaseTranscriptParser):
         )
 
     def extract_last_messages(
-        self, turns: list[dict[str, Any]], num_pairs: int = 2
+        self,
+        turns: list[dict[str, Any]],
+        num_pairs: int = 2,
+        *,
+        include_tool_activity: bool = False,
     ) -> list[dict[str, Any]]:
-        messages: list[dict[str, str]] = []
+        messages: list[dict[str, Any]] = []
         for segment in reversed(_turn_segments(turns)):
-            messages = _segment_pair_messages(segment) + messages
+            messages = (
+                _segment_pair_messages(segment, include_tool_activity=include_tool_activity)
+                + messages
+            )
             if len(messages) >= num_pairs * 2:
                 break
         return messages
@@ -212,10 +226,19 @@ def _turn_segments(turns: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     return segments
 
 
-def _segment_pair_messages(segment: list[dict[str, Any]]) -> list[dict[str, str]]:
-    messages: list[dict[str, str]] = []
+def _segment_pair_messages(
+    segment: list[dict[str, Any]], *, include_tool_activity: bool = False
+) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = []
     accumulated = ""
     pending_user = False
+    current_user: dict[str, Any] | None = None
+    activity: list[ToolActivityEntry] = []
+    activity_by_id: dict[str, ToolActivityEntry] = {}
+
+    def attach_activity() -> None:
+        if include_tool_activity and current_user is not None and activity:
+            current_user["tool_activity"] = render_tool_activity(activity)
 
     def flush(*, empty_if_pending: bool = False) -> None:
         nonlocal accumulated, pending_user
@@ -233,8 +256,12 @@ def _segment_pair_messages(segment: list[dict[str, Any]]) -> list[dict[str, str]
             continue
         update_type = str(update.get("sessionUpdate") or "")
         if update_type == _USER_MESSAGE_CHUNK:
+            attach_activity()
             flush()
-            messages.append({"role": "user", "content": _extract_text(update.get("content"))})
+            current_user = {"role": "user", "content": _extract_text(update.get("content"))}
+            messages.append(current_user)
+            activity = []
+            activity_by_id = {}
             pending_user = True
         elif update_type == _AGENT_MESSAGE_CHUNK:
             text = _extract_text(update.get("content"))
@@ -245,6 +272,35 @@ def _segment_pair_messages(segment: list[dict[str, Any]]) -> list[dict[str, str]
                 continue
             accumulated += text[:remaining]
             pending_user = False
+        elif include_tool_activity and update_type == "tool_call" and current_user is not None:
+            name, tool_input = canonical_tool_name(update.get("title"), update.get("rawInput"))
+            tool_use_id = update.get("toolCallId")
+            entry = ToolActivityEntry(
+                name,
+                tool_input,
+                tool_use_id=tool_use_id if isinstance(tool_use_id, str) else None,
+            )
+            activity.append(entry)
+            if entry.tool_use_id:
+                activity_by_id[entry.tool_use_id] = entry
+        elif include_tool_activity and update_type == "tool_call_update":
+            tool_use_id = update.get("toolCallId")
+            completed_entry = activity_by_id.get(
+                tool_use_id if isinstance(tool_use_id, str) else ""
+            )
+            status = update.get("status")
+            if completed_entry is None or status not in {"completed", "failed"}:
+                continue
+            completed_entry.resolved = True
+            output = _extract_tool_result(update).get("output")
+            output_text = str(output) if output is not None else ""
+            if status == "failed":
+                completed_entry.error = output_text or "failed"
+            elif is_commit_producing(completed_entry.tool_name, completed_entry.tool_input):
+                completed_entry.outcome = commit_outcome(
+                    completed_entry.tool_name, completed_entry.tool_input, output_text
+                )
+    attach_activity()
     flush(empty_if_pending=True)
     return messages
 

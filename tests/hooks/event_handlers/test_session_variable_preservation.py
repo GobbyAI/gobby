@@ -17,6 +17,7 @@ import pytest
 
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.session_materialize import activate_deferred_session
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
@@ -497,32 +498,57 @@ def test_parent_turn_seq_preserved_across_activation(
     assert variables["parent_turn_seq"] == 42
 
 
+def _make_activity_event(data: dict | None = None) -> HookEvent:
+    return HookEvent(
+        event_type=HookEventType.BEFORE_AGENT,
+        session_id="external-activation",
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data=data or {},
+        metadata={},
+    )
+
+
+def _materialize_first_activity(
+    handlers: EventHandlers,
+    db: HubDatabase,
+    project_id: str,
+    tmp_path: Path,
+    data: dict,
+) -> str:
+    """Create the deferred row and run the first-activity activation body."""
+    session_id = _register_session(db, project_id, tmp_path)
+    event = _make_activity_event(data)
+    with patch.object(handlers, "_setup_code_index"):
+        handlers._activate_materialized_session(
+            event,
+            session_id,
+            project_id=project_id,
+            transcript_path=None,
+        )
+    assert event.metadata["_platform_session_id"] == session_id
+    return session_id
+
+
 @patch("gobby.workflows.agent_resolver.resolve_agent")
 def test_parent_turn_seq_seeded_on_first_activation(
     mock_resolve: MagicMock,
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
-    """First activation seeds parent_turn_seq when it is absent from existing variables."""
+    """First-activity materialization seeds parent_turn_seq when it is absent."""
     project_id = _make_project(temp_db, tmp_path)
     handlers = _make_real_event_handlers(temp_db, project_id)
     mock_resolve.return_value = _make_agent_body(variables={"mode_level": 1})
-    event = _make_hook_event(
-        {"cwd": str(tmp_path), "project_id": project_id, "agent_name_override": "default"}
+
+    session_id = _materialize_first_activity(
+        handlers,
+        temp_db,
+        project_id,
+        tmp_path,
+        {"cwd": str(tmp_path), "project_id": project_id, "agent_name_override": "default"},
     )
 
-    with (
-        patch.object(handlers, "_derive_transcript_path", return_value=None),
-        patch.object(handlers, "_setup_code_index"),
-        patch.object(
-            handlers,
-            "_compose_session_response",
-            return_value=HookResponse(decision="allow"),
-        ),
-    ):
-        handlers.handle_session_start(event)
-
-    session_id = event.metadata["_platform_session_id"]
     variables = SessionVariableManager(temp_db).get_variables(session_id)
     assert variables["parent_turn_seq"] == 0
     assert "memory_recall_helper_enabled" not in variables
@@ -535,24 +561,21 @@ def test_variables_seeded_when_activation_skipped_at_flow_level(
     """Skipped default-agent activation must still seed parent turn tracking."""
     project_id = _make_project(temp_db, tmp_path)
     handlers = _make_real_event_handlers(temp_db, project_id)
-    event = _make_hook_event(
-        {"cwd": str(tmp_path), "project_id": project_id, "skip_default_agent_activation": True}
-    )
 
-    with (
-        patch.object(handlers, "_derive_transcript_path", return_value=None),
-        patch.object(handlers, "_setup_code_index"),
-        patch.object(handlers, "_activate_default_agent", return_value=None) as activate,
-        patch.object(
+    with patch.object(handlers, "_activate_default_agent", return_value=None) as activate:
+        session_id = _materialize_first_activity(
             handlers,
-            "_compose_session_response",
-            return_value=HookResponse(decision="allow"),
-        ),
-    ):
-        handlers.handle_session_start(event)
+            temp_db,
+            project_id,
+            tmp_path,
+            {
+                "cwd": str(tmp_path),
+                "project_id": project_id,
+                "skip_default_agent_activation": True,
+            },
+        )
 
     activate.assert_not_called()
-    session_id = event.metadata["_platform_session_id"]
     variables = SessionVariableManager(temp_db).get_variables(session_id)
     assert variables["parent_turn_seq"] == 0
     assert "memory_recall_helper_enabled" not in variables
@@ -562,19 +585,23 @@ def test_full_session_start_marks_startup_context_injected(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
-    """Full startup context records durable evidence for later live resumes."""
+    """Full startup context delivered on first activity records durable evidence."""
     project_id = _make_project(temp_db, tmp_path)
     handlers = _make_real_event_handlers(temp_db, project_id)
-    event = _make_hook_event(
-        {
-            "cwd": str(tmp_path),
-            "project_id": project_id,
-            "skip_default_agent_activation": True,
-        }
+    session_id = _register_session(temp_db, project_id, tmp_path)
+    event = _make_activity_event(
+        {"cwd": str(tmp_path), "project_id": project_id, "skip_default_agent_activation": True}
     )
+    event.project_id = project_id
+    event.metadata["_platform_session_id"] = session_id
+    manager = MagicMock()
+    manager._event_handlers = handlers
+    manager._session_manager = SessionManager(temp_db)
+    manager._evaluate_workflow_rules.return_value = (None, None)
+    manager._evaluate_blocking_webhooks.return_value = None
+    manager.get_machine_id.return_value = LOCAL_MACHINE_ID
 
     with (
-        patch.object(handlers, "_derive_transcript_path", return_value=None),
         patch.object(handlers, "_setup_code_index"),
         patch.object(handlers, "_activate_default_agent", return_value=None) as activate,
         patch.object(
@@ -583,10 +610,9 @@ def test_full_session_start_marks_startup_context_injected(
             return_value=HookResponse(decision="allow"),
         ),
     ):
-        handlers.handle_session_start(event)
+        assert activate_deferred_session(manager, event, 0.0) is None
 
     activate.assert_not_called()
-    session_id = event.metadata["_platform_session_id"]
     variables = SessionVariableManager(temp_db).get_variables(session_id)
     session = SessionManager(temp_db).get(session_id)
     assert variables["_startup_context_injected"] is True

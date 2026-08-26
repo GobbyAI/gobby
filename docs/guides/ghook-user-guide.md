@@ -39,7 +39,8 @@ host AI CLI fires hook
       ├─ enriches input_data with terminal_context (for lifecycle hooks)
       ├─ writes envelope atomically to ~/.gobby/hooks/inbox/
       └─ POSTs Python-compatible hook payload to the Gobby daemon
-          ├─ 2xx → delete inbox file, return Python-dispatcher-compatible stdout/stderr/exit
+          ├─ 2xx → map provider action → write + flush stdout → delete inbox file
+          │        └─ mapping or stdout failure → retain inbox file for recovery
           └─ failure → leave inbox file, return Python-dispatcher-compatible stdout/stderr/exit
                        └─ daemon's drain worker replays on next tick
 ```
@@ -202,7 +203,17 @@ tmux pane env vars.
 | `grok` | `session_start`, `session_end`, `pre_compact` |
 | `agy` | `SessionStart` |
 
-Grok uses native snake_case hook types (e.g. `session_start`, `session_end`, `pre_compact`, `stop`, `pre_tool_use`) — distinct from Claude's hyphenated names and the PascalCase names the other CLIs use. Its malformed-JSON exit code is `2`.
+Grok uses native snake_case hook types (e.g. `session_start`, `session_end`,
+`pre_compact`, `stop`, `pre_tool_use`) — distinct from Claude's hyphenated
+names and the PascalCase names the other CLIs use. Its malformed-JSON exit code
+is `2`. Successful blocking `stop` and `subagent_stop` responses keep the full
+provider JSON on stdout with exit `0`, including
+`hookSpecificOutput.additionalContext`.
+
+For every CLI, a daemon 2xx becomes acknowledged only after the mapped provider
+action has been written and stdout has flushed. ghook then removes the inbox
+envelope. Mapping errors, stdout errors, and crashes before removal leave the
+file for daemon recovery.
 
 Droid uses PascalCase hook types (`SessionStart`, `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Notification`, `Stop`, `SubagentStop`, `PreCompact`, `SessionEnd`) and ghook forwards droid's stdin payload unchanged to the daemon with `source: "droid"`. Droid-specific block handling differs slightly from the other CLIs: daemon responses containing `continue:false` exit 2, while other meaningful response JSON is written to stdout with exit 0.
 

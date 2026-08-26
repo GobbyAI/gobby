@@ -44,7 +44,7 @@ def extract_result(response: dict[str, Any]) -> dict[str, Any]:
 
 
 def extract_internal_session_id(session_result: dict[str, Any]) -> str:
-    """Extract the database session ID from SessionStart hook context."""
+    """Extract the database session ID from first-activity hook context."""
     additional_context = session_result.get("hookSpecificOutput", {}).get("additionalContext", "")
     match = re.search(r"Gobby Session ID: #[0-9]+ \(([^)]+)\)", additional_context)
     assert match, f"Could not find session ID in response: {session_result}"
@@ -57,11 +57,21 @@ def read_project_id(project_path: Path) -> str:
 
 
 def register_project_session(cli_events, project_path: Path, external_id: str) -> str:
-    session_result = cli_events.session_start(
+    project_id = read_project_id(project_path)
+    start_result = cli_events.session_start(
         session_id=external_id,
-        project_id=read_project_id(project_path),
+        project_id=project_id,
+        cwd=str(project_path),
     )
-    return extract_internal_session_id(session_result)
+    assert start_result.get("continue") is True
+    prompt_result = cli_events.user_prompt_submit(
+        session_id=external_id,
+        prompt="hello",
+        source="claude",
+        project_id=project_id,
+        cwd=str(project_path),
+    )
+    return extract_internal_session_id(prompt_result)
 
 
 def wait_for_project_registration(daemon_instance: DaemonInstance, project_id: str) -> None:

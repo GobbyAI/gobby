@@ -400,10 +400,7 @@ GROK_HOOK_ALIASES: dict[str, str] = {
     "subagent_end": "subagent_stop",
 }
 
-GROK_ADDITIONAL_CONTEXT_HOOKS = frozenset(
-    {"session_start", "user_prompt_submit", "post_tool_use", "subagent_stop"}
-)
-GROK_SYSTEM_MESSAGE_CONTEXT_HOOKS = frozenset({"pre_tool_use", "pre_compact", "stop"})
+GROK_ADDITIONAL_CONTEXT_HOOKS = frozenset({"stop", "subagent_stop"})
 GROK_TRANSPORT_CAPABILITIES: dict[str, TransportCapabilityValue] = {
     "loadSession": True,
     "x.ai/fs_notify": True,
@@ -417,28 +414,16 @@ def _grok_capabilities() -> ProviderCapabilities:
     for hook_name, event_type in GROK_EVENT_MAP.items():
         if hook_name in GROK_ADDITIONAL_CONTEXT_HOOKS:
             context_channel = ContextChannel.ADDITIONAL_CONTEXT
-        elif hook_name in GROK_SYSTEM_MESSAGE_CONTEXT_HOOKS:
-            context_channel = ContextChannel.SYSTEM_MESSAGE
         else:
             context_channel = ContextChannel.NONE
 
-        decision_style = ProviderDecisionStyle.TOP_LEVEL_BLOCK
+        decision_style = ProviderDecisionStyle.NONE
         extra_fields: list[str] = []
         if hook_name == "pre_tool_use":
             decision_style = ProviderDecisionStyle.PRE_TOOL_USE
             extra_fields.extend(["permission_decision", "auto_approve", "modified_input"])
-        elif hook_name in {"pre_compact", "stop"}:
-            decision_style = ProviderDecisionStyle.HARD_STOP
-        elif hook_name in {
-            "session_start",
-            "user_prompt_submit",
-            "post_tool_use",
-            "post_compact",
-            "permission_denied",
-            "stop_failure",
-            "subagent_start",
-        }:
-            decision_style = ProviderDecisionStyle.NONE
+        elif hook_name in {"stop", "subagent_stop"}:
+            decision_style = ProviderDecisionStyle.TOP_LEVEL_BLOCK
 
         events[hook_name] = HookCapability(
             hook_name=hook_name,

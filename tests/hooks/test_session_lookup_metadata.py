@@ -10,7 +10,7 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.session_coordinator import SessionCoordinator
-from gobby.hooks.session_lookup import SessionLookupService
+from gobby.hooks.session_lookup import NON_MATERIALIZING_EVENTS, SessionLookupService
 from gobby.hooks.session_types import HookSessionManager
 from gobby.sessions.compact_identity import CompactIdentityResolution
 from gobby.storage.hub.protocol import HubDatabase
@@ -220,6 +220,87 @@ def test_user_prompt_submit_weak_context_recovers_tmux_session_without_registeri
     session_manager.backfill_terminal_context.assert_called_once_with(
         "tmux-capable-session",
         {"cwd": "/work/repos/gobby"},
+    )
+
+
+@pytest.mark.parametrize(
+    "event_type", sorted(NON_MATERIALIZING_EVENTS, key=lambda item: item.value)
+)
+def test_passive_hooks_do_not_materialize_idle_session(event_type: HookEventType) -> None:
+    session_manager = MagicMock()
+    session_manager.get_session_id.return_value = None
+    session_manager.lookup_session_id.return_value = None
+    session_manager.recover_session.return_value = None
+    session_task_manager = MagicMock()
+    resolve_project_id = MagicMock(return_value="project-1")
+    service = _service(session_manager, session_task_manager, resolve_project_id)
+    event = _event()
+    event.event_type = event_type
+
+    result = service.resolve(event)
+
+    assert result is None
+    assert "_session_just_materialized" not in event.metadata
+    session_manager.register_session.assert_not_called()
+
+
+def test_resolve_uncached_marks_only_the_create_branch() -> None:
+    session_manager = MagicMock()
+    session_manager.get_session_id.return_value = None
+    session_manager.lookup_session_id.return_value = "existing-session"
+    session_manager.backfill_terminal_context.return_value = (None, False)
+    session_task_manager = MagicMock()
+    session_task_manager.get_session_tasks.return_value = []
+    service = _service(
+        session_manager,
+        session_task_manager,
+        MagicMock(return_value="project-1"),
+    )
+    existing_event = _event()
+
+    assert service.resolve(existing_event) == "existing-session"
+    assert "_session_just_materialized" not in existing_event.metadata
+
+    session_manager.lookup_session_id.return_value = None
+    session_manager.recover_session.return_value = None
+    session_manager.register_session.return_value = "created-session"
+    created_event = _event()
+
+    assert service.resolve(created_event) == "created-session"
+    assert created_event.metadata["_session_just_materialized"] is True
+
+
+def test_materialized_row_uses_normalized_deferred_identity() -> None:
+    session_manager = MagicMock()
+    session_manager.get_session_id.return_value = None
+    session_manager.lookup_session_id.return_value = None
+    session_manager.recover_session.return_value = None
+    session_manager.register_session.return_value = "created-session"
+    session_manager.backfill_terminal_context.return_value = (None, False)
+    session_task_manager = MagicMock()
+    session_task_manager.get_session_tasks.return_value = []
+    service = _service(
+        session_manager,
+        session_task_manager,
+        MagicMock(return_value="project-1"),
+    )
+    event = _event()
+    event.event_type = HookEventType.BEFORE_AGENT
+    event.cwd = "/work/repos/gobby"
+    event.data = {
+        "transcript_path": "/tmp/transcript.jsonl",
+        "terminal_context": {"tmux_pane": "%1"},
+    }
+
+    assert service.resolve(event) == "created-session"
+    session_manager.register_session.assert_called_once_with(
+        external_id="claude-external",
+        machine_id="21000000-0000-4000-8000-000000000009",
+        project_id="project-1",
+        transcript_path="/tmp/transcript.jsonl",
+        source="claude",
+        project_path="/work/repos/gobby",
+        terminal_context={"tmux_pane": "%1", "cwd": "/work/repos/gobby"},
     )
 
 

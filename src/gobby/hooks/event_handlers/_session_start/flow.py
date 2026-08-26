@@ -15,37 +15,27 @@ from gobby.hooks.terminal_context import (
     hook_cwd,
     is_gobby_acp_child,
 )
-from gobby.sessions.clear_continuation import (
-    build_clear_self_continue_prompt,
-    schedule_clear_self_continuation,
-    seed_clear_handoff_variables,
-    take_clear_handoff_marker,
-)
 from gobby.storage.session_activity import reconcile_compact_session_activity
 from gobby.storage.sessions._update_sentinel import UNSET
 
 from .agents import _seed_parent_turn_seq, _seed_wiki_overview_var
-from .claims import preserve_task_claim_state
 from .context import classify_session_start_context, mark_startup_context_injected
 from .handoff import (
-    prepare_compact_continuation_variables,
     rebind_resumed_session_start,
     resolve_session_start_identity,
 )
-from .profile import seed_user_profile_content
-from .terminal_runtime import (
-    expire_stale_terminal_sessions_for_context,
-    session_start_is_nested_cli_child,
+from .materialize import (
+    _CONTEXT_MODE_METADATA_KEY,
+    _consume_pending_compact_self_continuation,
+    _reset_agent_context_injection,
+    _schedule_tmux_window_rename_for_session,
+    session_start_should_defer,
 )
+from .profile import seed_user_profile_content
+from .terminal_runtime import session_start_is_nested_cli_child
 from .transcripts import replace_session_message_processor
 
 SLOW_SESSION_START_THRESHOLD_MS = 1000
-
-
-def _compat_module() -> Any:
-    import gobby.hooks.event_handlers._session_start as session_start
-
-    return session_start
 
 
 def _log_session_start_lifecycle(
@@ -100,149 +90,6 @@ def _log_session_start_timing(
         )
     else:
         handler.logger.debug(timing_message)
-
-
-def _consume_pending_compact_self_continuation(
-    handler: Any,
-    *,
-    session_source: str,
-    pending_session_id: str | None,
-    target_session: Any,
-) -> bool:
-    """Consume compact_self markers after a confirmed compact restart."""
-    if session_source != "compact" or not handler._session_manager:
-        return False
-    return bool(
-        _compat_module().consume_and_schedule_compact_self_continuation(
-            handler._session_manager.db,
-            pending_session_id=pending_session_id,
-            target_session=target_session,
-            loop=getattr(handler._session_coordinator, "_event_loop", None),
-        )
-    )
-
-
-def _schedule_tmux_window_rename_for_session(handler: Any, session: Any) -> None:
-    terminal_context = getattr(session, "terminal_context", None)
-    pane = terminal_context.get("tmux_pane") if isinstance(terminal_context, dict) else None
-    if not pane:
-        handler.logger.debug(
-            "tmux window rename skipped for %s: no tmux_pane in terminal_context",
-            getattr(session, "ref", "?"),
-        )
-        return
-
-    title = getattr(session, "title", None) or ""
-    handler.logger.debug(
-        "Scheduling tmux window rename for %s pane=%s",
-        getattr(session, "ref", "?"),
-        pane,
-    )
-    handler.logger.debug(
-        "Scheduling tmux window rename title for %s: %r",
-        getattr(session, "ref", "?"),
-        title,
-    )
-    _compat_module().schedule_tmux_window_rename(
-        session,
-        title,
-        loop=getattr(handler._session_coordinator, "_event_loop", None),
-    )
-
-
-def _reset_agent_context_injection(handler: Any, session_id: str | None) -> None:
-    """Force the next before_agent hook to rehydrate prompt-facing agent context."""
-    if not session_id or not handler._session_manager:
-        return
-    try:
-        from gobby.workflows.state_manager import SessionVariableManager
-
-        SessionVariableManager(handler._session_manager.db).merge_variables(
-            session_id,
-            {
-                "_agent_context_injected": False,
-                "_agent_context_rehydrate_pending": True,
-                "wiki_overview_injected": False,
-            },
-        )
-    except (json.JSONDecodeError, KeyError, psycopg.Error) as e:
-        handler.logger.warning("Failed to reset agent context injection flag: %s", e)
-
-
-def _bind_clear_successor(handler: Any, resolution: Any, session_obj: Any) -> None:
-    """Take the clear marker and apply isolated successor side effects."""
-    predecessor = getattr(resolution, "clear_predecessor", None)
-    attempt_id = getattr(resolution, "clear_attempt_id", None)
-    if predecessor is None or not attempt_id or handler._session_manager is None:
-        return
-    predecessor_id = getattr(predecessor, "id", None)
-    successor_id = getattr(session_obj, "id", None)
-    if not isinstance(predecessor_id, str) or not isinstance(successor_id, str):
-        return
-    won = take_clear_handoff_marker(
-        handler._session_manager.db,
-        predecessor_id,
-        attempt_id=attempt_id,
-        successor_id=successor_id,
-    )
-    if not won:
-        handler.logger.warning(
-            "Clear handoff take lost for predecessor %s successor %s",
-            predecessor_id,
-            successor_id,
-            extra={
-                "event": "clear_handoff_take_lost",
-                "predecessor_id": predecessor_id,
-                "successor_id": successor_id,
-                "attempt_id": attempt_id,
-            },
-        )
-        return
-    try:
-        seed_clear_handoff_variables(handler._session_manager, successor_id, predecessor)
-    except Exception as e:
-        handler.logger.warning(
-            "Failed to seed clear handoff variables for successor %s: %s",
-            successor_id,
-            e,
-        )
-    try:
-        predecessor_vars: dict[str, Any] = {}
-        sv_mgr: Any | None = None
-        try:
-            from gobby.workflows.state_manager import SessionVariableManager
-
-            sv_mgr = SessionVariableManager(handler._session_manager.db)
-            predecessor_vars = dict(sv_mgr.get_variables(predecessor_id) or {})
-        except Exception:
-            predecessor_vars = {}
-        preserve_task_claim_state(
-            handler,
-            sv_mgr,
-            successor_id,
-            predecessor_id,
-            predecessor_vars,
-        )
-    except Exception as e:
-        handler.logger.warning(
-            "Failed to reassign clear task claims for successor %s: %s",
-            successor_id,
-            e,
-        )
-    try:
-        predecessor_ref = str(getattr(predecessor, "ref", None) or predecessor_id)
-        prompt = build_clear_self_continue_prompt(predecessor_ref=predecessor_ref)
-        schedule_clear_self_continuation(
-            session_obj,
-            prompt,
-            loop=getattr(handler._session_coordinator, "_event_loop", None),
-        )
-    except Exception as e:
-        handler.logger.warning(
-            "Failed to schedule clear continuation for successor %s: %s",
-            successor_id,
-            e,
-        )
 
 
 def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
@@ -427,6 +274,8 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     if resolution.blocked_reason:
         return HookResponse(decision="block", reason=resolution.blocked_reason)
     session_source = resolution.session_source
+    if session_start_should_defer(event, resolution.session, session_source):
+        return HookResponse(decision="allow")
     parent_session_id = input_data.get("parent_session_id")
 
     _t_register = time.monotonic()
@@ -541,140 +390,53 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             except Exception as e:
                 handler.logger.warning("Failed to mark parent session as expired: %s", e)
 
-    expire_stale_terminal_sessions_for_context(
-        handler,
-        session_id=session_id,
-        project_id=project_id,
-        terminal_context=terminal_context,
-    )
-
-    handler._setup_code_index(session_id, project_id)
-
-    if workflow_name and session_id:
-        handler.logger.debug(
-            "Pipeline workflow registered for session -- agent will execute via run_pipeline",
-            extra={"workflow_name": workflow_name, "session_id": session_id},
+    _t_activate = time.monotonic()
+    if session_id:
+        event.project_id = project_id
+        session_obj = handler._session_manager.get(session_id) if handler._session_manager else None
+        additional_context = handler._activate_materialized_session(
+            event,
+            session_id,
+            resolution=resolution,
+            session_obj=session_obj,
+            project_id=project_id,
+            transcript_path=transcript_path,
+            terminal_context=terminal_context,
         )
-
-    if session_id and handler._session_manager is not None:
-        try:
-            _seed_parent_turn_seq(handler, session_id)
-        except Exception as e:
-            handler.logger.warning("Failed to seed memory recall vars: %s", e)
-        _seed_wiki_overview_var(handler, session_id, project_id)
-
-    session_obj = None
-    if session_id and handler._session_manager:
-        session_obj = handler._session_manager.get(session_id)
-    if session_source == "clear" and session_obj is not None:
-        _bind_clear_successor(handler, resolution, session_obj)
-        if handler._session_manager is not None:
+        context_mode = str(event.metadata.pop(_CONTEXT_MODE_METADATA_KEY, "live"))
+        if session_source == "clear" and handler._session_manager:
             rebound = handler._session_manager.get(session_id)
             if rebound is not None:
                 session_obj = rebound
-    if session_obj:
-        _schedule_tmux_window_rename_for_session(handler, session_obj)
-
-    context_decision = classify_session_start_context(
-        handler,
-        session_id=session_id,
-        session=session_obj,
-        session_source=session_source,
-        is_existing_session=False,
-    )
-
-    _t_activate = time.monotonic()
-    if session_id and not input_data.get("skip_default_agent_activation"):
-        try:
-            agent_override = input_data.get("agent_name_override")
-            handler._activate_default_agent(
-                session_id,
-                cli_source,
-                project_id,
-                agent_name_override=agent_override,
+    else:
+        handler._setup_code_index(None, project_id)
+        session_obj = None
+        context_decision = classify_session_start_context(
+            handler,
+            session_id=None,
+            session=None,
+            session_source=session_source,
+            is_existing_session=False,
+        )
+        context_mode = context_decision.mode
+        additional_context = []
+        if event.task_id:
+            task_title = event.metadata.get("_task_title", "Unknown Task")
+            additional_context.extend(
+                [
+                    "\n## Active Task Context\n",
+                    f"You are working on task: {task_title} ({event.task_id})",
+                ]
             )
-        except Exception as e:
-            handler.logger.exception("Failed to activate default agent: %s", e)
-
-    if session_id and handler._session_manager is not None:
-        try:
-            seed_user_profile_content(handler, session_id)
-        except (KeyError, json.JSONDecodeError, psycopg.Error) as e:
-            handler.logger.warning("Failed to seed user profile vars: %s", e)
-
-    _t_track = time.monotonic()
-    if transcript_path and handler._session_coordinator:
-        try:
-            handler._session_coordinator.register_session(external_id)
-        except Exception as e:
-            handler.logger.exception("Failed to setup session tracking: %s", e)
 
     effective_parent_session_id = parent_session_id or getattr(
-        session_obj, "parent_session_id", None
+        session_obj,
+        "parent_session_id",
+        None,
     )
-    if session_id:
-        event.metadata["_platform_session_id"] = session_id
-    if effective_parent_session_id:
-        event.metadata["_parent_session_id"] = effective_parent_session_id
-
-    _t_msg_proc = time.monotonic()
-    message_processor = handler._resolve_message_processor()
-    if message_processor is not None and transcript_path and session_id:
-        try:
-            replace_session_message_processor(
-                handler,
-                session_id,
-                message_processor,
-                transcript_path,
-                source=cli_source,
-            )
-        except Exception as e:
-            handler.logger.warning("Failed to register session with message processor: %s", e)
-
-    _t_handoff = time.monotonic()
-    additional_context: list[str] = []
-    if context_decision.mode == "full":
-        _reset_agent_context_injection(handler, session_id)
-
-    try:
-        prepare_compact_continuation_variables(handler, session_id, session_source)
-    except (KeyError, json.JSONDecodeError, psycopg.Error) as e:
-        handler.logger.warning("Failed to prepare compact continuation vars: %s", e)
-
-    if session_id and project_id and not event.task_id:
-        claimed_ctx = handler._build_claimed_task_context(
-            session_id,
-            project_id,
-            compact=context_decision.mode == "live",
-        )
-        if claimed_ctx:
-            additional_context.append(claimed_ctx)
-
-    if event.task_id and session_id and handler._session_manager:
-        task_title = event.metadata.get("_task_title", "Unknown Task")
-        task_context_str = f"You are working on task: {task_title} ({event.task_id})"
-        try:
-            from gobby.workflows.state_manager import SessionVariableManager
-
-            SessionVariableManager(handler._session_manager.db).merge_variables(
-                session_id,
-                {"task_context": task_context_str},
-            )
-        except (KeyError, json.JSONDecodeError, psycopg.Error) as e:
-            handler.logger.warning("Failed to persist task context: %s", e)
-
-    if event.task_id:
-        task_title = event.metadata.get("_task_title", "Unknown Task")
-        additional_context.append("\n## Active Task Context\n")
-        additional_context.append(f"You are working on task: {task_title} ({event.task_id})")
-
-    if session_obj:
-        _consume_pending_compact_self_continuation(
-            handler,
-            session_source=session_source,
-            pending_session_id=session_id,
-            target_session=session_obj,
-        )
+    _t_track = time.monotonic()
+    _t_msg_proc = _t_track
+    _t_handoff = _t_track
 
     def _ms(a: float, b: float) -> int:
         return int((b - a) * 1000)
@@ -719,7 +481,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             terminal_context=terminal_context,
         ),
     )
-    if context_decision.mode == "full":
+    if context_mode == "full":
         mark_startup_context_injected(handler, session_id)
     return response
 

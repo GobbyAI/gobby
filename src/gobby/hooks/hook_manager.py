@@ -15,6 +15,7 @@ from uuid import UUID
 
 import psycopg
 
+from gobby.hooks import grok_pending_context
 from gobby.hooks.agent_run_ingress import (
     TERMINAL_INGRESS_HOOK_TYPES,
     validate_managed_agent_hook,
@@ -23,12 +24,13 @@ from gobby.hooks.broadcaster import schedule_hook_broadcast
 from gobby.hooks.dispatchers import mcp as mcp_dispatcher
 from gobby.hooks.dispatchers import webhook as webhook_dispatcher
 from gobby.hooks.effect_deadline import new_blocking_effect_deadline
-from gobby.hooks.events import HookEvent, HookEventType, HookResponse
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.factory import HookManagerFactory
 from gobby.hooks.health_gate import ensure_daemon_ready, ensure_daemon_ready_async
 from gobby.hooks.project_context import ProjectIdResolver, resolve_hook_project_context
 from gobby.hooks.rule_evaluator import WorkflowRuleEvaluator
 from gobby.hooks.session_activation import reconcile_session_activation
+from gobby.hooks.session_materialize import activate_deferred_session
 from gobby.hooks.session_ref_resolution import (
     resolve_session_refs_in_tool_input,
 )
@@ -412,6 +414,25 @@ class HookManager:
                         )
                     return HookResponse(decision="allow")
                 self._session_lookup.apply_session_mutations(event, platform_session_id)
+            if event.metadata.pop("_session_just_materialized", False):
+                try:
+                    materialized_response = activate_deferred_session(
+                        self,
+                        event,
+                        blocking_deadline,
+                    )
+                except Exception as e:
+                    self.logger.exception("Deferred session activation failed: %s", e)
+                    return HookResponse(decision="allow", reason=f"Handler error: {e}")
+                if event.source == SessionSource.GROK:
+                    event.metadata["_session_just_materialized"] = True
+                if materialized_response is not None:
+                    try:
+                        grok_pending_context.flush_response(self, event, materialized_response)
+                    except Exception as e:
+                        self.logger.exception("Grok materialization flush failed: %s", e)
+                    event.metadata.pop("_session_just_materialized", None)
+                    return materialized_response
             self._record_session_activity_pulse(event)
 
         self._record_machine_ingress(event)
@@ -427,6 +448,11 @@ class HookManager:
         if handler is None:
             self.logger.warning("No handler for event type: %s", event.event_type)
             return HookResponse(decision="allow")  # Fail-open for unknown events
+
+        try:
+            grok_pending_context.mark_briefing_turn(self, event)
+        except Exception as e:
+            self.logger.exception("Grok prompt classification failed: %s", e)
 
         # --- Evaluate rules and execute handler ---
         # For SESSION_START: run handler first to register the session and set
@@ -510,6 +536,20 @@ class HookManager:
         suppress_webhooks: bool = False,
     ) -> HookResponse:
         """Enrich and notify observers, preserving terminal block responses."""
+        startup_context = event.metadata.pop("_startup_context", None)
+        startup_system_message = event.metadata.pop("_startup_system_message", None)
+        if isinstance(startup_context, str) and startup_context:
+            if response.context:
+                response.context = f"{startup_context}\n\n{response.context}"
+            else:
+                response.context = startup_context
+        if (
+            response.system_message is None
+            and isinstance(startup_system_message, str)
+            and startup_system_message
+        ):
+            response.system_message = startup_system_message
+
         observer_response = copy.deepcopy(response) if preserve_original else response
         original_decision = response.decision
         original_reason = response.reason
@@ -536,6 +576,15 @@ class HookManager:
                 self._enricher.enrich(event, observer_response, workflow_context=workflow_context)
             except Exception as e:
                 self.logger.exception("Response enrichment failed: %s", e)
+
+        try:
+            grok_pending_context.process_response(
+                self,
+                event,
+                response if preserve_original else observer_response,
+            )
+        except Exception as e:
+            self.logger.exception("Grok pending-context stash failed: %s", e)
 
         if preserve_original:
             observer_response.decision = original_decision

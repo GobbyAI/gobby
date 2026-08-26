@@ -38,7 +38,8 @@ main.rs::run_gobby_owned
   └─ transport::post_and_cleanup
         │
         ├─ POST {daemon_url}/api/hooks/execute  (30s timeout)
-        ├─ 2xx     → fs::remove_file(envelope) → ExitCode::SUCCESS
+        ├─ 2xx     → map action → write + flush stdout → fs::remove_file(envelope)
+        │            └─ mapping/stdout failure → retain envelope
         └─ failure → leave envelope               → ExitCode::SUCCESS or 2
                     └─ planned Stop shutdown race may delete envelope + continue
                                                     (drain worker replays)
@@ -211,7 +212,14 @@ atomic_write(final_path, bytes):
 
 ### POST + Cleanup
 
-`post_and_cleanup` POSTs a Python-compatible hook payload to `{daemon_url}/api/hooks/execute` with a 30-second timeout. The envelope's `headers` are mirrored as HTTP headers. On 2xx, the inbox file is deleted; otherwise it's left in place.
+`post_and_cleanup` POSTs a Python-compatible hook payload to
+`{daemon_url}/api/hooks/execute` with a 30-second timeout. The envelope's
+`headers` are mirrored as HTTP headers. A 2xx returns the response body to
+`dispatch::delivered_action` for provider mapping. `action::emit_action` writes
+and flushes stdout, and `dispatch::run_gobby_owned` removes the inbox envelope
+only after that emission succeeds. Mapping failure, stdout write/flush failure,
+and transport failure retain the envelope for replay or Grok acknowledgment
+recovery.
 
 The 30s timeout is deliberately generous — the daemon may be doing real work (DB writes, agent reconciliation). `--detach` is the escape hatch for hooks where the host CLI tears down its session before 30s.
 

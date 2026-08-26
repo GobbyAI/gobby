@@ -9,6 +9,7 @@ import pytest
 
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEventType, HookResponse
+from gobby.hooks.session_materialize import activate_deferred_session
 
 from ._event_handler_helpers import make_event
 
@@ -50,7 +51,7 @@ class TestReturnValues:
         event_handlers: EventHandlers,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Lean session start carries the banner in system_message; context stays empty."""
+        """Lean first-activity startup carries the banner in system_message; context stays empty."""
         manager = MagicMock()
         manager.get_variables.return_value = {}
         manager.merge_variables.return_value = True
@@ -61,6 +62,8 @@ class TestReturnValues:
         )
         session_obj = MagicMock()
         session_obj.parent_session_id = None
+        session_obj.project_id = None
+        session_obj.transcript_path = None
         session_obj.status = "active"
 
         def get_session(session_id: str) -> MagicMock | None:
@@ -68,14 +71,24 @@ class TestReturnValues:
 
         session_manager = cast(Any, event_handlers._session_manager)
         session_manager.get.side_effect = get_session
-        session_manager.find_by_external_id.return_value = None
-        session_manager.find_by_external_id_any_project.return_value = None
-        session_manager.register_session.return_value = "sess-1"
-        event = make_event(HookEventType.SESSION_START)
-        response = event_handlers.handle_session_start(event)
-        assert response.context is None
-        assert response.system_message is not None
-        assert "Gobby Session ID" in response.system_message
+        hook_manager = MagicMock()
+        hook_manager._event_handlers = event_handlers
+        hook_manager._session_manager = session_manager
+        hook_manager._evaluate_workflow_rules.return_value = (None, None)
+        hook_manager._evaluate_blocking_webhooks.return_value = None
+        hook_manager.get_machine_id.return_value = "machine-1"
+        event = make_event(
+            HookEventType.BEFORE_AGENT,
+            data={"prompt": "Hello"},
+            metadata={"_platform_session_id": "sess-1"},
+        )
+
+        assert activate_deferred_session(hook_manager, event, 123.0) is None
+
+        assert event.metadata["_startup_context"] is None
+        system_message = event.metadata["_startup_system_message"]
+        assert system_message is not None
+        assert "Gobby Session ID" in system_message
 
 
 class TestNoManagerDependencies:

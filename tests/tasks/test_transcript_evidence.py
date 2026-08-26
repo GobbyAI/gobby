@@ -16,6 +16,7 @@ from gobby.tasks import transcript_evidence
 from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.transcript_evidence import (
     WINDOW_LOOKBACK,
+    EvidenceOutcome,
     TranscriptEdit,
     TranscriptEvidence,
     TranscriptEvidenceUnavailable,
@@ -905,6 +906,99 @@ def test_merge_orders_cross_session_evidence() -> None:
     ]
     assert merged.sessions == ("session-2", "session-1")
     assert merged.attempted_paths == ("/two", "/one")
+
+
+def _session_run(
+    session_id: str,
+    command: str,
+    completed_at: datetime,
+    order: int,
+    outcome: EvidenceOutcome = "success",
+) -> TranscriptValidationRun:
+    return TranscriptValidationRun(
+        session_id=session_id,
+        source="claude",
+        command=command,
+        categories=("test",),
+        matcher_id="pytest",
+        label="pytest",
+        outcome=outcome,
+        started_at=completed_at - timedelta(seconds=1),
+        completed_at=completed_at,
+        order=order,
+    )
+
+
+def _session_edit(session_id: str, path: str, timestamp: datetime, order: int) -> TranscriptEdit:
+    return TranscriptEdit(
+        session_id=session_id,
+        source="claude",
+        path=path,
+        timestamp=timestamp,
+        order=order,
+        tool_name="Edit",
+    )
+
+
+def test_merge_renumbers_order_across_sessions() -> None:
+    """A fresh closing session's low local order must not sort before the owner's history."""
+    owner = TranscriptEvidence(
+        edits=(_session_edit("owner", "tests/test_feature.py", BASE_TIME, 300),),
+        validation_runs=(
+            _session_run("owner", "pytest red", BASE_TIME + timedelta(seconds=1), 305, "failure"),
+        ),
+    )
+    closer = TranscriptEvidence(
+        edits=(_session_edit("closer", "src/feature.py", BASE_TIME + timedelta(seconds=2), 10),),
+        validation_runs=(
+            _session_run("closer", "pytest green", BASE_TIME + timedelta(seconds=3), 15),
+        ),
+    )
+
+    merged = merge_transcript_evidence(owner, closer)
+
+    merged_items: list[TranscriptEdit | TranscriptValidationRun] = [
+        *merged.edits,
+        *merged.validation_runs,
+    ]
+    positions = sorted(merged_items, key=lambda item: item.order)
+    assert [(item.session_id, item.order) for item in positions] == [
+        ("owner", 1),
+        ("owner", 2),
+        ("closer", 3),
+        ("closer", 4),
+    ]
+    assert [run.command for run in merged.validation_runs] == ["pytest red", "pytest green"]
+
+
+def test_merge_keeps_intra_session_order_under_clock_skew() -> None:
+    """Sessions interleave by timestamp, but a session's own transcript order never changes."""
+    skewed = TranscriptEvidence(
+        edits=(_session_edit("skewed", "src/a.py", BASE_TIME + timedelta(seconds=5), 1),),
+        validation_runs=(
+            _session_run("skewed", "pytest skewed", BASE_TIME + timedelta(seconds=4), 2),
+        ),
+    )
+    other = TranscriptEvidence(
+        edits=(
+            _session_edit(
+                "other", "src/b.py", BASE_TIME + timedelta(seconds=4, milliseconds=500), 1
+            ),
+        ),
+    )
+
+    merged = merge_transcript_evidence(skewed, other)
+
+    merged_items: list[TranscriptEdit | TranscriptValidationRun] = [
+        *merged.edits,
+        *merged.validation_runs,
+    ]
+    positions = sorted(merged_items, key=lambda item: item.order)
+    assert [(item.session_id, item.order) for item in positions] == [
+        ("other", 1),
+        ("skewed", 2),
+        ("skewed", 3),
+    ]
 
 
 # ---------------------------------------------------------------------------

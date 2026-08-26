@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -30,6 +31,11 @@ from gobby.hooks.inbox import (
     drain_hook_inbox_barrier,
     drain_hook_inbox_once,
 )
+from gobby.storage import workspace_machine_scope
+from gobby.storage.machines import LocalMachineManager
+from gobby.storage.sessions import SessionManager
+from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
 
@@ -50,6 +56,73 @@ def _valid_envelope() -> dict[str, Any]:
         "source": "claude",
         "headers": {},
     }
+
+
+@pytest.mark.parametrize("has_processed_marker", [False, True])
+@pytest.mark.asyncio
+async def test_grok_ack_pending_envelope_retains_then_settles_after_timeout(
+    has_processed_marker: bool,
+    tmp_path: Path,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    machine_id = "37e78430-9ce8-447b-8a68-0688cde4a884"
+    LocalMachineManager(session_manager.db).upsert_seen(machine_id, TEST_USER_ID)
+    monkeypatch.setattr(workspace_machine_scope, "require_machine_id", lambda: machine_id)
+    session_id = session_manager.register_session(
+        external_id="grok-inbox",
+        machine_id=machine_id,
+        source="grok",
+        project_id=sample_project["id"],
+    )
+    component = {"id": "turn:retained", "text": "retained", "message_ids": []}
+    variables = SessionVariableManager(session_manager.db)
+    variables.merge_variables(
+        session_id,
+        {
+            "grok_pending_delivery": {
+                "envelope_id": "n-0000000000001-grok-ack",
+                "components": [component],
+            }
+        },
+    )
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    envelope_id = "n-0000000000001-grok-ack"
+    envelope_path = inbox_dir / f"{envelope_id}.json"
+    envelope = _valid_envelope()
+    envelope["source"] = "grok"
+    envelope["input_data"] = {"session_id": "grok-inbox"}
+    envelope["headers"] = {"X-Gobby-Session-Id": session_id}
+    envelope_path.write_text(json.dumps(envelope), encoding="utf-8")
+    processed_dir = inbox_dir / "processed"
+    if has_processed_marker:
+        mark_envelope_processed(envelope_id, processed_dir=processed_dir)
+    app = FastAPI()
+    app.state.hook_manager = MagicMock(_session_manager=session_manager)
+
+    with patch("gobby.hooks.inbox._post_envelope", new_callable=AsyncMock) as post:
+        post.return_value.status_code = 500
+        replayed = await drain_hook_inbox_once(app, inbox_dir=inbox_dir)
+
+    assert replayed == 0
+    assert envelope_path.exists()
+    post.assert_not_awaited()
+
+    expired = datetime.now(UTC).timestamp() - 3_601
+    os.utime(envelope_path, (expired, expired))
+    with patch("gobby.hooks.inbox._post_envelope", new_callable=AsyncMock) as post:
+        post.return_value.status_code = 500
+        replayed = await drain_hook_inbox_once(app, inbox_dir=inbox_dir)
+
+    assert replayed == 0
+    assert not envelope_path.exists()
+    assert read_envelope_marker(envelope_id, processed_dir=processed_dir) is None
+    stored = variables.get_variables(session_id)
+    assert "grok_pending_delivery" not in stored
+    assert stored["grok_pending_briefing"] == [component]
+    post.assert_not_awaited()
 
 
 @pytest.mark.asyncio

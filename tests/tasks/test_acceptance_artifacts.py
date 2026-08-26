@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from gobby.tasks.acceptance_artifacts import (
     AcceptanceTest,
     evaluate_acceptance_artifacts,
     validate_structured_file_evidence,
+    validation_run_names_test,
 )
 from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
 from gobby.tasks.transcript_evidence import (
@@ -20,9 +22,51 @@ from gobby.tasks.transcript_evidence import (
     TranscriptEdit,
     TranscriptEvidence,
     TranscriptValidationRun,
+    merge_transcript_evidence,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_transcript_evidence_imports_in_fresh_interpreter() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; import gobby.tasks.transcript_evidence; "
+                "assert 'gobby.mcp_proxy.server' not in sys.modules, "
+                "'importing transcript evidence loaded the MCP server'; "
+                "from gobby.mcp_proxy import MCPClientManager, create_mcp_server"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_validation_run_names_class_qualified_pytest_node_id() -> None:
+    test = AcceptanceTest(
+        reference="tests/test_feature.py::TestFeature.test_feature",
+        path="tests/test_feature.py",
+        symbol="TestFeature.test_feature",
+        body="def test_feature(): assert feature()",
+    )
+
+    assert validation_run_names_test(
+        "pytest tests/test_feature.py::TestFeature::test_feature",
+        "E AssertionError: failed",
+        test,
+    )
+    assert not validation_run_names_test(
+        "pytest tests/test_other.py::TestFeature::test_feature",
+        "E AssertionError: failed",
+        test,
+    )
 
 
 def test_test_body_resolution_requests_gcode_json(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -244,6 +288,181 @@ def test_tdd_evidence_ignores_other_test_edits_before_red() -> None:
     assert result.green_runs
 
 
+def test_tdd_evidence_accepts_later_repair_cycle() -> None:
+    started = datetime(2026, 8, 21, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference="tests/test_feature.py::test_feature",
+        path="tests/test_feature.py",
+        symbol="test_feature",
+        body="def test_feature(): assert feature() == 1",
+    )
+    repaired = TranscriptEvidence(
+        edits=(
+            _edit("tests/test_feature.py", started + timedelta(hours=6), 1),
+            _edit("src/feature.py", started + timedelta(hours=6, minutes=1), 2),
+            _edit("tests/test_feature.py", started + timedelta(hours=6, minutes=2), 3),
+            _edit("src/feature.py", started + timedelta(hours=6, minutes=4), 5),
+        ),
+        validation_runs=(
+            _run(
+                test,
+                started + timedelta(minutes=3),
+                "failure",
+                "FAILED tests/test_feature.py::test_feature\nE assert 0 == 1",
+                4,
+            ),
+            _run(
+                test,
+                started + timedelta(minutes=5),
+                "success",
+                "tests/test_feature.py::test_feature PASSED",
+                6,
+            ),
+        ),
+    )
+
+    result = evaluate_tdd_evidence((test,), repaired)
+
+    assert result.passed is True
+    assert result.red_runs
+    assert result.green_runs
+
+    post_implementation_red = TranscriptEvidence(
+        edits=repaired.edits[:2],
+        validation_runs=repaired.validation_runs,
+    )
+    assert evaluate_tdd_evidence((test,), post_implementation_red).passed is False
+
+    test_only_green = TranscriptEvidence(
+        edits=(
+            _edit("tests/test_feature.py", started, 1),
+            _edit("tests/test_feature.py", started + timedelta(minutes=2), 3),
+        ),
+        validation_runs=(
+            _run(
+                test,
+                started + timedelta(minutes=1),
+                "failure",
+                "FAILED tests/test_feature.py::test_feature\nE assert 0 == 1",
+                2,
+            ),
+            _run(
+                test,
+                started + timedelta(minutes=3),
+                "success",
+                "tests/test_feature.py::test_feature PASSED",
+                4,
+            ),
+        ),
+    )
+    assert evaluate_tdd_evidence((test,), test_only_green).passed is False
+
+
+def test_tdd_evidence_merges_handoff_sessions_by_position() -> None:
+    """Owner red and closer green form one cycle once merged order is global."""
+    started = datetime(2026, 8, 21, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference="tests/test_feature.py::test_feature",
+        path="tests/test_feature.py",
+        symbol="test_feature",
+        body="def test_feature(): assert feature() == 1",
+    )
+    red_output = "FAILED tests/test_feature.py::test_feature\nE assert 0 == 1"
+    owner = TranscriptEvidence(
+        edits=(_edit("tests/test_feature.py", started, 300, session_id="owner"),),
+        validation_runs=(
+            _run(test, started + timedelta(minutes=1), "failure", red_output, 305, "owner"),
+        ),
+    )
+    closer = TranscriptEvidence(
+        edits=(_edit("src/feature.py", started + timedelta(minutes=2), 10, session_id="closer"),),
+        validation_runs=(
+            _run(
+                test,
+                started + timedelta(minutes=3),
+                "success",
+                "tests/test_feature.py::test_feature PASSED",
+                15,
+                "closer",
+            ),
+        ),
+    )
+
+    assert evaluate_tdd_evidence((test,), merge_transcript_evidence(owner, closer)).passed is True
+
+    stale_closer = TranscriptEvidence(
+        validation_runs=(
+            _run(
+                test,
+                started - timedelta(hours=1),
+                "success",
+                "tests/test_feature.py::test_feature PASSED",
+                150,
+                "closer",
+            ),
+        ),
+    )
+    owner_without_green = TranscriptEvidence(
+        edits=(
+            _edit("tests/test_feature.py", started, 3, session_id="owner"),
+            _edit("src/feature.py", started + timedelta(minutes=2), 8, session_id="owner"),
+        ),
+        validation_runs=(
+            _run(test, started + timedelta(minutes=1), "failure", red_output, 5, "owner"),
+        ),
+    )
+    stale = evaluate_tdd_evidence(
+        (test,), merge_transcript_evidence(owner_without_green, stale_closer)
+    )
+
+    assert stale.passed is False
+    assert stale.green_runs == ()
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["docs/plans/feature.md", ".gobby/test-types-baseline.json", "AGENTS.md", "crates/CLAUDE.md"],
+)
+def test_tdd_evidence_rejects_documentation_as_production_edit(path: str) -> None:
+    started = datetime(2026, 8, 21, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference="tests/test_feature.py::test_feature",
+        path="tests/test_feature.py",
+        symbol="test_feature",
+        body="def test_feature(): assert feature() == 1",
+    )
+    evidence = TranscriptEvidence(
+        edits=(
+            _edit("tests/test_feature.py", started, 1),
+            _edit(path, started + timedelta(minutes=2), 3),
+            _edit("tests/test_feature.py", started + timedelta(minutes=3), 4),
+        ),
+        validation_runs=(
+            _run(
+                test,
+                started + timedelta(minutes=1),
+                "failure",
+                "FAILED tests/test_feature.py::test_feature\nE assert 0 == 1",
+                2,
+            ),
+            _run(
+                test,
+                started + timedelta(minutes=4),
+                "success",
+                "tests/test_feature.py::test_feature PASSED",
+                5,
+            ),
+        ),
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    assert result.passed is False
+    assert result.findings == (
+        "tests/test_feature.py::test_feature: no production edit follows the test edit",
+    )
+
+
 def test_collection_import_error_is_missing_red_evidence() -> None:
     started = datetime(2026, 8, 21, tzinfo=UTC)
     test = AcceptanceTest(
@@ -282,9 +501,11 @@ def test_collection_import_error_is_missing_red_evidence() -> None:
     assert "missing assertion or panic failure" in result.findings[0]
 
 
-def _edit(path: str, timestamp: datetime, order: int) -> TranscriptEdit:
+def _edit(
+    path: str, timestamp: datetime, order: int, session_id: str = "session"
+) -> TranscriptEdit:
     return TranscriptEdit(
-        session_id="session",
+        session_id=session_id,
         source="codex",
         path=path,
         timestamp=timestamp,
@@ -299,9 +520,10 @@ def _run(
     outcome: EvidenceOutcome,
     output: str,
     order: int,
+    session_id: str = "session",
 ) -> TranscriptValidationRun:
     return TranscriptValidationRun(
-        session_id="session",
+        session_id=session_id,
         source="codex",
         command=f"pytest {test.reference}",
         categories=("test",),

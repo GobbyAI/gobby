@@ -540,3 +540,34 @@ def test_grok_open_and_cancelled_turn_pairs() -> None:
         ("finished prompt", "all done"),
         ("in flight", "partial"),
     ]
+
+
+def test_extract_last_messages_tool_activity_ledger() -> None:
+    turns = [
+        _user_chunk("inspect"),
+        _record(
+            {
+                "sessionUpdate": "tool_call",
+                "title": "run_terminal_command",
+                "toolCallId": "call-1",
+                "rawInput": {"command": "uv run pytest -k widget"},
+            }
+        ),
+        _record(
+            {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "call-1",
+                "status": "failed",
+                "content": {"type": "text", "text": "exit 1"},
+            }
+        ),
+        _agent_chunk("done"),
+    ]
+
+    messages = GrokTranscriptParser().extract_last_messages(turns, include_tool_activity=True)
+
+    assert messages[0]["tool_activity"].splitlines() == [
+        "[tool activity]",
+        "- Bash uv run pytest -k widget ! failed: exit 1",
+    ]
+    assert "run_terminal_command" not in messages[0]["tool_activity"]

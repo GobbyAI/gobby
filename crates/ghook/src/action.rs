@@ -12,6 +12,11 @@ pub(crate) struct HookAction {
     pub(crate) stderr_message: Option<String>,
 }
 
+pub(crate) struct EmittedAction {
+    pub(crate) exit_code: ExitCode,
+    pub(crate) stdout_succeeded: bool,
+}
+
 pub(crate) fn continue_action(source: &str, hook_type: &str) -> HookAction {
     if is_claude_worktree_create(source, hook_type) {
         return worktree_create_failure("daemon unavailable; no worktree was created");
@@ -52,17 +57,21 @@ fn skip_stdout_json(source: &str, hook_type: &str) -> String {
 }
 
 pub(crate) fn emit_empty_json() {
-    output::stdout(format_args!("{{}}\n"));
+    let _ = output::stdout(format_args!("{{}}\n"));
 }
 
-pub(crate) fn emit_action(action: HookAction) -> ExitCode {
-    if let Some(stdout_json) = action.stdout_json {
-        output::stdout(format_args!("{stdout_json}\n"));
-    }
+pub(crate) fn emit_action(action: HookAction) -> EmittedAction {
+    let stdout_succeeded = action
+        .stdout_json
+        .map(|stdout_json| output::stdout(format_args!("{stdout_json}\n")).is_ok())
+        .unwrap_or(true);
     if let Some(stderr_message) = action.stderr_message {
         output::stderr(format_args!("\n{}\n", stderr_message.trim_end()));
     }
-    ExitCode::from(action.exit_code)
+    EmittedAction {
+        exit_code: ExitCode::from(action.exit_code),
+        stdout_succeeded,
+    }
 }
 
 pub(crate) fn action_from_success_response(
@@ -94,6 +103,14 @@ pub(crate) fn action_from_success_response(
     // Qwen's current hook contract consumes structured allow and block JSON,
     // including Stop. A non-zero exit would discard that response body.
     if canonical_source == "qwen" {
+        return Ok(HookAction {
+            exit_code: 0,
+            stdout_json: is_python_truthy(&result).then_some(serialized),
+            stderr_message: None,
+        });
+    }
+
+    if canonical_source == "grok" && is_stop_hook(hook_type) {
         return Ok(HookAction {
             exit_code: 0,
             stdout_json: is_python_truthy(&result).then_some(serialized),
@@ -522,20 +539,16 @@ mod tests {
     }
 
     #[test]
-    fn action_from_success_treats_lowercase_stop_block_as_exit_two() {
-        let action = action_from_success_response(
-            "grok",
-            "stop",
-            r#"{"decision":"block","reason":"Grok blocked stop"}"#,
-        )
-        .unwrap();
+    fn action_from_success_preserves_grok_stop_block_json() {
+        let body = r#"{"decision":"block","reason":"Grok blocked stop"}"#;
+        let action = action_from_success_response("grok", "stop", body).unwrap();
 
         assert_eq!(
             action,
             HookAction {
-                exit_code: 2,
-                stdout_json: None,
-                stderr_message: Some("Grok blocked stop".to_string()),
+                exit_code: 0,
+                stdout_json: Some(body.to_string()),
+                stderr_message: None,
             }
         );
     }

@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import json
 import logging
-import shlex
 from collections import deque
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
@@ -44,6 +43,8 @@ from gobby.sessions.transcripts.base import (
     _unknown_block_message,
     annotate_record_source,
 )
+from gobby.sessions.transcripts.codex_items import normalize_command_execution
+from gobby.sessions.transcripts.tool_activity import event_activity_by_user_index
 
 logger = logging.getLogger(__name__)
 
@@ -86,36 +87,19 @@ def _command_execution_outcomes(
     item = payload.get("item")
     if not isinstance(item, dict) or item.get("type") != "CommandExecution":
         return []
-    command_parts = item.get("command")
-    exit_code = item.get("exit_code")
-    if (
-        not isinstance(command_parts, list)
-        or not command_parts
-        or not all(isinstance(part, str) for part in command_parts)
-        or not isinstance(exit_code, int)
-        or isinstance(exit_code, bool)
-    ):
+    normalized = normalize_command_execution(item)
+    if normalized is None or normalized.exit_code is None:
         return []
-    command = (
-        command_parts[-1]
-        if len(command_parts) >= 3 and command_parts[-2] in {"-c", "-lc"}
-        else shlex.join(command_parts)
-    )
-    output = item.get("aggregated_output")
-    if not isinstance(output, str):
-        stdout = item.get("stdout") if isinstance(item.get("stdout"), str) else ""
-        stderr = item.get("stderr") if isinstance(item.get("stderr"), str) else ""
-        output = f"{stdout}{stderr}"
     event_id = item.get("id")
     return [
         CodexNestedExecOutcome(
             outer_call_id=event_id if isinstance(event_id, str) else "command-execution",
             result_index=0,
-            command=command,
+            command=normalized.command,
             result={
-                "exit_code": exit_code,
-                "success": exit_code == 0,
-                "output": output,
+                "exit_code": normalized.exit_code,
+                "success": normalized.success,
+                "output": normalized.output,
                 "outcome_provenance": "codex.event_msg.command_execution",
             },
             timestamp=timestamp,
@@ -295,10 +279,16 @@ class CodexTranscriptParser(BaseTranscriptParser):
             self._execution_chain.hydrate_state(execution_chain_state)
 
     def extract_last_messages(
-        self, turns: list[dict[str, Any]], num_pairs: int = 2
+        self,
+        turns: list[dict[str, Any]],
+        num_pairs: int = 2,
+        *,
+        include_tool_activity: bool = False,
     ) -> list[dict[str, Any]]:
-        messages: list[dict[str, str]] = []
-        for turn in reversed(turns):
+        messages: list[dict[str, Any]] = []
+        activity = event_activity_by_user_index(self, turns) if include_tool_activity else {}
+        for turn_index in range(len(turns) - 1, -1, -1):
+            turn = turns[turn_index]
             if turn.get("type") != "response_item":
                 continue
             payload = turn.get("payload", {})
@@ -312,7 +302,10 @@ class CodexTranscriptParser(BaseTranscriptParser):
             content = _extract_text_from_blocks(payload.get("content", []))
             if _is_instruction_dump(content):
                 continue
-            messages.insert(0, {"role": role, "content": content})
+            extracted: dict[str, Any] = {"role": role, "content": content}
+            if role == "user" and turn_index in activity:
+                extracted["tool_activity"] = activity[turn_index]
+            messages.insert(0, extracted)
             if len(messages) >= num_pairs * 2:
                 break
         return messages

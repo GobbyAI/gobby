@@ -19,6 +19,7 @@ from gobby.sessions.transcripts.base import (
     UNMODELED_RECORD_CONTENT_TYPE,
     ParsedMessage,
     ParsedToolEvent,
+    TranscriptParser,
 )
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
@@ -2371,3 +2372,187 @@ class TestParserRegistry:
     def test_legacy_get_parser_rejects_unknown_or_empty_source(self, source: str) -> None:
         with pytest.raises(ValueError, match="Unsupported transcript source"):
             _get_parser(source)
+
+
+def test_tool_activity_flag_preserves_pair_shape() -> None:
+    parsers: list[TranscriptParser] = [
+        ClaudeTranscriptParser(),
+        CodexTranscriptParser(),
+        GrokTranscriptParser(),
+        QwenTranscriptParser(),
+        DroidTranscriptParser(),
+    ]
+    for parser in parsers:
+        assert parser.extract_last_messages([], include_tool_activity=True) == []
+
+    turns: list[dict[str, Any]] = [
+        {"message": {"role": "user", "content": "inspect it"}},
+        {
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "tool-1",
+                        "name": "Read",
+                        "input": {"file_path": "widget.py"},
+                    }
+                ],
+            }
+        },
+        {
+            "message": {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tool-1",
+                        "content": "contents",
+                    }
+                ],
+            }
+        },
+        {"message": {"role": "assistant", "content": "done"}},
+    ]
+    parser = ClaudeTranscriptParser()
+    without_ledger = parser.extract_last_messages(turns)
+    with_ledger = parser.extract_last_messages(turns, include_tool_activity=True)
+
+    assert [(message["role"], message["content"]) for message in with_ledger] == [
+        (message["role"], message["content"]) for message in without_ledger
+    ]
+    assert with_ledger[0]["tool_activity"].splitlines() == [
+        "[tool activity]",
+        "- Read widget.py",
+    ]
+    assert "tool_activity" not in with_ledger[1]
+
+
+def test_tool_only_turn_ledger_stays_on_its_user_message() -> None:
+    turns = [
+        {
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "update": {
+                    "sessionUpdate": "user_message_chunk",
+                    "content": {"type": "text", "text": "inspect"},
+                }
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "update": {
+                    "sessionUpdate": "tool_call",
+                    "title": "Read",
+                    "toolCallId": "call-1",
+                    "rawInput": {"path": "widget.py"},
+                }
+            },
+        },
+    ]
+
+    without_ledger = GrokTranscriptParser().extract_last_messages(turns)
+    with_ledger = GrokTranscriptParser().extract_last_messages(turns, include_tool_activity=True)
+
+    assert [(item["role"], item["content"]) for item in without_ledger] == [
+        ("user", "inspect"),
+        ("assistant", ""),
+    ]
+    assert [(item["role"], item["content"]) for item in with_ledger] == [
+        ("user", "inspect"),
+        ("assistant", ""),
+    ]
+    assert "- Read widget.py (no result recorded)" in with_ledger[0]["tool_activity"]
+    assert "tool_activity" not in with_ledger[1]
+
+
+def _codex_text_message(role: str, text: str) -> dict[str, Any]:
+    block_type = "input_text" if role == "user" else "output_text"
+    return {
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "role": role,
+            "content": [{"type": block_type, "text": text}],
+        },
+    }
+
+
+def test_codex_item_stream_precedence_in_ledger() -> None:
+    turns = [
+        _codex_text_message("user", "inspect"),
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "item_completed",
+                "item": {
+                    "type": "McpToolCall",
+                    "server": "gobby",
+                    "tool": "call_tool",
+                    "arguments": {
+                        "server_name": "gobby-tasks",
+                        "tool_name": "claim_task",
+                        "arguments": {"task_id": "#20728"},
+                    },
+                    "status": "completed",
+                    "result": {"success": True},
+                },
+            },
+        },
+        _codex_text_message("assistant", "done"),
+    ]
+
+    messages = CodexTranscriptParser().extract_last_messages(turns, include_tool_activity=True)
+
+    assert messages[0]["tool_activity"].splitlines() == [
+        "[tool activity]",
+        "- mcp gobby-tasks:claim_task task_id=#20728",
+    ]
+
+
+def test_codex_mixed_window_and_split_tail_precedence() -> None:
+    command = "tail -f /var/log/widget.log"
+    turns = [
+        _codex_text_message("user", "inspect"),
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call",
+                "name": "exec",
+                "call_id": "call-1",
+                "input": f'await tools.exec_command({{"cmd":{json.dumps(command)}}})',
+            },
+        },
+        _codex_text_message("assistant", "waiting"),
+    ]
+
+    messages = CodexTranscriptParser().extract_last_messages(turns, include_tool_activity=True)
+
+    assert messages[0]["tool_activity"].count(command) == 1
+    assert "(no result recorded)" in messages[0]["tool_activity"]
+    assert "await tools.exec_command" not in messages[0]["tool_activity"]
+
+
+def test_codex_item_canonicalization_matches_exec_adapter() -> None:
+    from gobby.sessions.transcripts.codex import _command_execution_outcomes
+    from gobby.sessions.transcripts.codex_items import normalize_command_execution
+
+    item = {
+        "type": "CommandExecution",
+        "id": "exec-1",
+        "command": ["/bin/zsh", "-lc", "uv run pytest -k widget"],
+        "exit_code": 1,
+        "stderr": "failed",
+    }
+    normalized = normalize_command_execution(item)
+    outcomes = _command_execution_outcomes(
+        {}, {"type": "item_completed", "item": item}, datetime.now(UTC)
+    )
+
+    assert normalized is not None
+    assert len(outcomes) == 1
+    assert outcomes[0].command == normalized.command
+    assert outcomes[0].result["success"] == normalized.success

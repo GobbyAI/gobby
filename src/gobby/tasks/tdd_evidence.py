@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from pathlib import PurePosixPath
 
 from gobby.tasks.acceptance_artifacts import (
     AcceptanceTest,
@@ -37,6 +37,20 @@ class TddEvidenceResult:
         }
 
 
+_DOCUMENTATION_ROOTS = frozenset({"docs", ".gobby"})
+_INSTRUCTION_FILES = frozenset({"agents.md", "claude.md", "readme.md", "changelog.md"})
+
+
+def _is_production_edit_path(path: str) -> bool:
+    """Implementation edits only: neither test convention, docs, nor repo instructions."""
+    if is_test_convention_path(path):
+        return False
+    pure = PurePosixPath(path)
+    if pure.parts and pure.parts[0].casefold() in _DOCUMENTATION_ROOTS:
+        return False
+    return pure.name.casefold() not in _INSTRUCTION_FILES
+
+
 def evaluate_tdd_evidence(
     tests: tuple[AcceptanceTest, ...],
     evidence: TranscriptEvidence,
@@ -51,32 +65,55 @@ def evaluate_tdd_evidence(
     for test in tests:
         test_edits = sorted(
             (edit for edit in evidence.edits if edit.path == test.path),
-            key=lambda edit: (edit.timestamp, edit.order),
+            key=lambda edit: edit.order,
         )
         if not test_edits:
             findings.append(f"{test.reference}: transcript has no edit of the named test")
             continue
-        test_edit = test_edits[0]
-        first_non_test_edit = min(
-            (
-                edit
-                for edit in evidence.edits
-                if not is_test_convention_path(edit.path) and edit.timestamp >= test_edit.timestamp
-            ),
-            key=lambda edit: (edit.timestamp, edit.order),
-            default=None,
-        )
-        red = _find_red_run(test, evidence, test_edit.timestamp, first_non_test_edit)
+        red = None
+        green = None
+        production_edit_seen = False
+        for test_edit in test_edits:
+            first_production_edit = min(
+                (
+                    edit
+                    for edit in evidence.edits
+                    if edit.order > test_edit.order and _is_production_edit_path(edit.path)
+                ),
+                key=lambda edit: edit.order,
+                default=None,
+            )
+            if first_production_edit is None:
+                continue
+            production_edit_seen = True
+            window_red = _find_red_run(test, evidence, test_edit.order, first_production_edit)
+            if window_red is None:
+                continue
+            if red is None:
+                red = window_red
+            green = _find_green_run(
+                test,
+                evidence,
+                window_red,
+                after_order=first_production_edit.order,
+            )
+            if green is not None:
+                red = window_red
+                break
+        if not production_edit_seen:
+            findings.append(f"{test.reference}: no production edit follows the test edit")
+            continue
         if red is None:
             findings.append(
                 f"{test.reference}: missing assertion or panic failure after the test edit "
-                "and before the first non-test edit"
+                "and before the first production edit"
             )
             continue
         red_commands.append(red.command)
-        green = _find_green_run(test, evidence, red)
         if green is None:
-            findings.append(f"{test.reference}: assertion-backed red has no later passing run")
+            findings.append(
+                f"{test.reference}: assertion-backed red has no later production edit and pass"
+            )
             continue
         green_commands.append(green.command)
 
@@ -92,13 +129,13 @@ def evaluate_tdd_evidence(
 def _find_red_run(
     test: AcceptanceTest,
     evidence: TranscriptEvidence,
-    test_edit_at: datetime,
+    test_edit_order: int,
     first_non_test_edit: TranscriptEdit | None,
 ) -> TranscriptValidationRun | None:
-    for run in sorted(evidence.validation_runs, key=lambda item: item.started_at):
-        if run.outcome != "failure" or run.started_at < test_edit_at:
+    for run in sorted(evidence.validation_runs, key=lambda item: item.order):
+        if run.outcome != "failure" or run.order <= test_edit_order:
             continue
-        if first_non_test_edit is not None and run.started_at >= first_non_test_edit.timestamp:
+        if first_non_test_edit is not None and run.order >= first_non_test_edit.order:
             continue
         if not validation_run_names_test(run.command, run.output, test):
             continue
@@ -111,9 +148,11 @@ def _find_green_run(
     test: AcceptanceTest,
     evidence: TranscriptEvidence,
     red: TranscriptValidationRun,
+    *,
+    after_order: int,
 ) -> TranscriptValidationRun | None:
-    for run in sorted(evidence.validation_runs, key=lambda item: item.completed_at):
-        if run.outcome != "success" or run.completed_at <= red.completed_at:
+    for run in sorted(evidence.validation_runs, key=lambda item: item.order):
+        if run.outcome != "success" or run.order <= max(red.order, after_order):
             continue
         if validation_run_covers_test(run.command, run.output, test):
             return run

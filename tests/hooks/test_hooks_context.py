@@ -8,6 +8,7 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
+from gobby.hooks.session_materialize import activate_deferred_session
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import Task
@@ -125,30 +126,22 @@ def test_hook_event_task_id(mock_hook_manager: Any) -> None:
 
 
 def test_session_start_context_injection(mock_hook_manager: Any) -> None:
-    """Test that task context is injected into SESSION_START context."""
+    """Task context rides the deferred startup packet staged on first activity."""
 
     external_id = "test-session-123"
     platform_session_id = "session-uuid"
     task_id = "task-123"
     task_title = "Important Feature"
 
-    # Mock session lookup
-    mock_hook_manager._session_manager.get_session_id.return_value = platform_session_id
-    # Mock register_session to return session_id
-    mock_hook_manager._session_manager.register_session.return_value = platform_session_id
-
-    # Mock active task
     mock_task = MagicMock(spec=Task)
     mock_task.id = task_id
     mock_task.title = task_title
     mock_task.status = "in_progress"
-
     mock_hook_manager._session_task_manager.get_session_tasks.return_value = [
         {"task": mock_task, "action": "worked_on"}
     ]
 
-    # Create SESSION_START event
-    event = HookEvent(
+    start_event = HookEvent(
         event_type=HookEventType.SESSION_START,
         session_id=external_id,
         source=SessionSource.CLAUDE,
@@ -157,16 +150,49 @@ def test_session_start_context_injection(mock_hook_manager: Any) -> None:
         task_id=task_id,
         metadata={"_task_title": task_title},
     )
-
     with patch.object(
         mock_hook_manager._project_id_resolver,
         "resolve",
         return_value="test-project-id",
     ):
-        response = mock_hook_manager._event_handlers.handle_session_start(event)
+        response = mock_hook_manager._event_handlers.handle_session_start(start_event)
 
-    # Verify context injection
-    assert response.metadata["task_id"] == task_id
-    assert response.context is not None
-    assert f"You are working on task: {task_title}" in response.context
-    assert f"({task_id})" in response.context
+    # A cold startup defers row creation, so nothing is injected yet.
+    assert response.decision == "allow"
+    assert response.context is None
+    assert "_platform_session_id" not in start_event.metadata
+
+    session_obj = MagicMock()
+    session_obj.project_id = "test-project-id"
+    session_obj.parent_session_id = None
+    session_obj.transcript_path = None
+    session_obj.status = "active"
+    mock_hook_manager._session_manager.get.return_value = session_obj
+    activity = HookEvent(
+        event_type=HookEventType.BEFORE_AGENT,
+        session_id=external_id,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={"prompt": "Hello", "cwd": "/tmp"},
+        project_id="test-project-id",
+        task_id=task_id,
+        metadata={"_task_title": task_title, "_platform_session_id": platform_session_id},
+    )
+    handlers = mock_hook_manager._event_handlers
+
+    with (
+        patch.object(mock_hook_manager, "_evaluate_workflow_rules", return_value=(None, None)),
+        patch.object(mock_hook_manager, "_evaluate_blocking_webhooks", return_value=None),
+        patch.object(
+            handlers,
+            "_compose_session_response",
+            wraps=handlers._compose_session_response,
+        ) as compose,
+    ):
+        assert activate_deferred_session(mock_hook_manager, activity, 123.0) is None
+
+    assert compose.call_args.kwargs["task_id"] == task_id
+    context = activity.metadata["_startup_context"]
+    assert context is not None
+    assert f"You are working on task: {task_title}" in context
+    assert f"({task_id})" in context

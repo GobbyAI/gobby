@@ -42,6 +42,26 @@ def _task_state_label(task: object) -> str:
     return current_stage["state"] if current_stage else "ready"
 
 
+#: Hooks a CLI emits without user activity. A deferred SessionStart followed by
+#: only these keeps ``sessions`` empty: Claude fires ``Setup``,
+#: ``InstructionsLoaded``, and ``MessageDisplay`` at boot, before any prompt,
+#: and none of them carries a context channel for the startup packet.
+NON_MATERIALIZING_EVENTS: frozenset[HookEventType] = frozenset(
+    {
+        HookEventType.SESSION_END,
+        HookEventType.NOTIFICATION,
+        HookEventType.SETUP,
+        HookEventType.INSTRUCTIONS_LOADED,
+        HookEventType.CONFIG_CHANGE,
+        HookEventType.CWD_CHANGED,
+        HookEventType.FILE_CHANGED,
+        HookEventType.DIRECTORY_ADDED,
+        HookEventType.MESSAGE_DISPLAY,
+        HookEventType.TEAMMATE_IDLE,
+    }
+)
+
+
 class SessionLookupService:
     """Resolves platform session IDs and enriches events with session context.
 
@@ -361,11 +381,12 @@ class SessionLookupService:
         if compact_handled:
             return compact_session_id
 
-        if event.event_type == HookEventType.SESSION_END:
+        if event.event_type in NON_MATERIALIZING_EVENTS:
             self._logger.info(
-                "Skipping auto-registration for orphaned SESSION_END: "
+                "Skipping auto-registration for orphaned %s: "
                 "external_id=%s not found in DB "
                 "(machine_id=%s, project_id=%s, source=%s).",
+                event.event_type.name,
                 external_id,
                 machine_id,
                 project_id,
@@ -408,15 +429,21 @@ class SessionLookupService:
             project_id,
             event.source.value,
         )
-        return self._session_manager.register_session(
+        cwd = hook_cwd(event.data, event.cwd)
+        raw_terminal_context = event.data.get("terminal_context")
+        terminal_context = raw_terminal_context if isinstance(raw_terminal_context, dict) else None
+        terminal_context = enrich_terminal_context_with_cwd(terminal_context, cwd)
+        platform_session_id = self._session_manager.register_session(
             external_id=external_id,
             machine_id=machine_id,
             project_id=project_id,
             transcript_path=event.data.get("transcript_path"),
             source=event.source.value,
-            project_path=event.data.get("cwd"),
-            terminal_context=event.data.get("terminal_context"),
+            project_path=cwd,
+            terminal_context=terminal_context,
         )
+        event.metadata["_session_just_materialized"] = True
+        return platform_session_id
 
     def _recover_compact_session(
         self,

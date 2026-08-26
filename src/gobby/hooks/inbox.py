@@ -15,6 +15,7 @@ from typing import Any, Final
 import httpx
 
 from gobby.cli.utils import get_gobby_home
+from gobby.hooks import grok_pending_context
 from gobby.hooks.envelope_dedupe import (
     ENVELOPE_ID_HEADER,
     DirectoryPruneResult,
@@ -27,6 +28,7 @@ from gobby.hooks.envelope_dedupe import (
     mark_envelope_processed,
     prune_directory_by_age,
     prune_processed_envelope_markers,
+    remove_envelope_marker,
 )
 from gobby.hooks.runtime_compat import SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION
 from gobby.utils.local_token import read_local_api_token
@@ -239,6 +241,26 @@ async def _drain_hook_inbox_once_locked(
     processed_dir = get_processed_envelope_dir(pending_dir)
     for path in pending_files:
         envelope_id = envelope_id_from_inbox_path(path)
+        envelope = _load_envelope(path)
+        if envelope is None:
+            continue
+
+        hook_manager = getattr(getattr(app, "state", None), "hook_manager", None)
+        if (
+            envelope_id
+            and hook_manager is not None
+            and grok_pending_context.handle_ack_pending_inbox_envelope(
+                hook_manager,
+                envelope_id,
+                envelope,
+                path,
+                remove_marker=lambda current_id: remove_envelope_marker(
+                    current_id,
+                    processed_dir=processed_dir,
+                ),
+            )
+        ):
+            continue
         if envelope_id and is_envelope_processed(envelope_id, processed_dir=processed_dir):
             logger.debug("Skipping already-processed hook inbox envelope %s", path.name)
             path.unlink(missing_ok=True)
@@ -257,10 +279,6 @@ async def _drain_hook_inbox_once_locked(
             processed_dir=processed_dir,
         ):
             logger.warning("Cleared stale processing marker for hook inbox envelope %s", path.name)
-
-        envelope = _load_envelope(path)
-        if envelope is None:
-            continue
 
         try:
             response = await _post_envelope(app, envelope, envelope_id=envelope_id)
@@ -282,6 +300,18 @@ async def _drain_hook_inbox_once_locked(
                 continue
 
             mark_envelope_processed(envelope_id, processed_dir=processed_dir)
+            if hook_manager is not None and grok_pending_context.handle_ack_pending_inbox_envelope(
+                hook_manager,
+                envelope_id,
+                envelope,
+                path,
+                remove_marker=lambda current_id: remove_envelope_marker(
+                    current_id,
+                    processed_dir=processed_dir,
+                ),
+            ):
+                replayed += 1
+                continue
             path.unlink(missing_ok=True)
             replayed += 1
             continue

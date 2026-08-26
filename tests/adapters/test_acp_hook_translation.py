@@ -612,40 +612,22 @@ class TestBlockToDenyMapping:
     ``"block"`` causes a fail-open error that silently disables rule enforcement.
     """
 
-    @pytest.mark.parametrize(
-        ("adapter_cls", "hook_type"),
-        [(GrokAdapter, "pre_tool_use"), (GrokAdapter, "post_tool_use")],
-        ids=["grok-pre-tool-use", "grok-post-tool-use"],
-    )
-    def test_block_maps_to_deny_recoverable(
-        self,
-        adapter_cls: type,
-        hook_type: str,
-    ) -> None:
+    def test_block_maps_to_deny_recoverable(self) -> None:
         """Block on a tool hook maps to deny with continue=True (recoverable)."""
-        adapter = adapter_cls()
+        adapter = GrokAdapter()
         response = HookResponse(decision="block", reason="Rule enforced")
-        result = adapter.translate_from_hook_response(response, hook_type=hook_type)
+        result = adapter.translate_from_hook_response(response, hook_type="pre_tool_use")
         assert result["decision"] == "deny"
         assert result["continue"] is True
         assert result["reason"] == "Rule enforced"
 
-    @pytest.mark.parametrize(
-        ("adapter_cls", "hook_type"),
-        [(GrokAdapter, "session_start"), (GrokAdapter, "stop")],
-        ids=["grok-session-start", "grok-stop"],
-    )
-    def test_block_maps_to_deny_hard_stop(
-        self,
-        adapter_cls: type,
-        hook_type: str,
-    ) -> None:
-        """Block on a non-tool hook maps to deny with continue=False (hard stop)."""
-        adapter = adapter_cls()
+    def test_block_maps_to_deny_hard_stop(self) -> None:
+        """Only Grok Stop maps a top-level block to recoverable feedback."""
+        adapter = GrokAdapter()
         response = HookResponse(decision="block", reason="Hard stop gate")
-        result = adapter.translate_from_hook_response(response, hook_type=hook_type)
-        assert result["decision"] == "deny"
-        assert result["continue"] is False
+        result = adapter.translate_from_hook_response(response, hook_type="stop")
+        assert result["decision"] == "block"
+        assert result["continue"] is True
         assert result["reason"] == "Hard stop gate"
 
 
@@ -759,6 +741,57 @@ class TestGrokCurrentHookContract:
             },
         }
 
+    def test_stop_block_is_recoverable_with_additional_context(self) -> None:
+        result = GrokAdapter().translate_from_hook_response(
+            HookResponse(decision="block", reason="Keep working", context="Run tests"),
+            hook_type="stop",
+        )
+
+        assert result == {
+            "continue": True,
+            "decision": "block",
+            "reason": "Keep working",
+            "hookSpecificOutput": {
+                "hookEventName": "Stop",
+                "additionalContext": "Run tests",
+            },
+        }
+
+    @pytest.mark.parametrize("hook_type", ["user_prompt_submit", "post_tool_use"])
+    def test_observe_hooks_ignore_response_context(self, hook_type: str) -> None:
+        result = GrokAdapter().translate_from_hook_response(
+            HookResponse(decision="allow", context="ignored"), hook_type=hook_type
+        )
+
+        assert "hookSpecificOutput" not in result
+        assert "additionalContext" not in result
+
+    def test_allowing_stop_has_no_force_stop_fields(self) -> None:
+        result = GrokAdapter().translate_from_hook_response(
+            HookResponse(decision="allow"), hook_type="stop"
+        )
+
+        assert result.get("decision") == "allow"
+        assert result.get("continue") is True
+        assert "stopReason" not in result
+
+    def test_pre_tool_use_omits_context_fields(self) -> None:
+        result = GrokAdapter().translate_from_hook_response(
+            HookResponse(
+                decision="allow",
+                context="ignored",
+                modified_input={"command": "git status"},
+            ),
+            hook_type="pre_tool_use",
+        )
+
+        assert result["hookSpecificOutput"] == {
+            "hookEventName": "pre_tool_use",
+            "updatedInput": {"command": "git status"},
+        }
+        assert "additionalContext" not in result
+        assert "systemMessage" not in result
+
     def test_subagent_stop_block_has_non_empty_fallback_reason(self) -> None:
         result = GrokAdapter().translate_from_hook_response(
             HookResponse(decision="block"), hook_type="subagent_stop"
@@ -767,3 +800,45 @@ class TestGrokCurrentHookContract:
         assert result["continue"] is True
         assert result["decision"] == "block"
         assert result["reason"]
+
+    @pytest.mark.parametrize(
+        "hook_type",
+        [
+            "session_start",
+            "user_prompt_submit",
+            "post_tool_use",
+            "post_tool_use_failure",
+            "pre_compact",
+            "post_compact",
+            "notification",
+            "permission_denied",
+            "stop_failure",
+            "subagent_start",
+            "session_end",
+        ],
+    )
+    def test_passive_hooks_ignore_block_responses(self, hook_type: str) -> None:
+        result = GrokAdapter().translate_from_hook_response(
+            HookResponse(decision="block", reason="ignored", context="ignored"),
+            hook_type=hook_type,
+        )
+
+        assert result == {"decision": "allow", "continue": True}
+
+    def test_pre_tool_use_deny_omits_context_and_updated_input(self) -> None:
+        result = GrokAdapter().translate_from_hook_response(
+            HookResponse(
+                decision="deny",
+                reason="Blocked by policy",
+                context="ignored",
+                system_message="ignored",
+                modified_input={"command": "rm -rf build"},
+            ),
+            hook_type="pre_tool_use",
+        )
+
+        assert result["decision"] == "deny"
+        assert result["reason"] == "Blocked by policy"
+        assert "additionalContext" not in result
+        assert "systemMessage" not in result
+        assert "hookSpecificOutput" not in result

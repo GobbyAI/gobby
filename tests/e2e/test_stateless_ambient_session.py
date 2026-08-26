@@ -145,10 +145,26 @@ def test_session_start_accepts_distinct_cli_and_lifecycle_sources(
         cwd=str(daemon_instance.project_dir),
         terminal_context=terminal_context,
     )
+    prompt_a = cli_events.user_prompt_submit(
+        external_a,
+        prompt="hello",
+        source="codex",
+        project_id=PROJECT_ID,
+        cwd=str(daemon_instance.project_dir),
+        terminal_context=terminal_context,
+    )
     start_b = cli_events.session_start(
         external_b,
         cli_source="codex",
         session_start_source="clear",
+        project_id=PROJECT_ID,
+        cwd=str(daemon_instance.project_dir),
+        terminal_context=terminal_context,
+    )
+    prompt_b = cli_events.user_prompt_submit(
+        external_b,
+        prompt="hello",
+        source="codex",
         project_id=PROJECT_ID,
         cwd=str(daemon_instance.project_dir),
         terminal_context=terminal_context,
@@ -167,7 +183,9 @@ def test_session_start_accepts_distinct_cli_and_lifecycle_sources(
     )
 
     assert start_a.get("continue") is True
+    assert prompt_a.get("continue") is True
     assert start_b.get("continue") is True
+    assert prompt_b.get("continue") is True
     assert session_a is not None
     assert session_a.status == "expired"
     assert session_b is not None
@@ -202,6 +220,15 @@ async def test_ambient_proxy_follows_clear_and_attributes_schema_lease(
         terminal_context=terminal_context,
     )
     assert start_a.get("continue") is True
+    prompt_a = cli_events.user_prompt_submit(
+        external_a,
+        prompt="hello",
+        source=cli_source,
+        project_id=PROJECT_ID,
+        cwd=str(daemon_instance.project_dir),
+        terminal_context=terminal_context,
+    )
+    assert prompt_a.get("continue") is True
 
     manager = SessionManager(postgres_db)
     variable_manager = SessionVariableManager(postgres_db)
@@ -223,6 +250,15 @@ async def test_ambient_proxy_follows_clear_and_attributes_schema_lease(
             terminal_context=terminal_context,
         )
         assert start_b.get("continue") is True
+        prompt_b = cli_events.user_prompt_submit(
+            external_b,
+            prompt="hello",
+            source=cli_source,
+            project_id=PROJECT_ID,
+            cwd=str(daemon_instance.project_dir),
+            terminal_context=terminal_context,
+        )
+        assert prompt_b.get("continue") is True
 
         session_a = _session_for(manager, external_a, cli_source)
         session_b = _session_for(manager, external_b, cli_source)
@@ -469,6 +505,15 @@ async def test_same_proxy_resolves_existing_session_after_daemon_restart(
         terminal_context=terminal_context,
     )
     assert start.get("continue") is True
+    prompt = cli_events.user_prompt_submit(
+        external_id,
+        prompt="hello",
+        source="codex",
+        project_id=PROJECT_ID,
+        cwd=str(daemon_instance.project_dir),
+        terminal_context=terminal_context,
+    )
+    assert prompt.get("continue") is True
 
     manager = SessionManager(postgres_db)
     variable_manager = SessionVariableManager(postgres_db)

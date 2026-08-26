@@ -32,6 +32,23 @@ Clear is a context-loss source for startup, memory, skill, and
 progressive-discovery resets. Persona, wiki, and skill-ledger injections re-arm
 on the successor because the successor is a new session.
 
+### Grok Context Delivery
+
+Grok observes passive hooks without consuming their stdout. Gobby therefore
+stores first-prompt, binding-SessionStart, and continuation-prompt renders in
+`grok_pending_briefing`; ordinary per-turn renders enter
+`grok_pending_turn_context`. The next envelope-backed `PreToolUse` denies once
+with the briefing and asks Grok to retry the same call. A text-only turn flushes
+briefing through one blocking `Stop` / `SubagentStop`, after which the empty
+buffer allows the next stop. Turn-context augments an existing stop gate and is
+dropped when Stop already allows.
+
+Briefing delivery is acknowledged by ghook removing its inbox envelope after
+the provider action has been written and flushed. The following Grok hook
+settles that claim: an absent file confirms delivery; a retained file requeues
+the claimed briefing. This gives at-least-once delivery across mapping, stdout,
+and process failures without adding a synthetic Stop loop.
+
 ## Deliberate Clear Exception
 
 `clear_self(handoff=...)` crosses the clear boundary once, on purpose:

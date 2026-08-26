@@ -1449,13 +1449,17 @@ class TestSessionStartClearBinding:
                 return_value=resolution,
             ),
             patch(
-                "gobby.hooks.event_handlers._session_start.flow.take_clear_handoff_marker",
+                "gobby.hooks.event_handlers._session_start.materialize.take_clear_handoff_marker",
                 return_value=True,
             ),
-            patch("gobby.hooks.event_handlers._session_start.flow.seed_clear_handoff_variables"),
-            patch("gobby.hooks.event_handlers._session_start.flow.preserve_task_claim_state"),
             patch(
-                "gobby.hooks.event_handlers._session_start.flow.schedule_clear_self_continuation",
+                "gobby.hooks.event_handlers._session_start.materialize.seed_clear_handoff_variables"
+            ),
+            patch(
+                "gobby.hooks.event_handlers._session_start.materialize.preserve_task_claim_state"
+            ),
+            patch(
+                "gobby.hooks.event_handlers._session_start.materialize.schedule_clear_self_continuation",
                 return_value=True,
             ),
         ):
@@ -1492,7 +1496,7 @@ class TestSessionStartClearBinding:
                 return_value=_clear_resolution(),
             ),
             patch(
-                "gobby.hooks.event_handlers._session_start.flow.take_clear_handoff_marker"
+                "gobby.hooks.event_handlers._session_start.materialize.take_clear_handoff_marker"
             ) as mock_take,
         ):
             response = handlers.handle_session_start(event)
@@ -1521,7 +1525,9 @@ class TestSessionStartClearBinding:
                 "gobby.hooks.event_handlers._session_start.flow.resolve_session_start_identity",
                 return_value=_clear_resolution(),
             ) as mock_resolve,
-            patch("gobby.hooks.event_handlers._session_start.flow.take_clear_handoff_marker"),
+            patch(
+                "gobby.hooks.event_handlers._session_start.materialize.take_clear_handoff_marker"
+            ),
         ):
             response = handlers.handle_session_start(event)
 
@@ -1582,17 +1588,17 @@ class TestSessionStartClearBinding:
                 return_value=_clear_resolution(predecessor=predecessor, attempt_id="attempt-lost"),
             ),
             patch(
-                "gobby.hooks.event_handlers._session_start.flow.take_clear_handoff_marker",
+                "gobby.hooks.event_handlers._session_start.materialize.take_clear_handoff_marker",
                 return_value=False,
             ) as mock_take,
             patch(
-                "gobby.hooks.event_handlers._session_start.flow.seed_clear_handoff_variables"
+                "gobby.hooks.event_handlers._session_start.materialize.seed_clear_handoff_variables"
             ) as mock_seed,
             patch(
-                "gobby.hooks.event_handlers._session_start.flow.preserve_task_claim_state"
+                "gobby.hooks.event_handlers._session_start.materialize.preserve_task_claim_state"
             ) as mock_claims,
             patch(
-                "gobby.hooks.event_handlers._session_start.flow.schedule_clear_self_continuation"
+                "gobby.hooks.event_handlers._session_start.materialize.schedule_clear_self_continuation"
             ) as mock_schedule,
         ):
             response = handlers.handle_session_start(event)
@@ -1631,17 +1637,17 @@ class TestSessionStartClearBinding:
                 return_value=_clear_resolution(predecessor=predecessor, attempt_id="attempt-win"),
             ),
             patch(
-                "gobby.hooks.event_handlers._session_start.flow.take_clear_handoff_marker",
+                "gobby.hooks.event_handlers._session_start.materialize.take_clear_handoff_marker",
                 return_value=True,
             ) as mock_take,
             patch(
-                "gobby.hooks.event_handlers._session_start.flow.seed_clear_handoff_variables"
+                "gobby.hooks.event_handlers._session_start.materialize.seed_clear_handoff_variables"
             ) as mock_seed,
             patch(
-                "gobby.hooks.event_handlers._session_start.flow.preserve_task_claim_state"
+                "gobby.hooks.event_handlers._session_start.materialize.preserve_task_claim_state"
             ) as mock_claims,
             patch(
-                "gobby.hooks.event_handlers._session_start.flow.schedule_clear_self_continuation",
+                "gobby.hooks.event_handlers._session_start.materialize.schedule_clear_self_continuation",
                 return_value=True,
             ) as mock_schedule,
         ):
@@ -1685,18 +1691,18 @@ class TestSessionStartClearBinding:
                 ),
             ),
             patch(
-                "gobby.hooks.event_handlers._session_start.flow.take_clear_handoff_marker",
+                "gobby.hooks.event_handlers._session_start.materialize.take_clear_handoff_marker",
                 return_value=True,
             ),
             patch(
-                "gobby.hooks.event_handlers._session_start.flow.seed_clear_handoff_variables",
+                "gobby.hooks.event_handlers._session_start.materialize.seed_clear_handoff_variables",
                 side_effect=RuntimeError("seed exploded"),
             ),
             patch(
-                "gobby.hooks.event_handlers._session_start.flow.preserve_task_claim_state"
+                "gobby.hooks.event_handlers._session_start.materialize.preserve_task_claim_state"
             ) as mock_claims,
             patch(
-                "gobby.hooks.event_handlers._session_start.flow.schedule_clear_self_continuation",
+                "gobby.hooks.event_handlers._session_start.materialize.schedule_clear_self_continuation",
                 return_value=True,
             ) as mock_schedule,
         ):
@@ -1772,10 +1778,12 @@ class TestSessionStartClearBinding:
         with (
             patch.object(handlers, "_activate_default_agent", return_value=None),
             patch(
-                "gobby.hooks.event_handlers._session_start.flow.schedule_clear_self_continuation",
+                "gobby.hooks.event_handlers._session_start.materialize.schedule_clear_self_continuation",
                 side_effect=_schedule,
             ),
-            patch("gobby.hooks.event_handlers._session_start.flow.preserve_task_claim_state"),
+            patch(
+                "gobby.hooks.event_handlers._session_start.materialize.preserve_task_claim_state"
+            ),
             ThreadPoolExecutor(max_workers=2) as pool,
         ):
             responses = list(pool.map(handlers.handle_session_start, events))
