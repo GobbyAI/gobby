@@ -138,3 +138,36 @@ def test_result_content_keeps_payloads_longer_than_500_characters() -> None:
         payload, sort_keys=True, separators=(",", ":"), default=str
     )
     assert _result_content(None) == ""
+
+
+def test_qwen_failed_function_response_in_ledger() -> None:
+    turns = [
+        {"type": "user", "message": {"parts": [{"text": "inspect"}]}},
+        {
+            "type": "assistant",
+            "message": {
+                "parts": [{"functionCall": {"id": "call-1", "name": "Read", "args": {"path": "x"}}}]
+            },
+        },
+        {
+            "type": "tool_result",
+            "toolCallResult": {"callId": "call-1", "status": "error"},
+            "message": {
+                "parts": [
+                    {
+                        "functionResponse": {
+                            "id": "call-1",
+                            "name": "Read",
+                            "response": {"error": "permission denied"},
+                        }
+                    }
+                ]
+            },
+        },
+        {"type": "assistant", "message": {"parts": [{"text": "done"}]}},
+    ]
+
+    messages = QwenTranscriptParser().extract_last_messages(turns, include_tool_activity=True)
+
+    assert "- Read x ! failed:" in messages[0]["tool_activity"]
+    assert "permission denied" in messages[0]["tool_activity"]

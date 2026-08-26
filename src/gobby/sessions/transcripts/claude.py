@@ -28,6 +28,7 @@ from gobby.sessions.transcripts.claude_records import (
     fallback_content,
     system_event_content,
 )
+from gobby.sessions.transcripts.tool_activity import claude_activity_by_user_index
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +141,11 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
         return "Claude Code hook blocked this tool call."
 
     def extract_last_messages(
-        self, turns: list[dict[str, Any]], num_pairs: int = 2
+        self,
+        turns: list[dict[str, Any]],
+        num_pairs: int = 2,
+        *,
+        include_tool_activity: bool = False,
     ) -> list[dict[str, Any]]:
         """
         Extract last N user<>agent message pairs from transcript.
@@ -159,8 +164,10 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             >>> len(last_msgs)
             6  # 3 pairs = 6 messages
         """
-        messages: list[dict[str, str]] = []
-        for turn in reversed(turns):
+        messages: list[dict[str, Any]] = []
+        activity = claude_activity_by_user_index(turns) if include_tool_activity else {}
+        for turn_index in range(len(turns) - 1, -1, -1):
+            turn = turns[turn_index]
             if self._hook_blocking_attachment(turn) is not None:
                 continue
 
@@ -189,7 +196,10 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
                 if not content:
                     continue
 
-                messages.insert(0, {"role": role, "content": content})
+                extracted: dict[str, Any] = {"role": role, "content": content}
+                if role == "user" and turn_index in activity:
+                    extracted["tool_activity"] = activity[turn_index]
+                messages.insert(0, extracted)
                 if len(messages) >= num_pairs * 2:
                     break
         return messages

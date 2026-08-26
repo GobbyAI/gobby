@@ -22,6 +22,7 @@ from gobby.sessions.transcripts.base import (
     _unknown_block_message,
     annotate_record_source,
 )
+from gobby.sessions.transcripts.tool_activity import event_activity_by_user_index
 
 logger = logging.getLogger(__name__)
 
@@ -417,11 +418,17 @@ class DroidTranscriptParser(BaseTranscriptParser):
         return []
 
     def extract_last_messages(
-        self, turns: list[dict[str, Any]], num_pairs: int = 2
+        self,
+        turns: list[dict[str, Any]],
+        num_pairs: int = 2,
+        *,
+        include_tool_activity: bool = False,
     ) -> list[dict[str, Any]]:
         """Return the last N user/assistant text turns in chronological order."""
         messages: list[dict[str, Any]] = []
-        for turn in reversed(turns):
+        activity = event_activity_by_user_index(self, turns) if include_tool_activity else {}
+        for turn_index in range(len(turns) - 1, -1, -1):
+            turn = turns[turn_index]
             if turn.get("type") != "message":
                 continue
             message = turn.get("message") or {}
@@ -448,7 +455,10 @@ class DroidTranscriptParser(BaseTranscriptParser):
 
             if not text_parts:
                 continue
-            messages.append({"role": role, "content": "\n\n".join(text_parts)})
+            extracted: dict[str, Any] = {"role": role, "content": "\n\n".join(text_parts)}
+            if role == "user" and turn_index in activity:
+                extracted["tool_activity"] = activity[turn_index]
+            messages.append(extracted)
             if len(messages) >= num_pairs * 2:
                 break
 

@@ -323,7 +323,11 @@ class TranscriptParser(Protocol):
     def hydrate_state(self, state: Mapping[str, Any]) -> None: ...
 
     def extract_last_messages(
-        self, turns: list[dict[str, Any]], num_pairs: int = 2
+        self,
+        turns: list[dict[str, Any]],
+        num_pairs: int = 2,
+        *,
+        include_tool_activity: bool = False,
     ) -> list[dict[str, Any]]:
         """
         Extract last N user<>agent message pairs from transcript.
@@ -506,3 +510,14 @@ class BaseTranscriptParser:
     def parse_line(self, line: str, index: int) -> ParsedMessage | ParsedToolEvent | None:
         """To be implemented by subclasses."""
         raise NotImplementedError("Subclasses must implement parse_line")
+
+
+class TranscriptReadError(ValueError):
+    """A durable corrupt transcript record shared by forward and reverse readers."""
+
+    def __init__(self, path: Path, byte_offset: int, line_number: int | None = None) -> None:
+        self.path = path
+        self.byte_offset = byte_offset
+        self.line_number = line_number
+        line = f", line {line_number}" if line_number is not None else ""
+        super().__init__(f"Corrupt transcript record in {path} at byte {byte_offset}{line}")

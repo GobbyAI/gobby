@@ -19,6 +19,7 @@ from gobby.sessions.transcripts.base import (
     _unknown_block_message,
     annotate_record_source,
 )
+from gobby.sessions.transcripts.tool_activity import event_activity_by_user_index
 
 _IGNORED_SYSTEM_SUBTYPES = {"file_history_snapshot", "ui_telemetry"}
 
@@ -353,11 +354,17 @@ class QwenTranscriptParser(BaseTranscriptParser):
             )
 
     def extract_last_messages(
-        self, turns: list[dict[str, Any]], num_pairs: int = 2
+        self,
+        turns: list[dict[str, Any]],
+        num_pairs: int = 2,
+        *,
+        include_tool_activity: bool = False,
     ) -> list[dict[str, Any]]:
         """Extract visible text and tool-call labels from current Qwen envelopes."""
-        messages: list[dict[str, str]] = []
-        for turn in reversed(turns):
+        messages: list[dict[str, Any]] = []
+        activity = event_activity_by_user_index(self, turns) if include_tool_activity else {}
+        for turn_index in range(len(turns) - 1, -1, -1):
+            turn = turns[turn_index]
             record_type = turn.get("type")
             if record_type not in {"assistant", "user"}:
                 continue
@@ -384,7 +391,10 @@ class QwenTranscriptParser(BaseTranscriptParser):
             if not content:
                 continue
             role = "assistant" if record_type == "assistant" else "user"
-            messages.insert(0, {"role": role, "content": content})
+            extracted: dict[str, Any] = {"role": role, "content": content}
+            if role == "user" and turn_index in activity:
+                extracted["tool_activity"] = activity[turn_index]
+            messages.insert(0, extracted)
             if len(messages) >= num_pairs * 2:
                 break
         return messages
