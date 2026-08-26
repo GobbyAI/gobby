@@ -124,3 +124,59 @@ def test_unreplayable_set_falls_back_to_the_per_commit_stream(repo: Path) -> Non
 def test_unresolvable_commit_raises(repo: Path) -> None:
     with pytest.raises(RuntimeError, match="git show failed"):
         collect_commit_diff_text(["0" * 40], cwd=repo)
+
+
+def test_landing_merge_nets_to_its_first_parent_diff(repo: Path) -> None:
+    """A merge that lands the linked commits diffs against the branch it landed on.
+
+    Mirrors an epic landing: the branch syncs the target in, fixes, then lands.
+    """
+    _git(repo, "checkout", "-q", "-b", "side")
+    _commit(repo, "feature.py", "def feature():\n    return 1\n", "side feature")
+    _git(repo, "checkout", "-q", "main")
+    _commit(repo, "unrelated.py", "UNRELATED = True\n", "main unrelated")
+    _git(repo, "checkout", "-q", "side")
+    _git(repo, "merge", "--no-ff", "--no-gpg-sign", "-q", "-m", "sync main", "main")
+    sync = _git(repo, "rev-parse", "HEAD")
+    fix = _commit(repo, "feature.py", "def feature():\n    return 2\n", "side fix")
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "merge", "--no-ff", "--no-gpg-sign", "-q", "-m", "land side", "side")
+    landing = _git(repo, "rev-parse", "HEAD")
+
+    diff = collect_commit_diff_text([sync, fix, landing], cwd=repo)
+
+    assert diff.count("diff --git a/feature.py b/feature.py") == 1
+    assert "+    return 2" in diff
+    assert "return 1" not in diff
+    assert "unrelated.py" not in diff
+
+
+def test_a_lone_landing_merge_carries_the_branch_it_landed(repo: Path) -> None:
+    _git(repo, "checkout", "-q", "-b", "side")
+    _commit(repo, "feature.py", "def feature():\n    return 1\n", "side feature")
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "merge", "--no-ff", "--no-gpg-sign", "-q", "-m", "land side", "side")
+    landing = _git(repo, "rev-parse", "HEAD")
+
+    diff = collect_commit_diff_text([landing], cwd=repo)
+
+    assert "diff --git a/feature.py b/feature.py" in diff
+    assert "+    return 1" in diff
+
+
+def test_a_merge_that_lands_nothing_streams_first_parent_diffs(repo: Path) -> None:
+    """A set whose merge is a sync (not a landing) skips replay and streams per commit."""
+    _git(repo, "checkout", "-q", "-b", "side")
+    _commit(repo, "feature.py", "def feature():\n    return 1\n", "side feature")
+    _git(repo, "checkout", "-q", "main")
+    _commit(repo, "unrelated.py", "UNRELATED = True\n", "main unrelated")
+    _git(repo, "checkout", "-q", "side")
+    _git(repo, "merge", "--no-ff", "--no-gpg-sign", "-q", "-m", "sync main", "main")
+    sync = _git(repo, "rev-parse", "HEAD")
+    fix = _commit(repo, "feature.py", "def feature():\n    return 2\n", "side fix")
+
+    diff = collect_commit_diff_text([sync, fix], cwd=repo)
+
+    assert "diff --git a/unrelated.py b/unrelated.py" in diff
+    assert diff.count("diff --git a/feature.py b/feature.py") == 1
+    assert "+    return 2" in diff

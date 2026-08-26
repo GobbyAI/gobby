@@ -316,7 +316,17 @@ def _numstat_totals(
     git_timeout_seconds: float,
 ) -> dict[bytes, tuple[int | None, int | None]]:
     data = _read_git(
-        ["--literal-pathspecs", "show", "--format=", "--numstat", "-z", "-M", commit, "--"],
+        [
+            "--literal-pathspecs",
+            "show",
+            "--diff-merges=first-parent",
+            "--format=",
+            "--numstat",
+            "-z",
+            "-M",
+            commit,
+            "--",
+        ],
         cwd=cwd,
         subprocess_deadline=subprocess_deadline,
         git_timeout_seconds=git_timeout_seconds,
@@ -368,6 +378,7 @@ def _manifest_page_candidates(
             [
                 "--literal-pathspecs",
                 "show",
+                "--diff-merges=first-parent",
                 "--format=",
                 "--name-status",
                 "-z",
@@ -473,6 +484,7 @@ def _stream_diff_view(
         args: list[str | bytes] = [
             "--literal-pathspecs",
             "show",
+            "--diff-merges=first-parent",
             "--format=",
             "--no-ext-diff",
             "--no-textconv",

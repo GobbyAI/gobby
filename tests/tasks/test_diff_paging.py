@@ -703,3 +703,26 @@ def test_legacy_truncation_and_direct_diff_callers_are_removed() -> None:
     assert "_safe_truncate" not in commits_source
     assert "from gobby.tasks.commits import get_task_diff" not in factory_source
     assert "get_task_diff(" not in validation_source
+
+
+def test_merge_commit_manifest_and_patch_use_the_first_parent_diff(repo: Path) -> None:
+    (repo / "base.txt").write_text("base\n")
+    _commit(repo, "base")
+    _git(repo, "checkout", "-q", "-b", "side")
+    (repo / "side.txt").write_text("one\ntwo\n")
+    _commit(repo, "side")
+    _git(repo, "checkout", "-q", "-")
+    (repo / "main.txt").write_text("main\n")
+    _commit(repo, "main")
+    _git(repo, "merge", "--no-ff", "-m", "land side", "side")
+    landing = _git(repo, "rev-parse", "HEAD").strip().decode("ascii")
+
+    page = get_task_diff_page("task-id", _manager(landing), cwd=repo)
+    content, _pages = _page_all_diff(_manager(landing), repo, limit_bytes=MAX_LIMIT_BYTES)
+
+    item = _find_manifest_item(page, b"side.txt")
+    assert (item["lines_added"], item["lines_deleted"]) == (2, 0)
+    listed = [decode_content(entry["path"]) for entry in page["manifest"]["items"]]
+    assert b"main.txt" not in listed
+    assert b"+one\n+two\n" in content
+    assert b"main.txt" not in content

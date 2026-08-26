@@ -892,3 +892,33 @@ async def test_reparenting_the_task_earns_a_fresh_guard_run(tmp_path: Path) -> N
     assert _run_count(tmp_path) == 2, (
         "the reparented task served a guard set that no longer applies"
     )
+
+
+def test_guard_collection_sees_test_files_a_landing_merge_brought_in(tmp_path: Path) -> None:
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.email", "tests@example.com")
+    _git(tmp_path, "config", "user.name", "Tests")
+    Path(tmp_path, "README.md").write_text("base\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "base")
+    _git(tmp_path, "checkout", "-q", "-b", "side")
+    path = Path(tmp_path, "tests", "test_landed_guard.py")
+    path.parent.mkdir()
+    path.write_text("def test_guard(): pass\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "add guard on side")
+    _git(tmp_path, "checkout", "-q", "-")
+    _git(tmp_path, "merge", "--no-ff", "-m", "land side", "side")
+    landing = _git(tmp_path, "rev-parse", "HEAD").strip()
+    epic, prior, current = _task_tree(criteria="No explicit test reference.")
+    prior.commits = [landing]
+
+    paths, sources, errors, _deleted = collect_epic_guard_paths(
+        task_manager=cast(LocalTaskManager, _TaskManager([epic, prior, current])),
+        task=current,
+        repo_path=str(tmp_path),
+    )
+
+    assert paths == ("tests/test_landed_guard.py",)
+    assert sources == (prior.id,)
+    assert errors == ()

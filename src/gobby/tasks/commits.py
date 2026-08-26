@@ -88,6 +88,11 @@ def collect_commit_diff_text(
     one leaves no superseded hunk behind for the reviewer to mistake for the
     current code. A set that cannot be replayed (a linked commit that does not
     apply onto the others' history) falls back to the raw per-commit stream.
+
+    Merge commits diff against their first parent throughout: a landing merge
+    that reaches every other linked commit only through its second parent is
+    the set's net patch on its own; any other merge-containing set skips the
+    replay and streams each commit's first-parent diff.
     """
     if not commit_shas:
         return ""
@@ -98,6 +103,7 @@ def collect_commit_diff_text(
         [
             "git",
             "show",
+            "--diff-merges=first-parent",
             "--format=",
             "--find-renames",
             "--find-copies",
@@ -169,10 +175,40 @@ def _ancestry_order(commit_shas: list[str], *, cwd: str | Path) -> list[str] | N
     return ordered if len(ordered) == len(members) else None
 
 
+def _is_merge(sha: str, *, cwd: str | Path) -> bool:
+    return _git_bytes(["rev-parse", "--verify", "--quiet", f"{sha}^2"], cwd=cwd) is not None
+
+
+def _landing_merge_patch(ordered: list[str], *, cwd: str | Path) -> bytes | None:
+    """First-parent patch of a merge that lands every other linked commit.
+
+    A landing merge reaches the other commits only through its second parent,
+    so its diff against the branch it landed on already nets them; replaying
+    those commits again on top of it cannot apply.
+    """
+    tip = ordered[-1]
+    if not _is_merge(tip, cwd=cwd):
+        return None
+    for sha in ordered[:-1]:
+        if _git_bytes(["merge-base", "--is-ancestor", sha, f"{tip}^2"], cwd=cwd) is None:
+            return None
+        if _git_bytes(["merge-base", "--is-ancestor", sha, f"{tip}^1"], cwd=cwd) is not None:
+            return None
+    return _git_bytes(
+        ["diff", "--find-renames", "--find-copies", "--binary", f"{tip}^1", tip],
+        cwd=cwd,
+    )
+
+
 def _net_commit_patch(commit_shas: list[str], *, cwd: str | Path) -> str | None:
     """Replay the commits onto a temporary index and diff it against their base."""
     ordered = _ancestry_order(commit_shas, cwd=cwd)
     if not ordered:
+        return None
+    landing = _landing_merge_patch(ordered, cwd=cwd)
+    if landing is not None:
+        return landing.decode("utf-8", errors="replace").strip()
+    if any(_is_merge(sha, cwd=cwd) for sha in ordered):
         return None
     parent = _git_bytes(["rev-parse", "--verify", "--quiet", f"{ordered[0]}^"], cwd=cwd)
     base = parent.decode("ascii", errors="replace").strip() if parent else _EMPTY_TREE_SHA

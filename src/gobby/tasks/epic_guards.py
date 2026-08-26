@@ -473,11 +473,21 @@ def _changed_files(sha: str, repo_path: str) -> tuple[tuple[str, ...], tuple[str
     """Added and deleted paths for one commit from a single name-status listing.
 
     Renames are decomposed (--no-renames) so a guard renamed away counts as a
-    deletion of its old path and an addition of the new one.
+    deletion of its old path and an addition of the new one. A merge commit
+    diffs against its first parent so a landing merge reports what it brought
+    onto the branch.
     """
     try:
         result = subprocess.run(
-            ["git", "show", "--format=", "--name-status", "--no-renames", sha],
+            [
+                "git",
+                "show",
+                "--diff-merges=first-parent",
+                "--format=",
+                "--name-status",
+                "--no-renames",
+                sha,
+            ],
             cwd=repo_path,
             text=True,
             capture_output=True,
