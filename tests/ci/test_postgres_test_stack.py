@@ -41,7 +41,6 @@ _DEFAULT_POSTGRES_TEST_DSN = (
     f"postgresql://{_POSTGRES_TEST_USER}:{_POSTGRES_TEST_PASSWORD}"
     f"@localhost:{_POSTGRES_TEST_PORT}/{_POSTGRES_TEST_DB}"
 )
-_PGAUDIT_EMISSION_PROBE = "bash .github/scripts/verify-pgaudit-emission.sh"
 _POSTGRES_SKIP_REASONS = [
     "DATABASE_URL must point at an isolated PostgreSQL test database",
     "PostgreSQL DSN required for hub runtime surface tests",
@@ -55,23 +54,11 @@ _PYTEST_FORBIDDEN_SKIP_REASONS = [
     "set GOBBY_OTEL_COLLECTOR_SMOKE=1",
 ]
 
-_PGAUDIT_COMMAND_OPTIONS = [
-    "shared_preload_libraries=pg_search,pgaudit",
-    "pgaudit.log=write",
-    "pgaudit.log_catalog=off",
-    "logging_collector=on",
-    "log_destination=stderr",
-    "log_directory=/var/log/pgaudit",
-    "log_filename=pgaudit-%Y-%m-%d_%H%M%S.log",
-    "log_rotation_age=1d",
-    "log_rotation_size=0",
-    "log_file_mode=0640",
-    "log_min_messages=log",
-]
+_POSTGRES_COMMAND_OPTIONS = ["shared_preload_libraries=pg_search,pgaudit"]
 
 _POSTGRES_COMMAND = [
     "postgres",
-    *(option for command_option in _PGAUDIT_COMMAND_OPTIONS for option in ("-c", command_option)),
+    *(option for command_option in _POSTGRES_COMMAND_OPTIONS for option in ("-c", command_option)),
 ]
 
 # Recorded during task #19485's 1,170-test, 627.57-second storage stress run.
@@ -168,13 +155,6 @@ def test_ci_test_job_builds_and_runs_local_postgres_test_container(repo_root: Pa
     )
     assert _has_run(
         runs,
-        "docker run --rm",
-        '"${GOBBY_POSTGRES_TEST_IMAGE}"',
-        "/usr/local/bin/pg_audit_export.sh",
-        "--help",
-    )
-    assert _has_run(
-        runs,
         "docker run -d",
         '--name "${GOBBY_POSTGRES_TEST_CONTAINER}"',
         '-e POSTGRES_DB="${GOBBY_POSTGRES_TEST_DB}"',
@@ -184,7 +164,7 @@ def test_ci_test_job_builds_and_runs_local_postgres_test_container(repo_root: Pa
         f"--tmpfs {_POSTGRES_TEST_TMPFS}",
         '"${GOBBY_POSTGRES_TEST_IMAGE}"',
         "postgres",
-        *_PGAUDIT_COMMAND_OPTIONS,
+        *_POSTGRES_COMMAND_OPTIONS,
     )
     assert _has_run(
         runs,
@@ -192,7 +172,6 @@ def test_ci_test_job_builds_and_runs_local_postgres_test_container(repo_root: Pa
         '"${GOBBY_POSTGRES_TEST_CONTAINER}"',
         "healthy",
     )
-    assert _has_run(runs, _PGAUDIT_EMISSION_PROBE)
     assert _has_run(runs, "uv run pytest")
 
 
@@ -227,13 +206,6 @@ def test_ci_build_job_runs_wheel_smoke_against_local_postgres(repo_root: Path) -
     )
     assert _has_run(
         runs,
-        "docker run --rm",
-        '"${GOBBY_POSTGRES_TEST_IMAGE}"',
-        "/usr/local/bin/pg_audit_export.sh",
-        "--help",
-    )
-    assert _has_run(
-        runs,
         "docker run -d",
         '--name "${GOBBY_POSTGRES_TEST_CONTAINER}"',
         '-e POSTGRES_DB="${GOBBY_POSTGRES_TEST_DB}"',
@@ -243,7 +215,7 @@ def test_ci_build_job_runs_wheel_smoke_against_local_postgres(repo_root: Path) -
         f"--tmpfs {_POSTGRES_TEST_TMPFS}",
         '"${GOBBY_POSTGRES_TEST_IMAGE}"',
         "postgres",
-        *_PGAUDIT_COMMAND_OPTIONS,
+        *_POSTGRES_COMMAND_OPTIONS,
     )
     assert _has_run(
         runs,
@@ -252,62 +224,6 @@ def test_ci_build_job_runs_wheel_smoke_against_local_postgres(repo_root: Path) -
         'GOBBY_WHEEL_PATH="$wheel"',
         "uv run pytest tests/packaging/test_installed_wheel_ui_smoke.py -v",
     )
-    assert _has_run(runs, _PGAUDIT_EMISSION_PROBE)
-
-
-def test_pgaudit_emission_probe_fails_without_update_audit_record(
-    repo_root: Path,
-    tmp_path: Path,
-) -> None:
-    probe = repo_root / ".github/scripts/verify-pgaudit-emission.sh"
-    fake_docker = tmp_path / "docker"
-    fake_sleep = tmp_path / "sleep"
-    call_log = tmp_path / "docker-calls.log"
-    sql_log = tmp_path / "probe.sql"
-
-    fake_docker.write_text(
-        """#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\n' "$*" >> "${GOBBY_FAKE_DOCKER_LOG:?}"
-if [[ "$*" == *" psql "* ]]; then
-  cat > "${GOBBY_FAKE_SQL_LOG:?}"
-  exit 0
-fi
-if [[ "$*" == *"grep -Eq"* ]]; then
-  exit 1
-fi
-exit 0
-"""
-    )
-    fake_sleep.write_text("#!/usr/bin/env bash\nexit 0\n")
-    fake_docker.chmod(0o755)
-    fake_sleep.chmod(0o755)
-    env = os.environ.copy()
-    env.update(
-        {
-            "GOBBY_FAKE_DOCKER_LOG": str(call_log),
-            "GOBBY_FAKE_SQL_LOG": str(sql_log),
-            "GOBBY_POSTGRES_TEST_CONTAINER": _POSTGRES_TEST_CONTAINER,
-            "GOBBY_POSTGRES_TEST_DB": _POSTGRES_TEST_DB,
-            "GOBBY_POSTGRES_TEST_USER": _POSTGRES_TEST_USER,
-            "PATH": f"{tmp_path}:{env['PATH']}",
-        }
-    )
-
-    result = subprocess.run(
-        ["bash", str(probe)],
-        cwd=repo_root,
-        env=env,
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=5,
-    )
-
-    assert result.returncode == 1
-    assert "pgAudit emitted no AUDIT: SESSION record for the UPDATE probe" in result.stderr
-    assert "UPDATE gobby_pgaudit_ci_probe" in sql_log.read_text()
-    assert "LOG:  AUDIT: SESSION,.*UPDATE" in call_log.read_text()
 
 
 def test_pre_push_resolves_and_exports_postgres_database_url_for_pytest(

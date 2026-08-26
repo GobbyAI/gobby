@@ -190,8 +190,7 @@ jobs:
             --health-retries 20 \
             gobby-postgres-ci:18-pgsearch \
             postgres \
-            -c shared_preload_libraries=pg_search,pgaudit \
-            -c pgaudit.log=write
+            -c shared_preload_libraries=pg_search,pgaudit
 
       - name: Wait for PostgreSQL pg_search
         run: |

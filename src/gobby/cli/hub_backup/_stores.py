@@ -54,7 +54,6 @@ ALLOW_AUDIT_ARCHIVE_DIR = "logs"
 
 HUB_VOLUMES: tuple[str, ...] = (
     "gobby_postgres_data",
-    "gobby_pgaudit_log",
     "gobby_qdrant_data",
     "gobby_falkordb_data",
 )

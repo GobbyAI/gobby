@@ -172,7 +172,6 @@ shipped Compose template uses named volumes:
 | `gobby_qdrant_data` | Qdrant vector storage |
 | `gobby_falkordb_data` | FalkorDB graph data |
 | `gobby_postgres_data` | PostgreSQL hub data |
-| `gobby_pgaudit_log` | pgaudit logs |
 
 Hub-owned `USER.md`, `_personal`, and wiki files are not those volumes. They
 live in a host bind directory. See [Hub-owned files home](#hub-owned-files-home).

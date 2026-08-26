@@ -943,7 +943,6 @@ def test_tar_volumes_defaults_to_every_hub_volume(
 
     assert stores.HUB_VOLUMES == (
         "gobby_postgres_data",
-        "gobby_pgaudit_log",
         "gobby_qdrant_data",
         "gobby_falkordb_data",
     )
@@ -972,9 +971,9 @@ def test_tar_volumes_raises_when_docker_run_fails(
     _patch_source_volume_inventory(monkeypatch)
 
     with pytest.raises(click.ClickException) as excinfo:
-        stores.tar_volumes(tmp_path, ["gobby_pgaudit_log"])
+        stores.tar_volumes(tmp_path, ["gobby_qdrant_data"])
 
-    assert "gobby_pgaudit_log" in str(excinfo.value)
+    assert "gobby_qdrant_data" in str(excinfo.value)
 
 
 def test_artifact_destination_refuses_symlinked_leaf(tmp_path: Path) -> None:

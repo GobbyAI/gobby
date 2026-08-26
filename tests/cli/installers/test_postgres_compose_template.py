@@ -14,18 +14,12 @@ pytestmark = pytest.mark.unit
 
 _REQUIRED_INTERPOLATION_RE = re.compile(r"\$\{([A-Z0-9_]+):\?")
 
-_PGAUDIT_COMMAND_OPTIONS = [
+_POSTGRES_COMMAND = [
+    "postgres",
+    "-c",
     "shared_preload_libraries=pg_search,pgaudit",
-    "pgaudit.log=${GOBBY_PGAUDIT_LOG:-ddl}",
-    "pgaudit.log_catalog=off",
-    "logging_collector=on",
-    "log_destination=stderr",
-    "log_directory=/var/log/pgaudit",
-    "log_filename=pgaudit-%Y-%m-%d_%H%M%S.log",
-    "log_rotation_age=1d",
-    "log_rotation_size=0",
-    "log_file_mode=0640",
-    "log_min_messages=log",
+    "-c",
+    "pgaudit.log=none",
 ]
 
 
@@ -109,46 +103,40 @@ def test_postgres_service_has_required_profiles_ports_and_volumes(
     assert postgres["environment"]["POSTGRES_PASSWORD"] == (
         "${GOBBY_POSTGRES_PASSWORD:?GOBBY_POSTGRES_PASSWORD must be set}"
     )
-    assert "gobby_postgres_data:/var/lib/postgresql" in postgres["volumes"]
-    assert "gobby_pgaudit_log:/var/log/pgaudit" in postgres["volumes"]
+    assert postgres["volumes"] == ["gobby_postgres_data:/var/lib/postgresql"]
     assert "gobby_postgres_data" in compose_data["volumes"]
-    assert "gobby_pgaudit_log" in compose_data["volumes"]
+    assert "gobby_pgaudit_log" not in compose_data["volumes"]
 
 
-def test_postgres_service_preloads_pg_search_and_pgaudit(
+def test_postgres_service_preloads_extensions_without_audit_logging(
     compose_data: dict[str, object],
 ) -> None:
-    command = " ".join(compose_data["services"]["postgres"]["command"])
+    """pgaudit stays preloaded for the installed extension but emits nothing (#21027).
 
-    for option in _PGAUDIT_COMMAND_OPTIONS:
-        assert option in command
+    The explicit `pgaudit.log=none` matters: data directories initialized by earlier
+    images carry `pgaudit.log = 'write'` in postgresql.conf.
+    """
+    assert compose_data["services"]["postgres"]["command"] == _POSTGRES_COMMAND
 
 
-def test_postgres_service_healthcheck_validates_pgaudit_configuration(
+def test_postgres_service_healthcheck_checks_readiness_and_extension_only(
     compose_data: dict[str, object],
     repo_root: Path,
 ) -> None:
-    """Pin option C: runtime validates configuration while CI proves write emission."""
     environment = compose_data["services"]["postgres"]["environment"]
     healthcheck = compose_data["services"]["postgres"]["healthcheck"]
     test_command = " ".join(str(part) for part in healthcheck["test"])
     template = (repo_root / "src/gobby/data/docker-compose.services.yml").read_text()
 
-    assert environment["GOBBY_PGAUDIT_LOG"] == "${GOBBY_PGAUDIT_LOG:-ddl}"
+    assert "GOBBY_PGAUDIT_LOG" not in environment
     assert "pg_isready" in test_command
-    assert "pg_extension" in test_command
     assert "extname='pgaudit'" in test_command
-    assert "extname=$pgaudit$" not in test_command
-    assert "SHOW pgaudit.log" in test_command
-    assert "GOBBY_PGAUDIT_LOG:-ddl" in test_command
-    assert "/var/log/pgaudit" in test_command
-    assert "pgaudit-*.log" in test_command
-    assert "stat -c '%U %a'" in test_command
-    assert "postgres 640" in test_command
-    assert "UPDATE" not in test_command
-    assert "AUDIT: SESSION" not in test_command
-    assert "configuration-only by design" in template
-    assert ".github/scripts/verify-pgaudit-emission.sh" in template
+    assert "SHOW pgaudit.log" not in test_command
+    assert "/var/log/pgaudit" not in test_command
+    assert "gobby_pgaudit_log" not in template
+    assert "GOBBY_PGAUDIT_LOG" not in template
+    assert "log_directory" not in template
+    assert "verify-pgaudit-emission" not in template
 
 
 def test_postgres_service_has_pg_isready_healthcheck(
