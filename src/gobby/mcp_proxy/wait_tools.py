@@ -30,6 +30,11 @@ EXTENDED_TIMEOUT_TOOL_NAMES = (
     # daemon operation so its authoritative result is not lost (#17900).
     "merge_worktree",
     "sync_worktree",
+    # Worktree creation provisions the overlay index and deletion removes the
+    # tree (a cargo target/ dir alone can take minutes); both completed on the
+    # daemon after the caller had already given up at 30s (#21058).
+    "create_worktree",
+    "delete_worktree",
     # Generation-backed gwiki calls: daemon-side synthesis scales with vault
     # size and cannot fit the default 30s request timeout (#17593). The
     # daemon's gwiki subprocess guard (GENERATION_GWIKI_TIMEOUT_SECONDS) sits

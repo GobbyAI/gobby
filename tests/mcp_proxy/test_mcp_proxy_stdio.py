@@ -47,6 +47,8 @@ def test_extended_timeout_tools_excludes_stale_apply_tdd() -> None:
         "rebuild_knowledge_graph",
         "merge_worktree",
         "sync_worktree",
+        "create_worktree",
+        "delete_worktree",
         "wiki_compile",
         "spawn_agent",
         "run_expansion_qa_coverage",
