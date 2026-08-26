@@ -80,6 +80,49 @@ class TestShadowReplay:
         assert rows[0]["outcome"] == "injected"
         assert rows[1]["outcome"] is None
 
+    def test_search_cohort_request_replays_its_delivered_hit_in_injected_scope(
+        self, store: RecallSignalStore
+    ) -> None:
+        """#21011: an agent search is claimed, labeled, and replayed like any cohort
+        member; the hit the tool returned is its ``injected`` outcome at list position."""
+        complete_shadow_request(store, "req-search", caller="mcp_proxy.memory.search_memories")
+        assert (
+            store.record_injection_outcomes(
+                [
+                    {
+                        "session_id": "sess-shadow",
+                        "recall_request_id": "req-search",
+                        "memory_id": "mem-1",
+                        "project_id": "proj-1",
+                        "outcome": "injected",
+                        "injection_position": 0,
+                        "caller": "mcp_proxy.memory.search_memories",
+                    }
+                ]
+            )
+            == 1
+        )
+
+        rows = store.fetch_replay_rows(
+            label_source="digest_shadow",
+            candidate_scope="injected",
+            judge_protocol_version="shadow-v1",
+            query_construction_version=None,
+            weighting_regime_key="[true,false,false,false]",
+            judge_model_key="judge-model",
+            judge_config_fingerprint="judge-fingerprint",
+            data_cutoff=datetime(2026, 7, 17, 12, 10, tzinfo=UTC),
+            completion_cutoff=datetime(2026, 7, 17, 12, 40, tzinfo=UTC),
+            limit=10,
+        )
+
+        assert [
+            (row["recall_request_id"], row["memory_id"], row["caller"], row["injection_position"])
+            for row in rows
+        ] == [("req-search", "mem-1", "mcp_proxy.memory.search_memories", 0)]
+        assert rows[0]["injection_group"] is None
+        assert rows[0]["judge_useful"] is True
+
     def test_exact_request_ids_limit_feature_reads_to_reserved_partition(
         self, store: RecallSignalStore
     ) -> None:

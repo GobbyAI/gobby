@@ -151,10 +151,15 @@ def complete_shadow_request(
     judge_config_fingerprint: str = "judge-fingerprint",
     snapshot_created_at: str = "2026-07-17T12:30:00+00:00",
     query_construction_version: str | None = None,
+    caller: str = "memory.recall",
 ) -> None:
     assert (
         store.insert_signal_event(
-            shadow_event(request_id, query_construction_version=query_construction_version)
+            shadow_event(
+                request_id,
+                query_construction_version=query_construction_version,
+                caller=caller,
+            )
         )
         is True
     )
