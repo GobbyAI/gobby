@@ -22,7 +22,6 @@ __all__ = (
     "_API_KEY_PROMPTS",
     "_echo_install_details",
     "_echo_install_summary",
-    "_echo_migration_notice",
     "_echo_uninstall_details",
     "_echo_uninstall_summary",
     "_ensure_db_and_secrets",
@@ -552,7 +551,6 @@ def _run_voice_install(
 
 def _run_falkordb_install(
     installer: Callable[..., dict[str, Any]],
-    falkordb_password: str | None,
     results: dict[str, dict[str, Any]],
 ) -> None:
     """Run install + echo for FalkorDB."""
@@ -561,7 +559,7 @@ def _run_falkordb_install(
     click.echo("-" * 40)
 
     try:
-        result = installer(password=falkordb_password)
+        result = installer()
     except ValueError as exc:
         raise click.UsageError(str(exc)) from exc
     results["falkordb"] = result
@@ -571,8 +569,6 @@ def _run_falkordb_install(
         source = result.get("password_source")
         if source == "generated" and result.get("password"):
             click.echo(f"  Generated FalkorDB password: {result['password']}")
-        elif source == "provided":
-            click.echo("  Using provided FalkorDB password (not displayed)")
         elif source == "reused":
             click.echo("  Reusing existing FalkorDB password from config_store")
         click.echo(f"  Redis: {result['url']}")
@@ -583,26 +579,6 @@ def _run_falkordb_install(
     else:
         click.echo(f"Failed: {result['error']}", err=True)
     click.echo("")
-
-
-def _echo_migration_notice(project_path: Path) -> None:
-    """Detect and warn about per-project hooks that can be cleaned up."""
-    per_project_hooks = []
-    for cli_name, cli_dir in [
-        ("claude", ".claude"),
-        ("codex", ".codex"),
-    ]:
-        hooks_dir = project_path / cli_dir / "hooks"
-        if (hooks_dir / "hook_dispatcher.py").exists():
-            per_project_hooks.append(cli_name)
-
-    if per_project_hooks:
-        click.echo("-" * 40)
-        click.echo("Migration Notice")
-        click.echo("-" * 40)
-        click.echo(f"Per-project hooks detected for: {', '.join(per_project_hooks)}")
-        click.echo("Run 'gobby uninstall --project' to clean up per-project hooks.")
-        click.echo("")
 
 
 def _echo_install_summary(

@@ -5,19 +5,17 @@ Tests for install.py using Click's CliRunner to test all commands and options.
 
 import asyncio
 from collections.abc import Iterator
-from contextlib import nullcontext
+from contextlib import ExitStack, contextmanager, nullcontext
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
-from click import ClickException
 from click.testing import CliRunner
 
 from gobby.cli import cli
+from gobby.cli._install_state import empty_install_state
 from gobby.cli.install import (
-    _configure_secret_kek_posture,
     _ensure_daemon_config,
     _is_agy_cli_installed,
     _is_claude_code_installed,
@@ -26,17 +24,22 @@ from gobby.cli.install import (
     _is_qwen_cli_installed,
     _resolve_ide_settings_consent,
 )
+from gobby.cli.install_components import COMPONENTS
+from gobby.cli.install_setup_rtk import RtkInstallStatus
 from gobby.cli.uninstall import uninstall
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.storage.auth import hash_token
-from gobby.storage.secrets import (
-    POSTURE_KEY_FILE,
-    POSTURE_SCRYPT_PASSPHRASE,
-    SECRET_KEK_PASSPHRASE_ENV,
-    SecretStore,
-)
 
 pytestmark = pytest.mark.unit
+
+_RTK_DISABLED = RtkInstallStatus(
+    binary_path=None,
+    version=None,
+    rule_enabled=False,
+    direct_artifact_conflicts=(),
+    health="disabled",
+    managed_binary=False,
+)
 
 
 def test_install_has_no_auth_mode_flag() -> None:
@@ -46,55 +49,48 @@ def test_install_has_no_auth_mode_flag() -> None:
     assert "--auth-mode" not in result.output
 
 
-class _SecretKekStore:
-    def __init__(self, posture: str = POSTURE_KEY_FILE) -> None:
-        self.calls: list[tuple[str, str | None]] = []
-        self.posture = posture
-        self.kek_passphrase: str | None = None
-
-    def current_kek_posture(self) -> str:
-        return self.posture
-
-    def set_kek_posture(self, posture: str, *, passphrase: str | None = None) -> None:
-        self.calls.append((posture, passphrase))
-        self.posture = posture
-
-
-class TestSecretKekPostureInstall:
-    def test_key_file_posture_rewraps_existing_passphrase_store(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        store = _SecretKekStore(POSTURE_SCRYPT_PASSPHRASE)
-        monkeypatch.setenv(SECRET_KEK_PASSPHRASE_ENV, "current horse")
-
-        _configure_secret_kek_posture(
-            cast(SecretStore, store),
-            "key-file",
-            no_interactive=True,
-        )
-
-        assert store.kek_passphrase == "current horse"
-        assert store.calls == [(POSTURE_KEY_FILE, None)]
-
-    def test_passphrase_posture_uses_env_in_non_interactive(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        store = _SecretKekStore()
-        monkeypatch.setenv(SECRET_KEK_PASSPHRASE_ENV, "correct horse")
-
-        _configure_secret_kek_posture(
-            cast(SecretStore, store),
-            "passphrase",
-            no_interactive=True,
-        )
-
-        assert store.calls == [(POSTURE_SCRYPT_PASSPHRASE, "correct horse")]
-
-    def test_passphrase_posture_requires_env_in_non_interactive(self) -> None:
-        with pytest.raises(ClickException, match=SECRET_KEK_PASSPHRASE_ENV):
-            _configure_secret_kek_posture(MagicMock(), "passphrase", no_interactive=True)
+@contextmanager
+def _full_local_install(
+    files_home: Path, *, real_token: bool = False
+) -> Iterator[dict[str, MagicMock]]:
+    """Patch the full-install steps that need Docker, a hub, or the host filesystem."""
+    mocks = {
+        "required_stack": MagicMock(),
+        "reconcile_rtk": MagicMock(return_value=_RTK_DISABLED),
+        "provision_token": MagicMock(),
+    }
+    replacements: dict[str, object] = {
+        "gobby.cli.install.get_install_dir": MagicMock(return_value=Path("/fake/install")),
+        "gobby.cli.install.peek_install_bootstrap": MagicMock(
+            return_value={"datastore_mode": "local", "files_home": str(files_home)}
+        ),
+        "gobby.cli.install.acquire_install_maintenance": MagicMock(return_value=MagicMock()),
+        "gobby.cli.install.publish_install_files_home": MagicMock(
+            return_value={"created": False, "path": "/fake/bootstrap.yaml"}
+        ),
+        "gobby.cli.install.ensure_personal_project_identity": MagicMock(
+            return_value=files_home / "_personal" / ".gobby" / "project.json"
+        ),
+        "gobby.cli.install._ensure_daemon_config": MagicMock(
+            return_value={"created": False, "path": "/test/config.yaml"}
+        ),
+        "gobby.cli.install._install_required_stack": mocks["required_stack"],
+        "gobby.cli.install_components.reconcile_rtk": mocks["reconcile_rtk"],
+        "gobby.cli.install._should_initialize_project": MagicMock(return_value=False),
+        "gobby.cli.install.load_bootstrap": MagicMock(return_value=MagicMock(daemon_port=60887)),
+        "gobby.cli.install.prepare_install_state": MagicMock(return_value=empty_install_state()),
+        "gobby.cli.install._run_embedding_install": MagicMock(return_value="none"),
+        "gobby.cli.install._run_voice_install": MagicMock(),
+        "gobby.cli.install._is_claude_code_installed": MagicMock(return_value=False),
+        "gobby.cli.install._is_grok_cli_installed": MagicMock(return_value=False),
+        "gobby.cli.install._is_codex_cli_installed": MagicMock(return_value=False),
+    }
+    if not real_token:
+        replacements["gobby.cli.install._provision_local_api_token"] = mocks["provision_token"]
+    with ExitStack() as stack:
+        for target, replacement in replacements.items():
+            stack.enter_context(patch(target, replacement))
+        yield mocks
 
 
 @pytest.fixture(autouse=True)
@@ -109,7 +105,6 @@ def _mock_ext_services_and_prompts() -> Iterator[None]:
 
     def falkordb_success(
         _installer: object,
-        _password: str | None,
         results: dict[str, dict[str, object]],
     ) -> None:
         results["falkordb"] = {"success": True}
@@ -325,59 +320,54 @@ class TestInstallCommand:
         return CliRunner()
 
     def test_install_help(self, runner: CliRunner) -> None:
-        """Test install --help displays help text."""
+        """install --help lists the components and only the surviving options."""
         result = runner.invoke(cli, ["install", "--help"])
         assert result.exit_code == 0
-        assert "Install Gobby configuration, required infrastructure" in result.output
-        assert "--claude" in result.output
-        assert "--agy" in result.output
-        assert "--qwen" in result.output
-        assert "--codex" in result.output
-        assert "--droid" in result.output
-        assert "--hooks" in result.output
-        assert "--all" in result.output
-        assert "--embedding-api-key" not in result.output
-        assert "--embedding-provider" in result.output
+        assert "[OPTIONS] [COMPONENT]..." in result.output
+        assert "reinstall the named COMPONENTS" in result.output
+        for component in COMPONENTS:
+            assert component in result.output
+        for option in (
+            "--no-interactive",
+            "--container-restarts",
+            "--no-container-restarts",
+            "--files-home",
+            "--embedding-url",
+            "--embedding-provider",
+            "--embedding-model",
+            "--embedding-dim",
+            "-C, --path",
+        ):
+            assert option in result.output
         assert "LM Studio-compatible defaults" in result.output
         assert "openai-compatible uses generic OpenAI-" in result.output
         assert "compatible embedding APIs" in result.output
-        assert "--ide-settings" in result.output
-        assert "--no-ide-settings" in result.output
-        assert "--rtk" in result.output
-        assert "--no-rtk" in result.output
-        assert "--container-restarts" in result.output
-        assert "--no-container-restarts" in result.output
-
-    def test_install_ide_settings_option_is_tri_state(self) -> None:
-        install_command = cli.commands["install"]
-        ide_option = next(
-            parameter
-            for parameter in install_command.params
-            if parameter.name == "ide_settings_flag"
-        )
-
-        assert ide_option.default is None
-
-    @pytest.mark.parametrize("explicit_value", [True, False])
-    def test_explicit_ide_settings_choice_skips_detection(self, explicit_value: bool) -> None:
-        with (
-            patch(
-                "gobby.cli.installers.ide_config."
-                "find_vscode_family_ides_needing_terminal_integration"
-            ) as mock_detect,
-            patch("gobby.cli.install.click.confirm") as mock_confirm,
+        for removed in (
+            "--claude",
+            "--codex",
+            "--grok",
+            "--qwen",
+            "--droid",
+            "--agy",
+            "--hooks",
+            "--all",
+            "--config-only",
+            "--project",
+            "--rtk",
+            "--voice",
+            "--expose-ui",
+            "--ide-settings",
+            "--falkordb-password-stdin",
+            "--secret-kek-posture",
+            "--embedding-api-key",
         ):
-            result = _resolve_ide_settings_consent(explicit_value, no_interactive=False)
+            assert removed not in result.output
 
-        assert result is explicit_value
-        mock_detect.assert_not_called()
-        mock_confirm.assert_not_called()
-
-    def test_no_interactive_skips_unspecified_ide_settings(self) -> None:
+    def test_no_interactive_skips_ide_settings(self) -> None:
         with patch(
             "gobby.cli.installers.ide_config.find_vscode_family_ides_needing_terminal_integration"
         ) as mock_detect:
-            result = _resolve_ide_settings_consent(None, no_interactive=True)
+            result = _resolve_ide_settings_consent(no_interactive=True)
 
         assert result is False
         mock_detect.assert_not_called()
@@ -397,7 +387,7 @@ class TestInstallCommand:
             ),
             patch("gobby.cli.install.click.confirm", return_value=confirmed) as mock_confirm,
         ):
-            result = _resolve_ide_settings_consent(None, no_interactive=False)
+            result = _resolve_ide_settings_consent(no_interactive=False)
 
         assert result is expected
         assert "Cursor, Antigravity" in capsys.readouterr().out
@@ -415,7 +405,7 @@ class TestInstallCommand:
             ),
             patch("gobby.cli.install.click.confirm") as mock_confirm,
         ):
-            result = _resolve_ide_settings_consent(None, no_interactive=False)
+            result = _resolve_ide_settings_consent(no_interactive=False)
 
         assert result is False
         mock_confirm.assert_not_called()
@@ -430,170 +420,112 @@ class TestInstallCommand:
         assert result.exit_code == 2
         assert "Invalid value for '--embedding-dim'" in result.output
 
-    @patch("gobby.cli.install._ensure_daemon_config")
-    @patch("gobby.cli.install.install_qwen")
-    @patch("gobby.cli.runtime.CliRuntime.require_config")
-    def test_install_qwen_only_flag(
+    @pytest.mark.parametrize(
+        ("component", "label", "installer_result", "expected_lines"),
+        [
+            (
+                "qwen",
+                "Qwen CLI",
+                {
+                    "success": True,
+                    "hooks_installed": ["SessionStart"],
+                    "workflows_installed": [],
+                    "commands_installed": ["qwen-cmd"],
+                    "plugins_installed": ["plugin1"],
+                    "mcp_configured": True,
+                },
+                ("Installed 1 hooks", "Installed 1 skills/commands", "Installed 1 plugins"),
+            ),
+            (
+                "droid",
+                "Droid CLI",
+                {
+                    "success": True,
+                    "hooks_installed": ["SessionStart"],
+                    "workflows_installed": [],
+                    "commands_installed": [],
+                    "plugins_installed": [],
+                    "mcp_configured": True,
+                },
+                ("Installed 1 hooks",),
+            ),
+            (
+                "agy",
+                "AGY CLI",
+                {
+                    "success": True,
+                    "hooks_installed": ["PreInvocation"],
+                    "workflows_installed": [],
+                    "commands_installed": [],
+                    "plugins_installed": [],
+                    "mcp_configured": True,
+                },
+                ("Installed 1 hooks",),
+            ),
+        ],
+    )
+    def test_install_cli_component(
         self,
-        mock_load_config: MagicMock,
-        mock_install_qwen: MagicMock,
-        mock_ensure_config: MagicMock,
         runner: CliRunner,
         temp_dir: Path,
+        component: str,
+        label: str,
+        installer_result: dict[str, object],
+        expected_lines: tuple[str, ...],
     ) -> None:
-        """Test install with --qwen flag only."""
-        mock_load_config.return_value = MagicMock()
-        mock_ensure_config.return_value = {"created": False, "path": "/test/config.yaml"}
-        mock_install_qwen.return_value = {
-            "success": True,
-            "hooks_installed": ["SessionStart"],
-            "workflows_installed": [],
-            "commands_installed": ["qwen-cmd"],
-            "plugins_installed": ["plugin1"],
-            "mcp_configured": True,
-        }
-
-        files_home = temp_dir / "files"
-        files_home.mkdir()
+        """A CLI component runs only that CLI's installer against an existing install."""
+        installer = MagicMock(return_value=installer_result)
         with (
-            patch(
-                "gobby.cli.install.peek_install_bootstrap",
-                return_value={"datastore_mode": "local", "files_home": str(files_home)},
-            ),
+            patch.dict("gobby.cli.install_components._CLI_INSTALLERS", {component: installer}),
+            patch("gobby.cli.install.require_installed"),
+            patch("gobby.cli.install._ensure_daemon_config") as ensure_config,
             runner.isolated_filesystem(temp_dir=str(temp_dir)),
         ):
-            result = runner.invoke(cli, ["install", "--qwen", "--no-interactive"])
+            result = runner.invoke(cli, ["install", component, "--no-interactive"])
 
-        assert result.exit_code == 0
-        assert "Qwen CLI" in result.output
-        assert "Installed 1 hooks" in result.output
-        assert "Installed 1 skills/commands" in result.output
-        assert "Installed 1 plugins" in result.output
-        mock_install_qwen.assert_called_once()
+        assert result.exit_code == 0, result.output
+        assert label in result.output
+        for line in expected_lines:
+            assert line in result.output
+        assert f"{label} component complete." in result.output
+        installer.assert_called_once()
+        ensure_config.assert_not_called()
 
-    @patch("gobby.cli.install._ensure_daemon_config")
-    @patch("gobby.cli.install.install_droid")
-    @patch("gobby.cli.runtime.CliRuntime.require_config")
-    def test_install_droid_only_flag(
-        self,
-        mock_load_config: MagicMock,
-        mock_install_droid: MagicMock,
-        mock_ensure_config: MagicMock,
-        runner: CliRunner,
-        temp_dir: Path,
-    ) -> None:
-        """Test install with --droid flag only."""
-        mock_load_config.return_value = MagicMock()
-        mock_ensure_config.return_value = {"created": False, "path": "/test/config.yaml"}
-        mock_install_droid.return_value = {
-            "success": True,
-            "hooks_installed": ["SessionStart"],
-            "workflows_installed": [],
-            "commands_installed": [],
-            "plugins_installed": [],
-            "mcp_configured": True,
-        }
-
-        files_home = temp_dir / "files"
-        files_home.mkdir()
-        with (
-            patch(
-                "gobby.cli.install.peek_install_bootstrap",
-                return_value={"datastore_mode": "local", "files_home": str(files_home)},
-            ),
-            runner.isolated_filesystem(temp_dir=str(temp_dir)),
-        ):
-            result = runner.invoke(cli, ["install", "--droid", "--no-interactive"])
-
-        assert result.exit_code == 0
-        assert "Droid CLI" in result.output
-        assert "Installed 1 hooks" in result.output
-        mock_install_droid.assert_called_once()
-
-    @patch("gobby.cli.install._ensure_daemon_config")
-    @patch("gobby.cli.install.install_agy")
-    @patch("gobby.cli.runtime.CliRuntime.require_config")
-    def test_install_agy_only_flag(
-        self,
-        mock_load_config: MagicMock,
-        mock_install_agy: MagicMock,
-        mock_ensure_config: MagicMock,
-        runner: CliRunner,
-        temp_dir: Path,
-    ) -> None:
-        """Test install with --agy flag only."""
-        mock_load_config.return_value = MagicMock()
-        mock_ensure_config.return_value = {"created": False, "path": "/test/config.yaml"}
-        mock_install_agy.return_value = {
-            "success": True,
-            "hooks_installed": ["PreInvocation"],
-            "workflows_installed": [],
-            "commands_installed": [],
-            "plugins_installed": [],
-            "mcp_configured": True,
-        }
-
-        files_home = temp_dir / "files"
-        files_home.mkdir()
-        with (
-            patch(
-                "gobby.cli.install.peek_install_bootstrap",
-                return_value={"datastore_mode": "local", "files_home": str(files_home)},
-            ),
-            runner.isolated_filesystem(temp_dir=str(temp_dir)),
-        ):
-            result = runner.invoke(cli, ["install", "--agy", "--no-interactive"])
-
-        assert result.exit_code == 0
-        assert "AGY CLI" in result.output
-        assert "Installed 1 hooks" in result.output
-        mock_install_agy.assert_called_once()
-
-    def test_codex_install_skips_embedding(
+    def test_codex_component_skips_embedding_and_services(
         self,
         runner: CliRunner,
         temp_dir: Path,
     ) -> None:
-        """Targeted Codex install does not run embedding or Docker setup."""
-        codex_result = {
-            "success": True,
-            "hooks_installed": [],
-            "files_installed": ["/home/user/.gobby/hooks/codex/hook_dispatcher.py"],
-            "workflows_installed": [],
-            "commands_installed": [],
-            "plugins_installed": [],
-            "config_updated": True,
-            "mcp_configured": True,
-        }
-        files_home = temp_dir / "files"
-        files_home.mkdir()
+        """The codex component does not run embedding or Docker setup."""
+        installer = MagicMock(
+            return_value={
+                "success": True,
+                "hooks_installed": [],
+                "files_installed": ["/home/user/.gobby/hooks/codex/hook_dispatcher.py"],
+                "workflows_installed": [],
+                "commands_installed": [],
+                "plugins_installed": [],
+                "config_updated": True,
+                "mcp_configured": True,
+            }
+        )
         with (
-            patch("gobby.cli.install.run_daemon_setup"),
-            patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install")),
-            patch(
-                "gobby.cli.install.peek_install_bootstrap",
-                return_value={"datastore_mode": "local", "files_home": str(files_home)},
-            ),
-            patch(
-                "gobby.cli.install._ensure_daemon_config",
-                return_value={"created": False, "path": "/test/config.yaml"},
-            ),
-            patch("gobby.cli.runtime.CliRuntime.require_config", side_effect=FileNotFoundError),
-            patch("gobby.cli.install.install_codex", return_value=codex_result) as mock_codex,
-            patch("gobby.cli.install._run_embedding_install") as mock_embedding,
+            patch.dict("gobby.cli.install_components._CLI_INSTALLERS", {"codex": installer}),
+            patch("gobby.cli.install.require_installed"),
+            patch("gobby.cli.install._ensure_daemon_config") as ensure_config,
+            patch("gobby.cli.install_components._run_embedding_install") as mock_embedding,
             patch("gobby.cli.install._run_qdrant_install") as mock_qdrant,
             patch("gobby.cli.install._run_falkordb_install") as mock_falkordb,
+            runner.isolated_filesystem(temp_dir=str(temp_dir)),
         ):
-            with runner.isolated_filesystem(temp_dir=str(temp_dir)):
-                result = runner.invoke(cli, ["install", "--codex", "--no-interactive"])
+            result = runner.invoke(cli, ["install", "codex", "--no-interactive"])
 
-        assert result.exit_code == 0
+        assert result.exit_code == 0, result.output
         assert "Codex" in result.output
         assert "Embedding Provider" not in result.output
-        mock_codex.assert_called_once()
-        mock_embedding.assert_not_called()
-        mock_qdrant.assert_not_called()
-        mock_falkordb.assert_not_called()
+        installer.assert_called_once()
+        for untouched in (ensure_config, mock_embedding, mock_qdrant, mock_falkordb):
+            untouched.assert_not_called()
 
     def test_install_provisions_api_token(
         self,
@@ -605,40 +537,18 @@ class TestInstallCommand:
         monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
         files_home = temp_dir / "files"
         files_home.mkdir()
-        config_store = MagicMock()
         auth_store = MagicMock()
         auth_store._read_local_api_token_hash.return_value = (None, False)
-        codex_result = {
-            "success": True,
-            "hooks_installed": [],
-            "files_installed": [],
-            "workflows_installed": [],
-            "commands_installed": [],
-            "plugins_installed": [],
-            "config_updated": True,
-            "mcp_configured": True,
-        }
 
         with (
-            patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install")),
-            patch(
-                "gobby.cli.install.peek_install_bootstrap",
-                return_value={"datastore_mode": "local", "files_home": str(files_home)},
-            ),
-            patch(
-                "gobby.cli.install._ensure_daemon_config",
-                return_value={"created": False, "path": "/test/config.yaml"},
-            ),
-            patch("gobby.cli.runtime.CliRuntime.require_config"),
-            patch("gobby.cli.install.ConfigStore", return_value=config_store),
+            _full_local_install(files_home, real_token=True),
             patch("gobby.cli.install.AuthStore", return_value=auth_store),
-            patch("gobby.cli.install.install_codex", return_value=codex_result),
+            runner.isolated_filesystem(temp_dir=str(temp_dir)),
         ):
-            with runner.isolated_filesystem(temp_dir=str(temp_dir)):
-                result = runner.invoke(cli, ["install", "--codex", "--no-interactive"])
+            result = runner.invoke(cli, ["install", "--no-interactive"])
 
         token_path = gobby_home / "local_cli_token"
-        assert result.exit_code == 0
+        assert result.exit_code == 0, result.output
         assert token_path.exists()
         token = token_path.read_text().strip()
         auth_store.set_local_api_token_hash.assert_called_once_with(hash_token(token))
@@ -654,42 +564,23 @@ class TestInstallCommand:
         monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
         files_home = temp_dir / "files"
         files_home.mkdir()
-        codex_result = {
-            "success": True,
-            "hooks_installed": [],
-            "files_installed": [],
-            "workflows_installed": [],
-            "commands_installed": [],
-            "plugins_installed": [],
-            "config_updated": True,
-            "mcp_configured": True,
-        }
 
         with (
-            patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install")),
-            patch(
-                "gobby.cli.install.peek_install_bootstrap",
-                return_value={"datastore_mode": "local", "files_home": str(files_home)},
-            ),
-            patch(
-                "gobby.cli.install._ensure_daemon_config",
-                return_value={"created": False, "path": "/test/config.yaml"},
-            ),
+            _full_local_install(files_home, real_token=True),
             patch(
                 "gobby.cli.runtime.CliRuntime.require_database",
                 side_effect=FileNotFoundError("bootstrap unavailable"),
             ),
-            patch("gobby.cli.install.install_codex", return_value=codex_result),
+            runner.isolated_filesystem(temp_dir=str(temp_dir)),
         ):
-            with runner.isolated_filesystem(temp_dir=str(temp_dir)):
-                result = runner.invoke(cli, ["install", "--codex", "--no-interactive"])
+            result = runner.invoke(cli, ["install", "--no-interactive"])
 
         token_path = gobby_home / "local_cli_token"
         assert result.exit_code == 1
         assert "Failed to establish account identity: bootstrap unavailable" in result.output
         assert not token_path.exists()
 
-    def test_config_only_provisions_gdaemon_before_required_stack(
+    def test_install_provisions_gdaemon_before_required_stack(
         self,
         runner: CliRunner,
         temp_dir: Path,
@@ -699,31 +590,17 @@ class TestInstallCommand:
         files_home.mkdir()
 
         with (
-            patch(
-                "gobby.cli.install.peek_install_bootstrap",
-                return_value={"datastore_mode": "local", "files_home": str(files_home)},
-            ),
-            patch("gobby.cli.install.acquire_install_maintenance", return_value=MagicMock()),
-            patch(
-                "gobby.cli.install.publish_install_files_home",
-                return_value={"created": False, "path": "/fake"},
-            ),
-            patch(
-                "gobby.cli.install.ensure_personal_project_identity",
-                return_value=files_home / "_personal" / ".gobby" / "project.json",
-            ),
+            _full_local_install(files_home) as mocks,
             patch(
                 "gobby.cli.install._provision_gdaemon_for_services",
                 side_effect=lambda: events.append("gdaemon"),
-                create=True,
             ),
-            patch(
-                "gobby.cli.install._install_required_stack",
-                side_effect=lambda *_args, **_kwargs: events.append("required-stack"),
-            ),
+            runner.isolated_filesystem(temp_dir=str(temp_dir)),
         ):
-            with runner.isolated_filesystem(temp_dir=str(temp_dir)):
-                result = runner.invoke(cli, ["install", "--config-only", "--no-interactive"])
+            mocks["required_stack"].side_effect = lambda *_args, **_kwargs: events.append(
+                "required-stack"
+            )
+            result = runner.invoke(cli, ["install", "--no-interactive"])
 
         assert result.exit_code == 0, result.output
         assert events == ["gdaemon", "required-stack"]
@@ -1195,19 +1072,24 @@ def test_remote_mode_skips_datastore_provisioning(
             return_value=([], []),
         ) as preflight,
         patch("gobby.cli.install._install_required_stack") as install_stack,
-        patch("gobby.cli.install._configure_secret_kek_posture") as configure_kek,
+        patch("gobby.cli.install_components.reconcile_rtk", return_value=_RTK_DISABLED),
         patch("gobby.cli.install._provision_local_api_token") as provision_token,
+        patch("gobby.cli.install._should_initialize_project", return_value=False),
+        patch("gobby.cli.install.prepare_install_state", return_value=empty_install_state()),
+        patch("gobby.cli.install._run_embedding_install", return_value="none"),
+        patch("gobby.cli.install._run_voice_install"),
+        patch("gobby.cli.install._is_claude_code_installed", return_value=False),
+        patch("gobby.cli.install._is_grok_cli_installed", return_value=False),
+        patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
+        CliRunner().isolated_filesystem(temp_dir=str(tmp_path)),
     ):
-        result = CliRunner().invoke(
-            cli,
-            ["install", "--config-only", "--no-interactive"],
-        )
+        result = CliRunner().invoke(cli, ["install", "--no-interactive"])
 
     assert result.exit_code == 0, result.output
     assert result.exception is None
-    assert "Configuration and required infrastructure complete." in result.output
+    assert "Gobby Installation" in result.output
+    assert "Installation completed successfully!" in result.output
     install_stack.assert_not_called()
-    configure_kek.assert_not_called()
     provision_token.assert_not_called()
     preflight.assert_called_once_with(
         is_full_install=True,

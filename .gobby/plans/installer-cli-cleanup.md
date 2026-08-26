@@ -109,15 +109,13 @@ installer stops asking about the KEK and stops reading a FalkorDB password.
 `kind: deliverable`
 
 Targets:
-- `src/gobby/cli/install_components.py`
-- `src/gobby/cli/install.py::_reconcile_rtk_step`
-- `src/gobby/cli/install.py::install`
+- `src/gobby/cli/install_components.py::*` — scope-reason: new component registry and runner module
+- `src/gobby/cli/install.py::*` — scope-reason: reconcile step moved out and the install() call sites updated
 - `src/gobby/cli/install_setup.py::run_daemon_setup`
 - `src/gobby/cli/_install_prompts.py::_run_standard_cli_install`
 - `src/gobby/cli/_install_prompts.py::_run_standard_cli_uninstall`
-- `src/gobby/cli/_install_prompts.py::_run_codex_uninstall`
 - `src/gobby/cli/installers/git_hooks.py::*` — scope-reason: module-level hook script text and uninstall_git_hooks wiring
-- `tests/cli/test_install_components.py`
+- `tests/cli/test_install_components.py::*` — scope-reason: new test module for the registry and runners
 - `tests/cli/test_install_setup.py::*` — scope-reason: helper extraction tests
 - `tests/cli/test_install_prompts.py::*` — scope-reason: meta table and runner signature tests
 - `tests/cli/test_install_coverage.py::*` — scope-reason: reconcile_rtk patch target moves with the step
@@ -195,12 +193,11 @@ notice, goes with its caller in 1.2); drop the `mode` positional from
 
 Targets:
 - `src/gobby/cli/install.py::*` — scope-reason: command rewrite; flag removal; KEK step removal; maintenance branches replaced by component dispatch
-- `src/gobby/cli/install_components.py`
-- `src/gobby/cli/_install_prompts.py::_echo_migration_notice`
+- `src/gobby/cli/install_components.py::*` — scope-reason: new component registry and runner module
 - `src/gobby/cli/_install_prompts.py::_run_falkordb_install`
 - `tests/cli/test_install_coverage.py::*` — scope-reason: TestInstallCommand and files-home lifecycle rewritten for components; KEK patch lines
 - `tests/cli/test_cli_install.py::*` — scope-reason: help-text, per-CLI, config-only, remote-mode, TestSecretKekPostureInstall tests
-- `tests/cli/test_cli_falkordb.py::*` — scope-reason: deleted with the flag
+- `tests/cli/test_cli_falkordb.py`
 - `tests/cli/test_cli_falkor.py::*` — scope-reason: install/uninstall param assertions
 - `tests/cli/test_install_front_door.py::*` — scope-reason: --all/--config-only invocations; KEK monkeypatch; _install_required_stack password kwarg
 - `tests/cli/test_install_prompts.py::*` — scope-reason: _invoke_install callback signature; secret_kek_posture kwargs; TestFalkorDBInstallPrompt signature

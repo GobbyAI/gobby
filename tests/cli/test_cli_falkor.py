@@ -57,17 +57,18 @@ class TestGetFalkorDBStatus:
 class TestInstallFalkorDBFlags:
     """Tests for FalkorDB-related params in install/uninstall commands."""
 
-    def test_install_command_has_falkordb_options(self) -> None:
+    def test_install_command_has_no_falkordb_options(self) -> None:
         """54b9a969c (#19373) made FalkorDB part of the required install stack.
 
-        There is no opt-in `--falkordb` flag any more; only the password
-        override survives, and no install path may reintroduce the toggle.
+        There is no opt-in `--falkordb` flag and no password override: the
+        password is generated, and no install path may reintroduce either.
         """
         from gobby.cli.install import install
 
         param_names = [p.name for p in install.params]
         assert "falkordb_flag" not in param_names
-        assert "falkordb_password_stdin" in param_names
+        assert "falkordb_password_stdin" not in param_names
+        assert "components" in param_names
 
     def test_uninstall_command_rejects_falkordb_option(self) -> None:
         from gobby.cli.uninstall import uninstall

@@ -3,7 +3,6 @@ Installation commands for hooks.
 """
 
 import logging
-import os
 import secrets
 import subprocess  # nosec B404 # fixed install startup command
 import sys
@@ -22,17 +21,10 @@ from gobby.cli.install_files_home import (
     resolve_install_files_home,
 )
 from gobby.config.bootstrap import BootstrapConfigError, DatastoreMode, load_bootstrap
-from gobby.config.persistence import validate_falkordb_password
 from gobby.storage.auth import AuthStore, ensure_local_api_token
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.projects import ensure_personal_project_identity
-from gobby.storage.secrets import (
-    POSTURE_KEY_FILE,
-    POSTURE_SCRYPT_PASSPHRASE,
-    SECRET_KEK_PASSPHRASE_ENV,
-    SecretStore,
-    write_private_file,
-)
+from gobby.storage.secrets import SecretStore, write_private_file
 from gobby.ui_exposure import (
     UiExposeError,
     UiExposeResult,
@@ -68,7 +60,6 @@ from ._install_prompts import (
     _API_KEY_PROMPTS,
     _echo_install_details,
     _echo_install_summary,
-    _echo_migration_notice,
     _prompt_api_keys,
     _run_embedding_install,
     _run_falkordb_install,
@@ -77,8 +68,15 @@ from ._install_prompts import (
     _run_standard_cli_install,
     _run_voice_install,
 )
-from ._install_state import empty_install_state, prepare_install_state, should_configure_section
-from .install_components import reconcile_rtk_step
+from ._install_state import prepare_install_state, should_configure_section
+from .install_components import (
+    COMPONENT_LABELS,
+    COMPONENTS,
+    EmbeddingOverrides,
+    reconcile_rtk_step,
+    require_installed,
+    run_install_components,
+)
 from .install_identity import ensure_install_identity
 from .install_setup import ensure_daemon_config, run_daemon_setup
 from .install_setup_gdaemon import GdaemonInstallError, ensure_gdaemon
@@ -133,55 +131,6 @@ def _maybe_start_daemon_after_install(*, no_interactive: bool, claim: Any | None
     )
 
 
-def _configure_secret_kek_posture(
-    secret_store: SecretStore | None,
-    posture: str,
-    *,
-    no_interactive: bool,
-) -> None:
-    storage_posture = POSTURE_SCRYPT_PASSPHRASE if posture == "passphrase" else POSTURE_KEY_FILE
-    if storage_posture == POSTURE_KEY_FILE:
-        if secret_store is None:
-            return
-        if secret_store.current_kek_posture() == POSTURE_SCRYPT_PASSPHRASE:
-            current_passphrase = os.environ.get(SECRET_KEK_PASSPHRASE_ENV)
-            if not current_passphrase:
-                if no_interactive:
-                    raise click.ClickException(
-                        f"--secret-kek-posture key-file requires current "
-                        f"{SECRET_KEK_PASSPHRASE_ENV} in --no-interactive mode."
-                    )
-                current_passphrase = str(
-                    click.prompt(
-                        "Current secret KEK passphrase",
-                        hide_input=True,
-                    )
-                )
-            secret_store.kek_passphrase = current_passphrase
-        secret_store.set_kek_posture(storage_posture)
-        click.echo("Secret KEK posture: key-file")
-        return
-    if secret_store is None:
-        raise click.ClickException("Cannot configure passphrase KEK posture without hub access.")
-
-    passphrase = os.environ.get(SECRET_KEK_PASSPHRASE_ENV)
-    if not passphrase:
-        if no_interactive:
-            raise click.ClickException(
-                f"--secret-kek-posture passphrase requires {SECRET_KEK_PASSPHRASE_ENV} "
-                "in --no-interactive mode."
-            )
-        passphrase = str(
-            click.prompt(
-                "Secret KEK passphrase",
-                hide_input=True,
-                confirmation_prompt=True,
-            )
-        )
-    secret_store.set_kek_posture(storage_posture, passphrase=passphrase)
-    click.echo("Secret KEK posture: passphrase")
-
-
 def _provision_local_api_token(auth_store: AuthStore | None) -> None:
     """Provision the local token with or without a reachable hub database."""
     if auth_store is not None:
@@ -201,14 +150,8 @@ def _provision_gdaemon_for_services() -> None:
         raise click.ClickException(f"Failed to provision gdaemon: {exc}") from exc
 
 
-def _resolve_ide_settings_consent(
-    ide_settings: bool | None,
-    *,
-    no_interactive: bool,
-) -> bool:
-    """Resolve explicit or interactive consent for VS Code-family settings changes."""
-    if ide_settings is not None:
-        return ide_settings
+def _resolve_ide_settings_consent(*, no_interactive: bool) -> bool:
+    """Ask for consent to change detected VS Code-family terminal settings."""
     if no_interactive:
         return False
 
@@ -229,14 +172,13 @@ def _resolve_ide_settings_consent(
 def _install_required_stack(
     results: dict[str, dict[str, Any]],
     *,
-    falkordb_password: str | None,
     container_restarts: bool,
 ) -> None:
     """Provision PostgreSQL, Qdrant, and FalkorDB as one required stack."""
     results["postgres"] = install_postgres()
     if results["postgres"].get("success"):
         _run_qdrant_install(install_qdrant, results)
-        _run_falkordb_install(install_falkordb, falkordb_password, results)
+        _run_falkordb_install(install_falkordb, results)
     else:
         error = "Skipped because required PostgreSQL installation failed."
         results["qdrant"] = {"success": False, "error": error}
@@ -256,81 +198,41 @@ def _install_required_stack(
         }
 
 
+def _install_components(
+    components: tuple[str, ...],
+    *,
+    project_path: Path,
+    no_interactive: bool,
+    embedding: EmbeddingOverrides,
+    files_home: Path | None,
+) -> None:
+    """Run only the named components against an existing install."""
+    if files_home is not None:
+        raise click.UsageError("--files-home applies to the full install only.")
+    if embedding.any_set and "embedding" not in components:
+        raise click.UsageError("--embedding-* requires the embedding component.")
+    require_installed()
+    runtime = get_cli_runtime()
+    try:
+        results = run_install_components(
+            components,
+            project_path=project_path,
+            no_interactive=no_interactive,
+            embedding=embedding,
+            runtime=runtime,
+        )
+    finally:
+        runtime.close()
+    failed = {name for name, result in results.items() if not result.get("success", False)}
+    for name in components:
+        if name not in failed:
+            click.echo(f"{COMPONENT_LABELS[name]} component complete.")
+    if failed:
+        sys.exit(1)
+
+
 @click.command("install")
-@click.option(
-    "--claude",
-    "claude_flag",
-    is_flag=True,
-    help="Install Claude Code hooks only",
-)
-@click.option(
-    "--grok",
-    "grok_flag",
-    is_flag=True,
-    help="Install Grok CLI hooks only",
-)
-@click.option(
-    "--agy",
-    "agy_flag",
-    is_flag=True,
-    help="Install AGY CLI hooks only",
-)
-@click.option(
-    "--codex",
-    "codex_flag",
-    is_flag=True,
-    help="Configure Codex notify integration (interactive Codex)",
-)
-@click.option(
-    "--droid",
-    "droid_flag",
-    is_flag=True,
-    help="Install Droid CLI hooks only",
-)
-@click.option(
-    "--qwen",
-    "qwen_flag",
-    is_flag=True,
-    help="Install Qwen CLI hooks only",
-)
-@click.option(
-    "--hooks",
-    "--git-hooks",
-    "hooks_flag",
-    is_flag=True,
-    help="Install Git hooks for verification, JSONL export, and code indexing",
-)
-@click.option(
-    "--all",
-    "all_flag",
-    is_flag=True,
-    default=False,
-    help="Install required infrastructure and hooks for all detected CLIs",
-)
-@click.option(
-    "--config-only",
-    "config_only_flag",
-    is_flag=True,
-    help="Configure Gobby and required infrastructure without installing CLI or Git hooks",
-)
-@click.option(
-    "--falkordb-password-stdin",
-    "falkordb_password_stdin",
-    is_flag=True,
-    help="Read a custom FalkorDB password from stdin",
-)
-@click.option(
-    "--project",
-    "project_flag",
-    is_flag=True,
-    help="Install hooks per-project instead of globally (legacy behavior)",
-)
-@click.option(
-    "--voice",
-    "voice_flag",
-    is_flag=True,
-    help="Install voice chat dependencies (STT + TTS with voice cloning)",
-)
+@click.argument("components", nargs=-1, type=click.Choice(COMPONENTS), metavar="[COMPONENT]...")
 @click.option(
     "--embedding-url",
     "embedding_url",
@@ -363,36 +265,10 @@ def _install_required_stack(
     help="Override the embedding dimension. Omit to auto-detect via /v1/embeddings probe.",
 )
 @click.option(
-    "--secret-kek-posture",
-    "secret_kek_posture",
-    type=click.Choice(["key-file", "passphrase"]),
-    default="key-file",
-    show_default=True,
-    help="KEK posture for daemon-local secret encryption.",
-)
-@click.option(
-    "--ide-settings/--no-ide-settings",
-    "ide_settings_flag",
-    default=None,
-    help="Configure detected VS Code-family terminals for tmux and Gobby session titles.",
-)
-@click.option(
-    "--expose-ui/--no-expose-ui",
-    "expose_ui_flag",
-    default=None,
-    help="Expose the web UI to this machine's Tailscale network.",
-)
-@click.option(
     "--no-interactive",
     "no_interactive_flag",
     is_flag=True,
     help="Skip interactive prompts (for CI/automation)",
-)
-@click.option(
-    "--rtk/--no-rtk",
-    "rtk_flag",
-    default=None,
-    help="Enable or disable RTK command rewriting through Gobby hooks.",
 )
 @click.option(
     "--container-restarts/--no-container-restarts",
@@ -416,155 +292,85 @@ def _install_required_stack(
     help="Target directory (default: current directory)",
 )
 def install(
-    claude_flag: bool,
-    grok_flag: bool,
-    agy_flag: bool,
-    codex_flag: bool,
-    droid_flag: bool,
-    qwen_flag: bool,
-    hooks_flag: bool,
-    all_flag: bool,
-    config_only_flag: bool,
-    falkordb_password_stdin: bool,
-    voice_flag: bool,
-    project_flag: bool,
+    components: tuple[str, ...],
     embedding_url: str | None,
     embedding_provider: str | None,
     embedding_model: str | None,
     embedding_dim: int | None,
-    secret_kek_posture: str,
-    ide_settings_flag: bool | None,
-    expose_ui_flag: bool | None,
     no_interactive_flag: bool,
     container_restarts_flag: bool,
     files_home: Path | None = None,
     working_dir: Path | None = None,
-    rtk_flag: bool | None = None,
 ) -> None:
-    """Install Gobby configuration, required infrastructure, and integrations.
+    """Install Gobby, or reinstall the named COMPONENTS of an existing install.
 
-    By default (no flags), provisions the required stack and installs hooks
-    globally for detected CLIs.
-    Use --project to install per-project instead (legacy behavior).
-    Use --claude, --grok, --agy, --qwen, --codex, or --droid to install only
-    to specific CLIs.
-    Use --hooks alone to reinstall Git hooks without configuration or infrastructure setup.
-    Use --rtk/--no-rtk, --voice, or --embedding-* alone to configure only that section.
-    Use --config-only to configure Gobby and required infrastructure without hooks.
+    Bare `gobby install` runs the full install: daemon config, the managed
+    PostgreSQL/Qdrant/FalkorDB stack, account identity, hooks for every
+    detected CLI, Git hooks for the current repository, and the optional
+    sections. `gobby install COMPONENT...` requires an existing install and
+    runs only those components, in order.
+
+    Components: claude, codex, grok, qwen, droid, agy, git-hooks, rtk,
+    impeccable, voice, embedding, ide-settings.
     """
     if embedding_provider and not embedding_url:
         raise click.UsageError("--embedding-provider requires --embedding-url.")
 
-    falkordb_password: str | None = None
-    if falkordb_password_stdin:
-        falkordb_password = sys.stdin.read().strip()
-        if not falkordb_password:
-            raise click.UsageError("--falkordb-password-stdin requires a password on stdin.")
-        try:
-            validate_falkordb_password(falkordb_password)
-        except ValueError as exc:
-            raise click.UsageError(str(exc)) from exc
-
+    embedding = EmbeddingOverrides(
+        url=embedding_url,
+        provider=embedding_provider,
+        model=embedding_model,
+        dim=embedding_dim,
+    )
     project_path = working_dir.resolve() if working_dir else Path.cwd()
-    mode = "project" if project_flag else "global"
-    if project_flag and agy_flag:
-        raise click.UsageError(
-            "AGY integration does not support --project; install AGY globally without --project."
+
+    if components:
+        _install_components(
+            tuple(dict.fromkeys(components)),
+            project_path=project_path,
+            no_interactive=no_interactive_flag,
+            embedding=embedding,
+            files_home=files_home,
         )
+        return
 
-    explicit_scope = (
-        claude_flag
-        or grok_flag
-        or agy_flag
-        or qwen_flag
-        or codex_flag
-        or droid_flag
-        or hooks_flag
-        or all_flag
-        or config_only_flag
-    )
-    embedding_override = any(
-        value is not None
-        for value in (embedding_url, embedding_provider, embedding_model, embedding_dim)
-    )
-    # Section flags name one installable section (RTK, embedding, voice); with
-    # no scope flag they are a maintenance run of just those sections. Flags
-    # that answer full-install prompts pull the run back into the full install.
-    section_flags = rtk_flag is not None or embedding_override or voice_flag
-    full_install_prompt_answers = (
-        falkordb_password_stdin or ide_settings_flag is not None or expose_ui_flag is True
-    )
-    section_maintenance = section_flags and not explicit_scope and not full_install_prompt_answers
-    if not explicit_scope and not section_maintenance:
-        all_flag = True
+    # Auto-detect installed CLIs
     clis_to_install: list[str] = []
+    if _is_claude_code_installed():
+        clis_to_install.append("claude")
+    if _is_grok_cli_installed():
+        clis_to_install.append("grok")
+    if _is_qwen_cli_installed():
+        clis_to_install.append("qwen")
+    if _is_agy_cli_installed():
+        clis_to_install.append("agy")
+    if _is_codex_cli_installed():
+        clis_to_install.append("codex")
+    if _is_droid_cli_installed():
+        clis_to_install.append("droid")
 
-    install_hooks = hooks_flag
-    no_supported_cli = False
+    install_hooks = clis_to_install != ["agy"] and (project_path / ".git").exists()
+    no_supported_cli = not clis_to_install and not install_hooks
 
-    if all_flag:
-        # Auto-detect installed CLIs
-        if _is_claude_code_installed():
-            clis_to_install.append("claude")
-        if _is_grok_cli_installed():
-            clis_to_install.append("grok")
-        if _is_qwen_cli_installed():
-            clis_to_install.append("qwen")
-        if not project_flag and _is_agy_cli_installed():
-            clis_to_install.append("agy")
-        if _is_codex_cli_installed():
-            clis_to_install.append("codex")
-        if _is_droid_cli_installed():
-            clis_to_install.append("droid")
-
-        # Check for git
-        if clis_to_install != ["agy"] and (project_path / ".git").exists():
-            install_hooks = True
-
-        if not clis_to_install and not install_hooks:
-            no_supported_cli = True
-
-    else:
-        if claude_flag:
-            clis_to_install.append("claude")
-        if grok_flag:
-            clis_to_install.append("grok")
-        if agy_flag:
-            clis_to_install.append("agy")
-        if qwen_flag:
-            clis_to_install.append("qwen")
-        if codex_flag:
-            clis_to_install.append("codex")
-        if droid_flag:
-            clis_to_install.append("droid")
-
-    is_full_install = all_flag or config_only_flag
     raw_bootstrap = peek_install_bootstrap()
     datastore_mode = str(raw_bootstrap.get("datastore_mode") or "local")
     expose_ui = resolve_installer_ui_exposure(
-        expose_ui_flag,
-        full_install=is_full_install,
+        None,
+        full_install=True,
         no_interactive=no_interactive_flag,
         confirm=lambda: click.confirm(
             "Expose the web UI to your Tailscale network?",
             default=False,
         ),
     )
-    provision_managed_services = is_full_install and datastore_mode == "local"
-    hooks_only_maintenance = (
-        hooks_flag
-        and not clis_to_install
-        and not is_full_install
-        and not section_flags
-        and not full_install_prompt_answers
-    )
+    provision_managed_services = datastore_mode == "local"
 
     # Get install directory info
     install_dir = get_install_dir()
     is_dev_mode = _is_source_checkout_install(install_dir)
 
     preflight_errors, preflight_warnings = _run_install_preflight(
-        is_full_install=is_full_install,
+        is_full_install=True,
         install_dir=install_dir,
         embedding_url=embedding_url,
         embedding_provider=embedding_provider,
@@ -599,9 +405,7 @@ def install(
         raise click.UsageError(
             "Local install requires --files-home naming an existing absolute directory"
         )
-    if local_install_requires_maintenance(
-        datastore_mode=datastore_mode, full_install=is_full_install
-    ):
+    if local_install_requires_maintenance(datastore_mode=datastore_mode, full_install=True):
         if resolved_files_home is None:
             raise click.UsageError(
                 "Local install requires --files-home naming an existing absolute directory"
@@ -623,57 +427,7 @@ def install(
             ) from exc
         click.echo(f"Personal project identity: {personal_marker}")
 
-    if hooks_only_maintenance:
-        try:
-            hook_results: dict[str, dict[str, Any]] = {}
-            _run_git_hooks_install(install_git_hooks, project_path, hook_results)
-            if not hook_results["git-hooks"].get("success", False):
-                sys.exit(1)
-            click.echo("Git hook maintenance complete.")
-            return
-        finally:
-            if install_claim is not None:
-                install_claim.release()
-
-    if section_maintenance:
-        maintenance_runtime = get_cli_runtime()
-        try:
-            maintenance_db = maintenance_runtime.require_database()
-            maintenance_results: dict[str, dict[str, Any]] = {}
-            sections: list[str] = []
-            if rtk_flag is not None:
-                reconcile_rtk_step(maintenance_db, rtk_flag, no_interactive=no_interactive_flag)
-                sections.append("RTK")
-            if embedding_override:
-                _run_embedding_install(
-                    install_embedding,
-                    maintenance_results,
-                    no_interactive=no_interactive_flag,
-                    api_base_override=embedding_url,
-                    model_override=embedding_model,
-                    dim_override=embedding_dim,
-                    provider_override=embedding_provider,
-                )
-                sections.append("Embedding")
-            if voice_flag:
-                _run_voice_install(
-                    maintenance_results,
-                    voice_flag=True,
-                    no_interactive=no_interactive_flag,
-                    db=maintenance_db,
-                )
-                sections.append("Voice")
-            if not all(result.get("success", False) for result in maintenance_results.values()):
-                sys.exit(1)
-            for section in sections:
-                click.echo(f"{section} maintenance complete.")
-            return
-        finally:
-            if install_claim is not None:
-                install_claim.release()
-            maintenance_runtime.close()
-
-    initialize_project_after_setup = not config_only_flag and _should_initialize_project(
+    initialize_project_after_setup = _should_initialize_project(
         project_path,
         no_interactive=no_interactive_flag,
     )
@@ -681,10 +435,7 @@ def install(
     click.echo("=" * 60)
     click.echo("  Gobby Installation")
     click.echo("=" * 60)
-    if mode == "global":
-        click.echo("\nScope: Global (~/.gobby/)")
-    else:
-        click.echo(f"\nScope: Project ({project_path})")
+    click.echo("\nScope: Global (~/.gobby/)")
     if is_dev_mode:
         click.echo("Mode: Development (using source directory)")
 
@@ -697,20 +448,11 @@ def install(
         click.echo(f"Created daemon config: {config_result['path']}")
     if provision_managed_services:
         _provision_gdaemon_for_services()
-        _install_required_stack(
-            results,
-            falkordb_password=falkordb_password,
-            container_restarts=container_restarts_flag,
-        )
+        _install_required_stack(results, container_restarts=container_restarts_flag)
         if not all(result.get("success", False) for result in results.values()):
             _echo_install_summary(results, True)
             sys.exit(1)
-    configure_ide_settings = False
-    if not config_only_flag:
-        configure_ide_settings = _resolve_ide_settings_consent(
-            ide_settings_flag,
-            no_interactive=no_interactive_flag,
-        )
+    configure_ide_settings = _resolve_ide_settings_consent(no_interactive=no_interactive_flag)
     run_daemon_setup(project_path, configure_ide_settings=configure_ide_settings)
     runtime = get_cli_runtime()
     try:
@@ -723,7 +465,7 @@ def install(
         except (OSError, RuntimeError, ValueError) as exc:
             raise click.ClickException(f"Failed to establish account identity: {exc}") from exc
         click.echo(f"Account identity: {installed_user.email}")
-        rtk_status = reconcile_rtk_step(db, rtk_flag, no_interactive=no_interactive_flag)
+        rtk_status = reconcile_rtk_step(db, None, no_interactive=no_interactive_flag)
         results["rtk"] = {
             "success": rtk_status.health != "unavailable",
             "path": str(rtk_status.binary_path) if rtk_status.binary_path else None,
@@ -748,11 +490,6 @@ def install(
             )
         if exposure_result is not None:
             click.echo(f"Web UI exposed at {exposure_result.url}")
-        if config_only_flag:
-            if not _echo_install_summary(results, True):
-                sys.exit(1)
-            click.echo("Configuration and required infrastructure complete.")
-            return
 
         toggles = list(clis_to_install)
         if provision_managed_services:
@@ -793,16 +530,9 @@ def install(
             )
 
         if datastore_mode == "local":
-            _configure_secret_kek_posture(
-                secret_store,
-                secret_kek_posture,
-                no_interactive=no_interactive_flag,
-            )
             _provision_local_api_token(auth_store)
 
-        install_state = empty_install_state()
-        if is_full_install:
-            install_state = prepare_install_state(config_store, secret_store)
+        install_state = prepare_install_state(config_store, secret_store)
 
         _standard_installers: dict[str, Callable[..., dict[str, Any]]] = {
             "agy": install_agy,
@@ -825,43 +555,39 @@ def install(
         if install_hooks:
             _run_git_hooks_install(install_git_hooks, project_path, results)
 
-        configure_embedding = is_full_install and should_configure_section(
+        configure_embedding = should_configure_section(
             install_state.embedding,
             label="embedding provider/model/endpoint",
             no_interactive=no_interactive_flag,
-            explicit=embedding_override,
+            explicit=embedding.any_set,
         )
         if configure_embedding:
             _run_embedding_install(
                 install_embedding,
                 results,
                 no_interactive=no_interactive_flag,
-                api_base_override=embedding_url,
-                model_override=embedding_model,
-                dim_override=embedding_dim,
-                provider_override=embedding_provider,
+                api_base_override=embedding.url,
+                model_override=embedding.model,
+                dim_override=embedding.dim,
+                provider_override=embedding.provider,
             )
 
-        configure_voice = not is_full_install or should_configure_section(
+        configure_voice = should_configure_section(
             install_state.voice,
             label="voice setting",
             no_interactive=no_interactive_flag,
-            explicit=voice_flag,
+            explicit=False,
         )
         if configure_voice:
             _run_voice_install(
                 results,
-                voice_flag=voice_flag,
+                voice_flag=False,
                 no_interactive=no_interactive_flag,
                 db=db,
                 secret_store=secret_store,
                 reconfigure=install_state.voice.configured,
                 current_enabled=install_state.voice.enabled,
             )
-
-        # Migration detection
-        if mode == "global":
-            _echo_migration_notice(project_path)
 
         # Summary, next steps, API key prompts
         all_success = _echo_install_summary(
@@ -872,11 +598,10 @@ def install(
         )
         if not all_success:
             sys.exit(1)
-        if is_full_install:
-            _maybe_start_daemon_after_install(
-                no_interactive=no_interactive_flag,
-                claim=install_claim,
-            )
+        _maybe_start_daemon_after_install(
+            no_interactive=no_interactive_flag,
+            claim=install_claim,
+        )
     finally:
         if install_claim is not None:
             install_claim.release()

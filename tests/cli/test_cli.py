@@ -174,7 +174,7 @@ class TestCLICommands:
         """Test install --help displays help."""
         result = runner.invoke(cli, ["install", "--help"])
         assert result.exit_code == 0
-        assert "Install Gobby configuration, required infrastructure" in result.output
+        assert "reinstall the named COMPONENTS" in result.output
 
     def test_uninstall_help(self, runner: CliRunner) -> None:
         """Test uninstall --help displays help."""
@@ -323,12 +323,18 @@ class TestInstallCommand:
                 "gobby.cli.runtime.CliRuntime.require_database",
                 return_value=MagicMock(),
             ),
+            patch("gobby.cli.install.peek_install_bootstrap", return_value={}),
+            patch(
+                "gobby.cli.install._run_install_preflight",
+                return_value=(["preflight stop"], []),
+            ),
             runner.isolated_filesystem(temp_dir=str(temp_dir)),
         ):
-            result = runner.invoke(cli, ["install"])
+            result = runner.invoke(cli, ["install", "--no-interactive"])
 
             assert result.exit_code == 1
             assert "No supported AI coding CLIs detected" in result.output
+            assert "Error: preflight stop" in result.output
 
 
 class TestUninstallCommand:

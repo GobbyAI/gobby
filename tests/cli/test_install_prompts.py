@@ -19,6 +19,7 @@ from gobby.cli._install_prompts import (
 )
 from gobby.cli._install_state import empty_install_state
 from gobby.cli.install import install as install_command
+from gobby.cli.install_setup_rtk import RtkInstallStatus
 from gobby.config.skills import HubConfig, SkillsConfig
 from gobby.storage.config_mutations import ConfigPatch
 
@@ -39,6 +40,17 @@ def _installed_identity() -> Any:
             return_value=MagicMock(email="owner@example.com"),
         ),
         patch("gobby.cli.install._provision_gdaemon_for_services"),
+        patch(
+            "gobby.cli.install_components.reconcile_rtk",
+            return_value=RtkInstallStatus(
+                binary_path=None,
+                version=None,
+                rule_enabled=False,
+                direct_artifact_conflicts=(),
+                health="disabled",
+                managed_binary=False,
+            ),
+        ),
     ):
         yield
 
@@ -398,7 +410,6 @@ class TestVoiceInstall:
             mock_mutations.return_value.repository.read.return_value.revision = 42
             _run_voice_install(
                 results,
-                voice_flag=False,
                 no_interactive=False,
                 db=db,
                 reconfigure=True,
@@ -417,7 +428,6 @@ class TestFalkorDBInstallPrompt:
         ("password_source", "password", "expected"),
         [
             ("generated", "generated-pw", "Generated FalkorDB password: generated-pw"),
-            ("provided", None, "Using provided FalkorDB password (not displayed)"),
             ("reused", None, "Reusing existing FalkorDB password from config_store"),
         ],
     )
@@ -439,10 +449,10 @@ class TestFalkorDBInstallPrompt:
             }
         )
 
-        _run_falkordb_install(installer, "input-pw", results)
+        _run_falkordb_install(installer, results)
 
         output = capsys.readouterr().out
-        installer.assert_called_once_with(password="input-pw")
+        installer.assert_called_once_with()
         assert expected in output
         assert "Browser: http://localhost:13000" in output
         assert results["falkordb"]["password_source"] == password_source
@@ -452,25 +462,11 @@ class TestInstallCommandSharedStores:
     def test_embedding_provider_requires_embedding_url(self, tmp_path: Path) -> None:
         with pytest.raises(click.UsageError, match="--embedding-provider requires --embedding-url"):
             _invoke_install(
-                claude_flag=False,
-                grok_flag=False,
-                agy_flag=False,
-                codex_flag=True,
-                droid_flag=False,
-                qwen_flag=False,
-                hooks_flag=False,
-                all_flag=False,
-                config_only_flag=False,
-                falkordb_password_stdin=False,
-                voice_flag=False,
-                project_flag=False,
+                components=(),
                 embedding_url=None,
                 embedding_provider="lmstudio",
                 embedding_model=None,
                 embedding_dim=None,
-                secret_kek_posture="key-file",
-                ide_settings_flag=None,
-                expose_ui_flag=None,
                 no_interactive_flag=True,
                 container_restarts_flag=True,
                 working_dir=tmp_path,
@@ -512,6 +508,14 @@ class TestInstallCommandSharedStores:
                 AuthStore=mock_auth_cls,
                 _provision_local_api_token=mock_provision_token,
                 install_postgres=MagicMock(return_value={"success": True}),
+                apply_managed_service_restart_policy=MagicMock(return_value={"success": True}),
+                _run_qdrant_install=lambda _installer, results: results.update(
+                    {"qdrant": {"success": True}}
+                ),
+                _run_falkordb_install=lambda _installer, results: results.update(
+                    {"falkordb": {"success": True}}
+                ),
+                _maybe_start_daemon_after_install=MagicMock(),
             ),
             patch(
                 "gobby.cli.install._ensure_daemon_config",
@@ -540,25 +544,11 @@ class TestInstallCommandSharedStores:
             patch("gobby.cli.install._echo_install_summary", return_value=True) as mock_summary,
         ):
             _invoke_install(
-                claude_flag=False,
-                grok_flag=False,
-                agy_flag=False,
-                codex_flag=True,
-                droid_flag=False,
-                qwen_flag=False,
-                hooks_flag=False,
-                all_flag=False,
-                config_only_flag=False,
-                falkordb_password_stdin=False,
-                voice_flag=False,
-                project_flag=False,
+                components=(),
                 embedding_url=None,
                 embedding_provider=None,
                 embedding_model=None,
                 embedding_dim=None,
-                secret_kek_posture="key-file",
-                ide_settings_flag=None,
-                expose_ui_flag=None,
                 no_interactive_flag=True,
                 container_restarts_flag=True,
                 working_dir=tmp_path,
@@ -579,13 +569,10 @@ class TestInstallCommandSharedStores:
         runtime.close.assert_called_once_with()
         db.close.assert_not_called()
 
-    def test_closes_database_context_when_secret_setup_fails(self, tmp_path: Path) -> None:
+    def test_closes_runtime_when_identity_setup_fails(self, tmp_path: Path) -> None:
         db = MagicMock()
-        secret_store = MagicMock()
-        config_store = MagicMock()
-        secret_store_cls = MagicMock(return_value=secret_store)
-        config_store_cls = MagicMock(return_value=config_store)
-        configure_secret_kek = MagicMock(side_effect=RuntimeError("secret setup failed"))
+        secret_store_cls = MagicMock()
+        ensure_identity = MagicMock(side_effect=RuntimeError("identity failed"))
         runtime = MagicMock()
         runtime.require_database.return_value = db
 
@@ -598,8 +585,18 @@ class TestInstallCommandSharedStores:
             patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
             patch("gobby.cli.install.get_cli_runtime", return_value=runtime),
             patch("gobby.cli.install.SecretStore", secret_store_cls),
-            patch("gobby.cli.install.ConfigStore", config_store_cls),
-            patch("gobby.cli.install._configure_secret_kek_posture", configure_secret_kek),
+            patch("gobby.cli.install.ensure_install_identity", ensure_identity),
+            patch(
+                "gobby.cli.install._install_required_stack",
+                side_effect=lambda results, **_kwargs: results.update(
+                    {
+                        "postgres": {"success": True},
+                        "qdrant": {"success": True},
+                        "falkordb": {"success": True},
+                        "container-restarts": {"success": True},
+                    }
+                ),
+            ),
             patch(
                 "gobby.cli.install._ensure_daemon_config",
                 return_value={"created": False, "path": str(tmp_path / "bootstrap.yaml")},
@@ -621,41 +618,22 @@ class TestInstallCommandSharedStores:
                 "gobby.cli.install.ensure_personal_project_identity",
                 return_value=tmp_path / "files/_personal/.gobby/project.json",
             ),
-            pytest.raises(RuntimeError, match="secret setup failed"),
+            pytest.raises(click.ClickException, match="identity failed"),
         ):
             _invoke_install(
-                claude_flag=False,
-                grok_flag=False,
-                agy_flag=False,
-                codex_flag=True,
-                droid_flag=False,
-                qwen_flag=False,
-                hooks_flag=False,
-                all_flag=False,
-                config_only_flag=False,
-                falkordb_password_stdin=False,
-                voice_flag=False,
-                project_flag=False,
+                components=(),
                 embedding_url=None,
                 embedding_provider=None,
                 embedding_model=None,
                 embedding_dim=None,
-                secret_kek_posture="key-file",
-                ide_settings_flag=None,
-                expose_ui_flag=None,
                 no_interactive_flag=True,
                 container_restarts_flag=True,
                 working_dir=tmp_path,
             )
 
         runtime.require_database.assert_called_once_with()
-        assert secret_store_cls.call_args == call(db)
-        assert config_store_cls.call_args == call(db)
-        assert configure_secret_kek.call_args == call(
-            secret_store,
-            "key-file",
-            no_interactive=True,
-        )
+        assert ensure_identity.call_args == call(db, no_interactive=True)
+        secret_store_cls.assert_not_called()
         runtime.close.assert_called_once_with()
 
     def test_forwards_embedding_provider_override_and_reuses_shared_stores(
@@ -732,7 +710,7 @@ class TestInstallCommandSharedStores:
             ),
             patch(
                 "gobby.cli.install._run_falkordb_install",
-                side_effect=lambda _installer, _password, results: results.update(
+                side_effect=lambda _installer, results: results.update(
                     {"falkordb": {"success": True}}
                 ),
             ),
@@ -740,25 +718,11 @@ class TestInstallCommandSharedStores:
             patch("gobby.cli.install._maybe_start_daemon_after_install"),
         ):
             _invoke_install(
-                claude_flag=False,
-                grok_flag=False,
-                agy_flag=False,
-                codex_flag=False,
-                droid_flag=False,
-                qwen_flag=False,
-                hooks_flag=False,
-                all_flag=True,
-                config_only_flag=False,
-                falkordb_password_stdin=False,
-                voice_flag=False,
-                project_flag=False,
+                components=(),
                 embedding_url="http://lan:1234/v1",
                 embedding_provider="lmstudio",
                 embedding_model=None,
                 embedding_dim=None,
-                secret_kek_posture="key-file",
-                ide_settings_flag=None,
-                expose_ui_flag=None,
                 no_interactive_flag=True,
                 container_restarts_flag=True,
                 working_dir=tmp_path,
@@ -811,7 +775,7 @@ def test_install_prompt_accepts_files_home(tmp_path: Path) -> None:
     ):
         CliRunner().invoke(
             install_command,
-            ["--config-only", "--no-interactive", "--files-home", str(files_home)],
+            ["--no-interactive", "--files-home", str(files_home)],
         )
     assert resolve.call_count >= 1
     assert resolve.call_args[0][0] == files_home
