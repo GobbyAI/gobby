@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.hooks.dispatchers.mcp import run_coro_blocking
+from gobby.hooks.effect_deadline import BLOCKING_EFFECT_BUDGET_SECONDS
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
 from gobby.hooks.session_types import HookSessionManager
@@ -494,7 +495,7 @@ class TestHandleNonSessionStart:
         rules_deadline = evaluate_rules.call_args.args[1]
         webhooks_deadline = evaluate_webhooks.call_args.args[1]
         assert rules_deadline == webhooks_deadline
-        assert 100.0 < rules_deadline < 120.0
+        assert rules_deadline == 100.0 + BLOCKING_EFFECT_BUDGET_SECONDS
 
     def test_workflow_rule_evaluator_propagates_shared_deadline(
         self,

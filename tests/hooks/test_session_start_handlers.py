@@ -399,9 +399,15 @@ class TestSessionStartPreCreatedSession:
             },
         )
 
-        with patch(
-            "gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"
-        ) as mock_schedule:
+        with (
+            patch(
+                "gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"
+            ) as mock_schedule,
+            patch(
+                "gobby.hooks.event_handlers._session_start.terminal_runtime.subprocess.run",
+                return_value=SimpleNamespace(returncode=1, stdout=""),
+            ),
+        ):
             response = handlers.handle_session_start(event)
 
         assert response.decision == "allow"
@@ -457,12 +463,21 @@ class TestSessionStartPreCreatedSession:
             },
         )
 
-        with patch(
-            "gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"
-        ) as mock_schedule:
+        with (
+            patch(
+                "gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"
+            ) as mock_schedule,
+            patch(
+                "gobby.hooks.event_handlers._session_start.terminal_runtime.subprocess.run",
+                return_value=SimpleNamespace(returncode=1, stdout=""),
+            ),
+        ):
             response = handlers.handle_session_start(event)
 
         assert response.decision == "allow"
+        assert response.metadata.get("is_pre_created") is True
+        assert response.metadata.get("session_id") == "sess-pre-123"
+        assert response.metadata.get("terminal_tmux_pane") == "%77"
         mock_dependencies["session_manager"].backfill_terminal_context.assert_called_once_with(
             "sess-pre-123",
             {"tmux_pane": "%77", "parent_pid": 123, "cwd": "/work/repos/gobby"},
