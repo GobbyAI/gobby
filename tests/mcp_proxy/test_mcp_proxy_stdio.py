@@ -50,6 +50,8 @@ def test_extended_timeout_tools_excludes_stale_apply_tdd() -> None:
         "wiki_compile",
         "spawn_agent",
         "run_expansion_qa_coverage",
+        "reindex_embeddings",
+        "rebuild_crossrefs",
     )
 
 

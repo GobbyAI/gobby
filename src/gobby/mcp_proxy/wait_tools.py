@@ -46,6 +46,13 @@ EXTENDED_TIMEOUT_TOOL_NAMES = (
     # for the authoritative QA verdict instead of a REQUEST_TIMEOUT that hides a
     # successful run (#19095).
     "run_expansion_qa_coverage",
+    # Memory index rebuilds are bounded daemon work whose duration scales with
+    # the corpus: a global embedding reindex re-embeds every memory (~95s for
+    # 2.4k rows) and a crossref rebuild embeds and vector-searches per memory
+    # (~4min for the same corpus). Both finish server-side, so keep the caller
+    # alive for the authoritative result instead of a REQUEST_TIMEOUT (#21020).
+    "reindex_embeddings",
+    "rebuild_crossrefs",
 )
 
 
