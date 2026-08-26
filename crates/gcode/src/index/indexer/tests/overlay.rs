@@ -37,6 +37,10 @@ fn incremental_overlay_candidates_cover_divergence_from_the_parent_checkout() {
     ] {
         write_file(&parent, rel, b"pub fn seed() {}\n");
     }
+    // Indexed in the parent but invisible to git in both trees: a generated
+    // vault the parent gitignores and the worktree never checks out.
+    write_file(&parent, ".gitignore", b"/generated/\n");
+    write_file(&parent, "generated/page.md", b"# generated\n");
     git(&parent, &hooks, &["init", "-q"]);
     git(&parent, &hooks, &["add", "."]);
     git(&parent, &hooks, &["commit", "-q", "-m", "seed"]);
@@ -74,13 +78,27 @@ fn incremental_overlay_candidates_cover_divergence_from_the_parent_checkout() {
 
     let no_paths: HashMap<String, PathBuf> = HashMap::new();
     let no_states: HashMap<String, IndexedFileState> = HashMap::new();
+    // `same.rs` exists in the worktree and is not a candidate; the generated
+    // page is missing there and has no overlay row, so it must be reconciled.
+    let parent_files: HashMap<String, IndexedFileState> = ["same.rs", "generated/page.md"]
+        .into_iter()
+        .map(|rel| {
+            (
+                rel.to_string(),
+                IndexedFileState {
+                    content_hash: "parent-hash".to_string(),
+                    language: "text".to_string(),
+                },
+            )
+        })
+        .collect();
     let rels = overlay_reconcile_candidates(
         &incremental_request(&overlay),
         &overlay,
         &parent,
         &no_paths,
         &no_paths,
-        &no_states,
+        &parent_files,
         &no_states,
     );
 
@@ -88,6 +106,7 @@ fn incremental_overlay_candidates_cover_divergence_from_the_parent_checkout() {
         rels,
         vec![
             "branch_changed.rs",
+            "generated/page.md",
             "overlay_untracked.rs",
             "parent_changed.rs",
             "parent_dirty.rs",

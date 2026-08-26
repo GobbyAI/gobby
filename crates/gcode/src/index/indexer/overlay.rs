@@ -178,8 +178,18 @@ pub(super) fn index_overlay_files(
         let overlay = overlay_files.get(&rel);
         let current_hash = hash_by_rel.get(&rel).map(String::as_str);
         let indexable = ast_by_rel.contains_key(&rel) || content_by_rel.contains_key(&rel);
-        let action =
-            overlay_reconcile_action(abs.exists(), current_hash, parent, overlay, indexable);
+        // An overlay row that already carries the file's current content is a
+        // finished shadow: re-parsing it changes nothing. Read-path refreshes
+        // run with sync_projections=false, so adoption below (which requires
+        // synced projections) would fail and re-index every diverged file on
+        // every read. `--full` keeps the re-parse escape hatch.
+        let overlay_is_current = !request.full
+            && overlay.is_some_and(|state| Some(state.content_hash.as_str()) == current_hash);
+        let action = if overlay_is_current {
+            OverlayReconcileAction::Skip
+        } else {
+            overlay_reconcile_action(abs.exists(), current_hash, parent, overlay, indexable)
+        };
         // Reuse an existing overlay content version instead of re-parsing;
         // `--full` forces the re-parse escape hatch just like the primary
         // pipeline.
@@ -283,6 +293,17 @@ pub(super) fn overlay_reconcile_candidates(
     } else if let Ok(divergent) = overlay_divergent_relative_paths(root_path, parent_root) {
         rels.extend(divergent);
         rels.extend(overlay_files.keys().cloned());
+        // Parent rows for paths the overlay tree lacks and git cannot report —
+        // gitignored or explicitly indexed in the parent, like the wiki vault —
+        // would otherwise show through the overlay forever and trip every
+        // read-time pre-gate. A missing file with no overlay row is tombstoned
+        // on this pass.
+        rels.extend(
+            parent_files
+                .keys()
+                .filter(|rel| !overlay_files.contains_key(*rel) && !root_path.join(rel).exists())
+                .cloned(),
+        );
     } else {
         rels.extend(ast_by_rel.keys().cloned());
         rels.extend(content_by_rel.keys().cloned());

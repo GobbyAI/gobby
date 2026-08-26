@@ -144,6 +144,32 @@ fn overlay_incremental_index_shadows_parent_rows_for_commit_diverged_files() {
         vec![format!("{overlay_project_id}:overlay_only")],
         "overlay reads must serve the overlay's own rows for a diverged path"
     );
+
+    // The diverged path is now shadowed by an overlay row carrying its current
+    // content. A second incremental run (read-path refreshes never sync
+    // projections, so adoption cannot apply) must leave it alone instead of
+    // re-parsing it on every read.
+    let outcome = index_files(
+        IndexRequest {
+            project_root: overlay_root.clone(),
+            path_filter: None,
+            explicit_files: Vec::new(),
+            full: false,
+            require_cpp_semantics: false,
+            sync_projections: false,
+        },
+        &ctx,
+        IndexOptions::default(),
+    )
+    .expect("second incremental overlay run");
+    assert_eq!(
+        outcome.indexed_files, 0,
+        "a current overlay row is a finished shadow and is not re-parsed"
+    );
+    assert_eq!(
+        visible_names(&mut conn),
+        vec![format!("{overlay_project_id}:overlay_only")]
+    );
 }
 
 #[test]

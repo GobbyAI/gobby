@@ -377,6 +377,12 @@ mod tests {
         .expect("backdate project index");
     }
 
+    fn tombstone_count(ctx: &Context) -> usize {
+        let mut conn =
+            db::connect_readwrite(&ctx.database_url).expect("connect test PostgreSQL hub");
+        visibility::tombstone_count(&mut conn, ctx)
+    }
+
     mod serial_db {
         use super::*;
 
@@ -515,6 +521,12 @@ mod tests {
                     set_mtime(&path, aged);
                 }
             }
+            // Indexed in the parent only, like a generated vault the worktree
+            // never checks out: the overlay tombstones it and then stays quiet.
+            std::fs::create_dir_all(parent_root.join("generated")).expect("create generated");
+            let generated = parent_root.join("generated/page.md");
+            std::fs::write(&generated, "# generated\n").expect("write generated page");
+            set_mtime(&generated, aged);
             let parent_ctx = postgres_context_with_root(
                 &test_project_id("gcode-freshness-overlay-parent"),
                 &parent_root,
@@ -533,6 +545,7 @@ mod tests {
             invalidate_test_project(&overlay_ctx);
             full_index(&parent_ctx);
             full_index(&overlay_ctx);
+            assert_eq!(tombstone_count(&overlay_ctx), 1);
 
             // Every worktree path is inherited from the parent and older than
             // the overlay's index: nothing to refresh, no lock taken.
@@ -552,6 +565,7 @@ mod tests {
             assert!(project_needs_refresh(&overlay_ctx).expect("pre-gate"));
             let status = ensure_fresh(&overlay_ctx, FreshnessScope::Project).expect("refresh");
             assert_eq!(status, FreshnessStatus::Checked);
+            assert_eq!(tombstone_count(&overlay_ctx), 2);
             assert!(!project_needs_refresh(&overlay_ctx).expect("pre-gate"));
 
             // A tombstoned path that reappears reads as new.
