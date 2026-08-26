@@ -2436,3 +2436,34 @@ class TestCommandBuilding:
             assert call_kwargs["stdin"] == subprocess.DEVNULL
             assert call_kwargs["start_new_session"] is True
             assert "env" in call_kwargs
+
+
+def test_start_refuses_linked_worktree_before_services(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The worktree guard fails `gobby start` before dependency checks or services (#21031)."""
+    refusal = "Refusing to start the Gobby daemon from linked worktree /wt"
+    dependency_errors = MagicMock(return_value=[])
+    services_start = MagicMock()
+    monkeypatch.setattr("gobby.cli.daemon.worktree_daemon_refusal", lambda: refusal)
+    monkeypatch.setattr("gobby.cli.daemon._start_dependency_errors", dependency_errors)
+    monkeypatch.setattr("gobby.cli.daemon._services_start", services_start)
+
+    result = CliRunner().invoke(cli, ["start"])
+
+    assert result.exit_code == 1
+    assert refusal in result.output
+    dependency_errors.assert_not_called()
+    services_start.assert_not_called()
+
+
+def test_restart_refuses_linked_worktree_before_stopping(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`gobby restart` refuses before stopping the running daemon (#21031)."""
+    refusal = "Refusing to start the Gobby daemon from linked worktree /wt"
+    do_stop = MagicMock(return_value=True)
+    monkeypatch.setattr("gobby.cli.daemon.worktree_daemon_refusal", lambda: refusal)
+    monkeypatch.setattr("gobby.cli.daemon._do_stop", do_stop)
+
+    result = CliRunner().invoke(cli, ["restart"])
+
+    assert result.exit_code == 1
+    assert refusal in result.output
+    do_stop.assert_not_called()

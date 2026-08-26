@@ -92,6 +92,11 @@ uv run gobby pipelines list      # pipelines: list / run / approve / reject / im
 uv run gobby build <plan_or_task>  # opt a plan/epic/leaf into state dispatch
 ```
 
+Start the daemon only from the main checkout: `gobby start`/`restart` and
+`python -m gobby.runner` refuse a linked-worktree source tree because startup sync
+would publish that branch's templates to the shared DB. `GOBBY_ALLOW_WORKTREE_DAEMON=1`
+overrides it for announced testing.
+
 ## Testing
 
 **Never run the full pytest suite unless explicitly asked** — it takes well over 30

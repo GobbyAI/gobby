@@ -1,8 +1,18 @@
-"""Tests for dev mode detection utilities."""
+"""Tests for dev mode and source-tree detection utilities."""
 
+import os
 from pathlib import Path
+from unittest.mock import patch
 
-from gobby.utils.dev import is_dev_mode, is_gobby_project
+from gobby.utils.dev import (
+    WORKTREE_DAEMON_OVERRIDE_ENV,
+    LinkedWorktree,
+    is_dev_mode,
+    is_gobby_project,
+    linked_worktree_root,
+    running_source_worktree,
+    worktree_daemon_refusal,
+)
 
 
 class TestIsGobbyProject:
@@ -63,3 +73,109 @@ class TestIsDevMode:
     def test_defaults_to_cwd(self, monkeypatch, tmp_path: Path) -> None:
         monkeypatch.chdir(tmp_path)
         assert is_dev_mode() is False
+
+
+def _make_linked_worktree(tmp_path: Path, *, absolute: bool = True) -> tuple[Path, Path]:
+    """Create ``main/.git/worktrees/wt-1`` and a worktree whose ``.git`` file points at it."""
+    base = tmp_path.resolve()
+    main = base / "main"
+    git_dir = main / ".git" / "worktrees" / "wt-1"
+    git_dir.mkdir(parents=True)
+    worktree = base / "worktrees" / "wt-1"
+    worktree.mkdir(parents=True)
+    target = git_dir if absolute else Path(os.path.relpath(git_dir, worktree))
+    (worktree / ".git").write_text(f"gitdir: {target}\n", encoding="utf-8")
+    return worktree, main
+
+
+class TestLinkedWorktreeRoot:
+    """Tests for linked_worktree_root()."""
+
+    def test_detects_linked_worktree_from_nested_path(self, tmp_path: Path) -> None:
+        worktree, main = _make_linked_worktree(tmp_path)
+        nested = worktree / "src" / "gobby"
+        nested.mkdir(parents=True)
+
+        assert linked_worktree_root(nested) == LinkedWorktree(root=worktree, main_checkout=main)
+
+    def test_resolves_relative_gitdir_against_the_worktree(self, tmp_path: Path) -> None:
+        worktree, main = _make_linked_worktree(tmp_path, absolute=False)
+
+        assert linked_worktree_root(worktree) == LinkedWorktree(root=worktree, main_checkout=main)
+
+    def test_main_working_tree_is_not_linked(self, tmp_path: Path) -> None:
+        (tmp_path / ".git").mkdir()
+        nested = tmp_path / "src" / "gobby"
+        nested.mkdir(parents=True)
+
+        assert linked_worktree_root(nested) is None
+
+    def test_submodule_gitdir_is_not_linked(self, tmp_path: Path) -> None:
+        (tmp_path / ".git").write_text("gitdir: /super/.git/modules/sub\n", encoding="utf-8")
+
+        assert linked_worktree_root(tmp_path) is None
+
+    def test_malformed_git_file_is_not_linked(self, tmp_path: Path) -> None:
+        (tmp_path / ".git").write_text("not a gitdir pointer\n", encoding="utf-8")
+
+        assert linked_worktree_root(tmp_path) is None
+
+    def test_tree_without_git_is_not_linked(self, tmp_path: Path) -> None:
+        nested = tmp_path / "site-packages" / "gobby"
+        nested.mkdir(parents=True)
+
+        assert linked_worktree_root(nested) is None
+
+
+class TestRunningSourceWorktree:
+    """Tests for running_source_worktree()."""
+
+    def test_reports_the_package_source_worktree(self, tmp_path: Path) -> None:
+        worktree, main = _make_linked_worktree(tmp_path)
+        package = worktree / "src" / "gobby"
+        package.mkdir(parents=True)
+
+        with patch("gobby.__file__", str(package / "__init__.py")):
+            assert running_source_worktree() == LinkedWorktree(root=worktree, main_checkout=main)
+
+    def test_none_for_a_main_checkout_package(self, tmp_path: Path) -> None:
+        (tmp_path / ".git").mkdir()
+        package = tmp_path / "src" / "gobby"
+        package.mkdir(parents=True)
+
+        with patch("gobby.__file__", str(package / "__init__.py")):
+            assert running_source_worktree() is None
+
+
+class TestWorktreeDaemonRefusal:
+    """Tests for worktree_daemon_refusal()."""
+
+    def test_names_worktree_main_checkout_and_override(self, tmp_path: Path) -> None:
+        worktree, main = _make_linked_worktree(tmp_path)
+        package = worktree / "src" / "gobby"
+        package.mkdir(parents=True)
+
+        with patch("gobby.__file__", str(package / "__init__.py")):
+            refusal = worktree_daemon_refusal(environ={})
+
+        assert refusal is not None
+        assert str(worktree) in refusal
+        assert str(main) in refusal
+        assert f"{WORKTREE_DAEMON_OVERRIDE_ENV}=1" in refusal
+
+    def test_override_env_disarms_the_refusal(self, tmp_path: Path) -> None:
+        worktree, _main = _make_linked_worktree(tmp_path)
+        package = worktree / "src" / "gobby"
+        package.mkdir(parents=True)
+
+        with patch("gobby.__file__", str(package / "__init__.py")):
+            assert worktree_daemon_refusal(environ={WORKTREE_DAEMON_OVERRIDE_ENV: "1"}) is None
+            assert worktree_daemon_refusal(environ={WORKTREE_DAEMON_OVERRIDE_ENV: "0"}) is not None
+
+    def test_none_outside_a_linked_worktree(self, tmp_path: Path) -> None:
+        (tmp_path / ".git").mkdir()
+        package = tmp_path / "src" / "gobby"
+        package.mkdir(parents=True)
+
+        with patch("gobby.__file__", str(package / "__init__.py")):
+            assert worktree_daemon_refusal(environ={}) is None

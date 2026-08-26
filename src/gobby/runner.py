@@ -514,6 +514,15 @@ def main(config_path: Path | None = None, verbose: bool = False) -> None:
     os.environ.setdefault("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.8")
     _raise_fd_limit()
 
+    # Refuse a linked-worktree source tree before any subsystem touches the
+    # database: startup sync would publish this checkout's templates to every
+    # session (#21031).
+    from gobby.utils.dev import worktree_daemon_refusal
+
+    if refusal := worktree_daemon_refusal():
+        print(refusal, file=sys.stderr)
+        sys.exit(1)
+
     # Fast guard: if a healthy daemon is already serving on our port, exit
     # cleanly so launchd (KeepAlive.SuccessfulExit=false) won't respawn us.
     from gobby.config.bootstrap import load_bootstrap

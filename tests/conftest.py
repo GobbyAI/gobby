@@ -84,6 +84,19 @@ def _select_schema_contract_gdaemon() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _allow_worktree_daemon(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Disarm the linked-worktree daemon guard for the suite.
+
+    Agents run these tests from linked worktrees; without the override every
+    ``gobby start``/``runner.main`` test would hit the refusal (#21031). Tests
+    of the guard itself pass an explicit ``environ`` or patch the call site.
+    """
+    from gobby.utils.dev import WORKTREE_DAEMON_OVERRIDE_ENV
+
+    monkeypatch.setenv(WORKTREE_DAEMON_OVERRIDE_ENV, "1")
+
+
+@pytest.fixture(autouse=True)
 def _assert_postgres_pools_bounded() -> Iterator[None]:
     """Require each test to release every PostgreSQL pool it creates."""
     from gobby.storage.hub.postgres import _OPEN_DATABASES

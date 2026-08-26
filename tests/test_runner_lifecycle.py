@@ -4921,3 +4921,22 @@ async def test_restart_preserve_set_returns_none_when_run_enumeration_fails() ->
     assert await_args is not None
     assert await_args.args[1] is runner
     assert await_args.kwargs == {"include_fenced": True}
+
+
+def test_main_refuses_linked_worktree_before_bootstrap(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A linked-worktree source tree exits 1 before bootstrap or the singleton claim (#21031)."""
+    refusal = "Refusing to start the Gobby daemon from linked worktree /wt"
+    with (
+        patch("gobby.utils.dev.worktree_daemon_refusal", return_value=refusal),
+        patch("gobby.config.bootstrap.load_bootstrap") as load_bootstrap,
+        patch("gobby.runner.run_gobby") as run_gobby,
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        main()
+
+    assert exc_info.value.code == 1
+    assert refusal in capsys.readouterr().err
+    load_bootstrap.assert_not_called()
+    run_gobby.assert_not_called()

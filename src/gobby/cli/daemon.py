@@ -39,6 +39,7 @@ from gobby.utils.dependency_requirements import (
     required_dependency_errors,
     unsupported_platform_error,
 )
+from gobby.utils.dev import worktree_daemon_refusal
 from gobby.utils.status import fetch_rich_status, format_startup_summary, format_status_message
 
 from ._daemon_services import (
@@ -436,6 +437,10 @@ def start(ctx: click.Context, verbose: bool) -> None:
         convert_held_claim_to_reservation,
     )
 
+    if refusal := worktree_daemon_refusal():
+        _step(refusal, error=True)
+        sys.exit(1)
+
     gobby_dir = get_gobby_home()
     if dependency_errors := _start_dependency_errors():
         for error in dependency_errors:
@@ -636,6 +641,11 @@ def restart(ctx: click.Context, verbose: bool, docker_flag: bool) -> None:
     """Restart the Gobby daemon (stop then start)."""
     if verbose:
         setup_logging(True)
+
+    # Check before stopping: refusing after the stop would leave no daemon.
+    if refusal := worktree_daemon_refusal():
+        _step(refusal, error=True)
+        sys.exit(1)
 
     if not _do_stop(ctx, docker_flag, shutdown_intent="restart"):
         sys.exit(1)
