@@ -305,15 +305,21 @@ def _positive_port(value: Any, key: str) -> int:
     return port
 
 
+# Present in every resolved runtime, including the postgres-only one. Compose interpolates
+# every service in the template regardless of active profiles, so these are the only
+# variables the template may mark required with `:?`.
+ALWAYS_REQUIRED_COMPOSE_ENV: tuple[str, ...] = (
+    "GOBBY_POSTGRES_DB",
+    "GOBBY_POSTGRES_USER",
+    "GOBBY_POSTGRES_PASSWORD",
+    "GOBBY_PG_SEARCH_VERSION",
+    "GOBBY_PG_SEARCH_SHA256",
+    "GOBBY_FILES_HOME",
+)
+
+
 def _validate_effective_environment(environment: dict[str, str], profiles: tuple[str, ...]) -> None:
-    for key in (
-        "GOBBY_POSTGRES_DB",
-        "GOBBY_POSTGRES_USER",
-        "GOBBY_POSTGRES_PASSWORD",
-        "GOBBY_PG_SEARCH_VERSION",
-        "GOBBY_PG_SEARCH_SHA256",
-        "GOBBY_FILES_HOME",
-    ):
+    for key in ALWAYS_REQUIRED_COMPOSE_ENV:
         if not environment.get(key):
             raise ComposeEnvironmentError(f"{key} must not be empty")
     _positive_port(environment.get("GOBBY_POSTGRES_PORT"), "GOBBY_POSTGRES_PORT")

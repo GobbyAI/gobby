@@ -33,8 +33,10 @@ Confirmed Decision Record (2026-08-25, session #11102):
    volumes, bootstrap, secrets, or files home. `git-hooks` is explicit-only.
 5. `gobby stop --docker` uses `compose stop`; dead `uninstall_falkordb` is deleted.
 6. Impeccable stays in the full install; `impeccable` is its component.
-7. Fold-ins: FalkorDB `:?` in the Compose template; canonical values beat process env in
-   the compose runtime. No `ui` component (`gobby ui expose/unexpose`); Tailscale is not
+7. Fold-ins: no default FalkorDB password in the Compose template (`:-` empty; `:?` is
+   ruled out because Compose interpolates every service on the postgres-only `up` that
+   daemon start and fresh installs run first, so the compose runtime resolver is the
+   fail-closed guard); canonical values beat process env in the compose runtime. No `ui` component (`gobby ui expose/unexpose`); Tailscale is not
    required. Key-file KEK is the default and the only installer path.
 
 ## Constraints
@@ -373,6 +375,7 @@ calls it before `install_postgres`, so `_resolve_postgres_install_database_url`'
 Targets:
 - `src/gobby/cli/installers/falkor.py::*` — scope-reason: password parameter removed from the resolver, installer entry point, and locked body
 - `src/gobby/data/docker-compose.services.yml::*` — scope-reason: two GOBBY_FALKORDB_PASSWORD env lines
+- `src/gobby/cli/installers/compose_env.py::_validate_effective_environment`
 - `tests/cli/installers/test_falkordb_installer.py::*` — scope-reason: provided-source tests and template literal
 - `tests/cli/installers/test_falkor_installer.py::*` — scope-reason: password_source assertions
 - `tests/cli/installers/test_qdrant_installer.py::*` — scope-reason: compose template literal
@@ -383,17 +386,23 @@ Targets:
   "provided" branch of `_resolve_falkordb_password`; sources are `reused` (SecretStore
   `falkordb_password`) and `generated` (existing 32-char `secrets.choice` loop). The
   installer CLI stopped passing a password in 1.2, so no caller changes.
-- Template lines 15 and 17: `${GOBBY_FALKORDB_PASSWORD:?GOBBY_FALKORDB_PASSWORD must be set}`
-  (same contract as `POSTGRES_PASSWORD` on line 93). `reconcile_unified_compose` already
-  re-renders `~/.gobby/services/docker-compose.yml` on the next install/start, so existing
-  installs pick it up without manual steps. Josh toggles `block-docker-policy-edits` for
-  this edit.
-- The installer-level tests drop the provided-source cases and pin the `:?` literal.
+- Template lines 15 and 17: `${GOBBY_FALKORDB_PASSWORD:-}` — no shared default. `:?` (the
+  `POSTGRES_PASSWORD` contract on line 93) is not usable here: Compose interpolates every
+  service even when only the postgres profile is active, and `_start_managed_services_locked`
+  brings postgres up with `profiles=("postgres",)` (whose environment carries no FalkorDB
+  secret) before the full-profile `up`; a fresh install has no SecretStore at all until
+  postgres is up. The fail-closed guard for an actual FalkorDB bring-up is
+  `_service_environment` (missing/empty secret) plus `_validate_effective_environment`
+  (empty value with the falkordb profile active). `ALWAYS_REQUIRED_COMPOSE_ENV` names the
+  variables the template may mark `:?`, and `test_postgres_compose_template.py` pins that
+  contract. `reconcile_unified_compose` re-renders `~/.gobby/services/docker-compose.yml`
+  on the next install/start. Josh toggles `block-docker-policy-edits` for this edit.
+- The installer-level tests drop the provided-source cases and pin the `:-` literal.
 
 **Acceptance:**
 
 - 2.2.1 - `install_falkordb` has no password parameter and resolves only reused or generated passwords. symbol: `gobby.cli.installers.falkor._resolve_falkordb_password`.
-- 2.2.2 - The Compose template requires `GOBBY_FALKORDB_PASSWORD` on both lines and no `gobbyfalkor` literal remains in `src/` or `tests/`. file: `src/gobby/data/docker-compose.services.yml`.
+- 2.2.2 - The Compose template carries no default `GOBBY_FALKORDB_PASSWORD` on either line, marks `:?` only on always-present variables, and no `gobbyfalkor` literal remains in `src/` or `tests/`. file: `src/gobby/data/docker-compose.services.yml`.
 - 2.2.3 - The generated password is echoed once and stored as the `falkordb_password` secret. test: `tests/cli/test_install_prompts.py`.
 
 ### 2.3 Stop containers without removing them and delete `uninstall_falkordb` [category: code] (depends: 2.2)
