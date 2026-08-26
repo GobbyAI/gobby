@@ -18,7 +18,10 @@ from gobby.memory.facade import (
 from gobby.memory.falkor_client import FalkorClient
 from gobby.memory.protocol import MemoryBackendProtocol
 from gobby.memory.recall_constants import resolve_recall_constants
-from gobby.memory.recall_signal_log import make_recall_signal_sink
+from gobby.memory.recall_signal_log import (
+    make_injection_outcome_recorder,
+    make_recall_signal_sink,
+)
 from gobby.memory.services.crossref import CrossrefRebuildError, CrossrefService
 from gobby.memory.services.indexing import IndexingService
 from gobby.memory.services.keyword import MemoryKeywordSearchService
@@ -170,6 +173,9 @@ class MemoryManager(MemoryManagerFacadeMethods):
             ),
             recall_constants=self._recall_constants,
         )
+        # #21011: the search tool records which returned hits reached the agent
+        # (usefulness-label contract §5.1); None while the signal hub is off.
+        self.injection_outcome_recorder = make_injection_outcome_recorder(config, db)
         self._indexing_service = IndexingService(
             storage=self.storage,
             vector_store=vector_store,

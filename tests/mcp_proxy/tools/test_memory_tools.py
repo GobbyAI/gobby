@@ -13,6 +13,7 @@ Tests the memory MCP tools including:
 - search_knowledge_graph
 """
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -103,6 +104,7 @@ def mock_memory_manager() -> MagicMock:
     manager.db = MagicMock()
     manager.content_exists = MagicMock(return_value=False)
     manager.config = MagicMock()
+    manager.injection_outcome_recorder = None
     return manager
 
 
@@ -1269,3 +1271,72 @@ class TestUpdateMemoryRationale:
         assert result["success"] is False
         assert "Invalid memory_type" in result["error"]
         mock_memory_manager.update_memory_scoped.assert_not_awaited()
+
+
+class TestSearchMemoriesDeliveryOutcomes:
+    """The tool result is the delivery point of the search cohort (#21011, contract §5.1)."""
+
+    _PROJECT = {"id": "11111111-1111-4111-8111-111111110001"}
+
+    @pytest.mark.asyncio
+    async def test_returned_hits_record_injected_outcomes_at_list_position(
+        self, memory_registry: InternalToolRegistry, mock_memory_manager: MagicMock
+    ) -> None:
+        mock_memory_manager.search_memories.return_value = [
+            MockMemory(id="m1", similarity=0.9, temporal_decay_factor=1.0),
+            MockMemory(id="m2", similarity=0.4, temporal_decay_factor=1.0),
+            MockMemory(id="m3", similarity=0.8, temporal_decay_factor=1.0),
+        ]
+        recorded: list[list[dict[str, Any]]] = []
+        mock_memory_manager.injection_outcome_recorder = recorded.append
+
+        with (
+            patch("gobby.utils.project_context.get_project_context", return_value=self._PROJECT),
+            patch("gobby.utils.session_context.get_current_session_id", return_value="sess-1"),
+        ):
+            result = await memory_registry.call(
+                "search_memories", {"query": "dispatch", "min_score": 0.5}
+            )
+
+        assert [hit["id"] for hit in result["memories"]] == ["m1", "m3"]
+        assert recorded == [
+            [
+                {
+                    "session_id": "sess-1",
+                    "recall_request_id": result["recall_request_id"],
+                    "memory_id": memory_id,
+                    "project_id": result["project_id"],
+                    "outcome": "injected",
+                    "injection_position": position,
+                    "caller": "mcp_proxy.memory.search_memories",
+                }
+                for position, memory_id in enumerate(["m1", "m3"])
+            ]
+        ]
+
+    @pytest.mark.asyncio
+    async def test_no_outcome_rows_without_a_session_or_a_recorder(
+        self, memory_registry: InternalToolRegistry, mock_memory_manager: MagicMock
+    ) -> None:
+        recorded: list[list[dict[str, Any]]] = []
+        mock_memory_manager.injection_outcome_recorder = recorded.append
+
+        with (
+            patch("gobby.utils.project_context.get_project_context", return_value=self._PROJECT),
+            patch("gobby.utils.session_context.get_current_session_id", return_value=None),
+        ):
+            sessionless = await memory_registry.call("search_memories", {"query": "dispatch"})
+
+        assert sessionless["success"] is True
+        assert sessionless["memories"]
+        assert recorded == []
+
+        mock_memory_manager.injection_outcome_recorder = None
+        with (
+            patch("gobby.utils.project_context.get_project_context", return_value=self._PROJECT),
+            patch("gobby.utils.session_context.get_current_session_id", return_value="sess-1"),
+        ):
+            hub_off = await memory_registry.call("search_memories", {"query": "dispatch"})
+
+        assert hub_off["success"] is True
+        assert hub_off["memories"]

@@ -46,6 +46,43 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_SEARCH_CALLER = "mcp_proxy.memory.search_memories"
+
+
+def _record_delivered_hits(
+    manager: MemoryManager,
+    *,
+    session_id: str | None,
+    recall_request_id: str,
+    project_id: str,
+    hits: list[dict[str, Any]],
+) -> None:
+    """Write one ``recall_injection_outcomes`` row per hit the agent received.
+
+    The tool result is the delivery point of the search cohort (usefulness-label
+    contract §5.1): a returned hit is ``injected`` at its list position; hits cut
+    by ``limit`` or ``min_score`` never reach the agent and get no row. Fails
+    open — the recorder is None while the signal hub is off and swallows its own
+    write errors.
+    """
+    recorder = getattr(manager, "injection_outcome_recorder", None)
+    if recorder is None or not session_id or not hits:
+        return
+    recorder(
+        [
+            {
+                "session_id": session_id,
+                "recall_request_id": recall_request_id,
+                "memory_id": hit["id"],
+                "project_id": project_id,
+                "outcome": "injected",
+                "injection_position": position,
+                "caller": _SEARCH_CALLER,
+            }
+            for position, hit in enumerate(hits)
+        ]
+    )
+
 
 def create_memory_registry(
     memory_manager_resolver: Callable[[], MemoryManager | None],
@@ -159,6 +196,7 @@ def create_memory_registry(
             # Joinable correlation id (contract §2): threads the signal event,
             # the returned payload, and any downstream injection outcome.
             recall_request_id = str(uuid4())
+            current_session_id = get_current_session_id()
             current_project_id = get_current_project_id() or PERSONAL_PROJECT_ID
             canonical_memory_type = (
                 validate_memory_type(memory_type) if memory_type is not None else None
@@ -166,7 +204,8 @@ def create_memory_registry(
 
             # The floor travels to the service so its backfill loop chases the
             # same undecayed axis this tool reports (#21010).
-            candidates = await _memory_manager().search_memories(
+            manager = _memory_manager()
+            candidates = await manager.search_memories(
                 query=query,
                 project_id=current_project_id,
                 limit=limit,
@@ -175,9 +214,9 @@ def create_memory_registry(
                 tags_all=tags_all,
                 tags_any=tags_any,
                 tags_none=tags_none,
-                session_id=get_current_session_id(),
+                session_id=current_session_id,
                 recall_request_id=recall_request_id,
-                caller="mcp_proxy.memory.search_memories",
+                caller=_SEARCH_CALLER,
             )
 
             hits: list[dict[str, Any]] = []
@@ -219,6 +258,13 @@ def create_memory_registry(
                         }
                     )
 
+            _record_delivered_hits(
+                manager,
+                session_id=current_session_id,
+                recall_request_id=recall_request_id,
+                project_id=current_project_id,
+                hits=hits,
+            )
             return {
                 "success": True,
                 "memories": hits,

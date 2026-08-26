@@ -72,8 +72,10 @@ def shadow_event(
     schema_version: int = 4,
     complete_hashes: bool = True,
     query_construction_version: str | None = None,
+    caller: str = "memory.recall",
 ) -> dict[str, object]:
     event = signal_event(request_id=request_id, session_id=session_id)
+    event["caller"] = caller
     event["schema_version"] = schema_version
     event["query"] = query
     event["constants_provenance"] = "static"

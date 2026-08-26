@@ -455,6 +455,16 @@ class TestSearchMemories:
         assert snapshots[0].session_id == "session-1"
         assert snapshots[0].recall_request_id == "request-1"
 
+    def test_injection_outcome_recorder_follows_the_signal_hub_flag(
+        self, db: HubDatabase, memory_config: MemoryConfig
+    ) -> None:
+        """#21011: the search tool's delivery recorder exists only with the hub on."""
+        assert MemoryManager(db=db, config=memory_config).injection_outcome_recorder is None
+
+        hub_on = memory_config.model_copy(update={"recall_signal_hub": True})
+
+        assert MemoryManager(db=db, config=hub_on).injection_outcome_recorder is not None
+
 
 # =============================================================================
 # Test: Access Statistics
@@ -890,7 +900,6 @@ class TestVectorStoreIntegration:
             vector_store=mock_vs,
             embed_fn=mock_embed,
         )
-        manager._dedup_service = None
 
         with caplog.at_level(logging.DEBUG, logger="gobby.memory.services.lifecycle"):
             memory = await manager.create_memory(content="Initial content")
@@ -933,7 +942,6 @@ class TestVectorStoreIntegration:
             vector_store=mock_vs,
             embed_fn=AsyncMock(return_value=[0.1, 0.2]),
         )
-        manager._dedup_service = None
         memory = manager.storage.create_memory("Old indexed content", PERSONAL_PROJECT_ID)
 
         updated = await manager.update_memory(memory.id, content="New current content")
@@ -1024,7 +1032,6 @@ class TestLifecycleService:
             vector_store=mock_vs,
             embed_fn=mock_embed,
         )
-        manager._dedup_service = None
         db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_ID, "Project 1"))
 
         memory = await manager._lifecycle_service.create_memory(
@@ -1061,7 +1068,6 @@ class TestLifecycleService:
             vector_store=mock_vs,
             embed_fn=mock_embed,
         )
-        manager._dedup_service = None
         kg_service = MagicMock()
         kg_service.remove_memory_from_graph = AsyncMock()
         manager._kg_service = kg_service
