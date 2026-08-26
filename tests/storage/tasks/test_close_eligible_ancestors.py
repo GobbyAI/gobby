@@ -7,7 +7,10 @@ import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.tasks._transitions import claim_task
+from gobby.utils.machine_id import get_machine_id
 from tests.storage.tasks._stage_test_helpers import (
     initialize_manifest,
     set_stage_state,
@@ -150,3 +153,33 @@ def test_parent_with_a_finished_manifest_still_closes(temp_db: HubDatabase, tmp_
 
     assert closed_ancestors == [parent.id]
     assert not _open(manager, parent.id)
+
+
+def test_claimed_parent_survives_its_last_child(temp_db: HubDatabase, tmp_path: Path) -> None:
+    """A claimed ancestor is in-flight work its owner closes through the leaf gates.
+
+    Found-work child #21046 closed under the claimed, uncommitted leaf #20969
+    and the walk auto-closed #20969 and its epic, skipping every gate and
+    dropping the claim.
+    """
+    manager, project_id = _manager(temp_db, tmp_path)
+    epic = _create(manager, project_id, "Epic", task_type="epic")
+    parent = _create(manager, project_id, "Worked leaf", parent_task_id=epic.id)
+    child = _create(manager, project_id, "Found-work child", parent_task_id=parent.id)
+    owner = SessionManager(temp_db).register(
+        external_id="owner-session",
+        machine_id=get_machine_id(),
+        source="codex",
+        project_id=project_id,
+    )
+    claim_task(temp_db, parent.id, owner.id)
+
+    closed_ancestors: list[str] = []
+    manager.close_task(child.id, closed_ancestors=closed_ancestors)
+
+    assert closed_ancestors == []
+    assert _open(manager, parent.id)
+    assert _open(manager, epic.id)
+    reloaded = manager.get_task(parent.id)
+    assert reloaded is not None
+    assert reloaded.claimed_by_session_id == owner.id

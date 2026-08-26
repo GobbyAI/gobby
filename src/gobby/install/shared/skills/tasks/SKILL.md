@@ -118,7 +118,9 @@ Closing a leaf task is an ordered checklist:
 
 An epic or other structural parent is closable when it has no open children.
 Closing the last child auto-closes eligible ancestors in the same call — do not
-walk the tree by hand.
+walk the tree by hand. The walk stops at an ancestor that is claimed, has an
+open child, or still owes stage-manifest work; a claimed ancestor is in-flight
+work its owner closes through its own gates.
 
 Workspace rule: a task that owns an isolation worktree is not finished until
 that worktree is landed and deleted (`merge_worktree` then `delete_worktree`;

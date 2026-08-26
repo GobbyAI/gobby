@@ -750,7 +750,8 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             "a clean transcript-derived validation run, and one bounded criteria review "
             "unless a justified deliberate close exits escalation. "
             "Epics and other parents close when they have no open children; closing the "
-            "last child auto-closes eligible ancestors. "
+            "last child auto-closes eligible ancestors, stopping at a claimed ancestor, "
+            "which its owner closes through its own gates. "
             "preview=true returns diagnostics when blocked and still closes when ready."
         ),
         input_schema={
