@@ -992,6 +992,85 @@ class TestTouchedFileHelpers:
 
         assert result is False
 
+    @pytest.mark.parametrize(
+        "feedback_path",
+        [
+            "docs/research/gobby-feedback/inbox/2026-08-26-codex-session-11117.md",
+            "/project/docs/research/gobby-feedback/inbox/2026-08-26-claude-session-11103.md",
+        ],
+    )
+    def test_requires_task_for_any_touched_file_allows_feedback_markdown(
+        self, feedback_path: str
+    ) -> None:
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+
+        result = requires_task_for_any_touched_file(
+            {"file_paths": [feedback_path]},
+            source="codex",
+            plan_mode=False,
+        )
+
+        assert result is False
+
+    @pytest.mark.parametrize(
+        "feedback_path",
+        [
+            "docs/research/gobby-feedback/inbox/report.json",
+            "docs/research/gobby-feedback/report.md",
+            "docs/research/gobby-feedback/inbox-adjacent/report.md",
+        ],
+    )
+    def test_requires_task_for_any_touched_file_rejects_feedback_lookalikes(
+        self, feedback_path: str
+    ) -> None:
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+
+        result = requires_task_for_any_touched_file(
+            {"file_paths": [feedback_path]},
+            source="codex",
+            plan_mode=False,
+        )
+
+        assert result is True
+
+    def test_requires_task_for_any_touched_file_blocks_mixed_feedback_paths(self) -> None:
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+
+        result = requires_task_for_any_touched_file(
+            {
+                "file_paths": [
+                    "docs/research/gobby-feedback/inbox/session.md",
+                    "src/gobby/workflows/enforcement/blocking.py",
+                ]
+            },
+            source="codex",
+            plan_mode=False,
+        )
+
+        assert result is True
+
+    def test_requires_task_for_feedback_apply_patch_canonical_path(self) -> None:
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+
+        feedback_path = (
+            "docs/research/gobby-feedback/inbox/2026-08-26T073000-codex-session-11117.md"
+        )
+        result = requires_task_for_any_touched_file(
+            {
+                "patch": (
+                    f"*** Begin Patch\n*** Add File: {feedback_path}\n+# Feedback\n*** End Patch"
+                )
+            },
+            source="codex",
+            plan_mode=False,
+            event_data={
+                "canonical_repo_mutation": True,
+                "canonical_file_paths": [feedback_path],
+            },
+        )
+
+        assert result is False
+
     def test_requires_task_for_any_touched_file_blocks_mixed_paths(self) -> None:
         from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
 

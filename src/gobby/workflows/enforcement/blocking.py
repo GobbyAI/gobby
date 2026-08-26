@@ -213,6 +213,9 @@ _CLI_DIR_SEGMENTS = (
     f"{os.sep}.claude{os.sep}",
     f"{os.sep}.codex{os.sep}",
 )
+_TASKLESS_FEEDBACK_INBOX_SEGMENT = (
+    f"{os.sep}docs{os.sep}research{os.sep}gobby-feedback{os.sep}inbox{os.sep}"
+)
 
 SOURCE_CODE_EXTENSIONS = frozenset(
     {
@@ -327,6 +330,19 @@ def is_plan_file(file_path: str, source: str | None = None) -> bool:
 
     rooted = normalised if normalised.startswith(os.sep) else f"{os.sep}{normalised}"
     return any(seg in rooted for seg in _CLI_DIR_SEGMENTS)
+
+
+def is_taskless_feedback_file(file_path: str) -> bool:
+    """Return True for Markdown reports in the taskless Gobby feedback inbox."""
+    if not file_path:
+        return False
+
+    normalised = os.path.normpath(file_path)
+    if not normalised.endswith(".md"):
+        return False
+
+    rooted = normalised if normalised.startswith(os.sep) else f"{os.sep}{normalised}"
+    return _TASKLESS_FEEDBACK_INBOX_SEGMENT in rooted
 
 
 def is_source_code_path(file_path: str) -> bool:
@@ -514,10 +530,10 @@ def requires_task_for_any_touched_file(
 
     Structured tool inputs (Write/Edit shapes) carry their own paths; shell
     commands carry none, so the adapter's canonical path extraction in event
-    data is the fallback — a bash write whose extracted paths are all plan
-    files is exempt exactly like the structured path. The helper still fails
-    closed: when neither source yields a path for a write-like tool, the edit
-    is treated as requiring a task.
+    data is the fallback — a bash write whose extracted paths are all plan or
+    taskless feedback files is exempt exactly like the structured path. The
+    helper still fails closed: when neither source yields a path for a write-like
+    tool, the edit is treated as requiring a task.
     """
     touched_paths = get_touched_file_paths(tool_input) or _canonical_event_paths(event_data)
     if not touched_paths:
@@ -525,6 +541,8 @@ def requires_task_for_any_touched_file(
 
     for path in touched_paths:
         if is_plan_file(path, source):
+            continue
+        if is_taskless_feedback_file(path):
             continue
         if plan_mode and path.endswith(".md"):
             continue

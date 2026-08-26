@@ -1,0 +1,80 @@
+tags: [research-feedback, research, lifecycle, gobby, default]
+
+rules:
+  reset-gobby-session-feedback-on-context-reset:
+    description: "Reset the bounded feedback review for a fresh context epoch"
+    event: session_start
+    enabled: true
+    priority: 8
+    when: >
+      event.data.get('source') in ['clear', 'compact']
+      or (
+        event.data.get('source') == 'resume'
+        and variables.get('pending_context_reset')
+      )
+    effects:
+      - type: set_variable
+        variable: _gobby_feedback_epoch_reviewed
+        value: false
+
+  review-gobby-session-feedback-before-compact:
+    description: "Request one bounded Gobby feedback review before compaction"
+    event: before_tool
+    enabled: true
+    priority: 2
+    when: >
+      event.data.get('mcp_server') == 'gobby-sessions'
+      and event.data.get('mcp_tool') == 'compact_self'
+      and (
+        variables.get('task_claimed')
+        or not variables.get('session_task')
+      )
+      and not variables.get('_gobby_feedback_epoch_reviewed')
+    effects:
+      - type: block
+        mcp_tools:
+          - "gobby-sessions:compact_self"
+        acknowledge_variable: _gobby_feedback_epoch_reviewed
+        reason: |
+          Before compacting, perform one bounded Gobby session-feedback review using
+          only first-hand evidence from this context epoch. Record at most 3 specific
+          observations about Gobby friction, noise, surprises, missing affordances,
+          or especially useful behavior. Most epochs should produce no report; that
+          is a valid outcome.
+
+          When substantive feedback exists, create one Markdown file at
+          `docs/research/gobby-feedback/inbox/YYYY-MM-DDTHHMMSS-CLI-session-NNNNN.md` using
+          the schema in `docs/research/gobby-feedback/README.md`. Resolve concrete
+          bugs through Rule 4 and reference the task/commit. Store durable project
+          knowledge through `gobby-memory`. Omit secrets, private user content, and
+          transcript dumps. Then retry `gobby-sessions:compact_self`.
+
+  review-gobby-session-feedback-on-stop:
+    description: "Request one bounded Gobby feedback review after completed work"
+    event: turn_end
+    enabled: true
+    priority: 3
+    when: >
+      bool(variables.get('_memory_pending_task_reviews'))
+      and not variables.get('_gobby_feedback_epoch_reviewed')
+    effects:
+      - type: block
+        acknowledge_variable: _gobby_feedback_epoch_reviewed
+        reason: |
+          Perform one bounded Gobby session-feedback review using only first-hand
+          evidence from this session. Record at most 3 observations about Gobby
+          behavior: friction, noise, surprises, missing affordances, or especially
+          useful behavior. Most sessions should produce no report; that is a valid
+          outcome.
+
+          Each observation needs the concrete behavior or event, bounded evidence
+          such as a rule/tool name or short example, its impact, frequency, and a
+          suggested improvement when one is apparent. Resolve concrete bugs through
+          Rule 4 and reference the task/commit. Store durable project knowledge through
+          `gobby-memory`.
+
+          When substantive feedback exists, create one Markdown file at
+          `docs/research/gobby-feedback/inbox/YYYY-MM-DDTHHMMSS-CLI-session-NNNNN.md` using
+          the schema in `docs/research/gobby-feedback/README.md`. This inbox is
+          taskless and Git-ignored. Omit secrets, private user content, and transcript
+          dumps.
