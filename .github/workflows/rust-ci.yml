@@ -174,7 +174,7 @@ jobs:
             --build-arg PG_SEARCH_VERSION=0.23.4 \
             --build-arg PG_SEARCH_SHA256=6b042d61d156ca5fdcb1c417e291d90bffe3026848890be30bf6e578146b4676 \
             -t gobby-postgres-ci:18-pgsearch \
-            crates/gcore/assets/postgres-pgsearch
+            src/gobby/data/postgres-pgsearch
 
       - name: Start PostgreSQL pg_search service
         run: |

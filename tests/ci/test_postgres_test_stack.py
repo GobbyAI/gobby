@@ -226,6 +226,16 @@ def test_ci_build_job_runs_wheel_smoke_against_local_postgres(repo_root: Path) -
     )
 
 
+def test_rust_ci_builds_postgres_image_from_canonical_asset_tree(repo_root: Path) -> None:
+    """Every CI PostgreSQL image comes from the one shipped asset tree (#21059)."""
+    workflow = _load_yaml(repo_root / ".github/workflows/rust-ci.yml")
+    job = _mapping(_mapping(workflow["jobs"])["postgres-backed-tests"])
+    runs = _step_runs(_sequence(job["steps"]))
+
+    assert _has_run(runs, "docker build", "src/gobby/data/postgres-pgsearch")
+    assert not (repo_root / "crates/gcore/assets/postgres-pgsearch").exists()
+
+
 def test_pre_push_resolves_and_exports_postgres_database_url_for_pytest(
     repo_root: Path,
 ) -> None:
