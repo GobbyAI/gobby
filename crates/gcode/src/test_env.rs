@@ -125,12 +125,46 @@ fn provision_code_index_schema(database_url: &str) -> Result<(), String> {
     }
     let mut client = gobby_core::postgres::connect_readwrite(database_url)
         .map_err(|error| format!("connect to the test database: {error:#}"))?;
-    let mut runner = gobby_core::schema::SchemaRunner::new(&mut client, "public")
-        .map_err(|error| format!("schema runner: {error}"))?;
-    runner
-        .apply()
-        .map(|_| ())
-        .map_err(|error| format!("gdaemon schema apply: {error}"))
+    {
+        let mut runner = gobby_core::schema::SchemaRunner::new(&mut client, "public")
+            .map_err(|error| format!("schema runner: {error}"))?;
+        runner
+            .apply()
+            .map(|_| ())
+            .map_err(|error| format!("gdaemon schema apply: {error}"))?;
+    }
+    let machine_id = gobby_core::machine::read_local_machine_id()
+        .map_err(|error| format!("read local machine id: {error:#}"))?;
+    seed_test_machine(&mut client, &machine_id)
+}
+
+/// Register `machine_id` in `machines` under a synthetic test owner.
+///
+/// Code-index selector tables reference `machines`, and a fresh test database
+/// has no row for this machine or for the synthetic machines that
+/// multi-machine tests invent. Idempotent, so tests can call it freely.
+pub fn seed_test_machine(client: &mut postgres::Client, machine_id: &str) -> Result<(), String> {
+    let machine_id = uuid::Uuid::parse_str(machine_id)
+        .map_err(|error| format!("parse test machine id {machine_id:?}: {error}"))?;
+    let owner_id: uuid::Uuid = client
+        .query_one(
+            "INSERT INTO users (id, email, name, password_hash)
+             VALUES (gen_random_uuid(), $1, 'gcode tests', 'unused')
+             ON CONFLICT (lower(email)) DO UPDATE SET updated_at = now()
+             RETURNING id",
+            &[&"gcode-tests@example.invalid"],
+        )
+        .map_err(|error| format!("seed test owner user: {error}"))?
+        .get(0);
+    client
+        .execute(
+            "INSERT INTO machines (id, hostname, owner_user_id)
+             VALUES ($1, 'gcode-tests', $2)
+             ON CONFLICT (id) DO NOTHING",
+            &[&machine_id, &owner_id],
+        )
+        .map_err(|error| format!("seed local machine row: {error}"))?;
+    Ok(())
 }
 
 #[cfg(test)]

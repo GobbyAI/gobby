@@ -405,6 +405,8 @@ mod serial_db {
         let local_machine =
             gobby_core::machine::read_local_machine_id().expect("read local machine id");
         let foreign_machine = fixture_uuid(&format!("{project_id}:foreign-machine")).to_string();
+        crate::test_env::seed_test_machine(&mut conn, &foreign_machine)
+            .expect("seed foreign machine");
 
         insert_file_version(&mut conn, &project_id, "src/lib.rs", "rust", "hash-local");
         insert_file_version(&mut conn, &project_id, "src/lib.rs", "rust", "hash-foreign");
@@ -949,6 +951,7 @@ fn two_machine_divergence_scopes_reads_to_local_file_state() {
     let local_machine =
         gobby_core::machine::read_local_machine_id().expect("read local machine id");
     let foreign_machine = fixture_uuid(&format!("{project_id}:foreign-machine")).to_string();
+    crate::test_env::seed_test_machine(&mut conn, &foreign_machine).expect("seed foreign machine");
 
     // One shared path with divergent versions: the local machine selects
     // hash-local, the foreign machine selects hash-foreign.

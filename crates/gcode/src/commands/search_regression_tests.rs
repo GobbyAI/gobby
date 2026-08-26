@@ -98,7 +98,17 @@ fn hybrid_search_excludes_indexed_file_deleted_from_disk() -> anyhow::Result<()>
     std::fs::remove_file(absolute_path)?;
     let resolved = resolve_hybrid_symbols(&mut conn, &ctx, &merged, &symbol_cache, None, None, &[]);
 
+    // Selector rows restrict content-version deletes, so drop them before the
+    // project row cascades through code_indexed_files.
     let project_uuid = crate::db::id_param(&project_id)?;
+    conn.execute(
+        "DELETE FROM code_indexed_file_states WHERE project_id = $1",
+        &[&project_uuid],
+    )?;
+    conn.execute(
+        "DELETE FROM code_indexed_project_states WHERE project_id = $1",
+        &[&project_uuid],
+    )?;
     conn.execute(
         "DELETE FROM code_indexed_projects WHERE id = $1",
         &[&project_uuid],

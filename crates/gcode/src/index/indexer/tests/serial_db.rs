@@ -172,6 +172,7 @@ fn indexing_adopts_existing_content_version_without_reparse() {
     let project_root = tempfile::tempdir().expect("create project root");
     let project_id = unique_test_uuid("gcode-content-adoption");
     let first_machine_id = unique_test_uuid("gcode-content-adoption-first-machine");
+    crate::test_env::seed_test_machine(&mut conn, &first_machine_id).expect("seed first machine");
     let rel = "src/lib.rs";
     let absolute_path = project_root.path().join(rel);
     std::fs::create_dir_all(absolute_path.parent().expect("file parent"))
@@ -286,6 +287,7 @@ fn full_indexing_reparses_previously_adopted_content() {
     let project_root = tempfile::tempdir().expect("create project root");
     let project_id = unique_test_uuid("gcode-full-reparse");
     let first_machine_id = unique_test_uuid("gcode-full-reparse-first-machine");
+    crate::test_env::seed_test_machine(&mut conn, &first_machine_id).expect("seed first machine");
     let rel = "src/lib.rs";
     let content = b"pub fn adopted() {}\n";
     let absolute_path = project_root.path().join(rel);
@@ -387,6 +389,7 @@ fn overlay_indexing_adopts_existing_content_version_without_reparse() {
     let overlay_project_id = unique_test_uuid("gcode-overlay-adoption");
     let parent_project_id = unique_test_uuid("gcode-overlay-adoption-parent");
     let first_machine_id = unique_test_uuid("gcode-overlay-adoption-first-machine");
+    crate::test_env::seed_test_machine(&mut conn, &first_machine_id).expect("seed first machine");
     let rel = "src/lib.rs";
     let absolute_path = overlay_root.path().join(rel);
     std::fs::create_dir_all(absolute_path.parent().expect("file parent"))
