@@ -150,3 +150,53 @@ def test_duplicate_delivery_and_successful_review_record_deduplicate() -> None:
 
     assert duplicate == first
     assert reviewed == []
+
+
+def test_uncategorized_completed_leaf_queues_without_commits() -> None:
+    task = _task(category=None, commits=None)
+    event = _event()
+    event["tool_output"]["commit_shas"] = []
+
+    assert classify_memory_review_close(_manager(task), event, _input()) is not None
+
+
+def test_payload_without_task_id_skips_even_when_input_names_task() -> None:
+    manager = _manager(_task())
+    event = _event()
+    del event["tool_output"]["task_id"]
+
+    assert classify_memory_review_close(manager, event, _input()) is None
+    manager.get_task.assert_not_called()
+
+
+def test_delivered_flag_drops_consumed_closures_before_queueing() -> None:
+    manager = _manager(_task())
+    delivered = {
+        "closure_id": "old:closed",
+        "task_id": "old",
+        "task_ref": "#1",
+        "changes_summary": "Earlier closure.",
+    }
+
+    requeued = queue_memory_review_close(
+        manager,
+        _event(),
+        _input(),
+        {"_memory_pending_task_reviews": [delivered], "_memory_review_stop_delivered": True},
+    )
+    undelivered = queue_memory_review_close(
+        manager,
+        _event(),
+        _input(),
+        {"_memory_pending_task_reviews": [delivered], "_memory_review_stop_delivered": False},
+    )
+    unqueued = queue_memory_review_close(
+        _manager(_task(task_type="epic")),
+        _event(),
+        _input(),
+        {"_memory_pending_task_reviews": [delivered], "_memory_review_stop_delivered": True},
+    )
+
+    assert [item["task_ref"] for item in requeued] == ["#42"]
+    assert [item["task_ref"] for item in undelivered] == ["#1", "#42"]
+    assert unqueued == []

@@ -18,8 +18,8 @@ rules:
         skill: memory
 
   check-memory-guidance-on-initial-stop:
-    description: "Check memory skill loading once at the first raw Stop"
-    event: stop
+    description: "Check memory skill loading once at the first turn end"
+    event: turn_end
     enabled: true
     priority: 1
     when: "not variables.get('_memory_initial_stop_checked')"
@@ -27,6 +27,12 @@ rules:
       - type: set_variable
         variable: _memory_initial_stop_checked
         value: true
+        when: >
+          skill_loaded('memory')
+          or has_open_tool_error(
+            "gobby-skills/get_skill",
+            {"name": "memory"}
+          )
       - type: block
         when: >
           not skill_loaded('memory')
@@ -34,6 +40,7 @@ rules:
             "gobby-skills/get_skill",
             {"name": "memory"}
           )
+        acknowledge_variable: _memory_initial_stop_checked
         reason: '{{ skill_fetch_directive("memory") }}'
 
   remind-memory-guidance-on-later-turns:

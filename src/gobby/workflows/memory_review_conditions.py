@@ -5,11 +5,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Protocol
 
+# Category only decides whether commits are required. ``VALID_CATEGORIES``
+# covers every non-null value, so any other category (including an unset one)
+# queues without a commit requirement.
 _WORK_CATEGORIES = frozenset({"code", "config", "docs", "refactor", "test"})
-_NO_COMMIT_CATEGORIES = frozenset({"manual", "planning", "research"})
-_EXEMPT_REASONS = frozenset(
-    {"duplicate", "already_implemented", "wont_fix", "obsolete", "out_of_repo"}
-)
 
 
 class TaskLookup(Protocol):
@@ -53,7 +52,7 @@ def classify_memory_review_close(
     summary = str(tool_input.get("changes_summary") or "").strip()
     if not summary:
         return None
-    task_id = payload.get("task_id") or tool_input.get("task_id")
+    task_id = payload.get("task_id")
     if not isinstance(task_id, str) or not task_id:
         return None
     try:
@@ -64,8 +63,7 @@ def classify_memory_review_close(
         return None
 
     reason = str(getattr(task, "closed_reason", None) or tool_input.get("reason") or "completed")
-    reason = reason.casefold()
-    if reason != "completed" or reason in _EXEMPT_REASONS:
+    if reason.casefold() != "completed":
         return None
     if str(getattr(task, "task_type", "")).casefold() == "epic":
         return None
@@ -75,7 +73,7 @@ def classify_memory_review_close(
     except (LookupError, ValueError):
         return None
 
-    category = str(getattr(task, "category", "") or "").casefold()
+    category = str(getattr(task, "category", None) or "").casefold()
     if category in _WORK_CATEGORIES:
         payload_commits = payload.get("commit_shas")
         has_commits = bool(getattr(task, "commits", None)) or (
@@ -83,8 +81,6 @@ def classify_memory_review_close(
         )
         if not has_commits:
             return None
-    elif category not in _NO_COMMIT_CATEGORIES:
-        return None
 
     closure_id = _closure_id(task)
     if closure_id is None:
@@ -104,8 +100,12 @@ def queue_memory_review_close(
     tool_input: Mapping[str, Any],
     variables: Mapping[str, Any],
 ) -> list[dict[str, str]]:
-    """Append one classified closure while preserving delivery deduplication."""
-    stored = variables.get("_memory_pending_task_reviews", [])
+    """Append one classified closure, dropping closures whose review was delivered."""
+    stored = (
+        []
+        if variables.get("_memory_review_stop_delivered")
+        else variables.get("_memory_pending_task_reviews") or []
+    )
     pending = [dict(item) for item in stored if isinstance(item, Mapping)]
     candidate = classify_memory_review_close(task_manager, event_data, tool_input)
     if candidate is None:

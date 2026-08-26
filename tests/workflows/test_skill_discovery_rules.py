@@ -299,7 +299,7 @@ class TestBrevityRules:
             "brevity_disabled": disabled,
             "brevity_level": "normal",
             "skill_discovery_instructions_shown": True,
-            "memory_nudge_fired": True,
+            "_memory_initial_stop_checked": True,
             "servers_listed": True,
         }
 

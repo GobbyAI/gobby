@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -12,6 +13,7 @@ import pytest
 from gobby.mcp_proxy.tools.memory import create_memory_registry
 from gobby.mcp_proxy.tools.memory_write import derive_memory_create_provenance
 from gobby.storage.memories import MemoryType
+from gobby.storage.tasks import TaskNotFoundError
 
 pytestmark = pytest.mark.unit
 
@@ -33,23 +35,50 @@ def _task(**overrides: Any) -> SimpleNamespace:
     return SimpleNamespace(**values)
 
 
+def _resolve_task_reference(_db: Any, ref: str, _project_id: str) -> str:
+    """Mirror the storage contract: ``#N`` resolves or raises ``TaskNotFoundError``."""
+    if ref == "#42":
+        return TASK_ID
+    raise TaskNotFoundError(f"Task {ref} not found in project")
+
+
+@pytest.fixture(autouse=True)
+def _task_reference_resolution() -> Iterator[None]:
+    with patch(
+        "gobby.mcp_proxy.tools.memory_review.resolve_task_reference",
+        side_effect=_resolve_task_reference,
+    ):
+        yield
+
+
 def _registry(
     *,
     task: SimpleNamespace | None = None,
     candidates: list[SimpleNamespace] | None = None,
-) -> tuple[Any, MagicMock, MagicMock]:
+) -> tuple[Any, MagicMock, MagicMock, MagicMock]:
     memory_manager = MagicMock()
     memory_manager.search_memories = AsyncMock(return_value=candidates or [])
+
+    def get_task(task_id: str, project_id: str | None = None) -> SimpleNamespace:
+        # LocalTaskManager.get_task raises ValueError for ``#N`` refs without a
+        # project and for unknown UUIDs; it never returns ``None``.
+        if task is not None and task_id == TASK_ID:
+            return task
+        raise ValueError(f"Task {task_id} not found")
+
     task_manager = MagicMock()
-    task_manager.get_task.return_value = task
+    task_manager.get_task.side_effect = get_task
+    session = SimpleNamespace(id=SESSION_ID, project_id=PROJECT_ID)
     session_manager = MagicMock()
-    session_manager.get.return_value = SimpleNamespace(id=SESSION_ID, project_id=PROJECT_ID)
+    session_manager.get.side_effect = lambda session_id: (
+        session if session_id == SESSION_ID else None
+    )
     registry = create_memory_registry(
         lambda: memory_manager,
         task_manager=task_manager,
         session_manager=session_manager,
     )
-    return registry, memory_manager, task_manager
+    return registry, memory_manager, task_manager, session_manager
 
 
 @pytest.mark.asyncio
@@ -66,12 +95,15 @@ async def test_review_returns_candidates_and_records_success(candidate_count: in
         )
         for index in range(candidate_count)
     ]
-    registry, memory_manager, _task_manager = _registry(task=_task(), candidates=candidates)
+    registry, memory_manager, _task_manager, session_manager = _registry(
+        task=_task(), candidates=candidates
+    )
     state_manager = MagicMock()
+    state_manager_cls = MagicMock(return_value=state_manager)
 
     with patch(
         "gobby.mcp_proxy.tools.memory_review.SessionVariableManager",
-        return_value=state_manager,
+        state_manager_cls,
     ):
         result = await registry.call(
             "review_task_memories",
@@ -97,12 +129,13 @@ async def test_review_returns_candidates_and_records_success(candidate_count: in
     assert "injected_memory_ids" not in search_kwargs
     assert search_kwargs["project_id"] == PROJECT_ID
     assert search_kwargs["include_global"] is True
+    state_manager_cls.assert_called_once_with(session_manager.db)
     state_manager.upsert_bounded_list_variable.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_review_rejects_blank_summary_before_search() -> None:
-    registry, memory_manager, _task_manager = _registry(task=_task())
+    registry, memory_manager, _task_manager, _session_manager = _registry(task=_task())
 
     result = await registry.call(
         "review_task_memories",
@@ -115,7 +148,7 @@ async def test_review_rejects_blank_summary_before_search() -> None:
 
 @pytest.mark.asyncio
 async def test_review_rejects_missing_identity() -> None:
-    registry, memory_manager, _task_manager = _registry(task=_task())
+    registry, memory_manager, _task_manager, _session_manager = _registry(task=_task())
 
     result = await registry.call(
         "review_task_memories",
@@ -127,14 +160,55 @@ async def test_review_rejects_missing_identity() -> None:
 
 
 @pytest.mark.asyncio
+async def test_review_resolves_session_reference_when_direct_lookup_misses() -> None:
+    registry, memory_manager, _task_manager, session_manager = _registry(task=_task())
+
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.memory_review.resolve_session_reference",
+            return_value=SESSION_ID,
+        ) as resolver,
+        patch(
+            "gobby.mcp_proxy.tools.memory_review.SessionVariableManager",
+            return_value=MagicMock(),
+        ),
+    ):
+        result = await registry.call(
+            "review_task_memories",
+            {"task_id": "#42", "changes_summary": "Completed work.", "session_id": "1111"},
+        )
+
+    assert result["success"] is True
+    resolver.assert_called_once_with(session_manager.db, "1111")
+    memory_manager.search_memories.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_review_rejects_unresolvable_session() -> None:
+    registry, memory_manager, _task_manager, _session_manager = _registry(task=_task())
+
+    with patch(
+        "gobby.mcp_proxy.tools.memory_review.resolve_session_reference",
+        side_effect=ValueError("Session 'nope' not found"),
+    ):
+        result = await registry.call(
+            "review_task_memories",
+            {"task_id": "#42", "changes_summary": "Completed work.", "session_id": "nope"},
+        )
+
+    assert result["error"] == "missing_session_identity"
+    memory_manager.search_memories.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_review_rejects_unresolved_or_foreign_task() -> None:
-    missing_registry, missing_memory, _task_manager = _registry(task=None)
+    missing_registry, missing_memory, _task_manager, _session_manager = _registry(task=None)
     missing = await missing_registry.call(
         "review_task_memories",
         {"task_id": "#404", "changes_summary": "Completed work.", "session_id": SESSION_ID},
     )
 
-    foreign_registry, foreign_memory, _task_manager = _registry(
+    foreign_registry, foreign_memory, _task_manager, _session_manager = _registry(
         task=_task(closed_in_session_id="33333333-3333-4333-8333-333333330001")
     )
     foreign = await foreign_registry.call(
@@ -149,8 +223,23 @@ async def test_review_rejects_unresolved_or_foreign_task() -> None:
 
 
 @pytest.mark.asyncio
+async def test_review_rejects_task_from_another_project() -> None:
+    registry, memory_manager, _task_manager, _session_manager = _registry(
+        task=_task(project_id="44444444-4444-4444-8444-444444440001")
+    )
+
+    result = await registry.call(
+        "review_task_memories",
+        {"task_id": TASK_ID, "changes_summary": "Completed work.", "session_id": SESSION_ID},
+    )
+
+    assert result["error"] == "task_not_found"
+    memory_manager.search_memories.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_search_failure_records_no_review_completion() -> None:
-    registry, memory_manager, _task_manager = _registry(task=_task())
+    registry, memory_manager, _task_manager, _session_manager = _registry(task=_task())
     memory_manager.search_memories.side_effect = RuntimeError("embedding service unavailable")
     state_manager_cls = MagicMock()
 

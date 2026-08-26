@@ -47,17 +47,13 @@ def _resolve_session(
     session_manager: SessionManager,
     session_id: str,
 ) -> tuple[str, Any] | None:
-    try:
-        session = session_manager.get(session_id)
-    except (LookupError, ValueError):
-        session = None
+    session = session_manager.get(session_id)
     if session is not None:
         return str(session.id), session
 
-    project_id = getattr(session_manager, "project_id", None)
     try:
-        resolved_id = resolve_session_reference(session_manager.db, session_id, project_id)
-    except (LookupError, ValueError):
+        resolved_id = resolve_session_reference(session_manager.db, session_id)
+    except ValueError:
         return None
     session = session_manager.get(resolved_id)
     return (resolved_id, session) if session is not None else None
@@ -70,17 +66,17 @@ def _resolve_task(
 ) -> Task | None:
     try:
         task = task_manager.get_task(task_id)
-    except (LookupError, TaskNotFoundError, ValueError):
+    except ValueError:
         task = None
     if task is not None:
         return task if task.project_id == project_id else None
     try:
         resolved_id = resolve_task_reference(task_manager.db, task_id, project_id)
-    except (LookupError, TaskNotFoundError, ValueError):
+    except TaskNotFoundError:
         return None
     try:
         return task_manager.get_task(resolved_id)
-    except (LookupError, TaskNotFoundError, ValueError):
+    except ValueError:
         return None
 
 
@@ -185,7 +181,7 @@ def register_memory_review_tools(
             "reviewed_at": datetime.now(UTC).isoformat(),
         }
         await asyncio.to_thread(
-            SessionVariableManager(task_manager.db).upsert_bounded_list_variable,
+            SessionVariableManager(session_manager.db).upsert_bounded_list_variable,
             resolved_session_id,
             REVIEW_RECORDS_VARIABLE,
             record,

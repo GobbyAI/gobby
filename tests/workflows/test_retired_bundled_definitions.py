@@ -56,6 +56,7 @@ RETIRED_SKILLS = ("dev", "qa", "wiki-research")
 RETIRED_RULES = {
     "block-and-teach-context7",
     "block-writes-outside-plan-artifact",
+    "memory-capture-nudge",
     "no-npx",
     "require-memory-review-before-status",
 }

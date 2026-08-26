@@ -611,6 +611,7 @@ class TestRequireStepCompletion:
             "is_spawned_agent": True,
             "step_workflow_complete": False,
             "stop_attempts": 0,
+            "_memory_initial_stop_checked": True,
         }
 
         event = _make_event(HookEventType.AFTER_AGENT)

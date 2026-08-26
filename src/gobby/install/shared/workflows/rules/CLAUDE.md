@@ -12,7 +12,7 @@ This directory contains bundled rule groups. These are **templates** — they ar
 | `task-enforcement` | `task-enforcement/` | 20 | Require claimed tasks and lifecycle skills, protect shared-worktree edits and commits, and enforce valid task transitions |
 | `stop-gates` | `stop-gates/` | 6 | Require workflow completion and enforce the Found Work ladder before turn end |
 | `plan-mode` | `plan-mode/` | 6 | Track plan-mode entry and exit, block edits, teach plan navigation, and reset state |
-| `memory-lifecycle` | `memory-lifecycle/` | 10 | Recall, digest, capture, plan-memory guards, turn sequencing, and tracking reset |
+| `memory-lifecycle` | `memory-lifecycle/` | 14 | Recall, digest, layered guidance, post-close review, plan-memory guards, turn sequencing, and tracking reset |
 | `context-handoff` | `context-handoff/` | 10 | Compact/resume handoffs, task context, user profile, wiki context, and pressure nudges |
 | `auto-task` | `auto-task/` | 3 | Autonomous task execution context, task continuation, notify tree complete |
 | `build-coordinator` | `build-coordinator/` | 1 | Require build-coordinator guidance for Gobby build work |
