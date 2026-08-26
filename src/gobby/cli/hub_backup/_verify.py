@@ -467,6 +467,17 @@ def _recover_qdrant_collection(client: QdrantClient, scratch: str, snapshot_path
 
 
 def _delete_qdrant_collection(client: QdrantClient, scratch: str) -> None:
+    """Drop the scratch collection after its uploaded snapshot files.
+
+    Qdrant keeps an uploaded snapshot under ``snapshots/<collection>/`` even after
+    the collection is deleted, so the snapshots go first or every backup leaves
+    the full snapshot set behind in the Qdrant container.
+    """
+    try:
+        for snapshot in client.list_snapshots(scratch):
+            client.delete_snapshot(collection_name=scratch, snapshot_name=snapshot.name, wait=True)
+    except Exception as exc:  # cleanup must never mask the verification outcome
+        click.echo(f"Warning: failed to delete scratch snapshots for {scratch}: {exc}", err=True)
     try:
         client.delete_collection(scratch)
     except Exception as exc:  # cleanup must never mask the verification outcome
