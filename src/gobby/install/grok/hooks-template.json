@@ -38,7 +38,6 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "*",
         "hooks": [
           {
             "name": "gobby-pre-tool-use",
@@ -51,7 +50,6 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "*",
         "hooks": [
           {
             "name": "gobby-post-tool-use",
@@ -64,7 +62,6 @@
     ],
     "PostToolUseFailure": [
       {
-        "matcher": "*",
         "hooks": [
           {
             "name": "gobby-post-tool-use-failure",

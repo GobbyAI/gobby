@@ -243,3 +243,21 @@ def test_uninstall_grok_removes_gobby_hook_file(temp_dir: Path) -> None:
     assert result["hooks_removed"] == ["SessionStart", "PreToolUse"]
     assert result["files_removed"] == [str(hook_file)]
     assert not hook_file.exists()
+
+
+def test_bundled_template_matchers_are_valid_grok_regexes() -> None:
+    """Grok treats ``matcher`` as a regular expression; ``*`` alone never matches."""
+    import re
+
+    import gobby.install
+
+    template = Path(gobby.install.__file__).parent / "grok" / "hooks-template.json"
+    hooks = json.loads(template.read_text())["hooks"]
+
+    for event in ("PreToolUse", "PostToolUse", "PostToolUseFailure"):
+        assert all("matcher" not in group for group in hooks[event]), event
+    for groups in hooks.values():
+        for group in groups:
+            matcher = group.get("matcher")
+            if matcher is not None:
+                re.compile(matcher)
