@@ -166,6 +166,33 @@ def test_persisted_database_url_wins_over_process_env(
     assert runtime.environment["GOBBY_POSTGRES_PASSWORD"] == "persisted-password"
 
 
+def test_existing_bootstrap_database_url_survives_install_with_process_password(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    installer = _import_installer()
+    monkeypatch.setattr(installer.shutil, "which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr(
+        installer.subprocess, "run", lambda args, **_kwargs: _completed_process(args)
+    )
+    monkeypatch.setattr(installer, "_sync_postgres_pgsearch_assets", lambda **_kwargs: None)
+    monkeypatch.setattr(installer, "_wait_for_pg_isready", lambda **_kwargs: True)
+    monkeypatch.setattr(installer, "_probe_create_extension", lambda **_kwargs: None)
+    monkeypatch.setenv("GOBBY_POSTGRES_PASSWORD", "transient-password")
+    _refuse_password_minting(monkeypatch, installer)
+    files_home = tmp_path / "files"
+    files_home.mkdir()
+    bootstrap = _write_bootstrap(tmp_path, files_home, _PERSISTED_DSN)
+
+    result = installer._install_docker(gobby_home=tmp_path, files_home=files_home)
+
+    assert result["success"] is True
+    assert result["database_url"] == _PERSISTED_DSN
+    persisted = yaml.safe_load(bootstrap.read_text(encoding="utf-8"))
+    assert persisted["database_url"] == _PERSISTED_DSN
+    assert f"database_url: {_PERSISTED_DSN}\n" in bootstrap.read_text(encoding="utf-8")
+
+
 def test_missing_database_url_fails_before_compose_up(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
