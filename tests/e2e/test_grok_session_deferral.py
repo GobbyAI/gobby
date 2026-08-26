@@ -39,6 +39,24 @@ def _component_text(components: object) -> str:
     return "\n".join(texts)
 
 
+def _session_count(
+    postgres_db: HubDatabase,
+    *,
+    external_id: str,
+    source: str,
+) -> int:
+    row = postgres_db.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM sessions
+        WHERE external_id = %s AND project_id = %s AND source = %s
+        """,
+        (external_id, PROJECT_ID, source),
+    ).fetchone()
+    assert row is not None
+    return int(row["count"])
+
+
 def _write_retained_envelope(
     path: Path,
     *,
@@ -247,6 +265,7 @@ def test_grok_session_deferral_contract(
     assert turn_only_stop["decision"] == "allow"
 
     original_internal_id = grok_session.id
+    assert _session_count(postgres_db, external_id=grok_external_id, source="grok") == 1
     compact_start = cli_events.session_start(
         grok_external_id,
         cli_source="grok",
@@ -258,6 +277,7 @@ def test_grok_session_deferral_contract(
     rebound_session = sessions.find_by_external_id(grok_external_id, PROJECT_ID, "grok")
     assert rebound_session is not None
     assert rebound_session.id == original_internal_id
+    assert _session_count(postgres_db, external_id=grok_external_id, source="grok") == 1
 
     variable_manager.merge_variables(
         grok_session.id,
