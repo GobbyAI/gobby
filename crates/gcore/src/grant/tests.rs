@@ -1453,6 +1453,49 @@ fn spawn_managed_challenge(token: &str, grant: GrantBundle) -> Scripted {
             let (status, body) = if step == 0 {
                 let nonce = request
                     .split("\"nonce\":\"")
+#[test]
+fn managed_runtime_config_fetch_sends_identity_headers() {
+    let grant = fixture_grant(PrincipalKind::AgentRun);
+    let token = envelope_token(NOW + 60, PROJECT);
+    let claims = parse_capability_token(&token).expect("claims");
+    let scripted = spawn_scripted(vec![Step::Config {
+        revision: grant.config_revision,
+    }]);
+    fetch_runtime_config(&scripted.url, &grant, Some(&token), Duration::from_secs(1))
+        .expect("config");
+    let requests = join(scripted);
+    assert!(requests[0].contains("GET /api/runtime/config"));
+    assert!(has_header(&requests[0], GRANT_HEADER));
+    assert_eq!(
+        header_value(&requests[0], CALLER_PROJECT_HEADER).as_deref(),
+        Some(PROJECT)
+    );
+    assert_eq!(
+        header_value(&requests[0], SESSION_HEADER).as_deref(),
+        Some(claims.session_id.as_str())
+    );
+    assert_eq!(
+        header_value(&requests[0], AGENT_RUN_HEADER).as_deref(),
+        claims.agent_run_id.as_deref()
+    );
+    assert!(!has_header(&requests[0], MANAGED_EXECUTION_HEADER));
+}
+
+#[test]
+fn operator_runtime_config_fetch_sends_no_identity_headers() {
+    let grant = fixture_grant(PrincipalKind::Interactive);
+    let scripted = spawn_scripted(vec![Step::Config {
+        revision: grant.config_revision,
+    }]);
+    fetch_runtime_config(&scripted.url, &grant, Some(TOKEN), Duration::from_secs(1))
+        .expect("config");
+    let requests = join(scripted);
+    assert!(!has_header(&requests[0], CALLER_PROJECT_HEADER));
+    assert!(!has_header(&requests[0], SESSION_HEADER));
+    assert!(!has_header(&requests[0], AGENT_RUN_HEADER));
+    assert!(!has_header(&requests[0], MANAGED_EXECUTION_HEADER));
+}
+
                     .nth(1)
                     .and_then(|rest| rest.split('"').next())
                     .unwrap_or_default();

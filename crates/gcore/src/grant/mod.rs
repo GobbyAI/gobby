@@ -326,7 +326,23 @@ pub fn fetch_runtime_config(
         cache::normalize_endpoint(base_url),
         RUNTIME_CONFIG_PATH
     );
-    let response = handshake::http_json("GET", &url, None, bearer, Some(grant), &[], timeout)?;
+    // The config route binds identity like the handshake: a managed bearer must
+    // carry the caller-project, session, and owner headers from its capability
+    // claims or the daemon rejects it. Operator tokens carry none.
+    let claims = bearer.and_then(|token| parse_envelope(token).ok());
+    let identity_headers = claims
+        .as_ref()
+        .map(handshake::managed_identity_headers)
+        .unwrap_or_default();
+    let response = handshake::http_json(
+        "GET",
+        &url,
+        None,
+        bearer,
+        Some(grant),
+        &identity_headers,
+        timeout,
+    )?;
     if !(200..300).contains(&response.status) {
         if let Some(error) = GrantError::from_presentation_http(response.status, &response.body) {
             return Err(error);
