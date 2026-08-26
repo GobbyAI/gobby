@@ -116,8 +116,8 @@ class TestDockerComposeFalkorDB:
         )
         assert "127.0.0.1:${GOBBY_FALKORDB_BROWSER_PORT:-13000}:3000" in falkordb["ports"]
         assert (
-            "REDIS_ARGS=--requirepass ${GOBBY_FALKORDB_PASSWORD:-gobbyfalkor} --save 3600 1 300 100"
-            in falkordb["environment"]
+            "REDIS_ARGS=--requirepass ${GOBBY_FALKORDB_PASSWORD:?GOBBY_FALKORDB_PASSWORD must be set}"
+            " --save 3600 1 300 100" in falkordb["environment"]
         )
         assert (
             "FALKORDB_ARGS=MAX_QUEUED_QUERIES 25 TIMEOUT_DEFAULT 30000 TIMEOUT_MAX 0 RESULTSET_SIZE 10000"

@@ -12,9 +12,9 @@ services:
       # Redis AUTH - REDIS_ARGS is the documented entry point for redis-server flags.
       # --save drops the stock `60 10000` rule: graph projections are rebuildable and
       # that rule rewrote ~360 MB every minute under write bursts.
-      - REDIS_ARGS=--requirepass ${GOBBY_FALKORDB_PASSWORD:-gobbyfalkor} --save 3600 1 300 100
+      - REDIS_ARGS=--requirepass ${GOBBY_FALKORDB_PASSWORD:?GOBBY_FALKORDB_PASSWORD must be set} --save 3600 1 300 100
       # Pass-through so the healthcheck below can read the same value.
-      - GOBBY_FALKORDB_PASSWORD=${GOBBY_FALKORDB_PASSWORD:-gobbyfalkor}
+      - GOBBY_FALKORDB_PASSWORD=${GOBBY_FALKORDB_PASSWORD:?GOBBY_FALKORDB_PASSWORD must be set}
       # FALKORDB_ARGS is reserved for module options; do not put auth there. Setting it
       # replaces the image default wholesale, so the unchanged values are restated.
       # TIMEOUT_DEFAULT (not the deprecated read-only TIMEOUT) makes per-query
