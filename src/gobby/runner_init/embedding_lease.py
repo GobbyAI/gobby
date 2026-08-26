@@ -11,6 +11,7 @@ from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 
 from gobby.ai.embedding_switch import CompletedSwitchRecord
+from gobby.host_lifecycle import HostSleepTracker
 from gobby.storage.embedding_generation_state import (
     EmbeddingGenerationLeaseExpired,
     EmbeddingGenerationLeaseLost,
@@ -66,9 +67,32 @@ class _ManagedEmbeddingLease:
 
 
 def _renew_embedding_lease(handle: _ManagedEmbeddingLease) -> None:
+    sleep_wake = HostSleepTracker()
     while not handle.renewal_stop.wait(_EMBEDDING_LEASE_RENEW_SECONDS):
+        after_sleep = sleep_wake.observe_resume()
         try:
-            renewed = _renew_with_backoff(handle.lease, stop_event=handle.renewal_stop)
+            renewed = _renew_with_backoff(
+                handle.lease,
+                stop_event=handle.renewal_stop,
+                sleep_wake=sleep_wake,
+            )
+        except EmbeddingGenerationLeaseExpired:
+            after_sleep = after_sleep or sleep_wake.observe_resume()
+            handle.lease.fence()
+            log = logger.debug if after_sleep else logger.warning
+            log(
+                "Managed embedding generation lease expired%s; attempting re-acquisition",
+                " after host sleep" if after_sleep else "",
+                extra={
+                    "expected_generation": handle.lease.generation,
+                    "expected_revision": handle.lease.revision,
+                },
+            )
+            if handle.renewal_stop.is_set():
+                return
+            if not _reacquire_lease_from_renewal_thread(handle, after_sleep=after_sleep):
+                return
+            continue
         except EmbeddingGenerationLeaseLost:
             handle.lease.fence()
             logger.warning(
@@ -87,7 +111,8 @@ def _renew_embedding_lease(handle: _ManagedEmbeddingLease) -> None:
             return
         if renewed:
             continue
-        if not _reacquire_lease_from_renewal_thread(handle):
+        after_sleep = after_sleep or sleep_wake.observe_resume()
+        if not _reacquire_lease_from_renewal_thread(handle, after_sleep=after_sleep):
             return
 
 
@@ -95,6 +120,7 @@ def _renew_with_backoff(
     lease: EmbeddingServingLease,
     *,
     stop_event: threading.Event | None = None,
+    sleep_wake: HostSleepTracker | None = None,
 ) -> bool:
     """Renew once, retrying transient failures until the local deadline nears."""
     backoff = _EMBEDDING_RENEW_BACKOFF_INITIAL_SECONDS
@@ -118,7 +144,7 @@ def _renew_with_backoff(
                 )
             return True
         except EmbeddingGenerationLeaseExpired:
-            logger.warning(
+            logger.debug(
                 "Embedding generation lease renewal attempt reached local deadline "
                 "attempt=%d elapsed_ms=%.1f remaining_before_attempt=%.3f",
                 attempt,
@@ -129,7 +155,12 @@ def _renew_with_backoff(
         except EmbeddingGenerationLeaseRenewTransient as exc:
             remaining_seconds = lease.remaining_seconds()
             cause = exc.__cause__ or exc
-            logger.warning(
+            log = (
+                logger.debug
+                if sleep_wake is not None and sleep_wake.observe_resume()
+                else logger.warning
+            )
+            log(
                 "Embedding generation lease renewal failed transiently "
                 "attempt=%d elapsed_ms=%.1f remaining_lease_seconds=%.3f cause=%s: %s",
                 attempt,
@@ -140,9 +171,7 @@ def _renew_with_backoff(
             )
             if remaining_seconds <= backoff:
                 lease.fence()
-                logger.warning(
-                    "Embedding generation lease renewal kept failing transiently; serving fenced"
-                )
+                log("Embedding generation lease renewal kept failing transiently; serving fenced")
                 return False
             if stop_event is None:
                 time.sleep(backoff)
@@ -151,8 +180,15 @@ def _renew_with_backoff(
             backoff = min(backoff * 2.0, _EMBEDDING_RENEW_BACKOFF_CAP_SECONDS)
 
 
-def _reacquire_lease_from_renewal_thread(handle: _ManagedEmbeddingLease) -> bool:
-    reacquisition = asyncio.run_coroutine_threadsafe(_reacquire_lease(handle), handle.loop)
+def _reacquire_lease_from_renewal_thread(
+    handle: _ManagedEmbeddingLease,
+    *,
+    after_sleep: bool = False,
+) -> bool:
+    reacquisition = asyncio.run_coroutine_threadsafe(
+        _reacquire_lease(handle, after_sleep=after_sleep),
+        handle.loop,
+    )
     while True:
         try:
             return reacquisition.result(timeout=0.1)
@@ -165,7 +201,11 @@ def _reacquire_lease_from_renewal_thread(handle: _ManagedEmbeddingLease) -> bool
             return False
 
 
-async def _reacquire_lease(handle: _ManagedEmbeddingLease) -> bool:
+async def _reacquire_lease(
+    handle: _ManagedEmbeddingLease,
+    *,
+    after_sleep: bool = False,
+) -> bool:
     """Re-acknowledge a matching lease after connectivity returns, or rebuild."""
     while True:
         await asyncio.sleep(_EMBEDDING_REACQUIRE_POLL_SECONDS)
@@ -212,7 +252,8 @@ async def _reacquire_lease(handle: _ManagedEmbeddingLease) -> bool:
             successor.fence()
             return False
         handle.lease = successor
-        logger.info(
+        log = logger.debug if after_sleep else logger.info
+        log(
             "Embedding generation serving lease re-acknowledged generation=%s revision=%d "
             "decision=resume",
             successor.generation,

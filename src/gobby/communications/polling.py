@@ -6,6 +6,8 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+from gobby.host_lifecycle import HostSleepTracker
+
 if TYPE_CHECKING:
     from gobby.communications.adapters.base import BaseChannelAdapter
     from gobby.communications.manager import CommunicationsManager
@@ -92,8 +94,10 @@ class PollingManager:
             interval: Poll interval in seconds.
         """
         consecutive_failures = 0
+        traceback_logged = False
         max_backoff = 300  # 5 minutes max backoff
         base_backoff = 5  # start with 5 seconds backoff
+        sleep_wake = HostSleepTracker()
 
         while True:
             try:
@@ -105,6 +109,7 @@ class PollingManager:
                         await adapter.acknowledge_messages(stored)
 
                 consecutive_failures = 0
+                traceback_logged = False
                 await asyncio.sleep(interval)
 
             except asyncio.CancelledError:
@@ -115,7 +120,16 @@ class PollingManager:
                 # still says what failed (#20981).
                 error = str(e) or type(e).__name__
                 sleep_duration = min(base_backoff * (2 ** (consecutive_failures - 1)), max_backoff)
-                if consecutive_failures == 1:
+                if sleep_wake.observe_resume():
+                    logger.debug(
+                        "Polling channel %r waiting for connectivity after host resume: "
+                        "%s (failure %s in a row, backing off %ss)",
+                        channel_name,
+                        error,
+                        consecutive_failures,
+                        sleep_duration,
+                    )
+                elif not traceback_logged:
                     # One traceback per failure streak; repeats stay one line so a
                     # transient outage cannot flood the log (#20867).
                     logger.exception(
@@ -124,6 +138,7 @@ class PollingManager:
                         error,
                         sleep_duration,
                     )
+                    traceback_logged = True
                 else:
                     logger.warning(
                         "Error polling channel %r: %s (failure %s in a row, backing off %ss)",

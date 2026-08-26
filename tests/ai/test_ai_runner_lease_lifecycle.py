@@ -508,16 +508,23 @@ async def test_reacquire_unmanaged_lease_lost_to_newer_serving_lease_requests_re
 
 def test_renew_loop_routes_local_deadline_lapse_to_reacquisition(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     monkeypatch.setattr(embedding_lease, "_EMBEDDING_LEASE_RENEW_SECONDS", 0.0)
     events: list[str] = []
     reacquired: list[object] = []
 
-    def deadline_lapsed(_lease: object, *, stop_event: threading.Event) -> bool:
+    def deadline_lapsed(
+        _lease: object,
+        *,
+        stop_event: threading.Event,
+        sleep_wake: object,
+    ) -> bool:
         raise EmbeddingGenerationLeaseExpired("Embedding generation serving lease expired")
 
-    def stop_after_reacquire(handle: object) -> bool:
+    def stop_after_reacquire(handle: object, *, after_sleep: bool = False) -> bool:
         reacquired.append(handle)
+        assert after_sleep is True
         events.append("reacquire")
         return False
 
@@ -525,17 +532,24 @@ def test_renew_loop_routes_local_deadline_lapse_to_reacquisition(
     monkeypatch.setattr(
         embedding_lease, "_reacquire_lease_from_renewal_thread", stop_after_reacquire
     )
+    wake_tracker = MagicMock()
+    wake_tracker.observe_resume.return_value = True
+    monkeypatch.setattr(embedding_lease, "HostSleepTracker", lambda: wake_tracker)
     lease = MagicMock()
     lease.generation = "run-1"
     lease.revision = 7
     lease.fence.side_effect = lambda: events.append("fence")
     handle = cast(Any, SimpleNamespace(lease=lease, renewal_stop=threading.Event()))
 
-    embedding_lease._renew_embedding_lease(handle)
+    with caplog.at_level(logging.DEBUG, logger=embedding_lease.__name__):
+        embedding_lease._renew_embedding_lease(handle)
 
     assert events == ["fence", "reacquire"]
     assert reacquired == [handle]
     lease.fence.assert_called_once_with()
+    recovery = [r for r in caplog.records if "expired after host sleep" in r.message]
+    assert len(recovery) == 1
+    assert recovery[0].levelno == logging.DEBUG
 
 
 def test_renew_loop_routes_rowcount_mismatch_to_reacquisition(
