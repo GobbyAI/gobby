@@ -248,6 +248,71 @@ def test_missing_falkordb_secret_is_actionable_without_generating(
         compose_env._service_environment(tmp_path, required_profiles=("falkordb",))
 
 
+def test_postgres_only_runtime_resolves_without_falkordb_secret(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Daemon start brings postgres up before the FalkorDB secret is loaded.
+
+    That postgres-only step must resolve with no FalkorDB secret at all, while a
+    full-profile resolve against the same store still fails closed.
+    """
+    monkeypatch.delenv("GOBBY_FALKORDB_PASSWORD", raising=False)
+    monkeypatch.setattr(
+        compose_env,
+        "_postgres_environment",
+        lambda *_args, **_kwargs: {
+            "GOBBY_POSTGRES_DB": "gobby",
+            "GOBBY_POSTGRES_USER": "gobby",
+            "GOBBY_POSTGRES_PASSWORD": "secret",
+            "GOBBY_POSTGRES_PORT": "5432",
+        },
+    )
+    monkeypatch.setattr(
+        compose_env,
+        "_pgsearch_environment",
+        lambda: {
+            "GOBBY_PG_SEARCH_VERSION": "1.0.0",
+            "GOBBY_PG_SEARCH_SHA256": "hash",
+        },
+    )
+    _ConfigRepository.values = {
+        "databases.qdrant.url": "http://localhost:6333",
+        "databases.qdrant.port": 6333,
+        "databases.falkordb.host": "127.0.0.1",
+        "databases.falkordb.port": 16379,
+        "databases.falkordb.password": "$secret:missing",
+    }
+    _SecretStore.values = {}
+    monkeypatch.setattr(
+        "gobby.storage.hub.runtime.runtime_hub_database",
+        lambda *_args, **_kwargs: _Db(),
+    )
+    monkeypatch.setattr("gobby.storage.config_repository.ConfigRepository", _ConfigRepository)
+    monkeypatch.setattr("gobby.storage.secrets.SecretStore", _SecretStore)
+    files_home = tmp_path / "files-home"
+    files_home.mkdir()
+    from gobby.config.bootstrap_io import write_bootstrap_yaml
+
+    write_bootstrap_yaml(
+        tmp_path / "bootstrap.yaml",
+        {
+            "datastore_mode": "local",
+            "files_home": str(files_home),
+            "daemon_port": 60887,
+            "bind_host": "127.0.0.1",
+        },
+    )
+
+    runtime = compose_env.resolve_compose_runtime(tmp_path, profiles=("postgres",))
+
+    assert runtime.profiles == ("postgres",)
+    assert "GOBBY_FALKORDB_PASSWORD" not in runtime.environment
+    assert runtime.environment["GOBBY_POSTGRES_PASSWORD"] == "secret"
+
+    with pytest.raises(compose_env.ComposeEnvironmentError, match="missing"):
+        compose_env.resolve_compose_runtime(tmp_path)
+
+
 def test_missing_bootstrap_reports_postgres_install_command(tmp_path: Path) -> None:
     with pytest.raises(compose_env.ComposeEnvironmentError, match="gobby postgres install"):
         compose_env._bootstrap_database_url(tmp_path)
