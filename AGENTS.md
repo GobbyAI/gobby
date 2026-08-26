@@ -97,7 +97,9 @@ uv run gobby build <plan_or_task>  # opt a plan/epic/leaf into state dispatch
 **Never run the full pytest suite unless explicitly asked** — it takes well over 30
 minutes. Target the relevant file or package.
 
-- Prefix agent pytest runs with `GOBBY_TEST_PROTECT=1`.
+- Prefix agent pytest runs with `GOBBY_TEST_PROTECT=1`, and point `DATABASE_URL` at the
+  isolated test hub so no test touches the daemon database:
+  `DATABASE_URL="${DATABASE_URL:-postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test}" GOBBY_TEST_PROTECT=1 uv run pytest <path>`.
 - Tests must be isolated from the user's running daemon and real local state: anything
   needing daemon behavior starts an isolated test daemon with temporary state and
   ports.

@@ -431,6 +431,7 @@
     "workflows/agents/frontend-developer.yaml": "6d1bf44746c7b8542b1fb4628d7b2bd6ced3a0632774bfcac55df1ffc1424160",
     "workflows/agents/fullstack-developer.yaml": "913bfa0f8252fda85240408fcf622628006ddef651eee371ffbcee553fb12879",
     "workflows/agents/goal-taskmaster.yaml": "ef2f903280279a051c94100afc64b27d3033d36849f30548abbc178e59491fa7",
+    "workflows/agents/memory-curator.yaml": "566ea2ee5aa2b52c14b8e88fad31ce055c7f8f54751defa697db94dd2daedfab",
     "workflows/agents/merge-orchestrator.yaml": "af3eb7c7114350042d5bee02aea2c775d9daf183da652d21a18ddfa835ccb045",
     "workflows/agents/merge-worker.yaml": "e7dd50470b514c8f2175a7fcace7d5ebe44efa4502d8ef4b3d6bee7a8767ba18",
     "workflows/agents/plan-adversary-taskless.yaml": "2c2685fbf0c9aff9f86a5416c8d36d3df2b6e9b15d4102fca64a2f3fc2bd4038",
