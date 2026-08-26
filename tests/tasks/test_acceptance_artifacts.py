@@ -223,6 +223,52 @@ def test_tdd_evidence_ignores_other_test_edits_before_red() -> None:
     assert result.green_runs
 
 
+def test_tdd_evidence_accepts_later_repair_cycle() -> None:
+    started = datetime(2026, 8, 21, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference="tests/test_feature.py::test_feature",
+        path="tests/test_feature.py",
+        symbol="test_feature",
+        body="def test_feature(): assert feature() == 1",
+    )
+    repaired = TranscriptEvidence(
+        edits=(
+            _edit("tests/test_feature.py", started, 1),
+            _edit("src/feature.py", started + timedelta(minutes=1), 2),
+            _edit("tests/test_feature.py", started + timedelta(minutes=2), 3),
+            _edit("src/feature.py", started + timedelta(minutes=4), 5),
+        ),
+        validation_runs=(
+            _run(
+                test,
+                started + timedelta(minutes=3),
+                "failure",
+                "FAILED tests/test_feature.py::test_feature\nE assert 0 == 1",
+                4,
+            ),
+            _run(
+                test,
+                started + timedelta(minutes=5),
+                "success",
+                "tests/test_feature.py::test_feature PASSED",
+                6,
+            ),
+        ),
+    )
+
+    result = evaluate_tdd_evidence((test,), repaired)
+
+    assert result.passed is True
+    assert result.red_runs
+    assert result.green_runs
+
+    post_implementation_red = TranscriptEvidence(
+        edits=repaired.edits[:2],
+        validation_runs=repaired.validation_runs,
+    )
+    assert evaluate_tdd_evidence((test,), post_implementation_red).passed is False
+
+
 def test_collection_import_error_is_missing_red_evidence() -> None:
     started = datetime(2026, 8, 21, tzinfo=UTC)
     test = AcceptanceTest(

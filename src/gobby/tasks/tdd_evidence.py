@@ -56,17 +56,21 @@ def evaluate_tdd_evidence(
         if not test_edits:
             findings.append(f"{test.reference}: transcript has no edit of the named test")
             continue
-        test_edit = test_edits[0]
-        first_non_test_edit = min(
-            (
-                edit
-                for edit in evidence.edits
-                if not is_test_convention_path(edit.path) and edit.timestamp >= test_edit.timestamp
-            ),
-            key=lambda edit: (edit.timestamp, edit.order),
-            default=None,
-        )
-        red = _find_red_run(test, evidence, test_edit.timestamp, first_non_test_edit)
+        red = None
+        for test_edit in test_edits:
+            first_non_test_edit = min(
+                (
+                    edit
+                    for edit in evidence.edits
+                    if not is_test_convention_path(edit.path)
+                    and edit.timestamp >= test_edit.timestamp
+                ),
+                key=lambda edit: (edit.timestamp, edit.order),
+                default=None,
+            )
+            red = _find_red_run(test, evidence, test_edit.timestamp, first_non_test_edit)
+            if red is not None:
+                break
         if red is None:
             findings.append(
                 f"{test.reference}: missing assertion or panic failure after the test edit "
