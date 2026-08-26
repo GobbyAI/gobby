@@ -23,7 +23,7 @@ from gobby.mcp_proxy.tools.memory import create_memory_registry
 from gobby.mcp_proxy.tools.memory_scope import get_current_project_id
 from gobby.storage.memories import MemoryType
 from gobby.storage.projects import PERSONAL_PROJECT_ID
-from gobby.utils.session_context import session_context_for_test
+from gobby.utils.session_context import SessionContext, session_context_for_test
 
 pytestmark = pytest.mark.unit
 
@@ -407,6 +407,70 @@ class TestCreateMemory:
         assert result["success"] is True, result
         call_kwargs = mock_memory_manager.create_memory.call_args.kwargs
         assert call_kwargs["source_session_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_create_memory_receives_outer_call_tool_session_context(
+        self, memory_registry: InternalToolRegistry, mock_memory_manager: MagicMock
+    ) -> None:
+        """The proxy's outer call_tool(session_id=...) seeds the session create_memory stores.
+
+        create_memory declares ``session_id`` optional, so the proxy never injects the
+        caller's ref into its arguments; the seeded SessionContext is the only carrier.
+        Only the DB-backed ref resolver is stubbed; seeding, dispatch, and reset run for real.
+        """
+        from gobby.mcp_proxy.server import GobbyDaemonTools
+
+        mock_memory_manager.search_memories.return_value = []
+        seeded_uuid = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+        project_id = "11111111-1111-4111-8111-111111110001"
+        mcp_manager = MagicMock()
+        mcp_manager.project_id = project_id
+        mcp_manager.connections = {}
+        mcp_manager.health = {}
+        mcp_manager.server_configs = []
+        handler = GobbyDaemonTools(
+            mcp_manager=mcp_manager,
+            daemon_port=8787,
+            websocket_port=8788,
+            start_time=1000.0,
+            internal_manager=MagicMock(),
+            db=MagicMock(),
+        )
+
+        async def proxied_call(
+            server_name: str, tool_name: str, arguments: dict[str, Any], *_args: Any, **_kw: Any
+        ) -> Any:
+            assert (server_name, tool_name) == ("gobby-memory", "create_memory")
+            assert "session_id" not in arguments
+            return await memory_registry.call(tool_name, arguments)
+
+        with (
+            patch(
+                "gobby.utils.session_context._resolve_context_values",
+                return_value=(
+                    seeded_uuid,
+                    project_id,
+                    SessionContext(session_id=seeded_uuid),
+                    {"id": project_id},
+                ),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.memory_write.derive_memory_create_provenance",
+                return_value=(None, None),
+            ) as mock_derive,
+            patch.object(handler.tool_proxy, "call_tool", AsyncMock(side_effect=proxied_call)),
+        ):
+            result = await handler.call_tool(
+                server_name="gobby-memory",
+                tool_name="create_memory",
+                arguments={"content": "Test", "rationale": _VALID_RATIONALE},
+                session_id="#42",
+            )
+
+        assert not getattr(result, "is_error", False), result
+        call_kwargs = mock_memory_manager.create_memory.call_args.kwargs
+        assert call_kwargs["source_session_id"] == seeded_uuid
+        assert mock_derive.call_args.kwargs["resolved_session_id"] == seeded_uuid
 
     @pytest.mark.asyncio
     async def test_create_memory_auto_supersedes_near_duplicate(
