@@ -216,6 +216,7 @@ _CLI_DIR_SEGMENTS = (
 _TASKLESS_FEEDBACK_INBOX_SEGMENT = (
     f"{os.sep}docs{os.sep}research{os.sep}gobby-feedback{os.sep}inbox{os.sep}"
 )
+_TASKLESS_FEEDBACK_INBOX_DIR = _TASKLESS_FEEDBACK_INBOX_SEGMENT.rstrip(os.sep)
 
 SOURCE_CODE_EXTENSIONS = frozenset(
     {
@@ -333,16 +334,20 @@ def is_plan_file(file_path: str, source: str | None = None) -> bool:
 
 
 def is_taskless_feedback_file(file_path: str) -> bool:
-    """Return True for Markdown reports in the taskless Gobby feedback inbox."""
+    """Return True for the taskless Gobby feedback inbox.
+
+    Covers the Markdown reports inside it and the inbox directory itself: the
+    inbox is Git-ignored, so a report's ``mkdir -p`` is part of the same
+    taskless write.
+    """
     if not file_path:
         return False
 
     normalised = os.path.normpath(file_path)
-    if not normalised.endswith(".md"):
-        return False
-
     rooted = normalised if normalised.startswith(os.sep) else f"{os.sep}{normalised}"
-    return _TASKLESS_FEEDBACK_INBOX_SEGMENT in rooted
+    if rooted.endswith(_TASKLESS_FEEDBACK_INBOX_DIR):
+        return True
+    return normalised.endswith(".md") and _TASKLESS_FEEDBACK_INBOX_SEGMENT in rooted
 
 
 def is_source_code_path(file_path: str) -> bool:
