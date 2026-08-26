@@ -49,8 +49,9 @@ required `user_id`; deleting a user cascades to those sessions.
 | `scrypt_passphrase` | Passphrase-derived scrypt key | Wrapped DEK, posture, scrypt salt and params | `GOBBY_SECRET_KEK_PASSPHRASE` or an interactive CLI prompt |
 
 `key_file` is the default because it supports unattended daemon startup.
-`scrypt_passphrase` is opt-in via `gobby install --secret-kek-posture passphrase`
-or `gobby secrets rekey --posture passphrase`.
+`scrypt_passphrase` is the passphrase opt-in, reached only through
+`gobby secrets rekey --posture passphrase`; the installer always starts in
+`key_file`.
 
 ## Canonical State
 

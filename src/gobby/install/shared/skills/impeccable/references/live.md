@@ -17,7 +17,7 @@ Resolve `<scripts_dir>` once by calling
 the absolute path of the materialized `scripts/` tree. Export the returned
 `environment.PUPPETEER_CACHE_DIR` before any browser-engine invocation. Keep
 that same path for the full lifetime of every live helper process: returned
-generations remain available until an explicit `gobby uninstall --tools`. If
+generations remain available until an explicit `gobby uninstall impeccable`. If
 materialization or Node is unavailable, live mode cannot run; continue with
 ordinary source edits and browser inspection.
 

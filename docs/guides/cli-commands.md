@@ -71,7 +71,7 @@ Start it with `gobby start` and check it with `gobby status` or `gobby health`.
 | `test-types` | Audit Python test types. | `src/gobby/cli/test_types.py` |
 | `tokens` | Audit token usage ledgers. | `src/gobby/cli/tokens.py` |
 | `ui` | Manage and launch the web UI. | `src/gobby/cli/ui.py` |
-| `uninstall` | Remove installed integrations and hooks. | `src/gobby/cli/install.py` |
+| `uninstall` | Remove installed hooks and managed tools; never touches Docker or data. | `src/gobby/cli/uninstall.py` |
 | `unpack` | Unpack project context. | `src/gobby/cli/pack.py` |
 | `variables` | Get or set live session variables. | `src/gobby/cli/variables.py` |
 | `webhooks` | Manage webhook endpoints. | `src/gobby/cli/extensions.py` |
@@ -105,7 +105,9 @@ Stop the daemon.
 gobby stop [--docker]
 ```
 
-Pass `--docker` to stop the managed datastore containers as well as the daemon.
+Pass `--docker` to also stop the managed PostgreSQL, Qdrant, and FalkorDB
+containers with `docker compose stop`. Containers, data volumes, and their
+`unless-stopped` policy stay in place; `gobby start` brings them back.
 
 ### `gobby restart`
 
@@ -150,49 +152,64 @@ gobby init [--name NAME] [--github-url URL] [--linear-setup | --no-linear-setup]
 
 ### `gobby install` And `gobby uninstall`
 
-Install or remove Gobby integrations.
+Install Gobby, reinstall named components of an existing install, or remove what
+was installed.
 
 ```bash
-gobby install [OPTIONS]
-gobby uninstall [OPTIONS]
+gobby install [OPTIONS] [COMPONENT]...
+gobby uninstall [OPTIONS] [COMPONENT]...
 ```
 
-`gobby install` options:
+Bare `gobby install` is the only full install. It claims the files home, writes
+daemon config, provisions the managed PostgreSQL, Qdrant, and FalkorDB stack,
+creates the account identity, installs hooks for every detected CLI and Git
+hooks for the current repository, runs the RTK, web UI exposure, embedding, and
+voice prompts, then starts the daemon. Naming one or more components requires an
+existing install (`bootstrap.yaml` and `~/.gobby/bin/gdaemon`); the run executes
+only those components, in the order given, and never touches daemon config,
+managed services, identity, or daemon start. It exits 1 when any component
+fails.
+
+| Component | `gobby install` | `gobby uninstall` |
+| --- | --- | --- |
+| `claude`, `codex`, `grok`, `qwen`, `droid`, `agy` | Install that CLI's global hooks. | Remove that CLI's global hooks. |
+| `git-hooks` | Install repository Git hooks (verification, JSONL export, code indexing) in the `-C` repository. | Remove them from the `-C` repository. Explicit only; bare uninstall never touches repositories. |
+| `rtk` | Reconcile the RTK binary and the `rtk-command-rewrite` rule (details below). | Disable the rule and remove the managed fallback binary. |
+| `impeccable` | Provision the Impeccable design runtime. | Remove the Impeccable runtime. |
+| `voice` | Set `voice.enabled=true` in daemon config. | — |
+| `embedding` | Configure the embedding provider, honoring the `--embedding-*` overrides. | — |
+| `ide-settings` | Configure VS Code-family terminal integration. | — |
+
+`gobby install` modifiers:
 
 | Option | Purpose |
 | --- | --- |
-| `--claude` | Install Claude Code integration assets. |
-| `--grok` | Install Grok CLI integration assets. |
-| `--agy` | Install AGY integration assets. |
-| `--codex` | Install Codex integration assets. |
-| `--droid` | Install Droid integration assets. |
-| `--qwen` | Install QwenCode integration assets. |
-| `--hooks`, `--git-hooks` | Aliases for one flag: install repository git hooks (verification, JSONL export, code indexing). |
-| `--all` | Install all supported integrations. |
-| `--config-only` | Configure Gobby and provision required infrastructure without CLI or Git hooks. |
-| `--falkordb-password-stdin` | Read the FalkorDB password from standard input. |
-| `--project` | Install project-scoped configuration. |
-| `--voice` | Enable voice chat in daemon config. Alone, a voice-only maintenance run. |
-| `--rtk`, `--no-rtk` | Enable or disable RTK command rewriting through Gobby's hook proxy. Alone, an RTK-only maintenance run. |
-| `--embedding-url URL` | Use a custom embedding API endpoint. Embedding flags alone are an embedding-only maintenance run. |
+| `--embedding-url URL` | Use a custom embedding API endpoint. |
 | `--embedding-provider PROVIDER` | Force embedding provider compatibility mode (`lmstudio`, `ollama`, `openai-compatible`, `vllm`). |
 | `--embedding-model MODEL` | Override the embedding model. |
 | `--embedding-dim N` | Override the embedding dimension. |
-| `--secret-kek-posture [key-file|passphrase]` | Select daemon-local secret KEK storage. |
-| `--ide-settings`, `--no-ide-settings` | Answer the VS Code-family terminal integration prompt. |
-| `--expose-ui`, `--no-expose-ui` | Answer the Tailscale web UI exposure prompt. |
+| `--no-interactive` | Run without prompts. |
 | `--container-restarts`, `--no-container-restarts` | Enable or disable `unless-stopped` restart policies for managed service containers (enabled by default). |
 | `--files-home DIR` | Existing absolute directory for hub-owned files (local install). |
-| `--no-interactive` | Run without prompts. |
-| `-C`, `--path PATH` | Install against a specific path. |
+| `-C`, `--path PATH` | Repository for `git-hooks` (default: current directory). |
 
-Default, `--all`, and `--config-only` installs require a running Docker daemon
-and always provision the managed PostgreSQL, Qdrant, and FalkorDB profiles.
-Those services are independent of the embedding-provider choice. The installer
-applies `unless-stopped` to new and existing managed containers. Use
-`--no-container-restarts` when another supervisor owns their lifecycle.
-Re-running `gobby install --config-only` repairs the selected policy with
-`docker update` and refreshes the managed Compose file.
+The `--embedding-*` overrides apply to the full install or to the `embedding`
+component; combined with other components only, they are a usage error.
+
+`gobby uninstall` takes `-C`/`--path` (the `git-hooks` repository) and `--yes`
+(skip the confirmation prompt). Bare `gobby uninstall` removes everything
+installed: hooks from every detected CLI, the global hook dispatchers, the
+Tailscale UI exposure, the RTK rule and managed binary, and the Impeccable
+runtime. When no CLI hooks are detected it still cleans the RTK and Impeccable
+artifacts. Docker containers, data volumes, `bootstrap.yaml`, secrets, and the
+files home are never touched.
+
+The full install requires a running Docker daemon and always provisions the
+managed PostgreSQL, Qdrant, and FalkorDB profiles, independent of the
+embedding-provider choice. The installer applies `unless-stopped` to new and
+existing managed containers; use `--no-container-restarts` when another
+supervisor owns their lifecycle. Re-running bare `gobby install` repairs the
+selected policy with `docker update` and refreshes the managed Compose file.
 
 On a fresh datastore, interactive installation prompts for the initial user's
 name, email, password, and confirmation. It creates that user and assigns the
@@ -200,38 +217,33 @@ local machine before daemon startup. A fresh `--no-interactive` install refuses
 to invent credentials; run one interactive installation first. Reruns preserve
 the existing sole user and idempotently confirm local machine ownership.
 
-The full install runs only when no scope or section flag is given (or with
-`--all`). Section flags given without a scope flag are maintenance runs: they
-configure their own section and stop before the installation banner, daemon
-setup, managed services, and daemon start.
+Managed-service credentials are generated, never asked for, and never rotated
+by an install:
 
-- `--hooks` ensures the personal marker and reinstalls repository Git hooks.
-- `--rtk`/`--no-rtk` reconciles the RTK binary and rule (details below).
-- `--voice` enables voice chat in daemon config.
-- `--embedding-url`, `--embedding-provider`, `--embedding-model`, and
-  `--embedding-dim` configure the embedding provider.
+- The PostgreSQL DSN in `~/.gobby/bootstrap.yaml` receives a random URL-safe
+  password when the bootstrap is first created; every later install reuses the
+  stored `database_url` verbatim, whatever the process environment says. A
+  pre-existing `gobby_postgres_data` volume whose password differs fails the
+  readiness check with a message naming the volume and `bootstrap.yaml`; Gobby
+  never removes data volumes.
+- The FalkorDB password is generated on first provisioning, printed once, and
+  stored as the `falkordb_password` secret; later installs reuse it.
+- Secrets start in the key-file KEK posture; `gobby secrets rekey --posture
+  passphrase` is the passphrase opt-in.
+- `gobby datastores rotate-password postgres|falkordb` rotates a credential on
+  an existing install (see [Hub Backup Disaster Recovery](#hub-backup-disaster-recovery)).
 
-Section flags combine: `gobby install --rtk --voice` runs both sections and
-nothing else. Modifier flags (`--no-interactive`, `-C`/`--path`, `--project`,
-`--files-home`, `--container-restarts`, `--falkordb-password-stdin`,
-`--secret-kek-posture`, `--ide-settings`, `--expose-ui`) select nothing on
-their own, so alone they still run the full install. `--expose-ui`,
-`--ide-settings`, `--no-ide-settings`, and `--falkordb-password-stdin` answer
-full-install prompts, so combining one with a section flag runs the full
-install; `--no-expose-ui` and `--no-interactive` combine with any run.
-CLI-targeted flags (`--claude`, `--codex`, ...) install those hooks plus daemon
-configuration and identity; they skip managed-service provisioning.
+`gobby stop --docker` stops the managed containers with `docker compose stop`
+and never removes them; `gobby start` brings them back with `up -d`.
 
-RTK integration is opt-in. Interactive installs prompt with the currently
+RTK integration is opt-in. Interactive full installs prompt with the currently
 installed `rtk-command-rewrite` rule state as the default; fresh
-`--no-interactive` installs leave it disabled. `--rtk` accepts a compatible stock
-RTK 0.45.0 or newer from PATH, uses Homebrew when available, or installs a
-checksum-verified fallback in `~/.gobby/bin/`. Gobby never invokes `rtk init`.
-`gobby install --rtk` or `--no-rtk` with no other scope flag is a maintenance
-run like `--hooks`: it reconciles the binary and the rule, prints the RTK status
-line, and stops without provisioning services, prompting for the web UI, or
-re-running daemon setup. Combined with CLI flags it still runs inside that
-install.
+`--no-interactive` installs leave it disabled. `gobby install rtk` accepts a
+compatible stock RTK 0.45.0 or newer from PATH, uses Homebrew when available,
+or installs a checksum-verified fallback in `~/.gobby/bin/`. Gobby never
+invokes `rtk init`. The component run reconciles the binary and the rule,
+prints the RTK status line, and stops without provisioning services, prompting
+for the web UI, or re-running daemon setup.
 
 When enabled, `ghook` remains every CLI's installed hook. Gobby calls
 `rtk rewrite -- <command>` only for synchronous `before_tool` shell-command
@@ -250,33 +262,16 @@ once per executable and is reused until the binary changes on disk.
 direct-hook conflicts, ownership, and health. Opt-in reconciliation backs up and
 removes exact RTK-generated direct hooks, legacy scripts, instruction blocks, and
 generated files; modified or unrelated content is preserved and reported.
-The full global uninstall (no CLI flag, or `--all`) disables the rule;
-targeted CLI uninstalls such as `gobby uninstall --claude` leave it as
-installed. `gobby uninstall --tools` also removes the
-checksum-matching Gobby fallback, while Homebrew and other user-managed RTK
-installations remain installed. `gobby uninstall --rtk` alone disables the rule
-and removes the managed fallback, leaving CLI hooks, other tools, and the
-service in place.
+Bare `gobby uninstall` disables the rule and removes the checksum-matching
+Gobby fallback; CLI component uninstalls such as `gobby uninstall claude` leave
+both as installed, and `gobby uninstall rtk` alone disables the rule and removes
+the managed fallback while CLI hooks, other tools, and the service stay in
+place. Homebrew and other user-managed RTK installations always remain
+installed.
 
 The V1 handler registry is internal and contains only `rtk`. Future versions may
 add named trusted handlers, broader hook-event capabilities, and dedicated
 management surfaces.
-
-`gobby uninstall` options:
-
-| Option | Purpose |
-| --- | --- |
-| `--claude` | Remove Claude Code integration assets. |
-| `--grok` | Remove Grok CLI integration assets. |
-| `--agy` | Remove AGY integration assets. |
-| `--codex` | Remove Codex integration assets. |
-| `--droid` | Remove Droid integration assets. |
-| `--qwen` | Remove QwenCode integration assets. |
-| `--all` | Remove all supported integration assets. |
-| `--tools` | Remove Gobby-owned managed tool artifacts, including the RTK fallback. |
-| `--rtk` | Disable RTK rewriting and remove the managed RTK fallback only. |
-| `--project` | Remove project-scoped configuration. |
-| `-C`, `--path PATH` | Uninstall from a specific path. |
 
 ### `gobby cutover`
 

@@ -219,7 +219,7 @@ git pull --ff-only
 uv sync
 cargo build -p gobby-daemon
 export GOBBY_HOME="$REMOTE_ACCEPT_HOME"
-uv run gobby install --config-only --auth-mode required --no-interactive
+uv run gobby install
 uv run gobby status
 ```
 
@@ -327,10 +327,7 @@ provisioning is skipped and all three remote preflight checks pass:
 
 ```bash
 export GOBBY_HOME="$LOCAL_ACCEPT_HOME"
-uv run gobby install \
-  --config-only \
-  --no-interactive \
-  --auth-mode required
+uv run gobby install --no-interactive
 test -s "$LOCAL_ACCEPT_HOME/machine_id"
 ```
 

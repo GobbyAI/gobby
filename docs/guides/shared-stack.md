@@ -99,10 +99,9 @@ the HTTPS URL. The exposure choice is stored as
 `ui_expose: tailscale` in the machine-local `bootstrap.yaml` and is never copied into
 shared configuration.
 
-An interactive full or config-only install offers this setup when Tailscale is
-running, with **No** as the default. Targeted installs act only when `--expose-ui` is
-explicit. `--no-interactive` skips an unspecified choice, and `--no-expose-ui` leaves
-the existing Serve state and saved intent unchanged.
+An interactive full install offers this setup when Tailscale is running, with
+**No** as the default; `--no-interactive` skips it, and component installs never
+touch exposure. Change it afterwards with `gobby ui expose` and `gobby ui unexpose`.
 
 Manage exposure explicitly with:
 

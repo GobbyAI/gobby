@@ -39,10 +39,11 @@ asset URL, but it does not send recorded audio to a third-party service.
 
 ### During `gobby install`
 
-The installer asks whether to enable voice chat. Say yes, or pass `--voice`:
+The full installer asks whether to enable voice chat. Say yes, or enable it
+later on an existing install with the `voice` component:
 
 ```bash
-gobby install --voice
+gobby install voice
 ```
 
 The voice packages are installed by normal project sync. This command sets

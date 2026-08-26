@@ -41,11 +41,11 @@ uv run gobby status
 
 | Command | Description |
 |---------|-------------|
-| `uv run gobby install` | Install to all detected CLIs |
-| `uv run gobby install --claude` | Claude Code only |
-| `uv run gobby install --agy` | AGY CLI hooks only |
-| `uv run gobby install --codex` | Codex CLI only |
-| `uv run gobby uninstall` | Remove all hooks |
+| `uv run gobby install` | Full install: managed stack, daemon config, hooks for all detected CLIs |
+| `uv run gobby install claude` | Claude Code hooks only (existing install) |
+| `uv run gobby install agy` | AGY CLI hooks only (existing install) |
+| `uv run gobby install codex` | Codex CLI hooks only (existing install) |
+| `uv run gobby uninstall` | Remove all hooks and managed tools; never touches Docker or data |
 
 ### Project Initialization
 

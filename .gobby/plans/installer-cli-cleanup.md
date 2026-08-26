@@ -486,6 +486,7 @@ Targets:
 - `docs/contracts/secrets.md::*` — scope-reason: installer opt-in sentence
 - `src/gobby/install/shared/skills/impeccable/references/live.md::*` — scope-reason: uninstall --tools
 - `src/gobby/install/shared/skills/impeccable/references/live-setup.md::*` — scope-reason: uninstall --tools
+- `src/gobby/install/bundled_content_manifest.json::*` — scope-reason: checksums for the two edited impeccable references
 
 `cli-commands.md`: replace the install and uninstall option tables and the
 scope/section/modifier paragraphs with: synopsis `gobby install [COMPONENT]...`, a

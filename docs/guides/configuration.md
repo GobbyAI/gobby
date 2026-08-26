@@ -69,7 +69,7 @@ in `wiki.roots` load as the sibling `<project>/wiki` vault.
 available:
 
 ```yaml
-database_url: "postgresql://gobby:gobby_dev@localhost:60891/gobby"
+database_url: "postgresql://gobby:<generated-on-first-install>@localhost:60891/gobby"
 postgres_pool:
   acquire_timeout_seconds: 5.0
   open_timeout_seconds: 30.0
@@ -345,9 +345,9 @@ memory:
   access_debounce_seconds: 60
 ```
 
-`gobby install` accepts `--embedding-url`, `--embedding-provider`,
-`--embedding-model`, and `--embedding-dim` to override the bundled provider
-defaults. Provider identity for a custom URL comes from fingerprinting the
+The full `gobby install` and the `gobby install embedding` component accept
+`--embedding-url`, `--embedding-provider`, `--embedding-model`, and
+`--embedding-dim` to override the bundled provider defaults. Provider identity for a custom URL comes from fingerprinting the
 server: Ollama answers `GET /api/tags`, LM Studio answers `GET /api/v1/models`,
 vLLM's `/v1/models` entries carry `owned_by: "vllm"`, and any other reachable
 `/v1/models` endpoint routes as generic `openai-compatible`. Pass
@@ -375,8 +375,8 @@ stronger on MTEB and instruction-aware. Tradeoffs: roughly 3.3× the vector
 storage and a slower embed step. Example install:
 
 ```bash
-gobby install --embedding-url http://localhost:1234/v1 \
-              --embedding-model text-embedding-qwen3-embedding-4b
+gobby install embedding --embedding-url http://localhost:1234/v1 \
+                        --embedding-model text-embedding-qwen3-embedding-4b
 # --embedding-dim is auto-detected from the endpoint; pass 2560 to skip the probe.
 ```
 
@@ -386,7 +386,7 @@ generation endpoint. The served model is resolved live from `/v1/models` and
 the dim is always probed, never defaulted:
 
 ```bash
-gobby install --embedding-provider vllm --embedding-url http://localhost:8323/v1
+gobby install embedding --embedding-provider vllm --embedding-url http://localhost:8323/v1
 # or switch an existing installation to a vllm-served catalog model:
 gobby embeddings switch qwen3-0.6b-q8 --provider vllm --api-base http://localhost:8323/v1
 ```
