@@ -151,6 +151,7 @@ class GrokAdapter(ACPHookAdapter):
             result.pop("additionalContext", None)
             result.pop("systemMessage", None)
         if canonical_hook == "pre_tool_use":
+            result.pop("systemMessage", None)
             permission_decision = response.permission_decision
             if permission_decision is None and response.auto_approve:
                 permission_decision = "allow"

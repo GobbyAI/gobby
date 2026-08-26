@@ -830,6 +830,7 @@ class TestGrokCurrentHookContract:
                 decision="deny",
                 reason="Blocked by policy",
                 context="ignored",
+                system_message="ignored",
                 modified_input={"command": "rm -rf build"},
             ),
             hook_type="pre_tool_use",
