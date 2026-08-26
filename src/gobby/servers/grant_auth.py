@@ -255,7 +255,10 @@ def bearer_matches_grant(
     if claims.agent_run_id is not None:
         return principal.kind == "agent_run"
     if claims.managed_execution_id is not None:
-        return principal.kind == "tool_chat"
+        # tool_chat and maintenance executions share the managed_execution_id
+        # owner claim; the token's kind says which (absent means tool_chat).
+        managed_kind = claims.kind or "tool_chat"
+        return managed_kind in {"tool_chat", "maintenance"} and principal.kind == managed_kind
     return False
 
 
