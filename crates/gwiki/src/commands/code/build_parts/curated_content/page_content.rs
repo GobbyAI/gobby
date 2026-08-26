@@ -1,7 +1,5 @@
 //! Grounded evidence preparation and deterministic fallback bodies for curated pages.
 
-use std::fmt::Write as _;
-
 use super::*;
 
 /// Cap on key-symbol evidence rows fed into one content prompt. Bounds prompt

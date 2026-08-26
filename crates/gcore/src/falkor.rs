@@ -393,8 +393,10 @@ fn parse_map(value: RedisValue) -> anyhow::Result<Map<String, Value>> {
                 anyhow::bail!("invalid FalkorDB map: odd number of array entries");
             }
             values
-                .chunks_exact(2)
-                .map(|chunk| (chunk[0].clone(), chunk[1].clone()))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|[key, value]| (key.clone(), value.clone()))
                 .collect()
         }
         value => anyhow::bail!("invalid FalkorDB map value: {value:?}"),
