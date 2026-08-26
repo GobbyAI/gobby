@@ -171,6 +171,20 @@ effect. That lets one rule set variables, inject context, or queue MCP calls and
 then block the event with a rendered reason. Per-effect `when` conditions are
 evaluated separately from the rule-level `when`.
 
+### Override Precedence and Acknowledge Variables
+
+Turn-end responses are assembled in a fixed order. The hard-coded overrides
+(`force_allow_stop` → allow; `tool_block_pending` / `edit_write_pending` →
+block) are returned before any rule-level block reason, after the winning
+rule's non-block effects have already run. A block gate's `acknowledge_variable`
+is set only when that gate's block is actually delivered; a gate whose block is
+displaced by an override stays armed for the next turn end.
+
+Consume a gate's trigger state with `acknowledge_variable`, never with a
+`set_variable` effect placed ahead of `block`: under an override the block is
+not delivered and the state is lost, and under aggregated blocks later rules
+contribute only their `block` effects, so the state is consumed twice.
+
 ## Practical Advice
 
 - Use `variables.get()` defensively in `block` rules.

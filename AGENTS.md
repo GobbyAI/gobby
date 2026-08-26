@@ -146,10 +146,10 @@ state inconsistent.
 
 ## Architecture Facts
 
-- Templates vs enforcement: see `src/gobby/install/shared/CLAUDE.md` for the
+- Templates vs enforcement: see `src/gobby/install/shared/AGENTS.md` for the
   sync/override contract (rule 8 above is the short version).
 - Dispatch: stage-manifest dispatch enters via `gobby build` (CLI, MCP, HTTP all
-  call `src/gobby/build/service.py`). Read `src/gobby/dispatch/CLAUDE.md` before
+  call `src/gobby/build/service.py`). Read `src/gobby/dispatch/AGENTS.md` before
   touching dispatch, build, or stage-registry code.
 - Rust workspace (`crates/`): `gobby-code`→`gcode`, `gobby-daemon`→`gdaemon`,
   `gobby-hooks`→`ghook`, `gobby-wiki`→`gwiki`, shared `gobby-core`. The daemon shells
