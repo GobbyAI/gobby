@@ -90,6 +90,42 @@ async def test_request_preserves_explicit_nulls_in_tool_results() -> None:
 
 
 @pytest.mark.asyncio
+async def test_request_refreshes_project_id_after_late_project_init(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A proxy started before ``gobby init`` sends project headers once the ID exists."""
+    monkeypatch.delenv("GOBBY_AGENT_RUN_ID", raising=False)
+    deps = MagicMock()
+    deps.read_project_id.side_effect = [None, None, "proj-1"]
+    client = MagicMock()
+    client.request = AsyncMock(
+        return_value=_response(200, {"name": "get_task", "inputSchema": {"type": "object"}})
+    )
+    deps.http_client_factory.return_value = client
+    proxy = DaemonProxy(60887, deps_factory=lambda: deps)
+
+    await proxy.get_tool_schema("gobby-tasks", "get_task", session_id="#1")
+    result = await proxy.get_tool_schema("gobby-tasks", "get_task", session_id="#1")
+    await proxy.get_tool_schema("gobby-tasks", "get_task", session_id="#1")
+    await proxy._request("POST", "/api/mcp/tools/schema", json={}, project_id="other-project")
+
+    assert result["success"] is True
+    assert result["tool"]["name"] == "get_task"
+    before_init, after_init, cached, override = [
+        call.kwargs["headers"] for call in client.request.await_args_list
+    ]
+    assert "X-Gobby-Project-Id" not in before_init
+    assert "X-Gobby-Caller-Project-Id" not in before_init
+    assert after_init["X-Gobby-Project-Id"] == "proj-1"
+    assert after_init["X-Gobby-Caller-Project-Id"] == "proj-1"
+    assert after_init["X-Gobby-Session-Id"] == "#1"
+    assert cached["X-Gobby-Project-Id"] == "proj-1"
+    assert override["X-Gobby-Project-Id"] == "other-project"
+    assert override["X-Gobby-Caller-Project-Id"] == "proj-1"
+    assert deps.read_project_id.call_count == 3
+
+
+@pytest.mark.asyncio
 async def test_call_tool_sends_intent_on_each_http_shape() -> None:
     deps = MagicMock()
     deps.read_project_id.return_value = None

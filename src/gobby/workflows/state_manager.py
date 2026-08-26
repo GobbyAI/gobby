@@ -540,6 +540,19 @@ class SessionVariableManager:
                 task_files = dict(task_files)
                 task_files[task_id] = files_for_task
                 variables["task_edited_files"] = task_files
+                # Epoch seconds of the newest edit per path: release_task_paths compares
+                # it against the last commit touching the path to tell this task's own
+                # uncommitted work from someone else's dirt on a stale attribution.
+                raw_times = variables.get("task_edited_file_times") or {}
+                task_times = raw_times if isinstance(raw_times, dict) else {}
+                raw_task_times = task_times.get(task_id, {})
+                times_for_task = dict(raw_task_times) if isinstance(raw_task_times, dict) else {}
+                edited_at = time.time()
+                for path in normalized_paths:
+                    times_for_task[path] = edited_at
+                task_times = dict(task_times)
+                task_times[task_id] = times_for_task
+                variables["task_edited_file_times"] = task_times
                 if normalized_checkout is not None:
                     raw_checkouts = variables.get("task_edited_file_checkouts") or {}
                     task_checkouts = raw_checkouts if isinstance(raw_checkouts, dict) else {}
@@ -645,6 +658,22 @@ class SessionVariableManager:
             else:
                 updated_task_files.pop(task_id, None)
             variables["task_edited_files"] = updated_task_files
+            raw_times = variables.get("task_edited_file_times") or {}
+            task_times = raw_times if isinstance(raw_times, dict) else {}
+            if task_id in task_times:
+                raw_task_times = task_times.get(task_id)
+                stored_times = raw_task_times if isinstance(raw_task_times, dict) else {}
+                remaining_times = {
+                    path: stamp
+                    for path, stamp in stored_times.items()
+                    if normalize_task_edited_path(path) not in released
+                }
+                updated_task_times = dict(task_times)
+                if remaining_times:
+                    updated_task_times[task_id] = remaining_times
+                else:
+                    updated_task_times.pop(task_id, None)
+                variables["task_edited_file_times"] = updated_task_times
             if has_scoped_attribution and normalized_checkout is not None:
                 updated_checkouts_for_task = dict(checkouts_for_task)
                 remaining_checkout_paths = [

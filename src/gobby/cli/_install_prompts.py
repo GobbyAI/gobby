@@ -22,14 +22,12 @@ __all__ = (
     "_API_KEY_PROMPTS",
     "_echo_install_details",
     "_echo_install_summary",
-    "_echo_migration_notice",
     "_echo_uninstall_details",
     "_echo_uninstall_summary",
     "_ensure_db_and_secrets",
     "_infer_embedding_provider_from_url",
     "_prompt_api_keys",
     "_prompt_hub_api_keys",
-    "_run_codex_uninstall",
     "_run_embedding_install",
     "_run_git_hooks_install",
     "_run_falkordb_install",
@@ -349,34 +347,14 @@ def _prompt_api_keys(
 # Per-CLI install/uninstall orchestration helpers
 # ---------------------------------------------------------------------------
 
-# Mapping: cli_name -> (display_name, global_config, project_config_subpath, mcp_config_path)
-_CLI_INSTALL_META: dict[str, tuple[str, str, str, str | None]] = {
-    "claude": ("Claude Code", "~/.claude/settings.json", ".claude/settings.json", "~/.claude.json"),
-    "grok": (
-        "Grok CLI",
-        "~/.grok/hooks/gobby.json",
-        ".grok/hooks/gobby.json",
-        None,
-    ),
-    "qwen": (
-        "Qwen CLI",
-        "~/.qwen/settings.json",
-        ".qwen/settings.json",
-        "~/.qwen/settings.json",
-    ),
-    "agy": (
-        "AGY CLI",
-        "~/.gemini/config/hooks.json",
-        ".gemini/config/hooks.json",
-        "~/.gemini/config/mcp_config.json",
-    ),
-    "codex": ("Codex", "~/.codex/hooks.json", ".codex/hooks.json", None),
-    "droid": (
-        "Droid CLI",
-        "~/.factory/hooks/hooks.json",
-        ".factory/hooks/hooks.json",
-        "~/.factory/mcp.json",
-    ),
+# Mapping: cli_name -> (display_name, global_config, mcp_config_path)
+_CLI_INSTALL_META: dict[str, tuple[str, str, str | None]] = {
+    "claude": ("Claude Code", "~/.claude/settings.json", "~/.claude.json"),
+    "grok": ("Grok CLI", "~/.grok/hooks/gobby.json", None),
+    "qwen": ("Qwen CLI", "~/.qwen/settings.json", "~/.qwen/settings.json"),
+    "agy": ("AGY CLI", "~/.gemini/config/hooks.json", "~/.gemini/config/mcp_config.json"),
+    "codex": ("Codex", "~/.codex/hooks.json", None),
+    "droid": ("Droid CLI", "~/.factory/hooks/hooks.json", "~/.factory/mcp.json"),
 }
 
 
@@ -384,35 +362,29 @@ def _run_standard_cli_install(
     cli_name: str,
     installer: Callable[..., dict[str, Any]],
     project_path: Path,
-    mode: str,
     results: dict[str, dict[str, Any]],
     *,
     hook_timeout_seconds: int = 120,
 ) -> None:
-    """Run install + echo for a standard CLI."""
-    display_name, global_config, project_subpath, mcp_path = _CLI_INSTALL_META[cli_name]
+    """Run the global install + echo for a standard CLI."""
+    display_name, global_config, mcp_path = _CLI_INSTALL_META[cli_name]
 
     click.echo("-" * 40)
     click.echo(display_name)
     click.echo("-" * 40)
 
     if cli_name == "agy":
-        result = installer(project_path, mode=mode)
+        result = installer(project_path, mode="global")
     else:
         result = installer(
             project_path,
-            mode=mode,
+            mode="global",
             hook_timeout_seconds=hook_timeout_seconds,
         )
     results[cli_name] = result
 
     if result["success"]:
-        config = (
-            global_config
-            if mode == "global" or cli_name == "agy"
-            else str(project_path / project_subpath)
-        )
-        _echo_install_details(result, mcp_config_path=mcp_path, config_path=config)
+        _echo_install_details(result, mcp_config_path=mcp_path, config_path=global_config)
     else:
         click.echo(f"Failed: {result['error']}", err=True)
     click.echo("")
@@ -579,7 +551,6 @@ def _run_voice_install(
 
 def _run_falkordb_install(
     installer: Callable[..., dict[str, Any]],
-    falkordb_password: str | None,
     results: dict[str, dict[str, Any]],
 ) -> None:
     """Run install + echo for FalkorDB."""
@@ -588,7 +559,7 @@ def _run_falkordb_install(
     click.echo("-" * 40)
 
     try:
-        result = installer(password=falkordb_password)
+        result = installer()
     except ValueError as exc:
         raise click.UsageError(str(exc)) from exc
     results["falkordb"] = result
@@ -598,8 +569,6 @@ def _run_falkordb_install(
         source = result.get("password_source")
         if source == "generated" and result.get("password"):
             click.echo(f"  Generated FalkorDB password: {result['password']}")
-        elif source == "provided":
-            click.echo("  Using provided FalkorDB password (not displayed)")
         elif source == "reused":
             click.echo("  Reusing existing FalkorDB password from config_store")
         click.echo(f"  Redis: {result['url']}")
@@ -610,26 +579,6 @@ def _run_falkordb_install(
     else:
         click.echo(f"Failed: {result['error']}", err=True)
     click.echo("")
-
-
-def _echo_migration_notice(project_path: Path) -> None:
-    """Detect and warn about per-project hooks that can be cleaned up."""
-    per_project_hooks = []
-    for cli_name, cli_dir in [
-        ("claude", ".claude"),
-        ("codex", ".codex"),
-    ]:
-        hooks_dir = project_path / cli_dir / "hooks"
-        if (hooks_dir / "hook_dispatcher.py").exists():
-            per_project_hooks.append(cli_name)
-
-    if per_project_hooks:
-        click.echo("-" * 40)
-        click.echo("Migration Notice")
-        click.echo("-" * 40)
-        click.echo(f"Per-project hooks detected for: {', '.join(per_project_hooks)}")
-        click.echo("Run 'gobby uninstall --project' to clean up per-project hooks.")
-        click.echo("")
 
 
 def _echo_install_summary(
@@ -713,6 +662,7 @@ def _echo_uninstall_summary(results: dict[str, dict[str, Any]]) -> bool:
 _CLI_UNINSTALL_META: dict[str, tuple[str, str]] = {
     "agy": ("AGY CLI", "hooks from settings"),
     "claude": ("Claude Code", "hooks from settings"),
+    "grok": ("Grok CLI", "hooks from settings"),
     "qwen": ("Qwen CLI", "hooks from settings"),
     "codex": ("Codex", "hooks from settings"),
     "droid": ("Droid CLI", "hooks from settings"),
@@ -738,32 +688,6 @@ def _run_standard_cli_uninstall(
 
     if result["success"]:
         _echo_uninstall_details(result, label=label)
-    else:
-        click.echo(f"Failed: {result['error']}", err=True)
-    click.echo("")
-
-
-def _run_codex_uninstall(
-    uninstaller: Callable[..., dict[str, Any]],
-    results: dict[str, dict[str, Any]],
-) -> None:
-    """Run uninstall + echo for Codex notify integration."""
-    click.echo("-" * 40)
-    click.echo("Codex")
-    click.echo("-" * 40)
-
-    result = uninstaller()
-    results["codex"] = result
-
-    if result["success"]:
-        if result["files_removed"]:
-            click.echo(f"Removed {len(result['files_removed'])} files")
-            for f in result["files_removed"]:
-                click.echo(f"  - {f}")
-        if result.get("config_updated"):
-            click.echo("Updated: ~/.codex/config.toml (removed `notify = ...`)")
-        if not result["files_removed"] and not result.get("config_updated"):
-            click.echo("  (no codex integration found to remove)")
     else:
         click.echo(f"Failed: {result['error']}", err=True)
     click.echo("")

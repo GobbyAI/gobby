@@ -607,10 +607,17 @@ class AgentLifecycleMonitor:
                 result.reason,
             )
             if result.suggested_action in {"stop", "escalate"}:
-                await self._cleanup_handler.cleanup_agent(
-                    run,
-                    terminal_payload=f"autonomous stuck: {result.reason or result.layer}",
-                )
+                if self._idle_after_delivered_result(run, result):
+                    await self._cleanup_handler.terminalize_successful_run(
+                        run.id,
+                        notify_result={"status": "completed"},
+                        message=f"Agent {run.id} completed (idle after delivering its result)",
+                    )
+                else:
+                    await self._cleanup_handler.cleanup_agent(
+                        run,
+                        terminal_payload=f"autonomous stuck: {result.reason or result.layer}",
+                    )
                 self._draft_grace_observations.pop(run.id, None)
             elif run.tmux_session_name:
                 await self._tmux.send_keys(run.tmux_session_name, "Enter", literal=True)
@@ -625,6 +632,20 @@ class AgentLifecycleMonitor:
             result.layer == "progress_stagnation"
             and self._completion_registry is not None
             and self._completion_registry.is_awaiting(session_id)
+        )
+
+    @staticmethod
+    def _idle_after_delivered_result(run: AgentRun, result: StuckDetectionResult) -> bool:
+        """Quiet because finished: a taskless run already handed its result to the parent.
+
+        Interactive CLIs stay at their prompt after the final message, so progress
+        stagnation is the normal end of such a run rather than a failure. Task-bound
+        runs keep the failure path so task recovery can release their claim.
+        """
+        return (
+            result.layer == "progress_stagnation"
+            and run.task_id is None
+            and bool((run.result or "").strip())
         )
 
     async def _defer_stagnation_for_live_pane(

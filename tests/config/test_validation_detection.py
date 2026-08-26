@@ -12,6 +12,7 @@ from gobby.config.validation_detection import (
     ValidationCommandWrapper,
     ValidationDetectionConfig,
     classify_validation_command,
+    classify_validation_segments,
     is_validation_command,
     load_project_validation_detection,
     resolve_validation_detection_config,
@@ -426,3 +427,24 @@ def test_project_validation_detection_round_trip(tmp_path: Path) -> None:
     assert loaded["builtin_matchers_enabled"] is False
     resolved = resolve_validation_detection_config(project_path=str(tmp_path))
     assert classify_validation_command("demo test", resolved) is not None
+
+
+def test_classify_validation_segments_keeps_every_validation_segment() -> None:
+    command = (
+        'git stash push -m "tmp" src/gobby/servers/auth.py -q\n'
+        "GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/test_auth.py::test_case -q\n"
+        "git stash pop -q\n"
+        "uv run ruff check src/gobby/servers/auth.py"
+    )
+
+    segments = classify_validation_segments(command)
+
+    assert [match.normalized_command for match in segments] == [
+        "pytest tests/servers/test_auth.py::test_case -q",
+        "ruff check src/gobby/servers/auth.py",
+    ]
+    assert [match.segment_index for match in segments] == [1, 3]
+    first = classify_validation_command(command)
+    assert first is not None
+    assert first == segments[0]
+    assert classify_validation_segments("git status --short") == ()

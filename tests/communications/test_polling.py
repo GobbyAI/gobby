@@ -152,6 +152,75 @@ async def test_poll_loop_logs_one_traceback_per_failure_streak(
 
 
 @pytest.mark.asyncio
+async def test_poll_loop_quiets_resume_errors_then_surfaces_persistent_failure(
+    polling_manager: PollingManager,
+    mock_adapter: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("gobby.communications.polling.asyncio.sleep", AsyncMock())
+    wake_tracker = MagicMock()
+    wake_tracker.observe_resume.side_effect = [True, True, False]
+    monkeypatch.setattr(
+        "gobby.communications.polling.HostSleepTracker",
+        lambda: wake_tracker,
+    )
+    outcomes: Iterator[BaseException] = iter(
+        [
+            OSError("network resuming"),
+            OSError("dns resuming"),
+            OSError("persistent outage"),
+            asyncio.CancelledError(),
+        ]
+    )
+
+    async def poll_side_effect() -> list[object]:
+        raise next(outcomes)
+
+    mock_adapter.poll.side_effect = poll_side_effect
+
+    with caplog.at_level(logging.DEBUG, logger="gobby.communications.polling"):
+        await polling_manager._poll_loop("test-channel", mock_adapter, interval=0)
+
+    resume_records = [r for r in caplog.records if "after host resume" in r.message]
+    assert len(resume_records) == 2
+    assert all(r.levelno == logging.DEBUG and not r.exc_info for r in resume_records)
+    persistent = [r for r in caplog.records if "persistent outage" in r.message]
+    assert len(persistent) == 1
+    assert persistent[0].levelno == logging.ERROR
+    assert persistent[0].exc_info
+
+
+@pytest.mark.asyncio
+async def test_poll_loop_names_the_exception_class_when_its_message_is_empty(
+    polling_manager: PollingManager,
+    mock_adapter: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bare ``TimeoutError()`` renders as ``''``; the line names the class (#20981)."""
+    monkeypatch.setattr("gobby.communications.polling.asyncio.sleep", AsyncMock())
+
+    outcomes: Iterator[BaseException] = iter(
+        [TimeoutError(), TimeoutError(), asyncio.CancelledError()]
+    )
+
+    async def poll_side_effect() -> list[object]:
+        raise next(outcomes)
+
+    mock_adapter.poll.side_effect = poll_side_effect
+
+    with caplog.at_level(logging.WARNING, logger="gobby.communications.polling"):
+        await polling_manager._poll_loop("test-channel", mock_adapter, interval=0)
+
+    messages = [r.getMessage() for r in caplog.records if "Error polling channel" in r.message]
+    assert messages == [
+        "Error polling channel 'test-channel': TimeoutError (backing off 5s)",
+        "Error polling channel 'test-channel': TimeoutError (failure 2 in a row, backing off 10s)",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_poll_loop_error_handling(polling_manager, mock_adapter, mock_manager):
     """poll loop should catch errors and back off without crashing."""
     call_count = 0

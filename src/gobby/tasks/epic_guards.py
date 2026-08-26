@@ -361,7 +361,7 @@ def collect_epic_guard_paths(
     task: Task,
     repo_path: str,
 ) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
-    """Collect test refs and added test-convention files from prior closed leaves.
+    """Collect test refs and added pytest modules from prior closed leaves.
 
     The fourth element is every path deleted by a closed leaf's linked
     commits: a deletion that passed its own task's close gates retires the
@@ -410,7 +410,7 @@ def collect_epic_guard_paths(
                 continue
             deleted.update(removed)
             for path in added:
-                if not is_test_convention_path(path):
+                if not is_pytest_module_path(path):
                     continue
                 error = _path_error(path, repo_path)
                 if error:
@@ -493,7 +493,21 @@ def _changed_files(sha: str, repo_path: str) -> tuple[tuple[str, ...], tuple[str
     return tuple(added), tuple(deleted)
 
 
+def is_pytest_module_path(path: str) -> bool:
+    """A Python module pytest collects when named on the command line.
+
+    The guard template is a pytest command, so only ``test_*.py`` and
+    ``*_test.py`` files may be forwarded to it. Directory membership is not
+    enough: a ``tests/`` tree also holds fixtures, helpers, ``conftest.py``,
+    and other languages' tests, and pytest ends the run with ``ERROR: not
+    found`` for any of them (#20957).
+    """
+    name = PurePosixPath(path).name.casefold()
+    return name.endswith(".py") and (name.startswith("test_") or name.endswith("_test.py"))
+
+
 def is_test_convention_path(path: str) -> bool:
+    """A test module in any language or any file under a test directory."""
     pure = PurePosixPath(path)
     name = pure.name.casefold()
     return (
@@ -580,5 +594,6 @@ __all__ = [
     "EpicGuardResult",
     "collect_epic_guard_paths",
     "evaluate_epic_guards",
+    "is_pytest_module_path",
     "is_test_convention_path",
 ]

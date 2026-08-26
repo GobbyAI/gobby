@@ -1,5 +1,7 @@
 use std::borrow::Cow;
 use std::collections::BTreeSet;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use postgres::{Client, GenericClient};
 
@@ -104,15 +106,9 @@ impl<'a> SchemaRunner<'a> {
         verify_embedded_assets(self.migrations)?;
         ensure_schema(self.client, &self.schema)?;
         set_search_path(self.client, &self.schema)?;
-        self.client.query_one(
-            "SELECT pg_advisory_lock(hashtext('postgres_migrations_apply'), hashtext(current_schema()))",
-            &[],
-        )?;
+        acquire_apply_lock(self.client)?;
         let result = self.apply_locked(backup);
-        let unlock = self.client.query_one(
-            "SELECT pg_advisory_unlock(hashtext('postgres_migrations_apply'), hashtext(current_schema()))",
-            &[],
-        );
+        let unlock = release_apply_lock(self.client);
         match result {
             Err(error) => {
                 let _ = unlock;
@@ -241,6 +237,47 @@ impl BaselineState {
 }
 
 const GWIKI_TABLES: [&str; 3] = ["gwiki_chunks", "gwiki_documents", "gwiki_sources"];
+
+const APPLY_LOCK_POLL: Duration = Duration::from_millis(100);
+const APPLY_LOCK_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// Serialize every schema apply in the database on one session-level lock.
+///
+/// The baseline and migrations create cluster-global roles and the shared
+/// `gobby_agent_auth` objects, so applies into different schemas still race on
+/// the same catalog tuples. Waiters poll `pg_try_advisory_lock` instead of
+/// blocking in `pg_advisory_lock`: a session parked inside that call holds an
+/// open transaction, and the holder's `CREATE INDEX CONCURRENTLY` waits for
+/// every open transaction — a deadlock PostgreSQL resolves by killing one side.
+fn acquire_apply_lock(client: &mut Client) -> Result<(), SchemaError> {
+    let deadline = Instant::now() + APPLY_LOCK_TIMEOUT;
+    loop {
+        let acquired: bool = client
+            .query_one(
+                "SELECT pg_try_advisory_lock(hashtext('postgres_migrations_apply'), 0)",
+                &[],
+            )?
+            .get(0);
+        if acquired {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(SchemaError::ApplyLock(format!(
+                "another schema runner held the database apply lock for more than {}s",
+                APPLY_LOCK_TIMEOUT.as_secs()
+            )));
+        }
+        thread::sleep(APPLY_LOCK_POLL);
+    }
+}
+
+fn release_apply_lock(client: &mut Client) -> Result<(), SchemaError> {
+    client.query_one(
+        "SELECT pg_advisory_unlock(hashtext('postgres_migrations_apply'), 0)",
+        &[],
+    )?;
+    Ok(())
+}
 
 fn ensure_schema(client: &mut Client, schema: &str) -> Result<(), SchemaError> {
     validate_identifier(schema)?;

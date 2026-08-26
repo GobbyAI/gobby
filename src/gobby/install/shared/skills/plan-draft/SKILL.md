@@ -14,6 +14,11 @@ metadata:
 # plan-draft — Gobby Plan Drafting Methodology
 
 > Internal methodology skill; loaded with `get_skill(name="plan-draft")` from `/gobby plan` and autonomous agents. Not a user-facing command.
+>
+> Load `restraint` first (`get_skill(name="restraint")`). Every drafting choice —
+> a deliverable, a mechanism, an option taken at a fork, a recommendation put to
+> a human — walks its decision ladder and stops at the first rung that fully
+> solves the problem; write the rung beside the choice so reviewers can check it.
 
 This skill is the single source of truth for **how to write a gobby plan document**.
 

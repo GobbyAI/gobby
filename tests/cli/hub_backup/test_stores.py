@@ -215,6 +215,9 @@ def test_collect_source_roles_skips_builtin_roles_and_reports_flags(
             ("gobby_daemon_runtime", False, True),
             ("gobby_gcode_capability", False, False),
             ("gobby_agent_0123456789abcdef0123456789abcdef_1", False, True),
+            ("gobby_ix_e94cf5ac3163ddb1_1", False, True),
+            ("gobby_ix_claude_01234567_89abcdef_7", False, True),
+            ("gobby_mnt_0123456789abcdef0123456789abcdef_2", False, True),
         ]
     )
     _patch_psycopg(monkeypatch, connection)
@@ -230,7 +233,11 @@ def test_collect_source_roles_skips_builtin_roles_and_reports_flags(
     ]
     statement = next(s for s in connection.statements if "pg_roles" in s)
     assert "NOT LIKE 'pg\\_%'" in statement
-    assert "!~ '^gobby_agent_[0-9a-f]{32}_[1-9][0-9]*$'" in statement
+    assert (
+        "!~ '^(gobby_agent_[0-9a-f]{32}"
+        "|gobby_ix_([0-9a-f]{16}|[A-Za-z0-9]{1,8}_[0-9a-f]{8}_[0-9a-f]{8})"
+        "|gobby_mnt_[0-9a-f]{32})_[1-9][0-9]*$'"
+    ) in statement
     assert "ORDER BY rolname" in statement
 
 

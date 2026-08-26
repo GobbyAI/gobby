@@ -516,8 +516,11 @@ class HookManager:
 
         # Stringified call_tool arguments may be normalized for rule evaluation.
         # The MCP proxy validates/coerces the actual target arguments, so this
-        # should not become a CLI retry/update payload.
+        # should not become a CLI retry/update payload. The pristine input copy
+        # has served its rewrite-merge purpose by now and stays out of
+        # observer and broadcast payloads.
         event.data.pop("_input_coerced", None)
+        event.data.pop("_raw_tool_input", None)
 
         # Propagate rewrite_input from rule evaluation to response (PreToolUse)
         if "_modified_input" in event.metadata:

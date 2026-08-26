@@ -4,19 +4,30 @@ from __future__ import annotations
 
 import ipaddress
 import re
+import secrets
 import shutil
 import subprocess  # nosec B404 - fixed tailscale and Docker commands
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 import click
+import psycopg
+from psycopg import sql
+from psycopg_pool import PoolTimeout
 
+from gobby.config.bootstrap import BootstrapConfigError
 from gobby.config.bootstrap_io import read_bootstrap_yaml, write_bootstrap_yaml
+from gobby.config.postgres_bootstrap import write_postgres_defaults
 
+from .installers.falkor import rotate_falkordb_password
 from .installers.managed_services_lock import ManagedServicesLockError, managed_services_lock
 from .utils import get_gobby_home
 
 _DNS_LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\Z")
+_POSTGRES_CONNECT_TIMEOUT_SECONDS = 5
+_ROTATABLE_SERVICES = ("postgres", "falkordb")
 
 
 class DatastoreExposureError(RuntimeError):
@@ -269,3 +280,75 @@ def expose(bind_address: str, published_host: str) -> None:
     except DatastoreExposureError as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(f"Datastores exposed on {result.bind_address}; clients use {result.published_host}")
+
+
+def _dsn_with_password(database_url: str, password: str) -> tuple[str, str]:
+    """Return ``(role, dsn)``: the DSN user and the DSN with only its password replaced."""
+    parts = urlsplit(database_url)
+    userinfo, _, hostport = parts.netloc.rpartition("@")
+    user = userinfo.partition(":")[0]
+    if not user:
+        raise click.ClickException("database_url names no user; cannot rotate its password")
+    netloc = f"{user}:{quote(password, safe='')}@{hostport}"
+    return unquote(user), urlunsplit(parts._replace(netloc=netloc))
+
+
+def _rotate_postgres_password(gobby_home: Path, bootstrap: dict[str, Any]) -> None:
+    bootstrap_file = gobby_home / "bootstrap.yaml"
+    current_url = bootstrap.get("database_url")
+    if not isinstance(current_url, str) or not current_url:
+        raise click.ClickException(f"{bootstrap_file} has no database_url; run `gobby install`")
+    new_password = secrets.token_urlsafe(32)
+    role, new_url = _dsn_with_password(current_url, new_password)
+    # ALTER ROLE is a utility statement, so the password is a composed literal,
+    # never a bound parameter.
+    statement = sql.SQL("ALTER ROLE {} PASSWORD {}").format(
+        sql.Identifier(role), sql.Literal(new_password)
+    )
+    try:
+        with psycopg.connect(
+            current_url, connect_timeout=_POSTGRES_CONNECT_TIMEOUT_SECONDS, autocommit=True
+        ) as conn:
+            conn.execute(statement)
+    except psycopg.Error as exc:
+        raise click.ClickException(f"PostgreSQL password rotation failed: {exc}") from exc
+    # The role has already changed: a failed write below must hand the operator
+    # the new DSN for manual repair before the command exits.
+    try:
+        write_postgres_defaults(gobby_home=gobby_home, database_url=new_url)
+    except (BootstrapConfigError, OSError) as exc:
+        click.echo(
+            f"PostgreSQL role {role!r} now uses the new password but {bootstrap_file} "
+            f"was not updated: {exc}",
+            err=True,
+        )
+        click.echo(f"Set database_url in {bootstrap_file} to: {new_url}", err=True)
+        raise click.ClickException("bootstrap.yaml update failed after the role changed") from exc
+
+
+def _rotate_falkordb_password(gobby_home: Path) -> None:
+    try:
+        rotate_falkordb_password(gobby_home=gobby_home)
+    except (BootstrapConfigError, RuntimeError, psycopg.OperationalError, PoolTimeout) as exc:
+        raise click.ClickException(f"FalkorDB password rotation failed: {exc}") from exc
+
+
+@datastores.command("rotate-password")
+@click.argument("service", type=click.Choice(_ROTATABLE_SERVICES))
+def rotate_password(service: str) -> None:
+    """Rotate a managed datastore password; never restarts or touches Docker."""
+    gobby_home = get_gobby_home()
+    bootstrap_file = gobby_home / "bootstrap.yaml"
+    if not bootstrap_file.exists():
+        raise click.ClickException(f"{bootstrap_file} is missing; run `gobby install`")
+    bootstrap = read_bootstrap_yaml(bootstrap_file)
+    if bootstrap.get("datastore_mode", "local") != "local":
+        raise click.UsageError(
+            "rotate-password needs datastore_mode: local; "
+            "remote clients hold no datastore credentials."
+        )
+    if service == "postgres":
+        _rotate_postgres_password(gobby_home, bootstrap)
+    else:
+        _rotate_falkordb_password(gobby_home)
+    click.echo(f"Run `gobby restart` to apply the new {service} password.")

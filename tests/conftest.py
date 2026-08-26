@@ -55,22 +55,23 @@ _ensure_isolated_bootstrap()
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _checkout_gdaemon_for_schema_contract() -> Iterator[None]:
-    """Pin schema-contract gdaemon calls at this checkout's debug binary.
+def _select_schema_contract_gdaemon() -> Iterator[None]:
+    """Pin schema-contract gdaemon calls at the binary ``select_test_gdaemon`` chooses.
 
-    Schema identity enforcement compares the live database against the
-    checked-out source tree, so test schema applies must run a gdaemon built
-    from the same checkout — the installed ``~/.gobby/bin`` binary matches
-    whatever was last installed, not this branch. Session-scoped and autouse
-    so the patch is active before the session-scoped postgres fixtures run
-    their first schema apply/sweep, and uniform across the whole run (a
-    per-module patch would make schema behavior depend on which tests were
-    selected). When no debug binary has been built, resolution is untouched.
+    The installed ``~/.gobby/bin`` binary by default — the same one the daemon uses,
+    identity-checked against this checkout's pin so a mismatch fails loudly. Only
+    ``GOBBY_TEST_GDAEMON=checkout`` routes applies at this checkout's ``target/debug``
+    build, and that build must be newer than its crate sources. Session-scoped and
+    autouse so the choice is active before the session-scoped postgres fixtures run
+    their first schema apply/sweep, and uniform across the whole run.
     """
     from gobby.utils.native_bin import native_bin_name, resolve_native_bin
+    from tests.fixtures.gdaemon_binary import select_test_gdaemon
 
-    binary = Path(__file__).resolve().parents[1] / "target" / "debug" / native_bin_name("gdaemon")
-    if not binary.is_file():
+    binary = select_test_gdaemon(
+        Path(__file__).resolve().parents[1], os.environ, native_bin_name("gdaemon")
+    )
+    if binary is None:
         yield
         return
     monkeypatch = pytest.MonkeyPatch()

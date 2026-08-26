@@ -285,7 +285,7 @@ class DroidAdapter(BaseAdapter):
                     hook_output["permissionDecision"] = permission_decision
                     if normalized_reason:
                         hook_output["permissionDecisionReason"] = normalized_reason
-                if response.modified_input is not None:
+                if response.modified_input is not None and permission_decision != "deny":
                     hook_output["updatedInput"] = response.modified_input
         elif decision_style == DroidDecisionStyle.NONE and is_denied and normalized_reason:
             result.setdefault("systemMessage", normalized_reason)

@@ -183,6 +183,7 @@ class RuleEffect(BaseModel):
         "set_elicitation",
         "load_skill",
         "run_command",
+        "proxy_hook",
     ]
 
     # Per-effect condition (gates this individual effect within a multi-effect rule)
@@ -252,6 +253,9 @@ class RuleEffect(BaseModel):
     script: str | None = None
     timeout_seconds: float | None = None
 
+    # proxy_hook — trusted synchronous input transformation resolved internally.
+    handler: str | None = None
+
     @model_validator(mode="after")
     def _validate_required_fields(self) -> RuleEffect:
         required_fields: dict[str, tuple[str, ...]] = {
@@ -265,6 +269,7 @@ class RuleEffect(BaseModel):
             "set_worktree_path": ("worktree_path",),
             "load_skill": ("skill",),
             "run_command": ("command",),
+            "proxy_hook": ("handler",),
         }
         missing = [
             field_name
@@ -288,6 +293,33 @@ class RuleEffect(BaseModel):
                 raise ValueError(
                     "RuleEffect(type='run_command') timeout_seconds must be > 0 "
                     f"(got {self.timeout_seconds!r})"
+                )
+
+        if self.type == "proxy_hook":
+            if self.timeout_seconds is not None and not self.timeout_seconds > 0:
+                raise ValueError(
+                    "RuleEffect(type='proxy_hook') timeout_seconds must be > 0 "
+                    f"(got {self.timeout_seconds!r})"
+                )
+            forbidden = {
+                "background": self.background,
+                "command": self.command,
+                "script": self.script,
+                "skill": self.skill,
+                "template": self.template,
+                "server": self.server,
+                "tool": self.tool,
+                "arguments": self.arguments,
+                "inject_result": self.inject_result,
+                "permission_decision": self.permission_decision,
+                "input_updates": self.input_updates,
+                "auto_approve": self.auto_approve,
+                "updated_permissions": self.updated_permissions,
+            }
+            configured = [name for name, value in forbidden.items() if value]
+            if configured:
+                raise ValueError(
+                    "RuleEffect(type='proxy_hook') forbids: " + ", ".join(sorted(configured))
                 )
 
         if self.success_variable is not None and (not self.inject_result or self.background):
@@ -324,6 +356,10 @@ class RuleEffect(BaseModel):
     def model_post_init(self, __context: Any) -> None:
         """Warn when fields irrelevant to the effect type are set."""
         import warnings
+
+        if self.type == "proxy_hook":
+            # The strict proxy validator emits one actionable error for unsafe fields.
+            return
 
         selector_fields = {"tools", "mcp_tools", "command_pattern", "command_not_pattern"}
         _fields_by_type: dict[str, set[str]] = {
@@ -369,6 +405,7 @@ class RuleEffect(BaseModel):
                 "inject_result",
                 *selector_fields,
             },
+            "proxy_hook": {"handler", "timeout_seconds", *selector_fields},
         }
         # Fields with non-None defaults that shouldn't trigger warnings
         _default_skip = {
@@ -417,6 +454,9 @@ class RuleDefinitionBody(BaseModel):
         block_count = sum(e.type == "block" for e in self.effects)
         if block_count > 1:
             raise ValueError("At most one 'block' effect is allowed per rule")
+        if any(effect.type == "proxy_hook" for effect in self.effects):
+            if self.event != RuleTriggerEvent.BEFORE_TOOL:
+                raise ValueError("proxy_hook effects are restricted to before_tool rules")
         return self
 
     @property

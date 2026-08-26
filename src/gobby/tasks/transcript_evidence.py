@@ -10,7 +10,7 @@ import os
 import re
 import threading
 from collections import OrderedDict
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -18,8 +18,9 @@ from pathlib import Path
 from typing import Any, Literal
 
 from gobby.config.validation_detection import (
+    ValidationCommandMatch,
     ValidationDetectionConfig,
-    classify_validation_command,
+    classify_validation_segments,
 )
 from gobby.sessions.machine_scope import require_local_session_ownership
 from gobby.sessions.transcript_archive import get_archive_dir
@@ -106,6 +107,15 @@ _RUNNER_FAILURE_PATTERNS = (
 
 
 @dataclass(frozen=True)
+class TranscriptValidationSegment:
+    """One classified validation segment of a shell command."""
+
+    #: Normalized argv text with wrappers and env assignments stripped.
+    command: str
+    categories: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class TranscriptValidationRun:
     """One transcript-backed validation command outcome."""
 
@@ -123,6 +133,10 @@ class TranscriptValidationRun:
     unknown_reason: str | None = None
     output: str | None = None
     output_truncated: bool = False
+    #: Every validation segment of ``command`` in order, each with its own
+    #: categories; ``categories`` above is their union. Empty only for runs
+    #: built without classification.
+    validation_segments: tuple[TranscriptValidationSegment, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -669,9 +683,11 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
     pending = state.pending.get(outcome.outer_call_id)
     direct_pending = pending is not None and _tool_basename(pending.name) != "exec"
     order = state.next_order()
-    match = classify_validation_command(outcome.command, state.detection_config)
-    if match is None:
+    matches = classify_validation_segments(outcome.command, state.detection_config)
+    if not matches:
         return
+    match = matches[0]
+    segments = _validation_segments(matches)
     output, output_truncated = _extract_output(outcome.result)
     status, exit_code, unknown_reason = _extract_outcome(
         outcome.result,
@@ -697,7 +713,7 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
             session_id=state.session.id,
             source=state.session.source,
             command=outcome.command,
-            categories=match.categories,
+            categories=_segment_categories(segments),
             matcher_id=match.matcher_id,
             label=match.label,
             outcome=status,
@@ -708,8 +724,28 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
             unknown_reason=unknown_reason,
             output=output,
             output_truncated=output_truncated,
+            validation_segments=segments,
         )
     )
+
+
+def _validation_segments(
+    matches: Sequence[ValidationCommandMatch],
+) -> tuple[TranscriptValidationSegment, ...]:
+    """One record per distinct validation segment, in command order."""
+    return tuple(
+        dict.fromkeys(
+            TranscriptValidationSegment(
+                command=match.normalized_command, categories=match.categories
+            )
+            for match in matches
+        )
+    )
+
+
+def _segment_categories(segments: Sequence[TranscriptValidationSegment]) -> tuple[str, ...]:
+    """Union of the segments' categories, first occurrence first."""
+    return tuple(dict.fromkeys(category for segment in segments for category in segment.categories))
 
 
 def _record_validation_run(
@@ -724,9 +760,11 @@ def _record_validation_run(
     if _tool_basename(pending.name) not in _SHELL_TOOLS:
         return
     command = _extract_command(pending.arguments)
-    match = classify_validation_command(command, state.detection_config)
-    if match is None:
+    matches = classify_validation_segments(command, state.detection_config)
+    if not matches:
         return
+    match = matches[0]
+    segments = _validation_segments(matches)
     output, output_truncated = _extract_output(result)
     outcome, exit_code, unknown_reason = _extract_outcome(
         result,
@@ -743,7 +781,7 @@ def _record_validation_run(
             session_id=state.session.id,
             source=state.session.source,
             command=command,
-            categories=match.categories,
+            categories=_segment_categories(segments),
             matcher_id=match.matcher_id,
             label=match.label,
             outcome=outcome,
@@ -754,6 +792,7 @@ def _record_validation_run(
             unknown_reason=unknown_reason,
             output=output,
             output_truncated=output_truncated,
+            validation_segments=segments,
         )
     )
 

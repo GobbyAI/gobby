@@ -17,7 +17,10 @@ from gobby.workflows.commit_guard import (
     DirtyEditOwnershipInspectionError,
     foreign_owned_dirty_paths,
 )
-from gobby.workflows.task_claim_state import normalize_task_edited_path
+from gobby.workflows.task_claim_state import (
+    normalize_task_edited_path,
+    task_edited_file_times,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +52,41 @@ def _dirty_repo_paths(repo_path: str, paths: list[str]) -> list[str]:
                 dirty.add(original)
 
     return [path for path in paths if path in dirty]
+
+
+def _last_commit_epoch(repo_path: str, path: str) -> int:
+    """Return the committer epoch of the last commit touching ``path`` (0 if none)."""
+    result = subprocess.run(  # Hardcoded git command. # nosec B603 B607
+        ["git", "--literal-pathspecs", "log", "-1", "--format=%ct", "--", path],
+        cwd=Path(repo_path),
+        check=False,
+        capture_output=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        stderr = os.fsdecode(result.stderr).strip()
+        raise RuntimeError(f"git log failed: {stderr}")
+    output = result.stdout.strip()
+    return int(output) if output else 0
+
+
+def _own_uncommitted_paths(
+    repo_path: str,
+    dirty_paths: list[str],
+    edit_times: dict[str, float],
+) -> list[str]:
+    """Return the dirty paths the task's edit ledger cannot prove are someone else's.
+
+    A path is the task's own uncommitted work when the session never recorded an edit
+    of it under this task, or when its newest recorded edit postdates the last commit
+    touching it. ``%ct`` is second-resolution, so the stamp is floored before comparing.
+    """
+    own: list[str] = []
+    for path in dirty_paths:
+        edited_at = edit_times.get(path)
+        if edited_at is None or int(edited_at) > _last_commit_epoch(repo_path, path):
+            own.append(path)
+    return own
 
 
 def register_release_task_paths(
@@ -128,17 +166,36 @@ def register_release_task_paths(
             )
         try:
             dirty_paths = _dirty_repo_paths(repo_path, normalized_paths)
+            # Dirt is this task's own uncommitted work unless the session's edit ledger
+            # shows its newest edit of the path predates the last commit touching it;
+            # only then is releasing the attribution safe (#20818 and its reverse:
+            # another session also holding attribution proves nothing about whose
+            # dirt it is).
+            own_dirty_paths = _own_uncommitted_paths(
+                repo_path,
+                dirty_paths,
+                task_edited_file_times(
+                    ctx.session_var_manager.get_variables(session_id), resolved_task_id
+                ),
+            )
         except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
             return task_error(
                 f"Cannot verify task paths: {exc}",
                 TaskToolErrorCode.TASK_INVALID_STATUS,
             )
+        if own_dirty_paths:
+            return task_error(
+                "Cannot release paths whose uncommitted content may be this task's own "
+                "work (no recorded edit, or the newest recorded edit is newer than the "
+                "last commit touching the path); commit or revert it first "
+                "(git stash is blocked for interactive sessions)",
+                TaskToolErrorCode.TASK_INVALID_STATUS,
+                dirty_paths=own_dirty_paths,
+            )
         foreign_owned: dict[str, Any] = {}
         if dirty_paths:
-            # Dirt accounted for by another active session's open claimed task is not
-            # this task's uncommitted work: releasing only removes the stale
-            # attribution, while the dirt stays protected by the cross-session
-            # foreign-dirty-edit block and committable by its owner (#20818).
+            # Report which other active sessions' open tasks hold the released dirt; the
+            # report is informational, so an inspection failure omits it.
             try:
                 foreign_owned = foreign_owned_dirty_paths(
                     ctx.task_manager.db,
@@ -149,25 +206,10 @@ def register_release_task_paths(
                 )
             except DirtyEditOwnershipInspectionError:
                 logger.warning(
-                    "Dirty-path ownership inspection failed during release_task_paths",
+                    "Dirty-path ownership inspection failed during release_task_paths; "
+                    "omitting the foreign_dirty_paths report",
                     extra={"task_id": resolved_task_id, "session_id": session_id},
                     exc_info=True,
-                )
-                return task_error(
-                    "Cannot release paths with uncommitted content: ownership inspection "
-                    "failed, so the uncommitted content cannot be attributed to another "
-                    "session's open task. Retry once the database is reachable.",
-                    TaskToolErrorCode.TASK_INVALID_STATUS,
-                    dirty_paths=dirty_paths,
-                )
-            unaccounted = [path for path in dirty_paths if path not in foreign_owned]
-            if unaccounted:
-                return task_error(
-                    "Cannot release paths whose uncommitted content no other active "
-                    "session's open task accounts for; commit or revert it first "
-                    "(git stash is blocked for interactive sessions)",
-                    TaskToolErrorCode.TASK_INVALID_STATUS,
-                    dirty_paths=unaccounted,
                 )
 
         released, remaining = ctx.session_var_manager.release_task_edited_files(
@@ -193,9 +235,11 @@ def register_release_task_paths(
         name="release_task_paths",
         description=(
             "Release committed or abandoned paths from the current session's claimed task "
-            "attribution. Paths with uncommitted content are releasable only when another "
-            "active session's open claimed task holds attribution on them (the dirt stays "
-            "accounted for); otherwise commit or revert before releasing."
+            "attribution. A path with uncommitted content is releasable only when this "
+            "session's newest recorded edit of it under the task predates the last commit "
+            "touching it, so the dirt is someone else's (other active sessions' open tasks "
+            "holding it are reported); a path with no recorded edit, or edited since that "
+            "commit, must be committed or reverted before releasing."
         ),
         input_schema={
             "type": "object",

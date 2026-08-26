@@ -1,4 +1,4 @@
-"""Rule-4 stop facts for defect deferrals and terminal validation failures."""
+"""Found-work stop facts for defect deferrals and terminal validation failures."""
 
 from __future__ import annotations
 
@@ -22,32 +22,32 @@ from gobby.config.validation_detection import (
     resolve_validation_detection_config,
 )
 from gobby.hooks.events import HookEvent
+from gobby.hooks.normalization import is_shell_tool
 from gobby.tasks.transcript_evidence import (
     TranscriptEvidenceUnavailable,
     TranscriptValidationRun,
+    TranscriptValidationSegment,
     derive_transcript_evidence,
 )
 
 logger = logging.getLogger(__name__)
 
-RULE_4_LADDER_MESSAGE = (
-    "Rule 4 ladder: fix it now (create_task claim=true), hand it to its active owner via "
-    "send_message, or — edge case — file it labeled needs-decision/clean-window with the "
-    "reason. Don't ask, and don't go silent."
-)
-
 _DEFECT_RE = re.compile(
-    r"\b(?:bug|broken|defect|error|fail(?:ed|ing|ure)?|incorrect|regression|warning|"
-    r"type error|lint error|does(?:n't| not) work|not working)\b",
+    r"\b(?:bugs?|broken|defects?|errors?|fail(?:ed|ing|ures?)?|incorrect|regressions?|"
+    r"warnings?|issues?|type errors?|lint errors?|does(?:n't| not) work|not working)\b",
     re.IGNORECASE,
 )
-_PERMISSION_CLOSER_RE = re.compile(
+_PERMISSION_CLOSER_PATTERN = (
     r"(?:should|shall|can|could|may)\s+i\s+"
     r"(?:fix|repair|address|resolve|investigate|delete|drop|erase|overwrite|reset|remove|purge)|"
     r"(?:would|do)\s+you\s+(?:like|want)\s+me\s+to\s+"
     r"(?:fix|repair|address|resolve|investigate|delete|drop|erase|overwrite|reset|remove|purge)|"
     r"want\s+me\s+to\s+"
-    r"(?:fix|repair|address|resolve|investigate|delete|drop|erase|overwrite|reset|remove|purge)",
+    r"(?:fix|repair|address|resolve|investigate|delete|drop|erase|overwrite|reset|remove|purge)"
+)
+# The closer's own sentence must be the question; later prose may follow it.
+_PERMISSION_QUESTION_RE = re.compile(
+    rf"(?:{_PERMISSION_CLOSER_PATTERN})[^.!?\n]*\?",
     re.IGNORECASE,
 )
 _DESTRUCTIVE_CONFIRMATION_RE = re.compile(
@@ -65,15 +65,22 @@ _USER_DEFERRAL_RE = re.compile(
     r"\b(?:review|assessment|audit|diagnosis|report|q&a)\s+(?:only|deliverable)\b",
     re.IGNORECASE,
 )
-_SCOPE_OPTION_NAMES = {
-    "-k",
-    "-m",
-    "-p",
-    "--filter",
-    "--package",
-    "--run",
-    "-run",
+_SCOPE_OPTION_NAMES = frozenset({"-k", "-m", "--filter", "--run", "-run"})
+# ``-p`` selects a crate for cargo; for pytest it loads a plugin (``-p no:cacheprovider``).
+_CARGO_SCOPE_OPTION_NAMES = _SCOPE_OPTION_NAMES | {"-p", "--package"}
+_PYTHON_LAUNCHER_RE = re.compile(r"^python(?:\d+(?:\.\d+)?)?$")
+_COVER_SUFFIXES = {
+    ".py",
+    ".pyi",
+    ".rs",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".mjs",
+    ".cjs",
+    ".go",
 }
+_COVER_ROOTS = ("tests/", "src/", "crates/")
 _REPORTED_FAILURE_PATH_RE = re.compile(
     r"^\s*(?:FAILED|ERROR)\s+([^\s:]+)|"
     r"^\s*([^\s:]+\.[A-Za-z0-9]+):\d+(?::\d+)?:\s+(?:error|warning)\b",
@@ -99,7 +106,7 @@ _SHIRK_CONFIRM_SCHEMA = {
     "required": ["block", "reason"],
     "additionalProperties": False,
 }
-_SHIRK_SYSTEM_PROMPT = """You classify one coding-agent stop attempt for Rule 4.
+_SHIRK_SYSTEM_PROMPT = """You classify one coding-agent stop attempt against the found-work ladder.
 Return block=true only when the assistant describes an actionable defect it could address and
 ends by asking the user for permission instead of following the supplied Found Work ladder.
 Return block=false for destructive-action confirmations, user-reserved decisions, explicit user
@@ -112,14 +119,15 @@ class FoundWorkStopFacts:
     """Transient facts consumed by declarative stop-gate rules."""
 
     shirk: bool = False
+    shirk_confirmed: bool = False
     terminal_validation_failures: tuple[str, ...] = ()
 
 
 def capture_turn_prompt(event: HookEvent, variables: dict[str, Any]) -> None:
     """Persist the current user instruction for later stop-time exemptions."""
     variables["_current_user_prompt"] = ""
-    variables["_rule4_owner_handoff_turn"] = False
-    variables["_rule4_fix_commit_turn"] = False
+    variables["_found_work_owner_handoff_turn"] = False
+    variables["_found_work_fix_commit_turn"] = False
     if not isinstance(event.data, dict):
         return
     for key in ("prompt_text", "prompt", "user_prompt"):
@@ -129,12 +137,21 @@ def capture_turn_prompt(event: HookEvent, variables: dict[str, Any]) -> None:
             return
 
 
-def capture_rule4_handoff(event: HookEvent, variables: dict[str, Any]) -> None:
-    """Track tool activity and successful owner handoff within the current turn."""
-    revision = variables.get("_rule4_activity_revision", 0)
-    variables["_rule4_activity_revision"] = int(revision) + 1 if isinstance(revision, int) else 1
+def capture_found_work_handoff(event: HookEvent, variables: dict[str, Any]) -> None:
+    """Track tool activity and successful owner handoff within the current turn.
+
+    Only MCP and shell calls can change the analysis (validation runs, handoffs,
+    task lifecycle), so only those bump the activity revision; a Read or Edit
+    leaves the cached verdict — and the session-variable row — untouched.
+    """
     if not isinstance(event.data, dict):
         return
+    if not event.data.get("mcp_server") and not is_shell_tool(event.data.get("tool_name")):
+        return
+    revision = variables.get("_found_work_activity_revision", 0)
+    variables["_found_work_activity_revision"] = (
+        int(revision) + 1 if isinstance(revision, int) else 1
+    )
     if event.data.get("mcp_server") != "gobby-agents":
         return
     if event.data.get("mcp_tool") != "send_message":
@@ -149,7 +166,7 @@ def capture_rule4_handoff(event: HookEvent, variables: dict[str, Any]) -> None:
         provenance="hook_event.metadata.is_failure" if explicit_success is not None else None,
     )
     if outcome.succeeded is True:
-        variables["_rule4_owner_handoff_turn"] = True
+        variables["_found_work_owner_handoff_turn"] = True
 
 
 def is_permission_deferral_candidate(message: str) -> bool:
@@ -157,10 +174,7 @@ def is_permission_deferral_candidate(message: str) -> bool:
     if not isinstance(message, str) or not message.strip():
         return False
     tail = message.strip()[-800:]
-    if "?" not in tail:
-        return False
-    closer = _PERMISSION_CLOSER_RE.search(tail)
-    if closer is None or not re.search(r"\?\s*[*_`]*\s*$", tail[closer.start() :]):
+    if "?" not in tail or _PERMISSION_QUESTION_RE.search(tail) is None:
         return False
     return bool(_DEFECT_RE.search(message))
 
@@ -223,7 +237,7 @@ def resolve_stop_validation_config(
 
 
 class FoundWorkStopAnalyzer:
-    """Derive Rule-4 facts without persisting policy state."""
+    """Derive found-work facts without persisting policy state."""
 
     def __init__(
         self,
@@ -251,10 +265,11 @@ class FoundWorkStopAnalyzer:
         message = await _assistant_message(event, self._session_manager, session_id)
         user_prompt = str(variables.get("_current_user_prompt") or "")
         cache_key = _analysis_cache_key(message, user_prompt, variables)
-        if variables.get("_rule4_analysis_cache_key") == cache_key:
-            cached_failures = variables.get("_rule4_terminal_validation_failures")
+        if variables.get("_found_work_analysis_cache_key") == cache_key:
+            cached_failures = variables.get("_found_work_terminal_validation_failures")
             return FoundWorkStopFacts(
-                shirk=variables.get("_rule4_found_work_shirk") is True,
+                shirk=variables.get("_found_work_shirk") is True,
+                shirk_confirmed=variables.get("_found_work_shirk_confirmed") is True,
                 terminal_validation_failures=(
                     tuple(str(item) for item in cached_failures)
                     if isinstance(cached_failures, list | tuple)
@@ -269,13 +284,18 @@ class FoundWorkStopAnalyzer:
         task_disposition = bool(variables.get("task_claimed")) or labeled_deferral
         primary_compliance = bool(
             task_disposition
-            or variables.get("_rule4_fix_commit_turn")
-            or variables.get("_rule4_owner_handoff_turn")
+            or variables.get("_found_work_fix_commit_turn")
+            or variables.get("_found_work_owner_handoff_turn")
         )
         shirk = False
+        shirk_confirmed = False
         if not primary_compliance and is_permission_deferral_candidate(message):
             if not _deterministic_exemption(message, user_prompt):
-                shirk = await self._confirm_shirk(message, user_prompt)
+                # An LLM "no" clears the candidate; a "yes" or an unavailable
+                # confirmation both alert (the stop gate alerts once per session).
+                confirmed = await self._confirm_shirk(message, user_prompt)
+                shirk = confirmed is not False
+                shirk_confirmed = confirmed is True
 
         failures: tuple[str, ...] = ()
         if not task_disposition:
@@ -285,10 +305,15 @@ class FoundWorkStopAnalyzer:
                 project_path=project_path,
                 project_id=event.project_id,
             )
-        variables["_rule4_analysis_cache_key"] = cache_key
-        variables["_rule4_found_work_shirk"] = shirk
-        variables["_rule4_terminal_validation_failures"] = list(failures)
-        return FoundWorkStopFacts(shirk=shirk, terminal_validation_failures=failures)
+        variables["_found_work_analysis_cache_key"] = cache_key
+        variables["_found_work_shirk"] = shirk
+        variables["_found_work_shirk_confirmed"] = shirk_confirmed
+        variables["_found_work_terminal_validation_failures"] = list(failures)
+        return FoundWorkStopFacts(
+            shirk=shirk,
+            shirk_confirmed=shirk_confirmed,
+            terminal_validation_failures=failures,
+        )
 
     def _has_labeled_deferral_task(self, session_id: str) -> bool:
         if self._session_task_manager is None:
@@ -296,7 +321,7 @@ class FoundWorkStopAnalyzer:
         try:
             links = self._session_task_manager.get_session_tasks(session_id)
         except Exception:
-            logger.debug("Could not inspect session tasks for Rule-4 deferrals", exc_info=True)
+            logger.debug("Could not inspect session tasks for found-work deferrals", exc_info=True)
             return False
         for link in links:
             task = link.get("task") if isinstance(link, Mapping) else None
@@ -311,15 +336,21 @@ class FoundWorkStopAnalyzer:
                     return True
         return False
 
-    async def _confirm_shirk(self, message: str, user_prompt: str) -> bool:
+    async def _confirm_shirk(self, message: str, user_prompt: str) -> bool | None:
+        """LLM verdict on a fast-path candidate.
+
+        ``True`` confirms the shirk, ``False`` clears it, and ``None`` means no
+        confirmation was available (no service, validation disabled, timeout,
+        malformed payload) — the caller then alerts on the fast-path verdict.
+        """
         service = self._llm_service_resolver()
         daemon_config = self._config_resolver()
         if service is None or daemon_config is None:
-            return True
+            return None
         try:
             validation = daemon_config.get_gobby_tasks_config().validation
             if not validation.enabled:
-                return True
+                return None
             prompt = (
                 f"USER INSTRUCTION:\n{user_prompt or '(unavailable)'}\n\n"
                 f"FINAL ASSISTANT MESSAGE:\n{message}"
@@ -337,12 +368,12 @@ class FoundWorkStopAnalyzer:
             )
         except Exception:
             logger.debug(
-                "Rule-4 shirk confirmation unavailable; using fast-path verdict", exc_info=True
+                "Found-work shirk confirmation unavailable; using fast-path verdict", exc_info=True
             )
-            return True
+            return None
         if isinstance(payload, Mapping) and isinstance(payload.get("block"), bool):
             return payload["block"] is True
-        return True
+        return None
 
     async def _terminal_failures(
         self,
@@ -371,13 +402,13 @@ class FoundWorkStopAnalyzer:
                 project_path,
             )
         except TranscriptEvidenceUnavailable:
-            logger.debug("Rule-4 validation evidence unavailable for session %s", session_id)
+            logger.debug("Found-work validation evidence unavailable for session %s", session_id)
             return ()
         except Exception:
-            logger.debug("Could not derive Rule-4 validation evidence", exc_info=True)
+            logger.debug("Could not derive found-work validation evidence", exc_info=True)
             return ()
 
-        owner_handoff = variables.get("_rule4_owner_handoff_turn") is True
+        owner_handoff = variables.get("_found_work_owner_handoff_turn") is True
         foreign_paths: set[str] = set()
         if owner_handoff and self._db is not None:
             foreign_paths = await self._foreign_owned_dirty_paths(
@@ -484,10 +515,10 @@ def _analysis_cache_key(
     payload = {
         "message": message,
         "prompt": user_prompt,
-        "activity_revision": variables.get("_rule4_activity_revision", 0),
-        "task_claimed": variables.get("task_claimed") is True,
-        "fix_commit": variables.get("_rule4_fix_commit_turn") is True,
-        "owner_handoff": variables.get("_rule4_owner_handoff_turn") is True,
+        "activity_revision": variables.get("_found_work_activity_revision", 0),
+        "task_claimed": bool(variables.get("task_claimed")),
+        "fix_commit": variables.get("_found_work_fix_commit_turn") is True,
+        "owner_handoff": variables.get("_found_work_owner_handoff_turn") is True,
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
@@ -495,15 +526,40 @@ def _analysis_cache_key(
 
 
 def _run_covers(success: TranscriptValidationRun, failure: TranscriptValidationRun) -> bool:
-    success_targets = _command_targets(success.command)
-    failure_targets = _command_targets(failure.command)
-    if not success_targets:
-        return True
-    if not failure_targets:
-        return False
+    """Return whether every red validation segment sits inside a green segment.
+
+    Segments compare one to one, never as a union across the run: a lint
+    segment's paths cannot cover a test segment, and a sibling segment's
+    selectors cannot narrow it.
+    """
+    greens = _run_segments(success)
     return all(
-        any(_target_covers(green, red) for green in success_targets) for red in failure_targets
+        any(_segment_covers(green, red) for green in greens) for red in _run_segments(failure)
     )
+
+
+def _segment_covers(
+    success: TranscriptValidationSegment,
+    failure: TranscriptValidationSegment,
+) -> bool:
+    """Same category, no extra selectors (``-k``, ``-m``, ...), and containing paths."""
+    if not set(success.categories) & set(failure.categories):
+        return False
+    success_paths, success_selectors = _split_targets(_command_targets(success.command))
+    failure_paths, failure_selectors = _split_targets(_command_targets(failure.command))
+    if not success_selectors <= failure_selectors:
+        return False
+    if not success_paths:
+        return True
+    if not failure_paths:
+        return False
+    return all(any(_target_covers(green, red) for green in success_paths) for red in failure_paths)
+
+
+def _split_targets(targets: Sequence[str]) -> tuple[tuple[str, ...], frozenset[str]]:
+    paths = tuple(target for target in targets if not target.startswith("-"))
+    selectors = frozenset(target for target in targets if target.startswith("-"))
+    return paths, selectors
 
 
 def _verified_foreign_clearance(
@@ -528,16 +584,14 @@ def _reported_failure_paths(run: TranscriptValidationRun) -> set[str]:
             paths.add(raw.removeprefix("./").split("::", 1)[0])
     if paths:
         return paths
-    return {target for target in _command_targets(run.command) if Path(target).suffix}
+    return {target for target in _run_targets(run) if Path(target).suffix}
 
 
 def _green_scope_avoids_foreign_paths(
     run: TranscriptValidationRun,
     foreign_paths: AbstractSet[str],
 ) -> bool:
-    targets = tuple(
-        target for target in _command_targets(run.command) if not target.startswith("-")
-    )
+    targets = tuple(target for target in _run_targets(run) if not target.startswith("-"))
     if not targets:
         return False
     return all(
@@ -547,30 +601,93 @@ def _green_scope_avoids_foreign_paths(
     )
 
 
+def _run_segments(run: TranscriptValidationRun) -> tuple[TranscriptValidationSegment, ...]:
+    """The run's validation segments; the whole command when it was built unclassified."""
+    return run.validation_segments or (
+        TranscriptValidationSegment(command=run.command, categories=run.categories),
+    )
+
+
+def _run_targets(run: TranscriptValidationRun) -> tuple[str, ...]:
+    """Cover targets across every validation segment, for the foreign-path checks."""
+    return tuple(
+        dict.fromkeys(
+            target for segment in _run_segments(run) for target in _command_targets(segment.command)
+        )
+    )
+
+
 def _command_targets(command: str) -> tuple[str, ...]:
     try:
-        tokens = shlex.split(command)
+        tokens = _drop_python_launcher(shlex.split(command))
     except ValueError:
         return ()
+    program = next((token for token in tokens if "=" not in token), "")
+    scope_options = _CARGO_SCOPE_OPTION_NAMES if program == "cargo" else _SCOPE_OPTION_NAMES
     targets: list[str] = []
     for index, token in enumerate(tokens):
-        if token in _SCOPE_OPTION_NAMES and index + 1 < len(tokens):
-            targets.append(f"{token}:{tokens[index + 1]}")
+        if token in scope_options and index + 1 < len(tokens):
+            value = tokens[index + 1]
+            if "/" in value or Path(value).suffix:
+                normalized_value = value.removeprefix("./").rstrip("/")
+                if _is_cover_target(normalized_value):
+                    targets.append(normalized_value)
+                continue
+            targets.append(f"{token}:{value}")
             continue
         if token.startswith("-") or "=" in token or token in {"&&", "||", ";"}:
             continue
         normalized = token.removeprefix("./").rstrip("/")
-        if "/" in normalized or Path(normalized).suffix:
+        if _is_cover_target(normalized):
             targets.append(normalized)
     return tuple(dict.fromkeys(targets))
 
 
+def _drop_python_launcher(tokens: list[str]) -> list[str]:
+    """Drop ``python -m <module>`` launcher triples; that ``-m`` is no marker selector."""
+    kept: list[str] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if (
+            _PYTHON_LAUNCHER_RE.match(token)
+            and index + 2 < len(tokens)
+            and tokens[index + 1] == "-m"
+        ):
+            index += 3
+            continue
+        kept.append(token)
+        index += 1
+    return kept
+
+
+def _is_cover_target(token: str) -> bool:
+    """Keep source/test paths; drop log redirects and mkdir/cd directories."""
+    path = token.split("::", 1)[0]
+    suffix = Path(path).suffix.lower()
+    if suffix in _COVER_SUFFIXES:
+        return True
+    normalized = path.replace("\\", "/")
+    return any(
+        normalized == root.rstrip("/")
+        or normalized.startswith(root)
+        or f"/{root}" in f"/{normalized}/"
+        for root in _COVER_ROOTS
+    )
+
+
 def _target_covers(success: str, failure: str) -> bool:
+    """Return whether the green target's scope contains the red target's scope.
+
+    A file or directory covers every node id beneath it; a node id covers only
+    itself.
+    """
     if success == failure:
         return True
-    if success.startswith("-") or failure.startswith("-"):
+    if success.startswith("-") or failure.startswith("-") or "::" in success:
         return False
-    return failure.startswith(success.rstrip("/") + "/")
+    failure_path = failure.split("::", 1)[0]
+    return failure_path == success or failure_path.startswith(success.rstrip("/") + "/")
 
 
 def _project_verification_commands(project_path: str | None) -> dict[str, str]:

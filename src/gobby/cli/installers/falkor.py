@@ -60,19 +60,22 @@ def _generate_falkordb_password() -> str:
     return validate_falkordb_password(password)
 
 
-def _resolve_falkordb_password(
-    password: str | None = None,
-    *,
-    gobby_home: Path | None = None,
-) -> ResolvedFalkorPassword:
-    home = _normalize_home(gobby_home)
-    if password:
-        return ResolvedFalkorPassword(
-            value=validate_falkordb_password(password),
-            source="provided",
-            expose_value=False,
-        )
+def rotate_falkordb_password(*, gobby_home: Path | None = None) -> None:
+    """Store a freshly generated ``falkordb_password`` secret.
 
+    Docker is never touched: the container keeps its current password until
+    ``gobby restart`` recreates it from the stored secret.
+    """
+    _update_config(
+        port=DEFAULT_FALKORDB_PORT,
+        password=_generate_falkordb_password(),
+        gobby_home=_normalize_home(gobby_home),
+    )
+
+
+def _resolve_falkordb_password(*, gobby_home: Path | None = None) -> ResolvedFalkorPassword:
+    """Reuse the stored ``falkordb_password`` secret, else generate a fresh one."""
+    home = _normalize_home(gobby_home)
     database_stack = ExitStack()
     db = database_stack.enter_context(_config_db(home))
     try:
@@ -115,33 +118,23 @@ def _resolve_falkordb_password(
     )
 
 
-def install_falkordb(
-    *,
-    gobby_home: Path | None = None,
-    password: str | None = None,
-) -> dict[str, Any]:
+def install_falkordb(*, gobby_home: Path | None = None) -> dict[str, Any]:
     """Install FalkorDB via Docker Compose."""
     home = _normalize_home(gobby_home)
     try:
         with managed_services_lock(home, operation="falkordb installer refresh"):
-            return _install_falkordb_locked(gobby_home=home, password=password)
+            return _install_falkordb_locked(gobby_home=home)
     except ManagedServicesLockError as exc:
         return {"success": False, "error": str(exc)}
 
 
-def _install_falkordb_locked(
-    *,
-    gobby_home: Path,
-    password: str | None,
-) -> dict[str, Any]:
+def _install_falkordb_locked(*, gobby_home: Path) -> dict[str, Any]:
     home = gobby_home
-    if password is not None:
-        validate_falkordb_password(password)
     if not shutil.which("docker"):
         return {"success": False, "error": "Docker not found. Install Docker to use FalkorDB."}
 
     try:
-        resolved = _resolve_falkordb_password(password, gobby_home=home)
+        resolved = _resolve_falkordb_password(gobby_home=home)
     except (OSError, RuntimeError, ValueError) as exc:
         return {"success": False, "error": f"Failed to read FalkorDB config: {exc}"}
 
@@ -217,57 +210,6 @@ def _install_falkordb_locked(
     if restart_notice:
         response["restart_required"] = restart_notice
     return response
-
-
-def uninstall_falkordb(*, gobby_home: Path | None = None) -> dict[str, Any]:
-    """Uninstall FalkorDB Docker service and clear persisted credentials."""
-    home = _normalize_home(gobby_home)
-    services_dir = home / "services"
-    compose_file = services_dir / "docker-compose.yml"
-    compose_stopped = False
-    error: str | None = None
-
-    if compose_file.exists():
-        if not shutil.which("docker"):
-            error = "Docker not found. Install Docker to remove the FalkorDB container."
-        else:
-            try:
-                runtime = resolve_compose_runtime(home, profiles=("falkordb",))
-                ensure_docker_allowed("falkordb uninstall compose down", runner=subprocess.run)
-                result = subprocess.run(  # nosec B603 B607
-                    [
-                        "docker",
-                        "compose",
-                        "-f",
-                        str(compose_file),
-                        "--profile",
-                        "falkordb",
-                        "down",
-                    ],
-                    capture_output=True,
-                    text=True,
-                    timeout=120,
-                    env=runtime.environment,
-                    cwd=str(services_dir),
-                )
-                if result.returncode == 0:
-                    compose_stopped = True
-                else:
-                    error = f"Docker compose down failed: {result.stderr or result.stdout}"
-            except subprocess.TimeoutExpired:
-                error = "Docker compose down timed out after 120s"
-            except (ComposeEnvironmentError, OSError, subprocess.SubprocessError) as exc:
-                error = f"Docker compose execution failed: {exc}"
-
-    if error is None:
-        _clear_config(gobby_home=home)
-    return {
-        "success": error is None,
-        "error": error,
-        "compose_stopped": compose_stopped,
-        "compose_file": str(compose_file) if compose_file.exists() else None,
-        "config_cleared": error is None,
-    }
 
 
 def _wait_for_health(
@@ -353,35 +295,5 @@ def _update_config(*, port: int, password: str, gobby_home: Path) -> None:
             build_patch=build_patch,
             patch=store.patch,
         )
-    finally:
-        database_stack.close()
-
-
-def _clear_config(*, gobby_home: Path) -> None:
-    database_stack = ExitStack()
-    db = database_stack.enter_context(_config_db(gobby_home))
-    try:
-        from gobby.cli.config_writes import apply_cas_config_patch
-        from gobby.storage.config_mutations import ConfigPatch
-        from gobby.storage.config_store import ConfigStore
-        from gobby.storage.secrets import SecretStore
-
-        secret_store = SecretStore(db, gobby_home=gobby_home)
-        store = ConfigStore(db, secret_store=secret_store)
-        apply_cas_config_patch(
-            read_snapshot=store.read_snapshot,
-            build_patch=lambda _snapshot: ConfigPatch(
-                unset=frozenset(
-                    {
-                        "databases.falkordb.host",
-                        "databases.falkordb.port",
-                        "databases.falkordb.password",
-                    }
-                )
-            ),
-            patch=store.patch,
-        )
-    except Exception as exc:
-        logger.warning("Failed to clear FalkorDB config: %s", exc)
     finally:
         database_stack.close()

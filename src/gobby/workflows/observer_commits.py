@@ -75,7 +75,7 @@ def detect_commit_link(event: HookEvent, variables: dict[str, Any], session_id: 
         return
 
     variables["task_has_commits"] = True
-    variables["_rule4_fix_commit_turn"] = True
+    variables["_found_work_fix_commit_turn"] = True
     logger.debug("Session %s: task_has_commits=true (via %s)", session_id, inner_tool)
 
 
@@ -106,13 +106,13 @@ def detect_bash_commit(event: HookEvent, variables: dict[str, Any], session_id: 
 
     if _GIT_COMMIT_RE.search(output):
         variables["task_has_commits"] = True
-        variables["_rule4_fix_commit_turn"] = True
+        variables["_found_work_fix_commit_turn"] = True
         logger.debug("Session %s: task_has_commits=true (Bash git commit output)", session_id)
         return
 
     if outcome is True and _looks_like_commit_success(output):
         variables["task_has_commits"] = True
-        variables["_rule4_fix_commit_turn"] = True
+        variables["_found_work_fix_commit_turn"] = True
         logger.debug(
             "Session %s: task_has_commits=true (Bash git commit command fallback)",
             session_id,

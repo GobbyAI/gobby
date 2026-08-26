@@ -249,6 +249,80 @@ class TestMCPRewriteNesting:
         assert "arguments" not in response.modified_input
 
     @pytest.mark.asyncio
+    async def test_rewrite_returns_the_complete_tool_input(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        """Consumers replace the tool input wholesale, so untouched fields ride along."""
+        _insert_rule(
+            manager,
+            "uv-python-complete",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.BEFORE_TOOL,
+                effects=[
+                    RuleEffect(
+                        type="rewrite_input",
+                        input_updates={"command": "uv run python script.py"},
+                    )
+                ],
+            ),
+        )
+
+        event = _make_event(
+            data={
+                "tool_name": "Bash",
+                "tool_input": {
+                    "command": "python script.py",
+                    "timeout": 300000,
+                    "run_in_background": True,
+                },
+            }
+        )
+
+        engine = RuleEngine(db)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
+
+        assert response.modified_input == {
+            "command": "uv run python script.py",
+            "timeout": 300000,
+            "run_in_background": True,
+        }
+
+    @pytest.mark.asyncio
+    async def test_rewrite_prefers_the_adapters_pristine_tool_input(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        """Normalization aliases on ``tool_input`` never leak into the replacement."""
+        _insert_rule(
+            manager,
+            "uv-python-pristine",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.BEFORE_TOOL,
+                effects=[
+                    RuleEffect(
+                        type="rewrite_input",
+                        input_updates={"command": "uv run python script.py"},
+                    )
+                ],
+            ),
+        )
+
+        event = _make_event(
+            data={
+                "tool_name": "Bash",
+                "tool_input": {"command": "python script.py", "file_path": "script.py"},
+                "_raw_tool_input": {"command": "python script.py", "timeout": 300000},
+            }
+        )
+
+        engine = RuleEngine(db)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
+
+        assert response.modified_input == {
+            "command": "uv run python script.py",
+            "timeout": 300000,
+        }
+
+    @pytest.mark.asyncio
     async def test_rewrite_mcp_string_arguments(
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
@@ -286,6 +360,9 @@ class TestMCPRewriteNesting:
         inner = response.modified_input["arguments"]
         assert inner["skip_validation"] is False
         assert inner["task_id"] == "t-2"
+        # The replacement keeps the call_tool routing fields the rule never touched.
+        assert response.modified_input["server_name"] == "gobby-tasks"
+        assert response.modified_input["tool_name"] == "close_task"
 
 
 class TestRegexReplaceFilter:
@@ -573,7 +650,8 @@ class TestPermissionResponseEffects:
 
         assert response.decision == "allow"
         assert response.permission_decision == "allow"
-        assert response.modified_input == {}
+        # An empty update still yields a complete replacement payload.
+        assert response.modified_input == {"file_path": "README.md"}
         assert response.updated_permissions == []
 
     @pytest.mark.asyncio

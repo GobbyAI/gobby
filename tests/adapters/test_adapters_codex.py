@@ -2813,11 +2813,18 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert result["reason"] == "Not allowed"
 
     def test_permission_request_allow_uses_decision_behavior(self) -> None:
-        """PermissionRequest allow must use Codex decision.behavior."""
+        """PermissionRequest allow must use Codex decision.behavior.
+
+        A rewrite alone is permission-neutral, so the approval is stated explicitly.
+        """
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
-        response = HookResponse(decision="allow", modified_input={"command": "echo rewritten"})
+        response = HookResponse(
+            decision="allow",
+            permission_decision="allow",
+            modified_input={"command": "echo rewritten"},
+        )
         result = adapter.translate_from_hook_response(response, hook_type="PermissionRequest")
 
         assert result["continue"] is True
@@ -2977,7 +2984,11 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert hso["updatedInput"] == response.modified_input
 
     def test_pre_tool_use_modified_input_emits_native_updated_input(self) -> None:
-        """modified_input alone becomes native Codex updatedInput."""
+        """modified_input alone becomes updatedInput with the allow Codex requires.
+
+        Codex reports ``updatedInput`` without ``permissionDecision: "allow"`` as
+        a failed hook and runs the original input.
+        """
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
@@ -2994,6 +3005,34 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
             "permissionDecision": "allow",
             "updatedInput": {"command": "sed -n '1,20p' file.txt"},
         }
+
+    def test_pre_tool_use_permission_denial_discards_rewrite(self) -> None:
+        """An explicit deny keeps its decision and drops the rewrite."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(
+            permission_decision="deny",
+            modified_input={"command": "rtk git status"},
+        )
+        result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
+
+        assert result["continue"] is True
+        assert result["hookSpecificOutput"] == {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+        }
+        assert "updatedInput" not in result
+
+    def test_permission_request_rewrite_alone_stays_undecided(self) -> None:
+        """PermissionRequest only decides on explicit approval; a rewrite is neutral."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(modified_input={"command": "rtk git status"})
+        result = adapter.translate_from_hook_response(response, hook_type="PermissionRequest")
+
+        assert result == {"continue": True}
 
     def test_context_injection_session_start(self) -> None:
         """SessionStart uses hookSpecificOutput.additionalContext."""
@@ -3076,17 +3115,18 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
     def test_context_without_additional_context_schema_routes_to_system_message(
         self, hook_type: str
     ) -> None:
-        """Events without additionalContext schemas route context to systemMessage."""
+        """Events without additionalContext schemas route context to systemMessage.
+
+        Context alone never decides a PermissionRequest: with no explicit
+        approval the response stays permission-neutral.
+        """
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
         response = HookResponse(decision="allow", context="Rule context")
         result = adapter.translate_from_hook_response(response, hook_type=hook_type)
 
-        if hook_type == "PermissionRequest":
-            assert result["hookSpecificOutput"]["decision"] == {"behavior": "allow"}
-        else:
-            assert "hookSpecificOutput" not in result
+        assert "hookSpecificOutput" not in result
         assert "Rule context" in result["systemMessage"]
 
     def test_system_message_routes_only_to_additional_context_for_session_start(self) -> None:
@@ -3129,6 +3169,7 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         adapter = CodexHooksAdapter()
         response = HookResponse(
             decision="allow",
+            permission_decision="allow",
             system_message="Gate note",
             context="Rule constraint",
             modified_input={"command": "uv run python check.py"},

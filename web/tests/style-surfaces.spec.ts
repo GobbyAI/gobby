@@ -860,6 +860,8 @@ const CONFIG_VALUES = {
     dir: "~/.gobby/logs",
     max_size_mb: 10,
     backup_count: 5,
+    llm_max_size_mb: 50,
+    llm_backup_count: 5,
     runtime_max_size_mb: 50,
     growth_warn_mb_per_interval: 100,
   },

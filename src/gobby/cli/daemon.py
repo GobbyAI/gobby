@@ -610,7 +610,7 @@ def _do_stop(
     "--docker",
     "docker_flag",
     is_flag=True,
-    help="Also stop Docker service containers (Qdrant, FalkorDB)",
+    help="Also stop the managed PostgreSQL, Qdrant, and FalkorDB containers (compose stop; never removes them)",
 )
 @click.pass_context
 def stop(ctx: click.Context, docker_flag: bool) -> None:
@@ -629,7 +629,7 @@ def stop(ctx: click.Context, docker_flag: bool) -> None:
     "--docker",
     "docker_flag",
     is_flag=True,
-    help="Also restart Docker service containers (Qdrant, FalkorDB)",
+    help="Also restart the managed PostgreSQL, Qdrant, and FalkorDB containers",
 )
 @click.pass_context
 def restart(ctx: click.Context, verbose: bool, docker_flag: bool) -> None:

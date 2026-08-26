@@ -17,9 +17,17 @@ import {
 // prove nested `$ref` traversal through the real DaemonConfig shape — the
 // protocol enum in particular resolves two hops deep (telemetry -> exporter).
 // `otlp_headers` is the map "fix" row and `llm_tracing.providers` the array
-// "fix" row from the configuration audit.
+// "fix" row from the configuration audit. `LoggingSettings` carries only the
+// feature-LLM rotation rows so the runtime logging group is bound to values.
 const SCHEMA: Record<string, unknown> = {
   $defs: {
+    LoggingSettings: {
+      type: "object",
+      properties: {
+        llm_max_size_mb: { type: "integer" },
+        llm_backup_count: { type: "integer" },
+      },
+    },
     ExporterSettings: {
       type: "object",
       properties: {
@@ -66,6 +74,7 @@ const SCHEMA: Record<string, unknown> = {
   },
   type: "object",
   properties: {
+    logging: { $ref: "#/$defs/LoggingSettings" },
     telemetry: { $ref: "#/$defs/TelemetrySettings" },
     metrics: { $ref: "#/$defs/MetricsConfig" },
   },
@@ -73,6 +82,10 @@ const SCHEMA: Record<string, unknown> = {
 
 function makeConfigValues(): Record<string, unknown> {
   return {
+    logging: {
+      llm_max_size_mb: 50,
+      llm_backup_count: 5,
+    },
     telemetry: {
       service_name: "gobby-daemon",
       log_level: "info",
@@ -144,6 +157,30 @@ describe("ObservabilitySection", () => {
     );
     expect(screen.getByLabelText("Max log file size")).toHaveValue(10);
     expect(screen.getByLabelText("Log backup count")).toHaveValue(5);
+  });
+
+  it("renders the feature LLM log rotation rows bound to the draft", async () => {
+    const ctx = makeContext();
+    renderSection(ctx);
+
+    expect(screen.getByLabelText("Max feature LLM log file size")).toHaveValue(
+      50,
+    );
+    expect(
+      screen.getByLabelText("Rotated feature LLM log files to keep"),
+    ).toHaveValue(5);
+
+    fireEvent.change(screen.getByLabelText("Max feature LLM log file size"), {
+      target: { value: "80" },
+    });
+    const save = screen.getByRole("button", { name: "Save" });
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(save);
+
+    await waitFor(() => expect(ctx.saveConfig).toHaveBeenCalledTimes(1));
+    expect(ctx.saveConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ "logging.llm_max_size_mb": 80 }),
+    );
   });
 
   it("renders log level and format as schema-backed enum selects", () => {

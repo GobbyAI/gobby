@@ -138,7 +138,23 @@ class GrokAdapter(ACPHookAdapter):
                 }
             return result
 
-        return super().translate_from_hook_response(response, hook_type)
+        result = super().translate_from_hook_response(response, hook_type)
+        if canonical_hook == "pre_tool_use":
+            permission_decision = response.permission_decision
+            if permission_decision is None and response.auto_approve:
+                permission_decision = "allow"
+            if response.modified_input is not None or permission_decision is not None:
+                hook_output = result.setdefault(
+                    "hookSpecificOutput",
+                    {"hookEventName": canonical_hook},
+                )
+                if permission_decision is not None:
+                    hook_output["permissionDecision"] = permission_decision
+                if response.modified_input is not None and permission_decision != "deny":
+                    hook_output["updatedInput"] = response.modified_input
+            if response.decision == "allow":
+                result.pop("decision", None)
+        return result
 
 
 __all__ = ["GrokAdapter"]

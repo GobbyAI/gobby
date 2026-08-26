@@ -71,6 +71,12 @@ def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
     tool_input = data.get("tool_input")
     tool_name = data.get("tool_name")
 
+    # Aliasing and coercion below mutate this dict in place. Keep the payload
+    # the CLI actually sent (first pass wins) so an input rewrite can be
+    # returned as a complete replacement instead of echoing normalized keys.
+    if isinstance(tool_input, dict):
+        data.setdefault("_raw_tool_input", dict(tool_input))
+
     compact_tool_name = _compact_tool_name(tool_name)
     if compact_tool_name == "applypatch":
         data.setdefault("_original_tool_name", tool_name)

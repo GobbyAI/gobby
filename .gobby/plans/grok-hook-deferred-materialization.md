@@ -5,15 +5,14 @@
 ## Overview
 `kind: framing`
 
-Stop creating Gobby session rows on CLI `SessionStart`, and stop shipping
-`additionalContext` on that event. Materialize the session on the first
-non-`SESSION_END` / non-`NOTIFICATION` hook (usually `UserPromptSubmit`) for
-every CLI. Fix
-Gobby's Grok 1.0.5 wire contract so Stop/SubagentStop use `decision: "block"`
-plus `additionalContext`. Deliver Grok observe injects through a pending
-buffer: briefing-class deny-once on the next PreToolUse (including in-process
-compact); turn-context never forces a Stop continuation loop. Supersedes
-#20724 P2 / #20635 MCP-result delivery.
+Stop creating Gobby session rows on CLI `SessionStart(startup)`. Materialize
+the session on the first non-`SESSION_END` / non-`NOTIFICATION` hook (usually
+`UserPromptSubmit`) for every CLI, and deliver the former SessionStart startup
+context on that first-activity response. Fix Gobby's Grok 1.0.5 wire contract
+so Stop/SubagentStop use `decision: "block"` plus `additionalContext`. Deliver
+Grok observe-hook context through a durable pending buffer: briefing-class
+content is denied-once on the next PreToolUse (or blocked-once on a text-only
+Stop); turn-context never forces a Stop continuation loop.
 
 ## Constraints
 `kind: framing`
@@ -25,22 +24,26 @@ channel; Grok's PreToolUse JSON parser only reads `decision`, `reason`, and
 keeps the agent working.
 
 **SessionStart(startup) with no pre-created row must not call
-`SessionManager.register_session`.** Idle `grok` / `claude` processes must
-leave `sessions` empty until the user submits a prompt. Compact, resume,
-clear, web-chat, and pre-created (`gobby_session_id` / spawned agent) paths
-still bind on SessionStart; they just stop returning `additionalContext`.
+`SessionManager.register_session`.** Idle `grok` / `claude` processes leave
+`sessions` empty until the user submits a prompt. Compact, resume, clear,
+web-chat, and pre-created (`gobby_session_id` / spawned agent) SessionStart
+paths bind exactly as today, including their context output.
 
 **Thin auto-register on first non-start hook is not activation.**
 `SessionLookupService._resolve_uncached_session_id` already calls
 `register_session` when SessionStart did not. Keep that **row create** inside
-the lookup lock. Do **not** run agent/wiki/transcript activation under the
-lock (`SessionLookupService` has no handler, and it would serialize every
-lookup behind I/O). `HookManager._handle_after_daemon_ready` runs the
-activation tail after `resolve()` returns. Concurrent UPS+PreToolUse: each
-racer independently runs the idempotent activation to completion before its
-own rules and handler proceed — no claim, no wait for the idempotent steps;
-briefing staging and copied-rule evaluation carry their own sub-protocols
-(decision 7).
+the lookup lock and do not run agent/wiki/transcript activation under it
+(`SessionLookupService` has no handler, and it would serialize every lookup
+behind I/O). `HookManager._handle_after_daemon_ready` runs the activation
+tail after `resolve()` returns, only in the request that created the row
+(`_session_just_materialized`). A concurrent hook for the same `external_id`
+finds the existing row under the lookup lock and proceeds without waiting;
+CLIs serialize the first prompt before the first tool call of that turn, so
+the overlap is theoretical. No claim, barrier, or epoch exists. A crash inside
+activation leaves the row exactly as a crash inside today's SessionStart
+handler would, and the existing `reconcile_session_activation` backstop heals
+agent/workflow invariants on the next BEFORE_AGENT / BEFORE_TOOL — the
+startup packet is not replayed.
 
 **Idle vs any-event materialization.** SessionStart(startup) plus a later
 SESSION_END with nothing in between creates no row (SESSION_END already skips
@@ -50,82 +53,62 @@ except `NOTIFICATION` (decision 3). That is the fallback, not a UPS-only
 special case.
 
 **Grok UserPromptSubmit stdout is ignored.** Moving SessionStart context to
-UPS fixes Claude/Qwen/Droid/Codex and session-row timing for everyone. Grok
-still needs a pending-variable flush (decision 4).
+first activity fixes Claude/Qwen/Droid/Codex and session-row timing for
+everyone. Grok still needs the pending buffer (decision 4).
 
 **Grok compact is in-process.** Probe #20633 and
 `MiscEventHandlerMixin.handle_post_compact` already treat Grok as
-PreCompact → PostCompact with no SessionStart. Compact continuation is
-**briefing-class**, armed from PostCompact, not turn-context flushed at Stop.
+PreCompact → PostCompact with no SessionStart; `compact_self` schedules the
+continuation prompt and sets `compact_handoff_inject_pending`, and the existing
+`inject-compact-handoff-on-prompt` turn_start rule renders the continuation on
+that prompt. On Grok that render is captured as a briefing-class component
+(decision 4) instead of being lost on ignored UPS stdout.
 
-**`src/gobby/hooks/event_handlers/_session_start/flow.py` is 934 lines.**
+**`src/gobby/hooks/event_handlers/_session_start/flow.py` is 937 lines.**
 Split it: move register/activate/seed into
 `src/gobby/hooks/event_handlers/_session_start/materialize.py` so `flow.py`
 stays under the 1,000-line ceiling.
 
-**`src/gobby/hooks/hook_manager.py` is 864 lines (≥850).** Split first-prompt
-activation into `src/gobby/hooks/session_materialize.py` and Grok stash/flush
-into `src/gobby/hooks/grok_pending_context.py` so neither 3.1 nor 4.1 grows
+**`src/gobby/hooks/hook_manager.py` is 864 lines (≥850).** Keep first-activity
+orchestration in `src/gobby/hooks/session_materialize.py` and Grok stash/flush
+in `src/gobby/hooks/grok_pending_context.py` so neither 3.1 nor 4.1 grows
 `hook_manager.py` across the ceiling.
 
-### Collision with compact-summary-fidelity (#20724)
+### Collision with compact-summary-fidelity (#20724) — retired 2026-08-25
 `kind: framing`
 
-#20724 is already expanded. This plan **supersedes** its P2 Grok compact
-handoff leaves (#20727 / #20733–#20735) and deferred #20635 (section 3), which
-mandate `ContextChannel.NONE` on every Grok hook and MCP `call_tool`
-delivery. Stop/SubagentStop *do* have `additionalContext`.
+Resolved before this plan expands; nothing here is coordinator work. #20724's
+P2 Grok compact handoff leaves (#20727 / #20733–#20735) and its deferred
+section 3 carrier #20635 prescribed `ContextChannel.NONE` on every Grok hook
+plus MCP `call_tool` delivery — superseded by this plan's PreToolUse-deny /
+Stop-block delivery. Executed cleanup, commit `111bab878e`
+(`[gobby-#20913] chore: retire compact-summary-fidelity P2 and section 3,
+superseded by the grok plan`):
 
-**Coordinator-owned collision cleanup, two realizable phases.** The
-coordinator session that carries this plan through final approval executes
-the cleanup. Every step references resources that exist at the time it runs,
-and every amendment to the registered compact-summary-fidelity plan goes
-through the plans service — edit the file, then
-`gobby-plans:update_plan_hash(plan_id="compact-summary-fidelity")` (recomputes
-the registry hash and regenerates the managed coverage manifest), then
-`gobby-plans:validate_plan` must pass — never a freehand file edit that
-leaves the plans row and coverage ledger stale.
+- `.gobby/plans/compact-summary-fidelity.md`: P2 (2.1–2.3), section 3, the §4
+  live-Grok bullet, and the three M1 entries removed; a dated supersession
+  note points here; its Constraints name this plan as the owner of every Grok
+  `inject_context` effect. Plan re-hashed to
+  `85d0903a4c026e0f84c9d81c6633ab91477d4a7aa737f703fa2e6636e91f4539`;
+  companion ledger truncated to sections 1.1–1.5; managed coverage manifest
+  regenerated (72 rows covered, 0 invalid); `gobby plans validate` clean in
+  base and expansion modes.
+- Tasks: #20733–#20735 and sub-epic #20727 closed `obsolete` (their
+  `covers:compact-summary-fidelity:2.*` labels stripped first); #20635 closed
+  `duplicate` of this plan; #20724 now lands on P1 alone. #20726
+  (digest/summary fidelity) does not overlap and stays.
 
-**Phase A — after final approval, before expansion** (existing resources
-only):
+V2 item 6 re-checks that state before expansion.
 
-1. **#20635 stays open.** It is compact-summary-fidelity §3's deferral
-   carrier: it keeps its `deferred-from:compact-summary-fidelity:3`
-   provenance and its #20724 parentage, and §3's `task_ref` keeps pointing at
-   it for the whole cleanup. Closing it before delivery (any disposition
-   other than `completed`/`already_implemented`) orphans the registered
-   deferral and fails `validate_plan`.
-2. Close #20733–#20735 and sub-epic #20727 as `obsolete`.
-3. Drop #20724's blocked-by dependency on #20727 (`gobby-tasks` calls).
-4. Amend compact-summary-fidelity: rewrite §4's live Grok check off
-   `wait_for_summary` (deny-reason continuation block instead), and annotate
-   §3 as superseded-pending-delivery by plan
-   `grok-hook-deferred-materialization` (a plan-id reference that exists
-   now; `task_ref` unchanged). Run the update_plan_hash + validate_plan
-   amendment sequence above.
-
-**Phase B — after expansion creates this plan's epic task, before the
-automation opt-in.** The pre-dispatch interval is mechanically enforced by
-splitting expansion from dispatch: expansion alone never dispatches —
-`gobby build` is the explicit opt-in to state dispatch. The coordinator (a)
-expands this plan through the manual expansion path (`/gobby expand` /
-expand-task) with automation disabled, obtaining the concrete epic task id;
-(b) adds a blocked-by dependency from #20635 onto that epic via
-`gobby-tasks`, so the carrier's obligation is formally owed by this plan's
-delivery (carrier still open, provenance and parentage intact, §3 `task_ref`
-unmoved); (c) re-runs `gobby-plans:validate_plan` on
-compact-summary-fidelity; and only then (d) runs `gobby build '#<epic>'` to
-opt the epic into dispatch. No descendant is dispatch-eligible before step
-(d), so no prose-only interposition window exists. When this plan's epic
-completes, #20635 closes as `completed`/`already_implemented` — never
-before.
-
-#20726 (digest/summary fidelity) does not overlap and stays. Expansion must
-not begin until Phase A completes; the `gobby build` opt-in must not run
-until Phase B steps (a)–(c) complete; V2 item 6 verifies both phases
-retrospectively. This plan absorbs: compact continuation block as
-briefing-class; delivered-state variables set only on confirmed flush;
-`docs/guides/adapter-fidelity.md` Grok row corrected in 1.1.
+**Expansion prerequisite (coordinator, #20917).** The companion ledger
+`.gobby/plans/grok-hook-deferred-materialization.coverage-ledger.yaml` is
+sealed with `root_task_ref: SEALED-BY-COORDINATOR`, a placeholder
+`verify_bootstrap_ledger` does not resolve. Before `gobby-plans:create_plan`
+and expansion QA, the coordinator creates the paused root epic
+(`allow_automation=false`), regenerates the ledger with `root_task_ref` set
+to that epic's `#N` ref, and confirms the ledger header and the generated
+coverage manifest header agree. No other sealing, inventory, or recovery
+step exists.
 
 ### Grok references for the implementing agent
 `kind: framing`
@@ -199,10 +182,14 @@ Run from repo root; hit lists used to populate Targets:
 - `gcode grep -F "test_block_maps_to_deny_hard_stop" tests`
 - `gcode grep -F "register_session.assert_called" tests/hooks`
 - `gcode grep -F "user_prompt_submit" tests/e2e/conftest.py`
+- `gcode grep -F "_inject_pending_messages" src tests`
+- `gcode grep -F "delivered_action" crates/ghook`
 
 Owned consumers that change with this work: `HookManager._handle_after_daemon_ready`,
-`SessionStartMixin.handle_session_start`, `tests/hooks/test_session_events_coverage.py`,
-`tests/hooks/test_hooks_manager.py`, `tests/adapters/test_acp_hook_translation.py`,
+`HookManager._complete_response`, `SessionLookupService._resolve_uncached_session_id`,
+`SessionStartMixin.handle_session_start`, `EventEnricher._inject_pending_messages`,
+`tests/hooks/test_session_events_coverage.py`, `tests/hooks/test_hooks_manager.py`,
+`tests/hooks/test_hook_manager.py`, `tests/adapters/test_acp_hook_translation.py`,
 `tests/adapters/test_capabilities.py`, `tests/e2e/conftest.py`.
 
 ### Locked decisions
@@ -211,9 +198,12 @@ Owned consumers that change with this work: `HookManager._handle_after_daemon_re
 1. Defer **row creation**, not SessionStart hook install. `ghook` still runs;
    Gobby returns allow and writes nothing for `source in {startup, new, ""}`
    when there is no pre-created row.
-2. SessionStart **never** emits `additionalContext` / `systemMessage` context
-   on any CLI. Compact/resume/PostCompact set pending variables; first
-   context-capable event injects.
+2. The deferred startup SessionStart returns a bare `allow` with no context,
+   no `_platform_session_id`, no session-start rules, and no webhooks. Every
+   SessionStart that binds an existing or pre-created row (compact, resume,
+   clear, web-chat, `gobby_session_id`, spawned agent) keeps today's handler,
+   rules, webhooks, and context output unchanged; on Grok that context is
+   captured by the 4.1 stash because Grok ignores SessionStart stdout.
 3. **Any-event materialize.** Idle SessionStart(startup) creates no row.
    The first hook for that `external_id` other than `SESSION_END` and
    `NOTIFICATION` creates the row (thin `register_session` under the lookup
@@ -222,84 +212,72 @@ Owned consumers that change with this work: `HookManager._handle_after_daemon_re
    without a row still skips. **NOTIFICATION is excluded unconditionally**
    (idle-rows invariant). The 3.1 Claude/Grok notification-timing probe is
    observational only: its result is recorded in the leaf's validation
-   evidence and never changes this exclusion or any acceptance outcome.
-   Concurrent first hooks: see decision 7.
+   evidence and never changes this exclusion or any acceptance outcome. The
+   request that creates the row runs the activation tail and the copied
+   SessionStart evaluation (decision 7).
 4. **Grok briefing vs turn-context — no Stop-flush loop.**
-   - **Briefing-class** (`grok_pending_briefing`): first-prompt startup
-     packet; compact/clear continuation (skill-reload, MCP ledger, task
-     context — #20724 P2 payload); wiki/profile/persona first-shot. Arm
-     compact briefing from `handle_post_compact` on Grok (no SessionStart).
-     Flush deny-once on the next PreToolUse. If that cycle has no tools,
-     flush **once** on Stop as `additionalContext` (Grok continues once).
-     `wiki_overview_injected`, `_startup_context_injected`, and compact
-     one-shots are set **only on confirmed flush**, never on stash.
+   - **Briefing-class** (`grok_pending_briefing`): the first-activity startup
+     packet (session banner, claimed-task context, agent instructions,
+     copied session-start rule context, user profile); the wiki overview and
+     compact/clear continuation rendered by the turn_start rules on the first
+     or continuation prompt; context emitted by a binding SessionStart;
+     pending P2P messages. Components are deduplicated by stable id and never
+     cap-evicted. Flush deny-once on the next PreToolUse; if that turn has no
+     tool call, flush once on Stop as `decision: "block"` +
+     `additionalContext` (Grok continues once). Delivery is acknowledged by
+     ghook: it deletes the inbox envelope only after the mapped provider
+     action was written and flushed to stdout; the daemon treats that file's
+     absence, observed on the session's next hook, as the acknowledgment and
+     requeues the components when the file is still present. Ack effects
+     (P2P `mark_delivered_batch`) run only on acknowledgment. One-shot
+     producer markers (`wiki_overview_injected`, `_startup_context_injected`,
+     `_agent_context_injected`, the compact/clear pending flags) keep their
+     existing meaning — *composed and enqueued* — because the durable buffer,
+     not the marker, is what guarantees delivery.
    - **Turn-context-class** (`grok_pending_turn_context`): brevity
-     reminders, later memory recall, pressure nudges, tool-error recovery.
-     Never deny solely to deliver. **Never Stop-flush by itself** — that
-     plus turn_start re-arm is a continuation loop (`wants_continuation()`
-     is true whenever `additional_context` is non-empty). Concatenate onto
-     an already-blocking stop-gate only. If Stop is allowing, drop the
-     remainder (debug log).
+     reminders, later memory recall, pressure nudges, tool-error recovery,
+     skill suggestions. Never deny solely to deliver. **Never Stop-flush by
+     itself** — that plus turn_start re-arm is a continuation loop
+     (`wants_continuation()` is true whenever `additional_context` is
+     non-empty). Concatenate onto an already-blocking gate only; if Stop is
+     allowing, drop it (debug log). Turn-context has no ack effects and is
+     consumed at flush.
 5. Grok Stop gates (`require-task-close`, `tool_block_pending`, …) emit
    `decision: "block"` with `continue: true`, never `deny`.
-6. Stash Grok observe `response.context` in
-   `HookManager._complete_response` via `gobby.hooks.grok_pending_context`
-   **before** adapter translation, then clear `response.context` so
-   `record_unsupported_response_fields` does not `dropped_field`-spam
-   every UPS. Delete `GROK_SYSTEM_MESSAGE_CONTEXT_HOOKS`; do not keep an
-   empty frozenset. Classifier (no content-sniffing):
-   - `event.metadata["_session_just_materialized"]` → briefing
-   - Compact continuation: arm `grok_pending_briefing` in
-     `handle_post_compact`, **bypass stash**
-   - Clear continuation: arm `grok_pending_briefing` in
-     `_bind_clear_successor` (clear successor already has a row, so first
-     UPS is not just-materialized)
-   - Everything else that reaches stash → turn-context
-7. **Activation race — independent idempotent completion, with two
-   carved-out sub-protocols.** No claim, no wait, no timeout for the
-   idempotent activation steps: every racer calls
-   `activate_materialized_session` and runs it to completion before its own
-   rule evaluation and handler proceed. Each activation step carries its own
-   done-guard, so a concurrent double-run is a cheap no-op and no racer ever
-   crosses a rule or tool boundary against a half-activated session.
-   `_materialize_activation_done` is written on completion (idempotent); a
-   crash mid-activation is healed by the next hook re-running the same
-   guarded steps. Two pieces of first-activity work are not plain
-   no-op-on-rerun and carry their own protocols: (a) startup-briefing
-   staging (Grok) executes as an atomic enqueue-if-absent of a single
-   component keyed by session and activation epoch, so racers deduplicate
-   instead of double-enqueueing — 3.1 creates the structured-component
-   enqueue-if-absent primitive in `grok_pending_context.py` and wires it as
-   an activation step; 4.1 extends that module with stash/flush/claim/commit
-   mechanics. (b) Copied SessionStart processing splits into a **stateful
-   phase** and an **external-dispatch phase**. The stateful phase — rule
-   predicate evaluation whose effects are arming-only variable writes and
-   idempotent resets (3.1 converts every retained SessionStart inject
-   producer to arming/state-only) — is idempotent, so every racer runs it to
-   completion before its own live rules and handler, exactly like the
-   activation steps: no claim, no wait. Non-idempotent external side
-   effects split by whether their result gates the session. The
-   **blocking-gate step** — `session_start` webhook endpoints registered as
-   blocking — is a durable pre-live barrier: a single owner evaluates them
-   and persists the decision, and **every** racer observes that durable
-   result before its live rules and handler (3.1). The **async
-   external-dispatch phase** — the `pipeline-auto-run` rule's background
-   `run_pipeline` call and non-blocking webhook dispatch — is single-owner:
-   a durable compare-and-swap claim with crash takeover. Where Gobby owns
-   the consumer, dispatch carries a consumer-enforced idempotency key
-   (`run_pipeline`; the pipeline-execution store rejects a takeover
-   duplicate). Webhook endpoints are external observers Gobby cannot
-   deduplicate for: their dispatch is **at-least-once** — exactly once in
-   crash-free operation, a possible duplicate only across crash takeover —
-   and every webhook payload carries a stable delivery key (session id +
-   activation epoch) so receivers can deduplicate. A racer that loses the
-   async-phase claim skips external dispatch and proceeds with its own live
-   event; it never waits on the async phase. Injects stay gated by
-   delivered-state vars, not by `_materialize_activation_done`.
+6. Stash Grok observe `response.context` and `response.system_message` at
+   the end of `HookManager._complete_response` via
+   `gobby.hooks.grok_pending_context`, on the object that is returned to the
+   adapter, then clear those fields so `record_unsupported_response_fields`
+   does not `dropped_field`-spam every UPS. Delete
+   `GROK_SYSTEM_MESSAGE_CONTEXT_HOOKS`; do not keep an empty frozenset.
+   Classification is per request: briefing when the native hook is
+   `session_start`, when the request materialized the row
+   (`_session_just_materialized`), or when `_grok_briefing_turn` was set
+   before rule evaluation (the session's first prompt, or a prompt with
+   `compact_handoff_inject_pending` / `clear_handoff_inject_pending` set);
+   turn-context otherwise.
+7. **Activation race — the lookup lock is the only serialization.** Row
+   creation happens under `SessionLookupService`'s lookup lock; exactly one
+   request observes `_session_just_materialized` and runs
+   `activate_materialized_session` plus the copied SessionStart evaluation
+   once, before its own live rules and handler. Any other request for that
+   `external_id` binds the existing row and proceeds. Copied SessionStart
+   evaluation is the ordinary rule + webhook path run on a synthetic
+   SessionStart event (3.1); `pipeline-auto-run` cannot fire there because
+   `_assigned_pipeline` is set only on pre-created rows, which still
+   evaluate a live SessionStart. Webhook delivery at first activity is the
+   delivery a live SessionStart has today. No claim, CAS, takeover, epoch,
+   or idempotency key exists.
 
 Non-goals: changing Grok itself; MCP `call_tool` result injection (the
-#20635 design); Codex app-server follow-up messages; AGY PreInvocation
-beyond using the shared materialize path.
+retired #20635 design); Codex app-server follow-up messages; AGY
+PreInvocation beyond using the shared materialize path; crash-hardening
+beyond today's SessionStart parity — after a crash, exception, or block
+inside first-activity activation the existing reconciliation backstop
+repairs agent/workflow invariants only, and that session's startup packet,
+copied rules, and `session_start` webhooks are lost exactly as with today's
+SessionStart handler (user decision, round 11 F08); a ghook stdout failure
+is healed by the ack requeue; nothing else is added.
 
 ## P1: Grok wire contract
 `kind: framing`
@@ -315,6 +293,7 @@ Targets:
 - `docs/guides/adapter-fidelity.md`
 - `tests/adapters/test_acp_hook_translation.py::*` — scope-reason: flip Grok Stop expectations and add observe-hook no-context cases across classes
 - `tests/adapters/test_capabilities.py::*` — scope-reason: Grok capability-table expectations change across the file
+- `tests/adapters/test_permission_neutral_rewrites.py::*` — scope-reason: consumer of translate_from_hook_response; permission-neutral rewrite cases for Grok Stop follow the block mapping
 - `src/gobby/servers/routes/mcp/hooks.py::*` — scope-reason: consumer of translate_from_hook_response; verify the route makes no Stop-deny assumptions
 - `tests/hooks/test_context_limits.py::*` — scope-reason: consumer of translate_from_hook_response; truncation cases for Stop additionalContext may update
 
@@ -401,8 +380,8 @@ emit `additionalContext`.
 
 Targets:
 - `src/gobby/hooks/event_handlers/_session_start/materialize.py`
-- `src/gobby/hooks/event_handlers/_session_start/flow.py::*` — scope-reason: handle_session_start loses register/activate body to materialize.py so the 934-line file can shrink
-- `src/gobby/hooks/event_handlers/_session_start/__init__.py::SessionStartMixin.handle_session_start`
+- `src/gobby/hooks/event_handlers/_session_start/flow.py::*` — scope-reason: handle_session_start loses register/activate body to materialize.py so the 937-line file can shrink
+- `src/gobby/hooks/event_handlers/_session_start/__init__.py::*` — scope-reason: SessionStart mixin delegates the extracted materialization flow before the deferred cutover extends the same module
 - `tests/hooks/test_session_start_handlers.py::*` — scope-reason: consumer of handle_session_start; patch/import seams update for symbols moved to materialize.py
 - `tests/hooks/test_transcript_path_derivation.py::*` — scope-reason: consumer of handle_session_start; drives it for transcript derivation
 - `tests/hooks/event_handlers/test_session_variable_preservation.py::*` — scope-reason: monkeypatches flow symbols that move to materialize.py; patch/import seams update
@@ -411,9 +390,9 @@ Targets:
 This leaf is a **behavior-preserving extraction**: after it lands, the
 runtime behaves exactly as before — startup SessionStart still registers,
 still activates, and still returns its current context. The
-registration-timing cutover, response stripping, and deferral wiring all
-land atomically in 3.1, so no committed state exists where SessionStart
-behavior changed but first-hook activation does not yet exist.
+registration-timing cutover and deferral wiring land atomically in 3.1, so no
+committed state exists where SessionStart behavior changed but first-hook
+activation does not yet exist.
 
 Split `src/gobby/hooks/event_handlers/_session_start/flow.py` by moving
 register/activate/seed into
@@ -429,12 +408,13 @@ def session_start_should_defer(event, existing_session, session_source: str) -> 
     """True when this SessionStart must not create a sessions row."""
     ...
 
-def activate_materialized_session(handler, event, session_id: str) -> None:
+def activate_materialized_session(handler, event, session_id: str) -> list[str]:
     """Agent, wiki/profile/memory seeds, code index, transcript processor.
 
     Literal extraction of the current SessionStart activation body,
-    behavior-identical. This leaf adds no guards, no markers, and no new
-    state; it only relocates the code.
+    behavior-identical. Returns the additional_context list the caller
+    passes to compose_session_response. This leaf adds no guards, no
+    markers, and no new state; it only relocates the code.
     """
 ```
 
@@ -444,13 +424,17 @@ in this leaf**: `handle_session_start` keeps identity resolution
 (`resolve_session_start_identity`, compact/resume/pre-created / ACP-child
 skips) and keeps calling `register_session` and the activation body exactly
 as today, now through the extracted helpers. `_compose_session_response` is
-untouched in this leaf. `activate_materialized_session` is a **literal
-extraction** of the current activation body: this leaf introduces no per-step
-guards, no idempotency machinery, and no completion marker —
-`_materialize_activation_done`, the durable per-step guards, and the
-required/best-effort classification are specified and implemented entirely
-in 3.1, which rewrites the extracted body into that guarded idempotent form.
-A 2.1-only implementer needs nothing from any downstream section.
+untouched. `activate_materialized_session` is a **literal extraction** of the
+current activation body between `register_session` and
+`_compose_session_response` — stale-terminal expiry, code index,
+memory-recall and wiki-overview seeds, clear-successor bind, tmux rename,
+`classify_session_start_context`, default-agent activation, user-profile
+seed, transcript tracking, message processor,
+`_reset_agent_context_injection`, `prepare_compact_continuation_variables`,
+claimed-task and active-task context, pending compact-self continuation —
+with no per-step guards, no idempotency machinery, and no completion marker.
+3.1 calls it from the first-activity path; a 2.1-only implementer needs
+nothing from any downstream section.
 
 `session_start_should_defer` is true iff all of:
 
@@ -460,10 +444,9 @@ A 2.1-only implementer needs nothing from any downstream section.
 
 3.1 wires it in: deferred startup SessionStart returning
 `HookResponse(decision="allow")` with no `_platform_session_id` and no
-`register_session` call, and `_compose_session_response` stripped of
-SessionStart context, are 3.1 deliverables listed there.
+`register_session` call is a 3.1 deliverable listed there.
 
-After the split, `flow.py` must be under 850 lines (it is 934 now). The new
+After the split, `flow.py` must be under 850 lines (it is 937 now). The new
 module stays well under the ceiling.
 
 **Acceptance:**
@@ -477,392 +460,171 @@ module stays well under the ceiling.
 
 **Goal**: First UserPromptSubmit creates the session and carries former SessionStart context.
 
-### 3.1 Materialize on first BEFORE_AGENT and inject startup context [category: code] (depends: 2.1)
+### 3.1 Materialize on first BEFORE_AGENT and inject startup context [category: code] (depends: 1.1, 2.1)
 `kind: deliverable`
 
 Targets:
 - `src/gobby/hooks/session_materialize.py`
 - `src/gobby/hooks/event_handlers/_session_start/materialize.py`
-- `src/gobby/hooks/event_handlers/_session_start/__init__.py::SessionStartMixin.handle_session_start`
-- `src/gobby/hooks/event_handlers/_session_start/__init__.py::SessionStartMixin._compose_session_response`
+- `src/gobby/hooks/event_handlers/_session_start/flow.py::*` — scope-reason: handle_session_start gains the deferred startup return after 2.1 has split the file; the file-wide form matches 2.1 because a plan may not mix scope forms for one file
 - `src/gobby/hooks/hook_manager.py::HookManager._handle_after_daemon_ready`
+- `src/gobby/hooks/hook_manager.py::HookManager._complete_response`
 - `src/gobby/hooks/session_lookup.py::SessionLookupService._resolve_uncached_session_id`
-- `src/gobby/hooks/session_lookup.py::SessionLookupService._resolve_session_id`
-- `src/gobby/hooks/event_handlers/_agent.py::AgentEventHandlerMixin.handle_before_agent`
-- `src/gobby/hooks/event_handlers/_session_start/context.py::classify_session_start_context`
-- `src/gobby/install/shared/workflows/rules/context-handoff/inject-compact-handoff.yaml::*` — scope-reason: keep session_start trigger while guaranteeing the pending flag is set without SessionStart context
-- `src/gobby/install/shared/workflows/rules/context-handoff/inject-task-context-on-start.yaml::*` — scope-reason: fires via copied first-activity evaluation instead of CLI boot
-- `src/gobby/install/shared/workflows/rules/context-handoff/inject-user-profile.yaml::*` — scope-reason: fires via copied first-activity evaluation instead of CLI boot
-- `src/gobby/install/shared/workflows/rules/pipeline-enforcement/auto-run-pipeline.yaml::*` — scope-reason: fires via copied first-activity evaluation instead of CLI boot
 - `tests/hooks/test_session_events_coverage.py::*` — scope-reason: SessionStart registration assertions change across the session-start test classes
-- `tests/hooks/test_hooks_manager.py::*` — scope-reason: registration assertions move from SessionStart to first-hook materialization
-- `tests/hooks/test_hook_manager.py::*` — scope-reason: consumer of _handle_after_daemon_ready; materialization ordering asserts change
-- `src/gobby/hooks/event_handlers/__init__.py::*` — scope-reason: composes handle_before_agent into EventHandlers; verify no boot-time register path remains
-- `tests/hooks/test_agent_events_coverage.py::*` — scope-reason: consumer of handle_before_agent; first-activity injection asserts change
-- `tests/hooks/test_session_start_handlers.py::*` — scope-reason: consumer of classify_session_start_context; classification cases extend for deferral
-- `src/gobby/workflows/reserved_variables.py::*` — scope-reason: reserve the `_materialize_activation_done`, `_copied_session_start_state`, and `_deferred_materialization` control markers this leaf introduces
-- `tests/mcp_proxy/test_top_level_variables.py::*` — scope-reason: set_variable rejection cases for the three reserved control markers
-- `src/gobby/install/bundled_content_manifest.json::*` — scope-reason: manifest digests refresh for this leaf's compact-handoff template change
-- `tests/install/test_bundled_content_manifest.py::*` — scope-reason: tree-equality regression after this leaf's template change
-- `tests/workflows/test_context_handoff_rules.py::*` — scope-reason: compact arming/delivery split cases for non-Grok CLIs
-- `tests/servers/routes/test_session_variables.py::*` — scope-reason: prove HTTP set_variable rejects runtime-reserved materialization markers
-- `tests/workflows/test_hooks.py::*` — scope-reason: prove non-internal set_variable rule effects reject runtime-reserved materialization markers
-- `src/gobby/hooks/grok_pending_context.py`
-- `src/gobby/storage/sessions/_manager.py::SessionManager.register_session`
-- `tests/storage/sessions/test_storage_sessions_registration.py::*` — scope-reason: deferred-materialization discriminator persists atomically with the row insert
-- `src/gobby/install/shared/workflows/rules/context-handoff/clear-pending-context-reset-on-start.yaml::*` — scope-reason: pending_context_reset clearing moves from SessionStart to the confirmed delivery owner
-- `tests/hooks/test_webhooks.py::*` — scope-reason: session_start webhook replay-at-first-activity policy cases
-- `tests/hooks/test_session_activation_reconciliation.py::*` — scope-reason: prove reconciliation linearizes before copied stateful evaluation and live rules
-- `src/gobby/mcp_proxy/tools/workflows/_pipeline_execution.py::run_pipeline`
-- `src/gobby/mcp_proxy/tools/workflows/_pipelines.py::*` — scope-reason: consumer wrapper of run_pipeline; passes the idempotency key through
-- `src/gobby/runner_lifecycle_subsystems.py::*` — scope-reason: consumer registering run_pipeline; signature registration follows the new argument
-- `tests/events/test_mcp_tool_changes.py::*` — scope-reason: consumer of run_pipeline; tool-change expectations follow the signature change
-- `tests/mcp_proxy/tools/workflows/test_mcp_proxy_tools_workflows_pipelines.py::*` — scope-reason: idempotency-key dedup cases for duplicate copied-effect dispatch
-- `tests/storage/test_sessions_import.py::*` — scope-reason: consumer of register_session; import seams follow the initial-variable seed
-- `src/gobby/mcp_proxy/tools/workflows/_pipeline_execution.py::PipelineExecutionManager.create_execution`
-- `src/gobby/storage/pipeline_executions.py::PipelineExecutionStorageMixin.create_execution`
-- `src/gobby/workflows/pipeline_state.py::*` — scope-reason: `PipelineExecution` gains an optional `idempotency_key` field with a `None` default; construction and read sites elsewhere are unaffected by the additive field
-- `crates/gcore/assets/schema/migrations/405_pipeline_execution_idempotency_key.sql`
-- `crates/gcore/src/schema/assets.rs::*` — scope-reason: embed migration 405 and checksum for pipeline execution idempotency
-- `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: regenerated catalog manifest carries the migration 405 entry and digest
-- `crates/gcore/src/grant/bundle.rs::*` — scope-reason: derived schema-bundle carrier refreshes with migration 405
-- `crates/gcore/tests/schema_contract.rs::*` — scope-reason: schema contract test tracks the new migration and catalog digest
-- `crates/gdaemon/tests/cli_contract.rs::*` — scope-reason: daemon CLI contract test tracks the regenerated schema identity
-- `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: regenerated expected schema identity after migration 405
-- `tests/storage/test_pipeline_storage.py::*` — scope-reason: concurrent idempotency-key uniqueness and existing-run reuse cover storage behavior
-- `src/gobby/storage/sessions/_crud.py::_SessionCRUDMixin.register`
-- `src/gobby/hooks/session_types.py::HookSessionManager.register_session`
-- `src/gobby/hooks/session_coordinator.py::*` — scope-reason: consumer of HookSessionManager.register_session; call sites follow the typed-outcome signature and initial-variable seed
-- `tests/hooks/test_session_lookup_metadata.py::*` — scope-reason: consumer of register_session; typed-outcome expectations update
-- `crates/gcore/src/schema/runner_tests.rs::*` — scope-reason: advance embedded migration inventory/count and latest-migration assertions through 405
-- `crates/gcore/src/grant/tests.rs::expected_schema_identity_tracks_catalog_head`
-- `tests/runtime_grants/golden/brokered_datastores.json::*` — scope-reason: positive signed golden regenerated for schema identity 405
-- `tests/runtime_grants/golden/direct_datastores.json::*` — scope-reason: positive signed golden regenerated for schema identity 405
-- `tests/runtime_grants/golden/old_client_new_grant.json::*` — scope-reason: positive signed golden regenerated for schema identity 405
-- `tests/runtime_grants/golden/unavailable_datastores.json::*` — scope-reason: positive signed golden regenerated for schema identity 405
+- `tests/hooks/test_session_start_handlers.py::*` — scope-reason: consumer of handle_session_start; deferred-return cases extend the file
+- `tests/hooks/test_hooks_manager.py::*` — scope-reason: registration assertions move from SessionStart to first-hook materialization; the first-hook matrix, synthetic-schema, provider-matrix, and concurrency cases span the file
+- `tests/hooks/test_hook_manager.py::*` — scope-reason: consumer of _handle_after_daemon_ready and _complete_response; materialization ordering and startup-packet merge asserts change
+- `tests/hooks/test_session_lookup_metadata.py::*` — scope-reason: consumer of _resolve_uncached_session_id; NOTIFICATION exclusion and just-materialized flag cases extend the file
+- `tests/hooks/test_webhooks.py::*` — scope-reason: sessionless-startup skip and first-activity session_start webhook dispatch cases
 
-Split `src/gobby/hooks/hook_manager.py` by moving first-hook activation and
-copied session-start rule evaluation into
-`src/gobby/hooks/session_materialize.py` so `hook_manager.py` stays under the
-1,000-line ceiling.
+Move the new first-activity orchestration out of
+`src/gobby/hooks/hook_manager.py` (864 lines) into
+`src/gobby/hooks/session_materialize.py` — a split, so `hook_manager.py`
+gains only the call sites below and stays under the 1,000-line ceiling.
 
-Keep thin `register_session` inside `_resolve_uncached_session_id` (lookup
-lock). On create, set `event.metadata["_session_just_materialized"] = True`.
-The `_deferred_materialization` discriminator is **persisted in the same
-storage write as the row insert**, never stamped afterwards:
-`SessionManager.register_session` gains an initial-variable seed so the
-deferred-path marker exists if and only if the row exists. A crash at any
-point after `register_session` returns therefore leaves a row that recovery
-classifies unambiguously — deferred rows carry the marker from birth,
-pre-deploy rows never do — and no crash window can make a new deferred row
-look like a pre-deploy row and skip copied SessionStart processing forever.
-Do not call activation from the lookup service.
+**Deferred startup SessionStart.** `handle_session_start` consults
+`session_start_should_defer` (2.1) after the ACP-child / nested-CLI skips,
+the pre-created / `gobby_session_id` / web-chat lookups, and
+`resolve_session_start_identity`: when it is true, return
+`HookResponse(decision="allow")` with no `register_session` call and no
+`_platform_session_id`. `HookManager._handle_after_daemon_ready` already
+returns through `_complete_response(..., suppress_webhooks=True)` before
+session-start rules when `_platform_session_id` is absent — keep that, so a
+sessionless startup evaluates no session-start rules and dispatches no
+`session_start` webhooks. Every binding path (compact, resume, clear,
+web-chat, pre-created) is untouched, including its context output.
 
-This leaf performs the atomic cutover that 2.1 deliberately defers: wire
-`session_start_should_defer` into `handle_session_start` (deferred startup
-returns `HookResponse(decision="allow")` with no `_platform_session_id` and
-no `register_session` call; `HookManager._handle_after_daemon_ready` already
-returns before session-start rules when `_platform_session_id` is absent —
-keep that), and strip `_compose_session_response` so SessionStart never
-emits context or system-message fields on any path (startup, compact,
-resume, clear, web-chat, pre-created — session banner and claimed-task lines
-move to first-activity composition; compact/resume SessionStart may still
-mutate session variables). Registration timing, after-lookup activation, and
-copied SessionStart evaluation all land in this single leaf, so no committed
-state exists where SessionStart is deferred but first-hook activation is
-missing.
+**Row creation.** Keep the thin `register_session` inside
+`_resolve_uncached_session_id` (lookup lock). Add a NOTIFICATION skip beside
+the existing SESSION_END skip (decision 3). In the register branch set
+`event.metadata["_session_just_materialized"] = True`; that branch runs only
+after the exact lookup, cross-source recovery, compact recovery, and the
+skips all missed, so under the lookup lock it is the create. Do not call
+activation from the lookup service.
 
-After `resolve()` returns, `HookManager._handle_after_daemon_ready` calls
-`session_materialize.activate_if_needed(handler, event)` **outside** the
-lock. Every racer observes this exact linearization before its own live
-rules and handler run:
+**First-activity activation.** In the non-SessionStart branch of
+`_handle_after_daemon_ready`, immediately after `resolve()` and
+`apply_session_mutations`, when `_session_just_materialized` is set call
+`session_materialize.activate_deferred_session(self, event, blocking_deadline)`.
+It runs, in order, outside the lookup lock:
 
-1. **Materialization activation.** If `_session_just_materialized` (or a row
-   exists but `_materialize_activation_done` is unset — including pre-deploy
-   rows), run `activate_materialized_session`. Idempotent no-op if already
-   done.
-2. **Activation reconciliation.** Existing `reconcile_session_activation`
-   runs (idempotent) so copied evaluation and live rules observe the
-   resolved agent/workflow state, never a pre-reconciliation snapshot.
-3. **Copied SessionStart processing — stateful phase.** If this is the first
-   activity cycle, evaluate session-start rules on a **copied** event whose
-   type is `SESSION_START` (synthetic schema below). Stateful effects —
-   arming-only variable writes and idempotent resets (plan-mode, discovery,
-   skill, task tracking) — are idempotent, so every racer runs this phase to
-   completion itself; no claim, no wait. One-shot inject contributions to
-   the racer's own live response are claimed by an atomic test-and-set on
-   their delivered-state variable inside `_mutate_variables`, so concurrent
-   racers yield exactly one composer per one-shot. The live event keeps its
-   original type so turn_start rules still see `BEFORE_AGENT`.
-4. **Copied SessionStart processing — blocking-gate step.** Every racer
-   observes the durable blocking-webhook decision (barrier semantics below)
-   before its live rules and handler.
-5. **Copied SessionStart processing — async external-dispatch phase**
-   (single-owner, may complete asynchronously), then the normal handler +
-   rules for the live event.
+1. `activate_materialized_session(handler, event, session_id)` (2.1's
+   extraction): stale-terminal expiry, code index, memory-recall and
+   wiki-overview seeds, tmux window rename, `classify_session_start_context`
+   (a fresh deferred row has no prior evidence, so `claim_startup_context`
+   yields `full`), default-agent activation, user-profile seed, transcript
+   tracking (`_session_coordinator.register_session(external_id)`), message
+   processor, `_reset_agent_context_injection`,
+   `prepare_compact_continuation_variables`, claimed-task context. Identity
+   inputs come from the live event: `external_id = event.session_id`,
+   `cwd`, `transcript_path`, `terminal_context`; `workflow_name`,
+   `agent_depth`, `parent_session_id`, and `sandbox_enabled` are absent on a
+   deferred row (they arrive only on pre-created paths).
+2. **Copied SessionStart evaluation** on a synthetic event built by
+   `build_synthetic_session_start(event, session_id)`:
+   `event_type = SESSION_START`, `source = event.source`,
+   `session_id = external_id`, `data = {"source": "startup", "cwd": ...,
+   "transcript_path": ..., "terminal_context": ...}`, metadata
+   `{"_platform_session_id": session_id, "_synthetic_session_start": True}`,
+   and **no** prompt or tool payload. Startup-sensitive predicates behave
+   exactly as on a real startup SessionStart —
+   `reset-plan-mode-on-session-start` requires
+   `event.data['source'] == 'startup'` and silently stops firing without it.
+   Run `self._evaluate_workflow_rules(synthetic, blocking_deadline)` then
+   `self._evaluate_blocking_webhooks(synthetic, blocking_deadline)`; a rule
+   block or webhook block is returned as the live response (exactly as a
+   blocked live SessionStart returns today) and nothing below runs. Then
+   `self._dispatch_webhooks_async(synthetic, startup_response)` for
+   non-blocking endpoints. The live event keeps its original type so
+   turn_start rules still see `BEFORE_AGENT`.
+3. **Startup packet.** Call `compose_session_response(...)` with the
+   materialized session, the claimed-task context from step 1, and the
+   copied-rule workflow context appended to `additional_context`; store its
+   `context` in `event.metadata["_startup_context"]` and its
+   `system_message` (session banner) in
+   `event.metadata["_startup_system_message"]`; call
+   `mark_startup_context_injected` when the classification was `full`.
+   When the creating event is not BEFORE_AGENT (a no-UPS first PreToolUse
+   or Stop), also run
+   `AgentEventHandlerMixin._inject_agent_instructions_if_needed` against
+   the packet so an active agent's instructions ride it, persisting its
+   `_agent_context_injected` marker so a later UPS does not repeat them;
+   on BEFORE_AGENT the unchanged handler injects them as today.
 
-A racer never crosses into step 3 before steps 1–2 complete in its own call
-stack, and never runs live rules or its handler before steps 3–4 complete,
-so a claim loser cannot observe half-applied resets, pre-reconciliation
-state, or an unresolved blocking gate.
+Then the existing flow continues unchanged: `reconcile_session_activation`
+(the existing BEFORE_AGENT / BEFORE_TOOL backstop, which now also heals any
+agent invariant a crashed activation left behind), live rules, handler.
+`_complete_response` merges the packet into the **returned** response before
+enrichment: prepend `_startup_context` to `response.context` and set
+`system_message` when unset; the adapter's capability table decides the
+channel. The first-activity response therefore carries exactly what
+SessionStart carried before: banner, claimed-task lines, copied-rule context
+(`inject-user-profile`, `inject-task-context-on-start`), and — via the
+unchanged BEFORE_AGENT handler — agent instructions and skill suggestions. On
+Grok that merged context is `ContextChannel.NONE` after 1.1 and is dropped
+with a `dropped_field` log until 4.1 stashes it.
 
-UPS+PreToolUse racing: no claim, no wait — each racer runs
-`activate_materialized_session` to completion before its own copied-rule
-evaluation and live-event handling proceed (decision 7). Per-step done-guards
-make the double-run a cheap no-op, so neither racer crosses a rule or tool
-boundary against a half-activated session. `_materialize_activation_done` is
-written on completion (idempotent); a crash mid-activation is healed by the
-next hook re-running the same guarded steps. Startup injects are gated by
-delivered-state vars, not by a wait.
+**Failures** follow today's SessionStart contract: an exception inside
+activation or copied evaluation logs and fails open (`Handler error` →
+allow) for the current hook, the row exists, and the next BEFORE_AGENT /
+BEFORE_TOOL's `reconcile_session_activation` repairs agent and step state.
+Nothing replays the startup packet, the copied session-start rules, or the
+`session_start` webhooks for that session: `_session_just_materialized` is
+request-local, `reconcile_session_activation` deliberately avoids prompt and
+context side effects, and a copied-rule block or blocking-webhook block that
+returns before step 3 has the same effect. That is the loss a crash inside
+today's SessionStart handler already causes (user decision, round 11 F08:
+option B). No per-step guards, retry markers, startup-pending phase, or
+per-class outcomes are added.
 
-Startup-briefing staging (Grok) is itself an activation step and completes
-before any racer's rules or tool handling: each racer performs an atomic
-enqueue-if-absent of the single startup-briefing component keyed by session
-and activation epoch. **This leaf creates the primitive it needs**:
-`src/gobby/hooks/grok_pending_context.py` is created here with the
-structured-component model (stable `component_id`, class, payload/source
-reference, ack mutations) and the atomic `enqueue_if_absent` operation over
-`SessionVariableManager._mutate_variables`, and `session_materialize.py`
-wires it as an activation step — so 3.1 is implementable and testable with
-no forward dependency. `enqueue_if_absent` deduplicates against **queued,
-claimed, and committed** identities in that same transaction: the buffer
-holds queued and claimed components, and a per-epoch **committed-identity
-set** (the tombstone 4.1's commit writes when it removes a component)
-records what already delivered — so a stale racer whose guard passed before
-another request committed and removed the component no-ops instead of
-re-enqueueing the same activation-epoch identity and causing a second
-briefing denial. 4.1 extends the same module with stash, flush, claim, and
-commit mechanics. An interleaved schedule — UPS creates the row first,
-PreToolUse finishes activation first, UPS stashes last — still yields
-exactly one staged component; 4.1 owns flush and commit, so the deny-once
-delivery and commit-before-late-stash acceptance stay there while the
-exactly-one-staged-component acceptance lives here.
+**Concurrent first hooks.** Row creation is serialized by the lookup lock;
+only the creating request sees `_session_just_materialized`, so activation
+and copied evaluation run exactly once. A second request for the same
+`external_id` binds the row and proceeds. CLIs fire the first prompt hook
+before any tool hook of the same turn, so this overlap is theoretical.
 
-`activate_materialized_session` classifies every step as **required** or
-**best-effort**, each behind its own durable guard:
+**Webhooks.** A sessionless startup SessionStart dispatches no
+`session_start` webhooks. The copied evaluation dispatches them once, on the
+synthetic event, through the same blocking (`_evaluate_blocking_webhooks`)
+and non-blocking (`_dispatch_webhooks_async`) paths a live SessionStart uses;
+a blocking endpoint's block gates the live response. Compact, resume, clear,
+and pre-created SessionStart paths keep dispatching on the live event.
 
-- Required: session-row registration (performed by the lookup layer; a
-  failed or empty registration means there is no session to activate) and
-  session-variable seeding (identity and delivered-state seeds).
-- Best-effort: agent resolution (`None` is a valid absence; only an
-  exception is a failure), code-index setup, wiki seeding, profile
-  injection, transcript-processor setup. A best-effort failure is logged,
-  its guard marks complete, and activation proceeds.
-
-Registration failure is **typed, never shape-collapsed**: session
-lookup/registration returns a typed outcome — `materialized` (row exists or
-was created), `excluded` (SESSION_END, NOTIFICATION, missing project,
-ACP-child: legitimate absence), or `failed` (unrecoverable registration
-error) — instead of the empty-ID shape that today serves both absence and
-failure. `HookManager` consumes that outcome before copied processing,
-webhooks, live rules, and handlers: `excluded` follows the ordinary
-sessionless path, while `failed` triggers the per-class outcomes below, so
-a failed first PreToolUse can never ride the sessionless allow path. Tests
-cover `failed` separately from each exclusion class.
-
-A required-step failure leaves that guard incomplete, never writes
-`_materialize_activation_done`, skips copied SessionStart processing and
-startup injects (they stay pending), and keeps all state retryable — the
-next hook re-runs the guarded steps. The **current-hook outcome is
-per-class**, because fail-open on a gating hook would let a tool cross the
-half-activated state this plan forbids:
-
-- **Passive hooks** (UserPromptSubmit, PostToolUse, PostCompact, and every
-  other observe event): fail-open allow, matching the existing daemon-error
-  contract.
-- **PreToolUse**: a **retriable deny** — `decision: "deny"` with a reason
-  stating startup activation is incomplete and the same call should be
-  retried. The tool never executes before required startup state exists;
-  the retry (or any next hook) re-runs activation and proceeds normally on
-  success.
-- **Stop / SubagentStop**: fail-open allow — blocking a stop cannot repair
-  activation and would force an unactivated session to keep running. No
-  delivery happens, so no ack mutation can fire; owed briefing state stays
-  pending for the next cycle.
-
-`_materialize_activation_done` is written only when every required guard is
-complete and every best-effort guard is complete or logged-failed. Tests
-cover the same-event failure outcome for each class and next-hook recovery.
+**Pre-deploy rows.** A row created at CLI boot by the previous code already
+received its SessionStart; its next hook is a lookup hit with no
+`_session_just_materialized`, so nothing replays.
 
 The Claude/Grok Notification-timing probe is **observational only**: record
 what it shows in the leaf's validation evidence. The NOTIFICATION exclusion
 is unconditional (decision 3); no probe result changes normative behavior or
 any acceptance outcome.
 
-Reserve `_materialize_activation_done`, `_copied_session_start_state`, and
-`_deferred_materialization` in `src/gobby/workflows/reserved_variables.py`
-alongside the 4.1 Grok buffers. They are runtime-owned control markers:
-public `set_variable` (MCP and HTTP) and non-internal rule effects must
-reject writes to them, otherwise a stray write suppresses activation or
-replays non-idempotent session-start effects.
-
-The copied session-start evaluation uses an explicit synthetic SessionStart
-schema, never a re-typed prompt/tool envelope: `event_type = SESSION_START`,
-`data = {"source": "startup"}` plus the deferred identity fields
-(external_id, cwd, transcript path), and **no** live prompt or tool payload.
-Startup-sensitive predicates must behave exactly as on a real startup
-SessionStart — `reset-plan-mode-on-session-start` requires
-`event.data['source'] == 'startup'` and silently stops firing without it.
-Audit every installed SessionStart lifecycle rule plus one custom
-session-start rule against the synthetic payload.
-
-Copied SessionStart processing carries **durable state in
-`_copied_session_start_state`**, separate from activation, with the three
-phases from the linearization above tracked independently:
-
-- **Stateful phase** (idempotent arming/reset effects): every racer runs it
-  to completion; a `stateful: done` field is written afterwards so later
-  hooks skip re-evaluation. A crash before that write is harmless — the next
-  hook re-runs the idempotent phase. Activation completion never implies
-  copied-processing completion.
-- **Blocking-gate step** (blocking `session_start` webhook endpoints): a
-  `blocking` substate moves `pending → running → done` plus the **durable
-  decision** (allow, or block with reason). `pending → running` is an
-  atomic compare-and-swap claim carrying owner id and timestamp; the owner
-  runs `evaluate_blocking_webhooks` on the synthetic event and writes the
-  decision with `done` in one mutation. Every racer — owner or not — must
-  observe `done` before its live rules and handler: a non-owner waits with
-  a bounded poll, and a stale `running` past the takeover threshold is
-  taken over (re-evaluation is the at-least-once duplicate documented
-  below). If the bound expires unresolved, the racer applies the per-class
-  required-failure outcome (passive and Stop fail open, PreToolUse
-  retriable deny). A durable `block` decision gates **every** racer's live
-  event exactly as a live SessionStart block would — a losing first
-  PreToolUse cannot execute its tool while the copied SessionStart is
-  blocked.
-- **Async external-dispatch phase** (fire-and-forget side effects: the
-  `pipeline-auto-run` rule's background `run_pipeline` mcp_call, plus
-  non-blocking `session_start` webhook dispatch via
-  `dispatch_webhooks_async`): `external` moves `pending → running → done`
-  under the same CAS-claim/takeover contract; losers skip and never wait.
-  A claim alone cannot make dispatch exactly-once across a crash between
-  dispatch and `done`, so where Gobby owns the consumer the dispatch
-  carries a **durable consumer-enforced idempotency key** — for
-  `pipeline-auto-run`, `run_pipeline` gains an `idempotency_key` argument
-  (key: session id + rule id + activation epoch) and the
-  pipeline-execution store enforces uniqueness on it, returning the
-  existing run instead of starting a duplicate. Webhook endpoints are
-  external observers Gobby cannot deduplicate for: their dispatch —
-  blocking re-evaluation after takeover included — is **at-least-once**,
-  exactly once in crash-free operation, with a stable delivery key
-  (session id + activation epoch) in every payload for receiver-side
-  dedupe. Marking `done` only after a successful dispatch call cannot lose
-  a failed dispatch. Crash-recovery tests cover crash-before-dispatch
-  (takeover dispatches once), crash-after-dispatch (pipeline redispatch
-  consumer-rejected; webhook duplicate carries the same delivery key), and
-  dispatch failure (state stays retryable).
-
-Auditing the installed SessionStart rule inventory to classify each effect
-as stateful, blocking-gate, or async-external is part of this leaf.
-
-Pre-deploy rows: only rows the deferred path created (the
-`_deferred_materialization` marker persisted at row creation) are candidates
-for copied SessionStart processing. A row predating this deploy already
-received a real SessionStart evaluation at CLI boot; treat it as complete
-and never replay resets, webhooks, or pipelines against it. Idempotent
-activation seeds may still heal such rows harmlessly.
-
-**SessionStart webhook policy: parity at first activity.** Deferring the
-lifecycle event covers webhooks, not just rules. A sessionless startup
-SessionStart dispatches **no** `session_start` webhooks — there is no
-session identity to report. The copied first-activity processing dispatches
-them on the canonical synthetic SessionStart event: blocking endpoints run
-in the blocking-gate step via `evaluate_blocking_webhooks`, and the durable
-decision gates **every** racer's live event exactly as it would gate a live
-SessionStart response today; non-blocking endpoints fire via
-`dispatch_webhooks_async` inside the async external-dispatch phase. The
-relative order between copied rules and webhook dispatch matches today's
-live SessionStart order. Delivery is **at-least-once**: exactly one
-dispatch in crash-free operation via the CAS claims, a duplicate only
-across crash takeover, and every payload carries the stable
-session-id + activation-epoch delivery key so receivers can deduplicate —
-Gobby never claims exactly-once for consumers it does not own. Compact,
-resume, clear, and pre-created SessionStart paths keep dispatching their
-webhooks on the live event, unchanged. Non-Grok and Grok behave
-identically; `tests/hooks/test_webhooks.py` proves the sessionless-skip,
-crash-free-single-dispatch, delivery-key, and blocking-gates-every-racer
-cases.
-
-**SessionStart output barrier.** Stripping `_compose_session_response` is
-necessary but not sufficient: rule-generated workflow context merges into
-the response after handler composition. This leaf adds an explicit barrier
-at the single point where a live `SESSION_START` response leaves hook
-processing — after handler composition **and** rule-evaluation merge — that
-strips context and system-message fields for every SESSION_START path. Every
-retained live-SessionStart inject producer (`inject-compact-handoff`,
-`inject-task-context-on-start`, `inject-user-profile`, wiki overview,
-persona) converts to arming/state-only behavior on SESSION_START; their
-payloads deliver through the first-activity composition (non-Grok) or the
-Grok briefing buffer (4.1). State-clearing follows delivery, not arming:
-`clear-pending-context-reset-on-start` stops clearing
-`pending_context_reset` on SessionStart — the confirmed delivery owner (the
-non-Grok turn_start delivery rule; Grok component commit in 4.1) clears it
-together with the fields it delivered, so an empty compact SessionStart can
-no longer strand part of the continuation.
-
-Session-start YAML inject rules keep `event: session_start` and run via the
-copied evaluation at first activity, not at CLI boot. Compact SessionStart
-(existing row, Claude) still evaluates them; Grok compact uses PostCompact
-instead (4.1).
-
-Compact handoff splits into **arming** and **delivery** phases. The bundled
-`inject-compact-handoff` session_start rule becomes arming-only: it sets
-`compact_handoff_inject_pending` and **retains** `handoff_summary_injectable`
-plus the required-skill and advisory-skill lists — it no longer renders the
-continuation or clears any of those fields, and SessionStart emits no
-context. `inject-compact-handoff-on-prompt` (turn_start, non-Grok) becomes
-the sole non-Grok delivery point: it renders the complete continuation —
-summary plus the skill-reload content that today renders at SessionStart —
-and atomically clears exactly the fields it included. Grok delivery stays
-owned by PostCompact briefing arming (4.1). This leaf edits the
-`inject-compact-handoff.yaml` template accordingly and refreshes
-`src/gobby/install/bundled_content_manifest.json`; the tree-equality
-regression proves the manifest matches the committed templates after this
-leaf alone, without waiting for 4.1.
-
-Update `test_handle_session_start_basic`: startup SessionStart must
-**not** call `register_session`. Add
+Update `test_handle_session_start_basic`: startup SessionStart must **not**
+call `register_session`. Add
 `test_first_user_prompt_submit_registers_session` (SessionStart then
-BEFORE_AGENT → one `register_session` on the UPS) and
+BEFORE_AGENT → one `register_session` on the UPS; activation and copied
+evaluation run once; the response carries the startup packet) and
 `test_first_pre_tool_use_without_ups_registers_session` (any-event
-fallback).
-
-Update `tests/hooks/test_hooks_manager.py` assertions that today require
-`register_session` on SessionStart.
-
-Do not add SessionStart additionalContext back in `ACPHookAdapter` /
-`ClaudeCodeAdapter`.
+fallback). Update `tests/hooks/test_hooks_manager.py` assertions that today
+require `register_session` on SessionStart. Do not add SessionStart
+additionalContext back in `ACPHookAdapter` / `ClaudeCodeAdapter`.
 
 **Acceptance:**
 
 - 3.1.1 - Startup SessionStart does not create a sessions row. test: `tests/hooks/test_session_events_coverage.py::TestSessionStartAndHelpers::test_handle_session_start_basic`.
-- 3.1.2 - First BEFORE_AGENT creates the row; activation runs outside the lookup lock. file: `src/gobby/hooks/session_materialize.py`.
-- 3.1.3 - Compact/pre-created SessionStart still binds the existing row. test: `tests/hooks/test_session_events_coverage.py::TestSessionStartAndHelpers::test_handle_session_start_pre_created`.
-- 3.1.4 - First PreToolUse without UPS also materializes. test: `tests/hooks/test_hooks_manager.py`.
-- 3.1.5 - `hook_manager.py` does not grow; first-prompt orchestration lives in `session_materialize.py`. file: `src/gobby/hooks/session_materialize.py`.
+- 3.1.2 - First BEFORE_AGENT creates the row; activation runs outside the lookup lock in the creating request only. file: `src/gobby/hooks/session_materialize.py`.
+- 3.1.3 - Compact/pre-created SessionStart still binds the existing row and still returns its context. test: `tests/hooks/test_session_events_coverage.py::TestSessionStartAndHelpers::test_handle_session_start_pre_created`.
+- 3.1.4 - First PreToolUse without UPS also materializes and carries the startup packet, including the active agent's instructions when the session has one. test: `tests/hooks/test_hooks_manager.py`.
+- 3.1.5 - `hook_manager.py` stays under the ceiling; first-activity orchestration lives in `session_materialize.py`. file: `src/gobby/hooks/session_materialize.py`.
 - 3.1.6 - Notification does not materialize an idle session; the exclusion is unconditional and the recorded Claude/Grok probe is observational evidence only. test: `tests/hooks/test_hooks_manager.py`.
 - 3.1.7 - A parameterized first-hook matrix materializes every supported non-SessionStart event except SESSION_END and NOTIFICATION, and both exclusions leave an idle startup row absent. test: `tests/hooks/test_hooks_manager.py::test_first_hook_materialization_matrix`.
-- 3.1.8 - Copied evaluation uses the synthetic SessionStart schema (`data.source == 'startup'`, deferred identity fields, no prompt/tool payload); every installed SessionStart lifecycle rule plus one custom session-start rule fires identically to a real startup SessionStart. test: `tests/hooks/test_hooks_manager.py`.
-- 3.1.9 - `_materialize_activation_done`, `_copied_session_start_state`, and `_deferred_materialization` are reserved; MCP `set_variable` and non-internal rule effects reject writes to them. test: `tests/mcp_proxy/test_top_level_variables.py`.
-- 3.1.10 - Concurrent first UPS and PreToolUse both run activation to completion idempotently, and a simulated crash mid-activation is healed by the next hook. test: `tests/hooks/test_hooks_manager.py`.
-- 3.1.11 - Every startup, compact, resume, clear, web-chat, and pre-created SessionStart response has empty context and system-message fields. test: `tests/hooks/test_session_events_coverage.py::test_session_start_never_emits_context`.
-- 3.1.12 - Copied SessionStart processing follows the phase contract under concurrent first hooks: every racer completes the stateful phase and observes the durable blocking-gate decision before its live rules and handler, in activation → reconciliation → copied state → blocking gate → live evaluation order; the blocking-gate and async external-dispatch claims each have a single owner with crash takeover; a crash between activation completion and copied processing is recovered by the next hook; pre-deploy rows never replay resets, webhooks, or pipelines. test: `tests/hooks/test_hooks_manager.py`.
-- 3.1.13 - Transient failures in registration, agent resolution, variable seeding, and transcript setup follow the required/best-effort classification with per-class current-hook outcomes: passive hooks and Stop fail open, PreToolUse returns a retriable deny, no copied processing or startup injects run, and the next hook (or retried call) recovers; best-effort failures log and let activation complete; the typed registration outcome distinguishes `failed` from every exclusion class (SESSION_END, NOTIFICATION, missing project, ACP-child), and a failed first PreToolUse never follows the sessionless allow path. test: `tests/hooks/test_hooks_manager.py`.
-- 3.1.14 - Non-Grok compact: SessionStart emits nothing and arms pending state retaining the summary and skill lists; the first turn_start renders the complete continuation including skill reloads and clears only the fields it included. test: `tests/workflows/test_context_handoff_rules.py`.
-- 3.1.15 - Bundled-content manifest exactly matches the committed shared-template tree after this leaf's template change. test: `tests/install/test_bundled_content_manifest.py::test_bundled_content_manifest_matches_tree`.
-- 3.1.16 - Compact, resume, clear, web-chat, and pre-created SessionStart paths each bind or create the intended canonical row without duplication. test: `tests/hooks/test_session_events_coverage.py::test_session_start_binding_matrix`.
-- 3.1.17 - HTTP session-variable writes reject every runtime-reserved materialization marker. test: `tests/servers/routes/test_session_variables.py`.
-- 3.1.18 - Non-internal workflow set_variable effects reject every runtime-reserved materialization marker. test: `tests/workflows/test_hooks.py`.
-- 3.1.19 - The structured-component `enqueue_if_absent` primitive exists in `grok_pending_context.py`, is wired as an activation step, and an interleaved first UPS/PreToolUse stages exactly one startup-briefing component. test: `tests/hooks/test_hooks_manager.py`.
-- 3.1.20 - A sessionless startup SessionStart dispatches no session_start webhooks; first-activity copied processing dispatches blocking webhooks through the durable blocking-gate step and non-blocking webhooks through the async external-dispatch claim — exactly once in crash-free operation, at-least-once with the stable session-id + activation-epoch delivery key across crash takeover — and a durable blocking decision gates every racer's live event, proven by a two-racer test where the claim loser's PreToolUse cannot execute while the gate is blocked. test: `tests/hooks/test_webhooks.py`.
-- 3.1.21 - The SessionStart output barrier strips handler- and rule-merged context on every SESSION_START path, and `pending_context_reset` survives an empty compact SessionStart, cleared only by the confirmed delivery owner. test: `tests/workflows/test_context_handoff_rules.py`.
-- 3.1.22 - The `_deferred_materialization` discriminator persists in the same storage write as row creation; a simulated crash immediately after `register_session` leaves a row recovery classifies as deferred, never as pre-deploy. test: `tests/storage/sessions/test_storage_sessions_registration.py`.
-- 3.1.23 - `run_pipeline` rejects a duplicate dispatch bearing the same idempotency key and returns the existing run; a crash-takeover redispatch yields exactly one pipeline execution. test: `tests/mcp_proxy/tools/workflows/test_mcp_proxy_tools_workflows_pipelines.py`.
-- 3.1.24 - A parameterized provider matrix delivers first-activity startup context through the expected native channel for Claude, Qwen, Droid, and Codex, exercises the supported AGY shared-materialization path, and retains Grok as the pending-briefing exception. test: `tests/hooks/test_hooks_manager.py::test_first_activity_startup_context_provider_matrix`.
-- 3.1.25 - Concurrent pipeline execution creation with one idempotency key persists exactly one execution and every caller receives that existing execution across process restart. test: `tests/storage/test_pipeline_storage.py::test_create_execution_idempotency_key_is_concurrent_and_durable`.
-- 3.1.26 - The deferred discriminator is inserted inside the low-level fresh-row transaction while unique-conflict recovery and existing-row reuse never relabel pre-deploy rows. test: `tests/storage/sessions/test_storage_sessions_registration.py::test_deferred_seed_is_atomic_across_insert_conflict_and_reuse`.
-- 3.1.27 - Embedded migration inventory and grant schema-head assertions advance through migration 405. test: `crates/gcore/src/schema/runner_tests.rs`.
-- 3.1.28 - Every positive runtime-grant golden is regenerated and re-signed for schema identity 405 while the intentional skew golden remains negative. test: `tests/runtime_grants/test_golden_vectors.py::test_config_revision_signed`.
+- 3.1.8 - Copied evaluation uses the synthetic SessionStart schema (`data.source == 'startup'`, deferred identity fields, no prompt/tool payload); every installed SessionStart lifecycle rule plus one custom session-start rule fires identically to a real startup SessionStart, and a copied rule block or blocking-webhook block is returned as the live response. test: `tests/hooks/test_hooks_manager.py`.
+- 3.1.9 - Concurrent first UPS and PreToolUse for one `external_id` yield one row; activation and copied evaluation run exactly once, in the creating request, and the other request proceeds on the existing row. test: `tests/hooks/test_hooks_manager.py`.
+- 3.1.10 - Compact, resume, clear, web-chat, and pre-created SessionStart paths each bind or create the intended canonical row without duplication. test: `tests/hooks/test_session_events_coverage.py::test_session_start_binding_matrix`.
+- 3.1.11 - A sessionless startup SessionStart dispatches no session_start webhooks; first-activity copied processing dispatches blocking and non-blocking session_start webhooks once on the synthetic event, and a blocking endpoint's block gates the live response. test: `tests/hooks/test_webhooks.py`.
+- 3.1.12 - A parameterized provider matrix delivers the first-activity startup packet (banner system message, claimed-task context, copied-rule context) through the expected native channel for Claude, Qwen, Droid, and Codex, exercises the supported AGY shared-materialization path, and shows Grok emitting nothing on its observe hooks until 4.1. test: `tests/hooks/test_hooks_manager.py::test_first_activity_startup_context_provider_matrix`.
+- 3.1.13 - An exception inside activation fails the current hook open, leaves the row, and the next BEFORE_AGENT's `reconcile_session_activation` repairs agent state; the startup packet is not replayed. test: `tests/hooks/test_hooks_manager.py`.
+- 3.1.14 - `_resolve_uncached_session_id` skips NOTIFICATION like SESSION_END and sets `_session_just_materialized` only on the create branch. test: `tests/hooks/test_session_lookup_metadata.py`.
 
 ## P4: Grok pending-context flush
 `kind: framing`
@@ -874,328 +636,222 @@ Do not add SessionStart additionalContext back in `ACPHookAdapter` /
 
 Targets:
 - `src/gobby/hooks/grok_pending_context.py`
+- `src/gobby/hooks/hook_manager.py::HookManager._handle_after_daemon_ready`
 - `src/gobby/hooks/hook_manager.py::HookManager._complete_response`
-- `src/gobby/hooks/event_enrichment.py::*` — scope-reason: Grok pending-message routing leaves messages unclaimed until confirmed delivery; `mark_delivered_batch` moves into component ack mutations
-- `src/gobby/adapters/acp_hook_adapter.py::ACPHookAdapter.handle_native` — commit boundary: claimed components commit only after Grok translation succeeds here
-- `tests/adapters/test_acp_hook_integration.py::*` — scope-reason: handle_native consumer; commit-boundary integration cases extend the file
-- `src/gobby/servers/routes/mcp/hooks.py::*` — scope-reason: `_run_adapter_hook` executor-timeout path must atomically release claims so a late worker cannot commit
-- `src/gobby/hooks/event_handlers/_misc.py::MiscEventHandlerMixin.handle_post_compact`
-- `src/gobby/hooks/event_handlers/_session_start/flow.py::*` — scope-reason: arm clear-successor briefing inside _bind_clear_successor
-- `src/gobby/hooks/event_handlers/__init__.py::*` — scope-reason: composes handle_post_compact into EventHandlers; Grok briefing arming reaches it through the mixin
-- `src/gobby/workflows/reserved_variables.py::*` — scope-reason: reserve grok_pending_briefing and grok_pending_turn_context
-- `src/gobby/install/shared/workflows/rules/context-handoff/inject-compact-handoff.yaml::*` — scope-reason: exclude Grok from inject-compact-handoff-on-prompt turn_start delivery; PostCompact briefing owns Grok
-- `src/gobby/install/shared/workflows/rules/context-handoff/inject-clear-handoff.yaml::*` — scope-reason: exclude Grok from inject-clear-handoff-on-prompt; clear-successor briefing owns Grok
-- `src/gobby/install/bundled_content_manifest.json::*` — scope-reason: manifest digests refresh for both changed context-handoff rule templates
+- `src/gobby/hooks/event_enrichment.py::EventEnricher._inject_pending_messages`
+- `src/gobby/hooks/inbox.py::_drain_hook_inbox_once_locked`
+- `src/gobby/workflows/reserved_variables.py::*` — scope-reason: reserve the three Grok buffer variables in the module-level frozenset
+- `crates/ghook/src/dispatch.rs::run_gobby_owned`
+- `crates/ghook/src/dispatch.rs::delivered_action`
+- `crates/ghook/src/action.rs::emit_action`
+- `crates/ghook/src/output.rs::*` — scope-reason: make stdout write/flush result-bearing while preserving stderr behavior in the two-function output shim
+- `crates/ghook/tests/contract.rs::*` — scope-reason: envelope retention on stdout failure and deletion after successful emission cross the ghook process contract suite
 - `docs/contracts/session-boundary.md`
 - `docs/guides/sessions.md`
 - `docs/guides/variables.md`
-- `tests/workflows/test_context_handoff_rules.py::*` — scope-reason: one-owner proof; Grok exclusion cases for both turn_start handoff rules
-- `tests/hooks/test_misc_handlers.py::*` — scope-reason: direct handle_post_compact tests gain Grok briefing-arming cases
-- `tests/hooks/test_session_handoff_handlers.py::*` — scope-reason: direct clear-successor tests gain briefing-arming cases
-- `tests/hooks/test_hook_manager.py::*` — scope-reason: _complete_response stash/flush integration asserts, including preserve_original gates
-- `tests/hooks/test_pending_message_provider_contracts.py::*` — scope-reason: provider contract cases for queued-until-confirmed-delivery and commit-time delivered accounting
 - `tests/hooks/test_grok_pending_context.py`
-- `tests/install/test_bundled_content_manifest.py::*` — scope-reason: validate regenerated bundled-content digests against the committed shared-template tree
-- `src/gobby/workflows/engine/delivery_formatting.py::finalize_staged_memory_delivery`
-- `tests/workflows/test_delivery_pipeline.py::*` — scope-reason: consumer of finalize_staged_memory_delivery; Grok commit-time recording cases update
-- `src/gobby/hooks/event_handlers/_agent.py::AgentEventHandlerMixin._inject_agent_instructions_if_needed`
-- `src/gobby/install/shared/workflows/rules/context-handoff/inject-wiki-overview.yaml::*` — scope-reason: defer Grok wiki delivered-state mutation until confirmed component commit
-- `src/gobby/workflows/engine/effects.py::*` — scope-reason: route delivered-marker effects through the extracted deferred-ack seam; the extraction itself lands in the new module below
-- `src/gobby/workflows/engine/delivery_ack_effects.py`
-- `tests/hooks/test_event_enrichment.py::*` — scope-reason: update piggyback membership, enqueue-without-ack, formatting failure, and retained non-Grok delivery cases
-- `tests/servers/test_mcp_routes.py::*` — scope-reason: cover the real hook executor timeout and fallback boundary for claim release
-- `tests/workflows/test_hook_evaluation_timeout.py::*` — scope-reason: preserve bounded-worker and timeout recovery behavior while adding Grok claims
+- `tests/hooks/test_hook_manager.py::*` — scope-reason: _complete_response settle/stash/flush integration asserts, including preserve_original gates and the continuation-prompt capture
+- `tests/hooks/test_event_enrichment.py::*` — scope-reason: Grok enqueue-without-ack cases beside the retained non-Grok inline delivery cases
+- `tests/hooks/test_pending_message_provider_contracts.py::*` — scope-reason: provider contract cases for queued delivery and acknowledgment-time delivered marking
+- `tests/hooks/test_inbox.py::*` — scope-reason: daemon drain retains a Grok ack-pending envelope
+- `tests/adapters/test_acp_hook_translation.py::*` — scope-reason: Grok flush wire envelopes (deny reason, Stop block + additionalContext) are asserted at the adapter layer
+- `crates/ghook/src/action.rs::action_from_success_response`
+- `docs/guides/ghook-user-guide.md`
+- `docs/guides/ghook-development-guide.md`
 
-Split Grok stash/flush out of `src/gobby/hooks/hook_manager.py` into
-`src/gobby/hooks/grok_pending_context.py` so `hook_manager.py` does not grow
-across the 1,000-line ceiling. That module is created in 3.1 with the
-structured-component model and the `enqueue_if_absent` primitive; this leaf
-**extends** it with the stash, flush, claim, and commit mechanics.
+Grok stash and flush live in `src/gobby/hooks/grok_pending_context.py` and
+are invoked from `HookManager._complete_response`; `hook_manager.py` (864
+lines) gains only the call sites — the logic is split into the new module so
+the file stays under the ceiling.
 
-The delivered-marker effect seam splits out of
-`src/gobby/workflows/engine/effects.py` the same way: move the Grok
-deferred-ack effect handling into a new
-`src/gobby/workflows/engine/delivery_ack_effects.py` so `effects.py` (897
-lines) does not grow across the ceiling.
+**Buffer contract.** Three reserved session variables (add them to
+`RESERVED_WORKFLOW_VARIABLES` in `src/gobby/workflows/reserved_variables.py`
+so public `set_variable` and non-internal rule effects reject writes):
 
-`flow.py` is near the ceiling too: put the briefing build/store helper in
-`src/gobby/hooks/grok_pending_context.py` so 4.1 adds only a call
-inside `_bind_clear_successor`; the `flow.py` body split itself (register/
-activate into `materialize.py`) is 2.1's deliverable.
+- `grok_pending_briefing`: ordered list of components
+  `{"id": str, "text": str, "message_ids": list[str]}` (`message_ids`
+  non-empty only for P2P components). Deduplicated by `id`, never
+  cap-evicted; `BRIEFING_MAX_COMPONENTS = 64` is a defensive invariant (an
+  insert past it is an error log and a dropped component, never silent).
+- `grok_pending_turn_context`: the same component shape without
+  `message_ids`; drop-oldest (debug log) at
+  `TURN_CONTEXT_MAX_COMPONENTS = 32` components or
+  `TURN_CONTEXT_MAX_TOTAL_BYTES = 16384` serialized UTF-8 bytes; a single
+  component over `TURN_CONTEXT_MAX_COMPONENT_BYTES = 8192` is rejected at
+  enqueue (debug log).
+- `grok_pending_delivery`: `{"envelope_id": str, "components": [...]}` — the
+  briefing components claimed by the response for envelope `envelope_id`
+  (`event.data["source_event_id"]`), or absent.
 
-There is no `before_tool` / `_tool.py` flush site. Stash and flush both live
-in `gobby.hooks.grok_pending_context`, invoked from
-`HookManager._complete_response` (stash before adapter translate; flush when
-the native hook is PreToolUse or Stop).
+Every mutation is one `SessionVariableManager._mutate_variables` call
+(atomic read-modify-write under the existing
+`SessionVariableMutation(session_id)` advisory lock); no new lock, table, or
+transaction mode is added. Component ids: `startup:<session-id>`,
+`session_start:<envelope-id>`, `turn:<envelope-id>` (briefing prompts),
+`p2p:<message-id>`, `ctx:<envelope-id>:<n>` (turn-context).
 
-`stash(event, response)` runs when `source == GROK`, the hook is observe-only,
-and `response.context` is non-empty. Classify with metadata flags, never by
-sniffing the merged string:
+**Classification** (decision 6). In the non-SessionStart branch of
+`_handle_after_daemon_ready`, before rule evaluation, for Grok BEFORE_AGENT
+call `grok_pending_context.mark_briefing_turn(handler, event)`: it sets
+`event.metadata["_grok_briefing_turn"] = True` when the session has no prior
+activity (`_has_prior_session_activity` from
+`gobby.hooks.event_handlers._agent` is false — the first prompt, including a
+pre-created spawned Grok agent's first prompt) or when
+`compact_handoff_inject_pending` / `clear_handoff_inject_pending` is set (the
+continuation prompt, whose `inject-compact-handoff-on-prompt` /
+`inject-clear-handoff-on-prompt` render is about to be captured). No rule
+template changes: those turn_start rules, and `inject-wiki-overview`, stay
+the single owner of their text on every CLI; on Grok their output is captured
+instead of lost.
 
-- `event.metadata["_session_just_materialized"]` → `grok_pending_briefing`
-- else → append `grok_pending_turn_context`
+**Stash** runs at the end of `_complete_response` for
+`event.source is SessionSource.GROK` on the object that is returned to the
+adapter (`response` under `preserve_original`, otherwise the enriched
+response — so flush on a real gate mutates the canonical block and never an
+observer copy), on every Grok hook — gate hooks included — whose
+`response.context` or `response.system_message` is non-empty. Briefing when the native hook is `session_start` or
+`event.metadata` has `_session_just_materialized` or `_grok_briefing_turn`;
+turn-context otherwise. Append one component with the concatenated text, then
+clear `response.context` and `response.system_message` so
+`record_unsupported_response_fields` stays quiet. A first PreToolUse without
+UPS is both the materializing request and a gate: stash classifies its merged
+startup packet as briefing and the flush below delivers it on the same
+response; a first Stop does the same through arm 3. Under `preserve_original`
+the returned original already carries the startup packet (3.1 merges it onto
+the returned object) and the gate's own context; observer-copy enrichment is
+discarded on that path for every CLI today, and this plan does not change
+that.
 
-Then clear `response.context` so `record_unsupported_response_fields` does
-not emit `dropped_field` on every UPS.
+**Pending P2P messages** are briefing-class.
+`EventEnricher._inject_pending_messages` gains a Grok branch, reached from
+`enrich` for `_PIGGYBACK_EVENTS` even though `_hook_supports_context` is
+false on every Grok hook after 1.1: take the first
+`P2P_MAX_PER_SELECTION = 16` undelivered messages in the storage order
+(`sent_at ASC, id ASC`), render each with `render_pending_messages([message], ...)`,
+and enqueue `p2p:<message-id>` components carrying `message_ids`; do **not**
+call `mark_delivered_batch`. Enqueue dedupes against queued and claimed
+components inside the mutation, so two concurrent selectors and a
+select-after-claim both no-op. Non-Grok delivery is unchanged. Remaining
+messages are selected on later eligible hooks after acknowledgment marks the
+claimed ones delivered.
 
-Bypass stash for the two successor packets (they bind a row that is not
-just-materialized):
+**ghook Stop mapping.** `action_from_success_response` in
+`crates/ghook/src/action.rs` routes every source other than Claude, Qwen,
+and Droid through its generic branch, which turns a blocked Stop /
+SubagentStop into exit 2 plus a stderr reason and discards the JSON body —
+including `hookSpecificOutput.additionalContext`. Add a `grok` branch beside
+the Qwen one: for `stop` and `subagent_stop` emit the complete serialized
+daemon JSON on stdout with exit 0 (Grok reads `decision: "block"`,
+`continue: true`, and `additionalContext` from that body); every other Grok
+hook keeps the generic mapping. Update the existing lowercase-Stop unit case
+to expect the stdout body, and prove in `crates/ghook/tests/contract.rs`
+that the process writes and flushes `additionalContext` before the unlink
+below.
 
-- `handle_post_compact` already runs `apply_in_place_compact_context_loss`
-  and `consume_and_schedule_compact_self_continuation`. After that, arm
-  `grok_pending_briefing` with the compact continuation block.
-- `_bind_clear_successor` arms `grok_pending_briefing` with the clear
-  handoff when the successor row is bound.
+**Acknowledgment.** ghook currently removes the inbox envelope in
+`delivered_action` before `emit_action` writes stdout, and `output::stdout`
+discards write errors. Change `output::stdout` to return the write-and-flush
+`io::Result`, `emit_action` to report whether the stdout action was written
+and flushed, `delivered_action` to stop removing the file, and
+`run_gobby_owned` to remove the enqueued inbox envelope only
+after a successful emission (every CLI; the ordering is strictly safer for
+all of them). Mapping failure, stdout write/flush failure, or a crash before
+removal leaves the envelope in place. The daemon drain's already-processed
+branch (`_drain_hook_inbox_once_locked`) unlinks such leftovers today. The
+route stores the translated provider dict as the envelope's terminal
+response, so no response-metadata marker survives translation; the drain
+keys on the durable claim instead. For a leftover envelope it reads the
+session from the envelope payload and, when that session's
+`grok_pending_delivery.envelope_id` equals the envelope id, leaves the file
+for the session's ack check — with or without a processed marker (markers
+expire on their own schedule; `prune_hook_inbox` prunes markers and temp
+files only and never touches inbox envelopes). A retained ack-pending
+envelope older than `GROK_DELIVERY_RETENTION_SECONDS = 3600` is settled by
+the drain under the same `SessionVariableMutation(session_id)` advisory
+lock: push the claimed components back to the front of
+`grok_pending_briefing`, clear the delivery, and unlink the file and its
+marker together. Every other leftover is unlinked as today.
 
-**Arming is crash-safe.** Consuming a durable source marker and enqueuing
-its briefing reference must never straddle an unprotected crash window, and
-the transaction boundary is chosen per row topology because
-`_mutate_variables` is a **single-row** read-modify-write:
+On every Grok hook, `grok_pending_context.settle_delivery(handler, event)`
+runs first in `_complete_response` when `grok_pending_delivery` is set and
+its `envelope_id` differs from the current `source_event_id`: inbox file
+absent → acknowledged: run ack effects (`mark_delivered_batch` for every
+`message_ids` in the claimed components) and clear the delivery; inbox file
+present → not delivered: unlink it (the daemon now owns it), push the claimed
+components back to the front of `grok_pending_briefing`, and clear the
+delivery. Same-`envelope_id` retries are served by the route's existing
+envelope dedupe (`mark_envelope_processed` / `envelope_terminal_response`)
+and never re-enter flush. Delivery is at-least-once: a briefing may repeat
+after a ghook stdout failure, and a P2P message may repeat if the daemon dies
+between acknowledgment and `mark_delivered_batch`; neither is silently lost.
 
-- **Same-row arming** (in-process compact: source markers and the briefing
-  buffer live on the current session's variable row): the source-marker
-  take and the `enqueue_if_absent` run in one `_mutate_variables`
-  transaction, as before.
-- **Cross-row arming** (clear: predecessor state seeds the successor's
-  buffer; compact sibling-recovery: another session's row feeds the current
-  one) never pretends to span rows atomically. The source-side arming
-  writes a **generation-keyed staging record on the source row** — a
-  monotonic per-source arming generation plus the payload or durable
-  reference, written without destroying the source fields. The destination
-  side performs an idempotent **take**: `enqueue_if_absent` into its own
-  buffer keyed by (source session, arming generation) — a repeat take
-  no-ops on that key — then marks the source staging record consumed in a
-  separate retryable source-row mutation. Every write is single-row; a
-  crash between the two writes leaves either an unconsumed staging record
-  (the next hook completes the take) or an already-taken record whose
-  consume-mark retries harmlessly. The arming generation is part of the
-  briefing `component_id`, so a second compact or clear arriving while an
-  older component is queued or claimed produces a distinct component, and
-  source clearing compare-and-swaps against its own generation — an older
-  commit can never clear or re-render a newer continuation.
+**Flush** runs after settle and stash, only when the native hook is
+`pre_tool_use`, `stop`, or `subagent_stop`, on the same returned object:
 
-Where a step consumes state outside the variable domain
-(`consume_and_schedule_compact_self_continuation`), the arming writes a
-retryable `briefing_staging_pending` marker holding the durable payload
-reference **before** that consumption and clears it in the same mutation as
-the successful enqueue — a crash between consumption and enqueue leaves the
-marker, and the next hook completes staging from it. Crash-window tests
-cover the PostCompact same-row path, the predecessor→successor clear
-transfer, and the sibling→current compact recovery at each injected failure
-point, plus a second-generation arming racing an older queued/claimed
-component.
-
-**Single delivery owner.** The turn-start prompt-injection rules must not
-race this path on Grok. `inject-compact-handoff-on-prompt` (in
-`inject-compact-handoff.yaml`) and `inject-clear-handoff-on-prompt` (in
-`inject-clear-handoff.yaml`) fire on `turn_start` and clear
-`compact_handoff_inject_pending` / `clear_handoff_inject_pending` — on Grok
-that destroys the payload without delivery (UPS stdout is ignored) and would
-double-deliver against this flush after a bundle sync. Exclude Grok in both
-rules' `when` conditions; the PostCompact / clear-successor briefing arming
-above is the only Grok owner. Refresh
-`src/gobby/install/bundled_content_manifest.json` for the template change,
-prove one owner with rule-registry tests, and update
-`docs/contracts/session-boundary.md`, `docs/guides/sessions.md`, and
-`docs/guides/variables.md` from the turn-start route to the PreToolUse/Stop
-delivery contract.
-
-**Buffer contract.** Both variables hold **structured components**, never
-appended strings. Each component carries a stable `component_id`, a class
-(`briefing` or `turn_context`), its payload (or, for briefing, a stable
-reference to durable source state such as the handoff summary variable), and
-its **ack mutations** — the delivered-state flips and producer-side delivery
-marking (`mark_delivered_batch` for pending P2P messages,
-`wiki_overview_injected`, `_startup_context_injected`, compact one-shots)
-that must execute if and only if the component was actually delivered.
-Producers never mark delivery at enqueue or stash time.
-
-Both buffers are managed only through
-`SessionVariableManager._mutate_variables` (atomic read-modify-write).
-Bounds are **class-aware with exact numeric caps**, defined as named
-constants in `grok_pending_context.py`. Sizes are UTF-8 byte lengths of the
-serialized component payload; truncation and chunk boundaries always fall on
-character boundaries, never inside a multibyte sequence:
-
-- `briefing`: deduplicated by stable key (session, source one-shot,
-  activation epoch) via enqueue-if-absent; **never evicted by a cap**. The
-  source one-shot set is finite by construction, so cardinality is bounded:
-  `BRIEFING_MAX_COMPONENTS = 16` is a defensive invariant — an enqueue of a
-  17th distinct key is rejected with an error log (it signals a bug, not
-  load). **Every briefing flush fits one provider-budget response — there
-  are no continuation parts.** A briefing whose rendered payload exceeds
-  the provider delivery budget for the target channel degrades through the
-  existing `truncate_context_for_adapter` persisted-context mechanism: the
-  response carries the in-budget head plus the stable persisted-context
-  reference to the complete payload, in that single response. Flush renders
-  both PreToolUse `reason` and Stop `additionalContext` through that same
-  budget-and-degrade helper. The component commits on that one response —
-  deny-once (Locked decision 4) holds for every size class, and no briefing
-  content is lost: the oversize remainder stays retrievable through its
-  persisted reference.
-- `turn_context`: bounded drop-oldest (debug log) at
-  `TURN_CONTEXT_MAX_COMPONENTS = 32` components and
-  `TURN_CONTEXT_MAX_TOTAL_BYTES = 16384` serialized bytes. A single
-  incoming component over `TURN_CONTEXT_MAX_COMPONENT_BYTES = 8192` is
-  rejected at enqueue (debug log) rather than evicting older components.
-
-Overflow tests cover startup, compact, and clear briefings, the
-single-component-oversize case for each class, multibyte boundary
-truncation, and the oversize-briefing single-response degradation
-(in-budget head plus persisted reference, exactly one denial, commit on
-that response).
-
-**Claim and commit.** Flush claims components inside one atomic mutation:
-read, select what fits the Grok reason/`additionalContext` truncation
-budget, stamp the claimed set with a fresh `claim_id` **persisted with
-owner/request id, a claimed-at timestamp, and a lease deadline**, and write
-back the remainder.
-
-*Lease.* The lease deadline is a persisted UTC timestamp computed at claim
-time as the **effective outer hook-route timeout read from live config
-(so overrides propagate) plus `GROK_CLAIM_LEASE_MARGIN_SECONDS = 30`** — a
-named constant in `grok_pending_context.py`. The lease is therefore
-strictly longer than every legitimate in-flight response and still bounds
-daemon-death recovery. A claim whose lease has expired — daemon death
-after claim, a stranded executor, any abandoned in-flight request — is
-requeued by the next flush's stale-takeover check, so no payload or
-acknowledgment is ever stranded. Controlled-clock tests cover just-before
-and just-after expiry, timeout release, recovery across daemon restart,
-and a timeout-config override changing the computed lease.
-
-*Live claim.* A second gating hook arriving while a claim is live
-(unexpired, uncommitted) must not treat in-flight work as empty work: its
-PreToolUse returns a **retriable non-payload deny** ("briefing delivery in
-flight — retry"), never an allow, so no tool crosses before the owner
-commits, releases, or expires; a racing Stop follows its normal per-class
-arm (it never blocks solely to wait). Loser behavior and owner-timeout
-takeover are tested separately from the single payload-bearing denial.
-
-*Commit.* The claim token rides the canonical response through adapter
-translation, but the executor worker **never commits**:
-`ACPHookAdapter.handle_native` runs inside the worker thread and cannot
-know whether the route's outer `asyncio.wait_for` returned in budget. The
-worker returns the translated payload plus the opaque claim token, and
-**commit runs only in the async hook route** (`_run_adapter_hook`'s
-caller), after the await completed within budget — the last boundary the
-daemon can prove before emission; commit is honest about what remains
-(response emission) and covers it with replay. Commit is a
-compare-and-swap on `claim_id` executed in **one `_mutate_variables`
-transaction** that (a) runs the claimed components' ack mutations, (b)
-removes them from the buffer, writing their identities to the per-epoch
-committed set, and (c) persists the **exact translated payload as a replay
-envelope keyed by the hook request/envelope id**. The route then emits the
-response and marks the envelope emitted in a follow-up mutation. A crash
-or disconnect between commit and emission leaves an unemitted envelope:
-the next eligible Grok request for that session **replays that envelope
-verbatim before selecting new components**, so delivered markers never
-flip for content Grok can no longer obtain — emission is at-least-once,
-ack mutations exactly-once. A request without a durable request id
-releases the claim instead of committing (retryable, no envelope). If the
-commit CAS loses (lease expired and a takeover requeued the components),
-the route **discards its stale payload** and returns the safe retriable
-fallback — content is never returned to Grok unless its commit succeeded.
-On translation error, or when the route times out and returns its fallback
-while the executor thread is still running, the claim is atomically
-released (components requeued, `claim_id` invalidated) — a late worker
-cannot commit at all (commit lives in the route), and a near-boundary race
-resolves to the route's single decision: in-budget result → commit;
-timeout fallback → release. Focused failure tests cover translation error,
-executor timeout with a late worker, requeue-then-redeliver, lease-expiry
-takeover after simulated daemon death, crash-after-commit-before-emission
-replay, and CAS-loss payload suppression.
-
-**Pending P2P messages.** `EventEnricher` selects delivery candidates only
-from BEFORE_AGENT, BEFORE_TOOL, and AFTER_TOOL, so 1.1's channel flip alone
-would strand queued Grok messages. This leaf extends
-`src/gobby/hooks/event_enrichment.py`: for Grok, pending messages stay
-unclaimed until they ride an actual delivery — enqueued as components whose
-ack mutation is the `mark_delivered_batch` call — included in a briefing
-PreToolUse deny or an already-blocking Stop, and marked delivered only by
-that component's commit. Because selection is non-claiming, two concurrent
-eligible hooks can read the same `delivered_at IS NULL` rows: message
-enqueue is therefore an **atomic upsert keyed by a stable message-derived
-`component_id`** (the message UUID), so the second selector no-ops against
-the existing component whether it is queued or claimed, and a message can
-never ride two denials or two blocked Stops. After commit, its delivered
-marking removes it from selection. A pending message never forces an
-allowing Stop to carry context (the continuation loop this section
-forbids). Tests cover allowance (message stays queued), gated delivery,
-retry after a failed flush, commit-time delivered accounting, and two
-concurrent hooks selecting the same undelivered row yielding exactly one
-component and one delivery.
-
-**Canonical delivery response.** The canonical response is the exact object
-returned to the adapter. Under `preserve_original=True` (workflow and
-webhook gates), enrichment writes to an observer copy and the original
-returns untouched — so **stash harvests context from the enriched copy into
-the buffers**, and **flush mutates only the canonical original**.
-Delivery-relevant content always travels through the buffers; nothing
-depends on enrichment output surviving on the returned object.
-Observer/broadcast copies derive from the canonical response after flush.
-Flushing an observer copy never reaches Grok; the preserve_original tests
-must prove both the harvest and the flush target.
-
-**First-activity gating events.** A first PreToolUse (or Stop) with no prior
-UPS materializes on that same event. Startup-briefing staging is an
-activation step (decision 7): every racer performs the atomic
-enqueue-if-absent of the single startup-briefing component keyed by session
-and activation epoch **before** its rules or tool handling proceed, and the
-flush step claims that single key atomically — so the same PreToolUse
-deny-once delivers the briefing on the no-UPS path, an interleaved
-UPS/PreToolUse schedule stages exactly one component, and no schedule
-produces two denials or zero briefings.
-
-Flush (same module, still from `_complete_response`):
-
-1. **PreToolUse with non-empty `grok_pending_briefing`:** deny once; `reason`
-   is the briefing plus "Retry the same tool call." Claim the briefing
-   components. Do not consume turn-context.
+1. **PreToolUse with non-empty `grok_pending_briefing`:** deny once —
+   `decision = "deny"`, `reason = <briefing text> + "\n\nRetry the same tool
+   call."`; claim the briefing components into `grok_pending_delivery`
+   (removing them from the buffer). Do not consume turn-context.
 2. **PreToolUse deny from a real gate:** prepend leftover briefing (then
-   turn-context if it fits) to `reason`; claim exactly what was prepended.
-3. **Stop / SubagentStop with leftover briefing and no prior PreToolUse
-   flush** (text-only turn): `decision: "block"`, `additionalContext` =
-   briefing, continue once, claim the briefing components.
+   turn-context if it fits) to `reason`; claim the briefing, consume the
+   turn-context.
+3. **Stop / SubagentStop with leftover briefing** (text-only turn):
+   `decision = "block"`, `context = briefing (+ turn-context)`; claim the
+   briefing, consume the turn-context. 1.1 translates that to
+   `decision: "block"`, `continue: true`, `additionalContext`. Grok continues
+   once; the next Stop finds the buffer empty and allows.
 4. **Stop / SubagentStop with only turn-context:** if a real stop-gate
-   already blocked, concatenate turn-context onto `reason` /
-   `additionalContext` and claim it. If Stop is allowing, **drop**
-   turn-context (debug log). Never block Stop solely to deliver
+   already blocked, append turn-context to `context` and consume it. If Stop
+   is allowing, **drop** it (debug log). Never block Stop solely to deliver
    turn-context.
 
-In every arm, removing claimed components and executing their ack mutations
-(`wiki_overview_injected`, `_startup_context_injected`, compact one-shots,
-message delivered marking) happen at **commit** (Claim and commit above),
-never at claim and never at stash.
+**Claim guard.** A claim needs a durable envelope identity: flush claims only
+when the request carries `source_event_id` (the inbox envelope id) and
+`envelope_terminal_response(source_event_id)` is still absent at claim time.
+Without an envelope id (ghook's enqueue-failure direct POST) arms 1–3 neither
+claim nor deliver briefing, and a real gate passes through unchanged. When
+the route has already stored a terminal response for this envelope — the
+adapter timed out; `asyncio.wait_for` cannot stop the executor thread — the
+late worker leaves the components queued instead of claiming them. In both
+cases the next envelope-backed gate delivers the briefing; no retry response,
+deadline, or claim record is added.
 
-Reserve `grok_pending_briefing` and `grok_pending_turn_context` in
-`src/gobby/workflows/reserved_variables.py`.
+Oversize content goes through the shared `truncate_context_for_adapter` in
+the adapter, the same ceiling every CLI's context has today; the compact
+continuation already self-limits by pointing at `get_handoff_context` when
+the summary exceeds the inline budget. Truncation never blocks the claim:
+deny-once holds for every size.
+
+**Docs.** Update `docs/contracts/session-boundary.md`,
+`docs/guides/sessions.md`, and `docs/guides/variables.md`: Grok context is
+delivered through PreToolUse deny / Stop block, the three buffer variables are
+reserved, and acknowledgment is ghook's post-stdout envelope removal. Update
+the two ghook guides, `docs/guides/ghook-user-guide.md` and
+`docs/guides/ghook-development-guide.md`, whose flow diagrams and cleanup
+text say a daemon 2xx deletes the inbox file before provider output: the
+order becomes 2xx → write and flush the provider action → remove the
+envelope, and mapping or stdout failure retains it.
 
 **Acceptance:**
 
-- 4.1.1 - Grok UPS on a just-materialized session writes `grok_pending_briefing`; later Grok UPS context appends `grok_pending_turn_context`; neither returns additionalContext. test: `tests/hooks/test_grok_pending_context.py`.
-- 4.1.2 - First Grok PreToolUse after briefing denies once with that reason; delivered-state vars flip only then. test: `tests/hooks/test_grok_pending_context.py`.
+- 4.1.1 - First-prompt, binding-SessionStart, and continuation-prompt context on Grok is stashed as briefing while ordinary UPS context is stashed as turn-context; neither returns additionalContext or systemMessage. test: `tests/hooks/test_grok_pending_context.py`.
+- 4.1.2 - First Grok PreToolUse after a briefing stash denies once with that reason and claims the components; the identical PreToolUse after ghook's inbox-file removal allows absent another gate. test: `tests/hooks/test_grok_pending_context.py`.
 - 4.1.3 - Turn-context concatenates onto an already-blocking Stop and is dropped (debug-logged) when Stop allows; Grok Stop with only turn-context and no stop-gate allows the stop. test: `tests/hooks/test_grok_pending_context.py`.
-- 4.1.4 - Grok PostCompact and clear-successor bind arm briefing-class continuation. symbol: `MiscEventHandlerMixin.handle_post_compact`. symbol: `_bind_clear_successor`.
+- 4.1.4 - On Grok, the `inject-compact-handoff-on-prompt` / `inject-clear-handoff-on-prompt` render is captured as a briefing component on the continuation prompt and delivered by the next PreToolUse deny; the rule templates are unchanged. test: `tests/hooks/test_hook_manager.py`.
 - 4.1.5 - Grok wire envelopes for flush outputs (deny reason, Stop block + additionalContext) are asserted at the adapter layer only. test: `tests/adapters/test_acp_hook_translation.py`.
-- 4.1.6 - On Grok, `inject-compact-handoff-on-prompt` and `inject-clear-handoff-on-prompt` do not fire on turn_start and the pending flags survive until confirmed flush; non-Grok CLIs keep the turn_start route. test: `tests/workflows/test_context_handoff_rules.py`.
-- 4.1.7 - Briefing and turn-context merge into workflow-block and webhook-block responses under `preserve_original=True`; the adapter-visible response carries them. test: `tests/hooks/test_grok_pending_context.py`.
-- 4.1.8 - Buffer bounds enforce the named numeric caps: turn-context is drop-oldest at 32 components / 16384 serialized UTF-8 bytes and rejects a single component over 8192 bytes at enqueue; briefing components are deduplicated by stable key, never cap-evicted, and an oversize briefing degrades at flush to an in-budget head plus its persisted-context reference within one response; enqueue/flush interleavings lose nothing. test: `tests/hooks/test_grok_pending_context.py`.
-- 4.1.9 - A no-UPS first PreToolUse stages the startup packet as briefing before flush and deny-once delivers it on that same event. test: `tests/hooks/test_grok_pending_context.py`.
-- 4.1.10 - Regenerated bundled-content manifest exactly matches the committed shared-template tree. test: `tests/install/test_bundled_content_manifest.py::test_bundled_content_manifest_matches_tree`.
-- 4.1.11 - Ack mutations run only at the route-owned commit: claimed components requeue on translation error or executor timeout, a worker result arriving after the route's timeout fallback can never commit (commit lives in the async route and the released claim fails compare-and-swap), and no delivered flag flips for a response Grok never saw. test: `tests/hooks/test_grok_pending_context.py`.
-- 4.1.12 - Grok pending messages stay queued until a briefing deny or already-blocking Stop includes them; `mark_delivered_batch` runs only inside a delivered component's commit; an allowing Stop never carries one. test: `tests/hooks/test_pending_message_provider_contracts.py`.
-- 4.1.13 - An interleaved first UPS and PreToolUse (UPS creates the row first, PreToolUse completes activation first, UPS stashes last) stages exactly one startup-briefing component and yields exactly one deny-once delivery. test: `tests/hooks/test_grok_pending_context.py`.
-- 4.1.14 - Grok staged-memory IDs remain retryable through stash and drop and are recorded only by confirmed component commit. test: `tests/hooks/test_grok_pending_context.py`.
-- 4.1.15 - Agent, wiki, profile, and startup one-shot markers remain unset through Grok composition and stash and flip only on confirmed component commit. test: `tests/hooks/test_grok_pending_context.py`.
-- 4.1.16 - EventEnricher preserves non-Grok inline delivery while Grok enqueues without acknowledgment across formatting and retry failures. test: `tests/hooks/test_event_enrichment.py`.
-- 4.1.17 - The real route timeout returns fallback, releases the exact Grok claim, and a late worker result cannot commit or exceed worker bounds. test: `tests/servers/test_mcp_routes.py`.
-- 4.1.18 - Claims persist owner, timestamp, and a UTC lease deadline computed as the live effective route timeout plus `GROK_CLAIM_LEASE_MARGIN_SECONDS`; a claim orphaned by simulated daemon death is requeued by stale takeover only after lease expiry under a controlled clock (just-before expiry holds, just-after requeues, a timeout override changes the computed lease); commit executes only in the async route after an in-budget await, and a route whose commit CAS loses discards its payload and returns the retriable fallback. test: `tests/hooks/test_grok_pending_context.py`.
-- 4.1.19 - Two concurrent eligible hooks selecting the same undelivered P2P row upsert exactly one component by message-derived component_id and produce exactly one delivery. test: `tests/hooks/test_pending_message_provider_contracts.py`.
-- 4.1.20 - Compact and clear arming survive injected crashes at every boundary: same-row arming completes or retries in one transaction; cross-row transfers (predecessor→successor clear, sibling→current compact recovery) complete through the generation-keyed staging record and idempotent take with no loss or duplication; a second-generation arming racing an older queued or claimed component yields distinct components and generation-scoped source clearing. test: `tests/hooks/test_misc_handlers.py`.
-- 4.1.21 - An oversize briefing delivers in exactly one response — in-budget head plus persisted-context reference through the shared budget-and-degrade helper for both PreToolUse reason and Stop additionalContext — with exactly one denial and ack mutations on that single commit. test: `tests/hooks/test_grok_pending_context.py`.
-- 4.1.22 - Commit atomically persists the exact translated payload as a replay envelope keyed by the hook request id; a simulated crash between commit and emission replays that envelope verbatim on the next eligible request before new selection, a crash after emission marks it emitted without re-delivery, and a request without a durable id releases instead of committing. test: `tests/hooks/test_grok_pending_context.py`.
-- 4.1.23 - A second PreToolUse arriving during a live unexpired claim returns a retriable non-payload deny and never allows its tool; after the owner commits or releases, the next PreToolUse proceeds normally; owner-timeout takeover is tested separately from the payload-bearing denial. test: `tests/hooks/test_grok_pending_context.py`.
-- 4.1.24 - A stale racer reaching its enqueue step after the startup component committed finds its identity in the per-epoch committed set and does not re-enqueue: the commit-before-late-stash interleaving yields no second briefing denial. test: `tests/hooks/test_grok_pending_context.py`.
+- 4.1.6 - Briefing and turn-context flush onto workflow-block and webhook-block responses under `preserve_original=True`, on the object returned to the adapter. test: `tests/hooks/test_hook_manager.py`.
+- 4.1.7 - Buffer bounds enforce the named caps: turn-context is drop-oldest at 32 components / 16384 bytes and rejects a single component over 8192 bytes; briefing components are deduplicated by id and never cap-evicted; every mutation is one `_mutate_variables` call. test: `tests/hooks/test_grok_pending_context.py`.
+- 4.1.8 - A no-UPS first PreToolUse stashes the startup packet as briefing and deny-once delivers it on that same response. test: `tests/hooks/test_grok_pending_context.py`.
+- 4.1.9 - Grok pending P2P messages enqueue as `p2p:<id>` components without `mark_delivered_batch`, dedupe across concurrent selectors and select-after-claim, are bounded per selection, and are marked delivered only in the acknowledgment; non-Grok inline delivery is unchanged. test: `tests/hooks/test_event_enrichment.py`. test: `tests/hooks/test_pending_message_provider_contracts.py`.
+- 4.1.10 - Acknowledgment on the next hook with a different envelope id treats an absent inbox file as delivered (ack effects run, delivery cleared) and a present file as undelivered (file unlinked, components requeued at the front, delivered again on the next gate). test: `tests/hooks/test_grok_pending_context.py`.
+- 4.1.11 - ghook removes the inbox envelope only after the mapped provider action was written and flushed to stdout; mapping failure or stdout failure leaves the envelope in place. test: `crates/ghook/tests/contract.rs`.
+- 4.1.12 - The daemon drain leaves a leftover envelope whose id equals its session's `grok_pending_delivery.envelope_id` in place with or without a processed marker, settles it (components requeued at the front, delivery cleared, file and marker unlinked together) once it is older than `GROK_DELIVERY_RETENTION_SECONDS`, and still unlinks other processed leftovers. test: `tests/hooks/test_inbox.py`.
+- 4.1.13 - `grok_pending_briefing`, `grok_pending_turn_context`, and `grok_pending_delivery` are reserved; `is_reserved_workflow_variable` is true for all three. test: `tests/hooks/test_grok_pending_context.py`.
+- 4.1.14 - Session-boundary contract, sessions guide, and variables guide document Grok PreToolUse/Stop delivery, the reserved buffers, and post-stdout acknowledgment. file: `docs/contracts/session-boundary.md`, `docs/guides/sessions.md`, `docs/guides/variables.md`.
+- 4.1.15 - Grok Stop and SubagentStop block responses retain the complete provider JSON on stdout with success exit behavior, and ghook unlinks only after write and flush. test: `crates/ghook/tests/contract.rs`.
+- 4.1.16 - The ghook user guide documents provider-action write and flush before inbox-envelope removal, with mapping or stdout failure retaining the file. file: `docs/guides/ghook-user-guide.md`.
+- 4.1.17 - The ghook development guide documents the same post-stdout acknowledgment and retained-file recovery order. file: `docs/guides/ghook-development-guide.md`.
+- 4.1.18 - Flush without `source_event_id`, or for an envelope whose terminal response is already stored, neither claims nor delivers briefing; the next envelope-backed gate delivers it. test: `tests/hooks/test_grok_pending_context.py`.
 
 ## P5: Contract tests and smoke
 `kind: framing`
@@ -1208,7 +864,7 @@ document the live check.
 
 Targets:
 - `tests/e2e/test_grok_session_deferral.py`
-- `tests/e2e/conftest.py::*` — scope-reason: Grok UPS mapping plus pre_tool_use, stop, and post_compact simulator helpers change across CLIEventSimulator
+- `tests/e2e/conftest.py::*` — scope-reason: Grok UPS mapping plus pre_tool_use and stop simulator helpers change across CLIEventSimulator
 - `tests/adapters/test_acp_hook_translation.py::*` — scope-reason: Grok flush unit cases land across the translation test classes
 - `tests/adapters/test_capabilities.py::*` — scope-reason: capability contract cases extend the file
 - `tests/hooks/test_session_events_coverage.py::*` — scope-reason: deferral assertions extend the session-start test classes
@@ -1220,7 +876,7 @@ Targets:
 
 Add `"grok": "user_prompt_submit"` to
 `CLIEventSimulator.user_prompt_submit`'s `hook_type_by_source` (it is missing
-today; smoke cannot speak Grok UPS without it). Add a Grok `pre_tool_use` /
+today; smoke cannot speak Grok UPS without it). Add Grok `pre_tool_use` /
 `stop` helpers if not already present on the simulator.
 
 New isolated-daemon test `tests/e2e/test_grok_session_deferral.py` (marker
@@ -1232,28 +888,37 @@ New isolated-daemon test `tests/e2e/test_grok_session_deferral.py` (marker
 2. Repeat with `cli_source="claude"` — same: no row.
 3. `cli_events.user_prompt_submit(..., source="claude", prompt="hello")` →
    exactly one row; response `hookSpecificOutput.additionalContext` (or
-   Claude equivalent) is non-empty (session briefing).
+   Claude equivalent) is non-empty (startup packet).
 4. `cli_events.user_prompt_submit(..., source="grok", prompt="hello")` on a
    fresh external_id → one row; response has **no** `additionalContext`;
    session variable `grok_pending_briefing` is non-empty.
 5. Grok `pre_tool_use` (`read_file` / `gobby__list_tools`) → `decision: deny`
-   and `reason` contains the briefing; second identical PreToolUse is allow
-   (briefing consumed) unless another gate fires.
+   and `reason` contains the briefing; `grok_pending_delivery` holds that
+   envelope id. With the inbox file for that envelope absent, the next Grok
+   hook acknowledges and a second identical PreToolUse is allow unless
+   another gate fires. With the inbox file present (simulated ghook stdout
+   failure), the next Grok hook unlinks it and requeues, and the next
+   PreToolUse denies again with the same briefing.
 6. Grok `stop` with a real gate (`require-task-close` / `tool_block_pending`)
    → `decision: "block"` (not `"deny"`) and `continue: true`. Grok `stop`
-   with only leftover turn-context and no gate → allow (no continuation loop).
+   on a text-only turn with leftover briefing and no gate →
+   `decision: "block"`, `continue: true`, and
+   `hookSpecificOutput.additionalContext` carrying the briefing, exactly
+   once: the following `stop` allows. Grok `stop` with only leftover
+   turn-context and no gate → allow (no continuation loop).
 7. Compact/pre-created: SessionStart with `session_start_source="compact"` on
-   an existing row does not create a second row. Grok `post_compact` on an
-   existing row arms `grok_pending_briefing`; next PreToolUse denies once
-   with the continuation block.
-8. After a successful briefing flush, `wiki_overview_injected` /
-   `_startup_context_injected` are true; after stash-only they are still
-   false.
+   an existing row does not create a second row. With
+   `compact_handoff_inject_pending` set on an existing Grok row (the
+   `compact_self` marker), the next Grok UPS captures the rendered
+   continuation as briefing and the next PreToolUse denies once with it.
+8. After acknowledgment, `grok_pending_delivery` is cleared and the P2P
+   messages included in that briefing are marked delivered; before
+   acknowledgment they are not.
 
 Keep it one file, no full pytest. Command:
 
 ```bash
-GOBBY_TEST_PROTECT=1 uv run pytest tests/e2e/test_grok_session_deferral.py tests/adapters/test_acp_hook_translation.py tests/adapters/test_capabilities.py tests/hooks/test_session_events_coverage.py -q
+GOBBY_TEST_PROTECT=1 uv run pytest tests/e2e/test_grok_session_deferral.py tests/adapters/test_acp_hook_translation.py tests/adapters/test_capabilities.py tests/hooks/test_session_events_coverage.py tests/hooks/test_grok_pending_context.py tests/hooks/test_pending_message_provider_contracts.py -q
 ```
 
 Live operator check (not CI): `grok` in this repo, `gobby sessions list`
@@ -1265,10 +930,11 @@ unchanged.
 
 - 5.1.1 - Smoke file asserts Grok/Claude SessionStart does not insert a sessions row. test: `tests/e2e/test_grok_session_deferral.py`.
 - 5.1.2 - Simulator maps grok UPS to `user_prompt_submit`. symbol: `CLIEventSimulator.user_prompt_submit`.
-- 5.1.3 - Smoke asserts Grok first PreToolUse deny carries briefing, Stop `block` is only for real gates, and PostCompact arms briefing. test: `tests/e2e/test_grok_session_deferral.py`.
+- 5.1.3 - Smoke asserts Grok first PreToolUse deny carries briefing, Stop `block` fires for a real gate or for leftover briefing (once, with `additionalContext`; the next Stop allows) and never for turn-context alone, and the compact continuation prompt arms a briefing delivered by the next PreToolUse. test: `tests/e2e/test_grok_session_deferral.py`.
 - 5.1.4 - Claude first prompt returns startup context while Grok UPS returns none and leaves a pending briefing. test: `tests/e2e/test_grok_session_deferral.py`.
-- 5.1.5 - After the one briefing denial, a second PreToolUse allows absent another gate and Stop with only turn-context also allows. test: `tests/e2e/test_grok_session_deferral.py`.
-- 5.1.6 - Compact binding creates no duplicate row and delivered-state markers remain false before flush then become true after commit. test: `tests/e2e/test_grok_session_deferral.py`.
+- 5.1.5 - With the inbox envelope absent the next hook acknowledges and a second PreToolUse allows absent another gate; with it present the briefing is requeued and the next PreToolUse denies again; Stop with only turn-context allows. test: `tests/e2e/test_grok_session_deferral.py`.
+- 5.1.6 - Compact binding creates no duplicate row; `grok_pending_delivery` and P2P delivered markers change only at acknowledgment. test: `tests/e2e/test_grok_session_deferral.py`.
+- 5.1.7 - All four existing CLIEventSimulator SessionStart consumer suites pass after their row and context assumptions move to first activity. test: `GOBBY_TEST_PROTECT=1 uv run pytest tests/e2e/test_full_workflow.py tests/e2e/test_session_tracking.py tests/e2e/test_stateless_ambient_session.py tests/e2e/test_worktrees_e2e.py -q`.
 
 ## V2 End-to-end verification
 `kind: verification`
@@ -1280,26 +946,22 @@ After all leaves:
 2. Unit: startup SessionStart does not register; first UPS or first
    PreToolUse does; activation is outside the lookup lock.
 3. Smoke: `GOBBY_TEST_PROTECT=1 uv run pytest tests/e2e/test_grok_session_deferral.py -q`
-   against an isolated daemon (includes Stop-loop guard and PostCompact
-   briefing).
-4. Focused: session coverage + hook manager tests that previously assumed
-   SessionStart registration.
+   against an isolated daemon (includes Stop-loop guard and the
+   continuation-prompt briefing).
+4. Focused: session coverage + hook manager tests, plus all four existing
+   CLIEventSimulator SessionStart consumer suites after their row/context
+   assumptions move to first activity.
 5. Optional live: idle `grok` then first prompt, confirm session list timing
    and one-shot briefing deny; `compact_self` then first tool shows the
-   continuation block in a deny reason, not via `wait_for_summary`.
-6. Verify both phases of the coordinator-owned collision cleanup
-   (Constraints, Collision section). Phase A completed before expansion
-   began: #20635 still open with its `deferred-from` provenance and #20724
-   parentage, #20727/#20733–#20735 closed `obsolete`, #20724's blocked-by
-   on #20727 dropped, compact-summary-fidelity §4 rewritten off
-   `wait_for_summary` and §3 annotated superseded-pending-delivery with
-   `task_ref` unmoved, with `update_plan_hash` + `validate_plan` clean
-   after each amendment. Phase B completed before the `gobby build`
-   automation opt-in: the epic created through the automation-disabled
-   expansion path, #20635 blocked-by that epic, `validate_plan` clean, and
-   only then `gobby build '#<epic>'`. #20635 closes
-   `completed`/`already_implemented` only when the epic delivers. #20726
-   untouched.
+   continuation block in a deny reason.
+6. Verify the collision record (Collision section) before expansion:
+   `uv run gobby plans validate .gobby/plans/compact-summary-fidelity.md`
+   passes in base and expansion modes at hash `85d0903a…`, its DB-backed
+   coverage reports every remaining row covered and none invalid,
+   #20727 / #20733–#20735 are closed `obsolete`, #20635 is closed
+   `duplicate`, #20726 is untouched, and the companion ledger's
+   `root_task_ref` names the paused root epic (no `SEALED-BY-COORDINATOR`
+   placeholder remains).
 
 ## V1 Plan Changelog
 `kind: verification`
@@ -1443,3 +1105,434 @@ After all leaves:
 - state at handoff: round-5 rejection checkpoint appended and finalized on evidence 4e7529b1-eea3-4951-a142-cde57189dde1; F08 typed repairs applied (plan_hash ceb2655edfff5e27db36c6fc817272a28e6d08eaa3ae8863a925213d2c3a67d8 before the golden-target form fix); base validation clean.
 - unrepaired accepted findings: GHDM-R5-F01 through F07 and F09 through F16 (15 prose findings). Their fixes are recorded verbatim in the round-5 fence; several embed design forks reserved for the user or a designated decision authority (F06 deadline budgets, F09 helper ownership, F11 replay-compatibility strategy, F12 delivery-guarantee scoping, F13 relocation vs API refactor, F14 tombstone bounding, F15 typed-boundary choice).
 - next step: course-correction/replanning with fork resolution outside the adversary loop, per the reviewer-authored-candidate protocol tracked in task #20881. No further adversary rounds on this artifact without a fresh user directive.
+
+**Round 6** `kind: verification`
+
+- reviewer_run: 2c1024d5-207a-4612-b722-710bc3678df3
+- reviewer_session: 7ed2c179-0e3a-4f56-9eaa-a2ce919600d6
+- verdict: needs_review
+- findings:
+- GHDM-R6-F01/blocking: required companion `.coverage-ledger.yaml` bootstrap ledger is absent; Phase B expansion lacks its reviewed-parity precondition. Vote: accepted — every sibling implementation plan ships one; file missing on disk.
+- GHDM-R6-F02/blocking: #20635's title still names the superseded MCP-result design after the Phase A criteria migration. Vote: accepted — title joins the persisted readback comparison.
+- GHDM-R6-F03/blocking: Phase A removes the old blocked-by edges and closes their owners before Phase B creates the replacement epic; a crash between phases leaves the carrier with no durable prerequisite. Vote: accepted — create and attach the paused epic before removing old edges.
+- GHDM-R6-F04/blocking: coverage generation failing after `update_plan_hash` commits the new hash leaves the registered plan paired with stale coverage, and the retry skips generation on an unchanged hash; retirements must follow a verified sync checkpoint. Vote: accepted.
+- GHDM-R6-F05/blocking: three required §4.1 contract/guide rewrites have no acceptance item among 4.1.1–4.1.26. Vote: accepted — typed repair supplied.
+- GHDM-R6-F06/blocking: ghook deletes the inbox envelope on 2xx mapping failure and, on success, before provider-stdout emission — so file-absence-as-ack can commit deferred mutations for a denial Grok never received. Vote: accepted — refines the ratified F12 ack (deletion moves after a successful provider-stdout write/flush; the inbox-file mechanism itself stands).
+- GHDM-R6-F07/blocking: migration 405 already exists in committed assets (live head 407); `405_pipeline_execution_idempotency_key.sql` cannot land as written. Vote: accepted — renumber to the next free head at execution (currently 408) and sweep every derived carrier.
+- GHDM-R6-F08/blocking: §4.1's one-transaction P2P invariant lacks a connection-aware `SessionVariableManager._mutate_variables` seam; the state manager always opens its own transaction. Vote: accepted — typed repairs supplied.
+- GHDM-R6-F09/blocking: `compact_continuation.py` is already 952 lines and cannot absorb the four-operation refactor under the 1,000-line ceiling. Vote: accepted — support-module split target required.
+- GHDM-R6-F10/blocking: compatible different-class replay never refits canonical content through `fit_grok_briefing_response` for the receiving class's serialization budget. Vote: accepted — refines the ratified F11 retranslation.
+- GHDM-R6-F11/blocking: the four-operation continuation refactor omits the existing continuation-prompt scheduling side effect from the crash table. Vote: accepted.
+- GHDM-R6-F12/blocking: an `adapter_timeout` override below 15 seconds cancels the route before the copied gate's reserve boundary, escaping the typed short-circuit and takeover fence. Vote: accepted — refines the ratified F06 deadline (gate boundary = lesser of the 15-second aggregate deadline and remaining outer budget minus the reserve).
+- resolution_notes: All 12 findings accepted. 9 of 12 are fixer-induced by round-5 repairs; F01/F05 are coverage gaps and F07 is environment drift (schema head advanced through 407 after the plan pinned 405). None reverse the four user-ratified round-5 forks — F06/F10/F12 refine them inside their ratified mechanisms. Repairs delegated to a second reviewer-authored candidate sitting (typed F05/F08 entries verbatim in the candidate); the deterministic gate (base + expansion validate) reruns on the merged canonical before round 7. F01's ledger file is coordinator-created from the candidate's enumeration once the repaired plan bytes seal.
+
+```json plan-review-round
+{"evidence_id":"d73dd2e1-da6a-4520-998a-6ef6bb31b926","plan_hash":"c0c827f06d1c0c8eff1ec68ae2e0b847b4218aacfdd0e84d79b640ebfea47936","round_number":6,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"2e64ff494e94e9561950ebd2c61af6463a04dd7ef187b67c2ce72c29dd697a58","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":2,"emitted_findings":12,"total":14},"evidence_id":"d73dd2e1-da6a-4520-998a-6ef6bb31b926","lanes":[{"candidate_count":5,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":4,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":5,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":5,"manifest_digest":"2f6f8d46f980b172de92b273669d598767be42a255c9b3d877654f8c0138056e","status":"valid"},"source_digest":"003169ff0fead9cd1a44c2ae6c63d26dc9a03ba39643f6f888f01c13a61e9658","version":1},"findings":[{"category":"missing-requirement","check_key":"requirement-owner","description":"The required `.gobby/plans/grok-hook-deferred-materialization.coverage-ledger.yaml` is absent. Phase B binds and expands using only the managed coverage artifact, so expansion lacks the separately required reviewed bootstrap ledger.","finding_id":"GHDM-R6-F01","fix":"Add the companion coverage ledger with Plan ID/hash, all 73 acceptance items, and the five expected leaves; include it in the next immutable review snapshot and require its parity before Phase B expansion.","location":"Plan bootstrap / Phase B expansion precondition","prevention":"Before approving any new epic plan, verify `<plan>.coverage-ledger.yaml` exists, matches the sealed plan hash, enumerates every acceptance item, and maps every expected leaf.","principle":"Every new implementation epic must ship the adversary-reviewed bootstrap coverage ledger required by the plan-coverage contract.","root_cause":"The plan treats the managed DB-backed coverage manifest created during binding as if it also satisfied the separate companion-ledger requirement.","section_id":"5.1","severity":"blocking"},{"category":"traceability","causal_finding_id":"GHDM-R5-F02","causal_section_ids":["Collision with compact-summary-fidelity (#20724)","V2"],"check_key":"requirement-owner","description":"#20635 remains titled “Give Grok a real context delivery channel … via MCP results,” while this plan makes MCP-result delivery a non-goal and eventually closes that carrier as completed/already_implemented.","finding_id":"GHDM-R6-F02","fix":"Update #20635's title in the same Phase A mutation to name PreToolUse denial and Stop/SubagentStop delivery, then include title in the persisted readback comparison.","introduced_in_round":5,"location":"Collision cleanup / Phase A step 1 carrier migration","prevention":"When a deferral changes delivery architecture, compare title, description, criteria, artifacts, provenance, parentage, and dependency edges in one readback checklist.","principle":"A migrated deferred carrier's persisted identity and criteria must describe one coherent delivery contract.","root_cause":"The repair migrated #20635's description and validation criteria while leaving its title on the superseded MCP-result design.","section_id":"Collision with compact-summary-fidelity (#20724)","severity":"blocking"},{"category":"bad-sequencing","causal_finding_id":"GHDM-R5-F01","causal_section_ids":["Collision with compact-summary-fidelity (#20724)","V2"],"check_key":"atomic-leaf-cutover","description":"Phase A removes #20635's edges to #20733–#20735 and closes those owners before Phase B creates the replacement epic and attaches it. A crash between phases leaves the carrier open with no durable implementation prerequisite.","finding_id":"GHDM-R6-F03","fix":"Create and read back the paused replacement epic immediately after approval; add #20635's blocked-by edge to it before removing old edges or closing obsolete tasks. Bind and expand the already-paused epic after Phase A synchronization.","introduced_in_round":5,"location":"Collision cleanup / boundary between Phase A steps 2–3 and Phase B steps 1–4","prevention":"For ownership migrations, create and verify the replacement owner and attach its dependency before removing the final old owner edge.","principle":"A deferred external prerequisite must remain represented by a durable blocked-by edge throughout a resumable migration.","root_cause":"The replacement epic is created only after Phase A removes every old #20635 blocker.","section_id":"Collision with compact-summary-fidelity (#20724)","severity":"blocking"},{"category":"bad-sequencing","causal_finding_id":"GHDM-R5-F03","causal_section_ids":["Collision with compact-summary-fidelity (#20724)","V2"],"check_key":"edge-case-coverage","description":"Phase A edits the old plan/M1/ledger and mutates labels, edges, and closures before synchronization. If coverage generation fails after `update_plan_hash` commits the new hash, retrying `update_plan_hash` sees no hash change and skips generation, leaving the registered plan paired with stale coverage and already-retired tasks.","finding_id":"GHDM-R6-F04","fix":"Finish all compact-plan/M1/ledger edits first, run `update_plan_hash`, explicitly regenerate and verify the managed manifest, and define retry/restore recovery for a post-hash generation failure. Only after that checkpoint may labels, dependencies, and old tasks be mutated or closed.","introduced_in_round":5,"location":"Collision cleanup / Phase A plan-row and coverage synchronization","prevention":"Trace file, registry hash, companion ledger, managed manifest, labels, dependencies, and closures through success, generation failure, retry, and rollback before scheduling retirement.","principle":"Irreversible task retirement must follow a recoverable, verified synchronization of the governing plan row and coverage artifacts.","root_cause":"The plan postpones plan-hash synchronization until after task mutations and assumes update_plan_hash atomically regenerates coverage, while the implementation commits the hash before a separate generation call.","section_id":"Collision with compact-summary-fidelity (#20724)","severity":"blocking"},{"category":"weak-testability","check_key":"acceptance-observability","description":"`docs/contracts/session-boundary.md`, `docs/guides/sessions.md`, and `docs/guides/variables.md` are required §4.1 changes, yet none of 4.1.1–4.1.26 validates their PreToolUse/Stop route, single-owner compact/clear behavior, or acknowledgment-time clearing semantics.","finding_id":"GHDM-R6-F05","fix":"Add a §4.1 acceptance item covering all three documents and those exact contract assertions.","location":"P4 / §4.1 documentation targets and acceptance","prevention":"Map every documentation Target and every normative prose rewrite to at least one acceptance item before deriving manifest labels.","principle":"Every required changed artifact needs an observable acceptance outcome.","repairs":[{"items":[{"artifact":"file: `docs/contracts/session-boundary.md`, `docs/guides/sessions.md`, `docs/guides/variables.md`","prose":"Session-boundary contract, sessions guide, and variables guide document Grok PreToolUse/Stop delivery, compact/clear single ownership, and acknowledgment-time clearing semantics"}],"kind":"add_acceptance","section_id":"4.1"}],"root_cause":"The body requires three contract/guide rewrites while all 26 acceptance items focus on code and tests.","section_id":"4.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-R5-F12","causal_section_ids":["Locked decisions","4.1","5.1"],"check_key":"edge-case-coverage","description":"Inbox-file absence is unsound as specified: ghook removes the file when a 2xx body cannot be mapped, and on success removes it before provider stdout emission. A mapping error or crash/write failure after deletion can make the next request execute deferred ack mutations and clear replay even though Grok never received the denial/block.","finding_id":"GHDM-R6-F06","fix":"Target `crates/ghook/src/dispatch.rs` and `crates/ghook/tests/contract.rs`; retain the envelope through mapping and delete it only after a successful provider-stdout write/flush. Retain it on mapping/emission failure, then test every crash boundary with same-ID drain and different-ID compatible replay.","introduced_in_round":5,"location":"P4–P5 / ghook inbox-file acknowledgment and replay envelope","prevention":"Trace response commit, action mapping, stdout write/flush, inbox deletion, provider receipt, daemon drain, and replay as one ordered crash table.","principle":"A durable acknowledgment marker may advance delivery state only after the provider-facing action has been emitted successfully.","root_cause":"The repair assumed current ghook deletion followed successful action delivery, but `delivered_action` deletes on mapping failure and deletes successful envelopes before `run_gobby_owned` writes the action to stdout.","section_id":"4.1","severity":"blocking"},{"category":"unhandled-edge","check_key":"edge-case-coverage","description":"The plan creates `405_pipeline_execution_idempotency_key.sql`, but migration 405 already exists and committed assets include 406 and 407 with `latest_version: 407`. The named migration cannot be added or embedded as written.","finding_id":"GHDM-R6-F07","fix":"Renumber it to the next free version at execution—currently 408—and replace every 405 target, inventory/count assertion, schema identity, grant bundle, signed positive golden, and acceptance reference with the actual new head.","location":"P3 / pipeline-execution idempotency migration","prevention":"Resolve the live schema head immediately before sealing a plan and sweep every derived carrier when assigning the next migration number.","principle":"A new schema migration must use a unique version strictly above the committed catalog head.","root_cause":"The plan pinned migration 405 while the repository advanced through 407.","section_id":"3.1","severity":"blocking"},{"category":"traceability","causal_finding_id":"GHDM-R5-F14","causal_section_ids":["3.1","4.1"],"check_key":"targets-complete","description":"`SessionVariableManager._mutate_variables` accepts only decoded variables and always opens its own transaction; `mark_delivered_batch` independently queries through the database wrapper. Without changing the state-manager seam, §4.1 cannot implement its UUID-sorted message-lock then session-row mutation on one connection.","finding_id":"GHDM-R6-F08","fix":"Add a caller-supplied/connection-aware `_mutate_variables` seam that preserves existing callers, target its tests, and prove injected failures roll back message delivery, canonical replay, and buffer mutation together.","introduced_in_round":5,"location":"P3–P4 / P2P delivered-row and replay acknowledgment transaction","prevention":"For every multi-storage atomicity claim, trace connection ownership through each helper and target the first helper that opens an independent transaction.","principle":"A stated same-transaction invariant must own the lowest shared transaction seam and its rollback tests.","repairs":[{"entries":["`src/gobby/workflows/state_manager.py::SessionVariableManager._mutate_variables`","`tests/workflows/test_state_manager.py::*` — scope-reason: transaction-aware connection injection, rollback, and deterministic lock-order cases span the state-manager test module"],"kind":"add_targets","section_id":"4.1"},{"items":[{"artifact":"test: `tests/workflows/test_state_manager.py`","prose":"P2P enqueue and acknowledgment use one caller-supplied hub transaction with UUID-sorted message locks before session-row mutation, and injected failures roll back delivered state, canonical replay, and buffers together"}],"kind":"add_acceptance","section_id":"4.1"}],"root_cause":"The repair requires one hub connection across message-row locks, delivered marking, replay clearing, and session-variable mutation while targeting only mark_delivered_batch; `_mutate_variables` still opens its own transaction.","section_id":"4.1","severity":"blocking"},{"category":"gobby-format","causal_finding_id":"GHDM-R5-F13","causal_section_ids":["4.1"],"check_key":"targets-complete","description":"`src/gobby/sessions/compact_continuation.py` is already 952 lines. §4.1 adds multiple operations around private destructive helpers without a new support-module Target, making ceiling-compliant implementation infeasible.","finding_id":"GHDM-R6-F09","fix":"Create and target a support module such as `src/gobby/sessions/compact_staging.py`, move the peek/stage/take/generation-CAS implementation and relevant helpers there, keep the public orchestrator thin, and require `compact_continuation.py` below 850 lines.","introduced_in_round":5,"location":"P4 / compact-continuation decomposition","prevention":"Spot-check current line counts for every newly targeted production file and name a support-module split whenever a file is at or above 850 lines.","principle":"A plan must decompose any hand-maintained production file before planned growth can cross the 1,000-line ceiling.","root_cause":"The repair added peek/stage/take/generation-CAS machinery to a 952-line module and targeted only its public wrapper.","section_id":"4.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-R5-F11","causal_section_ids":["4.1"],"check_key":"edge-case-coverage","description":"`fit_grok_briefing_response` fits the original PreToolUse reason or Stop additionalContext, while compatible different-class replay merely “retranslates canonical content.” The plan never requires a receiving-class refit, so a PreToolUse→Stop or Stop→PreToolUse replay can exceed its envelope budget or reuse a head/reference computed for the wrong class.","finding_id":"GHDM-R6-F10","fix":"Persist full canonical content plus one stable reference and call `fit_grok_briefing_response` for every different-class replay before advancing current request identity. Add asymmetric PreToolUse↔Stop/SubagentStop byte-budget tests with one/many contributors, multibyte text, real-gate prepending, and persistence failure.","introduced_in_round":5,"location":"P4 / canonical-content cross-class replay","prevention":"Cross every replay producer and receiver with asymmetric budgets, full-envelope serialization, multibyte boundaries, persistence reuse/failure, and real-gate prepending.","principle":"A canonical payload retransmitted through a different native response class must be revalidated against that class's complete serialization budget.","root_cause":"The repair separates original fitting from cross-class retranslation without connecting the receiving replay path to the fitting helper.","section_id":"4.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-R5-F13","causal_section_ids":["4.1"],"check_key":"edge-case-coverage","description":"`consume_and_schedule_compact_self_continuation` currently schedules the continuation prompt after taking the marker. The planned resolve/peek, source-stage, destination-take, and generation-CAS consume operations—and acceptance 4.1.20—never specify when scheduling occurs or how scheduling failure/duplicate retry composes with those durable writes.","finding_id":"GHDM-R6-F11","fix":"Add prompt scheduling as an explicit generation-keyed operation with stated at-least-once/idempotency semantics. Cover crash before schedule, crash after schedule before durable recording, retry duplicate, and scheduling failure while preserving the staged briefing and source marker.","introduced_in_round":5,"location":"P4 / compact continuation four-operation refactor","prevention":"Before refactoring a destructive orchestrator, list each read, write, scheduled side effect, return value, and recovery action and place every one in the new crash table.","principle":"A crash-safe refactor must preserve every externally visible side effect of the public operation.","root_cause":"The repair enumerated durable staging operations while omitting the existing continuation-prompt scheduling effect.","section_id":"4.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-R5-F06","causal_section_ids":["Locked decisions","3.1"],"check_key":"edge-case-coverage","description":"`adapter_timeout` accepts overrides below 15 seconds and `_run_adapter_hook` enforces them with `asyncio.wait_for`. Such an override can cancel the route before the copied gate reaches its one-second reserve boundary, leaving its worker/owner claim to complete outside the plan's typed per-class short-circuit and takeover fence.","finding_id":"GHDM-R6-F12","fix":"Carry one immutable outer monotonic deadline into copied processing and derive the gate boundary from the lesser of the ratified 15-second aggregate deadline and remaining outer budget minus the reserve, or enforce a proven configuration minimum. Add controlled-clock short/equal/long overrides and route-cancellation fencing tests.","introduced_in_round":5,"location":"P3–P4 / copied blocking-gate deadline versus outer route timeout","prevention":"Test nested deadlines with outer budgets shorter than, equal to, and just above the inner window, including late worker completion and owner takeover.","principle":"An inner owner/loser/takeover protocol must resolve or be fenced before its enclosing route can time out.","root_cause":"The repair fixes the copied gate at a 15-second aggregate window while the outer adapter timeout remains any positive per-request value.","section_id":"3.1","severity":"blocking"}],"reviewer_session":"7ed2c179-0e3a-4f56-9eaa-a2ce919600d6","round":6,"round_number":6,"verdict":"needs_review"},"session_id":"ec1cd52b-590d-4658-9bbd-6a37a5ddb086"}
+```
+
+**Round 7** `kind: verification`
+
+- reviewer_run: ed12aa04-4d10-46c4-bf50-feaf846971a2
+- reviewer_session: 27cf8cc2-338c-4eba-95cd-f8a7d368ad7f
+- verdict: needs_review
+- findings:
+- GHDM-R7-F01/blocking: four existing CLIEventSimulator SessionStart E2E consumer suites whose assumptions §3.1 removes are absent from §5.1 acceptance and its focused command. Vote: accepted — typed repair supplied.
+- GHDM-R7-F02/blocking: new public `SessionResolutionOutcome` type and constructors fall outside the three exact `session_lookup.py` Targets. Vote: accepted — rescope ownership.
+- GHDM-R7-F03/blocking: new `CopiedGateResult` and endpoint-outcome symbols fall outside the exact `webhook.py` function Targets. Vote: accepted — rescope ownership.
+- GHDM-R7-F04/blocking: daemon `_drain_hook_inbox_once_locked` can unlink a still-live inbox file on the processed-marker branch before ghook maps/emits, falsely acknowledging undelivered content. Vote: accepted — drain must retain/skip provider-ack-pending Grok records; only ghook unlinks after successful stdout write/flush.
+- GHDM-R7-F05/blocking: connection-aware `_mutate_variables` seam locks the session row while legacy writers serialize via `SessionVariableMutation` advisory locks, allowing a lost update. Vote: accepted — supplied transaction acquires the same advisory lock, ordered after UUID-sorted message locks.
+- GHDM-R7-F06/blocking: preflight paused-root creation is non-idempotent; crash-after-commit-before-response loses the only root ID and a rerun creates a duplicate epic. Vote: accepted — deterministic provenance label + query-and-reuse before create.
+- GHDM-R7-F07/blocking: exact `408_...sql` Target combined with permission to renumber after approval reopens the 405-style drift as an unreviewed deviation. Vote: accepted — freeze 408 and add a pre-expansion occupancy check that returns to review (minimal option; no new re-seal mechanism).
+- GHDM-R7-F08/blocking: §3.1 prose is implementable as `min(aggregate, outer) - reserve`, shrinking the ratified 15-second aggregate window to 14 under a long outer budget. Vote: accepted — state `gate_deadline = min(aggregate_deadline, outer_deadline - COPIED_GATE_LIVE_RESERVE_SECONDS)` verbatim; restores the user-ratified budget exactly.
+- GHDM-R7-F09/blocking: cross-class replay eligibility ignores component classes; turn-context-only replay can manufacture a deny on an ungated PreToolUse (or block an allowing Stop), contradicting Locked decision 4. Vote: accepted — persist component classes; briefing may create its one gate; turn-context-only replay piggybacks only on a current real deny/block.
+- GHDM-R7-F10/blocking: unbounded `get_undelivered_messages` collides with the 16-key briefing cap; per-message enqueue can roll back or strand a cap-plus-one batch. Vote: accepted — classify P2P as briefing-class with deterministic bounded slot-ordered batching (`sent_at`/UUID), later batches drained without treating capacity as corruption; coherent with the existing P2P-rides-briefing-denial promise.
+- resolution_notes: All 10 findings accepted. 6 of 10 fixer-induced by round-6 repairs, 2 by round-5 target scoping, 1 latent from round 1 (P2P capacity), 1 new E2E acceptance gap. F08 restores the exact user-ratified deadline algebra the round-6 prose drifted. No product-scope forks: F07 takes the minimal freeze-plus-occupancy-check option, F09 realigns with Locked decision 4, F10 follows the plan's existing delivery promise. Repairs delegated to a third reviewer-authored candidate sitting (typed F01 verbatim); the deterministic gate (base + expansion validate) reruns on the merged canonical, and the coverage ledger is regenerated and re-sealed to the new plan hash before round 8.
+
+```json plan-review-round
+{"evidence_id":"27a8fea8-9191-4bd1-987e-15be5185e863","plan_hash":"0adc4e976ce12f5c9d8bb9ac51e3cb3e0b8a5685bd1379725c32768099a05161","round_number":7,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"ef7f427facdf845da15f34096db8c4e2260039dc9952238b99d31ae6094af623","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":0,"emitted_findings":10,"total":10},"evidence_id":"27a8fea8-9191-4bd1-987e-15be5185e863","lanes":[{"candidate_count":1,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":3,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":6,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":5,"manifest_digest":"7f2d4e84222ccf60cbcb70c278ae63565f2192c89a995bba6fc6111f5d545361","status":"valid"},"source_digest":"d02db4baa532171ea29832b9be4b06677483d18a6e573c76635cb6f01ddb510a","version":1},"findings":[{"category":"weak-testability","check_key":"acceptance-observability","description":"`test_stateless_ambient_session.py` requires a row immediately after startup SessionStart and `test_worktrees_e2e.py` extracts the internal ID from SessionStart context, both behaviors §3.1 removes. Neither suite is covered by §5.1 acceptance or its focused command, so the new smoke can pass while known consumers remain broken.","finding_id":"GHDM-R7-F01","fix":"Add one §5.1 acceptance item that runs all four listed E2E consumer suites and requires their SessionStart assumptions to move to first activity, or move those repairs and their exact validation command into §3.1.","location":"P3-P5 / existing E2E consumers of deferred SessionStart","prevention":"For every compatibility Target, map its changed assertion to an acceptance item and include the suite in a runnable validation command.","principle":"Every known consumer whose assumptions change at a behavioral cutover needs an observable acceptance gate.","repairs":[{"items":[{"artifact":"test: `GOBBY_TEST_PROTECT=1 uv run pytest tests/e2e/test_full_workflow.py tests/e2e/test_session_tracking.py tests/e2e/test_stateless_ambient_session.py tests/e2e/test_worktrees_e2e.py -q`","prose":"All four existing CLIEventSimulator SessionStart consumer suites pass after their row and context assumptions move to first activity"}],"kind":"add_acceptance","section_id":"5.1"}],"root_cause":"The Targets inventory recognizes four existing E2E consumers whose row/context assumptions shift, while §5.1 acceptance and its focused command cover only the new smoke and lower-level suites.","section_id":"5.1","severity":"blocking"},{"category":"traceability","causal_finding_id":"GHDM-R5-F15","causal_section_ids":["3.1"],"check_key":"targets-complete","description":"§3.1 requires a new public `SessionResolutionOutcome` and status representation, but `session_lookup.py` is scoped only to `_resolve_uncached_session_id`, `_resolve_session_id`, and `resolve`; the type definition and constructors are outside the reviewed scope.","finding_id":"GHDM-R7-F02","fix":"Replace the three exact `session_lookup.py` Targets with one justified `::*` Target that owns the outcome type and all resolution methods, or move the new type to a new explicitly targeted module.","introduced_in_round":5,"location":"P3 / `SessionResolutionOutcome` ownership","prevention":"Compare every named new class, enum, alias, and factory against exact symbol Targets before expansion validation.","principle":"Every new production symbol and its constructors must be owned by the deliverable's Targets.","root_cause":"The round-5 boundary repair added a new public outcome type in `session_lookup.py` while retaining exact Targets for only the three existing resolve methods.","section_id":"3.1","severity":"blocking"},{"category":"traceability","causal_finding_id":"GHDM-R5-F05","causal_section_ids":["3.1"],"check_key":"targets-complete","description":"`evaluate_blocking_webhooks` must return a new endpoint-bearing `CopiedGateResult` with four statuses, yet `webhook.py` is targeted only at existing functions. The new type and endpoint outcome representation are outside the reviewed scope.","finding_id":"GHDM-R7-F03","fix":"Replace the exact `webhook.py` Targets with one justified `::*` Target, or put `CopiedGateResult` and its endpoint-outcome representation in a new explicitly targeted module and retain exact function Targets.","introduced_in_round":5,"location":"P3 / `CopiedGateResult` ownership","prevention":"When a repair replaces sentinel returns with a typed result, target the type definition, every constructor, exports, and exhaustive consumers.","principle":"A changed function signature and its new exhaustive result type must share explicit source ownership.","root_cause":"The round-5 typed-gate repair targeted the existing webhook functions but omitted the new top-level result and endpoint-outcome symbols they construct.","section_id":"3.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-R6-F06","causal_section_ids":["Locked decisions","4.1","5.1"],"check_key":"bounded-atomic-pending-context-delivery","description":"After the route commits a canonical replay and writes its processed marker, the daemon drain can delete the still-live inbox file before ghook maps or emits the response. A later mapping/write/flush failure then leaves the file absent, falsely acknowledging content Grok never received and allowing deferred ack mutations to commit.","finding_id":"GHDM-R7-F04","fix":"Target and change `_drain_hook_inbox_once_locked` so a provider-ack-pending Grok record makes the processed-marker branch retain or skip the file; only ghook may unlink it after successful mapping and stdout write/flush. Add the direct-POST commit → drain → stdout-failure race to unit and E2E coverage.","introduced_in_round":6,"location":"P4-P5 / ghook inbox acknowledgment crash table","prevention":"Trace direct POST, processed-marker creation, concurrent drain, action mapping, stdout write, flush, unlink, and next-request acknowledgment in one interleaving table.","principle":"Only the provider-emission owner may remove the durable marker whose absence acknowledges delivery.","root_cause":"The round-6 repair changes `_post_envelope` and ghook deletion timing, while `_drain_hook_inbox_once_locked` still unlinks any file with an already-processed marker before calling `_post_envelope`.","section_id":"4.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-R6-F08","causal_section_ids":["4.1"],"check_key":"bounded-atomic-pending-context-delivery","description":"A P2P transaction can hold the session row lock while a legacy writer reads the pre-P2P value under the separate advisory lock; after P2P commits, that legacy UPDATE can overwrite the buffer or replay mutation with its stale snapshot. Joint rollback within the P2P transaction does not prevent this lost update.","finding_id":"GHDM-R7-F05","fix":"Require the supplied transaction to acquire the same `SessionVariableMutation(session_id)` lock before reading session variables, with a documented global order after UUID-sorted message locks, then add a concurrent P2P-versus-legacy `merge_variables` test plus rollback cases.","introduced_in_round":6,"location":"P4 / P2P transaction-aware `_mutate_variables` seam","prevention":"Race each new connection-aware mutation against every legacy writer and verify both acquire one shared serialization lock before reading.","principle":"Every writer of one read-modify-write value must serialize through the same lock domain.","root_cause":"The supplied-connection repair proposes a session-row lock, while legacy `_mutate_variables` callers serialize with `SessionVariableMutation` advisory locking and then use a plain MVCC SELECT.","section_id":"4.1","severity":"blocking"},{"category":"bad-sequencing","causal_finding_id":"GHDM-R6-F03","causal_section_ids":["Collision with compact-summary-fidelity (#20724)","V2"],"check_key":"atomic-leaf-cutover","description":"A crash after the paused replacement epic commits but before its response/readback loses the only root ID. Rerunning preflight creates another epic, leaving #20635 edge attachment and Phase-B plan binding ambiguous even though the old prerequisite edges are still intact.","finding_id":"GHDM-R7-F06","fix":"Create the root with a deterministic plan/evidence provenance label and make preflight query-and-reuse exactly one matching paused epic before creating. Attach/read back #20635's replacement edge while old edges remain, and test crash-after-insert-before-response recovery.","introduced_in_round":6,"location":"Collision cleanup / replacement-root Preflight","prevention":"Inject a crash after every resource-creation commit and before response receipt; require retry to locate exactly one durable resource.","principle":"A crash-resumable create step needs a deterministic durable identity that retries can discover and reuse.","root_cause":"The reordered preflight uses non-idempotent `create_task` and reads the returned ID only after commit, without a provenance label, uniqueness key, or recovery query.","section_id":"Collision with compact-summary-fidelity (#20724)","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-R6-F07","causal_section_ids":["3.1"],"check_key":"edge-case-coverage","description":"If the catalog advances after approval, choosing 409 as instructed changes a file absent from the sealed Targets while the plan, ledger, manifest, and coverage evidence still name 408. The same environment drift that invalidated 405 can therefore recur as an unreviewed implementation deviation.","finding_id":"GHDM-R7-F07","fix":"Freeze 408 and add a pre-expansion check that returns to review if it is occupied, or define a supported re-seal/re-review operation that updates the Target, acceptance text, ledger, plan hash, and manifest together before any leaf runs. Test that the selected migration is exactly one above the immediately preceding committed version.","introduced_in_round":6,"location":"P3 / next-free migration resolution","prevention":"Resolve numeric migration identity before expansion and test drift between approval, branch checkout, and leaf execution.","principle":"An immutable reviewed plan must name the same concrete changed file that implementation and coverage evidence will own.","root_cause":"The round-6 renumber repair combines an exact `408_...sql` Target with permission to choose a different filename after approval, without a supported re-seal or re-review transition.","section_id":"3.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-R6-F12","causal_section_ids":["3.1","4.1"],"check_key":"edge-case-coverage","description":"The accepted boundary is `min(aggregate_deadline, outer_deadline - reserve)`, while §3.1 says the lesser of aggregate and outer deadlines minus the reserve, implementable as `min(aggregate_deadline, outer_deadline) - reserve`. With a long outer budget, that shortens the ratified 15-second aggregate window to 14 seconds.","finding_id":"GHDM-R7-F08","fix":"State `gate_deadline = min(aggregate_deadline, outer_deadline - COPIED_GATE_LIVE_RESERVE_SECONDS)` verbatim in the body and acceptance. Add controlled-clock cases below, at, and above aggregate-plus-reserve so a long outer budget retains the full 15 seconds.","introduced_in_round":6,"location":"P3 / copied blocking-gate deadline","prevention":"Write deadline formulas algebraically and test values that distinguish every plausible subtraction order.","principle":"Nested deadline arithmetic must state one unambiguous formula that preserves each ratified budget.","root_cause":"The round-6 repair prose moved the reserve outside the `min` expression even though its accepted formula subtracts the reserve only from the outer route deadline.","section_id":"3.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-R6-F10","causal_section_ids":["4.1"],"check_key":"bounded-atomic-pending-context-delivery","description":"A real Stop gate can commit only turn-context; after emission uncertainty, the next ungated PreToolUse retranslates that record into a deny solely to deliver turn-context. The reverse path can block an otherwise allowing Stop. Both contradict Locked decision 4.","finding_id":"GHDM-R7-F09","fix":"Persist component classes in replay eligibility. Briefing may create its one delivery gate; turn-context-only replay may piggyback only on a current real deny/block and otherwise remains pending or follows the explicit drop policy. Add Stop(real gate + turn only) → ungated PreToolUse and the reverse test.","introduced_in_round":6,"location":"P4 / cross-class canonical replay eligibility","prevention":"Cross every origin and receiving hook class with briefing-only, turn-context-only, mixed, real-gated, and ungated content.","principle":"Replay may change wire encoding while preserving the originating content class's gating policy.","root_cause":"The round-6 refit repair treats every PreToolUse/Stop pair as compatible based only on wire shape and receiving budget, without checking whether the replay contains briefing or turn-context.","section_id":"4.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-R1-F10","causal_section_ids":["1.1","4.1"],"check_key":"pending-message-stop-consumer","description":"`get_undelivered_messages` returns an unbounded set, while briefing rejects a 17th distinct key as a bug. Per-message briefing enqueue can roll back or strand a cap-plus-one batch; classifying P2P as turn-context instead conflicts with the promise that it rides a briefing denial because the briefing-only flush arm explicitly leaves turn-context untouched.","finding_id":"GHDM-R7-F10","fix":"Choose P2P's class and define deterministic bounded selection. If it is briefing-class, enqueue only available slots in `sent_at`/UUID order, commit that batch, leave excess message rows untouched, and drain later batches without treating capacity as corruption. Add cap, cap-plus-one, rollback, concurrency, and eventual-delivery tests.","introduced_in_round":1,"location":"P4 / pending P2P component classification and capacity","prevention":"Test zero, cap, cap-plus-one, oversized, concurrent, and transaction-failure batches for every durable producer.","principle":"A durable unbounded producer needs an explicit bounded batching and backpressure policy at the finite delivery buffer.","root_cause":"The round-1 P2P repair specifies message-derived component IDs and safe gates without assigning P2P to a buffer class or reconciling unbounded selection with the briefing cap.","section_id":"4.1","severity":"blocking"}],"reviewer_session":"#11086","round":7,"round_number":7,"verdict":"needs_review"},"session_id":"ec1cd52b-590d-4658-9bbd-6a37a5ddb086"}
+```
+
+**Round 8** `kind: verification`
+
+- reviewer_run: d770e37c-c36e-43ce-bc71-cfe682a1cffc
+- reviewer_session: #11088
+- verdict: needs_review
+- findings:
+- GHDM-R8-F01/blocking/unhandled-edge — Preflight-to-Phase-B restart recovery: provenance recovery accepts only an unbound paused root, but Phase B binds the root at `create_plan` before coverage generation; a restart after the plan-row commit rediscovers a bound root that Preflight rejects. Fix: phase-aware recovery accepting the unbound paused root or a root bound exclusively to this exact Plan ID, root ref, and approved hash, with specified resume points after plan-row commit, response loss, and coverage-generation failure.
+- GHDM-R8-F02/blocking/unhandled-edge — Frozen migration 408 Phase-B gate: no executable read-only pre-expansion observation proves latest=407 and 408_count=0; acceptance 3.1.27 runs only post-implementation. Fix: named read-only coordinator preflight enumerating committed migration prefixes with recorded evidence and a mismatch-returns-to-review transition.
+- GHDM-R8-F03/blocking/unhandled-edge — P2P bounded selection vs global lock order: reading briefing capacity before the session advisory lock uses stale capacity; taking the advisory lock first creates the reverse lock-order edge. Fix: two-stage algorithm — UUID-lock a bounded candidate set, acquire SessionVariableMutation(session_id), recompute live capacity inside _mutate_variables, enqueue only the earliest fitting prefix; add the occupancy-change race test.
+- GHDM-R8-F04/blocking/unhandled-edge — Finite briefing arrival under P2P saturation: cap-full P2P occupancy makes a later non-evictable finite briefing the seventeenth key with only an error path and no retry transition. Accepted direction: reserve explicit finite-source capacity before P2P selection; test cap-full queued and replay-owned P2P followed by compact/clear generations proving finite delivery and later P2P draining.
+- GHDM-R8-F05/blocking/unhandled-edge — Reverse concurrent first-activity interleaving (latent, round 2): when PreToolUse creates the row and commits the startup briefing, the losing UPS lacks _session_just_materialized and its first-shot aggregate is misclassified as turn-context, bypassing briefing one-shot dedupe. Accepted direction: class lifecycle one-shots at their producers with stable briefing component IDs, leaving aggregate stash for genuine turn-context; add the reverse-interleaving acceptance proving one briefing identity, zero turn-context duplicate, one ack mutation.
+- resolution_notes: All five findings accepted (coordinator vote, unattended per user directive; no product-scope forks — F04 and F05 fix directions chosen by coordinator as least-mechanism refinements consistent with ratified decisions and R7-F09 component-class realignment). Four findings are round-7 fixer-induced (F01←R7-F06, F02←R7-F07, F03/F04←R7-F10); F05 is a latent round-2 defect (←R2-F05) surfaced by adjacent-variant analysis. Repairs applied by the round-8 author sitting on a coordinator-staged snapshot; deterministic gate (base + expansion) rerun on the merged canonical before round 9.
+
+```json plan-review-round
+{"evidence_id":"cb4cd7a7-aeff-4323-a714-7c6311c61704","plan_hash":"cf39f60cdcefc8695f53a43333029ddda17a3a6dd272ef7cc83905530ca6edf1","round_number":8,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"331519b670b2daa3aba4d052a24bbcc012b9babeede6d813cc3ed46f759b3716","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":1,"emitted_findings":5,"total":6},"evidence_id":"cb4cd7a7-aeff-4323-a714-7c6311c61704","lanes":[{"candidate_count":2,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":1,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":3,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":5,"manifest_digest":"8857090f845c7ad88d2e3666acc8fc1855acfefab80e469a3ae25b3aa8394bb7","status":"valid"},"source_digest":"f0277fd43d80ad751da57cd7e93fad3113a676b5f665355421f8d4378121c3cf","version":1},"findings":[{"category":"unhandled-edge","causal_finding_id":"GHDM-R7-F06","causal_section_ids":["Collision with compact-summary-fidelity (#20724)"],"check_key":"atomic-leaf-cutover","description":"A restart after `create_plan` commits the plan row can rediscover the provenance-labelled epic only as a bound root, which Preflight rejects. Because coverage generation occurs after the plan-row commit, the coordinator can lose its Phase-B resume point even though retrying `create_plan` with the same root is supported.","finding_id":"GHDM-R8-F01","fix":"Make provenance recovery phase-aware: accept either the expected unbound paused root or a root bound exclusively to this exact Plan ID, root ref, and approved hash after reading back the plan row, sealed ledger, and managed manifest. Specify the resume point after plan-row commit, response loss, or coverage-generation failure; reject foreign or mismatched bindings.","introduced_in_round":7,"location":"Collision cleanup / Preflight-to-Phase-B restart recovery","prevention":"Inject coordinator restarts after each plan-row, managed-manifest, and response boundary and require recovery from durable identifiers at every resulting state.","principle":"A durable recovery identity must remain discoverable after every later durable state transition.","root_cause":"The round-7 provenance repair accepts the labelled root only while it is unbound, while Phase B binds that same root before coverage generation and response receipt; no restart branch consults the plan registry for the now-bound root.","section_id":"Collision with compact-summary-fidelity (#20724)","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-R7-F07","causal_section_ids":["3.1"],"check_key":"edge-case-coverage","description":"Phase B owns the 408 occupancy check, yet the plan names no command, tool call, catalog read, or output artifact that proves `latest=407` and `408_count=0` before expansion. Acceptance 3.1.27 runs only after section 3.1 implements migration 408, so it cannot serve as the approval-to-expansion guard.","finding_id":"GHDM-R8-F02","fix":"Add a read-only coordinator preflight operation that enumerates committed migration prefixes and records `latest=407` and `408_count=0` before `create_plan` or expansion, with any mismatch returning the plan to review. Keep `runner_tests.rs` as the later proof that implemented 408 is embedded immediately after 407.","introduced_in_round":7,"location":"P3 / frozen migration 408 Phase-B gate","prevention":"For every frozen migration identity, name the exact pre-expansion catalog/filesystem query, expected values, recorded evidence, and mismatch transition.","principle":"A pre-expansion drift guard needs an executable read-only observation and recorded result before any leaf runs.","root_cause":"The round-7 freeze repair states the desired 407/408 predicate and adds a post-implementation runner test, while leaving the coordinator's pre-expansion observation unspecified.","section_id":"3.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-R7-F10","causal_section_ids":["4.1"],"check_key":"bounded-atomic-pending-context-delivery","description":"Available briefing slots live in queued, claimed, and replay-owned session variables. Reading them before the session advisory lock can select from stale capacity; taking the advisory lock first and then message-row locks creates the reverse edge the plan declares absent.","finding_id":"GHDM-R8-F03","fix":"Specify a two-stage algorithm: select and UUID-lock at most the bounded maximum candidate set first, acquire `SessionVariableMutation(session_id)`, recompute live capacity inside `_mutate_variables`, and enqueue only the earliest fitting prefix while leaving excess rows untouched. Add a race where occupancy changes between candidate selection and session-lock acquisition.","introduced_in_round":7,"location":"P4 / P2P bounded selection and global lock order","prevention":"For every computed batch, list each read, candidate lock, serialization lock, recheck, mutation, and commit in one total order, then race capacity changes at every boundary.","principle":"Every capacity decision must be made under a lock order that protects its inputs without creating a reverse edge.","root_cause":"The round-7 bounded-batching repair says to compute current session-buffer capacity before choosing message rows, while the lock-order repair requires UUID-sorted message-row locks before the session advisory lock; the plan supplies no two-stage selection that satisfies both.","section_id":"4.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-R7-F10","causal_section_ids":["4.1"],"check_key":"bounded-atomic-pending-context-delivery","description":"A cap-full queued, claimed, or replay-owned P2P batch can be followed by compact, clear, wiki, profile, persona, or startup briefing. That finite source is non-evictable yet becomes the seventeenth component, and the plan defines only an error—not how its durable source remains pending and is retried after acknowledgment frees a slot.","finding_id":"GHDM-R8-F04","fix":"Define finite-source arrival under full P2P occupancy as durable backpressure: preserve its source/staging marker and name the retry trigger after acknowledgment, or reserve explicit finite-source capacity before P2P selection. Test cap-full queued and replay-owned P2P followed by compact and clear generations, then prove finite delivery and later P2P draining without corruption.","introduced_in_round":7,"location":"P4 / finite briefing arrival under P2P saturation","prevention":"Fill every buffer state with each producer class, then inject every other class and prove preservation, retry ownership, and eventual delivery.","principle":"A bounded shared buffer must define priority, durable backpressure, and eventual progress for every producer-class ordering.","root_cause":"The round-7 P2P repair permits P2P to occupy every currently available briefing slot, while finite briefing producers treat a seventeenth distinct key as an error and have no specified retry transition after capacity frees.","section_id":"4.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-R2-F05","causal_section_ids":["3.1","4.1"],"check_key":"first-activity-activation-and-briefing-barrier","description":"If PreToolUse creates the row and commits the startup briefing while a concurrent UPS loses lookup creation, that UPS lacks `_session_just_materialized`. Its later first-shot agent/wiki/profile aggregate is therefore classified as turn-context, bypassing briefing one-shot dedupe and potentially delivering or dropping a duplicate under the turn-context policy.","finding_id":"GHDM-R8-F05","fix":"Class lifecycle one-shots at their producers with stable briefing component IDs, leaving aggregate stash for genuine turn-context, or propagate a durable first-activation-cycle classification to every concurrent racer. Add the reverse interleaving where PreToolUse creates/commits first and UPS stashes both before and after acknowledgment, proving one briefing identity, zero turn-context duplicate, and one ack mutation.","introduced_in_round":2,"location":"P3-P5 / reverse concurrent first-activity interleaving","prevention":"Enumerate both row-creation winners and stash timing before and after acknowledgment, asserting component class, stable identity, and exactly-once ack mutation.","principle":"Lifecycle one-shots must retain briefing class and one-shot identity for every concurrent first-hook winner orientation.","root_cause":"The round-2 interleaving repair gives `_session_just_materialized` only to the row-creation winner and defaults every unflagged stash to turn-context; its acceptance covers UPS creating first, not PreToolUse creating first.","section_id":"3.1","severity":"blocking"}],"reviewer_session":"#11088","round":8,"round_number":8,"verdict":"needs_review"},"session_id":"ec1cd52b-590d-4658-9bbd-6a37a5ddb086"}
+```
+
+**Round 9** `kind: verification`
+
+- reviewer_run: 5e7a2c72-fdaf-48e7-a41a-8f69c5222f35
+- reviewer_session: #11090
+- verdict: needs_review
+- findings:
+- GHDM-R9-F01/blocking: companion-ledger root_task_ref sentinel never sealed by any coordinator step, making phase-aware recovery's first bound readback unrealizable
+- GHDM-R9-F02/blocking: Preflight queries only the current-hash provenance label, so a superseded old-hash unbound root is invisible and a duplicate root can be created
+- GHDM-R9-F03/blocking: finite-source reservation counts 7 classes as 7 max components, but overlapping compact/clear generations produce a seventeenth key with only an error defined
+- GHDM-R9-F04/blocking: observe_frozen_migration_408 runs at Phase B after Preflight/Phase-A mutations, so its return-to-review branch is not side-effect-free
+- GHDM-R9-F05/blocking: activation epoch used for dedupe/watermark rollover has no durable field, initialization, transition owner, or CAS semantics
+- GHDM-R9-F06/blocking: P2P acknowledgment path has no two-stage lock protocol; reading replay-owned IDs under the session lock creates the forbidden reverse edge
+- GHDM-R9-F07/blocking: 4.1 Target annotation still names ACPHookAdapter.handle_native as the commit boundary, contradicting the ClaimHandle ownership move
+- resolution_notes: Coordinator (unattended, Josh asleep) accepted all 7 findings with zero user forks; none reverses a locked ratification. Direction for F03: bounded-generation branch — at most one compact and one clear component inside the 16-slot buffer, newer generations durably staged for acknowledgment-triggered admission; no retry/backpressure machinery, composing with the R8-F04 reservation branch. Repairs applied in an author sitting on a coordinator-staged snapshot; changelog byte-frozen during repair; merged and gated before round 10 (the review cap).
+
+```json plan-review-round
+{"evidence_id":"5a1169a1-6682-4996-830c-2465ee06050a","plan_hash":"af96f705c81e7c36d0ad9285ee460bac7442d5a5b29605ff254b46a607da8187","round_number":9,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"3bcdbdd7090e39cfd23a109a6df9a50bbfe16c1884eeb33e811376702cde4bc8","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":2,"emitted_findings":7,"total":9},"evidence_id":"5a1169a1-6682-4996-830c-2465ee06050a","lanes":[{"candidate_count":2,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":4,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":3,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":5,"manifest_digest":"ae27d747bffa4f92d14828df0c74c6c3016d08827035e91e11d7fa7659b55d57","status":"valid"},"source_digest":"107714f63d1acdcbc3809f651e412c0a17a591dcca3b1f1afc774711d720c56c","version":1},"findings":[{"category":"unhandled-edge","causal_finding_id":"GHDM-R8-F01","causal_section_ids":["Collision with compact-summary-fidelity (#20724)"],"check_key":"atomic-leaf-cutover","description":"Phase-aware recovery requires the companion ledger root ref to equal the recovered epic, while the reviewed ledger still contains `root_task_ref: \"SEALED-BY-COORDINATOR\"`. Preflight and Phase B never replace or verify that sentinel, and `create_plan` generates the managed manifest without sealing the companion ledger, so the first bound readback is unrealizable.","finding_id":"GHDM-R9-F01","fix":"After Preflight resolves exactly one paused root, add an idempotent coordinator step that replaces only the ledger sentinel with that normalized epic ref, records and verifies the resulting ledger hash and full identity/acceptance inventory, and requires the exact sealed ledger before `create_plan`. Retries must accept only that already-sealed root and reject sentinel or foreign values.","introduced_in_round":8,"location":"Collision cleanup / Preflight companion-ledger sealing","prevention":"For every recovery tuple, list the operation that writes each field, its retry behavior, and the readback that proves the tuple before binding.","principle":"Every recovery identity required at readback must be durably constructed before the operation that relies on it.","root_cause":"The round-8 recovery repair added exact root-ref verification for the companion ledger without adding the coordinator operation that replaces its SEALED-BY-COORDINATOR sentinel.","section_id":"Collision with compact-summary-fidelity (#20724)","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-R8-F01","causal_section_ids":["Collision with compact-summary-fidelity (#20724)","V2"],"check_key":"atomic-leaf-cutover","description":"Preflight searches only `plan-root:grok-hook-deferred-materialization:<current-hash>`. An older unbound root carrying the same Plan-ID prefix with an old hash can therefore survive a return-to-review, produce zero current-label matches, and allow a second root when no plan row exists; the promised superseded-root rejection is absent.","finding_id":"GHDM-R9-F02","fix":"Query all provenance labels with the Plan-ID prefix plus every Plan-ID/root registry binding before exact-current-label recovery. Fail closed or explicitly retire a superseded root before any create, and add old-hash unbound, bound, and terminal recovery cases.","introduced_in_round":8,"location":"Collision cleanup / superseded-root recovery","prevention":"Test recovery with current-hash and old-hash roots in unbound, bound, terminal, duplicate, and response-loss states before allowing a zero-match create branch.","principle":"Provenance recovery must inventory the whole logical identity namespace before treating an exact-label miss as permission to create.","root_cause":"The round-8 phase-aware repair queries only the current approved-hash label, so an older unbound root with the same Plan ID is invisible when no plan row claims it.","section_id":"Collision with compact-summary-fidelity (#20724)","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-R8-F04","causal_section_ids":["Locked decisions","4.1"],"check_key":"bounded-atomic-pending-context-delivery","description":"Nine P2P components plus the five lifecycle one-shots, one compact, and one clear fill all 16 slots. Section 4.1 also requires a second compact or clear generation racing an older queued or claimed generation to receive a distinct component ID; that next finite arrival becomes the seventeenth key, where the plan specifies only an error and disclaims retry/backpressure machinery.","finding_id":"GHDM-R9-F03","fix":"Keep at most one compact and one clear component inside the 16-slot buffer while newer generations remain durably staged for acknowledgment-triggered admission, or define explicit durable finite-source overflow/backpressure with ordered retry. Add the exact 9 P2P + 5 lifecycle + compact + clear saturation case followed by second compact and clear arrivals for queued, claimed, and replay-owned states.","introduced_in_round":8,"location":"P4 / finite briefing reservation under repeated compact or clear generations","prevention":"Compute buffer bounds from producer cardinality and race every multi-generation producer at queued, claimed, replay-owned, and saturated states.","principle":"A non-evictable bounded buffer must reserve capacity by maximum reachable concurrent components, including multiple generations from one producer class.","root_cause":"The round-8 saturation repair equates seven producer classes with seven maximum outstanding components even though compact and clear explicitly create distinct keys for overlapping generations.","section_id":"4.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-R8-F02","causal_section_ids":["Collision with compact-summary-fidelity (#20724)","V2"],"check_key":"edge-case-coverage","description":"`observe_frozen_migration_408` is executable and currently returns `latest=407 408_count=0`, yet its mismatch branch is not side-effect-free: it runs after Preflight may create a root and edge and after Phase A rewrites artifacts, migrates #20635, removes dependencies, and closes old tasks. A mismatch therefore returns to review with material coordinator state already changed.","finding_id":"GHDM-R9-F04","fix":"Run and durably record `observe_frozen_migration_408` before root creation, dependency attachment, Phase-A artifact edits, or task mutation; bind the evidence to the approved HEAD and revalidate that identity immediately before `create_plan`/expansion. The mismatch branch must leave task, plan, ledger, manifest, and dependency state unchanged.","introduced_in_round":8,"location":"Collision cleanup / observe_frozen_migration_408 ordering","prevention":"Place every pre-expansion drift observation before the first coordinator mutation and test its mismatch branch against a zero-diff task, plan, and dependency snapshot.","principle":"A read-only drift guard that returns work to review must run before the coordinator mutations it is supposed to prevent.","root_cause":"The round-8 migration observation was inserted at Phase B even though Preflight and Phase A already mutate the root/dependency graph, registered plan artifacts, #20635, and obsolete leaves.","section_id":"Collision with compact-summary-fidelity (#20724)","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-R5-F14","causal_section_ids":["3.1","4.1"],"check_key":"edge-case-coverage","description":"Sections 3.1 and 4.1 key lifecycle IDs, webhook/pipeline idempotency, committed-one-shot replacement, and watermark pruning to an `activation epoch`, but never define its durable field, initialization, rollover events, or mutation owner. Implementers cannot determine when an old committed identity stops suppressing a legitimate new lifecycle briefing or how racers agree on the same epoch.","finding_id":"GHDM-R9-F05","fix":"Define one reserved durable activation-epoch field and its atomic owner. Specify initialization for fresh deferred rows, the exact resume/clear/re-materialization transitions that advance it, CAS behavior under concurrent hooks, and treatment of queued, claimed, replay-owned, committed-one-shot, and compact/clear watermark state. Add restart and rollover races.","introduced_in_round":5,"location":"P3–P4 / activation-epoch lifecycle","prevention":"For each durable epoch, specify initialization, storage, owner, CAS transition, restart behavior, and migration or clearing of queued, claimed, replay, committed, and watermark state.","principle":"A durable dedupe epoch needs a defined source, atomic transition owner, and rollover treatment for every state it namespaces.","root_cause":"The round-5 tombstone-bounding repair says sets and watermarks roll over by activation epoch without defining the epoch field or any transition that changes it.","section_id":"3.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-R8-F03","causal_section_ids":["4.1"],"check_key":"bounded-atomic-pending-context-delivery","description":"The plan declares the global order UUID message-row locks → `SessionVariableMutation(session_id)`, but only enqueue explains how to obtain row IDs before the session lock. Acknowledgment must read P2P IDs from canonical replay stored in session variables before calling `mark_delivered_batch`; taking the advisory lock for that read creates the forbidden reverse edge, while an unprotected peek without replay-token revalidation can acknowledge stale ownership.","finding_id":"GHDM-R9-F06","fix":"Specify acknowledgment as a two-stage protocol: peek the replay token and P2P IDs, open a no-initial-lock immediate transaction, UUID-lock and eligibility-check those rows, acquire `SessionVariableMutation` through connection-aware `_mutate_variables`, revalidate the exact replay token/component ownership, then mark delivered, execute ack mutations, and clear or advance replay atomically. Add acknowledgment-versus-enqueue and acknowledgment-versus-legacy-merge races.","introduced_in_round":8,"location":"P4 / P2P acknowledgment lock order","prevention":"Trace enqueue and acknowledgment separately through candidate discovery, UUID row locks, session advisory lock, token recheck, mutation, rollback, and commit; race both against legacy session-only writers.","principle":"Every transaction that touches two lock domains needs a complete discovery, lock, recheck, mutation, and commit order.","root_cause":"The round-8 two-stage repair specifies message-row-first ordering for enqueue while acknowledgment must discover message IDs from replay stored behind the session lock and receives no equivalent two-stage protocol.","section_id":"4.1","severity":"blocking"},{"category":"traceability","causal_finding_id":"GHDM-R5-F10","causal_section_ids":["4.1"],"check_key":"targets-complete","description":"The 4.1 Target says `ACPHookAdapter.handle_native` is the commit boundary where claimed components commit after translation. The same section later requires that executor workers never commit and that only the async route commits after an in-budget await. Implementing the Target annotation literally reintroduces the late-worker timeout race.","finding_id":"GHDM-R9-F07","fix":"Rewrite the Target annotation and API contract so `handle_native` only translates and returns an opaque claim token, while `execute_hook`/the `_run_adapter_hook` caller owns commit-or-release after the immutable deadline check. Specify a typed worker result so constructors and tests exhaustively distinguish ordinary payloads from payload-plus-claim-token.","introduced_in_round":5,"location":"P4 / ACPHookAdapter.handle_native Target annotation","prevention":"After moving an ownership or commit boundary, sweep Targets, API descriptions, acceptance items, and timeout tests for the old owner.","principle":"Semantically annotated Targets must agree with the deliverable's authoritative runtime ownership and timeout boundary.","root_cause":"The round-5 ClaimHandle repair moved commit out of the executor worker but left the earlier Target annotation naming `handle_native` as the commit boundary.","section_id":"4.1","severity":"blocking"}],"reviewer_session":"#11090","round":9,"round_number":9,"verdict":"needs_review"},"session_id":"ec1cd52b-590d-4658-9bbd-6a37a5ddb086"}
+```
+
+**Round 10** `kind: verification`
+
+- reviewer_run: 93a78e64-c152-4ca2-892e-f3243ce784c1
+- reviewer_session: #11099
+- verdict: needs_review
+- findings:
+- GHDM-R10-F01/blocking/§4.1 flush-arm paragraph still executes acknowledgment mutations at route commit, contradicting Locked decision 4 ghook inbox-deletion ownership (fixer-induced, r6)
+- GHDM-R10-F02/blocking/direct AgyAdapter.handle_native consumer tests/adapters/test_adapters_agy.py missing from 4.1 Targets after the r9 typed-result repair (fixer-induced, r9)
+- GHDM-R10-F03/blocking/superseded-root Preflight label-prefix inventory has no completeness-preserving read path in current task MCP surfaces (fixer-induced, r9)
+- GHDM-R10-F04/blocking/observe_frozen_migration_408 durable observation record has no named persistent owner, key, schema, or authorized read/write interface (fixer-induced, r9)
+- GHDM-R10-F05/blocking/activation-epoch pending-drain fences omit P2P, turn-context, and staged-memory producers; final-acknowledgment epoch advance during _complete_response unhandled (fixer-induced, r9)
+- GHDM-R10-F06/blocking/cross-class concurrent live claims (PreToolUse vs real Stop/SubagentStop) lack serialization, overwrite rules, and losing-claim recovery (r4 lineage)
+- GHDM-R10-F07/blocking/pre-commit claim left pending on retryable persistence/reference/budget failure, denying immediate retry until route timeout plus lease expiry (r5 lineage)
+- GHDM-R10-F08/blocking/pre-deploy epochless session rows lack a deterministic _activation_epoch bootstrap and first-transition rule (fixer-induced, r9)
+- votes: all 8 accepted (coordinator-judged, unattended; zero declined)
+- resolution_notes: Review cap (10 rounds) reached without approval; no further adversary rounds. Disposition: F02 typed repairs via apply_plan_review_repairs; F01/F05/F06/F07/F08 prose fixes hand-applied by the coordinator after finalization; F03/F04 accepted but their fixes require user decisions (label-prefix task-inventory read API; durable owner for the 408 observation record) and are deferred to the human-handoff entry. Base validation rerun after repairs.
+
+```json plan-review-round
+{"evidence_id":"63ee4af3-27a1-42da-8b73-335ad1c00240","plan_hash":"34db9aa832135166003472eb36e5916c8ab5f22d51dd021b7e33f6019097dde0","round_number":10,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"f6f7883362c00d8d543b23e763215c9a6bca6ad9dc6f683bea49b1d5db7dd2ed","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":0,"emitted_findings":8,"total":8},"evidence_id":"63ee4af3-27a1-42da-8b73-335ad1c00240","lanes":[{"candidate_count":1,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":3,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":4,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":5,"manifest_digest":"3cc27f47fbf5632b39e18f6f85e3f793cecac420c23d32bb25b80daf2f777ccd","status":"valid"},"source_digest":"65170a0f2faf020539a09d05b5ec247170fd09f898cb7ecaec169d2ed41b48be","version":1},"findings":[{"category":"unhandled-edge","causal_finding_id":"GHDM-R6-F06","causal_section_ids":["Locked decisions","4.1","5.1"],"check_key":"bounded-atomic-pending-context-delivery","description":"Section 4.1 says claimed components and their acknowledgment mutations execute at route commit. The same section, Locked decision 4, 4.1.2/4.1.11/4.1.22, and 5.1.6 require route commit to persist canonical replay while delivered markers stay false until ghook maps, writes, flushes, and deletes the inbox envelope. An implementer cannot satisfy both ownership points.","finding_id":"GHDM-R10-F01","fix":"Rewrite the final flush-arm paragraph so route commit removes claimed components from selectable state and persists their deferred mutations in canonical replay; only the later inbox-absence acknowledgment transaction executes those mutations. Keep the never-at-claim and never-at-stash guarantees.","introduced_in_round":6,"location":"P4 / §4.1 final flush-arm mutation paragraph","prevention":"After moving a commit boundary, compare every state-transition verb across Locked decisions, body prose, acceptance, smoke, and V2.","principle":"Producer delivery state may advance only after the provider-visible action has been emitted and durably acknowledged.","root_cause":"The round-6 ghook-acknowledgment repair moved delivery ownership after route commit but left the older flush-arm sentence executing acknowledgment mutations at commit.","section_id":"4.1","severity":"blocking"},{"category":"traceability","causal_finding_id":"GHDM-R9-F07","causal_section_ids":["4.1","5.1","V2"],"check_key":"targets-complete","description":"`tests/adapters/test_adapters_agy.py` directly awaits `AgyAdapter.handle_native` and indexes the current dict result. Section 4.1 changes the inherited result to `PayloadResult | ClaimedPayloadResult`, but the file is absent from Targets and acceptance, so the planned implementation leaves a known consumer failing.","finding_id":"GHDM-R10-F02","fix":"Add the AGY test file to 4.1 Targets and require its direct call to exhaustively unwrap `PayloadResult` while preserving the native AGY payload contract.","introduced_in_round":9,"location":"P4 / §4.1 ACPHookAdapter.handle_native consumer inventory","prevention":"Run exact and literal direct-call sweeps for every changed return type, including inherited adapter test consumers, then add each hit to Targets or record why it is shape-neutral.","principle":"Every direct consumer of a changed return-shape contract must be targeted and validated.","repairs":[{"entries":["`tests/adapters/test_adapters_agy.py::*` — scope-reason: direct AgyAdapter.handle_native consumer must adopt the typed AdapterWorkerResult contract"],"kind":"add_targets","section_id":"4.1"},{"items":[{"artifact":"test: `tests/adapters/test_adapters_agy.py`","prose":"Direct AGY handle_native consumer exhaustively unwraps PayloadResult while preserving the native payload contract"}],"kind":"add_acceptance","section_id":"4.1"}],"root_cause":"The round-9 translation-only typed-result repair swept the async route and named adapter tests but omitted the direct AGY inherited handle_native consumer.","section_id":"4.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-R9-F02","causal_section_ids":["Collision with compact-summary-fidelity (#20724)","V2"],"check_key":"atomic-leaf-cutover","description":"Preflight requires every task state carrying `plan-root:grok-hook-deferred-materialization:*` before the zero-match create branch. Current `gobby-tasks:list_tasks` supports exact label presence only, exposes no completeness-preserving offset/total contract, and its discovery payload omits labels; `search_tasks` does not search labels. The plan-registry side is enumerable, while the task-label namespace side is not, so the repaired old-hash check is not executable through authorized tools.","finding_id":"GHDM-R10-F03","fix":"Name a current completeness-preserving read path. If none exists, land a narrowly scoped prerequisite task API with label-prefix filtering, stable pagination, total count, and task refs before this plan can finalize; then specify its exact Preflight calls and pair them with active/archived plan-registry enumeration.","introduced_in_round":9,"location":"Collision cleanup / superseded-root namespace Preflight","prevention":"Before ratifying a recovery query, verify its exact filter, pagination, total-count, and returned identity fields against the installed read API.","principle":"A fail-closed recovery inventory must name an executable read path that proves namespace completeness.","root_cause":"The round-9 superseded-root repair requires a label-prefix inventory that the current task MCP surfaces cannot perform exhaustively.","section_id":"Collision with compact-summary-fidelity (#20724)","severity":"blocking"},{"category":"missing-requirement","causal_finding_id":"GHDM-R9-F04","causal_section_ids":["Collision with compact-summary-fidelity (#20724)","3.1","V2"],"check_key":"requirement-owner","description":"The coordinator must durably record approved HEAD, command, exit status, stdout, and identity digests before root creation and reread that same object at two Phase-B boundaries. No repository path, registry field, key schema, or MCP operation owns it: PlanRecord and PlanReviewEvidence lack this post-approval checkpoint. The unanswered questions are where it persists, which authorized call writes it, and how a restarted coordinator retrieves the exact record.","finding_id":"GHDM-R10-F04","fix":"Specify one existing durable surface and exact read/write calls, or add a prerequisite storage/tool contract. Define the stable key and full object schema, then add restart tests proving both later observation checks read the same immutable record and every mismatch leaves the named state snapshot unchanged.","introduced_in_round":9,"location":"Collision cleanup / observe_frozen_migration_408 durable evidence","prevention":"For every cross-restart checkpoint, name the table or file, stable key, object schema, writer, reader, and recovery readback before declaring the sequence implementable.","principle":"Restart-dependent evidence needs a named durable owner, key, schema, and authorized read/write interface.","root_cause":"The round-9 ordering repair defines the observation object's contents and comparison rules without assigning it to any persistent surface.","section_id":"Collision with compact-summary-fidelity (#20724)","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-R9-F05","causal_section_ids":["Constraints","Locked decisions","3.1","4.1","5.1","V2"],"check_key":"edge-case-coverage","description":"While `_activation_epoch.pending` waits for queued, claimed, and replay-owned occupancy to empty, new P2P and turn-context producers can still add old-epoch components. This can starve rollover. The last acknowledgment can also advance the epoch during `_complete_response` after the current hook already produced old-epoch content, with no rule for reclassification or retry.","finding_id":"GHDM-R10-F05","fix":"Define a request-level pending-drain boundary. Permit only old-epoch release, replay, acknowledgment, explicit drop, and lease recovery; fence every new producer including P2P, turn-context, and staged memory. After the final drain CAS, re-evaluate the current hook under the new epoch or return a typed per-class retry outcome, and add continuous-arrival race tests.","introduced_in_round":9,"location":"P3-P5 / activation-epoch pending-drain producer boundary","prevention":"Enumerate every producer against active, pending_drain, and post-advance states, then test continuous arrivals and acknowledgment during response completion.","principle":"Once a namespace rollover is pending, new work must have one explicit epoch owner and cannot replenish the draining namespace indefinitely.","root_cause":"The round-9 activation-epoch repair fences lifecycle, copied external, and compact/clear producers while omitting P2P enqueue, turn-context stash, staged-memory selection, and current-hook behavior when the final acknowledgment advances the epoch.","section_id":"4.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-R4-F09","causal_section_ids":["4.1"],"check_key":"first-activity-activation-and-briefing-barrier","description":"A PreToolUse can hold one live claim while a real-blocking Stop/SubagentStop follows its normal arm and claims different remaining components. Route commit persists one canonical replay record, so two successful claim commits have no specified serialization, overwrite rule, or losing-claim recovery and can strand one claimed set.","finding_id":"GHDM-R10-F06","fix":"Enforce at most one live claim or canonical replay per session across all hook classes. A real Stop/SubagentStop may emit its existing gate while another claim is live, but must not attach pending components. Add concurrent PreToolUse-versus-Stop/SubagentStop tests for both completion orders and every release/takeover branch.","introduced_in_round":4,"location":"P4 / cross-class concurrent live claims","prevention":"Cross every live claim owner with concurrent PreToolUse, Stop, and SubagentStop in both completion orders, including release, timeout, and lease takeover.","principle":"A singular canonical replay owner requires a singular live claim owner across all hook classes.","root_cause":"The live-claim repair defines only a second PreToolUse loser; it explicitly lets a racing Stop follow its normal arm without defining whether that arm may claim remaining components.","section_id":"4.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-R5-F09","causal_section_ids":["Locked decisions","4.1"],"check_key":"edge-case-coverage","description":"Initial persistence/reference/budget failure returns a retryable fallback while leaving the pre-commit claim pending. The immediate retry then sees a live claim and returns the in-flight denial until route timeout plus the 30-second lease expires. Receiving-class retranslation failure should preserve committed replay; the pre-commit path needs release.","finding_id":"GHDM-R10-F07","fix":"CAS-release any newly created claim through `ClaimHandle` before returning a persistence/reference/budget fallback. Preserve an already committed canonical replay unchanged on receiving-class retranslation failure. Add controlled pre-token failures proving no live claim remains and the next eligible hook can select the same components.","introduced_in_round":5,"location":"P4 / oversize persistence and reference-fit failure","prevention":"For every helper failure, state whether ownership is queued, claimed, or replay-owned and assert the immediately following eligible request can make progress.","principle":"A retryable pre-commit failure must release its claim immediately; committed replay failures preserve replay identity.","root_cause":"The oversize repair uses one 'leave pending' rule for two different states: a newly created pre-commit claim and an already committed canonical replay.","section_id":"4.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-R9-F05","causal_section_ids":["Constraints","Locked decisions","3.1","4.1","5.1","V2"],"check_key":"edge-case-coverage","description":"Pre-deploy rows bypass the insert-time epoch seed but can later resume, end, compact, or re-materialize. The plan excludes them from copied SessionStart effects and says activation seeds may heal them, yet it never defines their exact `_activation_epoch` object or whether a first resume initializes epoch 1, advances to 2, or is excluded. Component IDs and watermarks therefore have no deterministic namespace.","finding_id":"GHDM-R10-F08","fix":"Specify one session-lock CAS bootstrap for an epochless existing row, including value, status, transition key, pending state, committed-one-shot set, and watermark/resident indexes. Define whether the triggering ordinary, resume, SESSION_END, PostCompact, or re-materialization event is folded into bootstrap or applied as the next transition, with restart and duplicate-event tests.","introduced_in_round":9,"location":"P3-P5 / epochless pre-deploy row bootstrap","prevention":"Test each legacy row class with every possible first post-deploy lifecycle event and record whether bootstrap absorbs or precedes that transition.","principle":"Every existing durable row entering a new namespace contract needs one deterministic bootstrap and first-transition rule.","root_cause":"The round-9 activation-epoch repair specifies fresh deferred, cutover-deferred, and clear-successor initialization while leaving ordinary pre-deploy rows to unspecified activation seeding.","section_id":"3.1","severity":"blocking"}],"reviewer_session":"#11099","round":10,"round_number":10,"verdict":"needs_review"},"session_id":"ec1cd52b-590d-4658-9bbd-6a37a5ddb086"}
+```
+
+**Human handoff** `kind: verification`
+
+- reason: review cap reached — round 10 (final round) returned needs_review with 8 blocking findings; per the cap rule no further adversary rounds were launched.
+- verdict_history: rounds 1-10 blocking-finding counts 11, 12, 20, 14, 16, 12, 10, 5, 7, 8; every round needs_review.
+- round_10_disposition: all 8 findings accepted (coordinator-judged, unattended; zero declined). F02 typed repairs applied via apply_plan_review_repairs (4.1 Target + acceptance 4.1.36). The coordinator hand-applied the adversary-specified prose fixes for F01 (route-commit persists deferred ack mutations; only the inbox-absence acknowledgment transaction executes them), F05 (request-level pending-drain producer fence including P2P, turn-context, and staged memory, plus final-acknowledgment re-evaluation; acceptance 4.1.37), F06 (at most one live claim or canonical replay per session across hook classes; acceptance 4.1.38), F07 (pre-commit claim CAS-release versus committed-replay preservation; acceptance 4.1.39), and F08 (epochless pre-deploy row bootstrap; Constraints plus acceptance 3.1.34). These hand-applied repairs follow the fixes verbatim in intent but have not been adversarially re-reviewed.
+- open_decision GHDM-R10-F03: the superseded-root Preflight label-prefix inventory has no completeness-preserving read path in current task MCP surfaces. Recommended: add a narrowly scoped prerequisite deliverable extending the gobby-tasks read surface with label-prefix filtering, stable pagination, and total count, then specify the exact Preflight calls. Alternative: enumerate historical plan hashes from the V1 changelog fences plus plan-registry bindings, accepting that unrecorded-hash roots stay undetectable.
+- open_decision GHDM-R10-F04: the observe_frozen_migration_408 observation record has no durable owner. Recommended: a coordinator-written sidecar file `.gobby/plans/grok-hook-deferred-materialization.observation-408.json` mirroring the companion coverage-ledger pattern (no new APIs), holding the record schema the plan already defines, with restart-readback tests. Alternative: a new plans-registry field or MCP tool (heavier mechanism).
+- next_step: resolve both open decisions, then authorize a fresh adversary round to review the hand-applied repairs and the two decision fixes. The M1 manifest remains unwritten and expansion remains blocked until an approved round; no build handoff occurred.
+
+**Restraint pass — 2026-08-25** `kind: verification`
+
+- author_session: #11061 (coordinator)
+- basis: user-ratified restraint ladder (memory 074414a2; landed as #20946) applied after round 10 hit the review cap with two open decisions (GHDM-R10-F03, GHDM-R10-F04); both are moot under the cuts below
+- cuts:
+- Collision/Preflight/Phase A/B: executed 2026-08-25 (commit 111bab878e) and reduced to a record; `observe_frozen_migration_408`, the label-namespace inventory, root-ledger sealing, and every recovery protocol removed — rung 1
+- Migration 408 / pipeline idempotency key removed: `_assigned_pipeline` is set only on pre-created rows, which still evaluate a live SessionStart, so copied first-activity evaluation cannot dispatch a pipeline; every derived carrier (assets.rs, catalog manifest, bundle.rs, schema identity, four goldens, runner_tests.rs) drops with it — rung 1
+- 3.1 keeps all-CLI scope; removed `_activation_epoch`, `SessionResolutionOutcome`, per-step guards and per-class failure outcomes, `_copied_session_start_state` phases, the blocking-webhook barrier and CAS/takeover claims, the phase-aware effect matrix, route deadlines and cancellation fencing, the four reserved control markers, the SessionStart output barrier, and the compact arming/delivery split — rung 1 (binding SessionStart paths keep today's context; decision 2 rewritten)
+- 4.1 reduced to the durable buffer, single-gate delivery, post-stdout inbox acknowledgment, and P2P FIFO through the same buffer under the existing advisory lock — rung 2 (reuse); removed ClaimHandle/leases/typed worker results, canonical replay records, `fit_grok_briefing_response`, stage-before-take and `compact_staging.py`, the 16/7/9 slot arithmetic, epoch rollover, and Grok-specific PostCompact/clear arming (the turn_start continuation rules stay the single owner on every CLI; Grok captures their render via `_grok_briefing_turn`)
+- 5.1 and V2 trimmed to the surviving contract; the saturation, rollover, and lock-order smokes are gone with the machinery they exercised
+- acceptance count: 92 → 44 (1.1: 6, 2.1: 3, 3.1: 14, 4.1: 14, 5.1: 7)
+- decision-class changes for user ratification: decision 2 (binding SessionStart context unchanged instead of stripped everywhere), decision 4 (one-shot markers mean composed-and-enqueued; ack effects limited to P2P delivered marking), decision 7 (the lookup lock is the only serialization; no claim, epoch, or idempotency key)
+- accepted residual risks, stated in the plan: a crash inside first-activity activation is healed by the existing `reconcile_session_activation` backstop only; a ghook stdout failure re-delivers the briefing at least once; a daemon death between acknowledgment and `mark_delivered_batch` may repeat a P2P message
+- next_step: mechanical repair by `plan-mechanic`, validate until clean, then adversary round 11 on this shape
+
+**Round 11** `kind: verification`
+
+- reviewer_run: 903304f5-3283-4936-8d05-ae38097fce1e
+- reviewer_session: #11104
+- basis: single user-authorized post-cap round on the restraint-cut shape (hash 8c4f18b3…); plan-mechanic pre-gate reported zero repairs
+- verdict: needs_review
+- findings:
+- GHDM-R11-F01/blocking/§Collision record — companion ledger keeps `root_task_ref: SEALED-BY-COORDINATOR` and the cut removed the only sealing step; `verify_bootstrap_ledger` has no sentinel branch (cut-induced)
+- GHDM-R11-F02/blocking/§5.1 — 5.1.3 and smoke step 6 say Stop `block` is only for real gates, contradicting the briefing-only Stop block in decision 4 and 4.1 flush arm 3 (earlier lineage)
+- GHDM-R11-F03/blocking/§4.1 — ghook `action_from_success_response` maps every non-Claude Stop block to exit 2 + stderr, discarding Grok's `additionalContext`; no deliverable owns that mapper (earlier lineage)
+- GHDM-R11-F04/blocking/§4.1 — `_grok_delivery` lives on `HookResponse.metadata` but the route stores the translated provider dict as the terminal response, so the drain cannot see it; the no-envelope direct-POST branch is unspecified (cut-induced)
+- GHDM-R11-F05/blocking/§4.1 — `prune_hook_inbox` prunes markers and temp files only; after marker expiry the drain re-posts a retained ack-pending envelope, unlinks it on 2xx, and the next hook reads that absence as delivered (cut-induced)
+- GHDM-R11-F06/blocking/§4.1 — stash predicate excludes gate hooks while the same paragraph and 4.1.8 require a no-UPS first PreToolUse to stash and deny on the same response; preserve_original returns the un-enriched original (cut-induced)
+- GHDM-R11-F07/blocking/§3.1 — agent instructions are produced only by `handle_before_agent`; a no-UPS first PreToolUse/Stop packet can never carry them although decision 4 lists them as briefing (cut-induced)
+- GHDM-R11-F08/blocking/§3.1 — `_session_just_materialized` is request-local; a crash, exception, copied-rule block, or blocking-webhook block after `register_session` leaves the packet, copied rules, and session_start webhooks with no heal path because `reconcile_session_activation` avoids prompt/context effects (cut-induced)
+- GHDM-R11-F09/blocking/§4.1 — route `asyncio.wait_for` cannot stop the executor thread; a late worker can activate, stash, or claim `grok_pending_delivery` after the route stored a terminal timeout response and ghook unlinked the envelope (cut-induced)
+- GHDM-R11-F10/blocking/§4.1 — `docs/guides/ghook-user-guide.md` and `docs/guides/ghook-development-guide.md` state 2xx deletes the inbox file before provider output; 4.1 reverses the order but omits both guides (earlier lineage)
+- votes: F01, F02, F03, F04, F05, F07, F10 accepted; F06 accepted in part (stash-predicate contradiction fixed; the preserve_original enrichment transfer declined as all-CLI parity — `_complete_response` discards observer-copy enrichment under preserve_original for every CLI today, and the startup packet is merged onto the returned object explicitly); F09 accepted in reduced form (flush claims only when `envelope_terminal_response(source_event_id)` is absent, no retry/backpressure response and no deadline protocol); F08 decision-class, pending user vote — A: one durable `_startup_pending` session variable written at creation and cleared after packet handoff, resumed by the next eligible hook; B (coordinator recommendation): keep the cut as today's SessionStart parity and state the loss honestly in 3.1 and Non-goals
+- resolution_notes: coordinator-judged (user present). Typed repairs for F03 and F10 applied via apply_plan_review_repairs after finalization; the remaining accepted findings hand-applied by the coordinator: F01 names the #20917 sealing step (paused root epic → ledger `root_task_ref` regeneration → header agreement) as the expansion prerequisite; F02 rewrites 5.1.3 and smoke step 6 to cover briefing-only Stop; F03 adds a Grok pass-through branch in `action_from_success_response` mirroring the Qwen branch; F04+F05 collapse into one drain rule keyed on the durable `grok_pending_delivery` variable (the `_grok_delivery` response marker is dropped) with a retention-bound requeue-and-unlink, and a no-`source_event_id` branch that delivers nothing and claims nothing; F06 stashes on every Grok hook with non-empty context and flushes gate hooks on the same object; F07 reuses `_inject_agent_instructions_if_needed` while composing a packet for a non-BEFORE_AGENT creating event and persists `_agent_context_injected`; F09 adds the claim guard. Plan re-validated in both modes and re-sealed after repairs. F08 waits for the user's vote before the next round.
+
+```json plan-review-round
+{"evidence_id":"e6366a2e-5dbf-41ac-90e0-f6d59c848dca","plan_hash":"8c4f18b3ebca6d9b45f2b2aacb23d7c4c02a8772216545d8674eefa0ebe138c9","round_number":11,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"19953404ce5090b2949e79c3257f969a279982739375b0bbd9165641a86a1573","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":4,"emitted_findings":10,"total":14},"evidence_id":"e6366a2e-5dbf-41ac-90e0-f6d59c848dca","lanes":[{"candidate_count":3,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":4,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":7,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":5,"manifest_digest":"730a05a149fbc841bac70407f2181117e297a991f160f88dcf922b2be1df599e","status":"valid"},"source_digest":"6289be02c29194edf66da41ed530023217157e77b18fcbe52463439cb16409c8","version":1},"findings":[{"category":"missing-requirement","causal_finding_id":"GHDM-RESTRAINT-PASS-2026-08-25","causal_section_ids":["Collision with compact-summary-fidelity (#20724) — retired 2026-08-25","V2"],"check_key":"bootstrap-ledger-root-identity","description":"Introduced by the round-10 restraint pass. The companion ledger still carries `root_task_ref: SEALED-BY-COORDINATOR`; `verify_bootstrap_ledger` treats that literal as the root identity and has no sentinel-resolution branch. The cut record says root-ledger sealing was removed, so expansion QA will compare the sentinel against the real plan/root manifest and fail.","finding_id":"GHDM-R11-F01","fix":"Restore one bounded coordinator step only: after the paused root exists and before `gobby-plans:create_plan` or expansion QA, atomically replace the ledger's root-task sentinel with that normalized root ref and verify the ledger and generated manifest headers agree. Keep the removed namespace inventory and recovery protocols out.","introduced_in_round":10,"location":"Collision record / companion coverage-ledger handoff","prevention":"For every retained companion artifact, enumerate unresolved sentinels and name the exact writer, timing, and readback gate.","principle":"Every mandatory bootstrap identity must have one executable owner that replaces planning-time sentinels before enforcement reads them.","root_cause":"The restraint cut removed the only root-task substitution step while retaining the mandatory companion ledger and its strict verifier.","section_id":"Collision with compact-summary-fidelity (#20724) — retired 2026-08-25","severity":"blocking"},{"category":"weak-testability","check_key":"grok-stop-briefing-parity","description":"Earlier-lineage defect. Locked decision 4 and §4.1 require leftover briefing on a text-only turn to block Stop once even without a real stop gate; 5.1.3 says Stop `block` is only for real gates, and the smoke never exercises briefing-only Stop. Both promises cannot pass the same implementation.","finding_id":"GHDM-R11-F02","fix":"Change smoke step 6 and 5.1.3 to allow Stop block for either a real gate or leftover briefing, retain the turn-context-only allow case, and add a focused assertion that briefing-only Stop emits `block` plus `additionalContext` once and the following Stop allows.","location":"P4 §4.1 briefing-only Stop branch versus P5 §5.1 smoke step 6 and acceptance 5.1.3","prevention":"Cross-check each acceptance sentence against every branch in the locked gate table, including briefing-only and turn-context-only states.","principle":"Acceptance must distinguish every behaviorally different gate input using the same vocabulary as the locked decision.","root_cause":"The smoke retained an older real-gate-only sentence after briefing-only Stop delivery became a required fallback.","section_id":"5.1","severity":"blocking"},{"category":"traceability","check_key":"grok-stop-stdout-mapping","description":"Earlier-lineage defect. Current ghook discards Grok Stop/SubagentStop JSON—including `hookSpecificOutput.additionalContext`—and emits only stderr with exit 2. Section 4.1 does not own that mapper, so its stdout-result change cannot make briefing-only Stop visible to Grok and cannot produce a valid post-stdout acknowledgment.","finding_id":"GHDM-R11-F03","fix":"In §4.1, give `action_from_success_response` a Grok Stop/SubagentStop branch that emits the complete serialized provider JSON on stdout with the provider-required success exit behavior; update the existing lowercase-Stop unit case and prove the process writes and flushes `additionalContext` before unlink.","location":"P4 §4.1 ghook post-stdout acknowledgment path","prevention":"Trace each provider gate from adapter dict through success mapping, stdout write, exit code, and inbox unlink before declaring the wire path complete.","principle":"The process-side success mapper must preserve the provider-native body that the adapter deliberately produced.","repairs":[{"entries":["`crates/ghook/src/action.rs::action_from_success_response`"],"kind":"add_targets","section_id":"4.1"},{"items":[{"artifact":"test: `crates/ghook/tests/contract.rs`","prose":"Grok Stop and SubagentStop block responses retain the complete provider JSON on stdout with success exit behavior, and ghook unlinks only after write and flush"}],"kind":"add_acceptance","section_id":"4.1"}],"root_cause":"`action_from_success_response` still treats lowercase Grok Stop block as stderr plus exit 2, while the plan changes only `emit_action` and deletion timing.","section_id":"4.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-RESTRAINT-PASS-2026-08-25","causal_section_ids":["Locked decisions","4.1","5.1"],"check_key":"durable-delivery-ack-identity","description":"Introduced by the round-10 restraint pass. `_grok_delivery` exists only on `HookResponse.metadata`, while ACP/Grok translation returns a provider dict and the route stores that dict as the terminal response; the drain therefore cannot observe the promised marker and may unlink before stdout. The enqueue-failure fallback also direct-POSTs without `source_event_id`, leaving a claim with no file-backed acknowledgment identity.","finding_id":"GHDM-R11-F04","fix":"Reuse existing durable state instead of restoring the removed typed worker-result layer: have the processed-envelope drain load the retained envelope, resolve its session, and retain it when `grok_pending_delivery.envelope_id` matches. When `source_event_id` is absent, present any gate response without claiming components or running acknowledgment effects, leaving them queued for a later durable envelope. Add drain-before-stdout and enqueue-failure/stdout-failure tests.","introduced_in_round":10,"location":"P4 §4.1 `_grok_delivery` terminal marker and enqueue-failure direct POST","prevention":"For every ingress branch, trace one envelope ID through HookEvent, claim state, terminal dedupe state, drain inspection, stdout, and settlement.","principle":"File absence proves provider emission only when the claim has a durable envelope identity and the daemon can read that identity from retained state.","root_cause":"The cut relies on metadata that provider translation discards and leaves the no-envelope direct-POST branch unspecified.","section_id":"4.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-RESTRAINT-PASS-2026-08-25","causal_section_ids":["4.1","5.1"],"check_key":"ack-retention-coupling","description":"Introduced by the round-10 restraint pass. `prune_hook_inbox` prunes processed markers and temp files only, so the plan's claim that it bounds retained acknowledgment files is false. After a marker expires, the drain re-posts the still-retained envelope and unlinks it on daemon 2xx; the next hook then treats that daemon-created absence as successful CLI stdout and permanently drops briefing/P2P content.","finding_id":"GHDM-R11-F05","fix":"Couple existing retention state: keep a processed marker while its inbox JSON remains acknowledgment-pending; at the retention bound, use the existing session-variable advisory lock to requeue the matching claimed components, then remove the marker and file together. Add a long-idle test that crosses marker retention before the next Grok hook.","introduced_in_round":10,"location":"P4 §4.1 age-based pruning claim","prevention":"Advance every acknowledgment test beyond marker retention and verify the retained file, dedupe marker, and session claim transition atomically.","principle":"Acknowledgment evidence and its retained payload must share one retention lifecycle.","root_cause":"Processed-marker pruning is independent of retained inbox JSON, and the stated prune does not remove or settle normal inbox envelopes.","section_id":"4.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-RESTRAINT-PASS-2026-08-25","causal_section_ids":["Locked decisions","3.1","4.1","5.1"],"check_key":"first-gate-capture-ordering","description":"Introduced by the round-10 restraint pass. The stash paragraph excludes PreToolUse, Stop, and SubagentStop, yet 4.1.8 requires a materializing first PreToolUse to stash and deny with the packet on that response; first Stop has the same gap. On workflow/webhook blocks, `_complete_response` enriches only the observer copy, so the specified returned original also lacks fresh context before Grok processing.","finding_id":"GHDM-R11-F06","fix":"Define one pre-flush capture step on the adapter-returned object: for a newly materialized or binding startup packet, capture briefing even on gate hooks; under `preserve_original`, transfer only enriched context/system-message fields from the observer copy while retaining the original decision/reason. Then flush on that same object. Cover first PreToolUse, first Stop, workflow block, and webhook block with fresh context.","introduced_in_round":10,"location":"P4 §4.1 stash predicate, preserve_original ownership, and same-response flush","prevention":"For each gate class, test newly produced startup, workflow, and webhook context through enrich, returned-object selection, stash, flush, translation, and stdout.","principle":"A gate can flush context produced by its own request only after that context has been transferred to the adapter-returned response and durably captured.","root_cause":"The cut excludes every gate from stash and selects the untouched original response on preserve_original paths, while both same-response delivery promises require the opposite ordering.","section_id":"4.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-RESTRAINT-PASS-2026-08-25","causal_section_ids":["Locked decisions","3.1","4.1","5.1"],"check_key":"first-activity-agent-context-parity","description":"Introduced by the round-10 restraint pass. Locked decision 4 classifies agent instructions as briefing, but `compose_session_response` builds the banner and supplied context only; `_inject_agent_instructions_if_needed` runs from BEFORE_AGENT. If PreToolUse or Stop is the first real hook, the packet can never contain the active agent contract even after same-response stash is repaired.","finding_id":"GHDM-R11-F07","fix":"Reuse `_inject_agent_instructions_if_needed` while composing a newly materialized packet when the creating event is outside BEFORE_AGENT, before the activity pulse makes the row look old; persist its existing `_agent_context_injected` marker so a later UPS does not duplicate it. Add the agent preamble to the no-UPS PreToolUse and first-Stop assertions.","introduced_in_round":10,"location":"P3 §3.1 no-UPS first PreToolUse/Stop startup packet","prevention":"Run the startup-component matrix across BEFORE_AGENT, BEFORE_TOOL, and Stop, asserting banner, claimed task, copied rules, profile, and agent instructions independently.","principle":"Every allowed first-activity class must compose every component that the locked startup-packet inventory promises.","root_cause":"Agent instructions are produced only by the BEFORE_AGENT handler, while the fallback packet composer does not include them.","section_id":"3.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-RESTRAINT-PASS-2026-08-25","causal_section_ids":["Constraints","Locked decisions","3.1","5.1"],"check_key":"first-activity-activation-recovery","description":"Introduced by the round-10 restraint pass and beyond the accepted residual-risk boundary. After `register_session` commits, an exception, process crash, copied-rule block, or blocking-webhook block can exit before packet stash/merge; later lookups hit the row and never reconstruct `_session_just_materialized`. `reconcile_session_activation` explicitly avoids prompt/context effects, so copied rules, async webhooks, and the startup packet have no heal path.","finding_id":"GHDM-R11-F08","fix":"Persist one minimal startup-pending phase in existing row/session metadata in the same transaction as creation, and clear it only after copied evaluation plus packet handoff to `_complete_response`. Later eligible hooks resume that phase; blocked copied evaluation either carries the packet and dispatches async SessionStart webhooks with the final synthetic response or leaves the phase pending. Add boundary-failure and copied-block retry tests without restoring epochs, claims, or takeover machinery.","introduced_in_round":10,"location":"P3 §3.1 row-create → activation → copied evaluation → packet handoff","prevention":"Inject failure or process loss after each startup boundary and require the next eligible hook to resume the missing packet/rules/webhooks without creating another row.","principle":"A committed row must retain a durable indication of unfinished startup work until every required one-shot side effect has reached its handoff boundary.","root_cause":"`_session_just_materialized` is event-local and disappears after the creating request, while reconciliation intentionally avoids prompt/context side effects.","section_id":"3.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"GHDM-RESTRAINT-PASS-2026-08-25","causal_section_ids":["3.1","4.1","5.1"],"check_key":"route-timeout-mutation-fence","description":"Introduced by the round-10 restraint pass. On adapter timeout the route stores and returns a terminal fail-open/block response, so ghook may emit it and unlink; the executor thread can continue afterward through activation, buffer stash, or `grok_pending_delivery` claim. That late state has no matching terminal acknowledgment record and can wedge or silently lose the startup packet.","finding_id":"GHDM-R11-F09","fix":"Reuse the existing envelope-processing claim and executor future: on timeout, return retry/backpressure without a terminal marker, keep the claim active, and attach completion handling that stores the worker's actual terminal result before a replay can proceed. Add a slow-worker test spanning startup/claim mutation and route timeout; avoid restoring the removed multi-deadline protocol.","introduced_in_round":10,"location":"P3/P4 adapter executor timeout versus durable activation and delivery mutations","prevention":"Force timeout immediately before every durable activation/claim mutation and prove the route neither terminalizes nor acknowledges ahead of worker completion.","principle":"A terminal envelope response must describe the final durable state of its worker.","root_cause":"`asyncio.wait_for` times out the await but cannot stop the synchronous executor thread, and the cut removed the completion fence around its durable mutations.","section_id":"4.1","severity":"blocking"},{"category":"traceability","check_key":"ghook-docs-ack-order-parity","description":"Earlier-lineage defect. `docs/guides/ghook-user-guide.md` and `docs/guides/ghook-development-guide.md` both say a daemon 2xx deletes the inbox file before provider output; §4.1 reverses that order but omits both guides, leaving the documented recovery model false.","finding_id":"GHDM-R11-F10","fix":"Add both ghook guides to §4.1 and rewrite their diagrams/cleanup text to map the 2xx response, write and flush the provider action, then remove the envelope; mapping or stdout failure retains it.","location":"P4 §4.1 documentation inventory","prevention":"Search live documentation for each changed state-transition verb and include every contradictory contract in the owning deliverable.","principle":"Every live guide that states a changed durability order must move with the implementation contract.","repairs":[{"entries":["`docs/guides/ghook-user-guide.md`","`docs/guides/ghook-development-guide.md`"],"kind":"add_targets","section_id":"4.1"},{"items":[{"artifact":"file: `docs/guides/ghook-user-guide.md`","prose":"The ghook user guide documents provider-action write and flush before inbox-envelope removal, with mapping or stdout failure retaining the file"},{"artifact":"file: `docs/guides/ghook-development-guide.md`","prose":"The ghook development guide documents the same post-stdout acknowledgment and retained-file recovery order"}],"kind":"add_acceptance","section_id":"4.1"}],"root_cause":"The plan updates session-facing docs while omitting ghook's two own flow/cleanup guides.","section_id":"4.1","severity":"blocking"}],"reviewer_session":"#11104","round":11,"round_number":11,"verdict":"needs_review"},"session_id":"ec1cd52b-590d-4658-9bbd-6a37a5ddb086"}
+```
+
+**User approval — 2026-08-25** `kind: verification`
+
+- author_session: #11061 (coordinator)
+- basis: user decision after round 11 — GHDM-R11-F08 resolved as option B (keep the cut; 3.1 Failures, Constraints, and Non-goals now state that the startup packet, copied rules, and session_start webhooks are not replayed after a crash or block inside first-activity activation, matching today's SessionStart handler); no further adversary rounds authorized
+- disposition: plan approved by the user for expansion on this artifact; the M1 Task Manifest is derived and applied by the coordinator through `derive_plan_handoff_manifest` / `apply_plan_handoff_manifest` (explicit human handoff) rather than by an approving adversary round
+- state: nine of ten round-11 findings repaired at 61cd0b11da; validation clean in both modes; plan-mechanic zero repairs; companion ledger re-sealed to the final artifact hash after the manifest apply
+- next_step: #20917 — create the paused root epic, seal the ledger `root_task_ref`, expand, expansion QA, then `gobby build` as the only automation opt-in
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Align Grok capabilities and Stop translation
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: Grok capability table lists additionalContext only
+    on stop and subagent_stop. symbol: `_grok_capabilities`.
+
+    1.1.2: Grok Stop block emits `decision: "block"` and `continue: true`. test: `tests/adapters/test_acp_hook_translation.py::TestBlockToDenyMapping.test_block_maps_to_deny_hard_stop`.
+
+    1.1.3: Grok observe hooks with context do not emit additionalContext. test: `tests/adapters/test_acp_hook_translation.py`.
+
+    1.1.4: Adapter-fidelity Grok row matches the 1.0.5 wire contract. file: `docs/guides/adapter-fidelity.md`.
+
+    1.1.5: Grok system-message compatibility constant is removed and every passive
+    Grok hook exposes ContextChannel.NONE with neither additionalContext nor systemMessage
+    output. test: `tests/adapters/test_capabilities.py`.
+
+    1.1.6: Grok PreToolUse emits only deny reason or updatedInput fields and never
+    additionalContext or systemMessage. test: `tests/adapters/test_acp_hook_translation.py`.'
+  labels:
+  - covers:grok-hook-deferred-materialization:1.1:1.1.1
+  - covers:grok-hook-deferred-materialization:1.1:1.1.2
+  - covers:grok-hook-deferred-materialization:1.1:1.1.3
+  - covers:grok-hook-deferred-materialization:1.1:1.1.4
+  - covers:grok-hook-deferred-materialization:1.1:1.1.5
+  - covers:grok-hook-deferred-materialization:1.1:1.1.6
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Split SessionStart flow and extract activation helpers
+  category: refactor
+  task_type: refactor
+  depends_on: []
+  validation_criteria: '2.1.1: `session_start_should_defer` and `activate_materialized_session`
+    exist with unit coverage; the live SessionStart path still registers and activates
+    exactly as before the split. file: `src/gobby/hooks/event_handlers/_session_start/materialize.py`.
+
+    2.1.2: `flow.py` is under 850 lines after the move. file: `src/gobby/hooks/event_handlers/_session_start/flow.py`.
+
+    2.1.3: The existing SessionStart test surface passes unchanged (behavior-preserving
+    proof), including ACP-child and pre-created paths. test: `tests/hooks/test_session_events_coverage.py`.'
+  labels:
+  - covers:grok-hook-deferred-materialization:2.1:2.1.1
+  - covers:grok-hook-deferred-materialization:2.1:2.1.2
+  - covers:grok-hook-deferred-materialization:2.1:2.1.3
+  tdd: false
+  source_section: '2.1'
+  assigned_agent: backend-developer
+- title: Materialize on first BEFORE_AGENT and inject startup context
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '2.1'
+  validation_criteria: '3.1.1: Startup SessionStart does not create a sessions row.
+    test: `tests/hooks/test_session_events_coverage.py::TestSessionStartAndHelpers::test_handle_session_start_basic`.
+
+    3.1.2: First BEFORE_AGENT creates the row; activation runs outside the lookup
+    lock in the creating request only. file: `src/gobby/hooks/session_materialize.py`.
+
+    3.1.3: Compact/pre-created SessionStart still binds the existing row and still
+    returns its context. test: `tests/hooks/test_session_events_coverage.py::TestSessionStartAndHelpers::test_handle_session_start_pre_created`.
+
+    3.1.4: First PreToolUse without UPS also materializes and carries the startup
+    packet, including the active agent''s instructions when the session has one. test:
+    `tests/hooks/test_hooks_manager.py`.
+
+    3.1.5: `hook_manager.py` stays under the ceiling; first-activity orchestration
+    lives in `session_materialize.py`. file: `src/gobby/hooks/session_materialize.py`.
+
+    3.1.6: Notification does not materialize an idle session; the exclusion is unconditional
+    and the recorded Claude/Grok probe is observational evidence only. test: `tests/hooks/test_hooks_manager.py`.
+
+    3.1.7: A parameterized first-hook matrix materializes every supported non-SessionStart
+    event except SESSION_END and NOTIFICATION, and both exclusions leave an idle startup
+    row absent. test: `tests/hooks/test_hooks_manager.py::test_first_hook_materialization_matrix`.
+
+    3.1.8: Copied evaluation uses the synthetic SessionStart schema (`data.source
+    == ''startup''`, deferred identity fields, no prompt/tool payload); every installed
+    SessionStart lifecycle rule plus one custom session-start rule fires identically
+    to a real startup SessionStart, and a copied rule block or blocking-webhook block
+    is returned as the live response. test: `tests/hooks/test_hooks_manager.py`.
+
+    3.1.9: Concurrent first UPS and PreToolUse for one `external_id` yield one row;
+    activation and copied evaluation run exactly once, in the creating request, and
+    the other request proceeds on the existing row. test: `tests/hooks/test_hooks_manager.py`.
+
+    3.1.10: Compact, resume, clear, web-chat, and pre-created SessionStart paths each
+    bind or create the intended canonical row without duplication. test: `tests/hooks/test_session_events_coverage.py::test_session_start_binding_matrix`.
+
+    3.1.11: A sessionless startup SessionStart dispatches no session_start webhooks;
+    first-activity copied processing dispatches blocking and non-blocking session_start
+    webhooks once on the synthetic event, and a blocking endpoint''s block gates the
+    live response. test: `tests/hooks/test_webhooks.py`.
+
+    3.1.12: A parameterized provider matrix delivers the first-activity startup packet
+    (banner system message, claimed-task context, copied-rule context) through the
+    expected native channel for Claude, Qwen, Droid, and Codex, exercises the supported
+    AGY shared-materialization path, and shows Grok emitting nothing on its observe
+    hooks until 4.1. test: `tests/hooks/test_hooks_manager.py::test_first_activity_startup_context_provider_matrix`.
+
+    3.1.13: An exception inside activation fails the current hook open, leaves the
+    row, and the next BEFORE_AGENT''s `reconcile_session_activation` repairs agent
+    state; the startup packet is not replayed. test: `tests/hooks/test_hooks_manager.py`.
+
+    3.1.14: `_resolve_uncached_session_id` skips NOTIFICATION like SESSION_END and
+    sets `_session_just_materialized` only on the create branch. test: `tests/hooks/test_session_lookup_metadata.py`.'
+  labels:
+  - covers:grok-hook-deferred-materialization:3.1:3.1.1
+  - covers:grok-hook-deferred-materialization:3.1:3.1.2
+  - covers:grok-hook-deferred-materialization:3.1:3.1.3
+  - covers:grok-hook-deferred-materialization:3.1:3.1.4
+  - covers:grok-hook-deferred-materialization:3.1:3.1.5
+  - covers:grok-hook-deferred-materialization:3.1:3.1.6
+  - covers:grok-hook-deferred-materialization:3.1:3.1.7
+  - covers:grok-hook-deferred-materialization:3.1:3.1.8
+  - covers:grok-hook-deferred-materialization:3.1:3.1.9
+  - covers:grok-hook-deferred-materialization:3.1:3.1.10
+  - covers:grok-hook-deferred-materialization:3.1:3.1.11
+  - covers:grok-hook-deferred-materialization:3.1:3.1.12
+  - covers:grok-hook-deferred-materialization:3.1:3.1.13
+  - covers:grok-hook-deferred-materialization:3.1:3.1.14
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: Stash observe context and flush briefing without a Stop loop
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '2.1'
+  - '3.1'
+  validation_criteria: '4.1.1: First-prompt, binding-SessionStart, and continuation-prompt
+    context on Grok is stashed as briefing while ordinary UPS context is stashed as
+    turn-context; neither returns additionalContext or systemMessage. test: `tests/hooks/test_grok_pending_context.py`.
+
+    4.1.2: First Grok PreToolUse after a briefing stash denies once with that reason
+    and claims the components; the identical PreToolUse after ghook''s inbox-file
+    removal allows absent another gate. test: `tests/hooks/test_grok_pending_context.py`.
+
+    4.1.3: Turn-context concatenates onto an already-blocking Stop and is dropped
+    (debug-logged) when Stop allows; Grok Stop with only turn-context and no stop-gate
+    allows the stop. test: `tests/hooks/test_grok_pending_context.py`.
+
+    4.1.4: On Grok, the `inject-compact-handoff-on-prompt` / `inject-clear-handoff-on-prompt`
+    render is captured as a briefing component on the continuation prompt and delivered
+    by the next PreToolUse deny; the rule templates are unchanged. test: `tests/hooks/test_hook_manager.py`.
+
+    4.1.5: Grok wire envelopes for flush outputs (deny reason, Stop block + additionalContext)
+    are asserted at the adapter layer only. test: `tests/adapters/test_acp_hook_translation.py`.
+
+    4.1.6: Briefing and turn-context flush onto workflow-block and webhook-block responses
+    under `preserve_original=True`, on the object returned to the adapter. test: `tests/hooks/test_hook_manager.py`.
+
+    4.1.7: Buffer bounds enforce the named caps: turn-context is drop-oldest at 32
+    components / 16384 bytes and rejects a single component over 8192 bytes; briefing
+    components are deduplicated by id and never cap-evicted; every mutation is one
+    `_mutate_variables` call. test: `tests/hooks/test_grok_pending_context.py`.
+
+    4.1.8: A no-UPS first PreToolUse stashes the startup packet as briefing and deny-once
+    delivers it on that same response. test: `tests/hooks/test_grok_pending_context.py`.
+
+    4.1.9: Grok pending P2P messages enqueue as `p2p:<id>` components without `mark_delivered_batch`,
+    dedupe across concurrent selectors and select-after-claim, are bounded per selection,
+    and are marked delivered only in the acknowledgment; non-Grok inline delivery
+    is unchanged. test: `tests/hooks/test_event_enrichment.py`. test: `tests/hooks/test_pending_message_provider_contracts.py`.
+
+    4.1.10: Acknowledgment on the next hook with a different envelope id treats an
+    absent inbox file as delivered (ack effects run, delivery cleared) and a present
+    file as undelivered (file unlinked, components requeued at the front, delivered
+    again on the next gate). test: `tests/hooks/test_grok_pending_context.py`.
+
+    4.1.11: ghook removes the inbox envelope only after the mapped provider action
+    was written and flushed to stdout; mapping failure or stdout failure leaves the
+    envelope in place. test: `crates/ghook/tests/contract.rs`.
+
+    4.1.12: The daemon drain leaves a leftover envelope whose id equals its session''s
+    `grok_pending_delivery.envelope_id` in place with or without a processed marker,
+    settles it (components requeued at the front, delivery cleared, file and marker
+    unlinked together) once it is older than `GROK_DELIVERY_RETENTION_SECONDS`, and
+    still unlinks other processed leftovers. test: `tests/hooks/test_inbox.py`.
+
+    4.1.13: `grok_pending_briefing`, `grok_pending_turn_context`, and `grok_pending_delivery`
+    are reserved; `is_reserved_workflow_variable` is true for all three. test: `tests/hooks/test_grok_pending_context.py`.
+
+    4.1.14: Session-boundary contract, sessions guide, and variables guide document
+    Grok PreToolUse/Stop delivery, the reserved buffers, and post-stdout acknowledgment.
+    file: `docs/contracts/session-boundary.md`, `docs/guides/sessions.md`, `docs/guides/variables.md`.
+
+    4.1.15: Grok Stop and SubagentStop block responses retain the complete provider
+    JSON on stdout with success exit behavior, and ghook unlinks only after write
+    and flush. test: `crates/ghook/tests/contract.rs`.
+
+    4.1.16: The ghook user guide documents provider-action write and flush before
+    inbox-envelope removal, with mapping or stdout failure retaining the file. file:
+    `docs/guides/ghook-user-guide.md`.
+
+    4.1.17: The ghook development guide documents the same post-stdout acknowledgment
+    and retained-file recovery order. file: `docs/guides/ghook-development-guide.md`.
+
+    4.1.18: Flush without `source_event_id`, or for an envelope whose terminal response
+    is already stored, neither claims nor delivers briefing; the next envelope-backed
+    gate delivers it. test: `tests/hooks/test_grok_pending_context.py`.'
+  labels:
+  - covers:grok-hook-deferred-materialization:4.1:4.1.1
+  - covers:grok-hook-deferred-materialization:4.1:4.1.2
+  - covers:grok-hook-deferred-materialization:4.1:4.1.3
+  - covers:grok-hook-deferred-materialization:4.1:4.1.4
+  - covers:grok-hook-deferred-materialization:4.1:4.1.5
+  - covers:grok-hook-deferred-materialization:4.1:4.1.6
+  - covers:grok-hook-deferred-materialization:4.1:4.1.7
+  - covers:grok-hook-deferred-materialization:4.1:4.1.8
+  - covers:grok-hook-deferred-materialization:4.1:4.1.9
+  - covers:grok-hook-deferred-materialization:4.1:4.1.10
+  - covers:grok-hook-deferred-materialization:4.1:4.1.11
+  - covers:grok-hook-deferred-materialization:4.1:4.1.12
+  - covers:grok-hook-deferred-materialization:4.1:4.1.13
+  - covers:grok-hook-deferred-materialization:4.1:4.1.14
+  - covers:grok-hook-deferred-materialization:4.1:4.1.15
+  - covers:grok-hook-deferred-materialization:4.1:4.1.16
+  - covers:grok-hook-deferred-materialization:4.1:4.1.17
+  - covers:grok-hook-deferred-materialization:4.1:4.1.18
+  tdd: true
+  source_section: '4.1'
+  implementation_domain: backend
+- title: Isolated-daemon smoke plus unit contracts
+  category: test
+  task_type: task
+  depends_on:
+  - '4.1'
+  validation_criteria: '5.1.1: Smoke file asserts Grok/Claude SessionStart does not
+    insert a sessions row. test: `tests/e2e/test_grok_session_deferral.py`.
+
+    5.1.2: Simulator maps grok UPS to `user_prompt_submit`. symbol: `CLIEventSimulator.user_prompt_submit`.
+
+    5.1.3: Smoke asserts Grok first PreToolUse deny carries briefing, Stop `block`
+    fires for a real gate or for leftover briefing (once, with `additionalContext`;
+    the next Stop allows) and never for turn-context alone, and the compact continuation
+    prompt arms a briefing delivered by the next PreToolUse. test: `tests/e2e/test_grok_session_deferral.py`.
+
+    5.1.4: Claude first prompt returns startup context while Grok UPS returns none
+    and leaves a pending briefing. test: `tests/e2e/test_grok_session_deferral.py`.
+
+    5.1.5: With the inbox envelope absent the next hook acknowledges and a second
+    PreToolUse allows absent another gate; with it present the briefing is requeued
+    and the next PreToolUse denies again; Stop with only turn-context allows. test:
+    `tests/e2e/test_grok_session_deferral.py`.
+
+    5.1.6: Compact binding creates no duplicate row; `grok_pending_delivery` and P2P
+    delivered markers change only at acknowledgment. test: `tests/e2e/test_grok_session_deferral.py`.
+
+    5.1.7: All four existing CLIEventSimulator SessionStart consumer suites pass after
+    their row and context assumptions move to first activity. test: `GOBBY_TEST_PROTECT=1
+    uv run pytest tests/e2e/test_full_workflow.py tests/e2e/test_session_tracking.py
+    tests/e2e/test_stateless_ambient_session.py tests/e2e/test_worktrees_e2e.py -q`.'
+  labels:
+  - covers:grok-hook-deferred-materialization:5.1:5.1.1
+  - covers:grok-hook-deferred-materialization:5.1:5.1.2
+  - covers:grok-hook-deferred-materialization:5.1:5.1.3
+  - covers:grok-hook-deferred-materialization:5.1:5.1.4
+  - covers:grok-hook-deferred-materialization:5.1:5.1.5
+  - covers:grok-hook-deferred-materialization:5.1:5.1.6
+  - covers:grok-hook-deferred-materialization:5.1:5.1.7
+  tdd: false
+  source_section: '5.1'
+  assigned_agent: backend-developer
+```

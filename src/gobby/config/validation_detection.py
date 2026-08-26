@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import shlex
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -515,13 +515,33 @@ def classify_validation_command(
     command: Any,
     config: ValidationDetectionConfig | None = None,
 ) -> ValidationCommandMatch | None:
-    """Return validation match metadata for a shell command."""
+    """Return validation match metadata for the first validation segment of a command."""
+    return next(_iter_validation_matches(command, config), None)
+
+
+def classify_validation_segments(
+    command: Any,
+    config: ValidationDetectionConfig | None = None,
+) -> tuple[ValidationCommandMatch, ...]:
+    """Return one match per validation segment of a possibly compound command.
+
+    A stash-wrapped test run (``git stash push src/x.py``, ``pytest tests/x.py``,
+    ``git stash pop``) yields only the pytest segment, so consumers that scope
+    paths to what was validated never read git or shell segments as targets.
+    """
+    return tuple(_iter_validation_matches(command, config))
+
+
+def _iter_validation_matches(
+    command: Any,
+    config: ValidationDetectionConfig | None,
+) -> Iterator[ValidationCommandMatch]:
     if not isinstance(command, str) or not command.strip():
-        return None
+        return
 
     detection_config = config or default_validation_detection_config()
     if not detection_config.enabled:
-        return None
+        return
 
     wrapper_rules = _iter_wrapper_rules(detection_config)
     parsed = parse_shell_command(command)
@@ -533,7 +553,7 @@ def classify_validation_command(
             for matcher in _iter_matchers(detection_config):
                 if _matcher_matches_segment(matcher, list(normalized.argv)):
                     shell_operators = (*parsed.operators, *normalized.shell_operators)
-                    return ValidationCommandMatch(
+                    yield ValidationCommandMatch(
                         matcher_id=matcher.id,
                         label=matcher.label,
                         categories=tuple(matcher.categories),
@@ -549,7 +569,7 @@ def classify_validation_command(
                             _matcher_requires_execution_confirmation(matcher, list(normalized.argv))
                         ),
                     )
-    return None
+                    break
 
 
 def is_validation_command(

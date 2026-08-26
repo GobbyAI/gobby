@@ -14,7 +14,12 @@ from typing import cast
 import pytest
 
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.tasks.epic_guards import collect_epic_guard_paths, evaluate_epic_guards
+from gobby.tasks.epic_guards import (
+    collect_epic_guard_paths,
+    evaluate_epic_guards,
+    is_pytest_module_path,
+    is_test_convention_path,
+)
 
 
 class _TaskManager:
@@ -319,6 +324,66 @@ def test_guard_collection_includes_test_convention_files_added_by_commit(
     assert paths == ("tests/test_added_guard.py",)
     assert sources == (prior.id,)
     assert errors == ()
+
+
+def test_guard_collection_skips_added_files_the_runner_cannot_collect(tmp_path: Path) -> None:
+    """A tests tree also gains fixtures, helpers, and conftest modules.
+
+    Handing those to pytest ended the guard run with ``ERROR: not found`` for a
+    scenario YAML and blocked #20913's close under its epic (#20957).
+    """
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.email", "tests@example.com")
+    _git(tmp_path, "config", "user.name", "Tests")
+    added = {
+        "tests/test_added_guard.py": "def test_guard(): pass\n",
+        "tests/conftest.py": "",
+        "tests/scenario_runner.py": "def run(): pass\n",
+        "tests/scenarios/bounded-repair.yaml": "skill: example\n",
+        "crates/core/tests/contract.rs": "#[test] fn contract() {}\n",
+        "web/src/login.test.tsx": "test('login', () => {});\n",
+    }
+    for relative, content in added.items():
+        target = Path(tmp_path, relative)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "add guard and support files")
+    sha = _git(tmp_path, "rev-parse", "HEAD").strip()
+    epic, prior, current = _task_tree(criteria="No explicit test reference.")
+    prior.commits = [sha]
+
+    paths, sources, errors, _deleted = collect_epic_guard_paths(
+        task_manager=cast(LocalTaskManager, _TaskManager([epic, prior, current])),
+        task=current,
+        repo_path=str(tmp_path),
+    )
+
+    assert paths == ("tests/test_added_guard.py",)
+    assert sources == (prior.id,)
+    assert errors == ()
+
+
+@pytest.mark.parametrize(
+    ("path", "module", "convention"),
+    [
+        ("tests/tasks/test_epic_guards.py", True, True),
+        ("src/gobby/tasks/guards_test.py", True, True),
+        ("web/src/login.test.tsx", False, True),
+        ("web/src/Login.spec.ts", False, True),
+        ("pkg/store_test.go", False, True),
+        ("tests/skills/scenarios/plan-mechanic/bounded-repair.yaml", False, True),
+        ("tests/conftest.py", False, True),
+        ("tests/skills/scenario_runner.py", False, True),
+        ("crates/gcore/tests/schema_contract.rs", False, True),
+        ("src/gobby/tasks/epic_guards.py", False, False),
+    ],
+)
+def test_guard_modules_are_pytest_files_while_edits_use_the_tree(
+    path: str, module: bool, convention: bool
+) -> None:
+    assert is_pytest_module_path(path) is module
+    assert is_test_convention_path(path) is convention
 
 
 def test_guard_collection_never_lists_the_whole_project(tmp_path: Path) -> None:

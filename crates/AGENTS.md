@@ -10,6 +10,7 @@ the rebuild/reinstall new-inode requirement) live in `AGENTS.md`.
 ```bash
 # Build / check a specific crate (use -p; avoid whole-workspace builds unless needed)
 cargo build -p gobby-code                 # gcode CLI
+cargo build --release -p <crate>          # one release artifact; install it via a new inode (AGENTS.md)
 uv run gobby cutover                      # build/install all four release binaries, pin, restart, smoke
 
 # Lint & format — match repo config; never relax lints to pass

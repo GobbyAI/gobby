@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import click
+import httpx
 
 from gobby.storage.hub.protocol import HubDatabase
 
@@ -35,8 +36,68 @@ REINSTALL_TARGETS: dict[str, set[str]] = {
 }
 
 
+def _running_daemon_install_dir() -> Path | None:
+    """Return the bundled-content directory of the running daemon, or None when none answers."""
+    from gobby.cli.utils_config import get_daemon_url
+
+    try:
+        response = httpx.get(f"{get_daemon_url()}/api/health", timeout=2.0)
+        payload = response.json()
+    except (httpx.HTTPError, ValueError, OSError) as exc:
+        logger.debug("No running daemon answered the bundled-source check: %s", exc)
+        return None
+    if response.status_code != 200 or not isinstance(payload, dict):
+        return None
+    install_dir = payload.get("install_dir")
+    if not isinstance(install_dir, str) or not install_dir:
+        return None
+    return Path(install_dir)
+
+
+def _check_bundled_source_checkout(install_dir: Path, *, force: bool) -> None:
+    """Refuse to overwrite the shared bundled rows from a checkout the daemon does not serve.
+
+    Every session reads the installed rows the running daemon serves, and the daemon
+    keeps running its own checkout's code against them. Syncing from another checkout
+    (a worktree on a branch) swaps the content without swapping that code, so it is
+    refused unless ``--force`` makes the overwrite deliberate. No reachable daemon means
+    nothing to conflict with.
+    """
+    daemon_dir = _running_daemon_install_dir()
+    if daemon_dir is None or daemon_dir.resolve() == install_dir.resolve():
+        return
+    if not force:
+        click.echo(
+            "The running daemon serves bundled content from\n"
+            f"  {daemon_dir}\n"
+            "and this checkout would sync from\n"
+            f"  {install_dir}\n"
+            "Every session reads the shared rows the daemon serves, and the daemon keeps "
+            "running its own code against them. Run `gobby sync` from the daemon's checkout, "
+            "or pass --force to overwrite the shared rows anyway.",
+            err=True,
+        )
+        sys.exit(1)
+    click.echo(
+        "WARNING: --force is overwriting the shared bundled rows from\n"
+        f"  {install_dir}\n"
+        "while the running daemon serves\n"
+        f"  {daemon_dir}\n"
+        "Every active session now reads this checkout's content; the daemon's next restart "
+        "or reload_cache reverts it.",
+        err=True,
+    )
+
+
 @click.command("sync")
-@click.option("--force", is_flag=True, help="Skip integrity check even in production mode.")
+@click.option(
+    "--force",
+    is_flag=True,
+    help=(
+        "Skip integrity check even in production mode, and overwrite the shared bundled "
+        "rows from a checkout the running daemon does not serve."
+    ),
+)
 @click.option("--verify-only", is_flag=True, help="Only run integrity check, don't sync.")
 @click.option(
     "--fail-on-verify",
@@ -143,6 +204,8 @@ def sync(
             skip_types = (BUNDLED_SYNC_CONTENT_TYPES - requested) | (skip_types & requested)
         else:
             skip_types = BUNDLED_SYNC_CONTENT_TYPES - requested
+
+    _check_bundled_source_checkout(install_dir, force=force)
 
     # --- Initialize DB and sync ---
     from gobby.cli.runtime import require_cli_database

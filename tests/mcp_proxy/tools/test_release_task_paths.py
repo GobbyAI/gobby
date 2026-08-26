@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -130,6 +131,7 @@ async def test_release_task_paths_is_owner_only_and_clears_commit_guard_attribut
 
 
 SHARED_PATH = "src/shared.py"
+RENAMED_PATH = "src/shared_v2.py"
 
 
 def _committed_repo(tmp_path: Path) -> Path:
@@ -145,6 +147,26 @@ def _committed_repo(tmp_path: Path) -> Path:
         check=True,
     )
     return repo
+
+
+def _last_commit_epoch(repo: Path, path: str) -> int:
+    output = subprocess.run(
+        ["git", "log", "-1", "--format=%ct", "--", path],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert output, f"{path} has no commit"
+    return int(output)
+
+
+def _stamp_owner_edits(harness: _Harness, edited_at: dict[str, float]) -> None:
+    """Record when the owner session last edited each path under its task."""
+    harness.variables.merge_variables(
+        harness.owner.id,
+        {"task_edited_file_times": {harness.task.id: edited_at}},
+    )
 
 
 @dataclass
@@ -203,8 +225,8 @@ def _harness(temp_db: HubDatabase, repo: Path) -> _Harness:
     )
 
 
-def _foreign_claimant(harness: _Harness) -> tuple[Any, Any]:
-    """Second active session whose open claimed task holds attribution on SHARED_PATH."""
+def _foreign_claimant(harness: _Harness, path: str = SHARED_PATH) -> tuple[Any, Any]:
+    """Second active session whose open claimed task holds attribution on ``path``."""
     foreign = harness.sessions.register(
         external_id="dirty-release-foreign",
         machine_id=LOCAL_MACHINE_ID,
@@ -227,8 +249,8 @@ def _foreign_claimant(harness: _Harness) -> tuple[Any, Any]:
         {
             "claimed_tasks": {other.id: f"#{other.seq_num}"},
             "active_task_id": other.id,
-            "task_edited_files": {other.id: [SHARED_PATH]},
-            "task_edited_file_checkouts": {other.id: {root: [SHARED_PATH]}},
+            "task_edited_files": {other.id: [path]},
+            "task_edited_file_checkouts": {other.id: {root: [path]}},
         },
     )
     return foreign, other
@@ -242,6 +264,7 @@ async def test_release_succeeds_when_the_dirt_belongs_to_another_sessions_open_t
     """The #20818 deadlock shape: stale attribution over another session's live dirt."""
     harness = _harness(temp_db, _committed_repo(tmp_path))
     foreign, other = _foreign_claimant(harness)
+    _stamp_owner_edits(harness, {SHARED_PATH: _last_commit_epoch(harness.repo, SHARED_PATH) - 100})
     (harness.repo / SHARED_PATH).write_text(
         "committed = True\nforeign_dirt = True\n", encoding="utf-8"
     )
@@ -261,18 +284,48 @@ async def test_release_succeeds_when_the_dirt_belongs_to_another_sessions_open_t
             SHARED_PATH: [{"task": f"#{other.seq_num}", "session": f"#{foreign.seq_num}"}]
         },
     }
-    assert harness.task.id not in harness.variables.get_variables(harness.owner.id).get(
-        "task_edited_files", {}
-    )
+    owner_variables = harness.variables.get_variables(harness.owner.id)
+    assert harness.task.id not in owner_variables.get("task_edited_files", {})
+    assert harness.task.id not in owner_variables.get("task_edited_file_times", {})
     foreign_files = harness.variables.get_variables(foreign.id)["task_edited_files"]
     assert foreign_files[other.id] == [SHARED_PATH]
 
 
 @pytest.mark.asyncio
-async def test_release_still_refuses_dirt_no_other_open_task_accounts_for(
+async def test_release_refuses_own_edit_newer_than_the_last_commit_on_a_co_claimed_path(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
+    """The reverse of #20818: another task holding attribution proves nothing about
+    whose dirt it is, so the owner's live edit stays attributed and committable."""
+    harness = _harness(temp_db, _committed_repo(tmp_path))
+    foreign, other = _foreign_claimant(harness)
+    _stamp_owner_edits(harness, {SHARED_PATH: _last_commit_epoch(harness.repo, SHARED_PATH) + 100})
+    (harness.repo / SHARED_PATH).write_text("committed = True\nown_dirt = True\n", encoding="utf-8")
+
+    with session_context_for_test(harness.owner.id):
+        refused = await harness.registry.call(
+            "release_task_paths",
+            {"task_id": harness.task.id, "paths": [SHARED_PATH]},
+        )
+
+    assert refused["success"] is False
+    assert refused["error_code"] == "TASK_INVALID_STATUS"
+    assert "commit or revert" in refused["error"]
+    assert "git stash is blocked" in refused["error"]
+    assert refused["dirty_paths"] == [SHARED_PATH]
+    owner_files = harness.variables.get_variables(harness.owner.id)["task_edited_files"]
+    assert owner_files[harness.task.id] == [SHARED_PATH]
+    foreign_files = harness.variables.get_variables(foreign.id)["task_edited_files"]
+    assert foreign_files[other.id] == [SHARED_PATH]
+
+
+@pytest.mark.asyncio
+async def test_release_refuses_dirt_with_no_recorded_edit(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    """Without a stamp the ledger cannot clear the dirt, foreign owner or not."""
     harness = _harness(temp_db, _committed_repo(tmp_path))
     (harness.repo / SHARED_PATH).write_text(
         "committed = True\nunaccounted = True\n", encoding="utf-8"
@@ -287,19 +340,25 @@ async def test_release_still_refuses_dirt_no_other_open_task_accounts_for(
     assert refused["success"] is False
     assert refused["error_code"] == "TASK_INVALID_STATUS"
     assert "commit or revert" in refused["error"]
-    assert "stash" in refused["error"], "the refusal must not leave stashing as the implied exit"
+    assert "git stash is blocked" in refused["error"], (
+        "the refusal must not leave stashing as the implied exit"
+    )
     assert refused["dirty_paths"] == [SHARED_PATH]
     owner_files = harness.variables.get_variables(harness.owner.id)["task_edited_files"]
     assert owner_files[harness.task.id] == [SHARED_PATH]
 
 
 @pytest.mark.asyncio
-async def test_release_fails_closed_when_ownership_inspection_errors(
+async def test_release_omits_the_foreign_report_when_ownership_inspection_errors(
     temp_db: HubDatabase,
     tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """Ownership only feeds the report, so an inspection failure does not block a
+    release the edit ledger already cleared."""
     harness = _harness(temp_db, _committed_repo(tmp_path))
     _foreign_claimant(harness)
+    _stamp_owner_edits(harness, {SHARED_PATH: _last_commit_epoch(harness.repo, SHARED_PATH) - 100})
     (harness.repo / SHARED_PATH).write_text(
         "committed = True\nforeign_dirt = True\n", encoding="utf-8"
     )
@@ -310,15 +369,78 @@ async def test_release_fails_closed_when_ownership_inspection_errors(
             side_effect=DirtyEditOwnershipInspectionError("db down"),
         ),
         session_context_for_test(harness.owner.id),
+        caplog.at_level(logging.WARNING, logger="gobby.mcp_proxy.tools.tasks._lifecycle_paths"),
     ):
-        refused = await harness.registry.call(
+        released = await harness.registry.call(
             "release_task_paths",
             {"task_id": harness.task.id, "paths": [SHARED_PATH]},
         )
 
+    assert released == {
+        "success": True,
+        "task_id": harness.task.id,
+        "released_paths": [SHARED_PATH],
+        "remaining_paths": [],
+    }
+    assert any("ownership inspection failed" in record.message for record in caplog.records)
+    assert harness.task.id not in harness.variables.get_variables(harness.owner.id).get(
+        "task_edited_files", {}
+    )
+
+
+@pytest.mark.asyncio
+async def test_release_clears_a_path_another_session_renamed(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    """A foreign staged rename shows the requested path as deleted (git reports a
+    rename only when both names are in the pathspec); the stale attribution still
+    releases under the name the owner's ledger holds, while the foreign ledger's new
+    name stays out of the report."""
+    harness = _harness(temp_db, _committed_repo(tmp_path))
+    _foreign_claimant(harness, path=RENAMED_PATH)
+    _stamp_owner_edits(harness, {SHARED_PATH: _last_commit_epoch(harness.repo, SHARED_PATH) - 100})
+    subprocess.run(["git", "mv", SHARED_PATH, RENAMED_PATH], cwd=harness.repo, check=True)
+
+    with session_context_for_test(harness.owner.id):
+        released = await harness.registry.call(
+            "release_task_paths",
+            {"task_id": harness.task.id, "paths": [SHARED_PATH]},
+        )
+
+    assert released == {
+        "success": True,
+        "task_id": harness.task.id,
+        "released_paths": [SHARED_PATH],
+        "remaining_paths": [],
+    }
+    assert harness.task.id not in harness.variables.get_variables(harness.owner.id).get(
+        "task_edited_files", {}
+    )
+
+
+@pytest.mark.asyncio
+async def test_release_refuses_the_owners_own_uncommitted_rename(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    harness = _harness(temp_db, _committed_repo(tmp_path))
+    subprocess.run(["git", "mv", SHARED_PATH, RENAMED_PATH], cwd=harness.repo, check=True)
+    harness.variables.merge_variables(
+        harness.owner.id,
+        {"task_edited_files": {harness.task.id: [SHARED_PATH, RENAMED_PATH]}},
+    )
+    seed_epoch = _last_commit_epoch(harness.repo, SHARED_PATH)
+    _stamp_owner_edits(harness, {SHARED_PATH: seed_epoch - 100, RENAMED_PATH: seed_epoch + 100})
+
+    with session_context_for_test(harness.owner.id):
+        refused = await harness.registry.call(
+            "release_task_paths",
+            {"task_id": harness.task.id, "paths": [SHARED_PATH, RENAMED_PATH]},
+        )
+
     assert refused["success"] is False
     assert refused["error_code"] == "TASK_INVALID_STATUS"
-    assert "ownership inspection failed" in refused["error"]
-    assert refused["dirty_paths"] == [SHARED_PATH]
+    assert refused["dirty_paths"] == [RENAMED_PATH]
     owner_files = harness.variables.get_variables(harness.owner.id)["task_edited_files"]
-    assert owner_files[harness.task.id] == [SHARED_PATH]
+    assert owner_files[harness.task.id] == [SHARED_PATH, RENAMED_PATH]

@@ -351,7 +351,7 @@ class TestBrevityRules:
         assert variables["brevity_disabled"]["value"] is False
         assert variables["brevity_level"]["value"] == "normal"
         assert variables["restraint_disabled"]["value"] is False
-        assert variables["restraint_level"]["value"] == "normal"
+        assert variables["restraint_level"]["value"] == "max"
         assert variables["brevity_last_violation"]["value"] == ""
         assert variables["brevity_last_violation_rule"]["value"] == ""
         assert variables["code_index_navigation_used_this_turn"]["value"] is False

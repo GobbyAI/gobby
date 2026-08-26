@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
+from gobby.storage.schema_identity_pin import SchemaIdentityError
 from scripts import generate_schema_expected_identity as generator
 
 
@@ -60,5 +62,29 @@ def test_generate_rejects_incomplete_identity(
         ),
     )
 
-    with pytest.raises(generator.IdentityGenerationError, match="exactly"):
+    with pytest.raises(SchemaIdentityError, match="exactly"):
         generator.generate(Path("/managed/gdaemon"), tmp_path / "identity.json")
+
+
+def test_main_reports_probe_failures_with_a_nonzero_exit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            ["/managed/gdaemon", "schema", "version", "--json"], 1, stdout="", stderr="boom\n"
+        ),
+    )
+    output = tmp_path / "identity.json"
+    monkeypatch.setattr(
+        sys, "argv", ["generate", "--gdaemon", "/managed/gdaemon", "--output", str(output)]
+    )
+
+    assert generator.main() == 1
+    assert capsys.readouterr().out == (
+        "generate_schema_expected_identity: gdaemon schema version failed: boom\n"
+    )
+    assert not output.exists()

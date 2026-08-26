@@ -87,6 +87,7 @@ TRUE_RESTRICTION_RULES = frozenset(
         "block-cross-session-foreign-dirty-edit",
         "block-cross-session-foreign-staged-commit",
         "block-docker-policy-edits",
+        "block-web-chat-send-keys",
         "no-agent-spawn-for-merge",
         "no-brew-install",
         "no-cargo-add",

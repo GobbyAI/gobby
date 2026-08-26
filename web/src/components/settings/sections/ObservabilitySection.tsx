@@ -50,6 +50,8 @@ const LOGGING_PATHS = [
   "logging.dir",
   "logging.max_size_mb",
   "logging.backup_count",
+  "logging.llm_max_size_mb",
+  "logging.llm_backup_count",
   "logging.runtime_max_size_mb",
   "logging.growth_warn_mb_per_interval",
 ] as const;
@@ -119,6 +121,18 @@ function RuntimeLoggingGroup({
         path="logging.backup_count"
         label="Rotated files to keep"
         ariaLabel="Rotated log files to keep"
+      />
+      <NumberConfigField
+        fields={fields}
+        path="logging.llm_max_size_mb"
+        label="Max feature LLM log size (MB)"
+        ariaLabel="Max feature LLM log file size"
+      />
+      <NumberConfigField
+        fields={fields}
+        path="logging.llm_backup_count"
+        label="Rotated feature LLM logs to keep"
+        ariaLabel="Rotated feature LLM log files to keep"
       />
       <NumberConfigField
         fields={fields}

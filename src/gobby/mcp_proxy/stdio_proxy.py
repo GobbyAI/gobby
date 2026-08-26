@@ -185,6 +185,11 @@ class DaemonProxy:
         headers: dict[str, str] = {
             MCP_WRAPPER_PROTOCOL_VERSION_HEADER: MCP_WRAPPER_PROTOCOL_VERSION,
         }
+        if not self._project_id:
+            # The proxy can outlive ``gobby init``: a session started before
+            # .gobby/project.json existed would otherwise never send project
+            # headers, and local "#N" session refs cannot resolve without them.
+            self._project_id = self._deps_factory().read_project_id()
         effective_project_id = project_id or self._project_id
         caller_project_id = self._project_id
         managed_run_id = os.environ.get("GOBBY_AGENT_RUN_ID")

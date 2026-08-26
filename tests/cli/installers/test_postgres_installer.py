@@ -25,6 +25,27 @@ def _completed_process(args: list[str] | None = None) -> subprocess.CompletedPro
     return subprocess.CompletedProcess(args=args or [], returncode=0, stdout="", stderr="")
 
 
+_PERSISTED_DSN = "postgresql://gobby:persisted-password@localhost:60991/gobby"
+
+
+def _write_bootstrap(gobby_home: Path, files_home: Path, database_url: str) -> Path:
+    bootstrap = gobby_home / "bootstrap.yaml"
+    bootstrap.write_text(
+        f"hub_backend: postgres\nfiles_home: {files_home}\ndatabase_url: {database_url}\n",
+        encoding="utf-8",
+    )
+    bootstrap.chmod(0o600)
+    return bootstrap
+
+
+def _refuse_password_minting(monkeypatch: pytest.MonkeyPatch, installer: Any) -> None:
+    monkeypatch.setattr(
+        installer.secrets,
+        "token_urlsafe",
+        lambda _size: pytest.fail("the installer must never mint a PostgreSQL password"),
+    )
+
+
 def test_install_postgres_uses_docker(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     installer = _import_installer()
     calls: list[tuple[str, dict[str, Any]]] = []
@@ -74,8 +95,8 @@ def test_docker_install_runs_postgres_profile_and_writes_bootstrap(
 
     monkeypatch.setattr(installer.shutil, "which", lambda name: "/usr/bin/docker")
     monkeypatch.setattr(installer.subprocess, "run", _run)
-    monkeypatch.delenv("GOBBY_POSTGRES_PASSWORD", raising=False)
-    monkeypatch.setattr(installer.secrets, "token_urlsafe", lambda _size: "generated-password")
+    monkeypatch.setenv("GOBBY_POSTGRES_PASSWORD", "transient-password")
+    _refuse_password_minting(monkeypatch, installer)
     monkeypatch.setattr(
         installer,
         "_sync_postgres_pgsearch_assets",
@@ -102,8 +123,9 @@ def test_docker_install_runs_postgres_profile_and_writes_bootstrap(
     )
     files_home = tmp_path / "files"
     files_home.mkdir()
+    _write_bootstrap(tmp_path, files_home, _PERSISTED_DSN)
 
-    result = installer._install_docker(gobby_home=tmp_path, port=60991, files_home=files_home)
+    result = installer._install_docker(gobby_home=tmp_path, files_home=files_home)
 
     assert result["success"] is True
     assert helper_calls == [
@@ -120,43 +142,116 @@ def test_docker_install_runs_postgres_profile_and_writes_bootstrap(
     assert "postgres" in compose_up
     assert "up" in compose_up
     assert "-d" in compose_up
-    assert subprocess_envs[0]["GOBBY_POSTGRES_PASSWORD"] == "generated-password"
+    assert subprocess_envs[0]["GOBBY_POSTGRES_PASSWORD"] == "persisted-password"
     assert not (tmp_path / "services" / ".env").exists()
-    payload_text = repr(bootstrap_payloads)
-    assert "postgresql://" in payload_text
-    assert "generated-password" in payload_text
-    assert "localhost:60991" in payload_text
-    assert "/gobby" in payload_text
+    assert bootstrap_payloads == [
+        {"args": (), "kwargs": {"gobby_home": tmp_path, "database_url": _PERSISTED_DSN}}
+    ]
 
 
-def test_postgres_database_url_matches_validated_compose_runtime(
+def test_persisted_database_url_wins_over_process_env(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     installer = _import_installer()
     files_home = tmp_path / "files"
     files_home.mkdir()
-    (tmp_path / "bootstrap.yaml").write_text(
-        "hub_backend: postgres\n"
-        f"files_home: {files_home}\n"
-        "database_url: postgresql://gobby:persisted-password@localhost:5432/gobby\n",
-        encoding="utf-8",
-    )
-    (tmp_path / "bootstrap.yaml").chmod(0o600)
+    _write_bootstrap(tmp_path, files_home, _PERSISTED_DSN)
     monkeypatch.setenv("GOBBY_POSTGRES_PASSWORD", "transient-password")
+    _refuse_password_minting(monkeypatch, installer)
+
+    database_url, runtime = installer._resolve_postgres_install_database_url(gobby_home=tmp_path)
+
+    assert database_url == _PERSISTED_DSN
+    assert runtime.environment["GOBBY_POSTGRES_PASSWORD"] == "persisted-password"
+
+
+def test_existing_bootstrap_database_url_survives_install_with_process_password(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    installer = _import_installer()
+    monkeypatch.setattr(installer.shutil, "which", lambda _name: "/usr/bin/docker")
     monkeypatch.setattr(
-        installer.secrets,
-        "token_urlsafe",
-        lambda _size: pytest.fail("persisted installs must not generate a new password"),
+        installer.subprocess, "run", lambda args, **_kwargs: _completed_process(args)
+    )
+    monkeypatch.setattr(installer, "_sync_postgres_pgsearch_assets", lambda **_kwargs: None)
+    monkeypatch.setattr(installer, "_wait_for_pg_isready", lambda **_kwargs: True)
+    monkeypatch.setattr(installer, "_probe_create_extension", lambda **_kwargs: None)
+    monkeypatch.setenv("GOBBY_POSTGRES_PASSWORD", "transient-password")
+    _refuse_password_minting(monkeypatch, installer)
+    files_home = tmp_path / "files"
+    files_home.mkdir()
+    bootstrap = _write_bootstrap(tmp_path, files_home, _PERSISTED_DSN)
+
+    result = installer._install_docker(gobby_home=tmp_path, files_home=files_home)
+
+    assert result["success"] is True
+    assert result["database_url"] == _PERSISTED_DSN
+    persisted = yaml.safe_load(bootstrap.read_text(encoding="utf-8"))
+    assert persisted["database_url"] == _PERSISTED_DSN
+    assert f"database_url: {_PERSISTED_DSN}\n" in bootstrap.read_text(encoding="utf-8")
+
+
+def test_missing_database_url_fails_before_compose_up(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    installer = _import_installer()
+    files_home = tmp_path / "files"
+    files_home.mkdir()
+    monkeypatch.setattr(installer.shutil, "which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr(installer, "_sync_postgres_pgsearch_assets", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        installer.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("compose must not run without a database_url"),
+    )
+    monkeypatch.setenv("GOBBY_POSTGRES_PASSWORD", "transient-password")
+    _refuse_password_minting(monkeypatch, installer)
+
+    result = installer._install_docker(gobby_home=tmp_path, files_home=files_home)
+
+    assert result["success"] is False
+    assert (
+        result["error"] == f"{tmp_path / 'bootstrap.yaml'} has no database_url; run `gobby install`"
     )
 
-    database_url, runtime = installer._resolve_postgres_install_database_url(
-        gobby_home=tmp_path,
-        port=60991,
-    )
 
-    assert database_url == "postgresql://gobby:transient-password@localhost:5432/gobby"
-    assert runtime.environment["GOBBY_POSTGRES_PASSWORD"] == "transient-password"
+def test_readiness_failure_names_bootstrap_and_volume_without_removing_anything(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    installer = _import_installer()
+    subprocess_calls: list[list[str]] = []
+
+    def _run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        subprocess_calls.append(args)
+        return _completed_process(args)
+
+    monkeypatch.setattr(installer.shutil, "which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr(installer.subprocess, "run", _run)
+    monkeypatch.setattr(installer, "_sync_postgres_pgsearch_assets", lambda **_kwargs: None)
+    monkeypatch.setattr(installer, "_wait_for_pg_isready", lambda **_kwargs: False)
+    monkeypatch.setattr(
+        installer,
+        "_write_bootstrap_defaults",
+        lambda **_kwargs: pytest.fail("a failed install must leave bootstrap.yaml untouched"),
+    )
+    files_home = tmp_path / "files"
+    files_home.mkdir()
+    _write_bootstrap(tmp_path, files_home, _PERSISTED_DSN)
+
+    result = installer._install_docker(gobby_home=tmp_path, files_home=files_home)
+
+    assert result["success"] is False
+    assert "PostgreSQL did not become ready" in result["error"]
+    assert "gobby_postgres_data" in result["error"]
+    assert f"database_url in {tmp_path / 'bootstrap.yaml'}" in result["error"]
+    assert "Gobby never removes data volumes" in result["error"]
+    assert [call[:2] for call in subprocess_calls] == [["docker", "compose"]]
+    assert "up" in subprocess_calls[0]
+    assert not any(verb in call for call in subprocess_calls for verb in ("down", "rm", "volume"))
 
 
 def test_docker_install_refuses_compose_without_files_home(
@@ -177,32 +272,11 @@ def test_docker_install_refuses_compose_without_files_home(
     monkeypatch.setattr(installer, "reconcile_unified_compose", _compose)
     monkeypatch.setattr(installer, "_sync_postgres_pgsearch_assets", _assets)
 
-    result = installer._install_docker(gobby_home=tmp_path, port=60991)
+    result = installer._install_docker(gobby_home=tmp_path)
 
     assert result["success"] is False
     assert "files-home" in result["error"]
     assert calls == []
-
-
-def test_docker_install_reports_incomplete_compose_environment(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    installer = _import_installer()
-    files_home = tmp_path / "files"
-    files_home.mkdir()
-    monkeypatch.setattr(installer.shutil, "which", lambda _name: "/usr/bin/docker")
-    monkeypatch.setattr(installer, "_sync_postgres_pgsearch_assets", lambda **_kwargs: None)
-    monkeypatch.setattr(
-        installer,
-        "resolve_compose_runtime",
-        lambda *_args, **_kwargs: installer.ComposeRuntime(environment={}, profiles=()),
-    )
-
-    result = installer._install_docker(gobby_home=tmp_path, port=60991, files_home=files_home)
-
-    assert result["success"] is False
-    assert "GOBBY_POSTGRES_USER" in result["error"]
 
 
 def test_postgres_install_refreshes_stale_unified_compose(

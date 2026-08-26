@@ -38,8 +38,8 @@ def resolve_compose_runtime(
     """Resolve the environment required by the unified managed-services Compose file.
 
     Canonical values come from ``bootstrap.yaml``, ``config_store``, ``SecretStore``,
-    and the bundled pg_search manifest. Process environment values override those
-    values, while explicit caller overrides take final precedence.
+    and the bundled pg_search manifest, and they win over the process environment for
+    every key Gobby owns; explicit caller overrides take final precedence.
     """
     home = gobby_home.expanduser()
     services_bind_address, files_home = _require_local_datastore_mode(home)
@@ -57,7 +57,7 @@ def resolve_compose_runtime(
         service_values = _service_environment(home, required_profiles=profiles)
         canonical.update(service_values)
 
-    environment = canonical | dict(os.environ)
+    environment = dict(os.environ) | canonical
     if overrides:
         environment.update(overrides)
     _validate_effective_environment(environment, profiles)
@@ -305,15 +305,21 @@ def _positive_port(value: Any, key: str) -> int:
     return port
 
 
+# Present in every resolved runtime, including the postgres-only one. Compose interpolates
+# every service in the template regardless of active profiles, so these are the only
+# variables the template may mark required with `:?`.
+ALWAYS_REQUIRED_COMPOSE_ENV: tuple[str, ...] = (
+    "GOBBY_POSTGRES_DB",
+    "GOBBY_POSTGRES_USER",
+    "GOBBY_POSTGRES_PASSWORD",
+    "GOBBY_PG_SEARCH_VERSION",
+    "GOBBY_PG_SEARCH_SHA256",
+    "GOBBY_FILES_HOME",
+)
+
+
 def _validate_effective_environment(environment: dict[str, str], profiles: tuple[str, ...]) -> None:
-    for key in (
-        "GOBBY_POSTGRES_DB",
-        "GOBBY_POSTGRES_USER",
-        "GOBBY_POSTGRES_PASSWORD",
-        "GOBBY_PG_SEARCH_VERSION",
-        "GOBBY_PG_SEARCH_SHA256",
-        "GOBBY_FILES_HOME",
-    ):
+    for key in ALWAYS_REQUIRED_COMPOSE_ENV:
         if not environment.get(key):
             raise ComposeEnvironmentError(f"{key} must not be empty")
     _positive_port(environment.get("GOBBY_POSTGRES_PORT"), "GOBBY_POSTGRES_PORT")

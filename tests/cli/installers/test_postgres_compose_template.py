@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
 import yaml
 
+from gobby.cli.installers.compose_env import ALWAYS_REQUIRED_COMPOSE_ENV
+
 pytestmark = pytest.mark.unit
+
+_REQUIRED_INTERPOLATION_RE = re.compile(r"\$\{([A-Z0-9_]+):\?")
 
 _PGAUDIT_COMMAND_OPTIONS = [
     "shared_preload_libraries=pg_search,pgaudit",
@@ -30,6 +35,22 @@ def compose_data(repo_root: Path) -> dict[str, object]:
     data = yaml.safe_load(compose_path.read_text())
     assert isinstance(data, dict)
     return data
+
+
+def test_required_interpolations_name_only_always_present_variables(repo_root: Path) -> None:
+    """`:?` may only guard variables every resolved runtime carries.
+
+    Compose interpolates every service in the file even when only the postgres profile
+    is active, and daemon start (and a fresh install, which has no SecretStore yet) brings
+    postgres up before the FalkorDB secret is loaded.
+    """
+    template = repo_root / "src/gobby/data/docker-compose.services.yml"
+    required = set(_REQUIRED_INTERPOLATION_RE.findall(template.read_text(encoding="utf-8")))
+
+    assert "GOBBY_POSTGRES_PASSWORD" in required
+    assert required <= set(ALWAYS_REQUIRED_COMPOSE_ENV), sorted(
+        required - set(ALWAYS_REQUIRED_COMPOSE_ENV)
+    )
 
 
 def test_postgres_compose_templates_are_byte_equivalent(repo_root: Path) -> None:

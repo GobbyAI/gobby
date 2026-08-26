@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 from click.testing import CliRunner
 
@@ -26,6 +27,13 @@ def mock_runtime_hub_database() -> Iterator[MagicMock]:
     with patch("gobby.cli.runtime.require_cli_database") as mock_require_cli_database:
         mock_require_cli_database.return_value = MagicMock()
         yield mock_require_cli_database
+
+
+@pytest.fixture(autouse=True)
+def no_running_daemon() -> Iterator[MagicMock]:
+    """Default every test to "no daemon answered" so the checkout gate stays out of the way."""
+    with patch("gobby.cli.sync._running_daemon_install_dir", return_value=None) as probe:
+        yield probe
 
 
 # All lazy imports in sync() need to be patched at the source module:
@@ -479,3 +487,126 @@ class TestSyncForce:
         result = runner.invoke(sync, ["--force", "--verbose"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "Force mode" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Checkout gate — shared bundled rows belong to the daemon's checkout
+# ---------------------------------------------------------------------------
+class TestSyncCheckoutGate:
+    DAEMON_DIR = Path("/checkouts/main/src/gobby/install")
+    WORKTREE_DIR = Path("/checkouts/wt-feature/src/gobby/install")
+
+    @patch("gobby.sync_registry.sync_bundled_content_to_db")
+    @patch("gobby.utils.dev.is_dev_mode", return_value=True)
+    @patch("gobby.cli.sync.get_install_dir")
+    def test_foreign_checkout_is_refused_without_force(
+        self,
+        mock_install: MagicMock,
+        _dev: MagicMock,
+        mock_sync: MagicMock,
+        runner: CliRunner,
+        no_running_daemon: MagicMock,
+    ) -> None:
+        mock_install.return_value = self.WORKTREE_DIR
+        no_running_daemon.return_value = self.DAEMON_DIR
+
+        result = runner.invoke(sync, [])
+
+        assert result.exit_code == 1
+        assert str(self.DAEMON_DIR) in result.output
+        assert str(self.WORKTREE_DIR) in result.output
+        assert "--force" in result.output
+        mock_sync.assert_not_called()
+
+    @patch("gobby.sync_registry.sync_bundled_content_to_db")
+    @patch("gobby.utils.dev.is_dev_mode", return_value=True)
+    @patch("gobby.cli.sync.get_install_dir")
+    def test_force_overwrites_with_a_banner(
+        self,
+        mock_install: MagicMock,
+        _dev: MagicMock,
+        mock_sync: MagicMock,
+        runner: CliRunner,
+        no_running_daemon: MagicMock,
+    ) -> None:
+        mock_install.return_value = self.WORKTREE_DIR
+        no_running_daemon.return_value = self.DAEMON_DIR
+        mock_sync.return_value = {"total_synced": 3, "errors": [], "details": {}}
+
+        result = runner.invoke(sync, ["--force"])
+
+        assert result.exit_code == 0
+        assert "WARNING" in result.output
+        assert str(self.DAEMON_DIR) in result.output
+        assert str(self.WORKTREE_DIR) in result.output
+        assert "Synced 3 bundled items" in result.output
+        mock_sync.assert_called_once()
+
+    @patch("gobby.sync_registry.sync_bundled_content_to_db")
+    @patch("gobby.utils.dev.is_dev_mode", return_value=True)
+    @patch("gobby.cli.sync.get_install_dir")
+    def test_daemon_checkout_syncs_without_a_banner(
+        self,
+        mock_install: MagicMock,
+        _dev: MagicMock,
+        mock_sync: MagicMock,
+        runner: CliRunner,
+        no_running_daemon: MagicMock,
+    ) -> None:
+        mock_install.return_value = self.DAEMON_DIR
+        no_running_daemon.return_value = self.DAEMON_DIR
+        mock_sync.return_value = {"total_synced": 0, "errors": [], "details": {}}
+
+        result = runner.invoke(sync, [])
+
+        assert result.exit_code == 0
+        assert "WARNING" not in result.output
+        mock_sync.assert_called_once()
+
+
+class TestRunningDaemonInstallDir:
+    @pytest.fixture(autouse=True)
+    def no_running_daemon(self) -> Iterator[None]:
+        """These tests exercise the real probe, so the module-level stub is switched off."""
+        yield
+
+    @staticmethod
+    def _response(status_code: int, payload: object) -> MagicMock:
+        response = MagicMock()
+        response.status_code = status_code
+        response.json.return_value = payload
+        return response
+
+    @patch("gobby.cli.utils_config.get_daemon_url", return_value="http://localhost:1")
+    @patch("gobby.cli.sync.httpx.get")
+    def test_reports_the_daemon_install_dir(self, mock_get: MagicMock, _url: MagicMock) -> None:
+        from gobby.cli.sync import _running_daemon_install_dir
+
+        mock_get.return_value = self._response(
+            200, {"install_dir": "/checkouts/main/src/gobby/install"}
+        )
+
+        assert _running_daemon_install_dir() == Path("/checkouts/main/src/gobby/install")
+        mock_get.assert_called_once_with("http://localhost:1/api/health", timeout=2.0)
+
+    @pytest.mark.parametrize(
+        "status_code, payload",
+        [(503, {"install_dir": "/x"}), (200, {}), (200, {"install_dir": ""}), (200, ["nope"])],
+    )
+    @patch("gobby.cli.utils_config.get_daemon_url", return_value="http://localhost:1")
+    @patch("gobby.cli.sync.httpx.get")
+    def test_unusable_health_payloads_mean_no_daemon(
+        self, mock_get: MagicMock, _url: MagicMock, status_code: int, payload: object
+    ) -> None:
+        from gobby.cli.sync import _running_daemon_install_dir
+
+        mock_get.return_value = self._response(status_code, payload)
+
+        assert _running_daemon_install_dir() is None
+
+    @patch("gobby.cli.utils_config.get_daemon_url", return_value="http://localhost:1")
+    @patch("gobby.cli.sync.httpx.get", side_effect=httpx.ConnectError("refused"))
+    def test_unreachable_daemon_means_no_daemon(self, _get: MagicMock, _url: MagicMock) -> None:
+        from gobby.cli.sync import _running_daemon_install_dir
+
+        assert _running_daemon_install_dir() is None

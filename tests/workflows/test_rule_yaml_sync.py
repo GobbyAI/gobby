@@ -7,15 +7,21 @@ into rule_definitions rows.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import pytest
+import yaml
 
 from gobby.mcp_proxy.tools.workflows._rules import update_rule
 from gobby.storage.definitions import DefinitionNotFoundError
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.workflows.sync_rules import sync_bundled_rules
+from gobby.workflows.sync_rules import (
+    _iter_active_rule_files,
+    get_bundled_rules_paths,
+    sync_bundled_rules,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -682,3 +688,54 @@ rules:
         rows = manager.list_all()
         names = sorted(r.name for r in rows)
         assert names == ["rule-from-file1", "rule-from-file2"]
+
+
+class TestBundledRuleRoots:
+    """Every bundled template must expose its rules to the sync scan."""
+
+    def test_every_bundled_rule_file_declares_rules_mapping(self) -> None:
+        roots = [root for root in get_bundled_rules_paths() if root.exists()]
+        scanned = _iter_active_rule_files(roots)
+        offenders: list[str] = []
+        for root, yaml_file in scanned:
+            data = yaml.safe_load(yaml_file.read_text(encoding="utf-8"))
+            rules = data.get("rules") if isinstance(data, dict) else None
+            if not isinstance(rules, dict) or not rules:
+                offenders.append(yaml_file.relative_to(root).as_posix())
+
+        assert scanned
+        assert offenders == []
+
+    def test_bundled_file_without_rules_mapping_warns(
+        self,
+        db: HubDatabase,
+        rules_dir: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        (rules_dir / "broken.yaml").write_text(
+            "broken-rule:\n  event: before_tool\n  effect:\n    type: block\n",
+            encoding="utf-8",
+        )
+
+        with caplog.at_level(logging.DEBUG, logger="gobby.workflows.sync_rules"):
+            result = sync_bundled_rules(db, rules_dir)
+
+        assert result["skipped"] == 1
+        warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "broken.yaml" in warnings[0].getMessage()
+
+    def test_user_root_without_rules_mapping_stays_debug(
+        self,
+        db: HubDatabase,
+        rules_dir: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        (rules_dir / "custom.yaml").write_text("notes: personal\n", encoding="utf-8")
+
+        with caplog.at_level(logging.DEBUG, logger="gobby.workflows.sync_rules"):
+            result = sync_bundled_rules(db, rules_dir, tag="user")
+
+        assert result["skipped"] == 1
+        skip_records = [record for record in caplog.records if "custom.yaml" in record.getMessage()]
+        assert [record.levelno for record in skip_records] == [logging.DEBUG]

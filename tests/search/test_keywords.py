@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import subprocess
 import sys
 import threading
@@ -57,6 +58,15 @@ def test_extractor_is_reused_within_a_thread() -> None:
     assert first is second
     assert first.config["dedup_lim"] == 0.9
     assert keywords._get_extractor("en", 5) is not first
+
+
+def test_dedup_lim_is_a_named_extractor_parameter() -> None:
+    """0.9 is also yake's default, so the config assertion alone cannot tell an honoured
+    ``dedup_lim`` kwarg from one the extractor swallowed (#20882)."""
+    assert keywords._yake is not None
+    parameters = inspect.signature(keywords._yake.KeywordExtractor.__init__).parameters
+    assert "dedup_lim" in parameters
+    assert parameters["dedup_lim"].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
 
 
 def test_extractor_is_not_shared_across_threads() -> None:

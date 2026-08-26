@@ -80,13 +80,10 @@ required managed services:
 uv run gobby install
 ```
 
-Use `--config-only` to configure and repair the required stack without touching
-CLI or Git hooks:
-
-```bash
-uv run gobby install --config-only
-printf '%s' 'your-password' | uv run gobby install --config-only --falkordb-password-stdin
-```
+Re-running bare `uv run gobby install` repairs the required stack in place: it
+reuses the stored PostgreSQL DSN and FalkorDB secret and never rotates them.
+Named components (`uv run gobby install rtk`, `uv run gobby install claude`, ...)
+reinstall one piece of an existing install without touching the stack.
 
 ## Embeddings
 
@@ -260,10 +257,13 @@ uv run gobby qdrant install --port 6333
 
 ### FalkorDB Authentication Fails
 
-Set or rotate the password during install:
+The installer generates the FalkorDB password on first provisioning and stores
+it as the `falkordb_password` secret; installs never rotate it. Rotate it
+explicitly, then restart so the container is recreated with the new value:
 
 ```bash
-printf '%s' 'your-password' | uv run gobby install --config-only --falkordb-password-stdin
+uv run gobby datastores rotate-password falkordb
+uv run gobby restart
 ```
 
 The configured auth value is stored in Gobby configuration, and the Compose

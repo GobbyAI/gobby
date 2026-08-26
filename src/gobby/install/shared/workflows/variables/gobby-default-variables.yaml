@@ -34,6 +34,9 @@ variables:
   task_edited_file_checkouts:
     value: {}
     description: "Map of claimed task UUIDs and absolute checkout roots to edited files"
+  task_edited_file_times:
+    value: {}
+    description: "Map of claimed task UUIDs to edited files and the epoch seconds of this session's newest edit"
   require_task_before_edit:
     value: true
     description: Default require_task_before_edit to true
@@ -120,8 +123,8 @@ variables:
     value: false
     description: "True after the user opts out of restraint reinforcement for the session"
   restraint_level:
-    value: "normal"
-    description: "Active restraint level (lite/normal/max); set by gobby-skills:get_skill on each leveled load"
+    value: "max"
+    description: "Active restraint level (lite/normal/max, default max); set by gobby-skills:get_skill on each leveled load"
   brevity_last_violation:
     value: ""
     description: "Last assistant response fragment that violated brevity rules"

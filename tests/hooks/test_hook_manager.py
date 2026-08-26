@@ -626,6 +626,28 @@ class TestHandlePostProcessing:
         # The flag should have been consumed (popped)
         assert "_input_coerced" not in event.data
 
+    def test_raw_tool_input_snapshot_is_consumed(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable[..., HookEvent],
+    ) -> None:
+        """The pristine copy serves rewrite merging and never reaches observers."""
+        mocks = cast(Any, manager_with_mocks)
+        mocks._event_handlers.get_handler.return_value = MagicMock(
+            return_value=HookResponse(decision="allow")
+        )
+        mocks._session_lookup.resolve.return_value = None
+        mocks._workflow_handler.handle.return_value = HookResponse(decision="allow")
+        mocks._enricher.enrich = MagicMock()
+
+        event = make_event(event_type=HookEventType.BEFORE_TOOL)
+        event.data["tool_input"] = {"command": "git status", "file_path": "status"}
+        event.data["_raw_tool_input"] = {"command": "git status"}
+
+        manager_with_mocks._handle_internal(event)
+
+        assert "_raw_tool_input" not in event.data
+
     def test_raw_tool_input_is_not_copied_to_response_metadata(
         self,
         manager_with_mocks: HookManager,

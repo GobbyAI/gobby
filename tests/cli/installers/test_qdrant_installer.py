@@ -61,17 +61,14 @@ class TestDockerComposeServices:
         ) in falkordb["ports"]
         assert "127.0.0.1:${GOBBY_FALKORDB_BROWSER_PORT:-13000}:3000" in falkordb["ports"]
         assert (
-            "REDIS_ARGS=--requirepass ${GOBBY_FALKORDB_PASSWORD:-gobbyfalkor} --save 3600 1 300 100"
+            "REDIS_ARGS=--requirepass ${GOBBY_FALKORDB_PASSWORD:-} --save 3600 1 300 100"
             in falkordb["environment"]
         )
         assert (
             "FALKORDB_ARGS=MAX_QUEUED_QUERIES 25 TIMEOUT_DEFAULT 30000 TIMEOUT_MAX 0 RESULTSET_SIZE 10000"
             in falkordb["environment"]
         )
-        assert (
-            "GOBBY_FALKORDB_PASSWORD=${GOBBY_FALKORDB_PASSWORD:-gobbyfalkor}"
-            in falkordb["environment"]
-        )
+        assert "GOBBY_FALKORDB_PASSWORD=${GOBBY_FALKORDB_PASSWORD:-}" in falkordb["environment"]
         assert falkordb["volumes"] == ["gobby_falkordb_data:/var/lib/falkordb/data"]
         assert falkordb["healthcheck"]["test"] == [
             "CMD-SHELL",

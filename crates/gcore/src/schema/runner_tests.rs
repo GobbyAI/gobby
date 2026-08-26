@@ -1541,7 +1541,7 @@ fn lock_and_recovery_tests_repair_an_invalid_concurrent_index() -> anyhow::Resul
 }
 
 #[test]
-fn lock_and_recovery_tests_named_schema_locks_are_independent() -> anyhow::Result<()> {
+fn lock_and_recovery_tests_database_apply_lock_serializes_schemas() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -1554,7 +1554,7 @@ fn lock_and_recovery_tests_named_schema_locks_are_independent() -> anyhow::Resul
     }
     lock_client.batch_execute("SET search_path TO schema_lock_a, pg_catalog")?;
     lock_client.query_one(
-        "SELECT pg_advisory_lock(hashtext('postgres_migrations_apply'), hashtext(current_schema()))",
+        "SELECT pg_advisory_lock(hashtext('postgres_migrations_apply'), 0)",
         &[],
     )?;
 
@@ -1565,15 +1565,68 @@ fn lock_and_recovery_tests_named_schema_locks_are_independent() -> anyhow::Resul
             .map_err(|error| error.to_string());
         sender.send(result).expect("receiver remains available");
     });
-    let result = receiver
-        .recv_timeout(StdDuration::from_secs(3))
-        .expect("different schema lock must remain available");
+    // The baseline creates cluster-global roles and the shared gobby_agent_auth
+    // objects, so applying another schema must wait for the database-wide lock.
+    assert!(
+        matches!(
+            receiver.recv_timeout(StdDuration::from_secs(2)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ),
+        "apply for another schema must block while the database apply lock is held"
+    );
     lock_client.query_one(
-        "SELECT pg_advisory_unlock(hashtext('postgres_migrations_apply'), hashtext(current_schema()))",
+        "SELECT pg_advisory_unlock(hashtext('postgres_migrations_apply'), 0)",
         &[],
     )?;
+    let result = receiver
+        .recv_timeout(StdDuration::from_secs(30))
+        .expect("apply must proceed once the database apply lock is released");
     worker.join().expect("schema worker must not panic");
     result.map_err(anyhow::Error::msg)?;
+    Ok(())
+}
+
+#[test]
+fn lock_and_recovery_tests_failed_apply_releases_database_apply_lock() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+    install_baseline(&mut client)?;
+    client.execute(
+        "UPDATE schema_migrations SET checksum = 'unrecognized' WHERE version = $1",
+        &[&BASELINE_VERSION],
+    )?;
+
+    let error = SchemaRunner::new(&mut client, "public")?
+        .apply()
+        .expect_err("a corrupt receipt must fail inside the locked apply section");
+    assert!(
+        error
+            .to_string()
+            .contains("recreate from a verified backup"),
+        "failure must come from apply_locked, got: {error}"
+    );
+
+    // The session-level lock lives on the runner's connection, so a fresh
+    // connection can only take it if the failed apply released it.
+    let mut probe = database.connect()?;
+    let acquired: bool = probe
+        .query_one(
+            "SELECT pg_try_advisory_lock(hashtext('postgres_migrations_apply'), 0)",
+            &[],
+        )?
+        .get(0);
+    assert!(
+        acquired,
+        "a failed apply must release the database apply lock"
+    );
+    probe.query_one(
+        "SELECT pg_advisory_unlock(hashtext('postgres_migrations_apply'), 0)",
+        &[],
+    )?;
     Ok(())
 }
 

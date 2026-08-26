@@ -106,6 +106,7 @@ class ProviderCapabilities:
     hook_aliases: Mapping[str, str] = field(default_factory=dict)
     transport_capabilities: Mapping[str, TransportCapabilityValue] = field(default_factory=dict)
     supports_permissions: bool = False
+    supports_permission_neutral_rewrite: bool = False
     supports_elicitation: bool = False
 
     def get_hook(self, hook_type: str | None) -> HookCapability | None:
@@ -188,6 +189,7 @@ def _claude_capabilities() -> ProviderCapabilities:
         hook_events=events,
         hook_aliases=aliases,
         supports_permissions=True,
+        supports_permission_neutral_rewrite=True,
         supports_elicitation=True,
     )
 
@@ -228,6 +230,7 @@ def _qwen_capabilities() -> ProviderCapabilities:
         source=SessionSource.QWEN,
         hook_events=events,
         supports_permissions=True,
+        supports_permission_neutral_rewrite=True,
     )
 
 
@@ -357,6 +360,7 @@ def _codex_capabilities() -> ProviderCapabilities:
         source=SessionSource.CODEX,
         hook_events=events,
         supports_permissions=True,
+        supports_permission_neutral_rewrite=True,
     )
 
 
@@ -453,6 +457,7 @@ def _grok_capabilities() -> ProviderCapabilities:
         hook_aliases=GROK_HOOK_ALIASES,
         transport_capabilities=GROK_TRANSPORT_CAPABILITIES,
         supports_permissions=True,
+        supports_permission_neutral_rewrite=True,
     )
 
 
@@ -484,6 +489,7 @@ def _agy_capabilities() -> ProviderCapabilities:
         hook_events=events,
         hook_aliases=AGY_HOOK_ALIASES,
         supports_permissions=True,
+        supports_permission_neutral_rewrite=True,
     )
 
 
@@ -512,6 +518,7 @@ def _droid_capabilities() -> ProviderCapabilities:
         source=SessionSource.DROID,
         hook_events=events,
         supports_permissions=True,
+        supports_permission_neutral_rewrite=True,
     )
 
 

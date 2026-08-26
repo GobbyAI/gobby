@@ -1024,6 +1024,14 @@ class TestHealthEndpoint:
         assert response.json()["status"] == "degraded"
         assert response.json()["degraded_services"] == ["llm_service"]
 
+    def test_health_reports_the_bundled_content_source(self, client: TestClient) -> None:
+        from gobby.paths import get_install_dir
+
+        response = client.get("/api/health")
+
+        assert response.status_code == 200
+        assert response.json()["install_dir"] == str(get_install_dir())
+
 
 class TestWorkflowsReloadEndpoint:
     """Tests for POST /admin/workflows/reload."""

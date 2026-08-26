@@ -31,6 +31,7 @@ from gobby.workflows.engine.event_utils import (
     _get_tool_identity,
     _is_write_like_event_data,
 )
+from gobby.workflows.engine.proxy_hooks import ProxyHookInvocation
 
 if TYPE_CHECKING:
     from gobby.storage.workflow_audit import WorkflowAuditManager
@@ -50,6 +51,7 @@ class EvaluationContext:
     block_tool_name: str
     context_parts: list[str] = field(default_factory=list)
     mcp_calls: list[dict[str, Any]] = field(default_factory=list)
+    proxy_hooks: list[ProxyHookInvocation] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,26 @@ class BlockGate:
     reason: str
     condition: Any | None = None
     acknowledge_variable: str | None = None
+
+
+def _replacement_tool_input(event: HookEvent, updates: dict[str, Any]) -> dict[str, Any]:
+    """Merge rewrite updates over the tool input the CLI actually sent.
+
+    Every consumer applies ``modified_input`` wholesale — Claude Code's
+    ``updatedInput``, AGY's ``overwrite``, the web-chat effective input — so a
+    bare delta drops every field the rule left alone: a rewritten Bash command
+    lost its ``timeout`` and ran under the CLI default. ``normalize_tool_fields``
+    keeps the payload the CLI sent as ``_raw_tool_input``, untouched by aliases
+    such as a backfilled ``file_path``; the normalized ``tool_input`` is the
+    fallback for data that never passed through normalization.
+    """
+    data = event.data if isinstance(event.data, dict) else {}
+    base = data.get("_raw_tool_input")
+    if not isinstance(base, dict):
+        base = data.get("tool_input")
+    if not isinstance(base, dict):
+        return updates
+    return {**base, **updates}
 
 
 class EvaluationMixin:
@@ -153,6 +175,12 @@ class EvaluationMixin:
     ) -> HookResponse:
         """Normalize block responses, log them, and attach tracing fields."""
         if response.decision == "block":
+            # A blocked call never carries an input rewrite: drop any pending
+            # rewrite so it neither reaches the adapter nor persists into the
+            # session variables for the next event.
+            evaluation.variables.pop("_rewrite_input", None)
+            response.modified_input = None
+            response.auto_approve = False
             resolved_rule_name = (
                 rule_name or extract_rule_name(response.reason) or "rule-engine-block"
             )
@@ -262,6 +290,7 @@ class EvaluationMixin:
         evaluation: EvaluationContext,
         *,
         aggregate_blocks: bool,
+        block_effects_only: bool = False,
     ) -> list[BlockGate]:
         block_gates: list[BlockGate] = []
         metric_records: list[MetricsEventRecord] = []
@@ -296,7 +325,7 @@ class EvaluationMixin:
                 ):
                     continue
 
-            if block_gates:
+            if block_effects_only or block_gates:
                 for effect in body.resolved_effects:
                     if effect.type != "block" or not self._effect_matches_event(
                         effect, evaluation.event
@@ -355,6 +384,10 @@ class EvaluationMixin:
                 if effect.type == "block":
                     # Defer block to after all sibling non-block effects
                     deferred_block = effect
+                    continue
+
+                if effect.type == "proxy_hook":
+                    evaluation.proxy_hooks.append(ProxyHookInvocation(effect=effect, row=row))
                     continue
 
                 # Apply non-block effects immediately
@@ -489,6 +522,8 @@ class EvaluationMixin:
                 modified_input = permission_meta.get("input_updates")
             permission_decision = permission_meta.get("permission_decision")
             updated_permissions = permission_meta.get("updated_permissions")
+        if modified_input is not None:
+            modified_input = _replacement_tool_input(evaluation.event, modified_input)
 
         watch_paths = evaluation.variables.pop("_watch_paths", None)
         worktree_path = evaluation.variables.pop("_worktree_path", None)

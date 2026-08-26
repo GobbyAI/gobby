@@ -116,7 +116,7 @@ class TestDockerComposeFalkorDB:
         )
         assert "127.0.0.1:${GOBBY_FALKORDB_BROWSER_PORT:-13000}:3000" in falkordb["ports"]
         assert (
-            "REDIS_ARGS=--requirepass ${GOBBY_FALKORDB_PASSWORD:-gobbyfalkor} --save 3600 1 300 100"
+            "REDIS_ARGS=--requirepass ${GOBBY_FALKORDB_PASSWORD:-} --save 3600 1 300 100"
             in falkordb["environment"]
         )
         assert (
@@ -139,15 +139,16 @@ class TestInstallFalkorDB:
         with (
             patch.object(shutil, "which", return_value="/usr/bin/docker"),
             patch("gobby.cli.installers.falkor.subprocess.run") as mock_run,
+            patch("gobby.cli.installers.falkor._generate_falkordb_password", return_value="secret"),
             _patch_config_db(hub_db),
         ):
             mock_run.side_effect = _docker_run_side_effect
 
-            result = module.install_falkordb(gobby_home=tmp_path, password="secret")
+            result = module.install_falkordb(gobby_home=tmp_path)
 
         assert result["success"] is True, result
-        assert result["password_source"] == "provided"
-        assert result["password"] is None
+        assert result["password_source"] == "generated"
+        assert result["password"] == "secret"
         assert result["browser_url"] == "http://localhost:13000"
         assert result["url"] == "redis://127.0.0.1:16379"
         assert result["mode"] == "docker"
@@ -201,7 +202,7 @@ class TestInstallFalkorDB:
             _patch_config_db(hub_db),
         ):
             mock_run.side_effect = _docker_run_side_effect
-            result = module.install_falkordb(gobby_home=tmp_path, password=None)
+            result = module.install_falkordb(gobby_home=tmp_path)
 
         assert result["success"] is True
         assert result["password_source"] == "generated"
@@ -209,26 +210,6 @@ class TestInstallFalkorDB:
         assert result["browser_url"] == "http://localhost:13000"
         assert "error" not in result
         assert "compose_running" not in result
-
-    def test_provided_password_result_does_not_disclose_password(
-        self,
-        tmp_path: Path,
-        hub_db: HubDatabase,
-    ) -> None:
-        module = _falkor_module()
-        _write_local_bootstrap(tmp_path)
-
-        with (
-            patch.object(shutil, "which", return_value="/usr/bin/docker"),
-            patch("gobby.cli.installers.falkor.subprocess.run") as mock_run,
-            _patch_config_db(hub_db),
-        ):
-            mock_run.side_effect = _docker_run_side_effect
-            result = module.install_falkordb(gobby_home=tmp_path, password="provided")
-
-        assert result["success"] is True
-        assert result["password_source"] == "provided"
-        assert result["password"] is None
 
     def test_reused_password_result_does_not_disclose_password(
         self,
@@ -256,7 +237,7 @@ class TestInstallFalkorDB:
             _patch_config_db(hub_db),
         ):
             mock_run.side_effect = _docker_run_side_effect
-            result = module.install_falkordb(gobby_home=tmp_path, password=None)
+            result = module.install_falkordb(gobby_home=tmp_path)
 
         assert result["success"] is True
         assert result["password_source"] == "reused"
@@ -271,7 +252,7 @@ class TestInstallFalkorDB:
         module = _falkor_module()
         with _patch_config_db(hub_db):
             for _ in range(100):
-                resolved = module._resolve_falkordb_password(None, gobby_home=tmp_path)
+                resolved = module._resolve_falkordb_password(gobby_home=tmp_path)
                 assert resolved.source == "generated"
                 assert module.validate_falkordb_password(resolved.value) == resolved.value
 
@@ -286,10 +267,11 @@ class TestInstallFalkorDB:
         with (
             patch.object(shutil, "which", return_value="/usr/bin/docker"),
             patch("gobby.cli.installers.falkor.subprocess.run") as mock_run,
+            patch("gobby.cli.installers.falkor._generate_falkordb_password", return_value="secret"),
             _patch_config_db(hub_db),
         ):
             mock_run.side_effect = _docker_run_side_effect
-            result = module.install_falkordb(gobby_home=tmp_path, password="secret")
+            result = module.install_falkordb(gobby_home=tmp_path)
 
         assert result["success"] is True
 
@@ -331,7 +313,7 @@ class TestInstallFalkorDB:
             ),
         ):
             mock_run.side_effect = _docker_run_side_effect
-            result = module.install_falkordb(gobby_home=tmp_path, password="secret")
+            result = module.install_falkordb(gobby_home=tmp_path)
 
         assert result["success"] is False
         assert "FalkorDB config" in result["error"]
@@ -391,9 +373,9 @@ class TestInstallFalkorDB:
         original_resolve_password = module._resolve_falkordb_password
         original_update_config = module._update_config
 
-        def track_password(password: str | None = None, *, gobby_home: Path | None = None) -> Any:
+        def track_password(*, gobby_home: Path | None = None) -> Any:
             received_homes.append(gobby_home)
-            return original_resolve_password(password, gobby_home=gobby_home)
+            return original_resolve_password(gobby_home=gobby_home)
 
         @contextmanager
         def track_config_db(home: Path, *, apply_migrations: bool = True) -> Iterator[HubDatabase]:
@@ -416,80 +398,7 @@ class TestInstallFalkorDB:
             patch("gobby.cli.installers.falkor.subprocess.run") as mock_run,
         ):
             mock_run.side_effect = _docker_run_side_effect
-            module.install_falkordb(gobby_home=None, password="secret")
+            module.install_falkordb(gobby_home=None)
 
         assert received_homes
         assert all(home == tmp_path for home in received_homes)
-
-
-class TestUninstallFalkorDB:
-    def test_uninstall_clears_config_store(
-        self,
-        tmp_path: Path,
-        hub_db: HubDatabase,
-    ) -> None:
-        module = _falkor_module()
-
-        with _patch_config_db(hub_db):
-            module._update_config(
-                port=16379,
-                password="secret",
-                gobby_home=tmp_path,
-            )
-
-            result = module.uninstall_falkordb(gobby_home=tmp_path)
-
-            secret_store = SecretStore(hub_db, gobby_home=tmp_path)
-            overrides = ConfigRepository(hub_db).read(resolve_secrets=False).overrides
-            assert result["success"] is True
-            assert "databases.falkordb.host" not in overrides
-            assert "databases.falkordb.port" not in overrides
-            assert "databases.falkordb.password" not in overrides
-            assert secret_store.get("falkordb_password") is None
-
-        assert not (tmp_path / "bootstrap.yaml").exists()
-
-    def test_uninstall_runs_falkordb_compose_down(
-        self,
-        tmp_path: Path,
-        hub_db: HubDatabase,
-    ) -> None:
-        module = _falkor_module()
-        _write_local_bootstrap(tmp_path)
-
-        with (
-            patch.object(shutil, "which", return_value="/usr/bin/docker"),
-            patch(
-                "gobby.cli.installers.falkor.subprocess.run", return_value=_successful_run()
-            ) as mock_run,
-            _patch_config_db(hub_db),
-        ):
-            module._update_config(
-                port=16379,
-                password="secret",
-                gobby_home=tmp_path,
-            )
-            from gobby.cli.installers.postgres import reconcile_unified_compose
-
-            compose_file = reconcile_unified_compose(tmp_path / "services").compose_file
-            result = module.uninstall_falkordb(gobby_home=tmp_path)
-
-        assert result["success"] is True
-        assert result["compose_stopped"] is True
-        mock_run.assert_called_once_with(
-            [
-                "docker",
-                "compose",
-                "-f",
-                str(compose_file),
-                "--profile",
-                "falkordb",
-                "down",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            env=mock_run.call_args.kwargs["env"],
-            cwd=str(tmp_path / "services"),
-        )
-        assert mock_run.call_args.kwargs["env"]["GOBBY_FALKORDB_PASSWORD"] == "secret"

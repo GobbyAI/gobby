@@ -12,6 +12,8 @@ from unittest.mock import MagicMock, call
 import pytest
 from click.testing import CliRunner
 
+from gobby.cli._install_state import empty_install_state
+from gobby.cli.install_setup_rtk import RtkInstallStatus
 from gobby.utils.dependency_requirements import (
     DependencyReport,
     DependencyState,
@@ -219,7 +221,8 @@ def test_required_stack_installs_all_services_and_applies_restart_policy(
             "success": True,
             "url": "redis://localhost:6379",
             "browser_url": "http://localhost:3000",
-            "password_source": "provided",
+            "password_source": "generated",
+            "password": "generated-pw",
         }
     )
     restart = MagicMock(return_value={"success": True})
@@ -229,20 +232,16 @@ def test_required_stack_installs_all_services_and_applies_restart_policy(
     monkeypatch.setattr(install_module, "apply_managed_service_restart_policy", restart)
     results: dict[str, dict[str, Any]] = {}
 
-    install_module._install_required_stack(
-        results,
-        falkordb_password="secret",
-        container_restarts=True,
-    )
+    install_module._install_required_stack(results, container_restarts=True)
 
     assert set(results) == {"postgres", "qdrant", "falkordb", "container-restarts"}
     assert results["postgres"] == {"success": True}
     assert results["qdrant"]["qdrant_url"] == "http://localhost:6333"
-    assert results["falkordb"]["password_source"] == "provided"
+    assert results["falkordb"]["password_source"] == "generated"
     assert results["container-restarts"] == {"success": True}
     postgres.assert_called_once_with()
     qdrant.assert_called_once_with()
-    falkordb.assert_called_once_with(password="secret")
+    falkordb.assert_called_once_with()
     restart.assert_called_once_with(enabled=True)
 
 
@@ -262,11 +261,7 @@ def test_required_stack_reports_dependent_failures_after_postgres_failure(
     monkeypatch.setattr(install_module, "apply_managed_service_restart_policy", restart)
     results: dict[str, dict[str, Any]] = {}
 
-    install_module._install_required_stack(
-        results,
-        falkordb_password=None,
-        container_restarts=True,
-    )
+    install_module._install_required_stack(results, container_restarts=True)
 
     assert all(not result["success"] for result in results.values())
     assert "PostgreSQL" in results["qdrant"]["error"]
@@ -295,7 +290,7 @@ def test_full_install_exits_before_provisioning_without_docker(
     monkeypatch.setattr(daemon_module.shutil, "which", lambda _name: "/usr/bin/tool")
     monkeypatch.setattr(install_module, "install_postgres", install_postgres)
 
-    result = CliRunner().invoke(install_module.install, ["--all"])
+    result = CliRunner().invoke(install_module.install, [])
 
     assert result.exit_code == 1
     assert "Docker daemon is required for full install" in result.output
@@ -324,7 +319,7 @@ def test_all_with_only_repository_hooks_still_owns_required_stack(
 
     result = CliRunner().invoke(
         install_module.install,
-        ["--all", "--no-interactive", "-C", str(tmp_path)],
+        ["--no-interactive", "-C", str(tmp_path)],
     )
 
     assert result.exit_code == 1
@@ -412,17 +407,15 @@ def test_default_install_completes_required_stack_without_detected_cli(
         "runtime_hub_database",
         MagicMock(side_effect=RuntimeError("test hub unavailable")),
     )
-    monkeypatch.setattr(install_module, "_configure_secret_kek_posture", lambda *_a, **_k: None)
     monkeypatch.setattr(install_module, "_provision_local_api_token", lambda *_args: None)
     monkeypatch.setattr(
         install_module,
         "prepare_install_state",
-        lambda *_args: install_module.empty_install_state(),
+        lambda *_args: empty_install_state(),
     )
     monkeypatch.setattr(install_module, "should_configure_section", lambda *_a, **_k: False)
     summary = MagicMock(return_value=True)
     monkeypatch.setattr(install_module, "_echo_install_summary", summary)
-    monkeypatch.setattr(install_module, "_echo_migration_notice", lambda *_args: None)
     start_daemon = MagicMock()
     monkeypatch.setattr(install_module, "_maybe_start_daemon_after_install", start_daemon)
 
@@ -465,7 +458,7 @@ def test_install_fails_when_personal_identity_cannot_be_written(
 
     result = CliRunner().invoke(
         install_module.install,
-        ["--config-only", "--no-interactive", "-C", str(tmp_path)],
+        ["--no-interactive", "-C", str(tmp_path)],
     )
 
     assert result.exit_code == 1
@@ -474,7 +467,7 @@ def test_install_fails_when_personal_identity_cannot_be_written(
     ensure_config.assert_not_called()
 
 
-def test_config_only_requires_git_before_provisioning(
+def test_install_requires_git_before_provisioning(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -496,7 +489,7 @@ def test_config_only_requires_git_before_provisioning(
 
     result = CliRunner().invoke(
         install_module.install,
-        ["--config-only", "--path", str(tmp_path), "--no-interactive"],
+        ["--path", str(tmp_path), "--no-interactive"],
     )
 
     assert result.exit_code == 1
@@ -504,7 +497,7 @@ def test_config_only_requires_git_before_provisioning(
     ensure_config.assert_not_called()
 
 
-def test_config_only_allows_non_repository_personal_workspace(
+def test_install_allows_non_repository_personal_workspace(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -559,16 +552,50 @@ def test_config_only_allows_non_repository_personal_workspace(
     runtime = MagicMock()
     runtime.require_database.return_value = MagicMock()
     monkeypatch.setattr(install_module, "get_cli_runtime", lambda: runtime)
+    for detector in (
+        "_is_claude_code_installed",
+        "_is_grok_cli_installed",
+        "_is_agy_cli_installed",
+        "_is_qwen_cli_installed",
+        "_is_codex_cli_installed",
+        "_is_droid_cli_installed",
+    ):
+        monkeypatch.setattr(install_module, detector, lambda: False)
+    monkeypatch.setattr(
+        importlib.import_module("gobby.cli.install_components"),
+        "reconcile_rtk",
+        MagicMock(
+            return_value=RtkInstallStatus(
+                binary_path=None,
+                version=None,
+                rule_enabled=False,
+                direct_artifact_conflicts=(),
+                health="disabled",
+                managed_binary=False,
+            )
+        ),
+    )
+    monkeypatch.setattr(install_module, "_provision_local_api_token", lambda *_args: None)
+    monkeypatch.setattr(
+        install_module,
+        "prepare_install_state",
+        lambda *_args: empty_install_state(),
+    )
+    monkeypatch.setattr(install_module, "should_configure_section", lambda *_a, **_k: False)
+    summary = MagicMock(return_value=True)
+    monkeypatch.setattr(install_module, "_echo_install_summary", summary)
+    monkeypatch.setattr(install_module, "_maybe_start_daemon_after_install", MagicMock())
     result = CliRunner().invoke(
         install_module.install,
-        ["--config-only", "--path", str(tmp_path), "--no-interactive"],
+        ["--path", str(tmp_path), "--no-interactive"],
     )
 
     assert not (tmp_path / ".git").exists()
-    assert result.exit_code == 0
-    assert "Configuration and required infrastructure complete." in result.output
+    assert result.exit_code == 0, result.output
+    assert "Gobby Installation" in result.output
     required_stack.assert_called_once()
     run_setup.assert_called_once()
+    summary.assert_called_once()
 
 
 def test_should_initialize_project_auto_yes_only_for_no_interactive(tmp_path: Path) -> None:
@@ -626,7 +653,7 @@ def test_files_home_must_be_existing_absolute_directory(
     missing = tmp_path / "missing-files"
     result = CliRunner().invoke(
         install_module.install,
-        ["--config-only", "--no-interactive", "--files-home", str(missing)],
+        ["--no-interactive", "--files-home", str(missing)],
     )
     assert result.exit_code != 0
     assert "does not exist" in result.output or "files-home" in result.output.lower()
@@ -652,7 +679,7 @@ def test_files_home_refuses_root_and_reserved_overlap(
 
     result = CliRunner().invoke(
         install_module.install,
-        ["--config-only", "--no-interactive", "--files-home", "/"],
+        ["--no-interactive", "--files-home", "/"],
     )
     assert result.exit_code != 0
     identity.assert_not_called()
@@ -664,7 +691,7 @@ def test_files_home_refuses_root_and_reserved_overlap(
     try:
         result = CliRunner().invoke(
             install_module.install,
-            ["--config-only", "--no-interactive", "--files-home", str(reserved)],
+            ["--no-interactive", "--files-home", str(reserved)],
         )
         assert result.exit_code != 0
         identity.assert_not_called()

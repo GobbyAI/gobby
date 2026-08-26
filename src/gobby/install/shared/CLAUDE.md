@@ -13,6 +13,13 @@ Everything in this directory is a **template**, not active enforcement.
 - User/project-owned rows and project-local override copies are preserved by sync
 - The `deprecated/` subdirectories are excluded from sync entirely
 - The database is the source of truth for what's active, not these YAML files
+- Installed rows belong to the checkout the running daemon serves. `gobby sync` from
+  another checkout (a worktree on a branch) is refused unless `--force`, because the
+  daemon keeps running its own code against the overwritten rows. To test
+  content-only branch changes, `--force` from the worktree, test, then restore with
+  `gobby sync` from the daemon's checkout (a daemon restart restores too). Content
+  that needs branch code (new handlers, new MCP tools) needs `gobby install` cutover
+  from the worktree or the merge
 
 ## Configurability Convention
 

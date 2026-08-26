@@ -12,7 +12,7 @@ was loaded independently, call `materialize_skill_scripts(name="impeccable")`
 on `gobby-skills` once and use its returned absolute `scripts_dir`. Export the
 returned `environment.PUPPETEER_CACHE_DIR` before any browser-engine invocation.
 The returned generation remains stable for the helper's lifetime and until an
-explicit `gobby uninstall --tools`.
+explicit `gobby uninstall impeccable`.
 
 ## Write the config
 

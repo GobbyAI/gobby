@@ -138,9 +138,11 @@ def _codesign(binary: Path) -> None:
             timeout=30,
         )
     except subprocess.TimeoutExpired as exc:
-        raise GdaemonInstallError("gdaemon ad-hoc signing timed out after 30 seconds") from exc
+        raise GdaemonInstallError(
+            f"{binary.name} ad-hoc signing timed out after 30 seconds"
+        ) from exc
     if result.returncode != 0:
-        raise GdaemonInstallError(f"gdaemon ad-hoc signing failed: {result.stderr.strip()}")
+        raise GdaemonInstallError(f"{binary.name} ad-hoc signing failed: {result.stderr.strip()}")
 
 
 def _install_gdaemon(binary: Path, version: str) -> str:

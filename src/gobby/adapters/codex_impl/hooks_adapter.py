@@ -226,17 +226,37 @@ class CodexHooksAdapter(BaseAdapter):
                 return block_result
 
         if hook_event_name == "PermissionRequest" and "hookSpecificOutput" not in result:
-            result["hookSpecificOutput"] = {
-                "hookEventName": "PermissionRequest",
-                "decision": {"behavior": "allow"},
-            }
+            behavior = response.permission_decision
+            if behavior is None and response.auto_approve:
+                behavior = "allow"
+            if behavior is not None:
+                result["hookSpecificOutput"] = {
+                    "hookEventName": "PermissionRequest",
+                    "decision": {"behavior": behavior},
+                }
 
-        if isinstance(response.modified_input, dict) and hook_event_name == "PreToolUse":
-            result["hookSpecificOutput"] = {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "allow",
-                "updatedInput": response.modified_input,
-            }
+        if hook_event_name == "PreToolUse":
+            permission_decision = response.permission_decision
+            if permission_decision is None and response.auto_approve:
+                permission_decision = "allow"
+            updated_input = (
+                response.modified_input if isinstance(response.modified_input, dict) else None
+            )
+            if updated_input is not None and permission_decision is None:
+                # Codex accepts ``updatedInput`` only next to
+                # ``permissionDecision: "allow"``; every other shape is reported
+                # as a failed hook and the original input runs. A rewrite on its
+                # own therefore carries the approval; an explicit deny keeps its
+                # decision and discards the rewrite.
+                permission_decision = "allow"
+            if permission_decision is not None:
+                hook_output = result.setdefault(
+                    "hookSpecificOutput",
+                    {"hookEventName": "PreToolUse"},
+                )
+                hook_output["permissionDecision"] = permission_decision
+                if updated_input is not None and permission_decision == "allow":
+                    hook_output["updatedInput"] = updated_input
 
         # Build additionalContext from all context sources. Keep high-value
         # session/system context ahead of large workflow payloads.

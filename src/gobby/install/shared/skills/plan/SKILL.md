@@ -36,15 +36,19 @@ Both `$gobby plan` and `/gobby plan` invoke this workflow.
    Ask the user to choose between the two depths. If the user already selected a
    depth in response to the Plan Mode Consider prompt, honor that choice without
    asking again.
-4. Load `elicit` for every Gobby plan:
+4. Load `restraint` and `elicit` for every Gobby plan:
 
 ```text
+get_skill(name="restraint") on gobby-skills
 get_skill(name="elicit") on gobby-skills
 ```
 
 Run its grill-me protocol in both depths. Resolve discoverable facts through
 repository inspection, ask one material decision at a time with a recommendation,
-and finish with a confirmed Decision Record before drafting either plan.
+and finish with a confirmed Decision Record before drafting either plan. Every
+recommendation you put to the user, and every choice you make unattended, walks
+`restraint`'s decision ladder and names the rung it stopped at; the ladder
+chooses among complete solutions only.
 
 ## Lightweight Workflow
 
@@ -134,10 +138,12 @@ the user changes the cap. Start it only after explicit enhancement approval.
    the turn to deliver the compaction command, never a refusal: do not stop, do
    not ask the user about it, and resume from the continuation prompt.
 3. Present every suggestion with its full text and metadata. Collect one
-   accept/decline vote per suggestion before editing. Apply only accepted
-   suggestions, append the enhancement changelog entry, and base-validate. In
-   unattended mode, the coordinator judges every item and records each vote
-   with its rationale.
+   accept/decline vote per suggestion before editing. Each vote walks
+   `restraint`'s decision ladder: a suggestion that stops at a lower rung than
+   the mechanism it proposes is declined `over-mechanism` with the rung named.
+   Apply only accepted suggestions, append the enhancement changelog entry, and
+   base-validate. In unattended mode, the coordinator judges every item and
+   records each vote with its rationale.
 4. Present the checkpoint menu. If the user chooses `continue interactively`,
    ask separately whether to begin adversarial review.
 
@@ -159,8 +165,12 @@ Start only after explicit adversarial-review approval.
    about it, and resume from the continuation prompt.
 3. Read the canonical result. Present every finding with its full text and
    metadata, and collect one accept/decline vote per finding before editing.
-   Record declined items and deferrals explicitly. In unattended mode, the
-   coordinator judges every item and records each vote with its rationale.
+   Every vote walks `restraint`'s decision ladder; a finding whose fix adds
+   mechanism around a design that already fully solves the problem is declined
+   `over-mechanism` with the rung it fails at — fixer-induced chains on the
+   previous round's repairs are the usual case. Record declined items and
+   deferrals explicitly. In unattended mode, the coordinator judges every item
+   and records each vote with its rationale.
 4. For a `needs_review` result, persist the rejection checkpoint before applying
    accepted repairs, so the checkpoint records the reviewed artifact and the
    next round snapshots the repaired one. Call
