@@ -764,6 +764,7 @@ class TestGrokCurrentHookContract:
         )
 
         assert "hookSpecificOutput" not in result
+        assert "additionalContext" not in result
 
     def test_allowing_stop_has_no_force_stop_fields(self) -> None:
         result = GrokAdapter().translate_from_hook_response(
