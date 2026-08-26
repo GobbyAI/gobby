@@ -23,6 +23,7 @@ from gobby.memory.scoring import undecay
 from gobby.storage.memories import MemoryType, validate_memory_type
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.sync.memories import is_ephemeral_implementation_note
+from gobby.utils.session_context import get_current_session_id
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -148,7 +149,8 @@ def register_memory_write_tools(
                 ``auto_superseded``; ``similar_existing`` lists the five nearest
                 neighbours with their undecayed similarity so the writer can judge
                 overlap the automatic threshold missed.
-            session_id: Session ID that created this memory (accepts #N, N, UUID, or prefix)
+            session_id: Session ID that created this memory (accepts #N, N, UUID, or
+                prefix); defaults to the calling session's context
             source_task_id: Optional task override (#N or UUID); derived from the
                 session's open claim when omitted
             created_by_agent: Optional agent-name override; derived from the
@@ -177,6 +179,9 @@ def register_memory_write_tools(
 
             project_id = get_current_project_id() or PERSONAL_PROJECT_ID
 
+            # The proxy injects the caller's session only into tools whose schema
+            # requires ``session_id``; this one is optional, so fall back to the
+            # seeded session context (already a UUID) when no explicit ref is given.
             resolved_session_id: str | None = None
             if session_id:
                 try:
@@ -190,6 +195,8 @@ def register_memory_write_tools(
                     )
                 except ValueError as e:
                     logger.warning("Could not resolve session_id '%s': %s", session_id, e)
+            else:
+                resolved_session_id = get_current_session_id()
 
             similar_existing: list[dict[str, Any]] = []
             auto_superseded: list[dict[str, Any]] = []

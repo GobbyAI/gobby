@@ -23,6 +23,7 @@ from gobby.mcp_proxy.tools.memory import create_memory_registry
 from gobby.mcp_proxy.tools.memory_scope import get_current_project_id
 from gobby.storage.memories import MemoryType
 from gobby.storage.projects import PERSONAL_PROJECT_ID
+from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
 
@@ -315,6 +316,95 @@ class TestCreateMemory:
             )
 
         assert result["success"] is True
+        call_kwargs = mock_memory_manager.create_memory.call_args.kwargs
+        assert call_kwargs["source_session_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_create_memory_falls_back_to_session_context(
+        self, memory_registry: InternalToolRegistry, mock_memory_manager: MagicMock
+    ) -> None:
+        """Without an explicit session_id the seeded session context is the source."""
+        mock_memory_manager.search_memories.return_value = []
+        context_uuid = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+
+        with (
+            patch(
+                "gobby.utils.project_context.get_project_context",
+                return_value={"id": "11111111-1111-4111-8111-111111110001"},
+            ),
+            patch(
+                "gobby.storage.session_resolution.resolve_session_reference",
+            ) as mock_resolve,
+            patch(
+                "gobby.mcp_proxy.tools.memory_write.derive_memory_create_provenance",
+                return_value=(None, None),
+            ) as mock_derive,
+            session_context_for_test(context_uuid),
+        ):
+            result = await memory_registry.call(
+                "create_memory", {"content": "Test", "rationale": _VALID_RATIONALE}
+            )
+
+        assert result["success"] is True, result
+        mock_resolve.assert_not_called()
+        call_kwargs = mock_memory_manager.create_memory.call_args.kwargs
+        assert call_kwargs["source_session_id"] == context_uuid
+        assert mock_derive.call_args.kwargs["resolved_session_id"] == context_uuid
+
+    @pytest.mark.asyncio
+    async def test_create_memory_explicit_session_id_beats_context(
+        self, memory_registry: InternalToolRegistry, mock_memory_manager: MagicMock
+    ) -> None:
+        """An explicit session_id argument wins over the seeded session context."""
+        mock_memory_manager.search_memories.return_value = []
+        resolved_uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+        with (
+            patch(
+                "gobby.utils.project_context.get_project_context",
+                return_value={"id": "11111111-1111-4111-8111-111111110001"},
+            ),
+            patch(
+                "gobby.storage.session_resolution.resolve_session_reference",
+                return_value=resolved_uuid,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.memory_write.derive_memory_create_provenance",
+                return_value=(None, None),
+            ),
+            session_context_for_test("cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
+        ):
+            result = await memory_registry.call(
+                "create_memory",
+                {"content": "Test", "session_id": "#42", "rationale": _VALID_RATIONALE},
+            )
+
+        assert result["success"] is True, result
+        call_kwargs = mock_memory_manager.create_memory.call_args.kwargs
+        assert call_kwargs["source_session_id"] == resolved_uuid
+
+    @pytest.mark.asyncio
+    async def test_create_memory_without_session_context_stores_null(
+        self, memory_registry: InternalToolRegistry, mock_memory_manager: MagicMock
+    ) -> None:
+        """No explicit session_id and no seeded context yields NULL without error."""
+        mock_memory_manager.search_memories.return_value = []
+
+        with (
+            patch(
+                "gobby.utils.project_context.get_project_context",
+                return_value={"id": "11111111-1111-4111-8111-111111110001"},
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.memory_write.derive_memory_create_provenance",
+                return_value=(None, None),
+            ),
+        ):
+            result = await memory_registry.call(
+                "create_memory", {"content": "Test", "rationale": _VALID_RATIONALE}
+            )
+
+        assert result["success"] is True, result
         call_kwargs = mock_memory_manager.create_memory.call_args.kwargs
         assert call_kwargs["source_session_id"] is None
 
