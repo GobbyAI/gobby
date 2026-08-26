@@ -106,7 +106,11 @@ class GrokAdapter(ACPHookAdapter):
     ) -> dict[str, Any]:
         """Translate Grok observe-only and recoverable stop responses."""
         canonical_hook = self.HOOK_EVENT_NAME_MAP.get(hook_type or "", hook_type or "")
-        if canonical_hook in {"permission_denied", "stop_failure", "subagent_start"}:
+        if canonical_hook in GROK_EVENT_MAP and canonical_hook not in {
+            "pre_tool_use",
+            "stop",
+            "subagent_stop",
+        }:
             return {"decision": "allow", "continue": True}
 
         if canonical_hook in {"stop", "subagent_stop"} and response.decision in {
@@ -150,14 +154,17 @@ class GrokAdapter(ACPHookAdapter):
             permission_decision = response.permission_decision
             if permission_decision is None and response.auto_approve:
                 permission_decision = "allow"
-            if response.modified_input is not None or permission_decision is not None:
+            denied = result.get("decision") == "deny" or permission_decision == "deny"
+            if permission_decision is not None or (
+                response.modified_input is not None and not denied
+            ):
                 hook_output = result.setdefault(
                     "hookSpecificOutput",
                     {"hookEventName": canonical_hook},
                 )
                 if permission_decision is not None:
                     hook_output["permissionDecision"] = permission_decision
-                if response.modified_input is not None and permission_decision != "deny":
+                if response.modified_input is not None and not denied:
                     hook_output["updatedInput"] = response.modified_input
             if response.decision == "allow":
                 result.pop("decision", None)
