@@ -12,7 +12,7 @@ import threading
 from collections import OrderedDict
 from collections.abc import Iterable, Iterator, Sequence
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
@@ -446,15 +446,45 @@ def select_window_raw_lines(
 
 
 def merge_transcript_evidence(*evidence_sets: TranscriptEvidence) -> TranscriptEvidence:
-    """Merge session evidence while preserving provider timestamps and local order."""
-    runs = sorted(
-        (run for evidence in evidence_sets for run in evidence.validation_runs),
-        key=lambda run: (run.completed_at, run.session_id, run.order),
-    )
-    edits = sorted(
-        (edit for evidence in evidence_sets for edit in evidence.edits),
-        key=lambda edit: (edit.timestamp, edit.session_id, edit.order),
-    )
+    """Merge session evidence into one transcript position sequence.
+
+    Each session numbers ``order`` from its own counter, so raw values are not
+    comparable across the owner and closing sessions the close path merges.
+    Sessions interleave by provider timestamp without reordering within a
+    session, and the merged edits and runs are renumbered as one sequence so
+    every consumer can compare positions.
+    """
+    streams: list[list[tuple[datetime, TranscriptValidationRun | TranscriptEdit]]] = []
+    for evidence in evidence_sets:
+        items: list[tuple[datetime, TranscriptValidationRun | TranscriptEdit]] = [
+            (run.completed_at, run) for run in evidence.validation_runs
+        ]
+        items.extend((edit.timestamp, edit) for edit in evidence.edits)
+        items.sort(key=lambda item: item[1].order)
+        if items:
+            streams.append(items)
+
+    cursors = [0] * len(streams)
+    runs: list[TranscriptValidationRun] = []
+    edits: list[TranscriptEdit] = []
+    position = 0
+    while True:
+        heads = [
+            (streams[index][cursor][0], index)
+            for index, cursor in enumerate(cursors)
+            if cursor < len(streams[index])
+        ]
+        if not heads:
+            break
+        _stamp, index = min(heads)
+        item = streams[index][cursors[index]][1]
+        cursors[index] += 1
+        position += 1
+        if isinstance(item, TranscriptValidationRun):
+            runs.append(replace(item, order=position))
+        else:
+            edits.append(replace(item, order=position))
+
     return TranscriptEvidence(
         validation_runs=tuple(runs),
         edits=tuple(edits),

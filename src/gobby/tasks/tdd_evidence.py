@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 
 from gobby.tasks.acceptance_artifacts import (
     AcceptanceTest,
@@ -36,6 +37,20 @@ class TddEvidenceResult:
         }
 
 
+_DOCUMENTATION_ROOTS = frozenset({"docs", ".gobby"})
+_INSTRUCTION_FILES = frozenset({"agents.md", "claude.md", "readme.md", "changelog.md"})
+
+
+def _is_production_edit_path(path: str) -> bool:
+    """Implementation edits only: neither test convention, docs, nor repo instructions."""
+    if is_test_convention_path(path):
+        return False
+    pure = PurePosixPath(path)
+    if pure.parts and pure.parts[0].casefold() in _DOCUMENTATION_ROOTS:
+        return False
+    return pure.name.casefold() not in _INSTRUCTION_FILES
+
+
 def evaluate_tdd_evidence(
     tests: tuple[AcceptanceTest, ...],
     evidence: TranscriptEvidence,
@@ -57,33 +72,41 @@ def evaluate_tdd_evidence(
             continue
         red = None
         green = None
+        production_edit_seen = False
         for test_edit in test_edits:
-            first_non_test_edit = min(
+            first_production_edit = min(
                 (
                     edit
                     for edit in evidence.edits
-                    if not is_test_convention_path(edit.path) and edit.order > test_edit.order
+                    if edit.order > test_edit.order and _is_production_edit_path(edit.path)
                 ),
                 key=lambda edit: edit.order,
                 default=None,
             )
-            if first_non_test_edit is None:
+            if first_production_edit is None:
                 continue
-            red = _find_red_run(test, evidence, test_edit.order, first_non_test_edit)
+            production_edit_seen = True
+            window_red = _find_red_run(test, evidence, test_edit.order, first_production_edit)
+            if window_red is None:
+                continue
             if red is None:
-                continue
+                red = window_red
             green = _find_green_run(
                 test,
                 evidence,
-                red,
-                after_order=first_non_test_edit.order,
+                window_red,
+                after_order=first_production_edit.order,
             )
             if green is not None:
+                red = window_red
                 break
+        if not production_edit_seen:
+            findings.append(f"{test.reference}: no production edit follows the test edit")
+            continue
         if red is None:
             findings.append(
                 f"{test.reference}: missing assertion or panic failure after the test edit "
-                "and before the first non-test edit"
+                "and before the first production edit"
             )
             continue
         red_commands.append(red.command)
