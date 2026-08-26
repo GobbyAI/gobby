@@ -26,6 +26,22 @@ from gobby.ui_exposure import UiExposeError, UiExposeResult
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def _pin_boot_id() -> Generator[None]:
+    """Keep the singleton claim off `sysctl`.
+
+    These tests patch ``gobby.cli.daemon.subprocess.Popen`` — the process-wide
+    stdlib attribute — so the boot-id probe inside ``claim_pid_file`` would run
+    ``subprocess.run`` against the mock on macOS (#21033). Both importing
+    modules bind the name, so both are patched.
+    """
+    with (
+        patch("gobby.runner_pid_record.current_boot_id", return_value="boot:test"),
+        patch("gobby.runner_pid_file.current_boot_id", return_value="boot:test"),
+    ):
+        yield
+
+
 @pytest.mark.parametrize("managed_services", [False, True])
 def test_start_dependency_errors_detects_managed_services_from_home(
     tmp_path: Path,

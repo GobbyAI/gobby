@@ -503,6 +503,10 @@ def mock_daemon_config() -> "MagicMock":
     temp_root = Path(tempfile.gettempdir())
     config.logging.dir = os.environ.get("GOBBY_LOGGING_DIR", str(temp_root))
     config.ui.enabled = False
+    # A bare MagicMock attribute is truthy; leave the managed-SRT preflight off
+    # so CLI start tests never probe the machine's SRT install (#21033).
+    config.agent_sandbox.enabled = False
+    config.web_chat_sandbox.enabled = False
     config.databases.falkordb.password = None
     return config
 
