@@ -629,7 +629,9 @@ class TestStartStopBarriers:
         config.bind_host = "127.0.0.1"
         config.logging = MagicMock()
         config.ui.enabled = False
+        # Both sandbox flags gate the real SRT preflight in `gobby start` (#21034).
         config.agent_sandbox.enabled = False
+        config.web_chat_sandbox.enabled = False
         runtime = CliRuntime(config_file=None, config=config)
         with (
             patch("gobby.cli.daemon.get_gobby_home", return_value=tmp_path),
