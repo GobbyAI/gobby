@@ -1046,13 +1046,15 @@ class CLIEventSimulator:
         machine_id: str = "21000000-0000-4000-8000-000000000002",
         cwd: str | None = None,
         project_id: str | None = None,
+        terminal_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Simulate a provider-specific turn-start/user-prompt hook."""
         hook_type_by_source = {
             "claude": "user-prompt-submit",
             "codex": "UserPromptSubmit",
             "droid": "UserPromptSubmit",
-            "qwen": "BeforeAgent",
+            "grok": "user_prompt_submit",
+            "qwen": "UserPromptSubmit",
         }
         hook_type = hook_type_by_source[source]
         input_data: dict[str, Any] = {
@@ -1063,14 +1065,13 @@ class CLIEventSimulator:
             input_data["cwd"] = cwd
         if project_id:
             input_data["project_id"] = project_id
+        if terminal_context:
+            input_data["terminal_context"] = terminal_context
 
         if source in {"claude", "droid"}:
             input_data["user_prompt"] = prompt
         else:
             input_data["prompt"] = prompt
-        if source == "qwen":
-            input_data["hook_event_name"] = hook_type
-
         payload = {
             "hook_type": hook_type,
             "source": source,
@@ -1080,6 +1081,80 @@ class CLIEventSimulator:
         response = self.client.post("/api/hooks/execute", json=self._hook_envelope(**payload))
         response.raise_for_status()
         return cast(dict[str, Any], response.json())
+
+    def _grok_active_hook(
+        self,
+        hook_type: str,
+        session_id: str,
+        envelope_id: str,
+        *,
+        project_id: str | None = None,
+        cwd: str | None = None,
+        **input_fields: Any,
+    ) -> dict[str, Any]:
+        """Send an envelope-backed Grok hook through the isolated daemon."""
+        input_data: dict[str, Any] = {"session_id": session_id, **input_fields}
+        if cwd:
+            input_data["cwd"] = cwd
+        if project_id:
+            input_data["project_id"] = project_id
+
+        headers = {"X-Gobby-Envelope-Id": envelope_id}
+        if project_id:
+            headers["X-Gobby-Project-Id"] = project_id
+        payload = {
+            "hook_type": hook_type,
+            "source": "grok",
+            "input_data": input_data,
+        }
+        response = self.client.post(
+            "/api/hooks/execute",
+            json=self._hook_envelope(**payload),
+            headers=headers,
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
+
+    def grok_pre_tool_use(
+        self,
+        session_id: str,
+        tool_name: str,
+        envelope_id: str,
+        tool_input: dict[str, Any] | None = None,
+        *,
+        project_id: str | None = None,
+        cwd: str | None = None,
+    ) -> dict[str, Any]:
+        """Simulate Grok's active PreToolUse delivery channel."""
+        return self._grok_active_hook(
+            "pre_tool_use",
+            session_id,
+            envelope_id,
+            project_id=project_id,
+            cwd=cwd,
+            tool_name=tool_name,
+            tool_input=tool_input or {},
+        )
+
+    def grok_stop(
+        self,
+        session_id: str,
+        envelope_id: str,
+        *,
+        project_id: str | None = None,
+        cwd: str | None = None,
+        last_assistant_message: str = "",
+    ) -> dict[str, Any]:
+        """Simulate Grok's active Stop delivery channel."""
+        return self._grok_active_hook(
+            "stop",
+            session_id,
+            envelope_id,
+            project_id=project_id,
+            cwd=cwd,
+            last_assistant_message=last_assistant_message,
+            stop_hook_active=True,
+        )
 
     def register_test_agent(
         self,
@@ -1475,6 +1550,15 @@ def _production_daemon_running() -> bool:
 
 # Known daemon artifacts that the production daemon may create/touch
 _DAEMON_ARTIFACTS = {"gobby.pid", "ui.pid", "shutdown_intent_active.json"}
+_PRODUCTION_DAEMON_ARTIFACT_PREFIXES = (
+    "cache/transcript-indexes/",
+    "grants/",
+    "logs/",
+    "runtime/managed-executions/",
+    "session_summaries/",
+    "session_transcripts/",
+    "worktrees/",
+)
 
 # Transient per-daemon-instance files that we never flag as a leak. The test
 # daemon runs with HOME overridden to a tmp dir, so any write to real ~/.gobby/
@@ -1486,6 +1570,16 @@ _DAEMON_ARTIFACTS = {"gobby.pid", "ui.pid", "shutdown_intent_active.json"}
 # here, so these omissions do not weaken the check.
 _ALWAYS_EXEMPT_BASENAMES = {"shutdown_intent_active.json"}
 _ALWAYS_EXEMPT_PREFIXES = ("hooks/inbox/", "session_wiki/")
+
+
+def _is_production_daemon_artifact(rel_path: str) -> bool:
+    """Return whether a running canonical daemon may create this path."""
+    basename = Path(rel_path).name
+    return (
+        basename in _DAEMON_ARTIFACTS
+        or basename.endswith((".pid", "-journal", "-shm", "-wal"))
+        or rel_path.startswith(_PRODUCTION_DAEMON_ARTIFACT_PREFIXES)
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -1527,17 +1621,7 @@ def assert_no_external_writes() -> Generator[None]:
                 continue
             if basename in _ALWAYS_EXEMPT_BASENAMES:
                 continue  # Transient per-daemon file — see _ALWAYS_EXEMPT_BASENAMES
-            if prod_running and (
-                basename in _DAEMON_ARTIFACTS
-                or rel_path.startswith("logs/")
-                or rel_path.startswith("session_summaries/")
-                or rel_path.startswith("session_transcripts/")
-                or rel_path.startswith("worktrees/")
-                # ManagedCredentialManager writes one bootstrap.json per
-                # maintenance/agent credential the production daemon issues.
-                or rel_path.startswith("runtime/managed-executions/")
-                or basename.endswith(".pid")
-            ):
+            if prod_running and _is_production_daemon_artifact(rel_path):
                 continue  # Known production daemon artifact
             leaked.append(f"  CREATED: ~/.gobby/{rel_path}")
         elif mtime != before[rel_path] and not prod_running and not rel_path.startswith("logs/"):

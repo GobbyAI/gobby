@@ -6,7 +6,29 @@ Verifies that the E2E test fixtures work correctly.
 
 import pytest
 
+from tests.e2e.conftest import _is_production_daemon_artifact
+
 pytestmark = pytest.mark.e2e
+
+
+def test_production_daemon_transcript_index_cache_is_external_write_exempt() -> None:
+    transient_index = (
+        "cache/transcript-indexes/"
+        ".0867344c080acbd5f48c8159abbfb31002083593489c2dff5be65877bc79fbd0"
+        ".gobby-index.json.fotd48q1.tmp"
+    )
+
+    assert _is_production_daemon_artifact(transient_index) is True
+    assert (
+        _is_production_daemon_artifact(
+            "grants/8f2b4499bdfe95a9/"
+            "d45545c5-ded5-4335-b115-0245752edacf--357cdecf-e4c9-5163-8efc-01769b8f6062.json"
+        )
+        is True
+    )
+    assert _is_production_daemon_artifact("codex-endpoints/openrouter/logs_2.sqlite-wal")
+    assert _is_production_daemon_artifact("codex-endpoints/openrouter/logs_2.sqlite-shm")
+    assert _is_production_daemon_artifact("config.yaml") is False
 
 
 class TestE2EInfrastructure:
