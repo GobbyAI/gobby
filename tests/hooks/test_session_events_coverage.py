@@ -70,6 +70,91 @@ def _make_session(
     return session
 
 
+@pytest.mark.parametrize(
+    "binding",
+    ["compact", "resume", "clear", "web_chat", "pre_created"],
+)
+def test_session_start_binding_matrix(binding: str) -> None:
+    from gobby.hooks.event_handlers._session_start.handoff import SessionStartResolution
+
+    handler = _TestHandler()
+    external_id = f"binding-{binding}"
+    source = binding if binding in {"compact", "resume", "clear"} else "startup"
+    event = _make_event(
+        event_type=HookEventType.SESSION_START,
+        session_id=external_id,
+        data={"source": source, "cwd": "/tmp"},
+    )
+    row = SimpleNamespace(
+        id=f"canonical-{binding}",
+        external_id=external_id,
+        status="active",
+        source="claude",
+        project_id="proj-1",
+        machine_id="21000000-0000-4000-8000-000000000001",
+        transcript_path="/tmp/transcript.jsonl",
+        terminal_context={"cwd": "/tmp"},
+        parent_session_id=None,
+        session_type="web_chat" if binding == "web_chat" else "terminal",
+        seq_num=42,
+    )
+    handler._session_manager.get.return_value = row if binding == "pre_created" else None
+    handler._session_manager.find_by_external_id.return_value = (
+        row if binding == "web_chat" else None
+    )
+    handler._session_manager.find_by_external_id_any_project.return_value = None
+    handler._session_manager.register_session.return_value = row.id
+
+    def bind_pre_created(**kwargs: Any) -> HookResponse:
+        kwargs["event"].metadata["_platform_session_id"] = row.id
+        return HookResponse(decision="allow")
+
+    def activate(
+        activation_event: HookEvent,
+        session_id: str,
+        **_kwargs: Any,
+    ) -> list[str]:
+        activation_event.metadata["_platform_session_id"] = session_id
+        return []
+
+    resolved = SessionStartResolution(
+        session=row if binding in {"compact", "resume"} else None,
+        session_source=source,
+    )
+    reconcile_result = SimpleNamespace(success=True)
+
+    with (
+        patch.object(handler, "_handle_pre_created_session", side_effect=bind_pre_created),
+        patch.object(handler, "_activate_materialized_session", side_effect=activate),
+        patch.object(
+            handler,
+            "_compose_session_response",
+            return_value=HookResponse(decision="allow"),
+        ),
+        patch.object(handler, "_derive_transcript_path", return_value=row.transcript_path),
+        patch(
+            "gobby.hooks.event_handlers._session_start.flow.resolve_session_start_identity",
+            return_value=resolved,
+        ),
+        patch(
+            "gobby.hooks.event_handlers._session_start.flow.rebind_resumed_session_start",
+            return_value=(row, row.transcript_path),
+        ),
+        patch(
+            "gobby.hooks.event_handlers._session_start.flow.reconcile_compact_session_activity",
+            return_value=reconcile_result,
+        ),
+    ):
+        response = handler.handle_session_start(event)
+
+    assert response.decision == "allow"
+    assert event.metadata["_platform_session_id"] == row.id
+    if binding == "clear":
+        handler._session_manager.register_session.assert_called_once()
+    else:
+        handler._session_manager.register_session.assert_not_called()
+
+
 class _TestHandler(SessionEventHandlerMixin):
     """Concrete implementation with required attributes for testing."""
 
@@ -364,31 +449,22 @@ class TestHandleSessionEnd:
 class TestSessionStartAndHelpers:
     """Tests for handle_session_start and its internal helpers."""
 
-    def test_handle_session_start_basic(
-        self, mock_empty_session_variable_manager: MagicMock
-    ) -> None:
+    def test_handle_session_start_basic(self) -> None:
         handler = _TestHandler()
         event = _make_event(
             event_type=HookEventType.SESSION_START, session_id="ext-1", data={"cwd": "/tmp"}
         )
         handler._session_manager.get.return_value = None
-        handler._session_manager.find_parent.return_value = None
+        handler._session_manager.find_by_external_id.return_value = None
+        handler._session_manager.find_by_external_id_any_project.return_value = None
 
-        with (
-            patch.object(handler, "_derive_transcript_path", return_value="/tmp/transcript.json"),
-            patch.object(handler, "_activate_default_agent", return_value=None),
-        ):
-            handler._session_manager.register_session.return_value = "new-sess-1"
+        resp = handler.handle_session_start(event)
 
-            resp = handler.handle_session_start(event)
-
-            handler._session_manager.register_session.assert_called_once()
-            handler._session_coordinator.register_session.assert_called_with("ext-1")
-            handler._message_processor_resolver().register_session.assert_called_with(
-                "new-sess-1", "/tmp/transcript.json", source="claude"
-            )
-            assert event.metadata["_platform_session_id"] == "new-sess-1"
-            assert resp.decision == "allow"
+        handler._session_manager.register_session.assert_not_called()
+        handler._session_coordinator.register_session.assert_not_called()
+        handler._message_processor_resolver().register_session.assert_not_called()
+        assert "_platform_session_id" not in event.metadata
+        assert resp.decision == "allow"
 
     def test_handle_session_start_skips_acp_child(self) -> None:
         """Sessions spawned by daemon-owned qwen --acp must not
@@ -425,29 +501,32 @@ class TestSessionStartAndHelpers:
             mock_pre_created.assert_called_once()
             assert resp.decision == "allow"
 
-    def test_handle_session_start_sets_code_index_available(self) -> None:
+    def test_materialized_session_sets_code_index_available(self) -> None:
         """When project has indexed symbols, code_index_available is set to True."""
         handler = _TestHandler()
         event = _make_event(
             event_type=HookEventType.SESSION_START, session_id="ext-1", data={"cwd": "/tmp"}
         )
-        handler._session_manager.get.return_value = None
-        handler._session_manager.find_parent.return_value = None
+        session = _make_session(session_id="new-sess-1", project_id="proj-1")
 
         mock_stats = MagicMock()
         mock_stats.total_symbols = 42
 
         with (
-            patch.object(handler, "_derive_transcript_path", return_value="/tmp/t.json"),
             patch.object(handler, "_activate_default_agent", return_value=None),
             patch("gobby.code_index.storage.CodeIndexStorage") as mock_cis_cls,
             patch("gobby.workflows.state_manager.SessionVariableManager") as mock_sv_cls,
         ):
-            handler._session_manager.register_session.return_value = "new-sess-1"
             mock_cis_cls.return_value.get_project_stats.return_value = mock_stats
             mock_sv_mgr = mock_sv_cls.return_value
 
-            handler.handle_session_start(event)
+            handler._activate_materialized_session(
+                event,
+                "new-sess-1",
+                session_obj=session,
+                project_id="proj-1",
+                transcript_path="/tmp/t.json",
+            )
 
             mock_cis_cls.return_value.get_project_stats.assert_called_once_with("proj-1")
             assert mock_cis_cls.return_value.get_project_stats.call_count == 1
@@ -456,26 +535,29 @@ class TestSessionStartAndHelpers:
             assert mock_sv_mgr.set_variable.call_count >= 1
             assert mock_sv_mgr.set_variable.call_args is not None
 
-    def test_handle_session_start_no_index_skips_variable(self) -> None:
+    def test_materialized_session_no_index_skips_variable(self) -> None:
         """When project has no indexed symbols, code_index_available is NOT set."""
         handler = _TestHandler()
         event = _make_event(
             event_type=HookEventType.SESSION_START, session_id="ext-1", data={"cwd": "/tmp"}
         )
-        handler._session_manager.get.return_value = None
-        handler._session_manager.find_parent.return_value = None
+        session = _make_session(session_id="new-sess-1", project_id="proj-1")
 
         with (
-            patch.object(handler, "_derive_transcript_path", return_value="/tmp/t.json"),
             patch.object(handler, "_activate_default_agent", return_value=None),
             patch("gobby.code_index.storage.CodeIndexStorage") as mock_cis_cls,
             patch("gobby.workflows.state_manager.SessionVariableManager") as mock_sv_cls,
         ):
-            handler._session_manager.register_session.return_value = "new-sess-1"
             mock_cis_cls.return_value.get_project_stats.return_value = None
             mock_sv_mgr = mock_sv_cls.return_value
 
-            handler.handle_session_start(event)
+            handler._activate_materialized_session(
+                event,
+                "new-sess-1",
+                session_obj=session,
+                project_id="proj-1",
+                transcript_path="/tmp/t.json",
+            )
 
             mock_cis_cls.return_value.get_project_stats.assert_called_once_with("proj-1")
             assert mock_cis_cls.return_value.get_project_stats.call_count == 1
@@ -798,8 +880,8 @@ class TestSessionMoreCoverage:
 
             mock_sleep.assert_not_called()
             assert event.data["source"] == "startup"
-            assert event.metadata["_platform_session_id"] == "new-sess-1"
-            handler._session_manager.register_session.assert_called_once()
+            assert "_platform_session_id" not in event.metadata
+            handler._session_manager.register_session.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

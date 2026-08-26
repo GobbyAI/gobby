@@ -4,13 +4,16 @@ import asyncio
 import time
 from collections.abc import Iterator
 from datetime import datetime
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
 from gobby.config.extensions import WebhookEndpointConfig, WebhooksConfig
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.hook_manager import HookManager
+from gobby.hooks.session_materialize import activate_deferred_session
 from gobby.hooks.webhooks import (
     _MAX_WEBHOOK_RESPONSE_BYTES,
     WebhookDispatcher,
@@ -725,3 +728,93 @@ class TestWebhookResult:
         assert result.success is False
         assert result.status_code is None
         assert result.error == "Connection refused"
+
+
+@pytest.mark.parametrize("blocked", [False, True], ids=["allow", "block"])
+def test_deferred_start_webhooks_use_synthetic_event_and_gate_live_response(
+    blocked: bool,
+) -> None:
+    manager = MagicMock()
+    session = SimpleNamespace(
+        id="platform-session",
+        seq_num=42,
+        project_id="project-1",
+        parent_session_id=None,
+        transcript_path="/tmp/transcript.jsonl",
+    )
+    manager._session_manager.get.return_value = session
+    manager._event_handlers._activate_materialized_session.return_value = []
+    startup_response = HookResponse(
+        decision="allow",
+        context="startup context",
+        system_message="Gobby Session ID: #42",
+    )
+    manager._event_handlers._compose_session_response.return_value = startup_response
+    manager._evaluate_workflow_rules.return_value = (None, None)
+    blocking_response = HookResponse(decision="block", reason="webhook blocked startup")
+    manager._evaluate_blocking_webhooks.return_value = blocking_response if blocked else None
+    manager._complete_response.side_effect = lambda _event, response, *_args, **_kwargs: response
+    manager._get_machine_id.return_value = "machine-1"
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_AGENT,
+        session_id="external-session",
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(),
+        data={"prompt": "hello", "cwd": "/tmp"},
+        machine_id="machine-1",
+        project_id="project-1",
+        metadata={"_platform_session_id": "platform-session"},
+    )
+
+    result = activate_deferred_session(manager, event, 123.0)
+
+    copied = manager._evaluate_blocking_webhooks.call_args.args[0]
+    assert copied.event_type is HookEventType.SESSION_START
+    assert copied.data == {
+        "source": "startup",
+        "cwd": "/tmp",
+        "terminal_context": {"cwd": "/tmp"},
+    }
+    assert copied.metadata == {
+        "_platform_session_id": "platform-session",
+        "_synthetic_session_start": True,
+    }
+    if blocked:
+        assert result is blocking_response
+        manager._complete_response.assert_called_once()
+    else:
+        assert result is None
+        manager._dispatch_webhooks_async.assert_called_once_with(copied, startup_response)
+
+
+def test_sessionless_start_suppresses_rules_and_webhooks() -> None:
+    manager = MagicMock()
+    manager._session_manager = MagicMock()
+    sessionless = HookResponse(decision="allow")
+    manager._get_event_handler.return_value = lambda _event: sessionless
+    completed = HookResponse(decision="allow")
+    manager._complete_response.return_value = completed
+    event = HookEvent(
+        event_type=HookEventType.SESSION_START,
+        session_id="deferred-start",
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(),
+        data={"source": "startup", "cwd": "/tmp"},
+    )
+
+    with patch(
+        "gobby.hooks.hook_manager.resolve_hook_project_context",
+        return_value=SimpleNamespace(skipped=False, project_id="project-1", reason=None),
+    ):
+        response = HookManager._handle_after_daemon_ready(manager, event, 123.0)
+
+    assert response is completed
+    manager._evaluate_workflow_rules.assert_not_called()
+    manager._evaluate_blocking_webhooks.assert_not_called()
+    manager._complete_response.assert_called_once_with(
+        event,
+        sessionless,
+        None,
+        preserve_original=True,
+        suppress_webhooks=True,
+    )

@@ -7,6 +7,7 @@ import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -356,32 +357,36 @@ class TestHookManagerHandle:
 class TestHookManagerSessionStart:
     """Tests for session start handling."""
 
-    def test_session_start_registers_session(
+    def test_startup_session_start_defers_session_registration(
         self,
         hook_manager_with_mocks: HookManager,
         sample_session_start_event: HookEvent,
     ) -> None:
-        """Test that session start registers a new session."""
+        """A startup SessionStart leaves row creation to first activity."""
         response = hook_manager_with_mocks.handle(sample_session_start_event)
 
         assert response.decision == "allow"
-        assert response.metadata.get("session_id") is not None
-        assert response.metadata.get("external_id") == "test-external-id-123"
+        assert response.metadata == {}
+        assert "_platform_session_id" not in sample_session_start_event.metadata
+        assert (
+            hook_manager_with_mocks._session_manager.get_session_id(
+                sample_session_start_event.session_id,
+                sample_session_start_event.source.value,
+            )
+            is None
+        )
 
     def test_session_start_returns_response(
         self,
         hook_manager_with_mocks: HookManager,
         sample_session_start_event: HookEvent,
     ) -> None:
-        """Test that session start returns a valid response with system_message."""
+        """A deferred startup returns no context before first activity."""
         response = hook_manager_with_mocks.handle(sample_session_start_event)
 
         assert response.decision == "allow"
-        # Response should include session ID banner in system_message
-        assert response.system_message is not None
-        assert "Gobby Session ID:" in response.system_message
-        # External ID now in metadata (injected by enricher), not system_message
-        assert response.metadata.get("external_id") is not None
+        assert response.system_message is None
+        assert response.context is None
 
     def test_session_resume_no_handoff_message(
         self,
@@ -532,6 +537,53 @@ class TestHookManagerSessionEnd:
 
 class TestHookManagerBeforeAgent:
     """Tests for before agent (user prompt submit) handling."""
+
+    def test_first_user_prompt_submit_registers_session(
+        self,
+        hook_manager_with_mocks: HookManager,
+        sample_session_start_event: HookEvent,
+        temp_dir: Path,
+    ) -> None:
+        manager = hook_manager_with_mocks
+
+        start_response = manager.handle(sample_session_start_event)
+
+        assert start_response.decision == "allow"
+        assert start_response.system_message is None
+        assert "_platform_session_id" not in sample_session_start_event.metadata
+        assert (
+            manager._session_manager.get_session_id(
+                sample_session_start_event.session_id,
+                sample_session_start_event.source.value,
+            )
+            is None
+        )
+
+        first_prompt = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id=sample_session_start_event.session_id,
+            source=sample_session_start_event.source,
+            timestamp=datetime.now(UTC),
+            data={
+                "prompt": "Help me write a function",
+                "cwd": str(temp_dir),
+                "transcript_path": str(temp_dir / "transcript.jsonl"),
+            },
+            machine_id=LOCAL_MACHINE_ID,
+        )
+
+        with patch.object(
+            manager._event_handlers,
+            "_activate_materialized_session",
+            wraps=manager._event_handlers._activate_materialized_session,
+        ) as activate:
+            response = manager.handle(first_prompt)
+
+        assert response.decision == "allow"
+        assert response.system_message is not None
+        assert "Gobby Session ID:" in response.system_message
+        activate.assert_called_once()
+        assert first_prompt.metadata.get("_platform_session_id")
 
     def test_before_agent_allows(
         self,
@@ -789,15 +841,27 @@ class TestHookManagerWorkflowBlocking:
         assert response.reason == "Need confirmation"
 
     def test_handle_workflow_context_merged(
-        self, hook_manager_with_mocks: HookManager, sample_session_start_event: HookEvent
+        self,
+        hook_manager_with_mocks: HookManager,
+        sample_session_start_event: HookEvent,
+        temp_dir: Path,
     ) -> None:
         """Test that workflow context is merged into response."""
         manager = hook_manager_with_mocks
+        manager.handle(sample_session_start_event)
+        first_prompt = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id=sample_session_start_event.session_id,
+            source=sample_session_start_event.source,
+            timestamp=datetime.now(UTC),
+            data={"prompt": "hello", "cwd": str(temp_dir)},
+            machine_id=LOCAL_MACHINE_ID,
+        )
 
         # Mock workflow handler to return context
         workflow_response = HookResponse(decision="allow", context="Workflow context info")
         with patch.object(manager._workflow_handler, "handle", return_value=workflow_response):
-            response = manager.handle(sample_session_start_event)
+            response = manager.handle(first_prompt)
 
         assert response.decision == "allow"
         assert "Workflow context info" in (response.context or "")
@@ -976,7 +1040,10 @@ class TestHookManagerBlockedObservability:
         assert all(item.decision == "block" for item in observed)
         assert all(item.metadata["enriched"] is True for item in observed)
         blocking_webhooks.assert_called_once()
-        assert blocking_webhooks.call_args.args[0] is event
+        copied_event = blocking_webhooks.call_args.args[0]
+        assert copied_event.event_type == HookEventType.SESSION_START
+        assert copied_event.metadata["_synthetic_session_start"] is True
+        assert copied_event.session_id == event.session_id
         assert isinstance(blocking_webhooks.call_args.args[1], float)
         handler.assert_not_called()
 
@@ -1248,7 +1315,20 @@ class TestHookManagerSessionLookup:
         response = manager.handle(start_event)
 
         assert response.decision == "allow"
-        canonical_id = start_event.metadata["_platform_session_id"]
+        first_prompt = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id=external_id,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={
+                "prompt": "resume",
+                "cwd": str(temp_dir),
+                "transcript_path": str(temp_dir / "resumed-codex.jsonl"),
+            },
+            machine_id=LOCAL_MACHINE_ID,
+        )
+        assert manager.handle(first_prompt).decision == "allow"
+        canonical_id = first_prompt.metadata["_platform_session_id"]
         stale_wrapper_id = str(uuid.uuid4())
         assert stale_wrapper_id != canonical_id
 
@@ -1585,22 +1665,14 @@ class TestHookManagerSessionLookup:
     ) -> None:
         """Later Codex hooks should repair a session that missed SessionStart terminal metadata."""
         manager = hook_manager_with_mocks
-
-        start_event = HookEvent(
-            event_type=HookEventType.SESSION_START,
-            session_id="codex-missing-terminal-context",
-            source=SessionSource.CODEX,
-            timestamp=datetime.now(UTC),
-            data={"cwd": str(temp_dir)},
-            machine_id="21000000-0000-4000-8000-000000000004",
+        project_id = json.loads((temp_dir / ".gobby" / "project.json").read_text())["id"]
+        registered = cast(Any, manager._session_manager).register(
+            external_id="codex-missing-terminal-context",
+            machine_id=LOCAL_MACHINE_ID,
+            source="codex",
+            project_id=project_id,
         )
-        manager.handle(start_event)
-
-        session_id = manager._session_manager.get_session_id(
-            "codex-missing-terminal-context",
-            "codex",
-        )
-        assert session_id is not None
+        session_id = registered.id
 
         manager._session_manager.db.execute(
             "UPDATE sessions SET title = %s, digest_markdown = %s WHERE id = %s",
@@ -2308,3 +2380,455 @@ class TestHookManagerMachineIdFallback:
         with patch("gobby.utils.machine_id.get_machine_id", return_value="my-machine-id"):
             result = manager.get_machine_id()
             assert result == "my-machine-id"
+
+
+def _deferred_start_event(
+    temp_dir: Path,
+    external_id: str,
+    source: SessionSource = SessionSource.CLAUDE,
+) -> HookEvent:
+    return HookEvent(
+        event_type=HookEventType.SESSION_START,
+        session_id=external_id,
+        source=source,
+        timestamp=datetime.now(UTC),
+        data={
+            "source": "startup",
+            "cwd": str(temp_dir),
+            "transcript_path": str(temp_dir / f"{external_id}.jsonl"),
+        },
+        machine_id=LOCAL_MACHINE_ID,
+    )
+
+
+_FIRST_HOOK_CASES = tuple(
+    (event_type, event_type not in {HookEventType.SESSION_END, HookEventType.NOTIFICATION})
+    for event_type in HookEventType
+    if event_type is not HookEventType.SESSION_START
+)
+
+
+@pytest.mark.parametrize(
+    ("event_type", "should_materialize"),
+    _FIRST_HOOK_CASES,
+    ids=[event_type.value for event_type, _expected in _FIRST_HOOK_CASES],
+)
+def test_first_hook_materialization_matrix(
+    hook_manager_with_mocks: HookManager,
+    temp_dir: Path,
+    event_type: HookEventType,
+    should_materialize: bool,
+) -> None:
+    manager = hook_manager_with_mocks
+    external_id = f"first-{event_type.value}"
+    start = _deferred_start_event(temp_dir, external_id)
+    assert manager.handle(start).decision == "allow"
+    assert "_platform_session_id" not in start.metadata
+
+    event = HookEvent(
+        event_type=event_type,
+        session_id=external_id,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={"cwd": str(temp_dir)},
+        machine_id=LOCAL_MACHINE_ID,
+    )
+    handler = MagicMock(return_value=HookResponse(decision="allow"))
+
+    with (
+        patch(
+            "gobby.hooks.hook_manager.validate_managed_agent_hook",
+            return_value=SimpleNamespace(
+                accepted=True,
+                ambiguous=False,
+                run_id=None,
+                reason=None,
+            ),
+        ),
+        patch.object(manager, "_get_event_handler", return_value=handler),
+        patch.object(
+            manager._event_handlers,
+            "_activate_materialized_session",
+            return_value=[],
+        ) as activate,
+        patch.object(
+            manager._event_handlers,
+            "_inject_agent_instructions_if_needed",
+        ),
+        patch.object(manager, "_evaluate_workflow_rules", return_value=(None, None)),
+        patch.object(manager, "_evaluate_blocking_webhooks", return_value=None),
+        patch.object(manager, "_dispatch_webhooks_async"),
+    ):
+        response = manager.handle(event)
+
+    assert response.decision == "allow"
+    if should_materialize:
+        assert isinstance(event.metadata.get("_platform_session_id"), str)
+        activate.assert_called_once()
+    else:
+        assert "_platform_session_id" not in event.metadata
+        activate.assert_not_called()
+
+
+def test_first_pre_tool_use_without_ups_registers_session(
+    hook_manager_with_mocks: HookManager,
+    temp_dir: Path,
+) -> None:
+    manager = hook_manager_with_mocks
+    external_id = "first-pre-tool-with-agent"
+    assert manager.handle(_deferred_start_event(temp_dir, external_id)).decision == "allow"
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id=external_id,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "Bash",
+            "tool_input": {"command": "pwd"},
+            "cwd": str(temp_dir),
+        },
+        machine_id=LOCAL_MACHINE_ID,
+    )
+
+    def inject_agent(
+        _event: HookEvent,
+        _session_id: str,
+        response: HookResponse,
+    ) -> None:
+        response.context = "active-agent-instructions"
+
+    with (
+        patch.object(
+            manager._event_handlers,
+            "_activate_materialized_session",
+            return_value=["claimed-task-context"],
+        ),
+        patch.object(
+            manager._event_handlers,
+            "_inject_agent_instructions_if_needed",
+            side_effect=inject_agent,
+        ) as inject,
+        patch.object(manager, "_evaluate_workflow_rules", return_value=(None, None)),
+        patch.object(manager, "_evaluate_blocking_webhooks", return_value=None),
+        patch.object(manager, "_dispatch_webhooks_async"),
+    ):
+        response = manager.handle(event)
+
+    assert response.decision == "allow"
+    assert response.system_message is not None
+    assert "active-agent-instructions" in (response.context or "")
+    inject.assert_called_once()
+
+
+def test_copied_session_start_uses_deferred_identity_schema(
+    hook_manager_with_mocks: HookManager,
+    temp_dir: Path,
+) -> None:
+    manager = hook_manager_with_mocks
+    external_id = "copied-start-schema"
+    assert manager.handle(_deferred_start_event(temp_dir, external_id)).decision == "allow"
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_AGENT,
+        session_id=external_id,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={
+            "prompt": "live prompt must not leak",
+            "cwd": str(temp_dir),
+            "transcript_path": str(temp_dir / "copied-start.jsonl"),
+            "terminal_context": {"tmux_pane": "%77"},
+        },
+        machine_id=LOCAL_MACHINE_ID,
+    )
+    evaluated: list[HookEvent] = []
+
+    def evaluate(copied_or_live: HookEvent, _deadline: float) -> tuple[str | None, None]:
+        evaluated.append(copied_or_live)
+        if copied_or_live.metadata.get("_synthetic_session_start"):
+            return "copied-rule-context", None
+        return None, None
+
+    with (
+        patch.object(
+            manager,
+            "_get_event_handler",
+            return_value=lambda _event: HookResponse(
+                decision="allow", context="live-handler-context"
+            ),
+        ),
+        patch.object(
+            manager._event_handlers,
+            "_activate_materialized_session",
+            return_value=["claimed-task-context"],
+        ),
+        patch.object(
+            manager._event_handlers,
+            "_inject_agent_instructions_if_needed",
+        ),
+        patch.object(manager, "_evaluate_workflow_rules", side_effect=evaluate),
+        patch.object(manager, "_evaluate_blocking_webhooks", return_value=None),
+        patch.object(manager, "_dispatch_webhooks_async") as dispatch,
+    ):
+        response = manager.handle(event)
+
+    synthetic = evaluated[0]
+    assert synthetic.event_type is HookEventType.SESSION_START
+    assert synthetic.session_id == external_id
+    assert synthetic.data == {
+        "source": "startup",
+        "cwd": str(temp_dir),
+        "transcript_path": str(temp_dir / "copied-start.jsonl"),
+        "terminal_context": {"tmux_pane": "%77", "cwd": str(temp_dir)},
+    }
+    assert synthetic.metadata == {
+        "_platform_session_id": event.metadata["_platform_session_id"],
+        "_synthetic_session_start": True,
+    }
+    assert event.event_type is HookEventType.BEFORE_AGENT
+    context = response.context or ""
+    assert context.index("claimed-task-context") < context.index("copied-rule-context")
+    assert context.index("copied-rule-context") < context.index("live-handler-context")
+    assert any(
+        call.args[0].metadata.get("_synthetic_session_start") is True
+        for call in dispatch.call_args_list
+    )
+
+
+def test_copied_session_start_rule_block_gates_live_response(
+    hook_manager_with_mocks: HookManager,
+    temp_dir: Path,
+) -> None:
+    manager = hook_manager_with_mocks
+    external_id = "copied-start-block"
+    assert manager.handle(_deferred_start_event(temp_dir, external_id)).decision == "allow"
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_AGENT,
+        session_id=external_id,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={"prompt": "blocked", "cwd": str(temp_dir)},
+        machine_id=LOCAL_MACHINE_ID,
+    )
+    blocked = HookResponse(decision="block", reason="copied startup blocked")
+    handler = MagicMock(return_value=HookResponse(decision="allow"))
+
+    def evaluate(copied_or_live: HookEvent, _deadline: float) -> tuple[None, HookResponse | None]:
+        if copied_or_live.metadata.get("_synthetic_session_start"):
+            return None, blocked
+        pytest.fail("live rules ran after copied SessionStart blocked")
+
+    with (
+        patch.object(manager, "_get_event_handler", return_value=handler),
+        patch.object(
+            manager._event_handlers,
+            "_activate_materialized_session",
+            return_value=[],
+        ),
+        patch.object(manager, "_evaluate_workflow_rules", side_effect=evaluate),
+        patch.object(manager, "_dispatch_webhooks_async"),
+    ):
+        response = manager.handle(event)
+
+    assert response is blocked
+    assert response.decision == "block"
+    assert response.reason == "copied startup blocked"
+    handler.assert_not_called()
+
+
+def test_concurrent_first_hooks_materialize_and_copy_once(
+    hook_manager_with_mocks: HookManager,
+    temp_dir: Path,
+) -> None:
+    manager = hook_manager_with_mocks
+    external_id = "concurrent-first-hooks"
+    assert manager.handle(_deferred_start_event(temp_dir, external_id)).decision == "allow"
+    barrier = threading.Barrier(2)
+    responses: list[HookResponse] = []
+    evaluated: list[HookEvent] = []
+
+    def handle(event_type: HookEventType) -> None:
+        event = HookEvent(
+            event_type=event_type,
+            session_id=external_id,
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"cwd": str(temp_dir)},
+            machine_id=LOCAL_MACHINE_ID,
+        )
+        barrier.wait(timeout=5)
+        responses.append(manager.handle(event))
+
+    def evaluate(event: HookEvent, _deadline: float) -> tuple[None, None]:
+        evaluated.append(event)
+        return None, None
+
+    handler = MagicMock(return_value=HookResponse(decision="allow"))
+    with (
+        patch.object(manager, "_get_event_handler", return_value=handler),
+        patch.object(
+            manager._event_handlers,
+            "_activate_materialized_session",
+            return_value=[],
+        ) as activate,
+        patch.object(
+            manager._event_handlers,
+            "_inject_agent_instructions_if_needed",
+        ),
+        patch.object(manager, "_evaluate_workflow_rules", side_effect=evaluate),
+        patch.object(manager, "_evaluate_blocking_webhooks", return_value=None),
+        patch.object(manager, "_dispatch_webhooks_async"),
+        patch.object(
+            manager._session_manager,
+            "register_session",
+            wraps=manager._session_manager.register_session,
+        ) as register,
+    ):
+        first = threading.Thread(target=handle, args=(HookEventType.BEFORE_AGENT,))
+        second = threading.Thread(target=handle, args=(HookEventType.BEFORE_TOOL,))
+        first.start()
+        second.start()
+        first.join(timeout=5)
+        second.join(timeout=5)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert [response.decision for response in responses] == ["allow", "allow"]
+    register.assert_called_once()
+    activate.assert_called_once()
+    assert sum(bool(event.metadata.get("_synthetic_session_start")) for event in evaluated) == 1
+
+
+def test_activation_failure_repairs_without_replaying_startup_packet(
+    hook_manager_with_mocks: HookManager,
+    temp_dir: Path,
+) -> None:
+    manager = hook_manager_with_mocks
+    external_id = "activation-repair"
+    assert manager.handle(_deferred_start_event(temp_dir, external_id)).decision == "allow"
+    first = HookEvent(
+        event_type=HookEventType.BEFORE_AGENT,
+        session_id=external_id,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={"prompt": "first", "cwd": str(temp_dir)},
+        machine_id=LOCAL_MACHINE_ID,
+    )
+
+    with patch.object(
+        manager._event_handlers,
+        "_activate_materialized_session",
+        side_effect=RuntimeError("activation crashed"),
+    ):
+        failed = manager.handle(first)
+
+    assert failed.decision == "allow"
+    assert failed.reason == "Handler error: activation crashed"
+    assert first.metadata.get("_platform_session_id")
+
+    retry = HookEvent(
+        event_type=HookEventType.BEFORE_AGENT,
+        session_id=external_id,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={"prompt": "retry", "cwd": str(temp_dir)},
+        machine_id=LOCAL_MACHINE_ID,
+    )
+    with patch("gobby.hooks.hook_manager.reconcile_session_activation") as reconcile:
+        repaired = manager.handle(retry)
+
+    assert repaired.decision == "allow"
+    assert repaired.system_message is None
+    assert "_startup_context" not in retry.metadata
+    reconcile.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("source", "native_hook", "delivery"),
+    [
+        (SessionSource.CLAUDE, "user-prompt-submit", "split"),
+        (SessionSource.QWEN, "UserPromptSubmit", "split"),
+        (SessionSource.DROID, "UserPromptSubmit", "split"),
+        (SessionSource.CODEX, "UserPromptSubmit", "combined"),
+        (SessionSource.AGY, "PreInvocation", "agy"),
+        (SessionSource.GROK, "user_prompt_submit", "drop"),
+    ],
+)
+def test_first_activity_startup_context_provider_matrix(
+    hook_manager_with_mocks: HookManager,
+    temp_dir: Path,
+    source: SessionSource,
+    native_hook: str,
+    delivery: str,
+) -> None:
+    from gobby.adapters.agy import AgyAdapter
+    from gobby.adapters.claude_code import ClaudeCodeAdapter
+    from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+    from gobby.adapters.droid import DroidAdapter
+    from gobby.adapters.grok import GrokAdapter
+    from gobby.adapters.qwen import QwenAdapter
+
+    adapters = {
+        SessionSource.CLAUDE: ClaudeCodeAdapter(),
+        SessionSource.QWEN: QwenAdapter(),
+        SessionSource.DROID: DroidAdapter(),
+        SessionSource.CODEX: CodexHooksAdapter(),
+        SessionSource.AGY: AgyAdapter(),
+        SessionSource.GROK: GrokAdapter(),
+    }
+    manager = hook_manager_with_mocks
+    external_id = f"provider-{source.value}"
+    assert manager.handle(_deferred_start_event(temp_dir, external_id, source)).decision == "allow"
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_AGENT,
+        session_id=external_id,
+        source=source,
+        timestamp=datetime.now(UTC),
+        data={"prompt": "hello", "cwd": str(temp_dir)},
+        machine_id=LOCAL_MACHINE_ID,
+    )
+
+    def evaluate(copied_or_live: HookEvent, _deadline: float) -> tuple[str | None, None]:
+        if copied_or_live.metadata.get("_synthetic_session_start"):
+            return "copied-rule-context", None
+        return None, None
+
+    with (
+        patch.object(
+            manager._event_handlers,
+            "_activate_materialized_session",
+            return_value=["claimed-task-context"],
+        ),
+        patch.object(
+            manager._event_handlers,
+            "_inject_agent_instructions_if_needed",
+        ),
+        patch.object(manager, "_evaluate_workflow_rules", side_effect=evaluate),
+        patch.object(manager, "_evaluate_blocking_webhooks", return_value=None),
+        patch.object(manager, "_dispatch_webhooks_async"),
+    ):
+        response = manager.handle(event)
+
+    assert response.system_message is not None
+    assert "claimed-task-context" in (response.context or "")
+    assert "copied-rule-context" in (response.context or "")
+    native = cast(Any, adapters[source]).translate_from_hook_response(
+        response,
+        hook_type=native_hook,
+    )
+    rendered = json.dumps(native)
+
+    if delivery == "split":
+        assert "Gobby Session ID:" in native["systemMessage"]
+        assert "claimed-task-context" in native["hookSpecificOutput"]["additionalContext"]
+    elif delivery == "combined":
+        assert "systemMessage" not in native
+        context = native["hookSpecificOutput"]["additionalContext"]
+        assert "Gobby Session ID:" in context
+        assert "copied-rule-context" in context
+    elif delivery == "agy":
+        assert "claimed-task-context" in rendered
+        assert "Gobby Session ID:" in rendered
+    else:
+        assert "claimed-task-context" not in rendered
+        assert "copied-rule-context" not in rendered
+        assert "Gobby Session ID:" not in rendered

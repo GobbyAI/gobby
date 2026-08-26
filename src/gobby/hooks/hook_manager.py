@@ -29,6 +29,7 @@ from gobby.hooks.health_gate import ensure_daemon_ready, ensure_daemon_ready_asy
 from gobby.hooks.project_context import ProjectIdResolver, resolve_hook_project_context
 from gobby.hooks.rule_evaluator import WorkflowRuleEvaluator
 from gobby.hooks.session_activation import reconcile_session_activation
+from gobby.hooks.session_materialize import activate_deferred_session
 from gobby.hooks.session_ref_resolution import (
     resolve_session_refs_in_tool_input,
 )
@@ -412,6 +413,18 @@ class HookManager:
                         )
                     return HookResponse(decision="allow")
                 self._session_lookup.apply_session_mutations(event, platform_session_id)
+            if event.metadata.pop("_session_just_materialized", False):
+                try:
+                    materialized_response = activate_deferred_session(
+                        self,
+                        event,
+                        blocking_deadline,
+                    )
+                except Exception as e:
+                    self.logger.exception("Deferred session activation failed: %s", e)
+                    return HookResponse(decision="allow", reason=f"Handler error: {e}")
+                if materialized_response is not None:
+                    return materialized_response
             self._record_session_activity_pulse(event)
 
         self._record_machine_ingress(event)
@@ -510,6 +523,20 @@ class HookManager:
         suppress_webhooks: bool = False,
     ) -> HookResponse:
         """Enrich and notify observers, preserving terminal block responses."""
+        startup_context = event.metadata.pop("_startup_context", None)
+        startup_system_message = event.metadata.pop("_startup_system_message", None)
+        if isinstance(startup_context, str) and startup_context:
+            if response.context:
+                response.context = f"{startup_context}\n\n{response.context}"
+            else:
+                response.context = startup_context
+        if (
+            response.system_message is None
+            and isinstance(startup_system_message, str)
+            and startup_system_message
+        ):
+            response.system_message = startup_system_message
+
         observer_response = copy.deepcopy(response) if preserve_original else response
         original_decision = response.decision
         original_reason = response.reason

@@ -1128,10 +1128,8 @@ class TestSessionStartNewSession:
         assert response.decision == "allow"
         # find_parent should NOT be called for startup sessions
         mock_dependencies["session_storage"].find_parent.assert_not_called()
-        # Stored parent linkage is preserved by the UNSET default, never adopted
-        mock_dependencies["session_manager"].register_session.assert_called_once()
-        call_kwargs = mock_dependencies["session_manager"].register_session.call_args
-        assert call_kwargs.kwargs.get("parent_session_id") is UNSET
+        mock_dependencies["session_manager"].register_session.assert_not_called()
+        assert "_platform_session_id" not in event.metadata
 
     def test_nested_grok_session_in_droid_pane_is_not_registered(
         self, mock_dependencies: dict[str, Any]
@@ -1236,7 +1234,9 @@ class TestSessionStartNewSession:
             response = handlers.handle_session_start(event)
 
         assert response.decision == "allow"
-        assert response.system_message == "\nGobby Session ID: #77 (new-sess-db-error)"
+        assert response.system_message is None
+        assert "_platform_session_id" not in event.metadata
+        mock_dependencies["session_manager"].register_session.assert_not_called()
 
     def test_new_session_start_renames_captured_tmux_pane(
         self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
@@ -1271,16 +1271,8 @@ class TestSessionStartNewSession:
             response = handlers.handle_session_start(event)
 
         assert response.decision == "allow"
-        register_kwargs = mock_dependencies["session_manager"].register_session.call_args.kwargs
-        assert register_kwargs["terminal_context"] == {
-            "tmux_pane": "%88",
-            "cwd": "/work/repos/gobby",
-        }
-        mock_schedule.assert_called_once_with(
-            new_session,
-            "",
-            loop=mock_dependencies["session_coordinator"]._event_loop,
-        )
+        mock_dependencies["session_manager"].register_session.assert_not_called()
+        mock_schedule.assert_not_called()
 
     def test_new_session_parent_lookup_error(
         self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
@@ -1364,43 +1356,71 @@ class TestSessionStartNewSession:
         mock_dependencies["session_manager"].mark_session_expired.assert_not_called()
         activate_agent.assert_not_called()
 
-    def test_new_session_coordinator_registration_error(
+    def test_materialized_session_coordinator_registration_error(
         self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
     ) -> None:
         """Test error registering session with coordinator is handled."""
-        mock_dependencies["session_storage"].get.return_value = None
-        mock_dependencies["session_manager"].register_session.return_value = "new-sess-456"
         mock_dependencies["session_coordinator"].register_session.side_effect = Exception(
             "Coordinator error"
         )
 
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
-            HookEventType.SESSION_START,
+            HookEventType.BEFORE_AGENT,
             session_id="ext-123",
-            data={"transcript_path": "/path/to/transcript.jsonl"},
+            data={
+                "transcript_path": "/path/to/transcript.jsonl",
+                "skip_default_agent_activation": True,
+            },
+        )
+        session = SimpleNamespace(
+            id="new-sess-456",
+            project_id="proj-123",
+            parent_session_id=None,
+            transcript_path="/path/to/transcript.jsonl",
+            terminal_context={},
+            title=None,
         )
 
-        response = handlers.handle_session_start(event)
+        additional_context = handlers._activate_materialized_session(
+            event,
+            session.id,
+            session_obj=session,
+            project_id=session.project_id,
+            transcript_path=session.transcript_path,
+        )
 
-        # Should still allow despite error
-        assert response.decision == "allow"
+        assert additional_context == []
 
-    def test_new_session_message_processor_registration(
+    def test_materialized_session_message_processor_registration(
         self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
     ) -> None:
         """Test new session registers with message processor."""
-        mock_dependencies["session_storage"].get.return_value = None
-        mock_dependencies["session_manager"].register_session.return_value = "new-sess-456"
-
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
-            HookEventType.SESSION_START,
+            HookEventType.BEFORE_AGENT,
             session_id="ext-123",
-            data={"transcript_path": "/path/to/transcript.jsonl"},
+            data={
+                "transcript_path": "/path/to/transcript.jsonl",
+                "skip_default_agent_activation": True,
+            },
+        )
+        session = SimpleNamespace(
+            id="new-sess-456",
+            project_id="proj-123",
+            parent_session_id=None,
+            transcript_path="/path/to/transcript.jsonl",
+            terminal_context={},
+            title=None,
         )
 
-        handlers.handle_session_start(event)
+        handlers._activate_materialized_session(
+            event,
+            session.id,
+            session_obj=session,
+            project_id=session.project_id,
+            transcript_path=session.transcript_path,
+        )
 
         mock_dependencies["message_processor_resolver"]().register_session.assert_called_once_with(
             "new-sess-456", "/path/to/transcript.jsonl", source="claude"
@@ -1421,20 +1441,31 @@ class TestSessionStartNewSession:
         rebuilt_processor = MagicMock()
         current: list[Any | None] = [old_processor]
         mock_dependencies["message_processor_resolver"] = lambda: current[0]
-        mock_dependencies["session_storage"].get.return_value = None
-        mock_dependencies["session_manager"].register_session.side_effect = [
-            "new-sess-1",
-            "new-sess-2",
-        ]
         handlers = EventHandlers(**mock_dependencies)
 
         current[0] = rebuilt_processor
-        handlers.handle_session_start(
-            make_event(
-                HookEventType.SESSION_START,
-                session_id="ext-1",
-                data={"transcript_path": "/path/to/first.jsonl"},
-            )
+        first_event = make_event(
+            HookEventType.BEFORE_AGENT,
+            session_id="ext-1",
+            data={
+                "transcript_path": "/path/to/first.jsonl",
+                "skip_default_agent_activation": True,
+            },
+        )
+        first_session = SimpleNamespace(
+            id="new-sess-1",
+            project_id="proj-123",
+            parent_session_id=None,
+            transcript_path="/path/to/first.jsonl",
+            terminal_context={},
+            title=None,
+        )
+        handlers._activate_materialized_session(
+            first_event,
+            first_session.id,
+            session_obj=first_session,
+            project_id=first_session.project_id,
+            transcript_path=first_session.transcript_path,
         )
         rebuilt_processor.register_session.assert_called_once_with(
             "new-sess-1", "/path/to/first.jsonl", source="claude"
@@ -1442,36 +1473,65 @@ class TestSessionStartNewSession:
         old_processor.register_session.assert_not_called()
 
         current[0] = None
-        handlers.handle_session_start(
-            make_event(
-                HookEventType.SESSION_START,
-                session_id="ext-2",
-                data={"transcript_path": "/path/to/second.jsonl"},
-            )
+        second_event = make_event(
+            HookEventType.BEFORE_AGENT,
+            session_id="ext-2",
+            data={
+                "transcript_path": "/path/to/second.jsonl",
+                "skip_default_agent_activation": True,
+            },
+        )
+        second_session = SimpleNamespace(
+            id="new-sess-2",
+            project_id="proj-123",
+            parent_session_id=None,
+            transcript_path="/path/to/second.jsonl",
+            terminal_context={},
+            title=None,
+        )
+        handlers._activate_materialized_session(
+            second_event,
+            second_session.id,
+            session_obj=second_session,
+            project_id=second_session.project_id,
+            transcript_path=second_session.transcript_path,
         )
         assert rebuilt_processor.register_session.call_count == 1
 
-    def test_new_session_message_processor_error(
+    def test_materialized_session_message_processor_error(
         self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
     ) -> None:
         """Test error registering with message processor is handled."""
-        mock_dependencies["session_storage"].get.return_value = None
-        mock_dependencies["session_manager"].register_session.return_value = "new-sess-456"
         mock_dependencies["message_processor_resolver"]().register_session.side_effect = Exception(
             "Registration failed"
         )
 
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
-            HookEventType.SESSION_START,
+            HookEventType.BEFORE_AGENT,
             session_id="ext-123",
-            data={"transcript_path": "/path/to/transcript.jsonl"},
+            data={
+                "transcript_path": "/path/to/transcript.jsonl",
+                "skip_default_agent_activation": True,
+            },
+        )
+        session = SimpleNamespace(
+            id="new-sess-456",
+            project_id="proj-123",
+            parent_session_id=None,
+            transcript_path="/path/to/transcript.jsonl",
+            terminal_context={},
+            title=None,
         )
 
-        response = handlers.handle_session_start(event)
+        handlers._activate_materialized_session(
+            event,
+            session.id,
+            session_obj=session,
+            project_id=session.project_id,
+            transcript_path=session.transcript_path,
+        )
 
-        # Should still allow despite error
-        assert response.decision == "allow"
         assert "new-sess-456" not in handlers._session_message_processors
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
@@ -1483,23 +1543,34 @@ class TestSessionStartNewSession:
         mock_sv_mgr.get_variables.return_value = {}
         mock_sv_mgr_cls.return_value = mock_sv_mgr
 
-        mock_dependencies["session_storage"].get.return_value = None
-        mock_dependencies["session_manager"].register_session.return_value = "new-sess-456"
-
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
-            HookEventType.SESSION_START,
+            HookEventType.BEFORE_AGENT,
             session_id="ext-123",
-            data={},
+            data={"skip_default_agent_activation": True},
         )
         event.task_id = "task-789"
         event.metadata["_task_title"] = "Implement feature X"
+        session = SimpleNamespace(
+            id="new-sess-456",
+            project_id="proj-123",
+            parent_session_id=None,
+            transcript_path=None,
+            terminal_context={},
+            title=None,
+        )
 
-        response = handlers.handle_session_start(event)
+        additional_context = handlers._activate_materialized_session(
+            event,
+            session.id,
+            session_obj=session,
+            project_id=session.project_id,
+        )
+        context = "\n".join(additional_context)
 
-        assert "Active Task Context" in response.context
-        assert "task-789" in response.context
-        assert "Implement feature X" in response.context
+        assert "Active Task Context" in context
+        assert "task-789" in context
+        assert "Implement feature X" in context
 
 
 def test_resolve_agent_name_reads_config_without_resolving_secrets(

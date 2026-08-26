@@ -29,6 +29,7 @@ from .materialize import (
     _consume_pending_compact_self_continuation,
     _reset_agent_context_injection,
     _schedule_tmux_window_rename_for_session,
+    session_start_should_defer,
 )
 from .profile import seed_user_profile_content
 from .terminal_runtime import session_start_is_nested_cli_child
@@ -273,6 +274,8 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     if resolution.blocked_reason:
         return HookResponse(decision="block", reason=resolution.blocked_reason)
     session_source = resolution.session_source
+    if session_start_should_defer(event, resolution.session, session_source):
+        return HookResponse(decision="allow")
     parent_session_id = input_data.get("parent_session_id")
 
     _t_register = time.monotonic()
