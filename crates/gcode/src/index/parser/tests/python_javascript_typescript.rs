@@ -4,7 +4,7 @@ use crate::models::CallRelation;
 /// A cross-file local import is now recorded at parse time as a pending
 /// `local_import` call: the original name plus the candidate target files. The
 /// canonical symbol id is resolved later against `code_symbols` (covered by the
-/// live `graph_standalone` integration test), so the parser-level contract is
+/// DB-backed `serial_db` indexer tests), so the parser-level contract is
 /// the `local_import` shape and that the real target file is among the
 /// candidates the post-write resolver will search.
 ///
