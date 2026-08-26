@@ -642,7 +642,11 @@ parent rows for content that differs on disk. Set
 5-second timeout for each of those git calls; invalid or nonpositive values are
 ignored with a warning. When any call fails (for example a clone whose object
 store lacks the parent's HEAD), the run falls back to hashing every discovered
-path.
+path. The read-time pre-gate is overlay-aware too: a project-scope read in a
+worktree skips the refresh when every visible path (the overlay's own rows plus
+the parent rows it inherits) is unchanged since the overlay's last index and the
+parent has not been re-indexed since; a parent re-index, a worktree edit, or a
+deleted or re-created inherited file trips it.
 
 ## Troubleshooting
 

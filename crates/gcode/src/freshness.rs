@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use crate::config::Context;
+use crate::config::{Context, ProjectIndexScope};
 use crate::db;
 use crate::index::{api, hasher};
 use crate::index_lock::{self, IndexLockPolicy, IndexLockResult};
@@ -105,23 +105,35 @@ fn project_needs_refresh(ctx: &Context) -> anyhow::Result<bool> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
     let machine_id = db::id_param(&gobby_core::machine::read_local_machine_id()?)?;
 
-    let last_indexed_at: Option<SystemTime> = match conn.query_opt(
-        "SELECT last_indexed_at
-         FROM code_indexed_project_states
-         WHERE machine_id = $1 AND project_id = $2",
-        &[&machine_id, &db::id_param(&ctx.project_id)?],
-    )? {
-        Some(row) => row.try_get::<_, Option<SystemTime>>(0)?,
-        None => None,
-    };
-
     // Never indexed (or no recorded timestamp): do not gate; let the existing
     // refresh path build the first index.
-    let Some(last_indexed_at) = last_indexed_at else {
+    let Some(last_indexed_at) = project_last_indexed_at(&mut conn, &machine_id, &ctx.project_id)?
+    else {
         return Ok(true);
     };
 
-    let indexed_paths = db::list_indexed_file_paths(&mut conn, &ctx.project_id)?;
+    let indexed_paths = match &ctx.index_scope {
+        ProjectIndexScope::Single => db::list_indexed_file_paths(&mut conn, &ctx.project_id)?,
+        ProjectIndexScope::Overlay {
+            parent_project_id, ..
+        } => {
+            // The overlay serves parent rows for every path it does not shadow,
+            // so a parent index newer than the overlay's own changes what the
+            // overlay reads without touching a worktree mtime.
+            let parent_indexed_at =
+                project_last_indexed_at(&mut conn, &machine_id, parent_project_id)?;
+            if parent_indexed_at.is_some_and(|parent| parent > last_indexed_at) {
+                return Ok(true);
+            }
+            // Overlay rows plus the parent rows they do not shadow. Tombstoned
+            // paths drop out: a file deleted in the worktree is known-absent,
+            // and one that reappears reads as new.
+            visibility::visible_tree(&mut conn, ctx)?
+                .into_iter()
+                .map(|file| file.file_path)
+                .collect()
+        }
+    };
     drop(conn);
 
     Ok(api::project_changed_since(
@@ -133,6 +145,23 @@ fn project_needs_refresh(ctx: &Context) -> anyhow::Result<bool> {
             respect_gitignore: ctx.indexing.respect_gitignore,
         },
     ))
+}
+
+fn project_last_indexed_at(
+    conn: &mut postgres::Client,
+    machine_id: &uuid::Uuid,
+    project_id: &str,
+) -> anyhow::Result<Option<SystemTime>> {
+    let row = conn.query_opt(
+        "SELECT last_indexed_at
+         FROM code_indexed_project_states
+         WHERE machine_id = $1 AND project_id = $2",
+        &[machine_id, &db::id_param(project_id)?],
+    )?;
+    match row {
+        Some(row) => Ok(row.try_get::<_, Option<SystemTime>>(0)?),
+        None => Ok(None),
+    }
 }
 
 pub fn ensure_symbol_fresh(ctx: &Context, id: &str) -> anyhow::Result<FreshnessStatus> {
@@ -330,6 +359,24 @@ mod tests {
         .expect("full index of test project");
     }
 
+    /// Move a project's recorded `last_indexed_at` into the past so a sibling
+    /// project indexed at NOW() reads as newer, without sleeping in the test.
+    fn backdate_project_index(ctx: &Context, seconds: f64) {
+        let mut conn =
+            db::connect_readwrite(&ctx.database_url).expect("connect test PostgreSQL hub");
+        let machine_id =
+            db::id_param(&gobby_core::machine::read_local_machine_id().expect("local machine id"))
+                .expect("machine uuid");
+        let project_id = db::id_param(&ctx.project_id).expect("project uuid");
+        conn.execute(
+            "UPDATE code_indexed_project_states
+                SET last_indexed_at = last_indexed_at - make_interval(secs => $3)
+              WHERE machine_id = $1 AND project_id = $2",
+            &[&machine_id, &project_id, &seconds],
+        )
+        .expect("backdate project index");
+    }
+
     mod serial_db {
         use super::*;
 
@@ -446,6 +493,73 @@ mod tests {
             )
             .expect("shift file");
             assert!(!symbol_slice_is_current(&ctx, &sym));
+        }
+
+        #[test]
+        #[cfg_attr(
+            not(gcode_postgres_tests),
+            ignore = "requires a PostgreSQL test database URL"
+        )]
+        #[serial_test::serial(serial_db)]
+        fn overlay_pre_gate_counts_inherited_paths_and_trips_on_parent_reindex_or_edits() {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let parent_root = tmp.path().join("parent");
+            let overlay_root = tmp.path().join("overlay");
+            // Age every file well past the skew margin and the back-dating below.
+            let aged = SystemTime::now() - std::time::Duration::from_secs(4 * 3600);
+            for root in [&parent_root, &overlay_root] {
+                std::fs::create_dir_all(root.join("src")).expect("create src");
+                for (rel, body) in [("src/lib.rs", "fn main() {}\n"), ("README.md", "# Title\n")] {
+                    let path = root.join(rel);
+                    std::fs::write(&path, body).expect("write file");
+                    set_mtime(&path, aged);
+                }
+            }
+            let parent_ctx = postgres_context_with_root(
+                &test_project_id("gcode-freshness-overlay-parent"),
+                &parent_root,
+            );
+            let mut overlay_ctx = postgres_context_with_root(
+                &test_project_id("gcode-freshness-overlay"),
+                &overlay_root,
+            );
+            overlay_ctx.index_scope = crate::config::ProjectIndexScope::Overlay {
+                overlay_project_id: overlay_ctx.project_id.clone(),
+                overlay_root: overlay_root.clone(),
+                parent_project_id: parent_ctx.project_id.clone(),
+                parent_root: parent_root.clone(),
+            };
+            invalidate_test_project(&parent_ctx);
+            invalidate_test_project(&overlay_ctx);
+            full_index(&parent_ctx);
+            full_index(&overlay_ctx);
+
+            // Every worktree path is inherited from the parent and older than
+            // the overlay's index: nothing to refresh, no lock taken.
+            assert!(!project_needs_refresh(&overlay_ctx).expect("pre-gate"));
+
+            // A parent index newer than the overlay's changes the rows the
+            // overlay inherits; no worktree mtime can show that.
+            backdate_project_index(&overlay_ctx, 3600.0);
+            assert!(project_needs_refresh(&overlay_ctx).expect("pre-gate"));
+            full_index(&overlay_ctx);
+            assert!(!project_needs_refresh(&overlay_ctx).expect("pre-gate"));
+
+            // Deleting an inherited file in the worktree trips the gate; once
+            // the refresh tombstones it, the known-absent path is quiet again.
+            let readme = overlay_root.join("README.md");
+            std::fs::remove_file(&readme).expect("delete README");
+            assert!(project_needs_refresh(&overlay_ctx).expect("pre-gate"));
+            let status = ensure_fresh(&overlay_ctx, FreshnessScope::Project).expect("refresh");
+            assert_eq!(status, FreshnessStatus::Checked);
+            assert!(!project_needs_refresh(&overlay_ctx).expect("pre-gate"));
+
+            // A tombstoned path that reappears reads as new.
+            std::fs::write(&readme, b"# Back\n").expect("recreate README");
+            assert!(project_needs_refresh(&overlay_ctx).expect("pre-gate"));
+
+            invalidate_test_project(&overlay_ctx);
+            invalidate_test_project(&parent_ctx);
         }
 
         #[test]
