@@ -1,6 +1,12 @@
 """Constants shared by memory search helpers."""
 
 DEFAULT_SEARCH_LIMIT = 10
+# Two hits whose stored vectors sit at or above this cosine are one memory said
+# twice: the lower-ranked one is folded into the higher-ranked one's
+# ``collapsed_duplicates`` before the limit cut (#21010). 0.92 sits above the live
+# corpus's query-hit band (p99 0.80) and below exact restatements, so paraphrases
+# of one contract collapse while distinct facts on one topic do not.
+_NEAR_DUPLICATE_COSINE = 0.92
 _USER_SOURCE_BOOST = 1.2
 _GRAPH_EXPANSION_ENTITY_SEED_LIMIT = 8
 # Recall expander (#17104): a memory the vector index missed, surfaced by an entity it

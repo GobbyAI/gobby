@@ -21,6 +21,51 @@ logger = logging.getLogger(__name__)
 _HYBRID_QDRANT_TIMEOUT_SECONDS = 10.0
 
 
+async def _candidate_vectors(
+    vector_store: VectorStore,
+    merged_ids: list[str],
+    *,
+    caller: str,
+    project_id: str | None,
+    path: str,
+) -> dict[str, list[float]] | None:
+    """Fetch the merged candidates' stored vectors in one retrieve, or None.
+
+    Materialization folds near-duplicate hits on these vectors (#21010). A store
+    that cannot serve them -- no such method, timeout, outage -- yields None and
+    the search returns uncollapsed rather than failing.
+    """
+    if not merged_ids:
+        return None
+    fetch = getattr(vector_store, "get_vectors", None)
+    if fetch is None:
+        return None
+    try:
+        vectors = await fetch(merged_ids, timeout=_HYBRID_QDRANT_TIMEOUT_SECONDS)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.debug(
+            "Candidate vector fetch failed; returning uncollapsed results",
+            extra={
+                "caller": caller,
+                "project_id": project_id,
+                "candidates": len(merged_ids),
+                "path": path,
+                "error": str(exc),
+            },
+        )
+        return None
+    if not isinstance(vectors, dict):
+        return None
+    stored = {
+        str(memory_id): cast(list[float], vector)
+        for memory_id, vector in vectors.items()
+        if isinstance(vector, list)
+    }
+    return stored or None
+
+
 def _qdrant_hits_or_empty(
     result: object,
     *,
@@ -200,6 +245,7 @@ class SearchPathHost(Protocol):
         half_life: float,
         effective_min_score: float,
         limit: int,
+        candidate_vectors: dict[str, list[float]] | None = None,
     ) -> list[Memory]: ...
 
     async def _emit_search_debug(
@@ -374,6 +420,13 @@ async def search_with_graph(
                 and len(graph_scored) < candidate_limit
                 and len(keyword_ranked) < candidate_limit
             ),
+            vectors=await _candidate_vectors(
+                vector_store,
+                merged_ids,
+                caller=caller,
+                project_id=project_id,
+                path="qdrant_graph_keyword",
+            ),
         )
 
     def _build(candidates: _Candidates) -> list[Memory]:
@@ -394,6 +447,7 @@ async def search_with_graph(
             half_life=half_life,
             effective_min_score=effective_min_score,
             limit=limit,
+            candidate_vectors=candidates.vectors,
         )
 
     results, candidates = await service._collect_active_results(
@@ -532,6 +586,13 @@ async def search_qdrant_keyword(
             exhausted=(
                 len(qdrant_results) < candidate_limit and len(keyword_ranked) < candidate_limit
             ),
+            vectors=await _candidate_vectors(
+                vector_store,
+                merged_ids,
+                caller=caller,
+                project_id=project_id,
+                path="qdrant_keyword",
+            ),
         )
 
     def _build(candidates: _Candidates) -> list[Memory]:
@@ -551,6 +612,7 @@ async def search_qdrant_keyword(
             half_life=half_life,
             effective_min_score=effective_min_score,
             limit=limit,
+            candidate_vectors=candidates.vectors,
         )
 
     results, candidates = await service._collect_active_results(

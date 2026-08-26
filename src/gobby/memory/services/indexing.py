@@ -9,6 +9,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
+from gobby.memory.embedding_text import memory_embedding_text
 from gobby.memory.services.crossref import CrossrefRebuildError, CrossrefService
 from gobby.projects.fenced_vector_store import global_write_context, project_write_context
 from gobby.storage.memories import Memory, Visibility
@@ -151,10 +152,13 @@ class IndexingService:
 
     @staticmethod
     def _memory_dicts(memories: list[Memory]) -> list[dict[str, Any]]:
+        # ``rationale`` rides along for the embedding text only; the vector payload
+        # and the identity fingerprint leave it out.
         return [
             {
                 "id": mem.id,
                 "content": mem.content,
+                "rationale": mem.rationale,
                 "project_id": mem.project_id,
                 "is_global": mem.is_global,
                 "memory_type": mem.memory_type.value,
@@ -191,6 +195,7 @@ class IndexingService:
                     {
                         "id": mem["id"],
                         "content": mem["content"],
+                        "rationale": mem.get("rationale"),
                         "project_id": mem.get("project_id"),
                         "is_global": mem.get("is_global"),
                     },
@@ -428,7 +433,9 @@ class IndexingService:
                 )
                 continue
             try:
-                embedding = await self._embed_fn(memory.content)
+                embedding = await self._embed_fn(
+                    memory_embedding_text(memory.content, memory.rationale)
+                )
             except Exception as error:
                 logger.warning("Failed to embed missing memory %s: %s", memory_id, error)
                 failures.append({"memory_id": memory_id, "error": str(error)})
@@ -492,8 +499,10 @@ class IndexingService:
             processed = 0
             for mem in memory_dicts:
                 mem_id: str = mem["id"]
-                embedding = await embed_fn(mem["content"])
-                payload = {k: v for k, v in mem.items() if k != "id"}
+                embedding = await embed_fn(
+                    memory_embedding_text(mem["content"], mem.get("rationale"))
+                )
+                payload = {k: v for k, v in mem.items() if k not in ("id", "rationale")}
                 batch.append((mem_id, embedding, payload))
                 if len(batch) >= REINDEX_PAGE_SIZE:
                     await vector_store.batch_upsert(batch)

@@ -733,45 +733,6 @@ async def test_manager_close_drains_mark_due(temp_db, monkeypatch) -> None:
     assert manager._background_tasks == set()
 
 
-@pytest.mark.asyncio
-async def test_local_mode_skips_background_dedup(
-    temp_db,
-    monkeypatch,
-    caplog,
-) -> None:
-    """Local Qdrant keeps foreground indexing but schedules no dedup worker."""
-    monkeypatch.setattr(lifecycle_module, "_local_mode_dedup_warning_logged", False)
-    vector_store = MagicMock()
-    vector_store.is_remote.return_value = False
-    vector_store.upsert = AsyncMock()
-    vector_store.delete = AsyncMock()
-    vector_store.search = AsyncMock(return_value=[])
-    manager = MemoryManager(
-        db=temp_db,
-        config=MemoryConfig(
-            enabled=True,
-            dream={"write_supersession_mark_due_enabled": False},
-        ),
-        vector_store=vector_store,
-        embed_fn=AsyncMock(return_value=[0.3, 0.6]),
-    )
-
-    first = await manager.create_memory("local foreground one", project_id=PERSONAL_PROJECT_ID)
-    second = await manager.create_memory("local foreground two", project_id=PERSONAL_PROJECT_ID)
-
-    assert manager.storage.get_memory(first.id).content == "local foreground one"
-    assert manager.storage.get_memory(second.id).content == "local foreground two"
-    assert vector_store.upsert.await_count == 2
-    assert manager._background_tasks == set()
-    assert (
-        sum(
-            record.message == "Background memory dedup is disabled for local Qdrant mode"
-            for record in caplog.records
-        )
-        == 1
-    )
-
-
 def test_supersedes_soft_hides_and_tags(temp_db) -> None:
     manager = LocalMemoryManager(temp_db)
     old_memory = manager.create_memory(

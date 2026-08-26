@@ -20,6 +20,7 @@ import pytest
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.memory import create_memory_registry
 from gobby.mcp_proxy.tools.memory_scope import get_current_project_id
+from gobby.storage.memories import MemoryType
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 pytestmark = pytest.mark.unit
@@ -31,6 +32,13 @@ _VALID_RATIONALE = (
 
 class MockMemory:
     """Mock memory object for tests."""
+
+    # Provenance the tools read with getattr; tests set them per case.
+    rationale: str | None = None
+    source_task_id: str | None = None
+    created_by_agent: str | None = None
+    graph_confidence: float | None = None
+    collapsed_duplicates: list[str] | None = None
 
     def __init__(
         self,
@@ -312,12 +320,28 @@ class TestCreateMemory:
     async def test_create_memory_auto_supersedes_near_duplicate(
         self, memory_registry, mock_memory_manager
     ):
-        """A >=0.9-similarity match is superseded atomically and reported."""
+        """A >=0.9 raw-cosine match is superseded atomically and reported.
+
+        The duplicate is old: its decayed ``similarity`` sits well under 0.9, and only
+        the bare cosine says it is the same memory (#21010).
+        """
         duplicate_id = "22222222-2222-4222-8222-222222220001"
         weaker_id = "22222222-2222-4222-8222-222222220002"
         mock_memory_manager.search_memories.return_value = [
-            MockMemory(id=duplicate_id, content="Near duplicate", similarity=0.95),
-            MockMemory(id=weaker_id, content="Related", similarity=0.7),
+            MockMemory(
+                id=duplicate_id,
+                content="Near duplicate",
+                similarity=0.475,
+                raw_semantic_score=0.95,
+                temporal_decay_factor=0.5,
+            ),
+            MockMemory(
+                id=weaker_id,
+                content="Related",
+                similarity=0.7,
+                raw_semantic_score=0.7,
+                temporal_decay_factor=1.0,
+            ),
         ]
 
         with patch(
@@ -332,17 +356,33 @@ class TestCreateMemory:
         assert result["success"] is True
         assert result["auto_superseded"] == [{"id": duplicate_id, "similarity": 0.95}]
         assert [entry["id"] for entry in result["similar_existing"]] == [duplicate_id, weaker_id]
+        # similar_existing reports the undecayed score, the axis search ranks on.
+        assert result["similar_existing"][0]["similarity"] == pytest.approx(0.95)
+        assert result["similar_existing"][0]["raw_semantic_score"] == 0.95
         call_kwargs = mock_memory_manager.create_memory.call_args.kwargs
         assert call_kwargs["supersedes"] == [duplicate_id]
+        probe_kwargs = mock_memory_manager.search_memories.call_args.kwargs
+        assert probe_kwargs["limit"] == 5
+        assert probe_kwargs["embed_text"] == f"Test content\n\nWhy: {_VALID_RATIONALE}"
 
     @pytest.mark.asyncio
     async def test_create_memory_below_threshold_is_not_superseded(
         self, memory_registry, mock_memory_manager
     ):
-        """Matches below the 0.9 similarity threshold are only reported."""
+        """Matches below the 0.9 raw-cosine threshold are only reported.
+
+        A boosted-and-fresh ``similarity`` above 0.9 does not count: the bare cosine
+        is the duplicate test (#21010).
+        """
         related_id = "22222222-2222-4222-8222-222222220003"
         mock_memory_manager.search_memories.return_value = [
-            MockMemory(id=related_id, content="Related", similarity=0.89),
+            MockMemory(
+                id=related_id,
+                content="Related",
+                similarity=0.95,
+                raw_semantic_score=0.89,
+                temporal_decay_factor=1.0,
+            ),
         ]
 
         with patch(
@@ -500,7 +540,12 @@ class TestSearchMemories:
     async def test_search_memories_with_explicit_min_score_filters_results(
         self, memory_registry, mock_memory_manager
     ):
-        """Explicit min_score filters by semantic similarity only."""
+        """Explicit min_score gates on the undecayed axis and travels to the service.
+
+        Memory 1 is old: decayed 0.65 is under the 0.6 floor by a hair only because
+        of age, and its undecayed 0.8 clears it. Memory 2 is fresh and genuinely weak:
+        decayed 0.55 undecays to 0.579 and stays out (#21010).
+        """
         mock_memory_manager.search_memories.return_value = [
             MockMemory(
                 id="21000000-0000-4000-8000-000000000005",
@@ -516,8 +561,8 @@ class TestSearchMemories:
                 content="Memory 2",
                 similarity=0.55,
                 ranking_score=0.12,
-                raw_semantic_score=0.7,
-                temporal_decay_factor=0.7857,
+                raw_semantic_score=0.55,
+                temporal_decay_factor=0.95,
                 ranking_mode="rrf",
             ),
         ]
@@ -532,9 +577,17 @@ class TestSearchMemories:
 
         assert result["success"] is True
         assert [mem["id"] for mem in result["memories"]] == ["21000000-0000-4000-8000-000000000005"]
+        assert result["memories"][0]["undecayed_similarity"] == pytest.approx(0.8)
         call_kwargs = mock_memory_manager.search_memories.call_args.kwargs
-        assert call_kwargs["limit"] == 4
-        assert call_kwargs["min_score"] is None
+        assert call_kwargs["limit"] == 2
+        assert call_kwargs["min_score"] == 0.6
+        assert result["diagnostics"] == {
+            "candidates_considered": 2,
+            "returned": 1,
+            "threshold": 0.6,
+            "threshold_axis": "undecayed_similarity",
+            "score_range": [pytest.approx(0.5789, abs=1e-4), pytest.approx(0.8)],
+        }
 
     @pytest.mark.asyncio
     async def test_search_memories_error(self, memory_registry, mock_memory_manager):
@@ -865,6 +918,8 @@ class TestUpdateMemory:
                     "memory_id": "mem-123",
                     "content": "Updated content",
                     "tags": ["new-tag"],
+                    "rationale": _VALID_RATIONALE,
+                    "memory_type": "pattern",
                 },
             )
 
@@ -875,6 +930,8 @@ class TestUpdateMemory:
             project_id="project-a",
             content="Updated content",
             tags=["new-tag"],
+            memory_type=MemoryType.PATTERN,
+            rationale=_VALID_RATIONALE,
         )
 
     @pytest.mark.asyncio
@@ -894,6 +951,8 @@ class TestUpdateMemory:
             project_id="project-a",
             content=None,
             tags=["updated"],
+            memory_type=None,
+            rationale=None,
         )
 
     @pytest.mark.asyncio
@@ -902,7 +961,8 @@ class TestUpdateMemory:
         mock_memory_manager.update_memory_scoped.side_effect = ValueError("Memory not found")
 
         result = await memory_registry.call(
-            "update_memory", {"memory_id": "nonexistent", "content": "New"}
+            "update_memory",
+            {"memory_id": "nonexistent", "content": "New", "rationale": _VALID_RATIONALE},
         )
 
         assert result["success"] is False
@@ -914,7 +974,8 @@ class TestUpdateMemory:
         mock_memory_manager.update_memory_scoped.side_effect = Exception("Update error")
 
         result = await memory_registry.call(
-            "update_memory", {"memory_id": "mem-123", "content": "New"}
+            "update_memory",
+            {"memory_id": "mem-123", "content": "New", "rationale": _VALID_RATIONALE},
         )
 
         assert result["success"] is False
@@ -1019,3 +1080,192 @@ class TestSearchMemoriesToolRegistration:
         tools = memory_registry.list_tools()
         tool_names = [t["name"] if isinstance(t, dict) else t.name for t in tools]
         assert "search_memories" in tool_names
+
+
+class TestSearchMemoriesResultShape:
+    """Every hit carries provenance for the agent's judgment (#21010)."""
+
+    @pytest.mark.asyncio
+    async def test_hits_carry_rationale_provenance_and_collapsed_duplicates(
+        self, memory_registry: InternalToolRegistry, mock_memory_manager: MagicMock
+    ) -> None:
+        hit = MockMemory(
+            id="21000000-0000-4000-8000-000000000007",
+            content="Memory 1",
+            updated_at="2024-02-01T00:00:00",
+            similarity=0.72,
+            raw_semantic_score=0.8,
+            temporal_decay_factor=0.9,
+        )
+        hit.rationale = "Why a future session needs this."
+        hit.source_task_id = "31000000-0000-4000-8000-000000000001"
+        hit.created_by_agent = "analyst"
+        hit.graph_confidence = None
+        hit.collapsed_duplicates = ["21000000-0000-4000-8000-000000000008"]
+        mock_memory_manager.search_memories.return_value = [hit]
+
+        with patch(
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "11111111-1111-4111-8111-111111110001"},
+        ):
+            result = await memory_registry.call("search_memories", {"query": "q"})
+
+        assert result["success"] is True
+        memory = result["memories"][0]
+        assert memory["rationale"] == "Why a future session needs this."
+        assert memory["updated_at"] == "2024-02-01T00:00:00"
+        assert memory["source_task_id"] == "31000000-0000-4000-8000-000000000001"
+        assert memory["created_by_agent"] == "analyst"
+        assert memory["graph_confidence"] is None
+        assert memory["collapsed_duplicates"] == ["21000000-0000-4000-8000-000000000008"]
+        assert memory["undecayed_similarity"] == pytest.approx(0.8)
+        assert mock_memory_manager.search_memories.call_args.kwargs["min_score"] is None
+
+    @pytest.mark.asyncio
+    async def test_diagnostics_are_emitted_without_a_threshold(
+        self, memory_registry: InternalToolRegistry, mock_memory_manager: MagicMock
+    ) -> None:
+        mock_memory_manager.search_memories.return_value = [
+            MockMemory(id="a", similarity=0.7, temporal_decay_factor=1.0),
+            MockMemory(id="b", similarity=0.5, temporal_decay_factor=0.5),
+            MockMemory(id="c"),
+        ]
+
+        with patch(
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "11111111-1111-4111-8111-111111110001"},
+        ):
+            result = await memory_registry.call("search_memories", {"query": "q"})
+
+        assert [mem["id"] for mem in result["memories"]] == ["a", "b", "c"]
+        assert result["diagnostics"] == {
+            "candidates_considered": 3,
+            "returned": 3,
+            "threshold": 0.0,
+            "threshold_axis": "undecayed_similarity",
+            "score_range": [pytest.approx(0.7), pytest.approx(1.0)],
+        }
+
+    @pytest.mark.asyncio
+    async def test_diagnostics_score_range_is_none_without_scored_hits(
+        self, memory_registry: InternalToolRegistry, mock_memory_manager: MagicMock
+    ) -> None:
+        mock_memory_manager.search_memories.return_value = []
+
+        with patch(
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "11111111-1111-4111-8111-111111110001"},
+        ):
+            result = await memory_registry.call("search_memories", {"query": "q"})
+
+        assert result["memories"] == []
+        assert result["diagnostics"]["candidates_considered"] == 0
+        assert result["diagnostics"]["score_range"] is None
+
+
+class TestListAndGetMemoryShape:
+    @pytest.mark.asyncio
+    async def test_list_memories_returns_rationale_updated_at_and_source_task(
+        self, memory_registry: InternalToolRegistry, mock_memory_manager: MagicMock
+    ) -> None:
+        row = MockMemory(id="mem-9", updated_at="2024-03-01T00:00:00")
+        row.rationale = "Durable claim."
+        row.source_task_id = "31000000-0000-4000-8000-000000000002"
+        mock_memory_manager.list_memories.return_value = [row]
+
+        with patch(
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "11111111-1111-4111-8111-111111110001"},
+        ):
+            result = await memory_registry.call("list_memories", {})
+
+        listed = result["memories"][0]
+        assert listed["rationale"] == "Durable claim."
+        assert listed["updated_at"] == "2024-03-01T00:00:00"
+        assert listed["source_task_id"] == "31000000-0000-4000-8000-000000000002"
+
+    @pytest.mark.asyncio
+    async def test_get_memory_returns_rationale_and_provenance(
+        self, memory_registry: InternalToolRegistry, mock_memory_manager: MagicMock
+    ) -> None:
+        row = MockMemory(id="mem-9")
+        row.rationale = "Durable claim."
+        row.source_task_id = "31000000-0000-4000-8000-000000000002"
+        row.created_by_agent = "curator"
+        mock_memory_manager.get_memory.return_value = row
+
+        with patch(
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "11111111-1111-4111-8111-111111110001"},
+        ):
+            result = await memory_registry.call("get_memory", {"memory_id": "mem-9"})
+
+        memory = result["memory"]
+        assert memory["rationale"] == "Durable claim."
+        assert memory["source_task_id"] == "31000000-0000-4000-8000-000000000002"
+        assert memory["created_by_agent"] == "curator"
+
+
+class TestUpdateMemoryRationale:
+    """A content change re-argues the durable-value claim (#21010)."""
+
+    @pytest.mark.asyncio
+    async def test_content_change_without_rationale_is_rejected(
+        self, memory_registry: InternalToolRegistry, mock_memory_manager: MagicMock
+    ) -> None:
+        result = await memory_registry.call(
+            "update_memory", {"memory_id": "mem-123", "content": "New body"}
+        )
+
+        assert result["success"] is False
+        assert result["error"].startswith("rationale_required")
+        mock_memory_manager.update_memory_scoped.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_overlong_rationale_is_rejected(
+        self, memory_registry: InternalToolRegistry, mock_memory_manager: MagicMock
+    ) -> None:
+        result = await memory_registry.call(
+            "update_memory", {"memory_id": "mem-123", "rationale": "x" * 501}
+        )
+
+        assert result["success"] is False
+        assert result["error"].startswith("rationale_required")
+        mock_memory_manager.update_memory_scoped.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_rationale_only_update_passes_through(
+        self, memory_registry: InternalToolRegistry, mock_memory_manager: MagicMock
+    ) -> None:
+        updated = MockMemory(id="mem-123")
+        updated.rationale = _VALID_RATIONALE
+        mock_memory_manager.update_memory_scoped.return_value = updated
+
+        with patch("gobby.utils.project_context.get_project_context") as mock_ctx:
+            mock_ctx.return_value = {"id": "project-a", "name": "Project A"}
+            result = await memory_registry.call(
+                "update_memory", {"memory_id": "mem-123", "rationale": _VALID_RATIONALE}
+            )
+
+        assert result["success"] is True
+        assert result["memory"]["rationale"] == _VALID_RATIONALE
+        mock_memory_manager.update_memory_scoped.assert_awaited_once_with(
+            memory_id="mem-123",
+            project_id="project-a",
+            content=None,
+            tags=None,
+            memory_type=None,
+            rationale=_VALID_RATIONALE,
+        )
+
+    @pytest.mark.asyncio
+    async def test_noncanonical_memory_type_is_rejected(
+        self, memory_registry: InternalToolRegistry, mock_memory_manager: MagicMock
+    ) -> None:
+        result = await memory_registry.call(
+            "update_memory", {"memory_id": "mem-123", "memory_type": "implementation_note"}
+        )
+
+        assert result["success"] is False
+        assert "Invalid memory_type" in result["error"]
+        mock_memory_manager.update_memory_scoped.assert_not_awaited()

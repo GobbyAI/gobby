@@ -18,6 +18,8 @@ from gobby.mcp_proxy.tools.memory_scope import (
     get_current_project_id,
     memory_owned_by_current_project,
 )
+from gobby.memory.embedding_text import memory_embedding_text
+from gobby.memory.scoring import undecay
 from gobby.storage.memories import MemoryType, validate_memory_type
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.sync.memories import is_ephemeral_implementation_note
@@ -29,9 +31,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Similarity at or above which create_memory supersedes the existing memory
-# instead of leaving a permanent near-duplicate (dream no longer merges).
+# Raw cosine at or above which create_memory supersedes the existing memory
+# instead of leaving a permanent near-duplicate (dream no longer merges). Read on
+# ``raw_semantic_score`` -- the bare cosine, before source boost and age decay --
+# so an old duplicate is still recognised as one (#21010).
 AUTO_SUPERSEDE_SIMILARITY = 0.9
+# How many neighbours the write-time probe reports back to the writer.
+SIMILAR_EXISTING_LIMIT = 5
 RATIONALE_REQUIRED_ERROR = (
     "rationale_required: one or two sentences on why this memory should be "
     "re-served to future sessions (max 500 chars)"
@@ -138,8 +144,10 @@ def register_memory_write_tools(
             supersedes: Up to 20 memory UUIDs to atomically soft-hide while recording
                 ``supersedes:<id>`` provenance on the resulting memory. Use this for
                 durable decisions, removals, and replacements. Near-duplicates
-                (similarity >= 0.9) are superseded automatically and reported in
-                ``auto_superseded``.
+                (raw cosine >= 0.9) are superseded automatically and reported in
+                ``auto_superseded``; ``similar_existing`` lists the five nearest
+                neighbours with their undecayed similarity so the writer can judge
+                overlap the automatic threshold missed.
             session_id: Session ID that created this memory (accepts #N, N, UUID, or prefix)
             source_task_id: Optional task override (#N or UUID); derived from the
                 session's open claim when omitted
@@ -186,29 +194,39 @@ def register_memory_write_tools(
             similar_existing: list[dict[str, Any]] = []
             auto_superseded: list[dict[str, Any]] = []
             try:
+                # The probe embeds what the stored row will embed -- content plus
+                # rationale -- so it sees the corpus the way search will (#21010).
                 similar = await memory_manager().search_memories(
                     query=content,
                     project_id=project_id,
-                    limit=4,
+                    limit=SIMILAR_EXISTING_LIMIT,
+                    embed_text=memory_embedding_text(content, normalized_rationale),
                     caller="mcp_proxy.memory.create_memory.similar_existing",
                 )
                 for m in similar:
                     similarity = getattr(m, "similarity", None)
+                    raw_score = getattr(m, "raw_semantic_score", None)
+                    undecayed = (
+                        undecay(similarity, getattr(m, "temporal_decay_factor", None))
+                        if isinstance(similarity, int | float) and not isinstance(similarity, bool)
+                        else None
+                    )
                     similar_existing.append(
                         {
                             "id": m.id,
                             "content": m.content,
-                            "similarity": similarity,
+                            "rationale": getattr(m, "rationale", None),
+                            "similarity": undecayed,
+                            "raw_semantic_score": raw_score,
                         }
                     )
                     if (
-                        isinstance(similarity, int | float)
-                        and not isinstance(similarity, bool)
-                        and float(similarity) >= AUTO_SUPERSEDE_SIMILARITY
+                        isinstance(raw_score, int | float)
+                        and not isinstance(raw_score, bool)
+                        and float(raw_score) >= AUTO_SUPERSEDE_SIMILARITY
                         and m.id not in supersedes_ids
                     ):
-                        auto_superseded.append({"id": m.id, "similarity": float(similarity)})
-                similar_existing = similar_existing[:3]
+                        auto_superseded.append({"id": m.id, "similarity": float(raw_score)})
                 if auto_superseded:
                     supersedes_ids = normalize_supersedes(
                         [*supersedes_ids, *(entry["id"] for entry in auto_superseded)]
@@ -276,21 +294,38 @@ def register_memory_write_tools(
         memory_id: str,
         content: str | None = None,
         tags: list[str] | None = None,
+        rationale: str | None = None,
+        memory_type: MemoryType | None = None,
     ) -> dict[str, Any]:
         """
         Update an existing memory.
 
         Args:
             memory_id: The ID of the memory to update
-            content: New content (optional)
+            content: New content (optional). A content change requires a fresh
+                ``rationale`` -- the durable-value claim is re-argued with the
+                body it describes.
             tags: New list of tags (optional)
+            rationale: New durable-value claim (max 500 characters); required when
+                ``content`` is given, optional otherwise
+            memory_type: New type (fact, preference, pattern, context)
         """
         try:
+            normalized_rationale = normalize_memory_rationale(rationale)
+            if content is not None and normalized_rationale is None:
+                return {"success": False, "error": RATIONALE_REQUIRED_ERROR}
+            if rationale is not None and normalized_rationale is None:
+                return {"success": False, "error": RATIONALE_REQUIRED_ERROR}
+            canonical_memory_type = (
+                validate_memory_type(memory_type) if memory_type is not None else None
+            )
             memory = await memory_manager().update_memory_scoped(
                 memory_id=memory_id,
                 project_id=get_current_project_id() or PERSONAL_PROJECT_ID,
                 content=content,
                 tags=tags,
+                memory_type=canonical_memory_type,
+                rationale=normalized_rationale,
             )
             return {
                 "success": True,
@@ -299,6 +334,8 @@ def register_memory_write_tools(
                     "updated_at": memory.updated_at,
                     "project_id": memory.project_id,
                     "is_global": memory.is_global,
+                    "type": memory.memory_type,
+                    "rationale": getattr(memory, "rationale", None),
                 },
             }
         except Exception as e:
@@ -310,7 +347,12 @@ def register_memory_write_tools(
     )
     async def delete_memory(memory_id: str) -> dict[str, Any]:
         """
-        Delete a memory by ID.
+        Hard-delete a memory by ID. Unrecoverable.
+
+        When a replacement exists, prefer ``create_memory(..., supersedes=[id])``:
+        superseding soft-hides the old row with provenance and ``restore_memory``
+        can bring it back. Reserve deletion for rows that are wrong or worthless
+        with nothing to replace them.
 
         Args:
             memory_id: The ID of the memory to delete

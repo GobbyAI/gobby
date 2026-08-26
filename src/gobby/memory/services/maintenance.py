@@ -12,6 +12,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from gobby.memory.embedding_text import memory_embedding_text
 from gobby.memory.vectorstore import memory_scope_filter
 from gobby.storage.memories import Memory
 from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope
@@ -245,7 +246,7 @@ async def find_duplicate_memories(
             continue
 
         try:
-            embedding = await embed_fn(memory.content)
+            embedding = await embed_fn(memory_embedding_text(memory.content, memory.rationale))
             filters = memory_scope_filter(scope)
             results = await vector_store.search(
                 query_embedding=embedding,

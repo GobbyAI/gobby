@@ -176,12 +176,12 @@ for the authoritative signature before calling a tool.
 
 | Tool | Purpose |
 | --- | --- |
-| `create_memory` | Store a memory. Accepts `content`, optional `memory_type`, `tags`, and `session_id`. Returns similar memories to help catch duplicates. |
-| `search_memories` | Search project-scoped memories with `query`, `limit`, `min_score`, and tag filters. |
+| `create_memory` | Store a memory. Requires `content` and `rationale`; accepts optional `memory_type`, `tags`, `supersedes`, and `session_id`. Returns the five nearest existing memories (`similar_existing`, undecayed score) and auto-supersedes any at raw cosine >= 0.9. |
+| `search_memories` | Hybrid search with `query`, `limit`, `min_score` (undecayed axis), and tag filters. Hits carry `rationale`, `similarity`, `raw_semantic_score`, `undecayed_similarity`, provenance, and `collapsed_duplicates`; `diagnostics` reports candidates and the score range. |
 | `list_memories` | List project-scoped memories with optional `memory_type`, `limit`, and tag filters. |
 | `get_memory` | Read one memory by ID. |
-| `update_memory` | Update content or tags for one memory. |
-| `delete_memory` | Delete one memory by ID. |
+| `update_memory` | Update `content`, `tags`, `rationale`, or `memory_type` for one memory. A content change requires a fresh `rationale`; content and rationale edits re-embed the vector. |
+| `delete_memory` | Hard-delete one memory by ID (unrecoverable). Prefer `create_memory(..., supersedes=[id])` when a replacement exists. |
 | `get_related_memories` | Return cross-reference neighbors for one memory. |
 | `memory_stats` | Return counts and summary stats. |
 | `search_knowledge_graph` | Search extracted FalkorDB memory entities. |
@@ -210,6 +210,7 @@ call_tool(server_name="gobby-memory", tool_name="list_memories", arguments={
 call_tool(server_name="gobby-memory", tool_name="update_memory", arguments={
     "memory_id": "mm-abc123",
     "content": "Use task-linked commits for Gobby work.",
+    "rationale": "Closing a leaf requires a linked commit; sessions re-derive this every week.",
     "tags": ["workflow", "commits"]
 })
 ```

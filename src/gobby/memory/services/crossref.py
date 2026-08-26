@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from psycopg.rows import dict_row
 from qdrant_client.models import Filter
 
+from gobby.memory.embedding_text import memory_embedding_text
 from gobby.memory.vectorstore import memory_scope_filter
 from gobby.storage.memories import ALL_MEMORIES, LocalMemoryManager, Memory, MemoryScope
 from gobby.storage.memories_crud import _memory_lock_key
@@ -93,7 +94,7 @@ class CrossrefService:
         threshold = threshold or getattr(self._config, "crossref_threshold", None) or 0.7
         max_links = max_links or getattr(self._config, "crossref_max_links", None) or 5
 
-        embedding = await self._embed_fn(memory.content)
+        embedding = await self._embed_fn(memory_embedding_text(memory.content, memory.rationale))
         results = await self._vector_store.search(
             embedding,
             limit=max_links + 1,

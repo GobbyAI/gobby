@@ -19,6 +19,7 @@ import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
 
+from gobby.memory.embedding_text import memory_embedding_text
 from gobby.memory.services.crossref import CrossrefService, _crossref_scope_filter
 from gobby.memory.vectorstore import is_recoverable_vector_store_error
 from gobby.storage.hub.async_ops import run_bounded_db
@@ -170,7 +171,11 @@ async def _index_payload(
         "memory_type": current.memory_type.value,
     }
     if not payload_only:
-        return await host.embed_and_upsert(current.id, current.content, payload=payload)
+        return await host.embed_and_upsert(
+            current.id,
+            memory_embedding_text(current.content, current.rationale),
+            payload=payload,
+        )
     if host._vector_store is None:
         return False
     try:
@@ -214,7 +219,7 @@ async def _search_crossref_candidates(
         return None
     if host._vector_store is None or host._embed_fn is None:
         return None
-    embedding = await host._embed_fn(current.content)
+    embedding = await host._embed_fn(memory_embedding_text(current.content, current.rationale))
     max_links = getattr(host._config, "crossref_max_links", None) or 5
     results = await host._vector_store.search(
         embedding,

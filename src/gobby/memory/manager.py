@@ -46,7 +46,6 @@ if TYPE_CHECKING:
 
 if TYPE_CHECKING:
     from gobby.llm.service import LLMService
-    from gobby.memory.services.dedup import DedupService
     from gobby.memory.vectorstore import VectorStore
 
 __all__ = [
@@ -116,7 +115,6 @@ class MemoryManager(MemoryManagerFacadeMethods):
             self._graph_initialization_error = exc
             self._falkor_client = None
             logger.exception("Failed to initialize FalkorDB graph subsystem")
-        self._dedup_service = self._build_dedup_service(vector_store, embed_fn)
         self._kg_service = self._build_kg_service(
             llm_service=llm_service,
             llm_service_resolver=llm_service_resolver,
@@ -146,7 +144,6 @@ class MemoryManager(MemoryManagerFacadeMethods):
             vector_store=vector_store,
             embed_fn=embed_fn,
             crossref_service=self._crossref_service,
-            dedup_service_provider=lambda: self._dedup_service,
             kg_service_provider=lambda: self._kg_service,
             background_tasks=self._background_tasks,
             record_to_memory=self._record_to_memory,
@@ -231,28 +228,6 @@ class MemoryManager(MemoryManagerFacadeMethods):
             password=falkordb_password,
             graph_name=falkordb_graph_name,
         )
-
-    def _build_dedup_service(
-        self,
-        vector_store: VectorStore | None,
-        embed_fn: Callable[..., Any] | None,
-    ) -> DedupService | None:
-        if not vector_store or not embed_fn:
-            return None
-        try:
-            from gobby.memory.services.dedup import DedupService as _DedupService
-
-            dedup_service = _DedupService(
-                vector_store=vector_store,
-                storage=self.storage,
-                embed_fn=embed_fn,
-                run_db=self.run_db,
-            )
-            logger.debug("DedupService initialized")
-            return dedup_service
-        except Exception as e:
-            logger.warning("Failed to initialize DedupService: %s", e)
-            return None
 
     def _build_kg_service(
         self,

@@ -1630,3 +1630,34 @@ def test_restore_memory_row_round_trips_rationale_and_provenance(
     assert restored.rationale == "snapshot claim"
     assert restored.source_task_id == TASK_1
     assert restored.created_by_agent == "dream-agent"
+
+
+def test_rationale_update_persists_and_marks_vector_stale(
+    memory_manager: LocalMemoryManager,
+) -> None:
+    """A rationale edit re-embeds like a content edit: the vector carries both (#21010)."""
+    memory = memory_manager.create_memory("Vector content with rationale", PERSONAL_PROJECT_ID)
+
+    updated = memory_manager.update_memory(memory.id, rationale="Why a future session needs it.")
+
+    assert updated.rationale == "Why a future session needs it."
+    assert updated.content == "Vector content with rationale"
+    assert updated.vector_needs_reindex is True
+    assert memory_manager.list_vector_reindex_ids() == [memory.id]
+    assert memory_manager.mark_vectors_reindexed({memory.id: updated.content}) == 1
+
+    unchanged = memory_manager.update_memory(memory.id, rationale="Why a future session needs it.")
+    assert unchanged.vector_needs_reindex is False
+
+
+def test_scoped_rationale_update_requires_visible_memory(
+    memory_manager: LocalMemoryManager,
+) -> None:
+    memory = memory_manager.create_memory("Scoped rationale content", PERSONAL_PROJECT_ID)
+
+    with pytest.raises(ValueError, match="not found"):
+        memory_manager.update_memory_scoped(
+            memory.id,
+            project_id="00000000-0000-4000-8000-00000000dead",
+            rationale="Why.",
+        )

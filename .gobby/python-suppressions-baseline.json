@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "site_count": 248,
+  "site_count": 245,
   "sites": [
     {
       "fingerprint": "0f66536411482f1a325ea75a3b12fe585163203aa948bb885f30281b874362a0",
@@ -1423,39 +1423,9 @@
       "statement": "cleaner = ProjectVectorCleaner ( vector_store )"
     },
     {
-      "fingerprint": "8f967e214d36b10c27ac062367324a462358c206d3b5928d98698de72bd437a0",
-      "path": "tests/projects/test_write_fence.py",
-      "symbol": "make_lifecycle_service",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "return MemoryLifecycleService ( config = MagicMock ( ) , storage_provider = MagicMock ( ) , backend_provider = MagicMock ( ) , vector_store = vector_store , embed_fn = embed_fn , crossref_service = MagicMock ( ) , dedup_service_provider = lambda : dedup_service , kg_service_provider = lambda : None , background_tasks = background_tasks if background_tasks is not None else set ( ) , record_to_memory = MagicMock ( ) , get_memory = MagicMock ( ) , embed_and_upsert = AsyncMock ( ) , vector_store_failure_logger = MagicMock ( ) , )"
-    },
-    {
-      "fingerprint": "8f967e214d36b10c27ac062367324a462358c206d3b5928d98698de72bd437a0",
-      "path": "tests/projects/test_write_fence.py",
-      "symbol": "make_lifecycle_service",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "return MemoryLifecycleService ( config = MagicMock ( ) , storage_provider = MagicMock ( ) , backend_provider = MagicMock ( ) , vector_store = vector_store , embed_fn = embed_fn , crossref_service = MagicMock ( ) , dedup_service_provider = lambda : dedup_service , kg_service_provider = lambda : None , background_tasks = background_tasks if background_tasks is not None else set ( ) , record_to_memory = MagicMock ( ) , get_memory = MagicMock ( ) , embed_and_upsert = AsyncMock ( ) , vector_store_failure_logger = MagicMock ( ) , )"
-    },
-    {
       "fingerprint": "f75d77b34e1597e4ad39fb4dd84f422f847396dbee9e1f193127c46352da45d8",
       "path": "tests/projects/test_write_fence.py",
       "symbol": "test_memory_writer_finishes_after_purge_claims_exclusive",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "vector_store = ProjectFencedVectorStore ( inner , fence )"
-    },
-    {
-      "fingerprint": "202565ee53da7a491f8f9d5fe254041f43e1d6d31c257a843b23c92a932e9181",
-      "path": "tests/projects/test_write_fence.py",
-      "symbol": "test_spawned_dedup_task_holds_writer_admission_for_full_lifetime",
       "directive": "type: ignore",
       "codes": [
         "arg-type"

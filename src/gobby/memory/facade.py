@@ -104,27 +104,6 @@ class MemoryManagerFacadeMethods:
         """Embed content and upsert to VectorStore when available."""
         return await self._lifecycle_service.embed_and_upsert(memory_id, content, payload)
 
-    def _fire_background_dedup(
-        self,
-        content: str,
-        project_id: str,
-        is_global: bool,
-        memory_type: str,
-        tags: list[str] | None,
-        source_type: str,
-        source_session_id: str | None,
-    ) -> None:
-        """Fire a background dedup task."""
-        self._lifecycle_service.fire_background_dedup(
-            content,
-            project_id,
-            is_global,
-            memory_type,
-            tags,
-            source_type,
-            source_session_id,
-        )
-
     async def _enqueue_for_graph(
         self,
         memory_id: str,
@@ -510,12 +489,14 @@ class MemoryManagerFacadeMethods:
         content: str | None = None,
         tags: list[str] | None = None,
         memory_type: str | None = None,
+        rationale: str | None = None,
     ) -> Memory:
         return await self._lifecycle_service.update_memory(
             memory_id=memory_id,
             content=content,
             tags=tags,
             memory_type=memory_type,
+            rationale=rationale,
         )
 
     async def update_memory_scoped(
@@ -525,6 +506,7 @@ class MemoryManagerFacadeMethods:
         content: str | None = None,
         tags: list[str] | None = None,
         memory_type: str | None = None,
+        rationale: str | None = None,
     ) -> Memory:
         return await self._lifecycle_service.update_memory_scoped(
             memory_id=memory_id,
@@ -532,6 +514,7 @@ class MemoryManagerFacadeMethods:
             content=content,
             tags=tags,
             memory_type=memory_type,
+            rationale=rationale,
         )
 
     async def move_memory(self, memory_id: str, new_project_id: str) -> Memory:

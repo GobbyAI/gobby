@@ -1,1 +1,1 @@
-"""Memory services for dedup, knowledge graph, and maintenance."""
+"""Memory services for lifecycle, search, knowledge graph, and maintenance."""

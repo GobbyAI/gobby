@@ -251,6 +251,20 @@ class VectorStore:
             collection_name,
         )
 
+    async def get_vectors(
+        self,
+        ids: list[str],
+        *,
+        collection_name: str | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, list[float]]:
+        """Return stored vectors for ``ids``; ids without a vector are omitted."""
+        return await self._queries.get_vectors(
+            ids,
+            collection_name=collection_name,
+            timeout=timeout,
+        )
+
     async def search_by_stored_vectors(
         self,
         ids: list[str],
