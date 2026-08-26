@@ -406,7 +406,8 @@ def test_guard_collection_skips_artifact_free_closures(
     Path(tmp_path, existing).parent.mkdir()
     Path(tmp_path, existing).write_text("def test_guard(): pass\n", encoding="utf-8")
     other = "tests/test_other.py"
-    Path(tmp_path, other).write_text("def test_other(): pass\n", encoding="utf-8")
+    if contributes:
+        Path(tmp_path, other).write_text("def test_other(): pass\n", encoding="utf-8")
     epic = _task("epic", task_type="epic", parent=None, now=now)
     completed = _task(
         "prior", parent=epic.id, now=now, criteria=f"test: `{existing}::test_guard`", closed=True
@@ -434,6 +435,41 @@ def test_guard_collection_skips_artifact_free_closures(
     else:
         assert paths == (existing,)
         assert sources == (completed.id,)
+
+
+@pytest.mark.asyncio
+async def test_obsolete_leaf_naming_a_never_written_test_does_not_block_close(
+    tmp_path: Path,
+) -> None:
+    now = datetime(2026, 8, 21, tzinfo=UTC)
+    existing = "tests/test_guard.py"
+    Path(tmp_path, existing).parent.mkdir()
+    Path(tmp_path, existing).write_text("def test_guard(): pass\n", encoding="utf-8")
+    _write_project(tmp_path, "printf '%s\\n' {test_files}")
+    epic = _task("epic", task_type="epic", parent=None, now=now)
+    completed = _task(
+        "prior", parent=epic.id, now=now, criteria=f"test: `{existing}::test_guard`", closed=True
+    )
+    obsolete = _task(
+        "obsolete",
+        parent=epic.id,
+        now=now,
+        criteria="test: `tests/test_never_written.py::test_missing`",
+        closed=True,
+        closed_reason="obsolete",
+    )
+    current = _task("current", parent=epic.id, now=now)
+
+    result = await evaluate_epic_guards(
+        task_manager=cast(LocalTaskManager, _TaskManager([epic, completed, obsolete, current])),
+        task=current,
+        repo_path=str(tmp_path),
+    )
+
+    assert result.error_type is None
+    assert result.passed is True
+    assert result.paths == (existing,)
+    assert result.source_task_ids == (completed.id,)
 
 
 def test_guard_collection_never_lists_the_whole_project(tmp_path: Path) -> None:
