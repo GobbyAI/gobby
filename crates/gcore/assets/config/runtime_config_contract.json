@@ -650,7 +650,7 @@
     },
     {
       "activation": "live",
-      "default": 30,
+      "default": 1,
       "description": "Days to retain unreferenced indexed content and recent Git history",
       "key": "code_index.content_retention_days",
       "machineExport": false,
