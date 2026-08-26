@@ -830,14 +830,6 @@ const CONFIG_VALUES = {
       purge_delete_after_days: 7,
     },
   },
-  memory_recall: {
-    profile: "feature_high",
-    candidates: ["claude/sonnet"],
-    enabled: true,
-    candidate_limit: 50,
-    min_score: 0.35,
-    selection_min_score: 0.65,
-  },
   knowledge_graph_queue: { interval_minutes: 10, batch_size: 25 },
   memory_backup: { enabled: true, backup_path: ".gobby/memories.jsonl" },
   wiki: {
@@ -1021,7 +1013,6 @@ function buildConfigSchema(): Record<string, unknown> {
     "pipelines.prompt_step",
     "memory.kg",
     "memory.dream",
-    "memory_recall",
     "code_index.symbol_summary",
     "digest",
   ]) {

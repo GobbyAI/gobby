@@ -4,7 +4,6 @@ Session configuration module.
 Contains session-related Pydantic config models:
 - SessionSummaryConfig: Session summary (handoff) generation settings
 - DigestConfig: Rolling digest and title generation settings
-- MemoryRecallConfig: Daemon-owned memory recall settings
 - MessageTrackingConfig: Session message tracking settings
 - SessionLifecycleConfig: Session lifecycle management settings
 

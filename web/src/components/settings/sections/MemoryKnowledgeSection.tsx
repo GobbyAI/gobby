@@ -16,10 +16,10 @@ import { asString, asTypedList } from "./configAccessors";
 
 /**
  * Memory & Knowledge settings section: the persistent memory store, its
- * knowledge-graph extraction and dreaming maintenance, observational recall,
- * the embedding model, the Qdrant vector store and FalkorDB graph store, the
- * background knowledge-graph queue, memory backup, and the wiki watcher. These
- * are the `memory.*`, `memory_recall.*`, `embeddings.*`, `databases.*`,
+ * knowledge-graph extraction and dreaming maintenance, the embedding model,
+ * the Qdrant vector store and FalkorDB graph store, the background
+ * knowledge-graph queue, memory backup, and the wiki watcher. These are the
+ * `memory.*`, `embeddings.*`, `databases.*`,
  * `knowledge_graph_queue.*`, `memory_backup.*`, and `wiki.*` keep-rows from the
  * configuration audit, with the array "fix" rows (`candidates`,
  * `wiki.ignore_globs`, `wiki.roots`) given typed list editors.
@@ -39,7 +39,6 @@ const MEMORY_PATHS = [
   "memory.access_debounce_seconds",
   "memory.code_link_min_score",
   "memory.temporal_decay_half_life_days",
-  "memory.min_recall_score",
   "memory.graph_edge_weighting",
   "memory.materialize_cooccurrence",
   "memory.graph_edge_decay",
@@ -64,15 +63,6 @@ const MEMORY_PATHS = [
   "memory.dream.include_global_memories",
   "memory.dream.reconcile_after_apply",
   "memory.dream.reconcile_after_revert",
-] as const;
-
-const RECALL_PATHS = [
-  "memory_recall.profile",
-  "memory_recall.candidates",
-  "memory_recall.enabled",
-  "memory_recall.candidate_limit",
-  "memory_recall.min_score",
-  "memory_recall.selection_min_score",
 ] as const;
 
 const EMBEDDINGS_PATHS = [
@@ -115,7 +105,6 @@ const WIKI_PATHS = [
 
 const OWNED_PATHS: readonly string[] = [
   ...MEMORY_PATHS,
-  ...RECALL_PATHS,
   ...EMBEDDINGS_PATHS,
   ...DATABASE_PATHS,
   ...QUEUE_PATHS,
@@ -194,13 +183,6 @@ function MemoryGroup({ fields }: { fields: SettingsSectionFields }) {
         path="memory.temporal_decay_half_life_days"
         label="Temporal decay half-life (days)"
         ariaLabel="Temporal decay half-life (days)"
-      />
-      <NumberConfigField
-        fields={fields}
-        path="memory.min_recall_score"
-        label="Minimum recall score"
-        ariaLabel="Minimum recall score"
-        step={0.05}
       />
       <SwitchConfigField
         fields={fields}
@@ -376,56 +358,6 @@ function DreamGroup({ fields }: { fields: SettingsSectionFields }) {
         path="memory.dream.reconcile_after_revert"
         label="Reconcile after revert"
         ariaLabel="Reconcile after revert"
-      />
-    </Subsection>
-  );
-}
-
-function RecallGroup({ fields }: { fields: SettingsSectionFields }) {
-  return (
-    <Subsection
-      title="Recall"
-      hint="Observational recall that surfaces relevant memories during a session. The search floor sharpens the candidate pool; the selection floor is the only control that can make a turn surface fewer memories than the candidate limit."
-    >
-      <SwitchConfigField
-        fields={fields}
-        path="memory_recall.enabled"
-        label="Enable memory recall"
-        ariaLabel="Enable memory recall"
-      />
-      <SchemaSelectField
-        fields={fields}
-        path="memory_recall.profile"
-        label="Model profile"
-        ariaLabel="Recall model profile"
-      />
-      <StringListConfigField
-        fields={fields}
-        path="memory_recall.candidates"
-        label="Model candidates"
-        ariaLabel="Recall model candidates"
-        addLabel="Add candidate"
-        placeholder="provider/model"
-      />
-      <NumberConfigField
-        fields={fields}
-        path="memory_recall.candidate_limit"
-        label="Candidate limit"
-        ariaLabel="Recall candidate limit"
-      />
-      <NumberConfigField
-        fields={fields}
-        path="memory_recall.min_score"
-        label="Search floor"
-        ariaLabel="Recall search floor"
-        step={0.05}
-      />
-      <NumberConfigField
-        fields={fields}
-        path="memory_recall.selection_min_score"
-        label="Selection floor"
-        ariaLabel="Recall selection floor"
-        step={0.05}
       />
     </Subsection>
   );
@@ -721,7 +653,6 @@ export function MemoryKnowledgeSection() {
           <MemoryGroup fields={fields} />
           <KnowledgeGraphGroup fields={fields} />
           <DreamGroup fields={fields} />
-          <RecallGroup fields={fields} />
           <EmbeddingsGroup fields={fields} />
           <VectorStoreGroup fields={fields} />
           <GraphStoreGroup fields={fields} />
