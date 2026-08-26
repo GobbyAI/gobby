@@ -120,3 +120,20 @@ def queue_memory_review_close(
     ):
         return pending
     return [*pending, candidate]
+
+
+def pending_memory_reviews_complete(variables: Mapping[str, Any]) -> bool:
+    """Return whether every queued closure already has a review record.
+
+    A batch reviewed before its block is delivered needs no delivery, so the
+    caller can release the stop/compact gate instead of re-requesting the
+    reviews (#21062).
+    """
+    pending = variables.get("_memory_pending_task_reviews")
+    reviewed = variables.get("_memory_task_review_records")
+    if not isinstance(pending, list) or not pending or not isinstance(reviewed, list):
+        return False
+    reviewed_ids = {item.get("closure_id") for item in reviewed if isinstance(item, Mapping)}
+    return all(
+        isinstance(item, Mapping) and item.get("closure_id") in reviewed_ids for item in pending
+    )

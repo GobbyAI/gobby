@@ -550,7 +550,7 @@ and the optional FalkorDB knowledge graph.
 | `delete_memory` | Delete a memory by ID. |
 | `list_memories` | List memories with filters. |
 | `search_memories` | Search by query and tags. |
-| `review_task_memories` | Review memories related to a task closed by the calling session. |
+| `review_task_memories` | Review memories related to a task closed by the calling session; reviewing every queued closure releases the post-close review gate. |
 | `get_related_memories` | Memories linked via cross-references. |
 | `memory_stats` | Statistics about the memory system. |
 
