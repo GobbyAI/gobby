@@ -174,7 +174,6 @@ def test_persist_kwargs_from_hook_response_use_manager_database() -> None:
         ("codex", "UserPromptSubmit"),
         ("droid", "UserPromptSubmit"),
         ("claude", "user-prompt-submit"),
-        ("grok", "SessionStart"),
     ],
 )
 def test_production_adapters_persist_overflow(adapter_factory: str, hook_type: str) -> None:

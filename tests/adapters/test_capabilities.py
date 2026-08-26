@@ -94,7 +94,7 @@ def test_current_context_and_decision_capabilities_are_declared() -> None:
     assert qwen_pre_tool.decision_style is ProviderDecisionStyle.PRE_TOOL_USE
 
     assert grok_pre_tool is not None
-    assert grok_pre_tool.context_channel is ContextChannel.SYSTEM_MESSAGE
+    assert grok_pre_tool.context_channel is ContextChannel.NONE
     assert grok_pre_tool.decision_style is ProviderDecisionStyle.PRE_TOOL_USE
 
     assert agy_pre_tool is not None
@@ -171,6 +171,7 @@ def test_grok_1_0_hook_capabilities_are_declared() -> None:
 
     pre_tool = capabilities.get_hook("pre_tool_use")
     pre_compact = capabilities.get_hook("pre_compact")
+    stop = capabilities.get_hook("stop")
     post_compact = capabilities.get_hook("post_compact")
     post_tool = capabilities.get_hook("post_tool_use")
     permission_denied = capabilities.get_hook("permission_denied")
@@ -179,15 +180,19 @@ def test_grok_1_0_hook_capabilities_are_declared() -> None:
     subagent_stop = capabilities.get_hook("subagent_stop")
 
     assert pre_tool is not None
-    assert pre_tool.context_channel is ContextChannel.SYSTEM_MESSAGE
+    assert pre_tool.context_channel is ContextChannel.NONE
     assert pre_tool.decision_style is ProviderDecisionStyle.PRE_TOOL_USE
     assert pre_tool.supports_response_field("permission_decision")
     assert pre_tool.supports_response_field("auto_approve")
     assert pre_tool.supports_response_field("modified_input")
 
     assert pre_compact is not None
-    assert pre_compact.context_channel is ContextChannel.SYSTEM_MESSAGE
-    assert pre_compact.decision_style is ProviderDecisionStyle.HARD_STOP
+    assert pre_compact.context_channel is ContextChannel.NONE
+    assert pre_compact.decision_style is ProviderDecisionStyle.NONE
+
+    assert stop is not None
+    assert stop.context_channel is ContextChannel.ADDITIONAL_CONTEXT
+    assert stop.decision_style is ProviderDecisionStyle.TOP_LEVEL_BLOCK
 
     assert post_compact is not None
     assert post_compact.event_type is HookEventType.POST_COMPACT
@@ -195,7 +200,7 @@ def test_grok_1_0_hook_capabilities_are_declared() -> None:
     assert post_compact.decision_style is ProviderDecisionStyle.NONE
 
     assert post_tool is not None
-    assert post_tool.context_channel is ContextChannel.ADDITIONAL_CONTEXT
+    assert post_tool.context_channel is ContextChannel.NONE
     assert post_tool.decision_style is ProviderDecisionStyle.NONE
     assert permission_denied is not None
     assert permission_denied.decision_style is ProviderDecisionStyle.NONE
@@ -206,6 +211,25 @@ def test_grok_1_0_hook_capabilities_are_declared() -> None:
     assert subagent_stop is not None
     assert subagent_stop.decision_style is ProviderDecisionStyle.TOP_LEVEL_BLOCK
     assert subagent_stop.context_channel is ContextChannel.ADDITIONAL_CONTEXT
+
+    passive_hooks = {
+        "session_start",
+        "user_prompt_submit",
+        "post_tool_use",
+        "post_tool_use_failure",
+        "pre_compact",
+        "post_compact",
+        "notification",
+        "permission_denied",
+        "stop_failure",
+        "subagent_start",
+        "session_end",
+    }
+    for hook_name in passive_hooks:
+        hook = capabilities.get_hook(hook_name)
+        assert hook is not None
+        assert hook.context_channel is ContextChannel.NONE
+        assert hook.decision_style is ProviderDecisionStyle.NONE
 
 
 def test_unsupported_elicitation_fields_are_dropped_with_telemetry(

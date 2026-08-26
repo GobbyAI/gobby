@@ -104,12 +104,15 @@ class GrokAdapter(ACPHookAdapter):
     def translate_from_hook_response(
         self, response: HookResponse, hook_type: str | None = None
     ) -> dict[str, Any]:
-        """Translate Grok observe-only and recoverable subagent responses."""
+        """Translate Grok observe-only and recoverable stop responses."""
         canonical_hook = self.HOOK_EVENT_NAME_MAP.get(hook_type or "", hook_type or "")
         if canonical_hook in {"permission_denied", "stop_failure", "subagent_start"}:
             return {"decision": "allow", "continue": True}
 
-        if canonical_hook == "subagent_stop" and response.decision in {"deny", "block"}:
+        if canonical_hook in {"stop", "subagent_stop"} and response.decision in {
+            "deny",
+            "block",
+        }:
             from gobby.adapters.base import normalize_adapter_response_reason
 
             reason = normalize_adapter_response_reason(
@@ -125,7 +128,7 @@ class GrokAdapter(ACPHookAdapter):
             }
             if response.context:
                 result["hookSpecificOutput"] = {
-                    "hookEventName": "SubagentStop",
+                    "hookEventName": ("Stop" if canonical_hook == "stop" else "SubagentStop"),
                     "additionalContext": truncate_context_for_adapter(
                         response.context,
                         provider=self.source,
@@ -139,6 +142,10 @@ class GrokAdapter(ACPHookAdapter):
             return result
 
         result = super().translate_from_hook_response(response, hook_type)
+        if canonical_hook not in {"pre_tool_use", "stop", "subagent_stop"}:
+            result.pop("hookSpecificOutput", None)
+            result.pop("additionalContext", None)
+            result.pop("systemMessage", None)
         if canonical_hook == "pre_tool_use":
             permission_decision = response.permission_decision
             if permission_decision is None and response.auto_approve:

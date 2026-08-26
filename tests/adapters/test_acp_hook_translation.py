@@ -640,12 +640,13 @@ class TestBlockToDenyMapping:
         adapter_cls: type,
         hook_type: str,
     ) -> None:
-        """Block on a non-tool hook maps to deny with continue=False (hard stop)."""
+        """Only Grok Stop maps a top-level block to recoverable feedback."""
         adapter = adapter_cls()
         response = HookResponse(decision="block", reason="Hard stop gate")
         result = adapter.translate_from_hook_response(response, hook_type=hook_type)
-        assert result["decision"] == "deny"
-        assert result["continue"] is False
+        grok_stop = adapter_cls is GrokAdapter and hook_type == "stop"
+        assert result["decision"] == ("block" if grok_stop else "deny")
+        assert result["continue"] is grok_stop
         assert result["reason"] == "Hard stop gate"
 
 
@@ -758,6 +759,39 @@ class TestGrokCurrentHookContract:
                 "additionalContext": "Resolve tests",
             },
         }
+
+    def test_stop_block_is_recoverable_with_additional_context(self) -> None:
+        result = GrokAdapter().translate_from_hook_response(
+            HookResponse(decision="block", reason="Keep working", context="Run tests"),
+            hook_type="stop",
+        )
+
+        assert result == {
+            "continue": True,
+            "decision": "block",
+            "reason": "Keep working",
+            "hookSpecificOutput": {
+                "hookEventName": "Stop",
+                "additionalContext": "Run tests",
+            },
+        }
+
+    @pytest.mark.parametrize("hook_type", ["user_prompt_submit", "post_tool_use"])
+    def test_observe_hooks_ignore_response_context(self, hook_type: str) -> None:
+        result = GrokAdapter().translate_from_hook_response(
+            HookResponse(decision="allow", context="ignored"), hook_type=hook_type
+        )
+
+        assert "hookSpecificOutput" not in result
+
+    def test_allowing_stop_has_no_force_stop_fields(self) -> None:
+        result = GrokAdapter().translate_from_hook_response(
+            HookResponse(decision="allow"), hook_type="stop"
+        )
+
+        assert result.get("decision") == "allow"
+        assert result.get("continue") is True
+        assert "stopReason" not in result
 
     def test_subagent_stop_block_has_non_empty_fallback_reason(self) -> None:
         result = GrokAdapter().translate_from_hook_response(
