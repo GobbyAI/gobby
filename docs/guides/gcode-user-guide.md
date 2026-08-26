@@ -631,9 +631,18 @@ Set `GCODE_FRESHNESS_INFLIGHT=1` in nested processes (or scripts that already
 run their own re-index) to short-circuit the same checks. gcode also sets this
 flag internally to prevent the indexer from recursing into itself.
 
-Overlay indexing uses `git status` to find changed paths. Set
+Incremental overlay indexing (a worktree or clone layered over its parent
+project's index) reconciles only the paths that can differ from the parent:
+`git status` in the overlay, `git status` in the parent checkout, and
+`git diff --name-only <parent HEAD> HEAD` for commit-level divergence in either
+direction. A path that differs is indexed from the overlay's own tree (or
+tombstoned when it only exists in the parent), so overlay reads never serve
+parent rows for content that differs on disk. Set
 `GCODE_GIT_STATUS_TIMEOUT_SECS` to a positive number to override the default
-5-second timeout; invalid or nonpositive values are ignored with a warning.
+5-second timeout for each of those git calls; invalid or nonpositive values are
+ignored with a warning. When any call fails (for example a clone whose object
+store lacks the parent's HEAD), the run falls back to hashing every discovered
+path.
 
 ## Troubleshooting
 

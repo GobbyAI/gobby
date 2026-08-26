@@ -1,12 +1,150 @@
 use super::super::file::write_parsed_file_facts;
 use super::super::sink::PostgresCodeFactSink;
 use super::super::{IndexOptions, IndexRequest, index_files};
+use super::fixtures::{git, write_file};
 use crate::config::{CodeVectorSettings, Context, ProjectIndexScope};
 use crate::db;
 use crate::index::api;
 use crate::models::{IndexedFile, IndexedProject, ParseResult, Symbol};
+use crate::visibility;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn overlay_incremental_index_shadows_parent_rows_for_commit_diverged_files() {
+    let (mut conn, database_url) = connect_summary_preservation_test_db();
+    let base = tempfile::tempdir().expect("create temp base");
+    let hooks = base.path().join("hooks");
+    std::fs::create_dir_all(&hooks).expect("create hooks dir");
+    let parent_root = base.path().join("parent");
+    std::fs::create_dir_all(&parent_root).expect("create parent root");
+    let overlay_root = base.path().join("overlay");
+    let rel = "src/lib.rs";
+    let parent_source = b"pub fn parent_only() {}\n";
+    let overlay_source = b"pub fn overlay_only() {}\n";
+
+    write_file(&parent_root, rel, parent_source);
+    git(&parent_root, &hooks, &["init", "-q"]);
+    git(&parent_root, &hooks, &["add", "."]);
+    git(&parent_root, &hooks, &["commit", "-q", "-m", "seed"]);
+    git(
+        &parent_root,
+        &hooks,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "wt",
+            overlay_root.to_str().expect("utf-8 overlay path"),
+        ],
+    );
+    // The divergence lives only in a commit on the overlay branch: both
+    // working trees are clean, so `git status` alone cannot see it.
+    write_file(&overlay_root, rel, overlay_source);
+    git(
+        &overlay_root,
+        &hooks,
+        &["commit", "-q", "-am", "overlay change"],
+    );
+
+    let overlay_project_id = unique_test_uuid("gcode-overlay-shadow");
+    let parent_project_id = unique_test_uuid("gcode-overlay-shadow-parent");
+    cleanup_summary_preservation_project(&mut conn, &overlay_project_id)
+        .expect("pre-clean overlay rows");
+    cleanup_summary_preservation_project(&mut conn, &parent_project_id)
+        .expect("pre-clean parent rows");
+    let _overlay_cleanup = SummaryPreservationCleanup {
+        database_url: database_url.clone(),
+        project_id: overlay_project_id.clone(),
+    };
+    let _parent_cleanup = SummaryPreservationCleanup {
+        database_url: database_url.clone(),
+        project_id: parent_project_id.clone(),
+    };
+
+    // The parent is indexed on this machine with its own version of the path.
+    let parent_hash = crate::index::hasher::file_content_hash(&parent_root.join(rel))
+        .expect("hash parent source");
+    write_postgres_parsed_file_facts_with_root(
+        &mut conn,
+        &parent_project_id,
+        &parent_root,
+        rel,
+        &parent_hash,
+        parent_source,
+        vec![test_symbol(
+            &parent_project_id,
+            rel,
+            &parent_hash,
+            "parent_only",
+            7,
+            "parent-only-hash",
+        )],
+    );
+
+    let ctx = Context {
+        database_url,
+        project_root: overlay_root.clone(),
+        project_id: overlay_project_id.clone(),
+        quiet: true,
+        falkordb: None,
+        qdrant: None,
+        embedding: None,
+        code_vectors: CodeVectorSettings::default(),
+        runtime_config_capture_degraded: false,
+        indexing: gobby_core::config::IndexingConfig::default(),
+        daemon_url: None,
+        grant_ai: None,
+        index_scope: ProjectIndexScope::Overlay {
+            overlay_project_id: overlay_project_id.clone(),
+            overlay_root: overlay_root.clone(),
+            parent_project_id: parent_project_id.clone(),
+            parent_root: parent_root.clone(),
+        },
+    };
+    let visible_names = |conn: &mut postgres::Client| -> Vec<String> {
+        visibility::visible_symbols_for_file(conn, &ctx, rel)
+            .expect("read visible symbols")
+            .into_iter()
+            .map(|symbol| format!("{}:{}", symbol.project_id, symbol.name))
+            .collect()
+    };
+    assert_eq!(
+        visible_names(&mut conn),
+        vec![format!("{parent_project_id}:parent_only")],
+        "before reconciliation the overlay inherits the parent's rows"
+    );
+
+    let outcome = index_files(
+        IndexRequest {
+            project_root: overlay_root.clone(),
+            path_filter: None,
+            explicit_files: Vec::new(),
+            full: false,
+            require_cpp_semantics: false,
+            sync_projections: false,
+        },
+        &ctx,
+        IndexOptions::default(),
+    )
+    .expect("incremental overlay run");
+
+    assert_eq!(
+        outcome.indexed_files, 1,
+        "the commit-diverged path must be indexed from the overlay tree"
+    );
+    assert_eq!(
+        visible_names(&mut conn),
+        vec![format!("{overlay_project_id}:overlay_only")],
+        "overlay reads must serve the overlay's own rows for a diverged path"
+    );
+}
 
 #[test]
 #[cfg_attr(
