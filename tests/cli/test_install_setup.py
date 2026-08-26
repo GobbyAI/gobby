@@ -3,12 +3,14 @@
 import hashlib
 import json
 import os
+import re
 import subprocess
 import tarfile
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from urllib.error import URLError
+from urllib.parse import urlparse
 
 import click
 import pytest
@@ -50,6 +52,21 @@ from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 pytestmark = pytest.mark.unit
 GCODE_PIN: str = MANAGED_BIN_VERSION_PINS["gcode"]
 GWIKI_PIN: str = MANAGED_BIN_VERSION_PINS["gwiki"]
+_BUNDLED_INSTALL_ROOT = Path(__file__).parents[2] / "src" / "gobby" / "install"
+
+
+def _assert_fresh_local_dsn(bootstrap_text: str) -> None:
+    """A newly minted bootstrap carries a random URL-safe password on the default port."""
+    parsed = urlparse(yaml.safe_load(bootstrap_text)["database_url"])
+    assert (parsed.scheme, parsed.username, parsed.port, parsed.path) == (
+        "postgresql",
+        "gobby",
+        60891,
+        "/gobby",
+    )
+    assert parsed.password is not None
+    assert len(parsed.password) >= 32
+    assert re.fullmatch(r"[A-Za-z0-9_-]+", parsed.password)
 
 
 @pytest.fixture(autouse=True)
@@ -90,7 +107,24 @@ class TestEnsureDaemonConfig:
         assert res["created"]
         assert res["source"] == "shared"
         assert yaml.safe_load(target.read_text())["files_home"] == str(files_home.resolve())
+        _assert_fresh_local_dsn(target.read_text())
         assert (tmp_path / ".bootstrap.yaml.lock").exists()
+
+    @patch("gobby.cli.install_setup.Path.expanduser")
+    def test_existing_bootstrap_is_never_rewritten(self, mock_expand, tmp_path):
+        target = tmp_path / "bootstrap.yaml"
+        original = (
+            "datastore_mode: local\ndatabase_url: postgresql://gobby:keep@localhost:60891/gobby\n"
+        )
+        target.write_text(original)
+        mock_expand.return_value = target
+
+        files_home = tmp_path / "files"
+        files_home.mkdir()
+        res = ensure_daemon_config(files_home=files_home)
+
+        assert not res["created"]
+        assert target.read_text() == original
 
     @patch("gobby.cli.install_setup.Path.expanduser")
     @patch("gobby.cli.install_setup.get_install_dir")
@@ -106,9 +140,7 @@ class TestEnsureDaemonConfig:
         assert res["created"]
         assert res["source"] == "generated"
         assert target.exists()
-        assert "database_url: postgresql://gobby:gobby_dev@localhost:60891/gobby" in (
-            target.read_text()
-        )
+        _assert_fresh_local_dsn(target.read_text())
         assert "daemon_port: 60887" in target.read_text()
         assert yaml.safe_load(target.read_text())["postgres_pool"] == {
             "acquire_timeout_seconds": 5.0,
@@ -117,15 +149,7 @@ class TestEnsureDaemonConfig:
         }
 
     def test_bundled_bootstrap_exposes_postgres_pool_defaults(self) -> None:
-        template = (
-            Path(__file__).parents[2]
-            / "src"
-            / "gobby"
-            / "install"
-            / "shared"
-            / "config"
-            / "bootstrap.yaml"
-        )
+        template = _BUNDLED_INSTALL_ROOT / "shared" / "config" / "bootstrap.yaml"
 
         content = yaml.safe_load(template.read_text())
 
@@ -133,6 +157,18 @@ class TestEnsureDaemonConfig:
             "acquire_timeout_seconds": 5.0,
             "open_timeout_seconds": 30.0,
         }
+        assert "database_url" not in content
+
+    def test_bundled_content_carries_no_dev_password(self) -> None:
+        offenders = [
+            path
+            for path in _BUNDLED_INSTALL_ROOT.rglob("*")
+            if "__pycache__" not in path.parts
+            and path.is_file()
+            and b"gobby_dev" in path.read_bytes()
+        ]
+
+        assert offenders == []
 
 
 class TestRunDaemonSetup:
@@ -1432,7 +1468,7 @@ class TestDownloadReleaseBinaryChecksum:
         assert result is False
         assert not (tmp_path / "gcode").exists()
 
-    def test_rejects_and_skips_placement_on_missing_checksum(self, tmp_path):
+    def test_rejects_and_skips_placement_on_missing_checksum(self, tmp_path: Path) -> None:
         archive = _release_tarball("gcode")
         with patch(
             "gobby.cli.install_setup.urlopen",

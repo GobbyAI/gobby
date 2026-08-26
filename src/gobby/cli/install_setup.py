@@ -39,6 +39,7 @@ from . import install_setup_ghook as _ghook_impl
 from . import install_setup_gwiki as _gwiki_impl
 from .install_setup_gdaemon import GdaemonInstallError, ensure_gdaemon
 from .install_setup_impeccable import ImpeccableInstallResult
+from .installers.postgres import fresh_local_database_url
 from .utils import get_install_dir
 
 logger = logging.getLogger(__name__)
@@ -316,7 +317,6 @@ def ensure_daemon_config(*, files_home: str | Path | None = None) -> dict[str, A
         source = "shared"
     else:
         data = {
-            "database_url": "postgresql://gobby:gobby_dev@localhost:60891/gobby",
             "postgres_pool": DEFAULT_POSTGRES_POOL_CONFIG.to_dict(),
             "daemon_port": 60887,
             "bind_host": "localhost",
@@ -326,6 +326,9 @@ def ensure_daemon_config(*, files_home: str | Path | None = None) -> dict[str, A
         source = "generated"
     data["datastore_mode"] = data.get("datastore_mode") or "local"
     data["files_home"] = str(validated)
+    # A fresh bootstrap is the only place a PostgreSQL password is minted; an
+    # existing bootstrap is returned above untouched and never rotated.
+    data["database_url"] = fresh_local_database_url()
     write_bootstrap_yaml(bootstrap_path, data)
     return {"created": True, "path": str(bootstrap_path), "source": source}
 

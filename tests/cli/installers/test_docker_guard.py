@@ -116,11 +116,7 @@ def test_postgres_install_fails_closed_before_compose_up(
     )
 
     with pytest.raises(DockerTestProtectError):
-        postgres_installer._install_docker(
-            gobby_home=tmp_path,
-            port=60891,
-            files_home=files_home,
-        )
+        postgres_installer._install_docker(gobby_home=tmp_path, files_home=files_home)
 
 
 def test_managed_services_compose_up_fails_closed(

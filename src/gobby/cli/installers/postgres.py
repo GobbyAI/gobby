@@ -6,7 +6,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import os
 import platform
 import secrets
 import shutil
@@ -44,6 +43,8 @@ _COMPOSE_SRC = _DATA_DIR / "docker-compose.services.yml"
 DEFAULT_POSTGRES_PORT = 60891
 DEFAULT_POSTGRES_DB = "gobby"
 DEFAULT_POSTGRES_USER = "gobby"
+# Named volume from docker-compose.services.yml; Gobby never removes it.
+POSTGRES_DATA_VOLUME = "gobby_postgres_data"
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,16 +165,12 @@ def _changed_compose_services(previous: str, current: str) -> frozenset[str]:
     )
 
 
-def install_postgres(
-    *,
-    gobby_home: Path | None = None,
-    port: int = DEFAULT_POSTGRES_PORT,
-) -> dict[str, Any]:
+def install_postgres(*, gobby_home: Path | None = None) -> dict[str, Any]:
     """Install or configure PostgreSQL for the Gobby hub."""
     home = gobby_home or get_gobby_home()
     try:
         with managed_services_lock(home, operation="postgres installer refresh"):
-            return _install_docker(gobby_home=home, port=port)
+            return _install_docker(gobby_home=home)
     except ManagedServicesLockError as exc:
         return {"success": False, "error": str(exc)}
 
@@ -181,7 +178,6 @@ def install_postgres(
 def _install_docker(
     *,
     gobby_home: Path | None,
-    port: int,
     files_home: Path | None = None,
 ) -> dict[str, Any]:
     home = gobby_home or get_gobby_home()
@@ -199,12 +195,9 @@ def _install_docker(
     compose_file = reconciliation.compose_file
     _sync_postgres_pgsearch_assets(gobby_home=home)
     try:
-        database_url, runtime = _resolve_postgres_install_database_url(
-            gobby_home=home,
-            port=port,
-        )
+        database_url, runtime = _resolve_postgres_install_database_url(gobby_home=home)
         env = runtime.environment
-    except (BootstrapConfigError, ComposeEnvironmentError, KeyError, click.ClickException) as exc:
+    except (BootstrapConfigError, ComposeEnvironmentError, click.ClickException) as exc:
         return {"success": False, "error": str(exc)}
 
     try:
@@ -243,7 +236,7 @@ def _install_docker(
         services_dir=services_dir,
         env=env,
     ):
-        return {"success": False, "error": "PostgreSQL did not become ready before timeout"}
+        return {"success": False, "error": _readiness_failure(home)}
 
     for extension in BASELINE_POSTGRES_EXTENSIONS:
         _probe_create_extension(
@@ -412,31 +405,31 @@ def _read_pgsearch_version_manifest() -> dict[str, str]:
     }
 
 
-def _resolve_postgres_install_database_url(
-    *,
-    gobby_home: Path,
-    port: int,
-) -> tuple[str, ComposeRuntime]:
+def _resolve_postgres_install_database_url(*, gobby_home: Path) -> tuple[str, ComposeRuntime]:
+    """Reuse the persisted DSN verbatim; only ``ensure_daemon_config`` mints a new one."""
+    from gobby.config.bootstrap import load_bootstrap
+
     bootstrap_path = gobby_home / "bootstrap.yaml"
-    if bootstrap_path.exists():
-        from gobby.config.bootstrap import load_bootstrap
-
-        existing_url = load_bootstrap(str(bootstrap_path)).database_url
-        if existing_url:
-            runtime = resolve_compose_runtime(
-                gobby_home,
-                database_url=existing_url,
-                profiles=("postgres",),
-            )
-            return _database_url_from_compose_environment(runtime.environment), runtime
-
-    password = os.environ.get("GOBBY_POSTGRES_PASSWORD") or secrets.token_urlsafe(32)
+    existing_url = (
+        load_bootstrap(str(bootstrap_path)).database_url if bootstrap_path.exists() else None
+    )
+    if not existing_url:
+        raise click.ClickException(f"{bootstrap_path} has no database_url; run `gobby install`")
     runtime = resolve_compose_runtime(
         gobby_home,
-        database_url=_docker_database_url(port, password=password),
+        database_url=existing_url,
         profiles=("postgres",),
     )
-    return _database_url_from_compose_environment(runtime.environment), runtime
+    return existing_url, runtime
+
+
+def _readiness_failure(gobby_home: Path) -> str:
+    return (
+        "PostgreSQL did not become ready before timeout. If the "
+        f"{POSTGRES_DATA_VOLUME} volume predates this install, its password may differ "
+        f"from database_url in {gobby_home / 'bootstrap.yaml'}; restore the original "
+        "bootstrap.yaml or remove the volume yourself (Gobby never removes data volumes)."
+    )
 
 
 def _ensure_local_files_home(
@@ -602,26 +595,13 @@ def _debian_arch(machine: str) -> str:
     return normalized
 
 
-def _docker_database_url(
-    port: int,
-    password: str,
-) -> str:
-    if not password:
-        raise click.ClickException(
-            "PostgreSQL credentials are unavailable; run `gobby install` to configure them."
-        )
+def fresh_local_database_url(port: int = DEFAULT_POSTGRES_PORT) -> str:
+    """DSN for a brand-new local install: a random URL-safe password, never rotated later."""
+    password = quote(secrets.token_urlsafe(32), safe="")
     return (
-        f"postgresql://{quote(DEFAULT_POSTGRES_USER, safe='')}:{quote(password, safe='')}"
+        f"postgresql://{quote(DEFAULT_POSTGRES_USER, safe='')}:{password}"
         f"@localhost:{port}/{DEFAULT_POSTGRES_DB}"
     )
-
-
-def _database_url_from_compose_environment(env: dict[str, str]) -> str:
-    user = quote(env["GOBBY_POSTGRES_USER"], safe="")
-    password = quote(env["GOBBY_POSTGRES_PASSWORD"], safe="")
-    port = env["GOBBY_POSTGRES_PORT"]
-    database = quote(env["GOBBY_POSTGRES_DB"], safe="")
-    return f"postgresql://{user}:{password}@localhost:{port}/{database}"
 
 
 def _read_bootstrap_database_url(gobby_home: Path) -> str | None:

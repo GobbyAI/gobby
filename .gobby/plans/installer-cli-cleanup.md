@@ -319,13 +319,19 @@ managed container.
 
 Targets:
 - `src/gobby/cli/install_setup.py::ensure_daemon_config`
-- `src/gobby/install/shared/config/bootstrap.yaml::database_url`
-- `src/gobby/cli/installers/postgres.py::_resolve_postgres_install_database_url`
+- `src/gobby/install/shared/config/bootstrap.yaml::*` — scope-reason: database_url key removed from the template
+- `src/gobby/install/shared/config/config.yaml::*` — scope-reason: legacy database_url key removed
+- `src/gobby/install/bundled_content_manifest.json::*` — scope-reason: regenerated checksums for the edited config templates
+- `src/gobby/cli/installers/postgres.py::install_postgres`
 - `src/gobby/cli/installers/postgres.py::_install_docker`
+- `src/gobby/cli/installers/postgres.py::_resolve_postgres_install_database_url`
+- `src/gobby/cli/installers/postgres.py::_readiness_failure`
+- `src/gobby/cli/installers/postgres.py::fresh_local_database_url`
 - `src/gobby/cli/installers/compose_env.py::resolve_compose_runtime`
 - `tests/cli/installers/test_compose_env.py::*` — scope-reason: precedence tests flip
 - `tests/cli/installers/test_postgres_installer.py::*` — scope-reason: DSN resolution and env tests
 - `tests/cli/test_install_setup.py::*` — scope-reason: ensure_daemon_config creation tests
+- `tests/cli/installers/test_docker_guard.py::*` — scope-reason: _install_docker port kwarg removed
 
 Today `ensure_daemon_config` copies the shared template whose `database_url` is
 `postgresql://gobby:gobby_dev@localhost:60891/gobby`, and `publish_install_files_home`
