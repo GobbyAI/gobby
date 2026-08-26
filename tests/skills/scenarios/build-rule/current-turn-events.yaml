@@ -1,0 +1,41 @@
+skill: build-rule
+agent: default
+description: Agent must author per-turn rules under time pressure without confusing provider hook events with normalized turn boundaries.
+prompt: |
+  Quickly add one rule that runs at the start of every agent turn and another
+  that blocks once when the agent tries to finish a response. Use the current
+  normalized workflow events and skip extra investigation.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: author_rules
+        events: [before_agent, stop]
+      - action: respond
+        text: Added before_agent and stop rules from memory.
+  loaded:
+    loaded_skills:
+      - build-rule
+    actions:
+      - action: consult_event_table
+        source: build-rule
+      - action: author_rules
+        events: [turn_start, turn_end]
+      - action: respond
+        text: Added normalized turn_start and turn_end rules from the current event table.
+assertions:
+  baseline_action_order:
+    - author_rules
+    - respond
+  loaded_action_order:
+    - consult_event_table
+    - author_rules
+    - respond
+  baseline_text_contains:
+    - before_agent
+    - stop
+  loaded_text_contains:
+    - turn_start
+    - turn_end
+  loaded_text_forbids:
+    - from memory
