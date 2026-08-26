@@ -60,19 +60,9 @@ def _generate_falkordb_password() -> str:
     return validate_falkordb_password(password)
 
 
-def _resolve_falkordb_password(
-    password: str | None = None,
-    *,
-    gobby_home: Path | None = None,
-) -> ResolvedFalkorPassword:
+def _resolve_falkordb_password(*, gobby_home: Path | None = None) -> ResolvedFalkorPassword:
+    """Reuse the stored ``falkordb_password`` secret, else generate a fresh one."""
     home = _normalize_home(gobby_home)
-    if password:
-        return ResolvedFalkorPassword(
-            value=validate_falkordb_password(password),
-            source="provided",
-            expose_value=False,
-        )
-
     database_stack = ExitStack()
     db = database_stack.enter_context(_config_db(home))
     try:
@@ -115,33 +105,23 @@ def _resolve_falkordb_password(
     )
 
 
-def install_falkordb(
-    *,
-    gobby_home: Path | None = None,
-    password: str | None = None,
-) -> dict[str, Any]:
+def install_falkordb(*, gobby_home: Path | None = None) -> dict[str, Any]:
     """Install FalkorDB via Docker Compose."""
     home = _normalize_home(gobby_home)
     try:
         with managed_services_lock(home, operation="falkordb installer refresh"):
-            return _install_falkordb_locked(gobby_home=home, password=password)
+            return _install_falkordb_locked(gobby_home=home)
     except ManagedServicesLockError as exc:
         return {"success": False, "error": str(exc)}
 
 
-def _install_falkordb_locked(
-    *,
-    gobby_home: Path,
-    password: str | None,
-) -> dict[str, Any]:
+def _install_falkordb_locked(*, gobby_home: Path) -> dict[str, Any]:
     home = gobby_home
-    if password is not None:
-        validate_falkordb_password(password)
     if not shutil.which("docker"):
         return {"success": False, "error": "Docker not found. Install Docker to use FalkorDB."}
 
     try:
-        resolved = _resolve_falkordb_password(password, gobby_home=home)
+        resolved = _resolve_falkordb_password(gobby_home=home)
     except (OSError, RuntimeError, ValueError) as exc:
         return {"success": False, "error": f"Failed to read FalkorDB config: {exc}"}
 
