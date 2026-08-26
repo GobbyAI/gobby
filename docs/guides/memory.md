@@ -379,11 +379,11 @@ sequenceDiagram
     participant Agent
 
     User->>RuleEngine: turn_start(prompt)
-    RuleEngine->>Memory: bootstrap_session_title
     RuleEngine->>Memory: search_memories(limit=2, min_score=0.7)
     RuleEngine-->>Agent: inject <project-memory>
-    RuleEngine-->>Agent: one-time memory capture nudge
+    RuleEngine-->>Agent: memory skill on the initial turn, concise reminder later
     Agent-->>User: response
+    RuleEngine-->>Agent: post-close review request on turn_end (when tasks closed)
     RuleEngine->>Memory: build_turn_and_digest on turn_end
 ```
 
@@ -391,9 +391,12 @@ Current bundled memory rules:
 
 | Rule | Event | Behavior |
 | --- | --- | --- |
-| `bootstrap-session-title-on-prompt` | `turn_start` | Sets a heuristic title before the first completed turn. |
 | `memory-recall-on-prompt` | `turn_start` | Searches relevant memories and injects a `<project-memory>` block. |
-| `memory-capture-nudge` | `turn_start` | Reminds the agent once per session to save durable facts or preferences. |
+| `load-memory-guidance-on-initial-turn` | `turn_start` | Loads the `memory` skill until the first turn-end check passes. |
+| `check-memory-guidance-on-initial-stop` | `turn_end` | Blocks the first turn end once until the `memory` skill is loaded or its fetch failed. |
+| `remind-memory-guidance-on-later-turns` | `turn_start` | Injects a concise memory reminder once per later parent turn. |
+| `queue-task-memory-review-after-close` | `after_tool` | Queues completed worked leaves closed through `close_task` for one review. |
+| `review-closed-task-memories-on-stop` | `turn_end` | Blocks once per queued closure set with a `review_task_memories` request. |
 | `digest-on-response` | `turn_end` | Builds a turn record and appends to the session digest in the background. |
 | `digest-on-plan-turn-end` | `after_tool` | Builds a digest when plan mode ends through supported plan tools. |
 | `reset-memory-tracking-on-start` | `session_start` | Clears injected-memory tracking after clear, compact, or selected resume events. |

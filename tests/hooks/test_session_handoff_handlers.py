@@ -878,7 +878,8 @@ class TestPrepareCompactContinuationVariables:
                 "loaded_skills": ["tasks"],
                 "suggested_skill_names": ["python"],
                 "workflow_requested_skills": ["restraint"],
-                "memory_nudge_fired": True,
+                "_memory_initial_stop_checked": True,
+                "_memory_pending_task_reviews": [{"closure_id": "task:closed"}],
                 "injected_memory_ids": ["mem-1"],
                 "_agent_context_injected": True,
                 "_agent_context_rehydrate_pending": False,
@@ -902,7 +903,8 @@ class TestPrepareCompactContinuationVariables:
         assert variables["loaded_skills"] == []
         assert variables["suggested_skill_names"] == []
         assert variables["workflow_requested_skills"] == []
-        assert variables["memory_nudge_fired"] is False
+        assert variables["_memory_initial_stop_checked"] is True
+        assert variables["_memory_pending_task_reviews"] == [{"closure_id": "task:closed"}]
         assert variables["injected_memory_ids"] == []
         assert variables["_agent_context_injected"] is False
         assert variables["_agent_context_rehydrate_pending"] is True

@@ -1,0 +1,39 @@
+tags: [memory-lifecycle, memory, lifecycle, tasks, gobby, default]
+
+rules:
+  queue-task-memory-review-after-close:
+    description: "Queue completed worked leaves for one post-close memory review"
+    event: after_tool
+    enabled: true
+    priority: 13
+    when: >
+      event.data.get('mcp_server') == 'gobby-tasks'
+      and event.data.get('mcp_tool') == 'close_task'
+      and tool_call_succeeded()
+      and isinstance(event.data.get('tool_output'), dict)
+    effects:
+      - type: set_variable
+        variable: _memory_pending_task_reviews
+        value: "queue_memory_review_close(event.data, tool_input)"
+      - type: set_variable
+        variable: _memory_review_stop_delivered
+        value: false
+
+  review-closed-task-memories-on-stop:
+    description: "Request one bounded memory review continuation for pending closures"
+    event: turn_end
+    enabled: true
+    priority: 2
+    when: >
+      bool(variables.get('_memory_pending_task_reviews'))
+      and not variables.get('_memory_review_stop_delivered')
+    effects:
+      - type: block
+        acknowledge_variable: _memory_review_stop_delivered
+        reason: |
+          Closed task(s) need one bounded memory review:
+          {% for item in variables.get('_memory_pending_task_reviews') or [] %}- {{ item.task_ref }} (task_id `{{ item.task_id }}`): {{ item.changes_summary | truncate(200) }}
+          {% endfor %}For each, call `gobby-memory:review_task_memories(task_id, changes_summary)`;
+          update/delete stale entries or record durable knowledge only when warranted.
+          Most tasks need no memory write. Use the returned `source_task_id` for any
+          new memory.

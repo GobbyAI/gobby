@@ -92,9 +92,21 @@ variables:
   code_index_navigation_used_this_turn:
     value: false
     description: "True after successful gcode navigation in the current turn"
-  memory_nudge_fired:
+  _memory_initial_stop_checked:
     value: false
-    description: "True after memory-capture-nudge has fired once this session"
+    description: "True after the first turn end checks initial memory skill loading"
+  _memory_reminder_turn_seq:
+    value: null
+    description: "Parent turn sequence that last received the concise memory reminder"
+  _memory_pending_task_reviews:
+    value: []
+    description: "Closed worked leaves awaiting the bounded post-close memory review turn end"
+  _memory_review_stop_delivered:
+    value: false
+    description: "True once the pending post-close memory review block was delivered to the agent"
+  _memory_task_review_records:
+    value: []
+    description: "Successful review_task_memories results keyed by canonical task closure"
   plan_memory_write_nudge_fired:
     value: false
     description: "True after the planning-context memory-write guard has fired once this epoch"

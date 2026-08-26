@@ -246,6 +246,7 @@ def setup_internal_registries(
             startup_config=initial_config,
             config_resolver=config_resolver,
             dream_coordinator_resolver=dream_coordinator_resolver,
+            task_manager=task_manager,
         )
         manager.add_registry(memory_registry)
         logger.debug("Memory registry initialized")

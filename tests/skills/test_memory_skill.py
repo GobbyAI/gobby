@@ -14,9 +14,7 @@ def test_memory_skill_routes_plan_drafts_to_plan_artifacts() -> None:
     content = MEMORY_SKILL.read_text(encoding="utf-8")
 
     assert (
-        "| Draft direction, enhancement suggestion, or review finding | **Plan** | "
-        "Belongs in the plan artifact or evidence |"
+        "| Draft direction, implementation approach, enhancement suggestion, or review finding "
+        "| Plan or evidence |"
     ) in content
-    assert (
-        "- **Plan content** — draft direction, enhancement suggestions, and review findings"
-    ) in content
+    assert "Never store bugs as memories." in content

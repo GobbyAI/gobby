@@ -290,8 +290,14 @@ def test_override_mode_project_ref_name_canonicalized_for_context_not_session_sc
         # UUID session_ref is authoritative across projects — resolver is NOT
         # scoped by the project override.
         mgr.resolve_session_reference.assert_called_once_with(SESSION_EXTERNAL_UUID, None)
+        assert tokens.resolved_session_id == SESSION_PLATFORM_UUID
+        ctx = get_session_context()
+        assert ctx is not None
+        assert ctx.session_id == SESSION_PLATFORM_UUID
+        assert ctx.conversation_id == SESSION_EXTERNAL_UUID
         # Project *context*, on the other hand, uses the canonical UUID.
         assert tokens.resolved_project_id == PROJECT_B_UUID
+        assert tokens.project_token == mock_from_ref.return_value
         mock_from_ref.assert_called_once_with(PROJECT_B_UUID, mgr.db)
     finally:
         reset_seeded_contexts(tokens)
@@ -307,7 +313,7 @@ def test_override_mode_hash_n_ref_uses_project_ref_as_session_scope() -> None:
         patch(
             "gobby.utils.project_context.set_project_context_from_ref",
             return_value="tok",
-        ),
+        ) as mock_from_ref,
     ):
         mock_pm = MagicMock()
         project = MagicMock()
@@ -323,6 +329,14 @@ def test_override_mode_hash_n_ref_uses_project_ref_as_session_scope() -> None:
         )
     try:
         mgr.resolve_session_reference.assert_called_once_with("#5", PROJECT_B_UUID)
+        assert tokens.resolved_session_id == SESSION_PLATFORM_UUID
+        assert tokens.resolved_project_id == PROJECT_B_UUID
+        assert tokens.project_token == mock_from_ref.return_value
+        mock_from_ref.assert_called_once_with(PROJECT_B_UUID, mgr.db)
+        ctx = get_session_context()
+        assert ctx is not None
+        assert ctx.session_id == SESSION_PLATFORM_UUID
+        assert ctx.conversation_id == SESSION_EXTERNAL_UUID
     finally:
         reset_seeded_contexts(tokens)
 
@@ -376,7 +390,7 @@ def test_fallback_mode_uuid_session_ref_not_scoped_by_header_project() -> None:
         patch(
             "gobby.utils.project_context.set_project_context_from_session",
             return_value="session-derived-token",
-        ),
+        ) as mock_from_session,
     ):
         mock_pm = MagicMock()
         project = MagicMock()
@@ -395,6 +409,14 @@ def test_fallback_mode_uuid_session_ref_not_scoped_by_header_project() -> None:
         # Header project is NOT passed to the session resolver — UUID refs must
         # resolve across projects regardless of header.
         mgr.resolve_session_reference.assert_called_once_with(SESSION_EXTERNAL_UUID, None)
+        assert tokens.resolved_session_id == SESSION_PLATFORM_UUID
+        assert tokens.resolved_project_id == PROJECT_B_UUID
+        assert tokens.project_token == mock_from_session.return_value
+        mock_from_session.assert_called_once()
+        ctx = get_session_context()
+        assert ctx is not None
+        assert ctx.session_id == SESSION_PLATFORM_UUID
+        assert ctx.conversation_id == SESSION_EXTERNAL_UUID
     finally:
         reset_seeded_contexts(tokens)
 
@@ -525,6 +547,12 @@ def test_fallback_mode_session_derivation_fails_falls_through_to_project_ref() -
         )
     try:
         assert tokens.project_token == "fallback-token"
+        assert tokens.resolved_session_id == SESSION_PLATFORM_UUID
+        assert tokens.resolved_project_id == PROJECT_B_UUID
+        ctx = get_session_context()
+        assert ctx is not None
+        assert ctx.session_id == SESSION_PLATFORM_UUID
+        assert ctx.conversation_id == SESSION_EXTERNAL_UUID
         mock_from_ref.assert_called_once_with(PROJECT_B_UUID, mgr.db)
     finally:
         reset_seeded_contexts(tokens)

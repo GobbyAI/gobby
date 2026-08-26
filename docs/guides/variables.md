@@ -371,7 +371,11 @@ These are the bundled default variables (from `gobby-default-variables.yaml`):
 | `is_subagent` | `false` | bool | Whether a native subagent is currently active |
 | `loaded_skills` | `[]` | list | Skills loaded through `gobby-skills:get_skill` |
 | `code_index_navigation_used_this_turn` | `false` | bool | True after successful gcode navigation in the current turn |
-| `memory_nudge_fired` | `false` | bool | Whether the memory capture nudge fired this session |
+| `_memory_initial_stop_checked` | `false` | bool | True after the first turn end checks initial memory skill loading |
+| `_memory_reminder_turn_seq` | `null` | int | Parent turn sequence that last received the concise memory reminder |
+| `_memory_pending_task_reviews` | `[]` | list | Closed worked leaves awaiting the bounded post-close memory review turn end |
+| `_memory_review_stop_delivered` | `false` | bool | True once the pending post-close memory review block was delivered to the agent |
+| `_memory_task_review_records` | `[]` | list | Successful `review_task_memories` results keyed by canonical task closure |
 | `skill_discovery_instructions_shown` | `false` | bool | Whether skill discovery instructions were shown |
 | `brevity_disabled` | `false` | bool | Whether brevity reinforcement is disabled |
 | `brevity_level` | `"normal"` | string | Active brevity level (lite/normal/max); set by `gobby-skills:get_skill` on each leveled load |

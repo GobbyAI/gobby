@@ -1,0 +1,65 @@
+tags: [memory-lifecycle, memory, lifecycle, gobby, default]
+
+rules:
+  load-memory-guidance-on-initial-turn:
+    description: "Request the memory skill during the initial turn"
+    event: turn_start
+    enabled: true
+    priority: 9
+    when: >
+      not variables.get('_memory_initial_stop_checked')
+      and not skill_loaded('memory')
+      and not has_open_tool_error(
+        "gobby-skills/get_skill",
+        {"name": "memory"}
+      )
+    effects:
+      - type: load_skill
+        skill: memory
+
+  check-memory-guidance-on-initial-stop:
+    description: "Check memory skill loading once at the first turn end"
+    event: turn_end
+    enabled: true
+    priority: 1
+    when: "not variables.get('_memory_initial_stop_checked')"
+    effects:
+      - type: set_variable
+        variable: _memory_initial_stop_checked
+        value: true
+        when: >
+          skill_loaded('memory')
+          or has_open_tool_error(
+            "gobby-skills/get_skill",
+            {"name": "memory"}
+          )
+      - type: block
+        when: >
+          not skill_loaded('memory')
+          and not has_open_tool_error(
+            "gobby-skills/get_skill",
+            {"name": "memory"}
+          )
+        acknowledge_variable: _memory_initial_stop_checked
+        reason: '{{ skill_fetch_directive("memory") }}'
+
+  remind-memory-guidance-on-later-turns:
+    description: "Inject concise memory judgment on later parent-user prompts"
+    event: turn_start
+    enabled: true
+    priority: 11
+    when: >
+      not variables.get('is_spawned_agent')
+      and variables.get('_memory_initial_stop_checked')
+      and variables.get('parent_turn_seq') is not none
+      and variables.get('_memory_reminder_turn_seq')
+          != variables.get('parent_turn_seq')
+    effects:
+      - type: inject_context
+        template: >
+          Memory reminder: use recalled memories; search `gobby-memory` when injected
+          context is insufficient. Record only explicitly requested or durable,
+          non-obvious knowledge. Most turns need no memory write.
+      - type: set_variable
+        variable: _memory_reminder_turn_seq
+        value: "{{ variables.get('parent_turn_seq') }}"

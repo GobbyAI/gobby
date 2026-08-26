@@ -182,24 +182,27 @@ async def test_send_message_adaptive_card(
             created_at=_TIMESTAMP,
         )
 
-        await adapter.send_message(message)
+        platform_message_id = await adapter.send_message(message)
 
-        expected_json = {
-            "type": "message",
-            "text": "",
-            "attachments": [
-                {
-                    "contentType": "application/vnd.microsoft.card.adaptive",
-                    "content": {"type": "AdaptiveCard", "version": "1.0", "body": []},
-                }
-            ],
-        }
-
-        mock_client.post.assert_called_with(
+        assert platform_message_id == "msg-123"
+        send_call = mock_client.post.call_args
+        assert send_call.args == (
             "https://smba.trafficmanager.net/apis/v3/conversations/conv-1/activities",
-            json=expected_json,
-            headers={"Authorization": "Bearer test-token", "Content-Type": "application/json"},
         )
+        activity = send_call.kwargs["json"]
+        assert activity["type"] == "message"
+        assert activity["text"] == ""
+        assert activity["attachments"] == [
+            {
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "content": {"type": "AdaptiveCard", "version": "1.0", "body": []},
+            }
+        ]
+        assert "replyToId" not in activity
+        assert send_call.kwargs["headers"] == {
+            "Authorization": "Bearer test-token",
+            "Content-Type": "application/json",
+        }
 
 
 def test_parse_webhook(adapter: TeamsAdapter) -> None:

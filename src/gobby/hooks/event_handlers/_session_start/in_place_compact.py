@@ -37,7 +37,6 @@ def apply_in_place_compact_context_loss(handler: Any, session_id: str | None) ->
         "suggested_skill_names": [],
         "loaded_skills": [],
         "workflow_requested_skills": [],
-        "memory_nudge_fired": False,
         "injected_memory_ids": [],
     }
     if _variable_enabled(current.get("auto_inject_handoff"), default=True):

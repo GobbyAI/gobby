@@ -10,7 +10,11 @@ Active memory-lifecycle rules:
 - reset-memory-tracking-on-start: set_variable on session_start
 - increment-parent-turn-seq: set_variable on turn_start before daemon recall
 - memory-recall-on-prompt: mcp_call on turn_start
-- memory-capture-nudge: inject_context on turn_start
+- load-memory-guidance-on-initial-turn: load_skill on the initial turn_start
+- check-memory-guidance-on-initial-stop: acknowledged block on the first turn_end
+- remind-memory-guidance-on-later-turns: inject_context on later parent turn_starts
+- queue-task-memory-review-after-close: set_variable on after_tool close_task
+- review-closed-task-memories-on-stop: acknowledged block on turn_end
 - guard-plan-memory-writes: one-time block on create_memory and update_memory
 - require-memory-recall-before-tool: block on before_tool
 - require-memory-recall-before-turn-end: block on turn_end
@@ -21,15 +25,20 @@ Active memory-lifecycle rules:
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
-from gobby.hooks.events import HookEventType
+from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody
+from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 from gobby.workflows.sync_rules import sync_bundled_rules
 
@@ -42,7 +51,11 @@ MEMORY_RULES = {
     "reset-memory-tracking-on-start",
     "increment-parent-turn-seq",
     "memory-recall-on-prompt",
-    "memory-capture-nudge",
+    "load-memory-guidance-on-initial-turn",
+    "check-memory-guidance-on-initial-stop",
+    "remind-memory-guidance-on-later-turns",
+    "queue-task-memory-review-after-close",
+    "review-closed-task-memories-on-stop",
     "guard-plan-memory-writes",
     "require-memory-recall-before-tool",
     "require-memory-recall-before-turn-end",
@@ -51,6 +64,7 @@ MEMORY_RULES = {
 REMOVED_HELPER_RULES = {
     "bootstrap-session-title-on-prompt",
     "cancel-stale-memory-recall-helpers",
+    "memory-capture-nudge",
     "spawn-memory-recall-helper",
 }
 
@@ -110,6 +124,7 @@ class TestMemoryLifecycleSync:
                     assert effect.type in {
                         "set_variable",
                         "inject_context",
+                        "load_skill",
                         "mcp_call",
                         "block",
                     }
@@ -344,66 +359,487 @@ class TestIncrementParentTurnSeq:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# memory-capture-nudge
+# layered memory guidance and post-close review
 # ═══════════════════════════════════════════════════════════════════════
 
+SESSION_ID = "11111111-1111-4111-8111-111111111111"
+TASK_ID = "22222222-2222-4222-8222-222222220043"
 
-class TestMemoryCaptureNudge:
-    """Nudge agent to save user preferences."""
 
-    def test_event_and_effect(self, db, manager) -> None:
+def _turn_end_event(
+    event_type: HookEventType = HookEventType.STOP,
+    *,
+    source: SessionSource = SessionSource.CODEX,
+    data: dict[str, Any] | None = None,
+) -> HookEvent:
+    return HookEvent(
+        event_type=event_type,
+        session_id=SESSION_ID,
+        source=source,
+        timestamp=datetime.now(UTC),
+        data=data or {},
+    )
+
+
+def _initial_gate_variables(**overrides: Any) -> dict[str, Any]:
+    variables: dict[str, Any] = {
+        "_memory_initial_stop_checked": False,
+        "loaded_skills": [],
+        "open_tool_errors": [],
+    }
+    variables.update(overrides)
+    return variables
+
+
+def _pending_review(task_ref: str, summary: str) -> dict[str, str]:
+    number = task_ref.lstrip("#")
+    return {
+        "closure_id": f"task-{number}:closed",
+        "task_id": f"task-{number}",
+        "task_ref": task_ref,
+        "changes_summary": summary,
+    }
+
+
+# Hardcoded turn-end overrides in RuleEngine core: each returns before the
+# rule-level block is delivered, so gate state must survive it untouched.
+TURN_END_OVERRIDES = [
+    pytest.param({"tool_block_pending": True}, "block", "tool-failure-recovery", id="tool_block"),
+    pytest.param({"edit_write_pending": True}, "block", "edit-write-recovery", id="edit_write"),
+    pytest.param({"force_allow_stop": True}, "allow", "", id="force_allow"),
+]
+
+
+def _review_variables(*pending: dict[str, str], **overrides: Any) -> dict[str, Any]:
+    variables: dict[str, Any] = {
+        "_memory_initial_stop_checked": True,
+        "loaded_skills": ["memory"],
+        "_memory_pending_task_reviews": list(pending),
+        "_memory_review_stop_delivered": False,
+    }
+    variables.update(overrides)
+    return variables
+
+
+class TestLayeredMemoryGuidance:
+    def test_initial_turn_requests_memory_skill(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
-        row = manager.get_by_name("memory-capture-nudge")
+        row = manager.get_by_name("load-memory-guidance-on-initial-turn")
         assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
+        effects = body.resolved_effects
+
         assert body.event.value == "turn_start"
-        assert body.effects[0].type == "inject_context"
-        assert body.effects[0].template is not None
-        assert "create_memory" in body.effects[0].template
-        assert "Draft direction, enhancement suggestions, and review findings" in (
-            body.effects[0].template
+        assert effects[0].type == "load_skill"
+        assert effects[0].skill == "memory"
+        assert "_memory_initial_stop_checked" in (body.when or "")
+        assert "has_open_tool_error" in (body.when or "")
+
+    @pytest.mark.asyncio
+    async def test_initial_turn_emits_skill_directive_and_records_reload(
+        self, db: HubDatabase
+    ) -> None:
+        _sync_bundled(db)
+        variables: dict[str, Any] = {
+            "_memory_initial_stop_checked": False,
+            "is_spawned_agent": False,
+            "parent_turn_seq": 0,
+            "loaded_skills": [],
+            "workflow_requested_skills": [],
+            "open_tool_errors": [],
+        }
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id="11111111-1111-4111-8111-111111111111",
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={"prompt": "Implement the requested memory guidance."},
         )
-        assert "plan artifact or evidence" in body.effects[0].template
 
-    def test_has_when_condition(self, db, manager) -> None:
-        """Only nudge on substantial prompts (not slash commands)."""
-        _sync_bundled(db)
-        row = manager.get_by_name("memory-capture-nudge")
-        body = RuleDefinitionBody.model_validate(row.definition_json)
-        assert body.when is not None
-        assert "prompt" in body.when
+        response = await RuleEngine(db).evaluate(event, event.session_id, variables)
 
-    def test_skips_taskless_spawned_agents(self, db, manager) -> None:
-        """Spawned reviewers get daemon-composed prompts, never preferences (#20451)."""
+        assert skill_fetch_directive("memory") in (response.context or "")
+        assert "memory" in variables["workflow_requested_skills"]
+
+    def test_initial_turn_end_gate_sets_flag_only_when_passed_or_acknowledged(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
-        row = manager.get_by_name("memory-capture-nudge")
+        row = manager.get_by_name("check-memory-guidance-on-initial-stop")
+        assert row is not None
+        assert row.priority == 1
         body = RuleDefinitionBody.model_validate(row.definition_json)
-        assert body.when is not None
-        prompt_event = {"data": {"prompt": "Please remember this durable preference"}}
-        taskless = SafeExpressionEvaluator(
+        effects = body.resolved_effects
+
+        assert body.event.value == "turn_end"
+        assert effects[0].type == "set_variable"
+        assert effects[0].variable == "_memory_initial_stop_checked"
+        assert effects[0].value is True
+        assert "skill_loaded('memory')" in (effects[0].when or "")
+        assert "has_open_tool_error" in (effects[0].when or "")
+        assert effects[1].type == "block"
+        assert effects[1].acknowledge_variable == "_memory_initial_stop_checked"
+        assert "not skill_loaded('memory')" in (effects[1].when or "")
+        assert "has_open_tool_error" in (effects[1].when or "")
+
+    def test_matching_fetch_failure_fails_initial_stop_open(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("check-memory-guidance-on-initial-stop")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+        block_when = body.resolved_effects[1].when
+        assert block_when is not None
+
+        evaluator = SafeExpressionEvaluator(
+            {"variables": {"loaded_skills": []}},
             {
-                "event": prompt_event,
+                "skill_loaded": lambda _name: False,
+                "has_open_tool_error": lambda _tool, _arguments: True,
+            },
+        )
+        assert evaluator.evaluate(block_when) is False
+
+    def test_later_reminder_is_parent_only_and_deduplicated_per_turn(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("remind-memory-guidance-on-later-turns")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+        assert body.resolved_effects[0].template == (
+            "Memory reminder: use recalled memories; search `gobby-memory` when injected "
+            "context is insufficient. Record only explicitly requested or durable, "
+            "non-obvious knowledge. Most turns need no memory write.\n"
+        )
+
+        first = SafeExpressionEvaluator(
+            {
+                "variables": {
+                    "is_spawned_agent": False,
+                    "_memory_initial_stop_checked": True,
+                    "parent_turn_seq": 8,
+                }
+            },
+            {},
+        )
+        duplicate = SafeExpressionEvaluator(
+            {
+                "variables": {
+                    "is_spawned_agent": False,
+                    "_memory_initial_stop_checked": True,
+                    "parent_turn_seq": 8,
+                    "_memory_reminder_turn_seq": 8,
+                }
+            },
+            {},
+        )
+        spawned = SafeExpressionEvaluator(
+            {
                 "variables": {
                     "is_spawned_agent": True,
-                    "task_claimed": False,
-                    "auto_task_ref": None,
+                    "_memory_initial_stop_checked": True,
+                    "parent_turn_seq": 8,
+                }
+            },
+            {},
+        )
+
+        assert body.when is not None
+        assert first.evaluate(body.when) is True
+        assert duplicate.evaluate(body.when) is False
+        assert spawned.evaluate(body.when) is False
+
+    @pytest.mark.asyncio
+    async def test_first_turn_end_blocks_once_and_consumes_gate(self, db: HubDatabase) -> None:
+        _sync_bundled(db)
+        variables = _initial_gate_variables()
+        engine = RuleEngine(db)
+        event = _turn_end_event()
+
+        first = await engine.evaluate(event, SESSION_ID, variables)
+        second = await engine.evaluate(event, SESSION_ID, variables)
+
+        assert first.decision == "block"
+        assert skill_fetch_directive("memory") in (first.reason or "")
+        assert variables["_memory_initial_stop_checked"] is True
+        assert "check-memory-guidance-on-initial-stop" not in (second.reason or "")
+
+    @pytest.mark.asyncio
+    async def test_loaded_skill_passes_initial_gate_without_block(self, db: HubDatabase) -> None:
+        _sync_bundled(db)
+        variables = _initial_gate_variables(loaded_skills=["memory"])
+
+        response = await RuleEngine(db).evaluate(_turn_end_event(), SESSION_ID, variables)
+
+        assert "check-memory-guidance-on-initial-stop" not in (response.reason or "")
+        assert variables["_memory_initial_stop_checked"] is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("override", "decision", "marker"), TURN_END_OVERRIDES)
+    async def test_turn_end_override_leaves_initial_gate_armed(
+        self,
+        db: HubDatabase,
+        override: dict[str, bool],
+        decision: str,
+        marker: str,
+    ) -> None:
+        _sync_bundled(db)
+        variables = _initial_gate_variables(**override)
+        engine = RuleEngine(db)
+        event = _turn_end_event()
+
+        overridden = await engine.evaluate(event, SESSION_ID, variables)
+        overridden_flag = variables["_memory_initial_stop_checked"]
+        for key in override:
+            variables[key] = False
+        delivered = await engine.evaluate(event, SESSION_ID, variables)
+
+        assert overridden.decision == decision
+        assert marker in (overridden.reason or "")
+        assert skill_fetch_directive("memory") not in (overridden.reason or "")
+        assert overridden_flag is False
+        assert delivered.decision == "block"
+        assert skill_fetch_directive("memory") in (delivered.reason or "")
+        assert variables["_memory_initial_stop_checked"] is True
+
+    @pytest.mark.asyncio
+    async def test_manual_compact_stop_skips_initial_gate(self, db: HubDatabase) -> None:
+        _sync_bundled(db)
+        variables = _initial_gate_variables()
+        engine = RuleEngine(db)
+
+        await engine.evaluate(
+            _turn_end_event(HookEventType.PRE_COMPACT, data={"trigger": "manual"}),
+            SESSION_ID,
+            variables,
+        )
+        response = await engine.evaluate(_turn_end_event(), SESSION_ID, variables)
+
+        assert response.decision == "allow"
+        assert variables["_memory_initial_stop_checked"] is False
+
+    @pytest.mark.asyncio
+    async def test_after_agent_fires_initial_gate_for_other_providers(
+        self, db: HubDatabase
+    ) -> None:
+        _sync_bundled(db)
+        variables = _initial_gate_variables()
+        event = _turn_end_event(HookEventType.AFTER_AGENT, source=SessionSource.QWEN)
+
+        response = await RuleEngine(db).evaluate(event, SESSION_ID, variables)
+
+        assert response.decision == "block"
+        assert skill_fetch_directive("memory") in (response.reason or "")
+        assert variables["_memory_initial_stop_checked"] is True
+
+
+class TestPostCloseMemoryReviewRules:
+    def test_queue_rule_uses_normalized_success_and_resets_delivery_flag(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("queue-task-memory-review-after-close")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+        effects = body.resolved_effects
+
+        assert body.event.value == "after_tool"
+        assert "mcp_server" in (body.when or "")
+        assert "mcp_tool" in (body.when or "")
+        assert "tool_call_succeeded" in (body.when or "")
+        assert effects[0].variable == "_memory_pending_task_reviews"
+        assert effects[0].value == "queue_memory_review_close(event.data, tool_input)"
+        assert effects[1].type == "set_variable"
+        assert effects[1].variable == "_memory_review_stop_delivered"
+        assert effects[1].value is False
+
+    def test_turn_end_review_is_single_acknowledged_block(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("review-closed-task-memories-on-stop")
+        assert row is not None
+        assert row.priority == 2
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+        effects = body.resolved_effects
+
+        assert body.event.value == "turn_end"
+        assert "_memory_pending_task_reviews" in (body.when or "")
+        assert "_memory_review_stop_delivered" in (body.when or "")
+        assert len(effects) == 1
+        assert effects[0].type == "block"
+        assert effects[0].acknowledge_variable == "_memory_review_stop_delivered"
+        reason = effects[0].reason or ""
+        assert "{% for item in variables.get('_memory_pending_task_reviews') or [] %}" in reason
+        assert "review_task_memories" in reason
+        assert "source_task_id" in reason
+
+    @pytest.mark.asyncio
+    async def test_turn_end_renders_pending_closures_and_delivers_once(
+        self, db: HubDatabase
+    ) -> None:
+        _sync_bundled(db)
+        pending = [
+            _pending_review("#42", "Implemented layered memory guidance."),
+            _pending_review("#43", "Documented the review tool."),
+        ]
+        variables = _review_variables(*pending)
+        engine = RuleEngine(db)
+        event = _turn_end_event()
+
+        first = await engine.evaluate(event, SESSION_ID, variables)
+        second = await engine.evaluate(event, SESSION_ID, variables)
+
+        assert first.decision == "block"
+        reason = first.reason or ""
+        assert "#42 (task_id `task-42`): Implemented layered memory guidance." in reason
+        assert "#43 (task_id `task-43`): Documented the review tool." in reason
+        assert "gobby-memory:review_task_memories(task_id, changes_summary)" in reason
+        assert variables["_memory_review_stop_delivered"] is True
+        assert variables["_memory_pending_task_reviews"] == pending
+        assert "review-closed-task-memories-on-stop" not in (second.reason or "")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("override", "decision", "marker"), TURN_END_OVERRIDES)
+    async def test_turn_end_override_preserves_pending_review(
+        self,
+        db: HubDatabase,
+        override: dict[str, bool],
+        decision: str,
+        marker: str,
+    ) -> None:
+        _sync_bundled(db)
+        pending = _pending_review("#42", "Completed work.")
+        variables = _review_variables(pending, **override)
+        engine = RuleEngine(db)
+        event = _turn_end_event()
+
+        overridden = await engine.evaluate(event, SESSION_ID, variables)
+        overridden_flag = variables["_memory_review_stop_delivered"]
+        for key in override:
+            variables[key] = False
+        delivered = await engine.evaluate(event, SESSION_ID, variables)
+        settled = await engine.evaluate(event, SESSION_ID, variables)
+
+        assert overridden.decision == decision
+        assert marker in (overridden.reason or "")
+        assert "review-closed-task-memories-on-stop" not in (overridden.reason or "")
+        assert overridden_flag is False
+        assert delivered.decision == "block"
+        assert "#42 (task_id `task-42`): Completed work." in (delivered.reason or "")
+        assert variables["_memory_pending_task_reviews"] == [pending]
+        assert variables["_memory_review_stop_delivered"] is True
+        assert "review-closed-task-memories-on-stop" not in (settled.reason or "")
+
+    @pytest.mark.asyncio
+    async def test_manual_compact_stop_preserves_pending_review(self, db: HubDatabase) -> None:
+        _sync_bundled(db)
+        pending = _pending_review("#42", "Completed work.")
+        variables = _review_variables(pending)
+        engine = RuleEngine(db)
+
+        await engine.evaluate(
+            _turn_end_event(HookEventType.PRE_COMPACT, data={"trigger": "manual"}),
+            SESSION_ID,
+            variables,
+        )
+        response = await engine.evaluate(_turn_end_event(), SESSION_ID, variables)
+
+        assert response.decision == "allow"
+        assert variables["_memory_pending_task_reviews"] == [pending]
+        assert variables["_memory_review_stop_delivered"] is False
+
+    @pytest.mark.asyncio
+    async def test_after_agent_aggregates_both_memory_gates_once(self, db: HubDatabase) -> None:
+        _sync_bundled(db)
+        variables = _review_variables(
+            _pending_review("#42", "Completed work."),
+            _memory_initial_stop_checked=False,
+            loaded_skills=[],
+            open_tool_errors=[],
+        )
+        engine = RuleEngine(db)
+        event = _turn_end_event(HookEventType.AFTER_AGENT, source=SessionSource.QWEN)
+
+        first = await engine.evaluate(event, SESSION_ID, variables)
+        second = await engine.evaluate(event, SESSION_ID, variables)
+
+        assert first.decision == "block"
+        reason = first.reason or ""
+        assert "aggregated:2-gates" in reason
+        assert "[check-memory-guidance-on-initial-stop]" in reason
+        assert "[review-closed-task-memories-on-stop]" in reason
+        assert "#42 (task_id `task-42`): Completed work." in reason
+        assert variables["_memory_initial_stop_checked"] is True
+        assert variables["_memory_review_stop_delivered"] is True
+        assert "check-memory-guidance-on-initial-stop" not in (second.reason or "")
+        assert "review-closed-task-memories-on-stop" not in (second.reason or "")
+
+    @pytest.mark.asyncio
+    async def test_later_close_requeues_only_new_closure_and_resets_flag(
+        self, db: HubDatabase
+    ) -> None:
+        _sync_bundled(db)
+        task_manager = MagicMock()
+        task_manager.get_task.return_value = SimpleNamespace(
+            id=TASK_ID,
+            seq_num=43,
+            task_type="task",
+            category="code",
+            closed_reason="completed",
+            closed_at=datetime(2026, 8, 25, tzinfo=UTC),
+            commits=["abc1234"],
+        )
+        task_manager.list_tasks.return_value = []
+        delivered = _pending_review("#42", "Earlier closure.")
+        variables = _review_variables(delivered, _memory_review_stop_delivered=True)
+        engine = RuleEngine(db, task_manager=task_manager)
+        close_event = HookEvent(
+            event_type=HookEventType.AFTER_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "close_task",
+                    "arguments": {
+                        "task_id": "#43",
+                        "changes_summary": "Second closure.",
+                        "commit_sha": "abc1234",
+                    },
+                },
+                "tool_output": {
+                    "success": True,
+                    "closed": True,
+                    "task_id": TASK_ID,
+                    "commit_shas": ["abc1234"],
                 },
             },
-            {"len": len},
         )
-        task_owned = SafeExpressionEvaluator(
+
+        await engine.evaluate(close_event, SESSION_ID, variables)
+        queued = list(variables["_memory_pending_task_reviews"])
+        queued_flag = variables["_memory_review_stop_delivered"]
+        response = await engine.evaluate(_turn_end_event(), SESSION_ID, variables)
+
+        assert queued == [
             {
-                "event": prompt_event,
-                "variables": {
-                    "is_spawned_agent": True,
-                    "task_claimed": True,
-                    "auto_task_ref": None,
-                },
-            },
-            {"len": len},
-        )
-        assert taskless.evaluate(body.when) is False
-        assert task_owned.evaluate(body.when) is True
+                "closure_id": f"{TASK_ID}:2026-08-25T00:00:00+00:00",
+                "task_id": TASK_ID,
+                "task_ref": "#43",
+                "changes_summary": "Second closure.",
+            }
+        ]
+        assert queued_flag is False
+        assert f"#43 (task_id `{TASK_ID}`): Second closure." in (response.reason or "")
+        assert "Earlier closure." not in (response.reason or "")
+        assert variables["_memory_review_stop_delivered"] is True
 
 
 # ═══════════════════════════════════════════════════════════════════════
