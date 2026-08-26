@@ -10,7 +10,7 @@ mod grep_matcher;
 #[path = "grep/db_tests.rs"]
 mod db_tests;
 
-use crate::commands::scope;
+use crate::commands::{scope, token_budget};
 use crate::config::{Context, ProjectIndexScope};
 use crate::db;
 use crate::output::{self, Format};
@@ -22,6 +22,7 @@ use grep_matcher::GrepMatcher;
 
 const GREP_SQL_SAFETY_LIMIT: i64 = 100_000;
 
+#[derive(Clone, Copy)]
 pub struct GrepOptions<'a> {
     pub pattern: &'a str,
     pub paths: &'a [String],
@@ -33,6 +34,8 @@ pub struct GrepOptions<'a> {
     pub before_context: Option<usize>,
     pub after_context: Option<usize>,
     pub max_count: Option<usize>,
+    pub offset: usize,
+    pub token_budget: Option<usize>,
     pub files_with_matches: bool,
     pub format: Format,
 }
@@ -73,21 +76,30 @@ pub(crate) struct GrepMatch {
 }
 
 #[derive(Debug, Serialize)]
-struct GrepResponse {
-    project_id: String,
-    pattern: String,
+struct GrepResponse<'a> {
+    project_id: &'a str,
+    pattern: &'a str,
     fixed_strings: bool,
     ignore_case: bool,
     word: bool,
-    paths: Vec<String>,
-    globs: Vec<String>,
+    paths: &'a [String],
+    globs: &'a [String],
     max_count: Option<usize>,
+    offset: usize,
     matched_lines: usize,
     truncated: bool,
     scanned_chunks: usize,
-    matches: Vec<GrepMatch>,
+    matches: &'a [GrepMatch],
     #[serde(skip_serializing_if = "Option::is_none")]
-    files: Option<Vec<String>>,
+    next_offset: Option<usize>,
+    #[serde(skip_serializing_if = "is_false")]
+    budget_exceeded: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    files: Option<&'a [String]>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug)]
@@ -102,25 +114,117 @@ pub fn run(ctx: &Context, options: GrepOptions<'_>) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
     let filters = GrepFilters::new(options.paths, options.globs)?;
     let loaded = load_indexed_chunks(&mut conn, ctx, &filters)?;
-    let mut result = grep_chunks_with_filters(&loaded.chunks, &options, &filters)?;
+    let scan_options = GrepOptions {
+        max_count: None,
+        offset: 0,
+        token_budget: None,
+        ..options
+    };
+    let mut result = grep_chunks_with_filters(&loaded.chunks, &scan_options, &filters)?;
     result.truncated |= loaded.truncated;
 
-    match options.format {
-        Format::Json => output::print_json(&grep_response(&ctx.project_id, &options, &result)),
-        Format::Text => {
-            let text = if options.files_with_matches {
-                let (files, _) = matching_files(&result.matches, options.max_count);
-                format_matching_files(&files)
-            } else {
-                format_text_matches(&result.matches)
-            };
-            if text.is_empty() {
-                Ok(())
-            } else {
-                output::print_text(&text)
-            }
-        }
+    if options.files_with_matches {
+        return print_file_page(ctx, &options, &result);
     }
+    print_match_page(ctx, &options, &result)
+}
+
+fn print_file_page(
+    ctx: &Context,
+    options: &GrepOptions<'_>,
+    result: &GrepResult,
+) -> anyhow::Result<()> {
+    let (files, _) = matching_files(&result.matches, None);
+    let (total, _, files) = token_budget::window(files, options.offset, options.max_count);
+    let has_more = total > options.offset.saturating_add(files.len());
+    let page = token_budget::paginate_results(
+        files,
+        options.offset,
+        has_more,
+        options.token_budget,
+        |files, next_offset, budget_exceeded| match options.format {
+            Format::Json => render_grep_response(&grep_response(
+                &ctx.project_id,
+                options,
+                result,
+                &[],
+                Some(files),
+                next_offset,
+                budget_exceeded,
+            )),
+            Format::Text => {
+                token_budget::render_text_page(&format_matching_files(files), next_offset)
+            }
+        },
+    );
+    match options.format {
+        Format::Json => output::print_json(&grep_response(
+            &ctx.project_id,
+            options,
+            result,
+            &[],
+            Some(&page.results),
+            page.next_offset,
+            page.budget_exceeded,
+        )),
+        Format::Text => print_text_page(&format_matching_files(&page.results), page.next_offset),
+    }
+}
+
+fn print_match_page(
+    ctx: &Context,
+    options: &GrepOptions<'_>,
+    result: &GrepResult,
+) -> anyhow::Result<()> {
+    let (total, _, matches) =
+        token_budget::window(result.matches.clone(), options.offset, options.max_count);
+    let has_more = total > options.offset.saturating_add(matches.len());
+    let page = token_budget::paginate_results(
+        matches,
+        options.offset,
+        has_more,
+        options.token_budget,
+        |matches, next_offset, budget_exceeded| match options.format {
+            Format::Json => render_grep_response(&grep_response(
+                &ctx.project_id,
+                options,
+                result,
+                matches,
+                None,
+                next_offset,
+                budget_exceeded,
+            )),
+            Format::Text => {
+                token_budget::render_text_page(&format_text_matches(matches), next_offset)
+            }
+        },
+    );
+    match options.format {
+        Format::Json => output::print_json(&grep_response(
+            &ctx.project_id,
+            options,
+            result,
+            &page.results,
+            None,
+            page.next_offset,
+            page.budget_exceeded,
+        )),
+        Format::Text => print_text_page(&format_text_matches(&page.results), page.next_offset),
+    }
+}
+
+fn print_text_page(body: &str, next_offset: Option<usize>) -> anyhow::Result<()> {
+    let rendered = token_budget::render_text_page(body, next_offset);
+    if rendered.is_empty() {
+        Ok(())
+    } else {
+        output::print_text(&rendered)
+    }
+}
+
+fn render_grep_response(response: &GrepResponse<'_>) -> String {
+    // Grep response fields use only derived serializers with string map keys.
+    serde_json::to_string(response).expect("derived grep response serialization cannot fail")
 }
 
 /// Result-returning grep beneath the CLI print layer, for the CodeWiki tool loop
@@ -606,26 +710,31 @@ fn format_matching_files(files: &[String]) -> String {
     files.join("\n")
 }
 
-fn grep_response(project_id: &str, options: &GrepOptions<'_>, result: &GrepResult) -> GrepResponse {
-    let (matches, files, truncated) = if options.files_with_matches {
-        let (files, file_truncated) = matching_files(&result.matches, options.max_count);
-        (Vec::new(), Some(files), result.truncated || file_truncated)
-    } else {
-        (result.matches.clone(), None, result.truncated)
-    };
+fn grep_response<'a>(
+    project_id: &'a str,
+    options: &'a GrepOptions<'_>,
+    result: &GrepResult,
+    matches: &'a [GrepMatch],
+    files: Option<&'a [String]>,
+    next_offset: Option<usize>,
+    budget_exceeded: bool,
+) -> GrepResponse<'a> {
     GrepResponse {
-        project_id: project_id.to_string(),
-        pattern: options.pattern.to_string(),
+        project_id,
+        pattern: options.pattern,
         fixed_strings: options.fixed_strings,
         ignore_case: options.ignore_case,
         word: options.word,
-        paths: options.paths.to_vec(),
-        globs: options.globs.to_vec(),
+        paths: options.paths,
+        globs: options.globs,
         max_count: options.max_count,
+        offset: options.offset,
         matched_lines: result.matched_lines,
-        truncated,
+        truncated: result.truncated || next_offset.is_some(),
         scanned_chunks: result.scanned_chunks,
         matches,
+        next_offset,
+        budget_exceeded,
         files,
     }
 }

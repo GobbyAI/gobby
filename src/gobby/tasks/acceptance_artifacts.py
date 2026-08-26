@@ -255,7 +255,7 @@ def _resolve_test_body(path: str, symbol: str, repo_path: str) -> str:
     symbol_id = candidates[0].get("id")
     if not isinstance(symbol_id, str):
         raise RuntimeError("gcode result omitted symbol id")
-    symbol_raw = _run_command(["gcode", "symbol", symbol_id], repo_path)
+    symbol_raw = _run_command(["gcode", "symbol", symbol_id, "--format", "json"], repo_path)
     try:
         source = json.loads(symbol_raw).get("source")
     except (AttributeError, json.JSONDecodeError) as exc:

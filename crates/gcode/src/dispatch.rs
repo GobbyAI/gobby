@@ -132,9 +132,9 @@ fn service_config_selection(command: &Command) -> config::ServiceConfigSelection
         | Command::Symbol { .. }
         | Command::SymbolAt { .. }
         | Command::Symbols { .. }
-        | Command::Kinds
-        | Command::Tree
-        | Command::RepoOutline => ServiceConfigSelection::database_only(),
+        | Command::Kinds { .. }
+        | Command::Tree { .. }
+        | Command::RepoOutline { .. } => ServiceConfigSelection::database_only(),
         Command::Prune { .. } => ServiceConfigSelection::projection_cleanup(),
     }
 }
@@ -283,6 +283,7 @@ fn run() -> anyhow::Result<()> {
     };
     init_logger(cli.quiet);
     let format = cli::effective_format(cli.format, &cli.command);
+    let effective_token_budget = cli::effective_token_budget(format, &cli.command);
 
     // Commands that must run before Context::resolve() (work on uninitialized projects)
     if dispatch_early_command(&cli, format)? {
@@ -451,7 +452,7 @@ fn run() -> anyhow::Result<()> {
             offset,
             kind,
             language,
-            token_budget,
+            token_budget: _,
         } => {
             ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::search::search(
@@ -465,7 +466,8 @@ fn run() -> anyhow::Result<()> {
                     paths: &paths,
                     format,
                     with_graph: true,
-                    token_budget,
+                    token_budget: effective_token_budget,
+                    verbose: cli.verbose,
                 },
             )
         }
@@ -477,6 +479,7 @@ fn run() -> anyhow::Result<()> {
             kind,
             language,
             with_graph,
+            token_budget: _,
         } => {
             ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::search::search_symbol(
@@ -490,7 +493,8 @@ fn run() -> anyhow::Result<()> {
                     paths: &paths,
                     format,
                     with_graph,
-                    token_budget: None,
+                    token_budget: effective_token_budget,
+                    verbose: cli.verbose,
                 },
             )
         }
@@ -500,16 +504,21 @@ fn run() -> anyhow::Result<()> {
             limit,
             offset,
             language,
+            token_budget: _,
         } => {
             ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::search::search_text(
                 &ctx,
                 &query,
-                limit,
-                offset,
-                language.as_deref(),
-                &paths,
-                format,
+                commands::search::TextSearchOptions {
+                    limit,
+                    offset,
+                    language: language.as_deref(),
+                    paths: &paths,
+                    format,
+                    token_budget: effective_token_budget,
+                    verbose: cli.verbose,
+                },
             )
         }
         Command::SearchContent {
@@ -518,16 +527,21 @@ fn run() -> anyhow::Result<()> {
             limit,
             offset,
             language,
+            token_budget: _,
         } => {
             ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::search::search_content(
                 &ctx,
                 &query,
-                limit,
-                offset,
-                language.as_deref(),
-                &paths,
-                format,
+                commands::search::TextSearchOptions {
+                    limit,
+                    offset,
+                    language: language.as_deref(),
+                    paths: &paths,
+                    format,
+                    token_budget: effective_token_budget,
+                    verbose: cli.verbose,
+                },
             )
         }
         Command::Grep {
@@ -546,6 +560,8 @@ fn run() -> anyhow::Result<()> {
             context,
             glob,
             max_count,
+            offset,
+            token_budget: _,
         } => {
             ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::grep::run(
@@ -561,15 +577,30 @@ fn run() -> anyhow::Result<()> {
                     before_context,
                     after_context,
                     max_count,
+                    offset,
+                    token_budget: effective_token_budget,
                     files_with_matches,
                     format,
                 },
             )
         }
 
-        Command::Outline { file } => {
+        Command::Outline {
+            file,
+            limit,
+            offset,
+            token_budget: _,
+        } => {
             ensure_file_fresh(&ctx, cli.allow_stale, &file)?;
-            commands::symbols::outline(&ctx, &file, format, cli.verbose)
+            commands::symbols::outline(
+                &ctx,
+                &file,
+                limit,
+                offset,
+                effective_token_budget,
+                format,
+                cli.verbose,
+            )
         }
         Command::Symbol { id } => {
             ensure_symbol_fresh(&ctx, cli.allow_stale, &id)?;
@@ -580,46 +611,87 @@ fn run() -> anyhow::Result<()> {
             ensure_file_fresh(&ctx, cli.allow_stale, &file)?;
             commands::symbol_at::run(&ctx, &location, line, format)
         }
-        Command::Symbols { ids } => {
+        Command::Symbols {
+            ids,
+            limit,
+            offset,
+            token_budget: _,
+        } => {
             ensure_project_fresh(&ctx, cli.allow_stale)?;
-            commands::symbols::symbols(&ctx, &ids, format)
+            commands::symbols::symbols(&ctx, &ids, limit, offset, effective_token_budget, format)
         }
-        Command::Kinds => {
+        Command::Kinds {
+            limit,
+            offset,
+            token_budget: _,
+        } => {
             ensure_project_fresh(&ctx, cli.allow_stale)?;
-            commands::symbols::kinds(&ctx, format)
+            commands::symbols::kinds(&ctx, limit, offset, effective_token_budget, format)
         }
-        Command::Tree => {
+        Command::Tree {
+            limit,
+            offset,
+            token_budget: _,
+        } => {
             ensure_project_fresh(&ctx, cli.allow_stale)?;
-            commands::symbols::tree(&ctx, format)
+            commands::symbols::tree(&ctx, limit, offset, effective_token_budget, format)
         }
         Command::Callers {
             symbol_name,
             limit,
             offset,
+            token_budget: _,
         } => {
             ensure_project_fresh(&ctx, cli.allow_stale)?;
-            commands::graph::callers(&ctx, &symbol_name, limit, offset, format)
+            commands::graph::callers(
+                &ctx,
+                &symbol_name,
+                limit,
+                offset,
+                effective_token_budget,
+                format,
+            )
         }
         Command::Callees {
             symbol_name,
             limit,
             offset,
+            token_budget: _,
         } => {
             ensure_project_fresh(&ctx, cli.allow_stale)?;
-            commands::graph::callees(&ctx, &symbol_name, limit, offset, format)
+            commands::graph::callees(
+                &ctx,
+                &symbol_name,
+                limit,
+                offset,
+                effective_token_budget,
+                format,
+            )
         }
         Command::Usages {
             symbol_name,
             limit,
             offset,
-            token_budget,
+            token_budget: _,
         } => {
             ensure_project_fresh(&ctx, cli.allow_stale)?;
-            commands::graph::usages(&ctx, &symbol_name, limit, offset, token_budget, format)
+            commands::graph::usages(
+                &ctx,
+                &symbol_name,
+                limit,
+                offset,
+                effective_token_budget,
+                format,
+            )
         }
-        Command::Imports { file } => {
+        Command::Imports {
+            file,
+            limit,
+            offset,
+            token_budget: _,
+        } => {
             ensure_project_fresh(&ctx, cli.allow_stale)?;
-            commands::graph::imports(&ctx, &file, format)
+            commands::graph::imports(&ctx, &file, limit, offset, effective_token_budget, format)
         }
         Command::Path {
             symbol_a,
@@ -632,15 +704,29 @@ fn run() -> anyhow::Result<()> {
         Command::BlastRadius {
             target,
             depth,
-            token_budget,
+            limit,
+            offset,
+            token_budget: _,
         } => {
             ensure_project_fresh(&ctx, cli.allow_stale)?;
-            commands::graph::blast_radius(&ctx, &target, depth, token_budget, format)
+            commands::graph::blast_radius(
+                &ctx,
+                &target,
+                depth,
+                limit,
+                offset,
+                effective_token_budget,
+                format,
+            )
         }
 
-        Command::RepoOutline => {
+        Command::RepoOutline {
+            limit,
+            offset,
+            token_budget: _,
+        } => {
             ensure_project_fresh(&ctx, cli.allow_stale)?;
-            commands::status::repo_outline(&ctx, format)
+            commands::status::repo_outline(&ctx, limit, offset, effective_token_budget, format)
         }
     }
 }

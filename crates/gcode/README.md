@@ -28,10 +28,7 @@ graphs.
 
 ```
 $ gcode search "handleAuth"
-[
-  {"name": "handleAuth", "kind": "function", "file_path": "src/auth/middleware.ts",
-   "line_start": 42, "signature": "async function handleAuth(req, res, next)", ...}
-]
+src/auth/middleware.ts:42 [function] handleAuth
 ```
 
 One search call instead of reading 50 files. 90%+ token savings.
@@ -139,7 +136,7 @@ gcode tree                                # File tree with symbol counts
 gcode graph overview --limit 100          # Project overview graph
 gcode callers <symbol-id>                 # Who calls this symbol?
 gcode usages <symbol-id>                  # Incoming call sites for this symbol
-gcode usages <symbol-id> --token-budget 120 # Trim rows to an approximate token budget
+gcode usages <symbol-id> --token-budget 120 # Page complete rows under a token budget
 gcode imports src/auth.ts                 # Import graph for a file
 gcode path "handleAuth" "writeDb"         # Shortest CALLS path between two symbols
 gcode blast-radius "handleAuth" --depth 3 # Transitive impact analysis
@@ -168,18 +165,25 @@ gcode search --project myapp "query"      # By project name
 gcode search --project /path/to/app "q"   # By path
 
 # Global flags
---format text|json                        # Output format (default: json)
+--format text|json                        # Explicit output format
+--verbose                                 # Include IDs and diagnostics in text
 --quiet                                   # Suppress warnings and progress
 --allow-stale                             # Allow stale data by skipping freshness checks
 ```
 
-`gcode grep` defaults to grouped text output: each matched file is printed once,
-followed by line-numbered matches and context. Other high-volume text outputs,
-including `tree`, `callers`, `usages`, and `blast-radius`, also group repeated
-paths for compact agent-readable output. `--token-budget N` trims returned rows
-to an approximate `ceil(chars/4)` token ceiling on `search`, `usages`, and
-`blast-radius` only. `gcode grep --format json` returns structured matches with
-spans and context. Regex patterns use Rust regex syntax,
+Navigation commands default to compact agent-readable text; nested structural
+graph and lifecycle commands retain complete JSON defaults. Use explicit
+`--format json` for the stable machine interface, or `--verbose` when compact
+text needs IDs, scores, or diagnostics.
+
+Collection commands accept `--limit`, `--offset`, and `--token-budget`.
+Compact text receives an automatic 2,000-token page budget and prints an exact
+shell-safe continuation command when more complete items remain. The estimate
+is `ceil(chars/4)` over the fully rendered page. An oversized first item is
+returned complete. JSON adds `next_offset` and conditional `budget_exceeded`;
+explicit JSON uses token paging only when requested. `gcode grep -m` and
+`--max-count` are aliases for `--limit`; JSON grep returns structured matches
+with intact spans and context. Regex patterns use Rust regex syntax,
 including `\b` word boundaries; use `-w/--word` for ASCII identifier whole-word
 search. For reference mapping, resolve a symbol ID first and prefer
 `gcode usages <symbol-id>` or `gcode callers <symbol-id>` over text grep when

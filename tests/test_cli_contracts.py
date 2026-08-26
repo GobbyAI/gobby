@@ -377,7 +377,7 @@ def test_gcode_contract_covers_daemon_consumed_surface() -> None:
     contract = _contract("gcode")
     commands = {command["name"] for command in contract["commands"]}
 
-    assert contract["contract_version"] == 5
+    assert contract["contract_version"] == 6
     assert {
         "index",
         "search",
@@ -407,14 +407,21 @@ def test_gcode_contract_covers_daemon_consumed_surface() -> None:
         "communities",
         "mermaid",
     } <= _json_keys(contract, "graph view")
-    assert {"total", "offset", "limit", "results"} <= _json_keys(contract, "callees")
+    assert {
+        "total",
+        "offset",
+        "limit",
+        "next_offset",
+        "budget_exceeded",
+        "results",
+    } <= _json_keys(contract, "callees")
     assert "codewiki" not in commands
     assert "--project" in _flag_names(contract["global_flags"])
     assert {"project_id", "results"} <= _json_keys(contract, "search")
-    assert {"nodes", "links", "summary"} <= _json_keys(contract, "graph overview")
-    assert {"nodes", "links", "summary"} <= _json_keys(contract, "graph file")
-    assert {"nodes", "links", "summary"} <= _json_keys(contract, "graph neighbors")
-    assert {"nodes", "links", "summary"} <= _json_keys(contract, "graph blast-radius")
+    assert {"nodes", "links", "center"} <= _json_keys(contract, "graph overview")
+    assert {"nodes", "links", "center"} <= _json_keys(contract, "graph file")
+    assert {"nodes", "links", "center"} <= _json_keys(contract, "graph neighbors")
+    assert {"nodes", "links", "center"} <= _json_keys(contract, "graph blast-radius")
     assert "--max-depth" in _allowed_flags(contract, "path")
     assert {"status", "project_id", "summary"} <= _json_keys(contract, "graph clear")
     assert {"status", "project_id", "summary"} <= _json_keys(contract, "graph rebuild")

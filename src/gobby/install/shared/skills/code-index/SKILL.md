@@ -22,7 +22,7 @@ This project is indexed. Use `gcode` via Bash for fast code search and navigatio
 - `gcode search-text "query" [PATH ...]` — pg_search BM25 search on symbol names, signatures, and docstrings
 - `gcode search-content "query" [PATH ...]` — full-text search across repo text chunks: source, comments, docs/Markdown, skill files, configs, scripts, CSS, SQL, and extensionless text
 
-Search filters compose: `search` and `search-symbol` accept `--kind <kind>`; use `gcode kinds` to discover values. Ranked search commands accept positional path filters after the query (paths or globs, OR semantics), plus `--language <lang>`, `--limit N`, and `--offset N` for scoped or paginated results. `gcode grep` accepts positional paths, `-w/--word`, `-g/--glob`, `-i`, `-F`, `-l/--files-with-matches`, `-C/-A/-B`, and `-m/--max-count`; it rejects `--limit`. `-E`, `-n`, `-r`, and `-R` are accepted no-ops (rg/grep muscle memory). Unknown flags return a one-line JSON usage error with a `recovery` hint; do not retry the failing gcode call. Add `--format json` to `gcode grep` for structured matches with spans. Hybrid JSON results include final display `score`, raw `rrf_score`, deterministic `sources`, and hints when literal-ish queries should use `grep` or `search-content`; path globs that require post-filter fallback surface a hint/warning.
+Search filters compose: `search` and `search-symbol` accept `--kind <kind>`; use `gcode kinds` to discover values. Ranked search commands accept positional path filters after the query (paths or globs, OR semantics), plus `--language <lang>`, `--limit N`, and `--offset N` for scoped or paginated results. `gcode grep` accepts positional paths, `-w/--word`, `-g/--glob`, `-i`, `-F`, `-l/--files-with-matches`, `-C/-A/-B`, and `-m/--limit`; `--max-count` is an alias for `--limit`. `-E`, `-n`, `-r`, and `-R` are accepted no-ops (rg/grep muscle memory). Unknown flags return a one-line JSON usage error with a `recovery` hint; do not retry the failing gcode call. Add `--format json` to `gcode grep` for structured matches with spans. Hybrid JSON results include final display `score`, raw `rrf_score`, deterministic `sources`, and hints when literal-ish queries should use `grep` or `search-content`; path globs that require post-filter fallback surface a hint/warning.
 
 Bare `gcode grep "pattern"` is regex-backed. Use `-F` for literal text containing regex metacharacters like `(`, `)`, `[`, `]`, `.`, `*`, `+`, `?`, `|`, `^`, `$`, or `\`. For example, `gcode grep "TaskExpansionConfig(" tests/config/test_tasks.py --format text -m 120 --allow-stale` is an anti-pattern because `(` starts a regex group and fails with `error: unclosed group`. Use `gcode grep -F "TaskExpansionConfig(" tests/config/test_tasks.py --format text -m 120 --allow-stale` for a literal search, or `gcode grep "TaskExpansionConfig\\(" tests/config/test_tasks.py --format text -m 120 --allow-stale` when intentionally writing regex.
 
@@ -33,15 +33,15 @@ Bare `gcode grep "pattern"` is regex-backed. Use `-F` for literal text containin
 - `gcode symbol <full-uuid>` — retrieve one symbol by exact stored ID (O(1) via byte offsets)
 - `gcode symbols <full-uuid> <full-uuid> ...` — batch-retrieve symbols by exact stored IDs
 
-Symbol IDs must be full stored UUIDs from `gcode search`, `gcode search-symbol`, or `gcode outline`. Literal placeholders, wildcards, globs, and prefix IDs such as `id1`, `514??`, `abc*`, or `80abc77f` are invalid.
+Symbol IDs must be full stored UUIDs from `gcode search --format json`, `gcode search-symbol --verbose`, or `gcode outline --verbose`. Literal placeholders, wildcards, globs, and prefix IDs such as `id1`, `514??`, `abc*`, or `80abc77f` are invalid.
 
 ## Recommended Workflow
 
 When navigating code for context or understanding:
 
 1. **Locate with gcode**: `gcode grep -w <identifier> [PATH ...] -m 50` for identifier text search, `gcode grep -F "literal string" [PATH ...] -m 50` for literal strings and call sites, `gcode grep "regex" [PATH ...] -m 50` for regex text search, `gcode search "concept"` for fuzzy concepts, `gcode search-symbol "name"` for known symbols, or `gcode search-content "text"` for ranked file-content hits.
-2. **Known file/line**: use `gcode symbol-at path/to/file.py:42` when a diagnostic, grep hit, stack trace, or user message already gives a file and line.
-3. **Navigate by structure/ID**: use `gcode outline path/to/file` to survey structure, then `gcode symbol <full-uuid>` or `gcode symbols <full-uuid> <full-uuid> ...` using IDs from search or outline.
+2. **Known file/line**: use `gcode symbol-at path/to/file.py:42` after search, grep, diagnostics, stack traces, or user-provided locations.
+3. **Navigate by structure/ID**: use `gcode outline path/to/file` to survey structure. Request `--verbose` or `--format json` only when IDs or ranking diagnostics are required, then use `gcode symbol <full-uuid>` or `gcode symbols <full-uuid> ...`.
 4. **Fetch tight neighboring context only when needed**: use `sed`/`awk` only for tight neighboring context (1-3 lines) after symbol retrieval.
 
 Search output is intentionally snippet-sized. Use `gcode symbol-at` when a file/line is known, or `gcode outline` then `gcode symbol` when navigating by structure/ID, before reaching for broad `sed`, `awk`, or full-file reads.
@@ -69,7 +69,7 @@ known.
 - `gcode tree` — whole-project file tree with symbol counts per file; text output groups files by directory and it takes no path argument
 - `gcode kinds` — list distinct symbol kinds in the index (helps pick `--kind` values)
 
-For directory-focused exploration, use `gcode tree --format text` with shell filtering, or scope search commands with positional paths: `gcode search "query" crates/gcode/src docs/**/*.md`.
+For directory-focused exploration, use `gcode tree` with shell filtering, or scope search commands with positional paths: `gcode search "query" crates/gcode/src docs/**/*.md`.
 
 ## Impact Analysis
 
@@ -77,12 +77,12 @@ Use these **before making changes** to understand what you'll affect:
 
 - `gcode blast-radius <name>` — walk call/import graph transitively to find all affected code
 - `gcode callers <symbol-id>` — who calls this function/method? Prefer a full symbol ID after resolving one
-- `gcode callees <symbol>` — who this function/method calls (`limit`/`offset` only; no output-clip `--token-budget`)
+- `gcode callees <symbol>` — who this function/method calls
 - `gcode usages <symbol-id>` — all usages (calls + imports). Prefer a full symbol ID after resolving one
 - `gcode imports <file>` — what does this file import?
 - `gcode path <from> <to>` — shortest CALLS path between two symbol queries (requires the graph backend); `--max-depth` bounds the hop search
 
-`gcode search`, `gcode usages`, and `gcode blast-radius` accept `--token-budget <N>` to trim returned rows to an approximate token budget — useful when feeding bounded context to an agent.
+Collection commands accept `--limit`, `--offset`, and `--token-budget`. Compact text automatically uses a 2,000-token page budget. Every page contains whole semantic items and prints an exact shell-safe continuation command when more remain; run that command unchanged. An oversized first item is returned complete. Explicit JSON is unbounded unless a limit default or token budget applies and adds `next_offset` plus conditional `budget_exceeded`.
 
 ## Graph views
 
@@ -143,6 +143,6 @@ See `docs/guides/codewiki.md` for the dormant daemon status/error contract, cano
 
 ## Output and global flags
 
-`gcode grep` defaults to grouped text output; use `--format json` when you need structured matches and spans. High-volume text outputs such as `tree`, `callers`, `usages`, and `blast-radius` group repeated paths under directory or file headers. Other commands support `--format text` for human-readable output where available. Use `--quiet` to suppress warnings. Exit 0 always means success, including empty results — do not re-verify with a second call. Nonzero exits print a one-line JSON error on stderr. `--allow-stale` is the only freshness bypass and is rarely needed now that freshness failures degrade to warnings.
+Navigation commands default to compact text: `search`, `search-symbol`, `search-text`, `search-content`, `grep`, `outline`, `symbol`, `symbol-at`, `symbols`, `kinds`, `tree`, `repo-outline`, `callers`, `callees`, `usages`, `imports`, `path`, and `blast-radius`. Compact text omits UUIDs, scores, and ranking-lane diagnostics. Use `--verbose` or `--format json` when those fields are required. Nested structural graph and lifecycle commands keep complete JSON defaults. Use `--quiet` to suppress warnings. Exit 0 always means success, including empty results — do not re-verify with a second call. Nonzero exits print a one-line JSON error on stderr. `--allow-stale` is the only freshness bypass and is rarely needed now that freshness failures degrade to warnings.
 
 On `payload_skew` or `api_contract_mismatch`, stop retrying gcode, report the `recovery` directive to the user, and continue with fallback tools (recorded failures fail the redirect rules open).

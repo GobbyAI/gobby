@@ -42,7 +42,7 @@ fn make_ctx_no_falkordb() -> Context {
 fn graph_reads_degrade_when_falkor_missing() {
     let ctx = make_ctx_no_falkordb();
 
-    let result = imports(&ctx, "src/lib.rs", Format::Text);
+    let result = imports(&ctx, "src/lib.rs", None, 0, None, Format::Text);
 
     assert!(result.is_ok(), "imports should degrade cleanly: {result:?}");
 }
@@ -146,7 +146,7 @@ fn graph_read_token_budget_uses_rendered_rows() {
     };
     let second = GraphResult {
         id: "sym-2".to_string(),
-        name: "run_more".to_string(),
+        name: "run_more".repeat(100),
         file_path: "src/lib.rs".to_string(),
         line: 18,
         confidence: ProjectionProvenance::Inferred,
@@ -155,35 +155,45 @@ fn graph_read_token_budget_uses_rendered_rows() {
         metadata: None,
         node_kind: None,
     };
-    let budget = token_budget::estimate_tokens(&format_usage_result_line(&first, "main"));
-
-    let trimmed = token_budget::trim_results(
+    let render_usages = |rows: &[GraphResult], next_offset, _| {
+        token_budget::render_text_page(
+            &format_grouped_graph_results(rows, |result| format_usage_result_line(result, "main")),
+            next_offset,
+        )
+    };
+    let budget =
+        token_budget::estimate_tokens(&render_usages(std::slice::from_ref(&first), Some(1), false));
+    let page = token_budget::paginate_results(
         vec![first.clone(), second.clone()],
+        0,
+        false,
         Some(budget),
-        "`--limit` or `--offset`",
-        |result| format_usage_result_line(result, "main"),
+        render_usages,
     );
 
-    assert_eq!(trimmed.results.len(), 1);
-    assert_eq!(trimmed.results[0].id, first.id);
-    assert!(trimmed.hint.expect("usage budget hint").contains("1 of 2"));
+    assert_eq!(page.results.len(), 1);
+    assert_eq!(page.results[0].id, first.id);
+    assert_eq!(page.next_offset, Some(1));
 
-    let blast_budget = token_budget::estimate_tokens(&format_blast_radius_result_line(&first));
-    let trimmed_blast = token_budget::trim_results(
+    let render_blast = |rows: &[GraphResult], next_offset, _| {
+        token_budget::render_text_page(
+            &format_grouped_graph_results(rows, format_blast_radius_result_line),
+            next_offset,
+        )
+    };
+    let blast_budget =
+        token_budget::estimate_tokens(&render_blast(std::slice::from_ref(&first), Some(1), false));
+    let blast_page = token_budget::paginate_results(
         vec![first.clone(), second],
+        0,
+        false,
         Some(blast_budget),
-        "`--depth`",
-        format_blast_radius_result_line,
+        render_blast,
     );
 
-    assert_eq!(trimmed_blast.results.len(), 1);
-    assert_eq!(trimmed_blast.results[0].id, first.id);
-    assert!(
-        trimmed_blast
-            .hint
-            .expect("blast budget hint")
-            .contains("refine with `--depth`")
-    );
+    assert_eq!(blast_page.results.len(), 1);
+    assert_eq!(blast_page.results[0].id, first.id);
+    assert_eq!(blast_page.next_offset, Some(1));
 }
 
 #[test]
@@ -510,6 +520,8 @@ fn top_level_read_commands_preserve_json_shape() {
             metadata: None,
             node_kind: None,
         }],
+        next_offset: None,
+        budget_exceeded: false,
         hint: None,
         warnings: Vec::new(),
     };
@@ -549,6 +561,8 @@ fn top_level_read_commands_preserve_json_shape() {
             ),
             node_kind: None,
         }],
+        next_offset: None,
+        budget_exceeded: false,
         hint: None,
         warnings: Vec::new(),
     };
@@ -628,6 +642,8 @@ fn callees_mirrors_callers_pagination() {
         offset: 2,
         limit: 3,
         results: vec![result],
+        next_offset: Some(3),
+        budget_exceeded: false,
         hint: None,
         warnings: Vec::new(),
     };
@@ -638,7 +654,7 @@ fn callees_mirrors_callers_pagination() {
     assert!(value.get("token_budget").is_none());
 
     let ctx = make_ctx_no_falkordb();
-    super::callees(&ctx, "handleAuth", 10, 0, Format::Json).expect("callees degrades");
+    super::callees(&ctx, "handleAuth", 10, 0, None, Format::Json).expect("callees degrades");
 }
 
 #[test]

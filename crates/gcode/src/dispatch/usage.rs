@@ -76,7 +76,6 @@ fn first_quoted(text: &str) -> Option<String> {
 
 fn recovery_for(token: Option<&str>) -> Option<&'static str> {
     Some(match token {
-        Some("--limit") => "use `-m`/`--max-count`",
         Some("-e" | "--regexp") => "pass the pattern as the first positional argument",
         Some("-c" | "--count") => "use `--format json` and read `matched_lines`",
         Some("-t" | "--type") => "use `-g` with a glob such as `-g '*.py'`",
@@ -107,7 +106,7 @@ mod tests {
 
     #[test]
     fn unknown_grep_flag_renders_one_usage_json_line() {
-        let rendered = usage_error_from_clap(&parse_err(&["grep", "--limit", "10", "needle"]));
+        let rendered = usage_error_from_clap(&parse_err(&["grep", "--count", "needle"]));
         assert_eq!(rendered.code, "usage");
         assert_eq!(rendered.exit_status, 2);
         assert!(
@@ -120,12 +119,18 @@ mod tests {
             "command listing leaked: {}",
             rendered.message
         );
-        assert_eq!(rendered.recovery, Some("use `-m`/`--max-count`"));
+        assert_eq!(
+            rendered.recovery,
+            Some("use `--format json` and read `matched_lines`")
+        );
         let line = json_line(&rendered);
         assert!(!line.contains('\n'), "stderr must be one JSON line: {line}");
         let value: serde_json::Value = serde_json::from_str(&line).expect("json");
         assert_eq!(value["error"], "usage");
-        assert_eq!(value["recovery"], "use `-m`/`--max-count`");
+        assert_eq!(
+            value["recovery"],
+            "use `--format json` and read `matched_lines`"
+        );
         assert!(
             value["message"]
                 .as_str()

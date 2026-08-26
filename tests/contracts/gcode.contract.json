@@ -1,6 +1,6 @@
 {
   "tool": "gcode",
-  "contract_version": 5,
+  "contract_version": 6,
   "summary": "Fast code index CLI for Gobby.",
   "global_flags": [
     {
@@ -295,6 +295,8 @@
         "total",
         "offset",
         "limit",
+        "next_offset",
+        "budget_exceeded",
         "results",
         "id",
         "name",
@@ -305,7 +307,8 @@
         "line_start",
         "line_end",
         "signature",
-        "score"
+        "score",
+        "hint"
       ]
     },
     {
@@ -364,6 +367,14 @@
           "allowed_values": [],
           "required": false,
           "repeatable": false
+        },
+        {
+          "name": "--token-budget",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
         }
       ],
       "json_output_keys": [
@@ -371,6 +382,8 @@
         "total",
         "offset",
         "limit",
+        "next_offset",
+        "budget_exceeded",
         "results",
         "id",
         "name",
@@ -381,7 +394,8 @@
         "line_start",
         "line_end",
         "signature",
-        "score"
+        "score",
+        "hint"
       ]
     },
     {
@@ -424,6 +438,14 @@
           "allowed_values": [],
           "required": false,
           "repeatable": false
+        },
+        {
+          "name": "--token-budget",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
         }
       ],
       "json_output_keys": [
@@ -431,6 +453,8 @@
         "total",
         "offset",
         "limit",
+        "next_offset",
+        "budget_exceeded",
         "results",
         "id",
         "name",
@@ -441,7 +465,8 @@
         "line_start",
         "line_end",
         "signature",
-        "score"
+        "score",
+        "hint"
       ]
     },
     {
@@ -484,6 +509,14 @@
           "allowed_values": [],
           "required": false,
           "repeatable": false
+        },
+        {
+          "name": "--token-budget",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
         }
       ],
       "json_output_keys": [
@@ -491,6 +524,8 @@
         "total",
         "offset",
         "limit",
+        "next_offset",
+        "budget_exceeded",
         "results",
         "id",
         "name",
@@ -501,7 +536,8 @@
         "line_start",
         "line_end",
         "signature",
-        "score"
+        "score",
+        "hint"
       ]
     },
     {
@@ -618,7 +654,23 @@
           "repeatable": true
         },
         {
-          "name": "--max-count",
+          "name": "--limit",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--offset",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--token-budget",
           "takes_value": true,
           "value_name": "N",
           "allowed_values": [],
@@ -649,7 +701,11 @@
         "matched_lines",
         "truncated",
         "scanned_chunks",
+        "offset",
+        "next_offset",
+        "budget_exceeded",
         "matches",
+        "files",
         "path",
         "line",
         "text",
@@ -671,14 +727,58 @@
           "repeatable": false
         }
       ],
-      "flags": [],
+      "flags": [
+        {
+          "name": "--limit",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--offset",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--token-budget",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--format",
+          "takes_value": true,
+          "value_name": "json|text",
+          "allowed_values": [
+            "json",
+            "text"
+          ],
+          "required": false,
+          "repeatable": false
+        }
+      ],
       "json_output_keys": [
+        "project_id",
+        "total",
+        "offset",
+        "limit",
+        "next_offset",
+        "budget_exceeded",
+        "results",
         "id",
         "name",
         "kind",
         "line_start",
         "line_end",
-        "signature"
+        "signature",
+        "hint"
       ]
     },
     {
@@ -788,6 +888,30 @@
       ],
       "flags": [
         {
+          "name": "--limit",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--offset",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--token-budget",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
           "name": "--format",
           "takes_value": true,
           "value_name": "json|text",
@@ -800,6 +924,13 @@
         }
       ],
       "json_output_keys": [
+        "project_id",
+        "total",
+        "offset",
+        "limit",
+        "next_offset",
+        "budget_exceeded",
+        "results",
         "id",
         "project_id",
         "file_path",
@@ -815,7 +946,8 @@
         "content_hash",
         "summary",
         "created_at",
-        "updated_at"
+        "updated_at",
+        "hint"
       ]
     },
     {
@@ -825,25 +957,29 @@
       "positionals": [],
       "flags": [
         {
-          "name": "--format",
+          "name": "--limit",
           "takes_value": true,
-          "value_name": "json|text",
-          "allowed_values": [
-            "json",
-            "text"
-          ],
+          "value_name": "N",
+          "allowed_values": [],
           "required": false,
           "repeatable": false
-        }
-      ],
-      "json_output_keys": []
-    },
-    {
-      "name": "tree",
-      "summary": "Show file tree with symbol counts.",
-      "daemon_consumed": true,
-      "positionals": [],
-      "flags": [
+        },
+        {
+          "name": "--offset",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--token-budget",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
         {
           "name": "--format",
           "takes_value": true,
@@ -857,9 +993,70 @@
         }
       ],
       "json_output_keys": [
+        "project_id",
+        "total",
+        "offset",
+        "limit",
+        "next_offset",
+        "budget_exceeded",
+        "results",
+        "hint"
+      ]
+    },
+    {
+      "name": "tree",
+      "summary": "Show file tree with symbol counts.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [
+        {
+          "name": "--limit",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--offset",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--token-budget",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--format",
+          "takes_value": true,
+          "value_name": "json|text",
+          "allowed_values": [
+            "json",
+            "text"
+          ],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "project_id",
+        "total",
+        "offset",
+        "limit",
+        "next_offset",
+        "budget_exceeded",
+        "results",
         "file_path",
         "language",
-        "symbol_count"
+        "symbol_count",
+        "hint"
       ]
     },
     {
@@ -891,6 +1088,14 @@
           "repeatable": false
         },
         {
+          "name": "--token-budget",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
           "name": "--format",
           "takes_value": true,
           "value_name": "json|text",
@@ -907,6 +1112,8 @@
         "total",
         "offset",
         "limit",
+        "next_offset",
+        "budget_exceeded",
         "results",
         "id",
         "name",
@@ -948,6 +1155,14 @@
           "repeatable": false
         },
         {
+          "name": "--token-budget",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
           "name": "--format",
           "takes_value": true,
           "value_name": "json|text",
@@ -964,6 +1179,8 @@
         "total",
         "offset",
         "limit",
+        "next_offset",
+        "budget_exceeded",
         "results",
         "id",
         "name",
@@ -1005,6 +1222,14 @@
           "repeatable": false
         },
         {
+          "name": "--token-budget",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
           "name": "--format",
           "takes_value": true,
           "value_name": "json|text",
@@ -1014,14 +1239,6 @@
           ],
           "required": false,
           "repeatable": false
-        },
-        {
-          "name": "--token-budget",
-          "takes_value": true,
-          "value_name": "N",
-          "allowed_values": [],
-          "required": false,
-          "repeatable": false
         }
       ],
       "json_output_keys": [
@@ -1029,6 +1246,8 @@
         "total",
         "offset",
         "limit",
+        "next_offset",
+        "budget_exceeded",
         "results",
         "id",
         "name",
@@ -1054,6 +1273,30 @@
       ],
       "flags": [
         {
+          "name": "--limit",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--offset",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--token-budget",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
           "name": "--format",
           "takes_value": true,
           "value_name": "json|text",
@@ -1070,6 +1313,8 @@
         "total",
         "offset",
         "limit",
+        "next_offset",
+        "budget_exceeded",
         "results",
         "id",
         "name",
@@ -1157,6 +1402,22 @@
           "repeatable": false
         },
         {
+          "name": "--limit",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--offset",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
           "name": "--token-budget",
           "takes_value": true,
           "value_name": "N",
@@ -1181,6 +1442,8 @@
         "total",
         "offset",
         "limit",
+        "next_offset",
+        "budget_exceeded",
         "results",
         "id",
         "name",
@@ -1272,7 +1535,7 @@
       "json_output_keys": [
         "nodes",
         "links",
-        "summary"
+        "center"
       ]
     },
     {
@@ -1304,7 +1567,7 @@
       "json_output_keys": [
         "nodes",
         "links",
-        "summary"
+        "center"
       ]
     },
     {
@@ -1344,7 +1607,7 @@
       "json_output_keys": [
         "nodes",
         "links",
-        "summary"
+        "center"
       ]
     },
     {
@@ -1400,7 +1663,7 @@
       "json_output_keys": [
         "nodes",
         "links",
-        "summary"
+        "center"
       ]
     },
     {
@@ -1813,6 +2076,30 @@
       "positionals": [],
       "flags": [
         {
+          "name": "--limit",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--offset",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--token-budget",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
           "name": "--format",
           "takes_value": true,
           "value_name": "json|text",
@@ -1824,7 +2111,20 @@
           "repeatable": false
         }
       ],
-      "json_output_keys": []
+      "json_output_keys": [
+        "project_id",
+        "total",
+        "offset",
+        "limit",
+        "next_offset",
+        "budget_exceeded",
+        "results",
+        "directory",
+        "file_count",
+        "symbol_count",
+        "files",
+        "hint"
+      ]
     },
     {
       "name": "projects",

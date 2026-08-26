@@ -110,7 +110,7 @@ pub(super) fn run_lifecycle_action_with_backend(
         Format::Json => output::print_json(&output.payload),
         Format::Text => {
             output::print_text(&format_success_text(&output))?;
-            output::print_json_compact(&output.payload)
+            output::print_json(&output.payload)
         }
     }
 }
@@ -468,7 +468,7 @@ pub fn cleanup_orphans(ctx: &Context, format: Format) -> anyhow::Result<()> {
                 "Removed {} stale code-graph file(s) and {} file-scoped graph node(s)",
                 cleanup.stale_files_deleted, cleanup.graph_nodes_deleted
             ))?;
-            output::print_json_compact(&payload)
+            output::print_json(&payload)
         }
     }
 }
@@ -505,7 +505,7 @@ pub fn sync_file(
                         "Skipped code-index graph sync for project {}: `{file_path}` has no graph facts",
                         ctx.project_id
                     ))?;
-                    output::print_json_compact(&payload)
+                    output::print_json(&payload)
                 }
             };
         }
@@ -518,7 +518,7 @@ pub fn sync_file(
                         "Skipped code-index graph sync for project {}: indexed file `{file_path}` was not found",
                         ctx.project_id
                     ))?;
-                    output::print_json_compact(&payload)
+                    output::print_json(&payload)
                 }
             };
         }
@@ -546,7 +546,7 @@ pub fn sync_file(
                 "Synced code-index graph for project {}: {summary}",
                 ctx.project_id
             ))?;
-            output::print_json_compact(&payload)
+            output::print_json(&payload)
         }
     }
 }

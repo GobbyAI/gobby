@@ -25,6 +25,27 @@ from gobby.tasks.transcript_evidence import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_test_body_resolution_requests_gcode_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+
+    def run_command(command: list[str], _repo_path: str) -> str:
+        calls.append(command)
+        if command[1] == "search-symbol":
+            return (
+                '{"results":[{"id":"symbol-id","file_path":"tests/test_feature.py",'
+                '"name":"test_feature","qualified_name":"test_feature"}]}'
+            )
+        return '{"source":"def test_feature(): pass"}'
+
+    monkeypatch.setattr(artifacts_module, "_run_command", run_command)
+
+    body = artifacts_module._resolve_test_body("tests/test_feature.py", "test_feature", "/repo")
+
+    assert body == "def test_feature(): pass"
+    assert calls[0][-4:] == ["--format", "json", "--limit", "20"]
+    assert calls[1] == ["gcode", "symbol", "symbol-id", "--format", "json"]
+
+
 def test_python_placebo_acceptance_test_is_named(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

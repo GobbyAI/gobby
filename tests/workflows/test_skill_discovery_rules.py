@@ -3802,11 +3802,12 @@ class TestCodeIndexNavigationRules:
         assert response.decision == "block"
         assert response.reason is not None
         assert (
-            'Use `gcode grep "pattern" -m 50` (supports -F -i -w -l -g; '
+            'Use compact `gcode grep "pattern" -m 50` (supports -F -i -w -l -g; '
             "exit 0 even with no matches) or "
             '`gcode search-content "query"` — '
-            "the code index has full access to this repo and returns ranked, token-cheap results."
+            "the code index has full access to this repo and returns ranked, token-cheap pages."
         ) in response.reason
+        assert "Run any printed continuation command exactly" in response.reason
         assert "follow the `recovery` directive" in response.reason
         assert "do NOT re-run the failing gcode call" in response.reason
 
@@ -4231,9 +4232,15 @@ class TestCodeIndexNavigationRules:
         assert broad_response.decision == "block"
         assert broad_response.reason is not None
         assert (
-            "Use `gcode outline <file>` then `gcode symbol <id>` — "
-            "ranged Read (offset/limit, ≤40 lines) is always available."
+            "Use `gcode outline <file>`, then `gcode symbol-at <file>:<line>` "
+            "for the relevant result."
         ) in broad_response.reason
+        assert "Request `--format json` or `--verbose` only when an ID is required" in (
+            broad_response.reason
+        )
+        assert "Ranged Read (offset/limit, ≤40 lines) is always available" in (
+            broad_response.reason
+        )
         assert "follow the `recovery` directive" in broad_response.reason
         assert "use Read on the file instead" in broad_response.reason
         assert narrow_response.decision == "allow"

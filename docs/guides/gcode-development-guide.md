@@ -420,7 +420,7 @@ line-oriented indexed matches.
 
 ### Pagination
 
-All search/graph commands return a `PagedResponse` envelope:
+All collection commands return a page envelope:
 
 ```json
 {
@@ -428,20 +428,26 @@ All search/graph commands return a `PagedResponse` envelope:
   "total": 47,
   "offset": 0,
   "limit": 10,
+  "next_offset": 3,
   "results": [...],
   "hint": null
 }
 ```
 
 - `--offset N` skips the first N results
-- `--limit N` caps results per page (default: 10)
-- `--token-budget N` (on `search`, `usages`, and `blast-radius` only) trims
-  returned rows to an approximate token ceiling, estimated as `ceil(chars/4)` per
-  rendered row. Rows are trimmed from the tail after ranking/graph order is fixed;
-  trimmed output populates `hint` in JSON and prints a `refine with ...` narrowing
-  hint in text mode. It is not a global flag and is absent from `outline`/`symbol`.
+- `--limit N` caps results per page; existing search and graph defaults remain
+  10, while newly paged explicit-JSON collections are unbounded when no limit or
+  token budget is supplied
+- `--token-budget N` selects the largest prefix of complete semantic items whose
+  fully rendered page fits `ceil(chars/4)`; compact text receives 2,000 tokens
+  automatically
+- `next_offset` identifies the next complete item; `budget_exceeded` is emitted
+  when a complete oversized first item or page metadata exceeds the budget
+- outline pages use top-level subtrees, grep pages use match/context blocks,
+  symbols remain complete, tree/repo-outline use directory groups, and graph
+  commands use relationship rows
 - `hint` is populated when FalkorDB is unavailable (graph commands only)
-- Text mode shows a pagination footer: `-- 10 of 47 results (use --offset 10 for more)`
+- text mode prints an exact shell-safe continuation command
 
 ## Database Schema
 
@@ -606,31 +612,37 @@ The system always works without the daemon process once the PostgreSQL hub is co
 
 ## Output Format
 
-### Default (Slim)
+Navigation commands default to compact text. Search rows render as
+`path:line [kind] qualified_name`; outline rows preserve hierarchy; grep keeps
+each match and its context block together; tree and repo-outline page by
+directory group. Compact output omits UUIDs, scores, and ranking-lane
+diagnostics. `--verbose` restores those details for search and outline.
 
-- **Search**: `id`, `name`, `qualified_name`, `kind`, `file_path`, `line_start`, `score`, `signature`, `sources`
-- **Outline**: `id`, `name`, `kind`, `line_start`, `line_end`, `signature` (6 fields vs full Symbol)
-- **Graph**: `id`, `name`, `file_path`, `line`, `relation`, `distance`
+Explicit `--format json` is the stable machine interface and uses compact
+serialization. Nested structural graph and lifecycle commands keep complete
+JSON defaults.
 
-### Verbose (`--verbose`)
-
-- **Outline**: Returns full `Symbol` struct with all fields
-
-Fields never shown even in verbose: `content_hash`, `created_at`, `updated_at`, `byte_start`, `byte_end`. `project_id` is hoisted to the `PagedResponse` envelope.
+All collection handlers share `gobby_core::token_budget::paginate_results`.
+They pass semantic units and a renderer for the complete candidate page, so
+headers and continuation metadata count toward the budget. The pager selects
+the largest complete prefix, emits one complete oversized first item, and
+returns `next_offset` plus conditional `budget_exceeded`. Text presentation
+prints an exact shell-safe continuation command. Compact text gets an automatic
+2,000-token budget; explicit JSON uses token paging only when requested.
 
 ## Use Cases
 
 ### Agent Search Workflow
 
-1. `gcode search "auth middleware"` → ranked results with file:line, signature
-2. Pick result → `gcode symbol <id>` (exact source code) or `gcode symbol-at file_path:line_start`
-3. Need more? → `gcode search "auth middleware" --offset 10`
+1. `gcode search "auth middleware"` → compact ranked results with file and line
+2. Pick result → `gcode symbol-at file_path:line_start`
+3. Run the printed continuation command when more results remain
 
 ### File Survey
 
 1. `gcode outline src/config.rs` → slim symbol list (name, kind, lines, signature)
 2. If you already have a file and line, use `gcode symbol-at src/config.rs:42`
-3. If navigating by structure or ID, identify relevant functions → `gcode symbol <id>` for source code
+3. If an ID is required, rerun with `--verbose` or `--format json`, then use `gcode symbol <id>`
 
 ### Impact Analysis
 

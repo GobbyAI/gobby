@@ -117,7 +117,7 @@ fn print_skipped_missing_indexed_file(
                 "Skipped code-symbol vector sync for project {}: indexed file `{file_path}` was not found",
                 ctx.project_id
             ))?;
-            output::print_json_compact(&payload)
+            output::print_json(&payload)
         }
     }
 }

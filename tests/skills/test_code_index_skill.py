@@ -32,7 +32,8 @@ def test_code_index_skill_documents_positional_path_filters() -> None:
     assert 'gcode search "query" [PATH ...]' in body
     assert 'gcode grep "regex" [PATH ...] -m 50' in body
     assert 'gcode search-content "query" [PATH ...]' in body
-    assert "-m/--max-count" in body
+    assert "-m/--limit" in body
+    assert "`--max-count` is an alias for `--limit`" in body
     assert "--format json" in body
     assert "--path <glob>" not in body
     assert "positional path filters" in body
@@ -109,8 +110,10 @@ def test_code_index_skill_documents_callees_and_graph_view() -> None:
     body = parse_skill_file(SKILL_PATH).content
 
     assert "`gcode callees <symbol>`" in body
-    assert "`limit`/`offset` only" in body
-    assert "no output-clip `--token-budget`" in body
+    assert "Collection commands accept `--limit`, `--offset`, and `--token-budget`" in body
+    assert "automatically uses a 2,000-token page budget" in body
+    assert "prints an exact shell-safe continuation command" in body
+    assert "oversized first item is returned complete" in body
     assert "`gcode graph view --view=fcg|mcg|class-hierarchy <seed>`" in body
     assert "complete within `--depth`" in body
     assert "omitted `--depth` is 8 for CHG and 1 for FCG/MCG" in body
@@ -119,6 +122,15 @@ def test_code_index_skill_documents_callees_and_graph_view() -> None:
     assert "Leiden via `analyze`" in body
     assert "`E(P)`" in body
     assert "`nodes[].file` is nullable" in body
+
+
+def test_code_index_skill_prefers_compact_location_retrieval() -> None:
+    body = parse_skill_file(SKILL_PATH).content
+
+    assert "Navigation commands default to compact text" in body
+    assert "use `gcode symbol-at path/to/file.py:42` after search" in body
+    assert "Compact text omits UUIDs, scores, and ranking-lane diagnostics" in body
+    assert "Use `--verbose` or `--format json`" in body
 
 
 def test_code_index_skill_matches_gcode_bundled_asset_when_present() -> None:

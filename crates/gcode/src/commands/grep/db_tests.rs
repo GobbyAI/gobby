@@ -210,6 +210,8 @@ fn grep_scopes_chunks_to_local_machine_file_state() {
         before_context: None,
         after_context: None,
         max_count: None,
+        offset: 0,
+        token_budget: None,
         files_with_matches: false,
         format: Format::Json,
     };

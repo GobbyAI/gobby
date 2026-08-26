@@ -657,9 +657,17 @@ pub struct PagedResponse<T: Serialize> {
     pub limit: usize,
     pub results: Vec<T>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_offset: Option<usize>,
+    #[serde(skip_serializing_if = "is_false")]
+    pub budget_exceeded: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub hint: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<SearchWarning>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// Hybrid-search lane that emitted a degradation warning.
