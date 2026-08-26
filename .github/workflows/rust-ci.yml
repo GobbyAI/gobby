@@ -131,27 +131,18 @@ jobs:
       - name: Build workspace (without embeddings)
         run: cargo build --workspace --no-default-features
 
-  gcode-graph-standalone:
-    name: gcode graph_standalone
+  # PostgreSQL-backed Rust tests: gcore schema authority and the gcode DB
+  # suites. gcode always runs under the daemon's grant; the test_env fixture
+  # applies the schema and seeds the machine row itself, so no daemon or
+  # standalone setup step is involved.
+  postgres-backed-tests:
+    name: PostgreSQL-backed Rust tests
     runs-on: ubuntu-latest
     env:
-      GCODE_GRAPH_STANDALONE_DATABASE_URL: postgresql://gobby:gobby_dev@127.0.0.1:15432/gobby
-      GCODE_GRAPH_STANDALONE_FALKOR_HOST: 127.0.0.1
-      GCODE_GRAPH_STANDALONE_FALKOR_PORT: "16379"
-      GCODE_GRAPH_STANDALONE_FALKOR_PASSWORD: gobbyfalkor
-    services:
-      falkordb:
-        image: falkordb/falkordb:latest
-        env:
-          REDIS_ARGS: "--requirepass gobbyfalkor"
-          GOBBY_FALKORDB_PASSWORD: gobbyfalkor
-        ports:
-          - 16379:6379
-        options: >-
-          --health-cmd "redis-cli -a gobbyfalkor PING | grep -q PONG"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 20
+      GOBBY_SCHEMA_TEST_DATABASE_URL: postgresql://gobby:gobby_dev@127.0.0.1:15432/gobby
+      # gcode DB tests refuse databases whose name does not end in `_test`.
+      GCODE_POSTGRES_TEST_DATABASE_URL: postgresql://gobby:gobby_dev@127.0.0.1:15432/gobby_gcode_test
+      GOBBY_HOME: ${{ runner.temp }}/gobby-home
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -174,7 +165,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-gcode-graph-cargo-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-postgres-tests-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Build PostgreSQL pg_search image
@@ -215,36 +206,27 @@ jobs:
           docker logs gobby-postgres-ci
           exit 1
 
+      - name: Create the gcode test database and machine identity
+        run: |
+          docker exec gobby-postgres-ci psql -U gobby -d gobby -c "CREATE DATABASE gobby_gcode_test"
+          mkdir -p "$GOBBY_HOME"
+          uuidgen | tr '[:upper:]' '[:lower:]' > "$GOBBY_HOME/machine_id"
+
       - name: Test gcore schema authority and catalog freshness
-        env:
-          GOBBY_SCHEMA_TEST_DATABASE_URL: postgresql://gobby:gobby_dev@127.0.0.1:15432/gobby
         run: |
           cargo test -p gobby-core --features postgres --lib schema:: -- --test-threads=1
           cargo test -p gobby-core --features postgres --test schema_contract -- --test-threads=1
           cargo test -p gobby-core --features postgres --test catalog_manifest_freshness -- --test-threads=1
 
-      - name: Set up standalone gcode schema
-        env:
-          GOBBY_HOME: ${{ runner.temp }}/gcode-graph-home
-        run: |
-          cargo run -p gobby-code -- setup \
-            --standalone \
-            --database-url "$GCODE_GRAPH_STANDALONE_DATABASE_URL" \
-            --no-services \
-            --falkordb-host "$GCODE_GRAPH_STANDALONE_FALKOR_HOST" \
-            --falkordb-port "$GCODE_GRAPH_STANDALONE_FALKOR_PORT" \
-            --falkordb-password "$GCODE_GRAPH_STANDALONE_FALKOR_PASSWORD" \
-            --quiet
-
-      - name: Test graph_standalone (gcode)
-        run: cargo nextest run --profile ci -p gobby-code --test graph_standalone
+      # The in-crate serial_db suites compile only when the DSN is set at build
+      # time (crates/gcode/build.rs); .config/nextest.toml serializes them.
+      - name: Test gcode serial_db suites
+        run: cargo nextest run --profile ci -p gobby-code -E 'test(serial_db)'
 
       # projection_stale is gated behind required-features = ["test-support"];
       # without this step no CI lane compiles or runs it. Plain cargo test keeps
       # serial_test's in-process serialization against the shared database.
       - name: Test projection_stale (gcode, test-support)
-        env:
-          GCODE_POSTGRES_TEST_DATABASE_URL: postgresql://gobby:gobby_dev@127.0.0.1:15432/gobby
         run: cargo test -p gobby-code --features test-support --test projection_stale
 
   coverage:

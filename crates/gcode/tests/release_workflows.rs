@@ -266,18 +266,16 @@ fn ci_workflow_pins_core_actions_by_sha() {
 }
 
 #[test]
-fn ci_workflow_runs_gcode_graph_standalone_with_backends() {
+fn ci_workflow_runs_postgres_backed_rust_tests_without_standalone_setup() {
     let workflow = include_str!("../../../.github/workflows/rust-ci.yml");
 
-    assert!(workflow.contains("gcode-graph-standalone:"));
-    assert!(workflow.contains("image: falkordb/falkordb:latest"));
-    assert!(workflow.contains("REDIS_ARGS: \"--requirepass gobbyfalkor\""));
+    assert!(workflow.contains("postgres-backed-tests:"));
     assert!(workflow.contains(
-        "GCODE_GRAPH_STANDALONE_DATABASE_URL: postgresql://gobby:gobby_dev@127.0.0.1:15432/gobby"
+        "GOBBY_SCHEMA_TEST_DATABASE_URL: postgresql://gobby:gobby_dev@127.0.0.1:15432/gobby"
     ));
-    assert!(workflow.contains("GCODE_GRAPH_STANDALONE_FALKOR_HOST: 127.0.0.1"));
-    assert!(workflow.contains("GCODE_GRAPH_STANDALONE_FALKOR_PORT: \"16379\""));
-    assert!(workflow.contains("GCODE_GRAPH_STANDALONE_FALKOR_PASSWORD: gobbyfalkor"));
+    assert!(workflow.contains(
+        "GCODE_POSTGRES_TEST_DATABASE_URL: postgresql://gobby:gobby_dev@127.0.0.1:15432/gobby_gcode_test"
+    ));
     assert!(workflow.contains("docker build \\"));
     assert!(workflow.contains("--build-arg PG_SEARCH_VERSION=0.23.4 \\"));
     assert!(workflow.contains(
@@ -285,10 +283,21 @@ fn ci_workflow_runs_gcode_graph_standalone_with_backends() {
     ));
     assert!(workflow.contains("docker run --detach \\"));
     assert!(workflow.contains("SELECT 1 FROM pg_extension WHERE extname='pg_search'"));
-    assert!(workflow.contains("cargo run -p gobby-code -- setup \\"));
+    assert!(workflow.contains("CREATE DATABASE gobby_gcode_test"));
+    assert!(workflow.contains("> \"$GOBBY_HOME/machine_id\""));
+    assert!(workflow.contains("cargo nextest run --profile ci -p gobby-code -E 'test(serial_db)'"));
     assert!(
-        workflow.contains("cargo nextest run --profile ci -p gobby-code --test graph_standalone")
+        workflow
+            .contains("cargo test -p gobby-code --features test-support --test projection_stale")
     );
+
+    // gcode runs only under the daemon's grant: the standalone schema setup and
+    // the FalkorDB-backed graph_standalone lane are retired (#21045).
+    assert!(!workflow.contains("gcode setup"));
+    assert!(!workflow.contains("-- setup"));
+    assert!(!workflow.contains("graph_standalone"));
+    assert!(!workflow.contains("GCODE_GRAPH_STANDALONE"));
+    assert!(!workflow.contains("falkordb/falkordb"));
 }
 
 #[test]
