@@ -310,6 +310,42 @@ class TestManualCompactionTurnEndBypass:
         assert variables.get("raw_after_agent_seen") is True
         assert variables.get(COMPACT_TURN_END_BYPASS_PENDING) is False
 
+    @pytest.mark.asyncio
+    async def test_manual_pre_compact_stop_allows_but_keeps_raw_stop_event(
+        self,
+        db: HubDatabase,
+        manager: RuleDefinitionManager,
+    ) -> None:
+        """Raw `stop` is transport: it fires on the bypassed Stop like `after_agent` does."""
+        _sync_bundled(db)
+        _insert_rule(
+            manager,
+            "raw-stop-marker",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.STOP,
+                effects=[
+                    RuleEffect(
+                        type="set_variable",
+                        variable="raw_stop_seen",
+                        value=True,
+                    )
+                ],
+            ),
+        )
+        engine = RuleEngine(db)
+        variables = _claimed_task_variables()
+
+        precompact = _make_event(HookEventType.PRE_COMPACT, data={"trigger": "manual"})
+        await engine.evaluate(precompact, SESSION_ID, variables)
+
+        stop = _make_event(HookEventType.STOP)
+        response = await engine.evaluate(stop, SESSION_ID, variables)
+
+        assert response.decision == "allow"
+        assert variables.get("stop_attempts") == 0
+        assert variables.get("raw_stop_seen") is True
+        assert variables.get(COMPACT_TURN_END_BYPASS_PENDING) is False
+
     @pytest.mark.parametrize(
         "precompact_data",
         [

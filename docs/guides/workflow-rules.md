@@ -6,7 +6,10 @@ full reference for fields, events, and effects, see [rules.md](./rules.md).
 Gobby treats `turn_start` and `turn_end` as the primary rule-authoring
 events for agent turns. Raw events such as `before_agent`, `after_agent`, and
 `stop` are normalized provider/runtime details that remain available for
-escape-hatch rules.
+escape-hatch rules. Raw events fire on every provider event: the manual
+`/compact` bypass skips only the semantic `turn_end` of the provider-noise Stop
+that follows a manual `pre_compact`, so a rule on `event: stop` still runs there
+and a `block` on it would hold that Stop open. Stop gates use `turn_end`.
 
 ## Variable Safety In `when`
 

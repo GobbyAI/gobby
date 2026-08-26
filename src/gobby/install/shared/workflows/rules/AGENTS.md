@@ -51,7 +51,10 @@ Multiple rules can live in one YAML file, or each rule can have its own file. Th
 
 For lifecycle authoring, prefer semantic workflow events such as `turn_start`
 and `turn_end`. Raw events such as `before_agent`, `after_agent`, and `stop`
-are escape hatches for provider-specific detail.
+are escape hatches for provider-specific detail. They fire on every provider
+event: the manual-compact bypass skips only the semantic `turn_end` of the
+provider-noise Stop after a manual `pre_compact`, so a rule on `event: stop`
+still runs there. Stop gates use `turn_end`.
 
 ## Turn-End Overrides and Acknowledge Variables
 
