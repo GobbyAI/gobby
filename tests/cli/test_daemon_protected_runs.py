@@ -75,6 +75,8 @@ def test_fetch_protected_runs_authenticates_and_returns_the_daemons_run_rows() -
         assert fetch_protected_runs(60887) == [RUN]
 
     get.assert_called_once_with(ENDPOINT, headers=AUTH_HEADERS, timeout=3.0)
+    sent_headers = get.call_args.kwargs["headers"]
+    assert sent_headers["Authorization"] == "Bearer test-local-cli-token"
 
 
 @pytest.mark.parametrize(
