@@ -70,11 +70,12 @@ class TestInstallFalkorDBFlags:
         assert "falkordb_password_stdin" not in param_names
         assert "components" in param_names
 
-    def test_uninstall_command_rejects_falkordb_option(self) -> None:
+    def test_uninstall_command_takes_components_not_service_flags(self) -> None:
         from gobby.cli.uninstall import uninstall
 
         param_names = [p.name for p in uninstall.params]
         assert "falkordb_flag" not in param_names
+        assert "components" in param_names
 
 
 class TestDaemonDockerFlag:

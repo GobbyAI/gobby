@@ -14,7 +14,10 @@ from pathlib import Path
 from typing import Any
 
 import click
+import psycopg
+from psycopg_pool import PoolTimeout
 
+from gobby.config.bootstrap import BootstrapConfigError
 from gobby.config.bootstrap_io import bootstrap_path
 from gobby.paths import get_gobby_home
 from gobby.storage.hub.protocol import HubDatabase
@@ -274,7 +277,18 @@ def run_uninstall_components(
             else:
                 click.echo(f"Failed: {result['error']}", err=True)
         elif name == "rtk":
-            rule_disabled = disable_rule_if_present(runtime.require_database())
+            # Binary cleanup must not depend on the hub being reachable: an
+            # uninstall after `gobby stop --docker` has no database to talk to.
+            try:
+                rule_disabled = disable_rule_if_present(runtime.require_database())
+            except (
+                BootstrapConfigError,
+                RuntimeError,
+                psycopg.OperationalError,
+                PoolTimeout,
+            ) as exc:
+                click.echo(f"Warning: RTK rule left unchanged (hub unavailable): {exc}", err=True)
+                rule_disabled = False
             cleanup = remove_managed_rtk()
             _echo_cleanup(cleanup.removed, cleanup.conflicts)
             results["rtk"] = {

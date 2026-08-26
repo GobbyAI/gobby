@@ -10,12 +10,13 @@ import threading
 import time
 import tomllib
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
 
 from gobby.cli import install_setup_impeccable as installer
+from gobby.cli.install_setup_rtk import RtkCleanupReport
 from gobby.cli.uninstall import uninstall
 from gobby.skills.script_cache import (
     DELETION_TOMBSTONE_PREFIX,
@@ -917,53 +918,59 @@ def test_warm_waiter_restarts_after_uninstall_deletes_root(
 
 
 @pytest.mark.parametrize(
-    ("arguments", "hook_removed", "cleanup_called", "exit_code"),
+    ("arguments", "hook_removed", "cleanup_called"),
     [
-        ([], True, False, 0),
-        (["--tools"], False, True, 0),
-        (["--tools", "--all"], True, True, 0),
-        (["--tools", "--claude"], True, True, 0),
-        (["--tools", "--project"], False, False, 2),
-        (["--tools", "--project", "--all"], False, False, 2),
-        (["--tools", "--project", "--claude"], False, False, 2),
+        ([], True, True),
+        (["impeccable"], False, True),
+        (["rtk", "impeccable"], False, True),
+        (["impeccable", "claude"], True, True),
+        (["claude"], True, False),
     ],
 )
-def test_uninstall_tools_selector_matrix(
+def test_uninstall_component_matrix(
     arguments: list[str],
     hook_removed: bool,
     cleanup_called: bool,
-    exit_code: int,
     tmp_path: Path,
 ) -> None:
     settings = tmp_path / ".claude" / "settings.json"
     settings.parent.mkdir()
     settings.write_text("{}", encoding="utf-8")
     cleanup = installer.ImpeccableRemovalResult((), ())
+    remove_claude = MagicMock(
+        return_value={"success": True, "hooks_removed": [], "files_removed": []}
+    )
     with (
         patch("gobby.cli.uninstall.Path.home", return_value=tmp_path),
-        patch("gobby.cli.uninstall.remove_impeccable_runtime", return_value=cleanup) as remove,
+        patch("gobby.cli.uninstall.get_cli_runtime", return_value=MagicMock()),
+        patch("gobby.cli.uninstall._teardown_ui_exposure"),
+        patch("gobby.cli.install_components.disable_rule_if_present", return_value=False),
         patch(
-            "gobby.cli.uninstall.uninstall_claude",
-            return_value={"success": True, "hooks_removed": [], "files_removed": []},
-        ) as remove_claude,
+            "gobby.cli.install_components.remove_managed_rtk",
+            return_value=RtkCleanupReport(removed=(), backups=(), conflicts=()),
+        ),
+        patch(
+            "gobby.cli.install_components.remove_impeccable_runtime", return_value=cleanup
+        ) as remove,
+        patch.dict("gobby.cli.install_components._CLI_UNINSTALLERS", {"claude": remove_claude}),
     ):
         result = CliRunner().invoke(uninstall, [*arguments, "--yes"])
 
-    assert result.exit_code == exit_code
+    assert result.exit_code == 0, result.output
     assert remove.called is cleanup_called
     assert remove_claude.called is hook_removed
-    if exit_code == 2:
-        assert "--tools cannot be combined with --project" in result.output
 
 
-def test_uninstall_tools_without_hooks(tmp_path: Path) -> None:
+def test_uninstall_impeccable_component_without_hooks(tmp_path: Path) -> None:
     removed = tmp_path / "tools" / "impeccable"
     cleanup = installer.ImpeccableRemovalResult((removed,), ())
     with (
         patch("gobby.cli.uninstall.Path.home", return_value=tmp_path),
-        patch("gobby.cli.uninstall.remove_impeccable_runtime", return_value=cleanup) as remove,
+        patch(
+            "gobby.cli.install_components.remove_impeccable_runtime", return_value=cleanup
+        ) as remove,
     ):
-        result = CliRunner().invoke(uninstall, ["--tools", "--yes"], catch_exceptions=False)
+        result = CliRunner().invoke(uninstall, ["impeccable", "--yes"], catch_exceptions=False)
 
     assert result.exit_code == 0
     assert str(removed) in result.output

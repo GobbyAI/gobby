@@ -506,7 +506,7 @@ def test_remove_managed_rtk_preserves_path_mismatch(tmp_path: Path) -> None:
     assert "path does not match" in report.conflicts[0]
 
 
-def test_global_uninstall_tools_disables_rule_and_removes_owned_fallback(tmp_path: Path) -> None:
+def test_uninstall_rtk_component_disables_rule_and_removes_owned_fallback(tmp_path: Path) -> None:
     binary = tmp_path / ".gobby" / "bin" / "rtk"
     binary.parent.mkdir(parents=True)
     binary.write_bytes(b"owned")
@@ -524,22 +524,19 @@ def test_global_uninstall_tools_disables_rule_and_removes_owned_fallback(tmp_pat
     database = MagicMock()
     runtime = MagicMock()
     runtime.require_database.return_value = database
-    impeccable_cleanup = MagicMock(removed=(), skipped=())
 
     with (
         patch("gobby.cli.uninstall.Path.home", return_value=tmp_path),
         patch("gobby.cli.uninstall.get_cli_runtime", return_value=runtime),
-        patch("gobby.cli.uninstall.disable_rule_if_present") as disable,
-        patch(
-            "gobby.cli.uninstall.remove_impeccable_runtime",
-            return_value=impeccable_cleanup,
-        ),
+        patch("gobby.cli.install_components.disable_rule_if_present") as disable,
+        patch("gobby.cli.install_components.remove_impeccable_runtime") as remove_impeccable,
     ):
-        result = CliRunner().invoke(uninstall, ["--tools", "--yes"])
+        result = CliRunner().invoke(uninstall, ["rtk", "--yes"])
 
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.output
     disable.assert_called_once_with(database)
     runtime.close.assert_called_once_with()
+    remove_impeccable.assert_not_called()
     assert not binary.exists()
     assert not sidecar.exists()
 

@@ -11,6 +11,8 @@ from gobby.cli.install import (
     _is_claude_code_installed,
     _is_codex_cli_installed,
 )
+from gobby.cli.install_setup_impeccable import ImpeccableRemovalResult
+from gobby.cli.install_setup_rtk import RtkCleanupReport
 from gobby.cli.utils import (
     format_uptime,
     is_port_available,
@@ -345,23 +347,33 @@ class TestUninstallCommand:
         """Create a CLI test runner."""
         return CliRunner()
 
+    @patch("gobby.cli.uninstall._teardown_ui_exposure")
+    @patch("gobby.cli.install_components.remove_impeccable_runtime")
+    @patch("gobby.cli.install_components.remove_managed_rtk")
+    @patch("gobby.cli.uninstall.get_cli_runtime")
     @patch("gobby.cli.install.Path.home")
-    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_uninstall_no_hooks_found(
         self,
-        mock_load_config: MagicMock,
         mock_path_home: MagicMock,
+        mock_runtime: MagicMock,
+        mock_remove_rtk: MagicMock,
+        mock_remove_impeccable: MagicMock,
+        _teardown_ui: MagicMock,
         runner: CliRunner,
         temp_dir: Path,
     ) -> None:
-        """Test uninstall when no hooks are found."""
-        mock_load_config.return_value = MagicMock()
+        """Bare uninstall on an empty home finishes even when the hub is offline."""
         # Mock home directory to prevent finding actual hooks on dev machine
         mock_path_home.return_value = temp_dir
+        mock_runtime.return_value.require_database.side_effect = RuntimeError("hub offline")
+        mock_remove_rtk.return_value = RtkCleanupReport(removed=(), backups=(), conflicts=())
+        mock_remove_impeccable.return_value = ImpeccableRemovalResult((), ())
 
         with runner.isolated_filesystem(temp_dir=str(temp_dir)):
             # Confirm the uninstall
             result = runner.invoke(cli, ["uninstall", "--yes"])
 
-            assert result.exit_code == 0
-            assert "No Gobby hooks found" in result.output
+        assert result.exit_code == 0, result.output
+        assert "No Gobby hooks found" in result.output
+        assert "Warning: RTK rule left unchanged (hub unavailable): hub offline" in result.output
+        assert "Uninstallation completed successfully!" in result.output

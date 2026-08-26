@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import AbstractContextManager, ExitStack, contextmanager
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -24,6 +26,7 @@ from gobby.cli.install import (
     _is_codex_cli_installed,
     install,
 )
+from gobby.cli.install_setup_impeccable import ImpeccableRemovalResult
 from gobby.cli.install_setup_rtk import RtkCleanupReport, RtkInstallStatus
 from gobby.cli.uninstall import uninstall
 from gobby.ui_exposure import UiExposeError
@@ -1076,146 +1079,217 @@ class TestInstallCommand:
 # ---------------------------------------------------------------------------
 # uninstall command
 # ---------------------------------------------------------------------------
-class TestUninstallCommand:
-    @patch("gobby.cli.uninstall.uninstall_claude")
-    def test_uninstall_claude(self, mock_uninstall: MagicMock, runner: CliRunner) -> None:
-        mock_uninstall.return_value = {
-            "success": True,
-            "hooks_removed": ["hook1"],
-            "files_removed": ["file1"],
-        }
-        result = runner.invoke(uninstall, ["--claude", "--yes"], catch_exceptions=False)
-        assert result.exit_code == 0
-        assert "Claude Code" in result.output
+def _cli_uninstallers(**uninstallers: MagicMock) -> AbstractContextManager[Any]:
+    return patch.dict("gobby.cli.install_components._CLI_UNINSTALLERS", uninstallers)
 
-    @patch("gobby.cli.uninstall.uninstall_claude")
-    def test_uninstall_claude_failure(self, mock_uninstall: MagicMock, runner: CliRunner) -> None:
-        mock_uninstall.return_value = {
-            "success": False,
-            "error": "Permission denied",
-        }
-        result = runner.invoke(uninstall, ["--claude", "--yes"], catch_exceptions=False)
+
+@contextmanager
+def _managed_tool_removal(*, teardown_ui: bool = True) -> Iterator[dict[str, MagicMock]]:
+    """Patch the rtk/impeccable cleanup and the runtime it needs."""
+    mocks = {
+        "runtime": MagicMock(),
+        "disable_rule": MagicMock(return_value=True),
+        "remove_rtk": MagicMock(
+            return_value=RtkCleanupReport(removed=(), backups=(), conflicts=())
+        ),
+        "remove_impeccable": MagicMock(return_value=ImpeccableRemovalResult((), ())),
+        "teardown_ui": MagicMock(),
+    }
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch("gobby.cli.uninstall.get_cli_runtime", return_value=mocks["runtime"])
+        )
+        stack.enter_context(
+            patch("gobby.cli.install_components.disable_rule_if_present", mocks["disable_rule"])
+        )
+        stack.enter_context(
+            patch("gobby.cli.install_components.remove_managed_rtk", mocks["remove_rtk"])
+        )
+        stack.enter_context(
+            patch(
+                "gobby.cli.install_components.remove_impeccable_runtime",
+                mocks["remove_impeccable"],
+            )
+        )
+        if teardown_ui:
+            stack.enter_context(
+                patch("gobby.cli.uninstall._teardown_ui_exposure", mocks["teardown_ui"])
+            )
+        yield mocks
+
+
+class TestUninstallCommand:
+    def test_uninstall_claude_touches_only_claude_hooks(self, runner: CliRunner) -> None:
+        uninstaller = MagicMock(
+            return_value={"success": True, "hooks_removed": ["hook1"], "files_removed": ["file1"]}
+        )
+        with _cli_uninstallers(claude=uninstaller), _managed_tool_removal() as tools:
+            result = runner.invoke(uninstall, ["claude", "--yes"], catch_exceptions=False)
+
+        assert result.exit_code == 0, result.output
+        assert "Claude Code" in result.output
+        assert "Gobby Uninstallation" not in result.output
+        uninstaller.assert_called_once_with(Path.home())
+        tools["runtime"].require_database.assert_not_called()
+        tools["disable_rule"].assert_not_called()
+        tools["remove_rtk"].assert_not_called()
+        tools["remove_impeccable"].assert_not_called()
+        tools["teardown_ui"].assert_not_called()
+        tools["runtime"].close.assert_called_once_with()
+
+    def test_uninstall_claude_failure(self, runner: CliRunner) -> None:
+        uninstaller = MagicMock(return_value={"success": False, "error": "Permission denied"})
+        with _cli_uninstallers(claude=uninstaller):
+            result = runner.invoke(uninstall, ["claude", "--yes"], catch_exceptions=False)
+
         assert result.exit_code == 1
         assert "Permission denied" in result.output
+        assert "Some uninstallations failed: claude" in result.output
 
-    @patch("gobby.cli.uninstall.uninstall_codex")
-    def test_uninstall_codex(self, mock_uninstall: MagicMock, runner: CliRunner) -> None:
-        mock_uninstall.return_value = {
-            "success": True,
-            "hooks_removed": ["codex_hook"],
-            "files_removed": ["codex_file"],
-            "config_updated": True,
-        }
-        result = runner.invoke(uninstall, ["--codex", "--yes"], catch_exceptions=False)
+    def test_uninstall_codex(self, runner: CliRunner) -> None:
+        uninstaller = MagicMock(
+            return_value={
+                "success": True,
+                "hooks_removed": ["codex_hook"],
+                "files_removed": ["codex_file"],
+                "config_updated": True,
+            }
+        )
+        with _cli_uninstallers(codex=uninstaller):
+            result = runner.invoke(uninstall, ["codex", "--yes"], catch_exceptions=False)
+
         assert result.exit_code == 0
         assert "Codex" in result.output
 
-    @patch("gobby.cli.uninstall.get_cli_runtime")
-    @patch("gobby.cli.uninstall.disable_rule_if_present")
-    @patch("gobby.cli.uninstall.uninstall_claude")
-    def test_uninstall_claude_leaves_rtk_rule(
-        self,
-        mock_uninstall: MagicMock,
-        mock_disable_rule: MagicMock,
-        mock_runtime_factory: MagicMock,
-        runner: CliRunner,
-    ) -> None:
-        mock_uninstall.return_value = {
-            "success": True,
-            "hooks_removed": ["hook1"],
-            "files_removed": [],
-        }
-        result = runner.invoke(uninstall, ["--claude", "--yes"], catch_exceptions=False)
+    def test_uninstall_components_run_once_each_in_order(self, runner: CliRunner) -> None:
+        order: list[str] = []
+
+        def uninstaller(name: str) -> MagicMock:
+            def run(_home: Path, **_kwargs: Any) -> dict[str, Any]:
+                order.append(name)
+                return {"success": True, "hooks_removed": [], "files_removed": []}
+
+            return MagicMock(side_effect=run)
+
+        with _cli_uninstallers(codex=uninstaller("codex"), qwen=uninstaller("qwen")):
+            result = runner.invoke(
+                uninstall, ["qwen", "codex", "qwen", "--yes"], catch_exceptions=False
+            )
 
         assert result.exit_code == 0, result.output
-        mock_uninstall.assert_called_once()
-        mock_disable_rule.assert_not_called()
-        mock_runtime_factory.assert_not_called()
+        assert order == ["qwen", "codex"]
 
-    @patch("gobby.cli.uninstall._teardown_ui_exposure")
-    @patch("gobby.cli.uninstall.get_cli_runtime")
-    @patch("gobby.cli.uninstall.disable_rule_if_present")
-    @patch("gobby.cli.uninstall.uninstall_claude")
-    def test_uninstall_all_disables_rtk_rule(
-        self,
-        mock_uninstall: MagicMock,
-        mock_disable_rule: MagicMock,
-        mock_runtime_factory: MagicMock,
-        _teardown_ui: MagicMock,
-        runner: CliRunner,
-        tmp_path: Path,
+    def test_uninstall_git_hooks_targets_the_given_repository(
+        self, runner: CliRunner, tmp_path: Path
     ) -> None:
-        runtime = MagicMock()
-        mock_runtime_factory.return_value = runtime
-        mock_uninstall.return_value = {"success": True, "hooks_removed": [], "files_removed": []}
-        (tmp_path / ".claude").mkdir()
-        (tmp_path / ".claude" / "settings.json").write_text("{}")
-        with patch("gobby.cli.uninstall.Path.home", return_value=tmp_path):
-            result = runner.invoke(uninstall, ["--yes"], catch_exceptions=False)
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        removed = {"success": True, "removed": ["pre-push"], "not_found": [], "error": None}
+        with patch(
+            "gobby.cli.install_components.uninstall_git_hooks", return_value=removed
+        ) as hooks:
+            result = runner.invoke(
+                uninstall, ["git-hooks", "-C", str(repo), "--yes"], catch_exceptions=False
+            )
 
         assert result.exit_code == 0, result.output
-        assert "Gobby Hooks Uninstallation" in result.output
-        assert "Targets to uninstall: claude" in result.output
-        assert "Removed global hook dispatchers from ~/.gobby/hooks/" in result.output
-        mock_disable_rule.assert_called_once_with(runtime.require_database.return_value)
-        runtime.close.assert_called_once()
-        mock_uninstall.assert_called_once()
-        _teardown_ui.assert_called_once()
+        hooks.assert_called_once_with(repo.resolve())
+        assert "Removed git hook section: pre-push" in result.output
 
-    @patch("gobby.cli.uninstall.remove_managed_rtk")
-    @patch("gobby.cli.uninstall.disable_rule_if_present")
-    @patch("gobby.cli.uninstall.get_cli_runtime")
-    def test_uninstall_rtk_flag_alone_removes_rtk_only(
-        self,
-        mock_runtime_factory: MagicMock,
-        mock_disable_rule: MagicMock,
-        mock_remove_rtk: MagicMock,
-        runner: CliRunner,
+    @pytest.mark.parametrize(
+        ("argument", "message"),
+        [
+            ("falkordb", "is not one of"),
+            ("voice", "is not one of"),
+            ("--all", "No such option"),
+            ("--tools", "No such option"),
+            ("--project", "No such option"),
+            ("--rtk", "No such option"),
+        ],
+    )
+    def test_uninstall_rejects_removed_flags_and_unknown_components(
+        self, runner: CliRunner, argument: str, message: str
     ) -> None:
-        runtime = MagicMock()
-        mock_runtime_factory.return_value = runtime
-        mock_remove_rtk.return_value = RtkCleanupReport(
-            removed=(Path("/fake/.gobby/bin/rtk"),),
-            backups=(),
-            conflicts=("~/.claude/settings.json still calls a direct rtk hook",),
-        )
-        with (
-            patch("gobby.cli.uninstall.uninstall_claude") as uninstall_claude,
-            patch("gobby.cli.uninstall.remove_impeccable_runtime") as remove_tools,
-            patch("gobby.cli.uninstall._teardown_ui_exposure") as teardown_ui,
-        ):
-            result = runner.invoke(uninstall, ["--rtk", "--yes"], catch_exceptions=False)
+        result = runner.invoke(uninstall, [argument, "--yes"])
+
+        assert result.exit_code == 2
+        assert message in result.output
+
+    def test_uninstall_rtk_component_removes_rtk_only(self, runner: CliRunner) -> None:
+        claude = MagicMock()
+        with _cli_uninstallers(claude=claude), _managed_tool_removal() as tools:
+            tools["remove_rtk"].return_value = RtkCleanupReport(
+                removed=(Path("/fake/.gobby/bin/rtk"),),
+                backups=(),
+                conflicts=("~/.claude/settings.json still calls a direct rtk hook",),
+            )
+            result = runner.invoke(uninstall, ["rtk", "--yes"], catch_exceptions=False)
 
         assert result.exit_code == 0, result.output
         assert "Removed managed artifact: /fake/.gobby/bin/rtk" in result.output
         assert "Warning: ~/.claude/settings.json still calls a direct rtk hook" in result.output
-        assert "RTK maintenance complete." in result.output
-        assert "Gobby Hooks Uninstallation" not in result.output
-        mock_disable_rule.assert_called_once_with(runtime.require_database.return_value)
-        runtime.close.assert_called_once()
-        mock_remove_rtk.assert_called_once()
-        uninstall_claude.assert_not_called()
-        remove_tools.assert_not_called()
-        teardown_ui.assert_not_called()
+        assert "Uninstallation completed successfully!" in result.output
+        assert "Gobby Uninstallation" not in result.output
+        tools["disable_rule"].assert_called_once_with(
+            tools["runtime"].require_database.return_value
+        )
+        tools["runtime"].close.assert_called_once_with()
+        tools["remove_rtk"].assert_called_once_with()
+        claude.assert_not_called()
+        tools["remove_impeccable"].assert_not_called()
+        tools["teardown_ui"].assert_not_called()
 
-    def test_uninstall_rtk_rejects_project_scope(self, runner: CliRunner) -> None:
-        result = runner.invoke(uninstall, ["--rtk", "--project", "--yes"])
-        assert result.exit_code == 2
-        assert "--rtk cannot be combined with --project" in result.output
+    def test_uninstall_bare_removes_everything_without_docker(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("GOBBY_HOOKS_DIR", raising=False)
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.json").write_text("{}")
+        dispatcher = tmp_path / ".gobby" / "hooks" / "hook_dispatcher.py"
+        dispatcher.parent.mkdir(parents=True)
+        dispatcher.write_text("# dispatcher")
+        claude = MagicMock(
+            return_value={"success": True, "hooks_removed": ["hook1"], "files_removed": []}
+        )
+        with (
+            patch("gobby.cli.uninstall.Path.home", return_value=tmp_path),
+            _cli_uninstallers(claude=claude),
+            _managed_tool_removal() as tools,
+            patch("subprocess.run") as run,
+            patch("subprocess.Popen") as popen,
+        ):
+            result = runner.invoke(uninstall, ["--yes"], catch_exceptions=False)
 
-    def test_uninstall_rejects_falkordb_target(self, runner: CliRunner) -> None:
-        result = runner.invoke(uninstall, ["--falkordb", "--yes"])
+        assert result.exit_code == 0, result.output
+        assert "Gobby Uninstallation" in result.output
+        assert "Targets to uninstall: claude, rtk, impeccable" in result.output
+        assert "Removed global hook dispatchers from ~/.gobby/hooks/" in result.output
+        assert not dispatcher.exists()
+        claude.assert_called_once_with(tmp_path)
+        tools["disable_rule"].assert_called_once_with(
+            tools["runtime"].require_database.return_value
+        )
+        tools["remove_rtk"].assert_called_once_with()
+        tools["remove_impeccable"].assert_called_once_with()
+        tools["teardown_ui"].assert_called_once_with()
+        tools["runtime"].close.assert_called_once_with()
+        run.assert_not_called()
+        popen.assert_not_called()
 
-        assert result.exit_code == 2
-        assert "No such option '--falkordb'" in result.output
+    def test_uninstall_bare_nothing_found_still_cleans_managed_tools(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        with (
+            patch("gobby.cli.uninstall.Path.home", return_value=tmp_path),
+            _managed_tool_removal() as tools,
+        ):
+            result = runner.invoke(uninstall, ["--yes"], catch_exceptions=False)
 
-    def test_uninstall_all_nothing_found(self, runner: CliRunner, tmp_path: Path) -> None:
-        """When --all is used but no CLI hooks are detected."""
-        # Use a clean tmp_path as home so no settings.json files are found
-        with patch("gobby.cli.uninstall.Path.home", return_value=tmp_path):
-            result = runner.invoke(uninstall, ["--all", "--yes"], catch_exceptions=False)
-        assert result.exit_code == 0
+        assert result.exit_code == 0, result.output
         assert "No Gobby hooks found" in result.output
+        assert "Targets to uninstall: rtk, impeccable" in result.output
+        tools["remove_rtk"].assert_called_once_with()
+        tools["remove_impeccable"].assert_called_once_with()
 
     @staticmethod
     def _global_uninstall(
@@ -1226,18 +1300,17 @@ class TestUninstallCommand:
     ) -> Any:
         (tmp_path / ".claude").mkdir()
         (tmp_path / ".claude" / "settings.json").write_text("{}")
+        claude = MagicMock(return_value={"success": True, "hooks_removed": [], "files_removed": []})
         with (
             patch("gobby.cli.uninstall.Path.home", return_value=tmp_path),
-            patch(
-                "gobby.cli.uninstall.uninstall_claude",
-                return_value={"success": True, "hooks_removed": [], "files_removed": []},
-            ),
+            _cli_uninstallers(claude=claude),
+            _managed_tool_removal(teardown_ui=False),
             patch("gobby.cli.uninstall.load_bootstrap", return_value=bootstrap),
             patch("gobby.cli.uninstall.disable_tailscale_ui", disable),
         ):
-            return runner.invoke(uninstall, ["--all", "--yes"], catch_exceptions=False)
+            return runner.invoke(uninstall, ["--yes"], catch_exceptions=False)
 
-    def test_uninstall_all_tears_down_ui_exposure(self, runner: CliRunner, tmp_path: Path) -> None:
+    def test_uninstall_bare_tears_down_ui_exposure(self, runner: CliRunner, tmp_path: Path) -> None:
         bootstrap = MagicMock(ui_expose="tailscale", daemon_port=60887)
         disable = MagicMock()
 
@@ -1247,7 +1320,7 @@ class TestUninstallCommand:
         assert "Removed Tailscale UI exposure." in result.output
         disable.assert_called_once_with(60887)
 
-    def test_uninstall_all_skips_ui_exposure_without_intent(
+    def test_uninstall_bare_skips_ui_exposure_without_intent(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
         bootstrap = MagicMock(ui_expose=None)

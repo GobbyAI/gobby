@@ -7,6 +7,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import click
+import psycopg
 import pytest
 
 from gobby.cli import install_components as components
@@ -27,6 +28,7 @@ from gobby.cli.installers import (
     uninstall_claude,
     uninstall_qwen,
 )
+from gobby.config.bootstrap import BootstrapConfigError
 
 
 def _rtk_status(**overrides: Any) -> RtkInstallStatus:
@@ -396,6 +398,43 @@ class TestRunUninstallComponents:
         captured = capsys.readouterr()
         assert f"Removed managed artifact: {tmp_path / 'rtk'}" in captured.out
         assert "Warning: ambiguous alias kept" in captured.err
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            RuntimeError("no database_url"),
+            BootstrapConfigError("bootstrap.yaml missing"),
+            psycopg.OperationalError("connection refused"),
+        ],
+        ids=["runtime", "bootstrap", "operational"],
+    )
+    def test_rtk_component_tolerates_an_unreachable_hub(
+        self,
+        tmp_path: Path,
+        runtime: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+        error: Exception,
+    ) -> None:
+        runtime.require_database.side_effect = error
+        report = RtkCleanupReport(removed=(tmp_path / "rtk",), backups=(), conflicts=())
+        with (
+            patch.object(components, "disable_rule_if_present") as disable,
+            patch.object(components, "remove_managed_rtk", return_value=report) as remove,
+        ):
+            results = run_uninstall_components(["rtk"], project_path=tmp_path, runtime=runtime)
+
+        disable.assert_not_called()
+        remove.assert_called_once_with()
+        assert results == {
+            "rtk": {
+                "success": True,
+                "rule_disabled": False,
+                "removed": [str(tmp_path / "rtk")],
+                "conflicts": [],
+            }
+        }
+        captured = capsys.readouterr()
+        assert f"Warning: RTK rule left unchanged (hub unavailable): {error}" in captured.err
 
     def test_impeccable_component_removes_runtime(
         self, tmp_path: Path, runtime: MagicMock, capsys: pytest.CaptureFixture[str]

@@ -270,10 +270,15 @@ passes the new keyword set; front-door tests use bare `[]` for the full install;
 
 Targets:
 - `src/gobby/cli/uninstall.py::*` — scope-reason: command rewrite; --tools/--all/--project/--rtk removal
+- `src/gobby/cli/install_components.py::*` — scope-reason: rtk uninstall branch tolerates an unreachable hub
 - `tests/cli/test_install_coverage.py::*` — scope-reason: TestUninstallCommand rewritten
 - `tests/cli/test_install_setup_impeccable.py::*` — scope-reason: --tools selector matrix becomes component matrix
 - `tests/cli/test_install_setup_rtk.py::*` — scope-reason: --tools invocation
-- `tests/cli/test_uninstall.py::*` — scope-reason: duplicate of the rtk test; fold and delete
+- `tests/cli/test_uninstall.py`
+- `tests/cli/test_install_components.py::*` — scope-reason: rtk hub-unavailable tolerance tests
+- `tests/cli/test_cli_install.py::*` — scope-reason: TestUninstallCommand converted to components
+- `tests/cli/test_cli.py::*` — scope-reason: bare uninstall smoke with the hub offline
+- `tests/cli/test_cli_falkor.py::*` — scope-reason: uninstall param assertion
 
 ```python
 @click.command("uninstall")
@@ -292,6 +297,9 @@ runs. With components: `run_uninstall_components(components)` only; `git-hooks` 
 code path; a test asserts no `docker` subprocess is spawned). Delete `--tools`, `--all`,
 `--project`, `--rtk`, and the per-CLI flags; `tests/cli/test_uninstall.py` merges into
 `test_install_setup_rtk.py`.
+The `rtk` branch of `run_uninstall_components` tolerates an unreachable hub (warning,
+`rule_disabled=False`) so a bare uninstall after `gobby stop --docker` still removes hooks
+and the managed binary.
 
 **Acceptance:**
 
