@@ -17,6 +17,7 @@ from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
+from gobby.hooks.session_lookup import NON_MATERIALIZING_EVENTS
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.utils.session_context import reset_seeded_contexts, resolve_and_seed_contexts
@@ -2402,7 +2403,7 @@ def _deferred_start_event(
 
 
 _FIRST_HOOK_CASES = tuple(
-    (event_type, event_type not in {HookEventType.SESSION_END, HookEventType.NOTIFICATION})
+    (event_type, event_type not in NON_MATERIALIZING_EVENTS)
     for event_type in HookEventType
     if event_type is not HookEventType.SESSION_START
 )

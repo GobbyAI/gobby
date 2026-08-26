@@ -349,6 +349,44 @@ class TestSenderResolution:
         assert "Session" not in response.context.split("anonymous")[0].split("\n")[-1]
 
 
+def test_grok_message_selection_is_bounded_per_hook(
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    machine_id = "fe5f771f-dbc3-48b0-bd35-6a82ab18fdc1"
+    LocalMachineManager(session_manager.db).upsert_seen(machine_id, TEST_USER_ID)
+    monkeypatch.setattr(workspace_machine_scope, "require_machine_id", lambda: machine_id)
+    session_id = session_manager.register_session(
+        external_id="grok-message-flood",
+        machine_id=machine_id,
+        source="grok",
+        project_id=sample_project["id"],
+    )
+    messages = [
+        _make_msg(content=f"message {index}", msg_id=f"flood-{index}") for index in range(17)
+    ]
+    message_manager = MagicMock()
+    message_manager.get_undelivered_messages.return_value = messages
+    enricher = EventEnricher(
+        session_manager=session_manager,
+        injected_sessions=set(),
+        inter_session_msg_manager=message_manager,
+    )
+    event = _make_event(HookEventType.BEFORE_AGENT, platform_session_id=session_id)
+    event.source = SessionSource.GROK
+
+    enricher.enrich(event, HookResponse(decision="allow"))
+
+    briefing = SessionVariableManager(session_manager.db).get_variables(session_id)[
+        "grok_pending_briefing"
+    ]
+    assert [component["id"] for component in briefing] == [
+        f"p2p:flood-{index}" for index in range(16)
+    ]
+    message_manager.mark_delivered_batch.assert_not_called()
+
+
 def test_grok_messages_enqueue_without_early_ack(
     session_manager: SessionManager,
     sample_project: dict[str, Any],

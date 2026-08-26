@@ -50,10 +50,9 @@ def session_start_should_defer(
     session_source = session_source or "startup"
     if session_source not in STARTUP_SOURCES:
         return False
-    if existing_session is not None and getattr(existing_session, "status", None) not in {
-        "expired",
-        "deleted",
-    }:
+    if existing_session is not None:
+        # An expired row is re-activated through the register path, as before;
+        # deferring it would hand the row to lookup recovery with no activation.
         return False
 
     raw_terminal_context = event.data.get("terminal_context")

@@ -754,7 +754,7 @@ def test_deferred_start_webhooks_use_synthetic_event_and_gate_live_response(
     blocking_response = HookResponse(decision="block", reason="webhook blocked startup")
     manager._evaluate_blocking_webhooks.return_value = blocking_response if blocked else None
     manager._complete_response.side_effect = lambda _event, response, *_args, **_kwargs: response
-    manager._get_machine_id.return_value = "machine-1"
+    manager.get_machine_id.return_value = "machine-1"
     event = HookEvent(
         event_type=HookEventType.BEFORE_AGENT,
         session_id="external-session",

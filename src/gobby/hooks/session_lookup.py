@@ -42,6 +42,26 @@ def _task_state_label(task: object) -> str:
     return current_stage["state"] if current_stage else "ready"
 
 
+#: Hooks a CLI emits without user activity. A deferred SessionStart followed by
+#: only these keeps ``sessions`` empty: Claude fires ``Setup``,
+#: ``InstructionsLoaded``, and ``MessageDisplay`` at boot, before any prompt,
+#: and none of them carries a context channel for the startup packet.
+NON_MATERIALIZING_EVENTS: frozenset[HookEventType] = frozenset(
+    {
+        HookEventType.SESSION_END,
+        HookEventType.NOTIFICATION,
+        HookEventType.SETUP,
+        HookEventType.INSTRUCTIONS_LOADED,
+        HookEventType.CONFIG_CHANGE,
+        HookEventType.CWD_CHANGED,
+        HookEventType.FILE_CHANGED,
+        HookEventType.DIRECTORY_ADDED,
+        HookEventType.MESSAGE_DISPLAY,
+        HookEventType.TEAMMATE_IDLE,
+    }
+)
+
+
 class SessionLookupService:
     """Resolves platform session IDs and enriches events with session context.
 
@@ -361,7 +381,7 @@ class SessionLookupService:
         if compact_handled:
             return compact_session_id
 
-        if event.event_type in {HookEventType.SESSION_END, HookEventType.NOTIFICATION}:
+        if event.event_type in NON_MATERIALIZING_EVENTS:
             self._logger.info(
                 "Skipping auto-registration for orphaned %s: "
                 "external_id=%s not found in DB "

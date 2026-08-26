@@ -28,6 +28,7 @@ TURN_CONTEXT_VARIABLE = "grok_pending_turn_context"
 DELIVERY_VARIABLE = "grok_pending_delivery"
 
 BRIEFING_MAX_COMPONENTS = 64
+P2P_MAX_PER_SELECTION = 16
 TURN_CONTEXT_MAX_COMPONENTS = 32
 TURN_CONTEXT_MAX_TOTAL_BYTES = 16_384
 TURN_CONTEXT_MAX_COMPONENT_BYTES = 8_192
@@ -247,6 +248,8 @@ def enqueue_pending_messages(
     resolve_sender: Callable[[str | None], str],
 ) -> None:
     """Queue bounded inter-session messages without acknowledging delivery."""
+    # Storage order; the rest waits for the next selection after acknowledgment.
+    messages = list(messages)[:P2P_MAX_PER_SELECTION]
     rendered = render_pending_messages(messages, resolve_sender=resolve_sender)
     represented_ids = set(rendered.represented_message_ids)
     if not represented_ids:
@@ -368,7 +371,8 @@ def _flush_plan(
     if not is_pretool and not is_stop:
         return None, False
 
-    real_gate = response.decision in {"block", "deny"} or response.permission_decision == "deny"
+    # Grok reads only the top-level decision; a bare permission_decision is not a gate.
+    real_gate = response.decision in {"block", "deny"}
     envelope_id = _source_envelope_id(event)
     marker_absent = bool(envelope_id and envelope_terminal_response(envelope_id) is None)
 

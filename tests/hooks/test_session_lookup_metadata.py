@@ -10,7 +10,7 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.session_coordinator import SessionCoordinator
-from gobby.hooks.session_lookup import SessionLookupService
+from gobby.hooks.session_lookup import NON_MATERIALIZING_EVENTS, SessionLookupService
 from gobby.hooks.session_types import HookSessionManager
 from gobby.sessions.compact_identity import CompactIdentityResolution
 from gobby.storage.hub.protocol import HubDatabase
@@ -223,7 +223,10 @@ def test_user_prompt_submit_weak_context_recovers_tmux_session_without_registeri
     )
 
 
-def test_notification_does_not_materialize_idle_session() -> None:
+@pytest.mark.parametrize(
+    "event_type", sorted(NON_MATERIALIZING_EVENTS, key=lambda item: item.value)
+)
+def test_passive_hooks_do_not_materialize_idle_session(event_type: HookEventType) -> None:
     session_manager = MagicMock()
     session_manager.get_session_id.return_value = None
     session_manager.lookup_session_id.return_value = None
@@ -232,7 +235,7 @@ def test_notification_does_not_materialize_idle_session() -> None:
     resolve_project_id = MagicMock(return_value="project-1")
     service = _service(session_manager, session_task_manager, resolve_project_id)
     event = _event()
-    event.event_type = HookEventType.NOTIFICATION
+    event.event_type = event_type
 
     result = service.resolve(event)
 

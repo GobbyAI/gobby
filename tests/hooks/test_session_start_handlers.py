@@ -41,7 +41,7 @@ pytestmark = pytest.mark.unit
         (None, None, None, True),
         ("resume", None, None, False),
         ("startup", SimpleNamespace(status="active"), None, False),
-        ("startup", SimpleNamespace(status="expired"), None, True),
+        ("startup", SimpleNamespace(status="expired"), None, False),
         ("startup", None, {"gobby_acp_child": "1"}, False),
     ],
 )
