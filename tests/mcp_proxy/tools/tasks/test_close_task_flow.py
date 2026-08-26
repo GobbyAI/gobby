@@ -997,6 +997,86 @@ async def test_epic_skips_leaf_gates_without_llm() -> None:
     review.assert_not_awaited()
 
 
+def _closed_child_of(task: Task) -> Task:
+    return replace(
+        _task(),
+        id="00000000-0000-4000-8000-000000000102",
+        parent_task_id=task.id,
+        closed_at=datetime(2026, 7, 27, 12, 1, tzinfo=UTC),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "owned_work",
+    [
+        pytest.param(
+            {"claimed_by_session_id": "00000000-0000-4000-8000-000000000301"}, id="claimed"
+        ),
+        pytest.param({"claimed_by_session_id": None, "commits": ["abc123"]}, id="linked-commit"),
+    ],
+)
+async def test_worked_task_with_a_closed_child_keeps_its_leaf_gates(
+    owned_work: dict[str, Any],
+) -> None:
+    """A worked leaf that gained a found-work child is still a leaf.
+
+    #21046 closed under the claimed leaf #20969; the direct close of #20969
+    then skipped every leaf gate because the task had a child.
+    """
+    task = replace(_task(criteria=None), **owned_work)
+    ctx = _ctx(task, validator=object())
+    cast(MagicMock, ctx.task_manager.list_tasks).return_value = [_closed_child_of(task)]
+
+    with (
+        patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
+        patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
+    ):
+        evaluation = await _evaluate_close(
+            ctx,
+            task_id=task.id,
+            reason="completed",
+            changes_summary="Implemented.",
+            commit_sha=None,
+            project_path=None,
+            response_detail="diagnostic",
+            closing_session_id="00000000-0000-4000-8000-000000000301",
+        )
+
+    assert evaluation.skip_leaf_checks is False
+    assert evaluation.error == "missing_validation_criteria"
+    assert [gate.item for gate in evaluation.gates] == [1, 2, 3, 4, 5]
+
+
+@pytest.mark.asyncio
+async def test_unworked_parent_with_a_closed_child_still_skips_leaf_gates() -> None:
+    task = replace(_task(), claimed_by_session_id=None, commits=None)
+    ctx = _ctx(task, validator=object())
+    cast(MagicMock, ctx.task_manager.list_tasks).return_value = [_closed_child_of(task)]
+    review = AsyncMock()
+
+    with (
+        patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
+        patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
+        patch.object(lifecycle, "evaluate_criteria_review", review),
+    ):
+        evaluation = await _evaluate_close(
+            ctx,
+            task_id=task.id,
+            reason="completed",
+            changes_summary=None,
+            commit_sha=None,
+            project_path=None,
+            response_detail="diagnostic",
+            closing_session_id="00000000-0000-4000-8000-000000000301",
+        )
+
+    assert evaluation.skip_leaf_checks is True
+    assert evaluation.ready is True
+    assert all(gate.status == "skipped" for gate in evaluation.gates[4:])
+    review.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_commit_epic_persists_allowed_valid_status() -> None:
     task = replace(_task(), task_type="epic")

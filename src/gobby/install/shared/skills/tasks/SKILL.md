@@ -116,7 +116,9 @@ Closing a leaf task is an ordered checklist:
 | 3 | A clean category-appropriate validation command in a task session transcript | Docs, planning, research, manual, or no-edit close |
 | 4 | One bounded criteria review | Organizational parent (no open children) |
 
-An epic or other structural parent is closable when it has no open children.
+An epic, or a parent that owns no work of its own, is closable when it has no
+open children. A claimed task or one with linked commits closes as a leaf even
+after it gains found-work children — its own gates apply.
 Closing the last child auto-closes eligible ancestors in the same call — do not
 walk the tree by hand. The walk stops at an ancestor that is claimed, has an
 open child, or still owes stage-manifest work; a claimed ancestor is in-flight
