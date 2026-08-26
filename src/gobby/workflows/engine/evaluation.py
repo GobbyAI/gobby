@@ -64,6 +64,18 @@ class BlockGate:
     acknowledge_variable: str | None = None
 
 
+def _unique_block_gate_feedback(block_gates: list[BlockGate]) -> list[BlockGate]:
+    """Keep the first gate for each rendered instruction."""
+    unique_gates: list[BlockGate] = []
+    seen_reasons: set[str] = set()
+    for gate in block_gates:
+        if gate.reason in seen_reasons:
+            continue
+        seen_reasons.add(gate.reason)
+        unique_gates.append(gate)
+    return unique_gates
+
+
 def _replacement_tool_input(event: HookEvent, updates: dict[str, Any]) -> dict[str, Any]:
     """Merge rewrite updates over the tool input the CLI actually sent.
 
@@ -484,13 +496,14 @@ class EvaluationMixin:
         include_rule_outputs: bool = True,
     ) -> HookResponse:
         block_reason: str | None = None
-        if len(block_gates) > 1:
+        feedback_gates = _unique_block_gate_feedback(block_gates)
+        if len(feedback_gates) > 1:
             block_reason = format_aggregated_block_reason(
-                [(gate.rule_name, gate.reason) for gate in block_gates],
+                [(gate.rule_name, gate.reason) for gate in feedback_gates],
                 tool_name=evaluation.block_tool_name,
             )
-        elif block_gates:
-            gate = block_gates[0]
+        elif feedback_gates:
+            gate = feedback_gates[0]
             block_reason = f"Rule enforced by Gobby: [{gate.rule_name}]\n{gate.reason}"
 
         ctx_str = "\n\n".join(evaluation.context_parts) if evaluation.context_parts else None
