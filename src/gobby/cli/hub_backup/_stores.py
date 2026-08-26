@@ -78,12 +78,21 @@ _REDIS_GRAPH_LIST = "GRAPH.LIST"
 _REDIS_DBSIZE = "DBSIZE"
 
 _TABLE_LIST_SQL = "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename"
+# Managed principals -- scoped agent logins, per-session interactive principals,
+# and maintenance logins -- are drained before the globals dump and re-minted on
+# demand, so the restore target never has to reproduce them. This is the same
+# namespace the schema reapers match (migrations 389/393/399).
+_MANAGED_PRINCIPAL_PATTERN = (
+    r"^(gobby_agent_[0-9a-f]{32}"
+    r"|gobby_ix_([0-9a-f]{16}|[A-Za-z0-9]{1,8}_[0-9a-f]{8}_[0-9a-f]{8})"
+    r"|gobby_mnt_[0-9a-f]{32})_[1-9][0-9]*$"
+)
+_MANAGED_PRINCIPAL_RE = re.compile(_MANAGED_PRINCIPAL_PATTERN)
 _ROLE_LIST_SQL = (
     "SELECT rolname, rolsuper, rolcanlogin FROM pg_roles "
     "WHERE rolname NOT LIKE 'pg\\_%' "
-    "AND rolname !~ '^gobby_agent_[0-9a-f]{32}_[1-9][0-9]*$' ORDER BY rolname"
+    f"AND rolname !~ '{_MANAGED_PRINCIPAL_PATTERN}' ORDER BY rolname"
 )
-_SCOPED_ROLE_NAME_RE = re.compile(r"gobby_agent_[0-9a-f]{32}_[1-9][0-9]*")
 _EPHEMERAL_ROLE_SQL = (
     "SELECT rolname, rolsuper, rolcanlogin FROM pg_roles "
     "WHERE rolcanlogin AND rolname ~ '^gobby_agent_[0-9a-f]{32}_[1-9][0-9]*$' "
@@ -190,7 +199,7 @@ def collect_source_roles(database_url: str) -> list[dict[str, object]]:
             "rolcanlogin": bool(row[2]),
         }
         for row in rows
-        if _SCOPED_ROLE_NAME_RE.fullmatch(str(row[0])) is None
+        if _MANAGED_PRINCIPAL_RE.match(str(row[0])) is None
     ]
 
 

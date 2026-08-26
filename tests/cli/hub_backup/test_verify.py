@@ -17,9 +17,12 @@ from pathlib import Path
 from typing import IO, Any
 
 import click
+import psycopg
 import pytest
 
+from gobby.cli.hub_backup import _stores as stores
 from gobby.cli.hub_backup import _verify
+from gobby.cli.hub_backup import cli as hub_cli
 from gobby.cli.hub_backup._content import archive_inventory
 from gobby.cli.hub_backup._verify import RoleExpectation
 
@@ -475,6 +478,68 @@ def test_verify_postgres_restore_raises_on_missing_role(
 
     assert "gobby_ro" in str(excinfo.value)
     assert fake.argv_starting("docker", "rm", "-f", "-v", fake.container_id)
+
+
+class _SourceRoleCursor:
+    def __init__(self, rows: list[tuple[str, bool, bool]]) -> None:
+        self._rows = rows
+
+    def fetchall(self) -> list[tuple[str, bool, bool]]:
+        return list(self._rows)
+
+
+class _SourceRoleConnection:
+    """A source cluster whose role list still carries managed principals."""
+
+    def __init__(self, rows: list[tuple[str, bool, bool]]) -> None:
+        self._rows = rows
+
+    def __enter__(self) -> _SourceRoleConnection:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+    def execute(self, _sql: str, _params: object = None) -> _SourceRoleCursor:
+        return _SourceRoleCursor(self._rows)
+
+
+def test_verify_postgres_restore_ignores_managed_principals_drained_before_dump(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # #20985: interactive/maintenance principals present at snapshot time are
+    # drained before pg_dumpall, so the scratch cluster never carries them.
+    source_rows = [
+        ("gobby", False, True),
+        ("gobby_ix_e94cf5ac3163ddb1_1", False, True),
+        ("gobby_ix_fa3149beb8d9b5c5_89", False, True),
+        ("gobby_mnt_0123456789abcdef0123456789abcdef_4", False, True),
+        ("gobby_agent_0123456789abcdef0123456789abcdef_9", False, True),
+    ]
+    monkeypatch.setattr(
+        psycopg, "connect", lambda *_args, **_kwargs: _SourceRoleConnection(source_rows)
+    )
+    expected_roles = hub_cli._role_expectations(
+        stores.collect_source_roles("postgresql://gobby:pw@localhost:60891/gobby")
+    )
+    assert [role.rolname for role in expected_roles] == ["gobby"]
+
+    fake = _DockerFake()
+    fake.role_rows = [("gobby", False, True)]
+    fake.table_counts = {"tasks": 0}
+    _install(monkeypatch, fake)
+    dump_path, globals_path = _pg_fixture(tmp_path)
+
+    state, details = _verify.verify_postgres_restore(
+        dump_path,
+        globals_path,
+        expected_probes={"tasks": 0},
+        expected_roles=expected_roles,
+    )
+
+    assert state.verified is True
+    assert details["roles_checked"] == 1
 
 
 def test_verify_postgres_restore_skips_attribute_compare_for_bootstrap_postgres_role(
