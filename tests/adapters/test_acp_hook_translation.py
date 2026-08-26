@@ -839,4 +839,4 @@ class TestGrokCurrentHookContract:
         assert result["reason"] == "Blocked by policy"
         assert "additionalContext" not in result
         assert "systemMessage" not in result
-        assert "updatedInput" not in result.get("hookSpecificOutput", {})
+        assert "hookSpecificOutput" not in result

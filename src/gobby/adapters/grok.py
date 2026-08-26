@@ -166,6 +166,8 @@ class GrokAdapter(ACPHookAdapter):
                     hook_output["permissionDecision"] = permission_decision
                 if response.modified_input is not None and not denied:
                     hook_output["updatedInput"] = response.modified_input
+            if result.get("hookSpecificOutput") == {"hookEventName": canonical_hook}:
+                result.pop("hookSpecificOutput")
             if response.decision == "allow":
                 result.pop("decision", None)
         return result
