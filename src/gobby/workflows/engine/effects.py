@@ -7,7 +7,6 @@ mcp_call, rewrite_input, load_skill, run_command, and block matching.
 import asyncio
 import json
 import logging
-import re
 import time
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
@@ -28,6 +27,7 @@ from gobby.skills.materialization import SkillScriptMaterializer
 from gobby.storage.definitions.rules import RuleDefinitionRow
 from gobby.workflows.enforcement.blocking import is_gobby_call_tool
 from gobby.workflows.engine._offload import offload
+from gobby.workflows.engine.command_matching import command_patterns_match
 from gobby.workflows.engine.delivery_formatting import (
     DeliveryFormattingMixin,
     _is_empty_inject_payload,
@@ -42,44 +42,6 @@ from gobby.workflows.reserved_variables import is_internal_rule, is_reserved_wor
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
 logger = logging.getLogger(__name__)
-
-
-def mask_quoted_spans(command: str) -> str:
-    """Blank shell string data so command patterns see only code.
-
-    Single-quoted spans are always data. A double-quoted span stays visible
-    when it contains ``$(`` or a backtick, because command substitution inside
-    it still executes — the coarse check fails toward a false positive, never
-    toward letting an invocation hide. Quote characters themselves are kept so
-    the code structure around the span survives; masked characters become
-    spaces, which also removes newline segment boundaries inside string data
-    (the way a multi-line commit message tripped command-position anchors,
-    #20887).
-    """
-    out = list(command)
-    i, n = 0, len(command)
-    while i < n:
-        ch = command[i]
-        if ch == "\\":
-            i += 2
-        elif ch == "'":
-            end = command.find("'", i + 1)
-            end = n if end == -1 else end
-            for j in range(i + 1, end):
-                out[j] = " "
-            i = end + 1
-        elif ch == '"':
-            j = i + 1
-            while j < n and command[j] != '"':
-                j += 2 if command[j] == "\\" else 1
-            span = command[i + 1 : j]
-            if "$(" not in span and "`" not in span:
-                for k in range(i + 1, j):
-                    out[k] = " "
-            i = j + 1
-        else:
-            i += 1
-    return "".join(out)
 
 
 _RUN_COMMAND_DEFAULT_TIMEOUT_SECONDS = 5.0
@@ -814,21 +776,13 @@ class EffectsMixin(DeliveryFormattingMixin):
             tool_input = event.data.get("tool_input")
             if isinstance(tool_input, dict):
                 command = tool_input.get("command")
-        if command and getattr(effect, "mask_quoted", False):
-            command = mask_quoted_spans(command)
 
         # If no tools/mcp_tools filter specified, block applies to everything
         has_tool_filter = effect.tools or effect.mcp_tools
 
         if not has_tool_filter:
             # Check command patterns even without tool filter
-            if effect.command_pattern and command:
-                if not re.search(effect.command_pattern, command):
-                    return False
-                if effect.command_not_pattern and re.search(effect.command_not_pattern, command):
-                    return False
-                return True
-            return True
+            return self._command_selector_matches(effect, command)
 
         # Check native tool match
         if effect.tools and tool_name:
@@ -836,13 +790,8 @@ class EffectsMixin(DeliveryFormattingMixin):
                 is_shell_tool(tool_name) and any(is_shell_tool(name) for name in effect.tools)
             )
             if matches_tool:
-                if is_shell_tool(tool_name) and effect.command_pattern and command:
-                    if not re.search(effect.command_pattern, command):
-                        return False
-                    if effect.command_not_pattern and re.search(
-                        effect.command_not_pattern, command
-                    ):
-                        return False
+                if is_shell_tool(tool_name):
+                    return self._command_selector_matches(effect, command)
                 return True
 
         # Check MCP tool match
@@ -858,6 +807,18 @@ class EffectsMixin(DeliveryFormattingMixin):
                         return True
 
         return False
+
+    @staticmethod
+    def _command_selector_matches(effect: Any, command: Any) -> bool:
+        """Apply an effect's command selectors; no pattern or no command matches."""
+        if not (effect.command_pattern and isinstance(command, str)):
+            return True
+        return command_patterns_match(
+            command,
+            pattern=effect.command_pattern,
+            not_pattern=effect.command_not_pattern,
+            mask_quoted=bool(getattr(effect, "mask_quoted", False)),
+        )
 
     def _should_block(self, effect: Any, event: HookEvent) -> bool:
         """Check if a block effect matches the current tool/event."""

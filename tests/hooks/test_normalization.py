@@ -7,7 +7,9 @@ from typing import Any
 import pytest
 
 from gobby.hooks._normalization_shell import (
+    HeredocBody,
     has_mutating_output_redirection,
+    scan_shell_command,
     shell_token_values,
     strip_output_redirections,
     tokenize_shell_command,
@@ -1625,6 +1627,66 @@ class TestHeredocTokenization:
         tokens = tokenize_shell_command(command)
 
         assert shell_token_values(tokens) == ["cat", "<<", "EOF", "first\nsecond", "\n"]
+
+    def test_scan_keeps_token_spans_and_heredoc_facts(self) -> None:
+        command = "cat >> f <<'EOF'\nbody line\nEOF\nbash <<EOF\n$(x)\nEOF"
+
+        scan = scan_shell_command(command)
+
+        assert [command[start:end] for start, end in scan.spans] == [
+            "cat",
+            ">>",
+            "f",
+            "<<",
+            "'EOF'",
+            "\n",
+            "bash",
+            "<<",
+            "EOF",
+            "\n",
+        ]
+        assert shell_token_values(scan.tokens) == [
+            "cat",
+            ">>",
+            "f",
+            "<<",
+            "EOF",
+            "\n",
+            "bash",
+            "<<",
+            "EOF",
+            "\n",
+        ]
+        assert scan.heredocs == [
+            HeredocBody("body line", quoted=True, terminated=True, opener=4),
+            HeredocBody("$(x)", quoted=False, terminated=True, opener=8),
+        ]
+
+    def test_scan_records_an_unterminated_body_as_live_input(self) -> None:
+        command = "cat <<EOF > out.txt\nstill > body\nnever closed"
+
+        scan = scan_shell_command(command)
+
+        assert scan.heredocs == [
+            HeredocBody("still > body\nnever closed", quoted=False, terminated=False, opener=2)
+        ]
+
+    def test_scan_binds_a_deferred_body_to_its_opener(self) -> None:
+        command = "cat <<'EOF' |\n  tee out.txt\nbody\nEOF"
+
+        scan = scan_shell_command(command)
+
+        assert shell_token_values(scan.tokens) == [
+            "cat",
+            "<<",
+            "EOF",
+            "|",
+            "\n",
+            "tee",
+            "out.txt",
+            "\n",
+        ]
+        assert scan.heredocs == [HeredocBody("body", quoted=True, terminated=True, opener=2)]
 
 
 class TestToolErrorDetection:

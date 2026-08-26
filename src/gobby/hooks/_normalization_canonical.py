@@ -21,6 +21,7 @@ from gobby.hooks._normalization_shell import (
     _looks_file_like,
     _looks_path_target,
     _shell_positional_args,
+    _strip_shell_wrappers,
     extract_redirection_paths,
     has_mutating_output_redirection,
     has_shell_input_redirection,
@@ -312,36 +313,6 @@ def _split_shell_segments(tokens: list[ShellToken]) -> list[_ShellSegment]:
     if current:
         segments.append(_ShellSegment(current, separator_before))
     return segments
-
-
-def _is_env_assignment(part: str) -> bool:
-    name, separator, _value = part.partition("=")
-    return bool(
-        separator
-        and name
-        and (name[0].isalpha() or name[0] == "_")
-        and all(char.isalnum() or char == "_" for char in name)
-    )
-
-
-def _strip_shell_wrappers(parts: list[str]) -> list[str]:
-    stripped = list(parts)
-    while stripped:
-        while stripped and _is_env_assignment(stripped[0]):
-            stripped = stripped[1:]
-        if stripped[:1] == ["command"]:
-            stripped = stripped[1:]
-            continue
-        if stripped[:1] == ["env"]:
-            stripped = stripped[1:]
-            continue
-        # Loop/conditional body keywords prefix the real command after a
-        # segment split (`do grep ...`, `then cat ...`); classify what follows.
-        if stripped[:1] in (["do"], ["then"], ["else"]):
-            stripped = stripped[1:]
-            continue
-        break
-    return stripped
 
 
 def _literal_cd_target(parts: list[str]) -> str | None:

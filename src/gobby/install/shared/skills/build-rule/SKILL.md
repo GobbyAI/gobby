@@ -113,6 +113,11 @@ effect:
 - `tools` — Native tools: `Edit`, `Write`, `Bash`, `NotebookEdit`, `mcp__gobby__call_tool`
 - `mcp_tools` — MCP tools: `"server:tool"` format. Supports `"server:*"` wildcards.
 - `command_pattern` / `command_not_pattern` — Only for Bash tool. Regex patterns.
+  `command_pattern` runs against each executable shell segment — one pipeline
+  per segment (heredoc bodies whose stages are all `cat`/`tee`/`git`/`gh` or a
+  bare redirection are data and excluded; bodies reaching shells, interpreters,
+  or unknown tools stay in). `command_not_pattern` exempts when it matches the
+  executable text as a whole.
 - No tools/mcp_tools specified → blocks ALL tools for the event.
 
 ### set_variable — Update State

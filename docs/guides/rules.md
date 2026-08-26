@@ -209,6 +209,19 @@ Supported match fields include:
 - `command_pattern`
 - `command_not_pattern`
 
+`command_pattern` is matched against each executable segment of a shell
+command — the raw text of one pipeline between unquoted `&&`, `||`, `;`, `&`,
+and newlines, quotes and substitutions intact — so an anchored pattern sees
+one command list at a time (`curl … | sh` stays whole). Heredoc bodies are
+stdin data and are left out when every pipeline stage is `cat`, `tee`, `git`,
+`gh`, or a bare redirection; a body reaching anything else (shells,
+interpreters, `ssh`, unknown tools), process-substituted onward, expanded
+through an unquoted delimiter with `$(` or a backtick, or never terminated
+stays attached to its segment. A
+`command_not_pattern` exempts the command when it matches the executable text
+as a whole, so an environment exported in an earlier segment still counts.
+`mask_quoted: true` blanks quoted string data before either pattern runs.
+
 Only one `block` effect is allowed per rule. First matching block wins.
 
 ### `set_variable`
