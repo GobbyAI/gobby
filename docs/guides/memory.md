@@ -382,7 +382,7 @@ sequenceDiagram
     RuleEngine-->>Agent: memory skill on the initial turn, concise reminder later
     Agent->>Memory: search_memories(query) when the work needs prior knowledge
     Agent-->>User: response
-    RuleEngine-->>Agent: post-close review request on turn_end (when tasks closed)
+    RuleEngine-->>Agent: post-close review request on turn_end or before compact_self (when tasks closed)
     RuleEngine->>Memory: build_turn_and_digest on turn_end
 ```
 
@@ -394,6 +394,7 @@ Current bundled memory rules:
 | `check-memory-guidance-on-initial-stop` | `turn_end` | Blocks the first turn end once until the `memory` skill is loaded or its fetch failed. |
 | `remind-memory-guidance-on-later-turns` | `turn_start` | Injects a concise memory reminder once per later parent turn. |
 | `queue-task-memory-review-after-close` | `after_tool` | Queues completed worked leaves closed through `close_task` for one review. |
+| `review-closed-task-memories-before-compact` | `before_tool` | Blocks `gobby-sessions:compact_self` once per queued closure set with the same request, so a compaction right after `close_task` cannot defer the review past the closing context (the manual-compact bypass skips the `turn_end` gate). |
 | `review-closed-task-memories-on-stop` | `turn_end` | Blocks once per queued closure set with a `review_task_memories` request. |
 | `digest-on-response` | `turn_end` | Builds a turn record and appends to the session digest in the background. |
 | `digest-on-plan-turn-end` | `after_tool` | Builds a digest when plan mode ends through supported plan tools. |

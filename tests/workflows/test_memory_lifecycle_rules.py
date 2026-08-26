@@ -13,6 +13,7 @@ Active memory-lifecycle rules:
 - check-memory-guidance-on-initial-stop: acknowledged block on the first turn_end
 - remind-memory-guidance-on-later-turns: inject_context on later parent turn_starts
 - queue-task-memory-review-after-close: set_variable on after_tool close_task
+- review-closed-task-memories-before-compact: acknowledged block on before_tool compact_self
 - review-closed-task-memories-on-stop: acknowledged block on turn_end
 - guard-plan-memory-writes: one-time block on create_memory and update_memory
 - search-memories-on-claim: inject_context on after_tool claim_task/create_task claims
@@ -51,6 +52,7 @@ MEMORY_RULES = {
     "check-memory-guidance-on-initial-stop",
     "remind-memory-guidance-on-later-turns",
     "queue-task-memory-review-after-close",
+    "review-closed-task-memories-before-compact",
     "review-closed-task-memories-on-stop",
     "guard-plan-memory-writes",
     "search-memories-on-claim",
@@ -360,6 +362,69 @@ def _review_variables(*pending: dict[str, str], **overrides: Any) -> dict[str, A
     }
     variables.update(overrides)
     return variables
+
+
+def _sessions_tool_event(tool_name: str = "compact_self") -> HookEvent:
+    """A `gobby-sessions` call as the before_tool gate sees it."""
+    return HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id=SESSION_ID,
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "mcp__gobby__call_tool",
+            "mcp_server": "gobby-sessions",
+            "mcp_tool": tool_name,
+            "tool_input": {
+                "server_name": "gobby-sessions",
+                "tool_name": tool_name,
+                "arguments": {},
+            },
+        },
+    )
+
+
+def _close_task_event(task_ref: str, summary: str) -> HookEvent:
+    """A successful `gobby-tasks:close_task` after_tool event for TASK_ID."""
+    return HookEvent(
+        event_type=HookEventType.AFTER_TOOL,
+        session_id=SESSION_ID,
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": "gobby-tasks",
+                "tool_name": "close_task",
+                "arguments": {
+                    "task_id": task_ref,
+                    "changes_summary": summary,
+                    "commit_sha": "abc1234",
+                },
+            },
+            "tool_output": {
+                "success": True,
+                "closed": True,
+                "task_id": TASK_ID,
+                "commit_shas": ["abc1234"],
+            },
+        },
+    )
+
+
+def _closed_leaf_task_manager() -> MagicMock:
+    task_manager = MagicMock()
+    task_manager.get_task.return_value = SimpleNamespace(
+        id=TASK_ID,
+        seq_num=43,
+        task_type="task",
+        category="code",
+        closed_reason="completed",
+        closed_at=datetime(2026, 8, 25, tzinfo=UTC),
+        commits=["abc1234"],
+    )
+    task_manager.list_tasks.return_value = []
+    return task_manager
 
 
 class TestLayeredMemoryGuidance:
@@ -692,6 +757,112 @@ class TestPostCloseMemoryReviewRules:
         assert response.decision == "allow"
         assert variables["_memory_pending_task_reviews"] == [pending]
         assert variables["_memory_review_stop_delivered"] is False
+
+    def test_before_compact_review_mirrors_the_stop_gate(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        """compact_self right after close_task must not defer the review past the context."""
+        _sync_bundled(db)
+        row = manager.get_by_name("review-closed-task-memories-before-compact")
+        assert row is not None
+        assert row.priority == 1
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+        effects = body.resolved_effects
+
+        assert body.event.value == "before_tool"
+        when = body.when or ""
+        assert "event.data.get('mcp_server') == 'gobby-sessions'" in when
+        assert "event.data.get('mcp_tool') == 'compact_self'" in when
+        assert "_memory_pending_task_reviews" in when
+        assert "_memory_review_stop_delivered" in when
+        assert len(effects) == 1
+        assert effects[0].type == "block"
+        assert effects[0].mcp_tools == ["gobby-sessions:compact_self"]
+        assert effects[0].acknowledge_variable == "_memory_review_stop_delivered"
+        reason = effects[0].reason or ""
+        assert "{% for item in variables.get('_memory_pending_task_reviews') or [] %}" in reason
+        assert "review_task_memories" in reason
+        assert "source_task_id" in reason
+        assert "retry `gobby-sessions:compact_self`" in reason
+
+    @pytest.mark.asyncio
+    async def test_compact_self_delivers_pending_review_once_and_settles_the_stop_gate(
+        self, db: HubDatabase
+    ) -> None:
+        """The manual-compact bypass skips turn_end, so the review lands on compact_self."""
+        _sync_bundled(db)
+        pending = [
+            _pending_review("#42", "Implemented layered memory guidance."),
+            _pending_review("#43", "Documented the review tool."),
+        ]
+        variables = _review_variables(*pending, _gobby_feedback_epoch_reviewed=True)
+        engine = RuleEngine(db)
+        compact = _sessions_tool_event()
+
+        first = await engine.evaluate(compact, SESSION_ID, variables)
+        retry = await engine.evaluate(compact, SESSION_ID, variables)
+        stop = await engine.evaluate(_turn_end_event(), SESSION_ID, variables)
+
+        assert first.decision == "block"
+        reason = first.reason or ""
+        assert "#42 (task_id `task-42`): Implemented layered memory guidance." in reason
+        assert "#43 (task_id `task-43`): Documented the review tool." in reason
+        assert "gobby-memory:review_task_memories(task_id, changes_summary)" in reason
+        assert "retry `gobby-sessions:compact_self`" in reason
+        assert variables["_memory_review_stop_delivered"] is True
+        assert variables["_memory_pending_task_reviews"] == pending
+        assert retry.decision == "allow"
+        assert stop.decision == "allow"
+        assert "review_task_memories" not in (stop.reason or "")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("overrides", "tool_name"),
+        [
+            pytest.param(
+                {"_memory_pending_task_reviews": []}, "compact_self", id="nothing_pending"
+            ),
+            pytest.param({"_memory_review_stop_delivered": True}, "compact_self", id="delivered"),
+            pytest.param({}, "get_handoff_context", id="other_sessions_tool"),
+        ],
+    )
+    async def test_compact_gate_stays_silent_without_an_undelivered_review(
+        self, db: HubDatabase, overrides: dict[str, Any], tool_name: str
+    ) -> None:
+        _sync_bundled(db)
+        variables = _review_variables(
+            _pending_review("#42", "Completed work."),
+            _gobby_feedback_epoch_reviewed=True,
+            **overrides,
+        )
+        delivered_before = variables["_memory_review_stop_delivered"]
+        engine = RuleEngine(db)
+
+        response = await engine.evaluate(_sessions_tool_event(tool_name), SESSION_ID, variables)
+
+        assert response.decision == "allow"
+        assert variables["_memory_review_stop_delivered"] is delivered_before
+
+    @pytest.mark.asyncio
+    async def test_later_close_rearms_the_compact_gate_after_delivery(
+        self, db: HubDatabase
+    ) -> None:
+        _sync_bundled(db)
+        variables = _review_variables(
+            _pending_review("#42", "Earlier closure."), _gobby_feedback_epoch_reviewed=True
+        )
+        engine = RuleEngine(db, task_manager=_closed_leaf_task_manager())
+        compact = _sessions_tool_event()
+
+        delivered = await engine.evaluate(compact, SESSION_ID, variables)
+        await engine.evaluate(_close_task_event("#43", "Second closure."), SESSION_ID, variables)
+        rearmed = await engine.evaluate(compact, SESSION_ID, variables)
+
+        assert delivered.decision == "block"
+        assert rearmed.decision == "block"
+        assert f"#43 (task_id `{TASK_ID}`): Second closure." in (rearmed.reason or "")
+        assert "Earlier closure." not in (rearmed.reason or "")
+        assert variables["_memory_review_stop_delivered"] is True
 
     @pytest.mark.asyncio
     async def test_after_agent_aggregates_both_memory_gates_once(self, db: HubDatabase) -> None:
