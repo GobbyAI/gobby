@@ -62,11 +62,15 @@ The top 25 relations sum to ≈7.5 GB (92%).
   193,199 of 231,411 chunks (83%). The content GC (30 days on
   `last_referenced_at`) has had no eligible row yet — `min(last_referenced_at)` is
   2026-08-07 (#21029).
-- `code_calls_unique_call_target` (9 columns, `NULLS NOT DISTINCT`) is 1,719 MB at
-  46% leaf density / 49% fragmentation; `code_calls` heap 39% free,
-  `code_content_chunks` 29%, `code_symbols` 21%. Churn bloat from version
-  delete/reinsert; a one-off `REINDEX INDEX CONCURRENTLY code_calls_unique_call_target`
-  would reclaim ≈0.8 GB and re-bloat over time. No task filed.
+- `code_calls_unique_call_target` (9 columns, `NULLS NOT DISTINCT`) was 1,719 MB at
+  46% leaf density / 49% fragmentation. Churn bloat from version delete/reinsert.
+  Applied today: `REINDEX TABLE CONCURRENTLY code_calls` (9 s, online) took the
+  table's indexes from 2,081 MB to 714 MB (`code_calls_unique_call_target` 570 MB,
+  `code_calls_pkey` 58 MB) and the `gobby` database from 8,109 MB to 6,622 MB. It
+  will re-bloat with churn; rerun when leaf density drops below ~50% again.
+  Heap free space (`code_calls` 39%, `code_content_chunks` 29%, `code_symbols` 21%)
+  is working space reused by the same churn; reclaiming it needs `VACUUM FULL`
+  under an exclusive lock and is deliberately left alone.
 - Chunk content by top-level directory (gobby): `wiki/` 79,579 chunks / 743 MB,
   `.gobby/` 27,042 / 340 MB, `tests/` 59,975 / 199 MB, `src/` 28,929 / 97 MB,
   `crates/` 23,095 / 72 MB. `wiki/` is gitignored and rescued on purpose by the
@@ -111,6 +115,8 @@ Single `dump.rdb`, 435 MB. Graphs: `gobby_code` 1,502 MB in memory, `gobby_kg`
 
 - Deleted 4.13 GB of `hub_backup_verify_*` snapshots from `services-qdrant-1`.
 - `REINDEX TABLE CONCURRENTLY spans` (121 MB → 24 KB).
+- `REINDEX TABLE CONCURRENTLY code_calls` (indexes 2,081 MB → 714 MB; `gobby`
+  database 8,109 MB → 6,622 MB).
 
 ## Follow-up tasks
 
