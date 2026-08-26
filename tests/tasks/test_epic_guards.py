@@ -386,6 +386,56 @@ def test_guard_modules_are_pytest_files_while_edits_use_the_tree(
     assert is_test_convention_path(path) is convention
 
 
+@pytest.mark.parametrize(
+    ("closed_reason", "contributes"),
+    [
+        ("obsolete", False),
+        ("duplicate", False),
+        ("wont_fix", False),
+        ("out_of_repo", False),
+        ("already_implemented", True),
+        ("completed", True),
+    ],
+)
+def test_guard_collection_skips_artifact_free_closures(
+    tmp_path: Path, closed_reason: str, contributes: bool
+) -> None:
+    """A leaf closed without work names tests nobody wrote; they guard nothing."""
+    now = datetime(2026, 8, 21, tzinfo=UTC)
+    existing = "tests/test_guard.py"
+    Path(tmp_path, existing).parent.mkdir()
+    Path(tmp_path, existing).write_text("def test_guard(): pass\n", encoding="utf-8")
+    other = "tests/test_other.py"
+    Path(tmp_path, other).write_text("def test_other(): pass\n", encoding="utf-8")
+    epic = _task("epic", task_type="epic", parent=None, now=now)
+    completed = _task(
+        "prior", parent=epic.id, now=now, criteria=f"test: `{existing}::test_guard`", closed=True
+    )
+    disposed = _task(
+        "disposed",
+        parent=epic.id,
+        now=now,
+        criteria=f"test: `{other}::test_other`",
+        closed=True,
+        closed_reason=closed_reason,
+    )
+    current = _task("current", parent=epic.id, now=now)
+
+    paths, sources, errors, _deleted = collect_epic_guard_paths(
+        task_manager=cast(LocalTaskManager, _TaskManager([epic, completed, disposed, current])),
+        task=current,
+        repo_path=str(tmp_path),
+    )
+
+    assert errors == ()
+    if contributes:
+        assert paths == (existing, other)
+        assert set(sources) == {completed.id, disposed.id}
+    else:
+        assert paths == (existing,)
+        assert sources == (completed.id,)
+
+
 def test_guard_collection_never_lists_the_whole_project(tmp_path: Path) -> None:
     """Guard collection must ask for its epic's scope, not for every task.
 
@@ -434,6 +484,7 @@ def _task(
     now: datetime,
     criteria: str | None = None,
     closed: bool = False,
+    closed_reason: str | None = None,
 ) -> Task:
     return Task(
         id=task_id,
@@ -446,6 +497,7 @@ def _task(
         parent_task_id=parent,
         validation_criteria=criteria,
         closed_at=now if closed else None,
+        closed_reason=closed_reason,
         seq_num={"prior": 1, "current": 2}.get(task_id),
     )
 

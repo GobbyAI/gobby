@@ -66,6 +66,14 @@ class EpicGuardResult:
 
 _passed_guard_runs: OrderedDict[str, EpicGuardResult] = OrderedDict()
 
+#: Closures that leave no repository artifacts behind (see
+#: ``gobby.tasks.validation.NO_WORK_CLOSE_REASONS``); their criteria still name
+#: acceptance tests nobody wrote. ``already_implemented`` stays a guard source
+#: because the tests it names exist.
+_ARTIFACT_FREE_CLOSE_REASONS: frozenset[str] = frozenset(
+    {"duplicate", "wont_fix", "obsolete", "out_of_repo"}
+)
+
 
 async def evaluate_epic_guards(
     *,
@@ -384,6 +392,7 @@ def collect_epic_guard_paths(
             if item.id in descendants
             and item.id != task.id
             and item.closed_at is not None
+            and item.closed_reason not in _ARTIFACT_FREE_CLOSE_REASONS
             and item.id not in child_parents
         ),
         key=lambda item: (item.closed_at, item.id),
