@@ -145,7 +145,10 @@ def is_assertion_failure(output: str | None) -> bool:
 def validation_run_names_test(command: str, output: str | None, test: AcceptanceTest) -> bool:
     """Return whether a run identifies the exact acceptance test."""
     evidence = f"{command}\n{output or ''}"
-    return test.symbol in evidence and (test.path in evidence or Path(test.path).name in evidence)
+    symbol_variants = (test.symbol, test.symbol.replace(".", "::"))
+    return any(symbol in evidence for symbol in symbol_variants) and (
+        test.path in evidence or Path(test.path).name in evidence
+    )
 
 
 def validation_run_covers_test(command: str, output: str | None, test: AcceptanceTest) -> bool:

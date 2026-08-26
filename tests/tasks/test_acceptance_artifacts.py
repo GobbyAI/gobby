@@ -14,6 +14,7 @@ from gobby.tasks.acceptance_artifacts import (
     AcceptanceTest,
     evaluate_acceptance_artifacts,
     validate_structured_file_evidence,
+    validation_run_names_test,
 )
 from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
 from gobby.tasks.transcript_evidence import (
@@ -43,6 +44,26 @@ def test_transcript_evidence_imports_in_fresh_interpreter() -> None:
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_validation_run_names_class_qualified_pytest_node_id() -> None:
+    test = AcceptanceTest(
+        reference="tests/test_feature.py::TestFeature.test_feature",
+        path="tests/test_feature.py",
+        symbol="TestFeature.test_feature",
+        body="def test_feature(): assert feature()",
+    )
+
+    assert validation_run_names_test(
+        "pytest tests/test_feature.py::TestFeature::test_feature",
+        "E AssertionError: failed",
+        test,
+    )
+    assert not validation_run_names_test(
+        "pytest tests/test_other.py::TestFeature::test_feature",
+        "E AssertionError: failed",
+        test,
+    )
 
 
 def test_python_placebo_acceptance_test_is_named(
