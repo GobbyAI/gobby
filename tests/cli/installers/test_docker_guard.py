@@ -12,7 +12,6 @@ from gobby.cli import _daemon_services
 from gobby.cli.hub_backup import _stores as hub_stores
 from gobby.cli.hub_backup import _verify as hub_verify
 from gobby.cli.hub_backup import cli as hub_cli
-from gobby.cli.installers import falkor
 from gobby.cli.installers import postgres as postgres_installer
 from gobby.cli.installers.compose_env import MANAGED_SERVICE_PROFILES, ComposeRuntime
 from gobby.cli.installers.docker_guard import DockerTestProtectError, ensure_docker_allowed
@@ -79,23 +78,6 @@ def test_explicit_opt_in_allows_real_runner(monkeypatch: pytest.MonkeyPatch) -> 
     assert not raised, "GOBBY_TEST_ALLOW_DOCKER=1 must allow real execution"
 
 
-def test_falkordb_uninstall_fails_closed_before_compose_down(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    _protect(monkeypatch)
-    _write_compose(tmp_path)
-    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/docker")
-    monkeypatch.setattr(
-        falkor,
-        "resolve_compose_runtime",
-        lambda home, profiles: ComposeRuntime(environment={}, profiles=profiles),
-    )
-
-    with pytest.raises(DockerTestProtectError):
-        falkor.uninstall_falkordb(gobby_home=tmp_path)
-
-
 def test_postgres_install_fails_closed_before_compose_up(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -131,7 +113,7 @@ def test_managed_services_compose_up_fails_closed(
         _daemon_services._run_compose_up(compose_file, compose_file.parent, runtime)
 
 
-def test_managed_services_compose_down_fails_closed(
+def test_managed_services_compose_stop_fails_closed(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:

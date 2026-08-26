@@ -307,8 +307,10 @@ def _stop_managed_services_locked(
         command = ["docker", "compose", "-f", str(compose_file)]
         for profile in MANAGED_SERVICE_PROFILES:
             command.extend(["--profile", profile])
-        command.append("down")
-        ensure_docker_allowed("managed-services compose down", runner=subprocess.run)
+        # `stop`, never `down`: containers keep their identity, volumes, and
+        # unless-stopped policy so `gobby start` brings them back with `up -d`.
+        command.append("stop")
+        ensure_docker_allowed("managed-services compose stop", runner=subprocess.run)
         result = _run_compose_command(
             command,
             timeout=60,

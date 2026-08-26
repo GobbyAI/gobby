@@ -371,9 +371,7 @@ calls it before `install_postgres`, so `_resolve_postgres_install_database_url`'
 `kind: deliverable`
 
 Targets:
-- `src/gobby/cli/installers/falkor.py::_resolve_falkordb_password`
-- `src/gobby/cli/installers/falkor.py::install_falkordb`
-- `src/gobby/cli/installers/falkor.py::_install_falkordb_locked`
+- `src/gobby/cli/installers/falkor.py::*` — scope-reason: password parameter removed from the resolver, installer entry point, and locked body
 - `src/gobby/data/docker-compose.services.yml::*` — scope-reason: two GOBBY_FALKORDB_PASSWORD env lines
 - `tests/cli/installers/test_falkordb_installer.py::*` — scope-reason: provided-source tests and template literal
 - `tests/cli/installers/test_falkor_installer.py::*` — scope-reason: password_source assertions
@@ -403,7 +401,7 @@ Targets:
 
 Targets:
 - `src/gobby/cli/_daemon_services.py::_stop_managed_services_locked`
-- `src/gobby/cli/installers/falkor.py::uninstall_falkordb`
+- `src/gobby/cli/installers/falkor.py::*` — scope-reason: uninstall_falkordb and its _clear_config helper deleted
 - `src/gobby/cli/installers/__init__.py`
 - `tests/cli/test_cli_falkor.py::*` — scope-reason: compose verb assertion
 - `tests/cli/installers/test_falkordb_installer.py::*` — scope-reason: TestUninstallFalkorDB deletion
@@ -430,7 +428,7 @@ Targets:
 
 Targets:
 - `src/gobby/cli/datastores.py::*` — scope-reason: new rotate-password command in the existing datastores group
-- `src/gobby/cli/installers/falkor.py::_update_config`
+- `src/gobby/cli/installers/falkor.py::*` — scope-reason: rotate-password reuses _update_config for the CAS secret patch
 - `src/gobby/cli/installers/postgres.py::_write_bootstrap_defaults`
 - `tests/cli/test_datastores_rotate_password.py`
 - `docs/guides/cli-commands.md::*` — scope-reason: datastores command table

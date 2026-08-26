@@ -171,7 +171,7 @@ class TestDaemonDockerFlag:
         assert result.outcome == "failed"
         mock_run.assert_not_called()
 
-    def test_services_stop_runs_compose_down(self, tmp_path: Path) -> None:
+    def test_services_stop_runs_compose_stop(self, tmp_path: Path) -> None:
         from gobby.cli.daemon import _services_stop
 
         svc_dir = tmp_path / "services"
@@ -189,10 +189,11 @@ class TestDaemonDockerFlag:
             mock_run.return_value = MagicMock(returncode=0)
             _services_stop(tmp_path)
 
-        compose_calls = [call for call in mock_run.call_args_list if "down" in str(call)]
+        compose_calls = [call for call in mock_run.call_args_list if "stop" in str(call)]
         assert compose_calls
         command = mock_run.call_args.args[0]
-        assert command[-1] == "down"
+        assert command[-1] == "stop"
+        assert "down" not in command
         for profile in ("postgres", "qdrant", "falkordb"):
             assert any(
                 command[index : index + 2] == ["--profile", profile]
