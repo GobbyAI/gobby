@@ -381,4 +381,33 @@ describe("CronTab", () => {
     expect(screen.getByText("dispatched")).toBeInTheDocument();
     expect(screen.getByText("pipeline waiting approval")).toBeInTheDocument();
   });
+
+  it("shows an interrupted run as a warning rather than a failure", () => {
+    const job = makeJob({ id: "sel", name: "selected-job" });
+    cronMock.jobs = [job];
+    cronMock.selectedJob = job;
+    cronMock.runs = [
+      {
+        id: "r1",
+        cron_job_id: "sel",
+        triggered_at: "2026-05-01T12:00:00Z",
+        started_at: "2026-05-01T12:00:01Z",
+        completed_at: "2026-05-01T13:30:00Z",
+        status: "interrupted",
+        output: null,
+        error: "Cron run was interrupted by a daemon restart",
+        agent_run_id: null,
+        pipeline_execution_id: null,
+        child: null,
+        created_at: "2026-05-01T12:00:00Z",
+      },
+    ];
+    render(<CronTab projectId="p" />);
+    expect(screen.getByText("interrupted")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Interrupted" })).toHaveAttribute(
+      "data-kind",
+      "warning",
+    );
+    expect(screen.queryByRole("img", { name: "Failure" })).toBeNull();
+  });
 });

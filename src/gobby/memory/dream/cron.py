@@ -27,7 +27,7 @@ MEMORY_DREAM_CRON_FINALIZE_GRACE_SECONDS = 300.0
 CronHandler = Callable[[CronJob], Awaitable[str]]
 
 
-def _action_config(dream_config: MemoryDreamConfig) -> dict[str, str | float]:
+def _action_config(dream_config: MemoryDreamConfig) -> dict[str, str | float | bool]:
     """Build the handler action config, including its own bounded timeout.
 
     The handler runs the sweep inline, so the cron executor's bounded-action
@@ -43,6 +43,9 @@ def _action_config(dream_config: MemoryDreamConfig) -> dict[str, str | float]:
             + float(dream_config.work_unit_timeout_seconds)
             + MEMORY_DREAM_CRON_FINALIZE_GRACE_SECONDS
         ),
+        # A nightly sweep runs for hours; its running cron row is the restart
+        # lease that `gobby stop`/`restart` honor unless forced.
+        "restart_protected": True,
     }
 
 

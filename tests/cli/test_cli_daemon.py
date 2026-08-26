@@ -42,6 +42,17 @@ def _pin_boot_id() -> Generator[None]:
         yield
 
 
+@pytest.fixture(autouse=True)
+def _no_protected_runs() -> Generator[MagicMock]:
+    """Every stop path asks the daemon for restart-protected cron runs (#21021).
+
+    Default to none so existing stop/restart tests never reach the network;
+    protected-run tests reconfigure the yielded mock.
+    """
+    with patch("gobby.cli.daemon.fetch_protected_runs", return_value=[]) as fetch:
+        yield fetch
+
+
 @pytest.mark.parametrize("managed_services", [False, True])
 def test_start_dependency_errors_detects_managed_services_from_home(
     tmp_path: Path,
@@ -2467,3 +2478,108 @@ def test_restart_refuses_linked_worktree_before_stopping(monkeypatch: pytest.Mon
     assert result.exit_code == 1
     assert refusal in result.output
     do_stop.assert_not_called()
+
+
+_PROTECTED_RUN = {
+    "run_id": "run-1",
+    "job_id": "job-1",
+    "job_name": "gobby:memory-dream",
+    "started_at": "2026-08-26T07:00:00+00:00",
+    "elapsed_seconds": 3725.0,
+    "remaining_seconds": 12475.0,
+}
+
+
+@patch("gobby.cli.daemon.get_service_status", return_value={"installed": False})
+@patch("gobby.cli.daemon.stop_daemon_util", return_value=True)
+@patch("gobby.cli.runtime.CliRuntime.require_config")
+def test_stop_refuses_while_a_protected_run_is_active(
+    mock_load_config: MagicMock,
+    mock_stop_daemon: MagicMock,
+    _service_status: MagicMock,
+    _no_protected_runs: MagicMock,
+) -> None:
+    """`gobby stop` names the protected run and its elapsed time, then refuses (#21021)."""
+    mock_load_config.return_value = MagicMock()
+    _no_protected_runs.return_value = [_PROTECTED_RUN]
+
+    result = CliRunner().invoke(cli, ["stop"])
+
+    assert result.exit_code == 1
+    assert "gobby:memory-dream (running 1h 2m 5s" in result.output
+    assert "--wait" in result.output
+    assert "--force" in result.output
+    mock_stop_daemon.assert_not_called()
+
+
+@patch("gobby.cli.daemon.get_service_status", return_value={"installed": False})
+@patch("gobby.cli.daemon.stop_daemon_util", return_value=True)
+@patch("gobby.cli.runtime.CliRuntime.require_config")
+def test_stop_force_interrupts_a_protected_run(
+    mock_load_config: MagicMock,
+    mock_stop_daemon: MagicMock,
+    _service_status: MagicMock,
+    _no_protected_runs: MagicMock,
+) -> None:
+    mock_load_config.return_value = MagicMock()
+    _no_protected_runs.return_value = [_PROTECTED_RUN]
+
+    result = CliRunner().invoke(cli, ["stop", "--force"])
+
+    assert result.exit_code == 0
+    assert "Interrupting protected cron run gobby:memory-dream" in result.output
+    mock_stop_daemon.assert_called_once_with(
+        quiet=False,
+        shutdown_intent="stop",
+        shutdown_source="cli_stop",
+    )
+
+
+@patch("gobby.cli.daemon.get_service_status", return_value={"installed": False})
+@patch("gobby.cli.daemon.stop_daemon_util", return_value=True)
+@patch("gobby.cli.runtime.CliRuntime.require_config")
+def test_stop_wait_defers_until_the_protected_run_finishes(
+    mock_load_config: MagicMock,
+    mock_stop_daemon: MagicMock,
+    _service_status: MagicMock,
+    _no_protected_runs: MagicMock,
+) -> None:
+    mock_load_config.return_value = MagicMock()
+    _no_protected_runs.side_effect = [[_PROTECTED_RUN], []]
+
+    with patch("gobby.cli._daemon_protected_runs.time.sleep") as sleep:
+        result = CliRunner().invoke(cli, ["stop", "--wait"])
+
+    assert result.exit_code == 0
+    assert "Waiting for protected cron run(s) to finish: gobby:memory-dream" in result.output
+    assert "Protected cron run(s) finished" in result.output
+    assert sleep.call_count == 1
+    mock_stop_daemon.assert_called_once()
+
+
+@patch("gobby.cli.daemon.stop_daemon_util", return_value=True)
+def test_stop_rejects_force_combined_with_wait(mock_stop_daemon: MagicMock) -> None:
+    result = CliRunner().invoke(cli, ["stop", "--force", "--wait"])
+
+    assert result.exit_code == 2
+    assert "--force and --wait are mutually exclusive" in result.output
+    mock_stop_daemon.assert_not_called()
+
+
+@patch("gobby.cli.daemon.get_service_status", return_value={"installed": False})
+@patch("gobby.cli.daemon.stop_daemon_util", return_value=True)
+@patch("gobby.cli.daemon.setup_logging")
+def test_restart_refuses_while_a_protected_run_is_active(
+    _setup_logging: MagicMock,
+    mock_stop_daemon: MagicMock,
+    _service_status: MagicMock,
+    _no_protected_runs: MagicMock,
+) -> None:
+    """`gobby restart` honors the lease before stopping; `--force` passes through (#21021)."""
+    _no_protected_runs.return_value = [_PROTECTED_RUN]
+
+    result = CliRunner().invoke(cli, ["restart"])
+
+    assert result.exit_code == 1
+    assert "Refusing to stop the daemon" in result.output
+    mock_stop_daemon.assert_not_called()

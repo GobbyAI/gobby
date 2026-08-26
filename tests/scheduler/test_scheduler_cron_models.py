@@ -75,6 +75,27 @@ def test_cron_job_creation() -> None:
     assert job.consecutive_failures == 0
 
 
+def test_cron_job_restart_protected_reads_the_action_config_flag() -> None:
+    """The restart lease flag lives in the job definition, not a schema column (#21021)."""
+
+    def _job(action_config: dict[str, object]) -> CronJob:
+        return CronJob(
+            id="cj-dream",
+            project_id="proj-1",
+            name="gobby:memory-dream",
+            schedule_type="cron",
+            action_type="handler",
+            action_config=action_config,
+            created_at=_TS,
+            updated_at=_TS,
+            cron_expr="0 2 * * *",
+        )
+
+    assert _job({"handler": "memory.dream"}).restart_protected is False
+    assert _job({"handler": "memory.dream", "restart_protected": True}).restart_protected is True
+    assert _job({"handler": "memory.dream", "restart_protected": 0}).restart_protected is False
+
+
 def test_cron_job_from_row() -> None:
     """CronJob.from_row() deserializes from a database row."""
     row_data = {

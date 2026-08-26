@@ -95,7 +95,9 @@ uv run gobby build <plan_or_task>  # opt a plan/epic/leaf into state dispatch
 Start the daemon only from the main checkout: `gobby start`/`restart` and
 `python -m gobby.runner` refuse a linked-worktree source tree because startup sync
 would publish that branch's templates to the shared DB. `GOBBY_ALLOW_WORKTREE_DAEMON=1`
-overrides it for announced testing.
+overrides it for announced testing. `gobby stop`/`restart` also refuse while a
+restart-protected cron run (the nightly memory dream) is active: `--wait` defers
+until it finishes, `--force` interrupts it (it resumes after the next start).
 
 ## Testing
 

@@ -9,7 +9,7 @@ import sys
 import time
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, HTTPException, Response
 
 from gobby.paths import get_gobby_home
 from gobby.shutdown_intent import ShutdownIntent
@@ -194,6 +194,18 @@ def _request_runner_shutdown(server: "HTTPServer", intent: ShutdownIntent) -> bo
 
 
 def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
+    @router.get("/cron/protected-runs")
+    async def protected_cron_runs() -> dict[str, Any]:
+        """Active restart-protected cron runs — the restart lease `gobby stop` honors."""
+        runner = server.get_runner()
+        if runner is None:
+            raise HTTPException(status_code=503, detail="runner unavailable")
+        scheduler = runner.cron_scheduler
+        if scheduler is None:
+            return {"runs": []}
+        runs = await server.run_db(scheduler.list_protected_runs)
+        return {"runs": runs}
+
     @router.post("/shutdown")
     async def shutdown(response: Response) -> dict[str, Any]:
         """

@@ -14,7 +14,9 @@ from gobby.utils.machine_id import require_machine_id
 
 logger = logging.getLogger(__name__)
 
-CronRunStatus = Literal["pending", "running", "completed", "failed", "skipped", "dispatched"]
+CronRunStatus = Literal[
+    "pending", "running", "completed", "failed", "skipped", "dispatched", "interrupted"
+]
 CronRunChildType = Literal["agent_run", "pipeline_execution"]
 
 
@@ -53,6 +55,16 @@ class CronJob:
     last_run_at: datetime | None = None
     last_status: str | None = None
     consecutive_failures: int = 0
+
+    @property
+    def restart_protected(self) -> bool:
+        """Whether an active run of this job holds the daemon restart lease.
+
+        Declared in the job definition's ``action_config`` so bundled system
+        jobs (memory dream) carry it without a schema column; ``gobby stop``
+        and ``gobby restart`` refuse while such a run is active.
+        """
+        return bool(self.action_config.get("restart_protected", False))
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> CronJob:

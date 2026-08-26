@@ -7,7 +7,7 @@ import threading
 import time
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -16,6 +16,10 @@ from gobby.config.cron import CronConfig
 from gobby.scheduler.executor import CronExecutor
 from gobby.scheduler.scheduler import CronRunRejected, CronScheduler
 from gobby.storage.cron import CronJobStorage
+from gobby.storage.cron_children import (
+    INTERRUPTED_RUN_ERROR,
+    INTERRUPTED_RUN_RETRY_DELAY_SECONDS,
+)
 from gobby.storage.cron_models import CronJob, CronRun
 from tests._timing import drain_asyncio_tasks, wait_for_async_condition
 from tests.config_runtime_helpers import static_cron_capture
@@ -128,7 +132,7 @@ async def test_start_creates_tasks(scheduler: CronScheduler) -> None:
 
 
 @pytest.mark.asyncio
-async def test_start_fails_orphan_running_runs_before_first_tick(
+async def test_start_interrupts_orphan_running_runs_before_first_tick(
     cron_storage: CronJobStorage,
     mock_executor: CronExecutor,
 ) -> None:
@@ -162,18 +166,70 @@ async def test_start_fails_orphan_running_runs_before_first_tick(
 
     refreshed_run = cron_storage.get_run(stale_run.id)
     assert refreshed_run is not None
-    assert refreshed_run.status == "failed"
-    assert refreshed_run.error == "Cron run was still active when the scheduler started"
+    assert refreshed_run.status == "interrupted"
+    assert refreshed_run.error == INTERRUPTED_RUN_ERROR
     mock_executor.execute.assert_called_once()
     assert mock_executor.execute.await_args.args[0].id == job.id
 
 
 @pytest.mark.asyncio
-async def test_start_fails_orphan_pending_runs(
+async def test_start_requeues_interrupted_job_without_charging_backoff(
     cron_storage: CronJobStorage,
     mock_executor: CronExecutor,
 ) -> None:
-    """Rows left pending by an old manual trigger must not be replayed."""
+    """A run left running by a dead daemon closes as interrupted, not failed (#21021).
+
+    The job keeps its failure counter and is pulled forward to a near-term
+    retry instead of waiting for its next schedule slot.
+    """
+    scheduler = CronScheduler(
+        storage=cron_storage,
+        executor=mock_executor,
+        capture_bundle=static_cron_capture(
+            CronConfig(check_interval_seconds=60, max_concurrent_jobs=1)
+        ),
+    )
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="gobby:test-dream",
+        schedule_type="cron",
+        action_type="handler",
+        action_config={"handler": "memory.dream"},
+        cron_expr="0 2 * * *",
+    )
+    next_slot = datetime.now(UTC) + timedelta(days=1)
+    cron_storage.update_job(job.id, next_run_at=next_slot.isoformat(), consecutive_failures=2)
+    orphan = cron_storage.create_run(job.id, start_immediately=True)
+    assert orphan is not None
+
+    before = datetime.now(UTC)
+    try:
+        await scheduler.start()
+    finally:
+        await scheduler.stop()
+
+    refreshed_run = cron_storage.get_run(orphan.id)
+    assert refreshed_run is not None
+    assert refreshed_run.status == "interrupted"
+    assert refreshed_run.error == INTERRUPTED_RUN_ERROR
+    refreshed_job = cron_storage.get_job(job.id)
+    assert refreshed_job is not None
+    assert refreshed_job.consecutive_failures == 2
+    assert refreshed_job.next_run_at is not None
+    assert before <= refreshed_job.next_run_at
+    assert refreshed_job.next_run_at <= before + timedelta(
+        seconds=INTERRUPTED_RUN_RETRY_DELAY_SECONDS + 5
+    )
+    assert refreshed_job.next_run_at < next_slot
+    cast(AsyncMock, mock_executor.execute).assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_start_interrupts_orphan_pending_runs_without_replay(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+) -> None:
+    """Rows left pending by an old manual trigger close as interrupted, never replay."""
     scheduler = CronScheduler(
         storage=cron_storage,
         executor=mock_executor,
@@ -198,9 +254,94 @@ async def test_start_fails_orphan_pending_runs(
 
     refreshed_run = cron_storage.get_run(stale_run.id)
     assert refreshed_run is not None
-    assert refreshed_run.status == "failed"
-    assert refreshed_run.error == "Cron run was still active when the scheduler started"
+    assert refreshed_run.status == "interrupted"
+    assert refreshed_run.error == INTERRUPTED_RUN_ERROR
     mock_executor.execute.assert_not_called()
+
+
+def _protected_job(
+    cron_storage: CronJobStorage,
+    name: str = "gobby:test-dream",
+    *,
+    protected: bool = True,
+    timeout_seconds: float = 3600.0,
+) -> CronJob:
+    action_config: dict[str, Any] = {"handler": "memory.dream", "timeout_seconds": timeout_seconds}
+    if protected:
+        action_config["restart_protected"] = True
+    return cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name=name,
+        schedule_type="cron",
+        action_type="handler",
+        action_config=action_config,
+        cron_expr="0 2 * * *",
+    )
+
+
+def test_list_protected_runs_reports_only_this_daemons_protected_leases(
+    scheduler: CronScheduler,
+    cron_storage: CronJobStorage,
+) -> None:
+    protected = _protected_job(cron_storage)
+    unprotected = _protected_job(cron_storage, "gobby:test-prune", protected=False)
+    foreign = _protected_job(cron_storage, "gobby:test-foreign")
+    run = cron_storage.create_run(
+        protected.id, scheduler_owner=scheduler._scheduler_owner, start_immediately=True
+    )
+    assert run is not None
+    assert (
+        cron_storage.create_run(
+            unprotected.id, scheduler_owner=scheduler._scheduler_owner, start_immediately=True
+        )
+        is not None
+    )
+    assert (
+        cron_storage.create_run(foreign.id, scheduler_owner="other-daemon", start_immediately=True)
+        is not None
+    )
+
+    reported = scheduler.list_protected_runs()
+
+    assert [entry["run_id"] for entry in reported] == [run.id]
+    entry = reported[0]
+    assert entry["job_id"] == protected.id
+    assert entry["job_name"] == "gobby:test-dream"
+    assert 0 <= entry["elapsed_seconds"] < 5
+    assert 3595 < entry["remaining_seconds"] <= 3600
+
+
+def test_list_protected_runs_expires_with_the_action_timeout(
+    scheduler: CronScheduler,
+    cron_storage: CronJobStorage,
+) -> None:
+    """A run older than its own timeout is the executor's to fail, not a lease."""
+    job = _protected_job(cron_storage, timeout_seconds=3600.0)
+    run = cron_storage.create_run(
+        job.id, scheduler_owner=scheduler._scheduler_owner, start_immediately=True
+    )
+    assert run is not None
+    cron_storage.update_run(run.id, started_at=datetime.now(UTC) - timedelta(hours=2))
+
+    assert scheduler.list_protected_runs() == []
+
+
+@pytest.mark.parametrize("terminal_status", ["completed", "failed", "interrupted"])
+def test_protected_run_lease_is_released_on_terminal_status(
+    scheduler: CronScheduler,
+    cron_storage: CronJobStorage,
+    terminal_status: str,
+) -> None:
+    job = _protected_job(cron_storage)
+    run = cron_storage.create_run(
+        job.id, scheduler_owner=scheduler._scheduler_owner, start_immediately=True
+    )
+    assert run is not None
+    assert [entry["run_id"] for entry in scheduler.list_protected_runs()] == [run.id]
+
+    cron_storage.update_run(run.id, status=terminal_status, completed_at=datetime.now(UTC))
+
+    assert scheduler.list_protected_runs() == []
 
 
 @pytest.mark.asyncio

@@ -102,20 +102,30 @@ lifecycle; set it to `false` persistently to run the daemon without the UI.
 Stop the daemon.
 
 ```bash
-gobby stop [--docker]
+gobby stop [--docker] [--wait | --force]
 ```
 
 Pass `--docker` to also stop the managed PostgreSQL, Qdrant, and FalkorDB
 containers with `docker compose stop`. Containers, data volumes, and their
 `unless-stopped` policy stay in place; `gobby start` brings them back.
 
+A restart-protected cron run (the nightly `gobby:memory-dream` sweep, which
+runs for hours) holds a lease while it is active: `gobby stop` refuses and
+prints the job name and elapsed time. `--wait` defers the stop until the run
+reaches a terminal state, bounded by the run's own timeout; `--force`
+interrupts it now. An interrupted run is recorded as `interrupted` (never
+`failed`, no backoff), and the scheduler re-queues the job about a minute
+after the next start so checkpointed work resumes.
+
 ### `gobby restart`
 
 Stop and start the daemon.
 
 ```bash
-gobby restart [--verbose] [--docker]
+gobby restart [--verbose] [--docker] [--wait | --force]
 ```
+
+`--wait` and `--force` apply to the stop half exactly as for `gobby stop`.
 
 ### `gobby status`
 

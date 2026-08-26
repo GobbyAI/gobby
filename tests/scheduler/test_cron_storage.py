@@ -10,7 +10,11 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from gobby.storage.cron import CronJobStorage, compute_next_run
-from gobby.storage.cron_children import _fetch_statuses
+from gobby.storage.cron_children import (
+    INTERRUPTED_RUN_ERROR,
+    INTERRUPTED_RUN_RETRY_DELAY_SECONDS,
+    _fetch_statuses,
+)
 from gobby.storage.cron_models import CronJob
 
 if TYPE_CHECKING:
@@ -973,12 +977,16 @@ def test_reconcile_interrupted_runs_preserves_active_children(
         action_config={"command": "echo"},
         cron_expr="0 * * * *",
     )
+    # Pin the schedule a day out so the re-queue count cannot depend on the clock.
+    cron_storage.update_job(
+        stale_job.id, next_run_at=(datetime.now(UTC) + timedelta(days=1)).isoformat()
+    )
     stale_run = cron_storage.create_run(stale_job.id)
     assert stale_run is not None
 
     result = cron_storage.reconcile_interrupted_runs(pipeline_run.machine_id)
 
-    assert result == {"dispatched": 1, "failed": 1}
+    assert result == {"dispatched": 1, "interrupted": 1, "requeued": 1}
     refreshed_pipeline = cron_storage.get_run(pipeline_run.id)
     refreshed_stale = cron_storage.get_run(stale_run.id)
     assert refreshed_pipeline is not None
@@ -986,7 +994,69 @@ def test_reconcile_interrupted_runs_preserves_active_children(
     assert refreshed_pipeline.child is not None
     assert refreshed_pipeline.child.status == "running"
     assert refreshed_stale is not None
-    assert refreshed_stale.status == "failed"
+    assert refreshed_stale.status == "interrupted"
+
+
+def test_reconcile_interrupted_runs_requeues_without_charging_backoff(
+    cron_storage: CronJobStorage,
+) -> None:
+    """A run a dead daemon left active closes as interrupted and re-queues its job."""
+
+    def _job(name: str) -> CronJob:
+        return cron_storage.create_job(
+            project_id=PROJECT_ID,
+            name=name,
+            schedule_type="cron",
+            action_type="handler",
+            action_config={"handler": "memory.dream"},
+            cron_expr="0 2 * * *",
+        )
+
+    sweep = _job("Interrupted Sweep")
+    next_slot = datetime.now(UTC) + timedelta(days=1)
+    cron_storage.update_job(sweep.id, next_run_at=next_slot.isoformat(), consecutive_failures=2)
+    sweep_run = cron_storage.create_run(sweep.id, start_immediately=True)
+    assert sweep_run is not None
+
+    parked = _job("Parked Sweep")
+    cron_storage.update_job(parked.id, next_run_at=None)
+    parked_run = cron_storage.create_run(parked.id, start_immediately=True)
+    assert parked_run is not None
+
+    imminent = _job("Imminent Sweep")
+    soon = datetime.now(UTC) + timedelta(seconds=10)
+    cron_storage.update_job(imminent.id, next_run_at=soon.isoformat())
+    imminent_run = cron_storage.create_run(imminent.id, start_immediately=True)
+    assert imminent_run is not None
+
+    before = datetime.now(UTC)
+    result = cron_storage.reconcile_interrupted_runs(sweep_run.machine_id)
+
+    assert result == {"dispatched": 0, "interrupted": 3, "requeued": 1}
+    for run_id in (sweep_run.id, parked_run.id, imminent_run.id):
+        refreshed_run = cron_storage.get_run(run_id)
+        assert refreshed_run is not None
+        assert refreshed_run.status == "interrupted"
+        assert refreshed_run.error == INTERRUPTED_RUN_ERROR
+        assert refreshed_run.completed_at is not None
+
+    refreshed_sweep = cron_storage.get_job(sweep.id)
+    assert refreshed_sweep is not None
+    assert refreshed_sweep.consecutive_failures == 2
+    assert refreshed_sweep.next_run_at is not None
+    assert before <= refreshed_sweep.next_run_at
+    assert refreshed_sweep.next_run_at <= before + timedelta(
+        seconds=INTERRUPTED_RUN_RETRY_DELAY_SECONDS + 5
+    )
+
+    refreshed_parked = cron_storage.get_job(parked.id)
+    assert refreshed_parked is not None
+    assert refreshed_parked.next_run_at is None
+
+    refreshed_imminent = cron_storage.get_job(imminent.id)
+    assert refreshed_imminent is not None
+    assert refreshed_imminent.next_run_at is not None
+    assert abs((refreshed_imminent.next_run_at - soon).total_seconds()) < 1
 
 
 def test_fail_stale_running_runs_uses_configured_cutoff(

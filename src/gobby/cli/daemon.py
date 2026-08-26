@@ -42,6 +42,7 @@ from gobby.utils.dependency_requirements import (
 from gobby.utils.dev import worktree_daemon_refusal
 from gobby.utils.status import fetch_rich_status, format_startup_summary, format_status_message
 
+from ._daemon_protected_runs import clear_protected_runs, fetch_protected_runs
 from ._daemon_services import (
     ServiceStartResult,
     start_managed_services,
@@ -543,9 +544,15 @@ def _do_stop(
     ctx: click.Context,
     docker_flag: bool,
     shutdown_intent: str = "stop",
+    *,
+    force: bool = False,
+    wait: bool = False,
 ) -> bool:
     """Stop the daemon and return whether shutdown succeeded."""
     from gobby.cli.runtime import get_cli_runtime
+
+    if force and wait:
+        raise click.UsageError("--force and --wait are mutually exclusive")
 
     pid_file = get_gobby_home() / "gobby.pid"
     gate, gate_error = stop_singleton_gate(pid_file)
@@ -556,6 +563,16 @@ def _do_stop(
         return True
 
     config = get_cli_runtime(ctx).operational_config
+    # A restart-protected cron run (nightly memory dream) holds a lease the
+    # daemon reports; honor it before either stop path can kill the run.
+    if not clear_protected_runs(
+        config.daemon_port,
+        force=force,
+        wait=wait,
+        step=_step,
+        fetch=fetch_protected_runs,
+    ):
+        return False
     shutdown_source = "cli_restart" if shutdown_intent == "restart" else "cli_stop"
     # If OS service is installed and running, delegate to it
     docker_stopped = False
@@ -617,10 +634,22 @@ def _do_stop(
     is_flag=True,
     help="Also stop the managed PostgreSQL, Qdrant, and FalkorDB containers (compose stop; never removes them)",
 )
+@click.option(
+    "--force",
+    "force",
+    is_flag=True,
+    help="Interrupt an active restart-protected cron run (it resumes after the next start)",
+)
+@click.option(
+    "--wait",
+    "wait",
+    is_flag=True,
+    help="Defer the stop until active restart-protected cron runs finish",
+)
 @click.pass_context
-def stop(ctx: click.Context, docker_flag: bool) -> None:
+def stop(ctx: click.Context, docker_flag: bool, force: bool, wait: bool) -> None:
     """Stop the Gobby daemon."""
-    sys.exit(0 if _do_stop(ctx, docker_flag) else 1)
+    sys.exit(0 if _do_stop(ctx, docker_flag, force=force, wait=wait) else 1)
 
 
 @click.command()
@@ -636,8 +665,26 @@ def stop(ctx: click.Context, docker_flag: bool) -> None:
     is_flag=True,
     help="Also restart the managed PostgreSQL, Qdrant, and FalkorDB containers",
 )
+@click.option(
+    "--force",
+    "force",
+    is_flag=True,
+    help="Interrupt an active restart-protected cron run (it resumes after the restart)",
+)
+@click.option(
+    "--wait",
+    "wait",
+    is_flag=True,
+    help="Defer the restart until active restart-protected cron runs finish",
+)
 @click.pass_context
-def restart(ctx: click.Context, verbose: bool, docker_flag: bool) -> None:
+def restart(
+    ctx: click.Context,
+    verbose: bool,
+    docker_flag: bool,
+    force: bool,
+    wait: bool,
+) -> None:
     """Restart the Gobby daemon (stop then start)."""
     if verbose:
         setup_logging(True)
@@ -647,7 +694,7 @@ def restart(ctx: click.Context, verbose: bool, docker_flag: bool) -> None:
         _step(refusal, error=True)
         sys.exit(1)
 
-    if not _do_stop(ctx, docker_flag, shutdown_intent="restart"):
+    if not _do_stop(ctx, docker_flag, shutdown_intent="restart", force=force, wait=wait):
         sys.exit(1)
 
     ctx.invoke(start, verbose=verbose)

@@ -21,6 +21,7 @@ UI/API reporting.
 | `completed` | Inline `shell` or `handler` work completed. | Yes |
 | `failed` | Dispatch or inline execution failed. | Yes |
 | `skipped` | No work launched because readiness or overlap policy blocked it. | Yes |
+| `interrupted` | A daemon restart closed the run before it finished; the job is re-queued. | Yes |
 
 `dispatched` is a cron terminal state. It means "cron did its job and handed the
 work to a durable subsystem." It does not claim the pipeline or agent completed.
@@ -33,10 +34,12 @@ stateDiagram-v2
     running --> completed: shell/handler completed inline
     running --> failed: dispatch or inline failure
     running --> skipped: readiness or overlap policy
+    running --> interrupted: daemon restart (startup reconciliation)
     dispatched --> [*]
     completed --> [*]
     failed --> [*]
     skipped --> [*]
+    interrupted --> [*]
 ```
 
 ## Action Semantics
@@ -106,9 +109,14 @@ backoff counters:
 |-----------|---------------|
 | `running` with valid `pipeline_execution_id` | Mark `dispatched`. |
 | `running` with valid `agent_run_id` | Mark `dispatched`. |
-| `running` without a child link | Mark `failed` with `interrupted before durable dispatch`. |
+| `pending` or `running` without a child link | Mark `interrupted`; re-queue the enabled job for a near-term retry (`next_run_at = now + 60s`, never later than its current slot) without charging `consecutive_failures`. |
 | `dispatched` | Leave terminal; child subsystem owns recovery. |
-| `completed`, `failed`, `skipped` | Leave terminal. |
+| `completed`, `failed`, `skipped`, `interrupted` | Leave terminal. |
+
+The running row of a job whose definition sets `action_config.restart_protected`
+is also the daemon's restart lease: `gobby stop`/`gobby restart` refuse while
+one is active unless `--wait` or `--force`. The lease is released by any
+terminal status and expires with the run's own action timeout.
 
 Valid child link means the referenced child row exists. If the ID is present but
 the child row is missing, treat the cron run as `failed` because durable

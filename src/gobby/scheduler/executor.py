@@ -111,7 +111,7 @@ class CronExecutor:
 
         self._background_tasks.clear()
 
-    def _action_timeout_seconds(self, job: CronJob) -> float:
+    def action_timeout_seconds(self, job: CronJob) -> float:
         """Resolve and validate the outer timeout for a bounded cron action."""
         configured = job.action_config.get("timeout_seconds")
         if configured is None:
@@ -131,7 +131,7 @@ class CronExecutor:
         action_factory: Callable[[], Awaitable[object]],
     ) -> object:
         """Await a bounded cron action within its configured outer timeout."""
-        timeout = self._action_timeout_seconds(job)
+        timeout = self.action_timeout_seconds(job)
         try:
             return await asyncio.wait_for(action_factory(), timeout=timeout)
         except TimeoutError as exc:
