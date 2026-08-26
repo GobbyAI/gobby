@@ -60,6 +60,19 @@ def _generate_falkordb_password() -> str:
     return validate_falkordb_password(password)
 
 
+def rotate_falkordb_password(*, gobby_home: Path | None = None) -> None:
+    """Store a freshly generated ``falkordb_password`` secret.
+
+    Docker is never touched: the container keeps its current password until
+    ``gobby restart`` recreates it from the stored secret.
+    """
+    _update_config(
+        port=DEFAULT_FALKORDB_PORT,
+        password=_generate_falkordb_password(),
+        gobby_home=_normalize_home(gobby_home),
+    )
+
+
 def _resolve_falkordb_password(*, gobby_home: Path | None = None) -> ResolvedFalkorPassword:
     """Reuse the stored ``falkordb_password`` secret, else generate a fresh one."""
     home = _normalize_home(gobby_home)

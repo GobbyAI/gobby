@@ -430,7 +430,7 @@ Targets:
 - `src/gobby/cli/datastores.py::*` — scope-reason: new rotate-password command in the existing datastores group
 - `src/gobby/cli/installers/falkor.py::*` — scope-reason: rotate-password reuses _update_config for the CAS secret patch
 - `src/gobby/cli/installers/postgres.py::_write_bootstrap_defaults`
-- `tests/cli/test_datastores_rotate_password.py`
+- `tests/cli/test_datastores_rotate_password.py::*` — scope-reason: new rotate-password test module
 - `docs/guides/cli-commands.md::*` — scope-reason: datastores command table
 
 Existing installs stay on whatever password they were created with (`gobby_dev` for every

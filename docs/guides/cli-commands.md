@@ -30,7 +30,7 @@ Start it with `gobby start` and check it with `gobby status` or `gobby health`.
 | `clones` | Manage isolated clone workspaces. | `src/gobby/cli/clones.py` |
 | `comms` | Manage inter-session communication channels. | `src/gobby/cli/communications.py` |
 | `cron` | Manage scheduled jobs and dispatcher ticks. | `src/gobby/cli/cron.py` |
-| `datastores` | Manage hub-side shared datastores. | `src/gobby/cli/datastores.py` |
+| `datastores` | Manage hub-side shared datastores: `expose`, `rotate-password`. | `src/gobby/cli/datastores.py` |
 | `embeddings` | Manage the embedding service and indices. | `src/gobby/cli/embeddings.py` |
 | `github` | Manage GitHub integration. | `src/gobby/cli/github.py` |
 | `health` | Check daemon health. | `src/gobby/cli/daemon.py` |
@@ -786,6 +786,25 @@ Use these recovery sequences:
 Generated runtime cleanup removes legacy shared-DSN bootstraps and runtime KEK
 links or copies before a managed gcode subprocess is launched. A runtime home
 is reusable only when its bootstrap user matches the scoped-role format.
+
+### `gobby datastores rotate-password`
+
+Rotate a managed datastore credential on a local install:
+
+```bash
+gobby datastores rotate-password postgres
+gobby datastores rotate-password falkordb
+```
+
+`postgres` generates a 32-byte URL-safe password, runs `ALTER ROLE` for the
+`database_url` user over the current DSN, then rewrites `database_url` in
+`~/.gobby/bootstrap.yaml`; if that write fails after the role changed, the new
+DSN is printed on stderr for manual repair. `falkordb` stores a freshly
+generated `falkordb_password` secret. Neither command prints the password on
+success, invokes Docker, or restarts anything: run `gobby restart` afterwards
+so the daemon and the containers pick up the new credential. Data volumes are
+never touched. Remote installs (`datastore_mode: remote`) are refused with
+exit 2 because remote clients hold no datastore credentials.
 
 ## Admin And Diagnostics
 
