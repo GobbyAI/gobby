@@ -275,6 +275,32 @@ class TestShadowCohort:
         assert [row["recall_request_id"] for row in rows] == ["req-valid"]
         assert [hit["memory_id"] for hit in rows[0]["hits"]] == ["mem-1", "mem-2"]
 
+    def test_polling_admits_archived_recall_and_agent_search_callers(
+        self, store: RecallSignalStore
+    ) -> None:
+        """#21011: the live cohort is agent-driven search; probe searches never enter."""
+        admitted = {
+            "req-recall": "memory.recall",
+            "req-search": "mcp_proxy.memory.search_memories",
+            "req-review": "mcp_proxy.memory.review_task_memories",
+        }
+        excluded = {
+            "req-probe": "mcp_proxy.memory.create_memory.similar_existing",
+            "req-cli": "cli.memory.recall",
+        }
+        for request_id, caller in {**admitted, **excluded}.items():
+            assert store.insert_signal_event(shadow_event(request_id, caller=caller)) is True
+
+        rows = store.fetch_unshadowed_requests(
+            "sess-shadow",
+            label_source="digest_shadow",
+            judge_protocol_version="shadow-v1",
+            query_construction_version=None,
+            limit=10,
+        )
+
+        assert sorted(row["recall_request_id"] for row in rows) == sorted(admitted)
+
     def test_scored_phases_require_exact_complete_snapshot_cohort(
         self, store: RecallSignalStore
     ) -> None:

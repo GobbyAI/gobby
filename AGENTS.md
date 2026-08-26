@@ -92,12 +92,21 @@ uv run gobby pipelines list      # pipelines: list / run / approve / reject / im
 uv run gobby build <plan_or_task>  # opt a plan/epic/leaf into state dispatch
 ```
 
+Start the daemon only from the main checkout: `gobby start`/`restart` and
+`python -m gobby.runner` refuse a linked-worktree source tree because startup sync
+would publish that branch's templates to the shared DB. `GOBBY_ALLOW_WORKTREE_DAEMON=1`
+overrides it for announced testing. `gobby stop`/`restart` also refuse while a
+restart-protected cron run (the nightly memory dream) is active: `--wait` defers
+until it finishes, `--force` interrupts it (it resumes after the next start).
+
 ## Testing
 
 **Never run the full pytest suite unless explicitly asked** — it takes well over 30
 minutes. Target the relevant file or package.
 
-- Prefix agent pytest runs with `GOBBY_TEST_PROTECT=1`.
+- Prefix agent pytest runs with `GOBBY_TEST_PROTECT=1`, and point `DATABASE_URL` at the
+  isolated test hub so no test touches the daemon database:
+  `DATABASE_URL="${DATABASE_URL:-postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test}" GOBBY_TEST_PROTECT=1 uv run pytest <path>`.
 - Tests must be isolated from the user's running daemon and real local state: anything
   needing daemon behavior starts an isolated test daemon with temporary state and
   ports.
@@ -137,10 +146,10 @@ state inconsistent.
 
 ## Architecture Facts
 
-- Templates vs enforcement: see `src/gobby/install/shared/CLAUDE.md` for the
+- Templates vs enforcement: see `src/gobby/install/shared/AGENTS.md` for the
   sync/override contract (rule 8 above is the short version).
 - Dispatch: stage-manifest dispatch enters via `gobby build` (CLI, MCP, HTTP all
-  call `src/gobby/build/service.py`). Read `src/gobby/dispatch/CLAUDE.md` before
+  call `src/gobby/build/service.py`). Read `src/gobby/dispatch/AGENTS.md` before
   touching dispatch, build, or stage-registry code.
 - Rust workspace (`crates/`): `gobby-code`→`gcode`, `gobby-daemon`→`gdaemon`,
   `gobby-hooks`→`ghook`, `gobby-wiki`→`gwiki`, shared `gobby-core`. The daemon shells

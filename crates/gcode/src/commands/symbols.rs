@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashSet};
 
-use crate::commands::scope;
+use crate::commands::{scope, token_budget};
 use crate::config::Context;
 use crate::db;
 use crate::index::languages;
@@ -10,7 +10,15 @@ use crate::savings;
 use crate::utils::short_id;
 use crate::visibility;
 
-pub fn outline(ctx: &Context, file: &str, format: Format, verbose: bool) -> anyhow::Result<()> {
+pub fn outline(
+    ctx: &Context,
+    file: &str,
+    limit: Option<usize>,
+    offset: usize,
+    token_budget: Option<usize>,
+    format: Format,
+    verbose: bool,
+) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
     let file = scope::normalize_file_arg(ctx, file);
     let symbols = visibility::visible_symbols_for_file(&mut conn, ctx, &file)?;
@@ -44,27 +52,124 @@ pub fn outline(ctx: &Context, file: &str, format: Format, verbose: bool) -> anyh
         }
     }
 
-    match format {
-        Format::Json => {
-            if verbose {
-                output::print_json(&symbols)
-            } else {
-                let slim: Vec<_> = symbols.iter().map(|s| s.to_outline()).collect();
-                output::print_json(&slim)
+    let groups = outline_groups(symbols, verbose)?;
+    let (total, limit, groups) = token_budget::window(groups, offset, limit);
+    let meta = token_budget::CollectionPageMeta {
+        project_id: &ctx.project_id,
+        total,
+        offset,
+        limit,
+        hint: None,
+    };
+    let has_more = total > offset.saturating_add(groups.len());
+    let page = token_budget::paginate_results(
+        groups,
+        offset,
+        has_more,
+        token_budget,
+        |groups, next_offset, budget_exceeded| match format {
+            Format::Json => token_budget::render_json_page(
+                meta,
+                &flatten_outline_json(groups),
+                next_offset,
+                budget_exceeded,
+            ),
+            Format::Text => {
+                token_budget::render_text_page(&render_outline_groups(groups, verbose), next_offset)
             }
-        }
+        },
+    );
+
+    match format {
+        Format::Json => token_budget::print_json_page(
+            meta,
+            &flatten_outline_json(&page.results),
+            page.next_offset,
+            page.budget_exceeded,
+        ),
         Format::Text => {
-            let outline = render_outline_text(&symbols);
-            if outline.is_empty() {
+            let rendered = token_budget::render_text_page(
+                &render_outline_groups(&page.results, verbose),
+                page.next_offset,
+            );
+            if rendered.is_empty() {
                 Ok(())
             } else {
-                output::print_text(&outline)
+                output::print_text(&rendered)
             }
         }
     }
 }
 
-fn render_outline_text(symbols: &[Symbol]) -> String {
+struct OutlineGroup {
+    symbols: Vec<Symbol>,
+    json: Vec<serde_json::Value>,
+}
+
+fn outline_groups(symbols: Vec<Symbol>, verbose: bool) -> anyhow::Result<Vec<OutlineGroup>> {
+    let parent_by_id = symbols
+        .iter()
+        .map(|symbol| (symbol.id.as_str(), symbol.parent_symbol_id.as_deref()))
+        .collect::<BTreeMap<_, _>>();
+    let mut root_by_id = BTreeMap::new();
+    for symbol in &symbols {
+        let mut current = symbol.id.as_str();
+        let mut seen = HashSet::new();
+        while seen.insert(current) {
+            let Some(Some(parent)) = parent_by_id.get(current) else {
+                break;
+            };
+            current = parent;
+        }
+        root_by_id.insert(symbol.id.clone(), current.to_string());
+    }
+
+    let mut root_order = Vec::new();
+    let mut seen_roots = HashSet::new();
+    let mut groups: BTreeMap<String, OutlineGroup> = BTreeMap::new();
+    for symbol in symbols {
+        let root = root_by_id
+            .get(&symbol.id)
+            .cloned()
+            .unwrap_or_else(|| symbol.id.clone());
+        if seen_roots.insert(root.clone()) {
+            root_order.push(root.clone());
+        }
+        let json = if verbose {
+            serde_json::to_value(&symbol)?
+        } else {
+            serde_json::to_value(symbol.to_outline())?
+        };
+        let group = groups.entry(root).or_insert_with(|| OutlineGroup {
+            symbols: Vec::new(),
+            json: Vec::new(),
+        });
+        group.symbols.push(symbol);
+        group.json.push(json);
+    }
+
+    Ok(root_order
+        .into_iter()
+        .filter_map(|root| groups.remove(&root))
+        .collect())
+}
+
+fn flatten_outline_json(groups: &[OutlineGroup]) -> Vec<serde_json::Value> {
+    groups
+        .iter()
+        .flat_map(|group| group.json.iter().cloned())
+        .collect()
+}
+
+fn render_outline_groups(groups: &[OutlineGroup], verbose: bool) -> String {
+    groups
+        .iter()
+        .map(|group| render_outline_text(&group.symbols, verbose))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn render_outline_text(symbols: &[Symbol], verbose: bool) -> String {
     let parent_by_id = symbols
         .iter()
         .map(|symbol| (symbol.id.as_str(), symbol.parent_symbol_id.as_deref()))
@@ -74,7 +179,7 @@ fn render_outline_text(symbols: &[Symbol]) -> String {
         .iter()
         .map(|s| {
             let indent = "  ".repeat(outline_depth(s, &parent_by_id));
-            format!("{indent}{}", format_outline_text_line(s))
+            format!("{indent}{}", format_outline_text_line(s, verbose))
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -136,16 +241,15 @@ fn unsupported_file_type_diagnostic(file: &str) -> Option<String> {
     ))
 }
 
-fn format_outline_text_line(symbol: &Symbol) -> String {
+fn format_outline_text_line(symbol: &Symbol, verbose: bool) -> String {
     let mut line = format!(
-        "{}:{}-{} [{}] {} id={}",
-        symbol.file_path,
-        symbol.line_start,
-        symbol.line_end,
-        symbol.kind,
-        symbol.qualified_name,
-        symbol.id
+        "{}:{}-{} [{}] {}",
+        symbol.file_path, symbol.line_start, symbol.line_end, symbol.kind, symbol.qualified_name
     );
+    if verbose {
+        line.push_str(" id=");
+        line.push_str(&symbol.id);
+    }
     if let Some(sig) = symbol.signature.as_deref().filter(|sig| !sig.is_empty()) {
         line.push_str(" sig=");
         line.push_str(sig);
@@ -204,15 +308,24 @@ pub fn symbol(ctx: &Context, id: &str, format: Format) -> anyhow::Result<()> {
     }
 }
 
-pub fn symbols(ctx: &Context, ids: &[String], format: Format) -> anyhow::Result<()> {
+pub fn symbols(
+    ctx: &Context,
+    ids: &[String],
+    limit: Option<usize>,
+    offset: usize,
+    token_budget: Option<usize>,
+    format: Format,
+) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
-    if ids.is_empty() {
-        return match format {
-            Format::Json => output::print_json(&Vec::<Symbol>::new()),
-            Format::Text => Ok(()),
-        };
-    }
     let results = visibility::visible_symbols_by_ids(&mut conn, ctx, ids)?;
+    let mut by_id = results
+        .into_iter()
+        .map(|symbol| (symbol.id.clone(), symbol))
+        .collect::<BTreeMap<_, _>>();
+    let results = ids
+        .iter()
+        .filter_map(|id| by_id.remove(id))
+        .collect::<Vec<_>>();
 
     // Report aggregate savings across batch
     let mut total_file_bytes = 0usize;
@@ -234,36 +347,59 @@ pub fn symbols(ctx: &Context, ids: &[String], format: Format) -> anyhow::Result<
         );
     }
 
-    match format {
-        Format::Json => output::print_json(&results),
-        Format::Text => {
-            for s in &results {
-                println!(
-                    "{}:{} [{}] {}",
-                    s.file_path, s.line_start, s.kind, s.qualified_name
-                );
-            }
-            Ok(())
-        }
-    }
+    let (total, limit, results) = token_budget::window(results, offset, limit);
+    let meta = token_budget::CollectionPageMeta {
+        project_id: &ctx.project_id,
+        total,
+        offset,
+        limit,
+        hint: None,
+    };
+    let page = token_budget::paginate(results, meta, token_budget, format, render_symbols_text);
+    token_budget::print_page(&page, meta, format, render_symbols_text)
 }
 
-pub fn kinds(ctx: &Context, format: Format) -> anyhow::Result<()> {
+fn render_symbols_text(symbols: &[Symbol]) -> String {
+    symbols
+        .iter()
+        .map(|symbol| {
+            format!(
+                "{}:{} [{}] {}",
+                symbol.file_path, symbol.line_start, symbol.kind, symbol.qualified_name
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+pub fn kinds(
+    ctx: &Context,
+    limit: Option<usize>,
+    offset: usize,
+    token_budget: Option<usize>,
+    format: Format,
+) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
     let kinds = visibility::visible_kinds(&mut conn, ctx)?;
-
-    match format {
-        Format::Json => output::print_json(&kinds),
-        Format::Text => {
-            for k in &kinds {
-                println!("{k}");
-            }
-            Ok(())
-        }
-    }
+    let (total, limit, kinds) = token_budget::window(kinds, offset, limit);
+    let meta = token_budget::CollectionPageMeta {
+        project_id: &ctx.project_id,
+        total,
+        offset,
+        limit,
+        hint: None,
+    };
+    let page = token_budget::paginate(kinds, meta, token_budget, format, |rows| rows.join("\n"));
+    token_budget::print_page(&page, meta, format, |rows| rows.join("\n"))
 }
 
-pub fn tree(ctx: &Context, format: Format) -> anyhow::Result<()> {
+pub fn tree(
+    ctx: &Context,
+    limit: Option<usize>,
+    offset: usize,
+    token_budget: Option<usize>,
+    format: Format,
+) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
     let files: Vec<serde_json::Value> = visibility::visible_tree(&mut conn, ctx)?
         .into_iter()
@@ -276,14 +412,50 @@ pub fn tree(ctx: &Context, format: Format) -> anyhow::Result<()> {
         })
         .collect();
 
+    let groups = tree_groups(&files);
+    let (total, limit, groups) = token_budget::window(groups, offset, limit);
+    let meta = token_budget::CollectionPageMeta {
+        project_id: &ctx.project_id,
+        total,
+        offset,
+        limit,
+        hint: None,
+    };
+    let has_more = total > offset.saturating_add(groups.len());
+    let page = token_budget::paginate_results(
+        groups,
+        offset,
+        has_more,
+        token_budget,
+        |groups, next_offset, budget_exceeded| match format {
+            Format::Json => token_budget::render_json_page(
+                meta,
+                &flatten_tree_json(groups),
+                next_offset,
+                budget_exceeded,
+            ),
+            Format::Text => {
+                token_budget::render_text_page(&render_tree_groups(groups), next_offset)
+            }
+        },
+    );
+
     match format {
-        Format::Json => output::print_json(&files),
+        Format::Json => token_budget::print_json_page(
+            meta,
+            &flatten_tree_json(&page.results),
+            page.next_offset,
+            page.budget_exceeded,
+        ),
         Format::Text => {
-            let text = format_tree_text(&files);
-            if text.is_empty() {
+            let rendered = token_budget::render_text_page(
+                &render_tree_groups(&page.results),
+                page.next_offset,
+            );
+            if rendered.is_empty() {
                 Ok(())
             } else {
-                output::print_text(&text)
+                output::print_text(&rendered)
             }
         }
     }
@@ -295,33 +467,61 @@ pub fn tree(ctx: &Context, format: Format) -> anyhow::Result<()> {
 /// (`basename`). Root-level files are grouped under `.`, a leading `/` is
 /// stripped for root files, and entries render as
 /// `  {basename} [{language}] ({symbol_count} symbols)`.
-fn format_tree_text(files: &[serde_json::Value]) -> String {
-    let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
+struct TreeGroup {
+    directory: String,
+    files: Vec<serde_json::Value>,
+}
 
+fn tree_groups(files: &[serde_json::Value]) -> Vec<TreeGroup> {
+    let mut grouped: BTreeMap<String, Vec<serde_json::Value>> = BTreeMap::new();
     for file in files {
         let file_path = file["file_path"].as_str().unwrap_or("");
-        let language = file["language"].as_str().unwrap_or("");
-        let symbol_count = file["symbol_count"].as_i64().unwrap_or(0);
-        let (dir, basename) = file_path
+        let directory = file_path
             .rsplit_once('/')
-            .map(|(dir, basename)| {
-                let dir = if dir.is_empty() { "." } else { dir };
-                (dir, basename)
-            })
-            .filter(|(_, basename)| !basename.is_empty())
-            .unwrap_or((".", file_path.trim_start_matches('/')));
-
-        groups.entry(dir.to_string()).or_default().push(format!(
-            "  {basename} [{language}] ({symbol_count} symbols)"
-        ));
+            .map(|(directory, _)| if directory.is_empty() { "." } else { directory })
+            .unwrap_or(".");
+        grouped
+            .entry(directory.to_string())
+            .or_default()
+            .push(file.clone());
     }
+    grouped
+        .into_iter()
+        .map(|(directory, files)| TreeGroup { directory, files })
+        .collect()
+}
 
+fn flatten_tree_json(groups: &[TreeGroup]) -> Vec<serde_json::Value> {
+    groups
+        .iter()
+        .flat_map(|group| group.files.iter().cloned())
+        .collect()
+}
+
+fn render_tree_groups(groups: &[TreeGroup]) -> String {
     let mut lines = Vec::new();
-    for (dir, entries) in groups {
-        lines.push(dir);
-        lines.extend(entries);
+    for group in groups {
+        lines.push(group.directory.clone());
+        for file in &group.files {
+            let file_path = file["file_path"].as_str().unwrap_or("");
+            let language = file["language"].as_str().unwrap_or("");
+            let symbol_count = file["symbol_count"].as_i64().unwrap_or(0);
+            let basename = file_path
+                .rsplit_once('/')
+                .map(|(_, basename)| basename)
+                .filter(|basename| !basename.is_empty())
+                .unwrap_or(file_path.trim_start_matches('/'));
+            lines.push(format!(
+                "  {basename} [{language}] ({symbol_count} symbols)"
+            ));
+        }
     }
     lines.join("\n")
+}
+
+#[cfg(test)]
+fn format_tree_text(files: &[serde_json::Value]) -> String {
+    render_tree_groups(&tree_groups(files))
 }
 
 #[cfg(test)]
@@ -354,7 +554,7 @@ mod tests {
 
     #[test]
     fn outline_text_line_includes_id_range_and_signature() {
-        let line = format_outline_text_line(&symbol());
+        let line = format_outline_text_line(&symbol(), true);
 
         assert!(line.contains("src/commands.rs:7-63 [function] outline"));
         assert!(line.contains("id=12345678-1234-5678-1234-567812345678"));
@@ -378,12 +578,46 @@ mod tests {
         grandchild.parent_symbol_id = Some(child.id.clone());
         grandchild.qualified_name = "Parent.child.grandchild".to_string();
 
-        let outline = render_outline_text(&[parent, child, grandchild]);
+        let outline = render_outline_text(&[parent, child, grandchild], true);
         let lines = outline.lines().collect::<Vec<_>>();
 
         assert!(lines[0].starts_with("src/commands.rs:"));
         assert!(lines[1].starts_with("  src/commands.rs:"));
         assert!(lines[2].starts_with("    src/commands.rs:"));
+    }
+
+    #[test]
+    fn outline_paging_keeps_each_root_subtree_complete() {
+        let mut parent = symbol();
+        parent.id = "parent".to_string();
+        let mut child = symbol();
+        child.id = "child".to_string();
+        child.parent_symbol_id = Some(parent.id.clone());
+        child.qualified_name = "outline::child".to_string();
+        let mut other = symbol();
+        other.id = "other".to_string();
+        other.qualified_name = "other".repeat(50);
+
+        let groups = outline_groups(vec![parent, child, other], false).expect("outline groups");
+        let render = |rows: &[OutlineGroup], next_offset, _| {
+            format!(
+                "{}\nnext={next_offset:?}",
+                render_outline_groups(rows, false)
+            )
+        };
+        let budget = token_budget::estimate_tokens(&render(&groups[..1], Some(1), false));
+        let page = token_budget::paginate_results(groups, 0, false, Some(budget), render);
+
+        assert_eq!(page.results.len(), 1);
+        assert_eq!(
+            page.results[0]
+                .symbols
+                .iter()
+                .map(|symbol| symbol.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["parent", "child"]
+        );
+        assert_eq!(page.next_offset, Some(1));
     }
 
     #[test]
@@ -433,5 +667,37 @@ mod tests {
         })];
 
         assert_eq!(format_tree_text(&files), ".\n  lib.rs [rust] (1 symbols)");
+    }
+
+    #[test]
+    fn tree_paging_keeps_directory_groups_complete() {
+        let files = vec![
+            serde_json::json!({
+                "file_path": "src/a.rs",
+                "language": "rust",
+                "symbol_count": 1,
+            }),
+            serde_json::json!({
+                "file_path": "src/b.rs",
+                "language": "rust",
+                "symbol_count": 2,
+            }),
+            serde_json::json!({
+                "file_path": "tests/a_very_long_fixture_name.rs",
+                "language": "rust",
+                "symbol_count": 3,
+            }),
+        ];
+        let groups = tree_groups(&files);
+        let render = |rows: &[TreeGroup], next_offset, _| {
+            format!("{}\nnext={next_offset:?}", render_tree_groups(rows))
+        };
+        let budget = token_budget::estimate_tokens(&render(&groups[..1], Some(1), false));
+        let page = token_budget::paginate_results(groups, 0, false, Some(budget), render);
+
+        assert_eq!(page.results.len(), 1);
+        assert_eq!(page.results[0].directory, "src");
+        assert_eq!(page.results[0].files.len(), 2);
+        assert_eq!(page.next_offset, Some(1));
     }
 }

@@ -113,6 +113,45 @@ class TestAggregateBlocks:
             "2. [second-gate] Second gate"
         )
 
+    async def test_duplicate_skill_directives_are_rendered_once(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        python_directive = (
+            "Load and fully read the skill in its own outer tool result: "
+            'call_tool("gobby-skills", "get_skill", {"name":"python"}). Then continue.'
+        )
+        restraint_directive = (
+            "Load and fully read the skill in its own outer tool result: "
+            'call_tool("gobby-skills", "get_skill", {"name":"restraint"}). Then continue.'
+        )
+        _insert_rule(
+            manager,
+            "require-claimed-task-required-skills",
+            [RuleEffect(type="block", reason=python_directive)],
+            priority=10,
+        )
+        _insert_rule(
+            manager,
+            "require-python-skill",
+            [RuleEffect(type="block", reason=python_directive)],
+            priority=20,
+        )
+        _insert_rule(
+            manager,
+            "require-restraint-skill",
+            [RuleEffect(type="block", reason=restraint_directive)],
+            priority=30,
+        )
+
+        response = await RuleEngine(db).evaluate(_make_event(), session_id=SESSION_ID, variables={})
+
+        assert response.reason == (
+            "Rule enforced by Gobby: [aggregated:2-gates]\n"
+            "Multiple gates blocked while retrying Edit.\n"
+            f"1. [require-claimed-task-required-skills] {python_directive}\n"
+            f"2. [require-restraint-skill] {restraint_directive}"
+        )
+
     def test_aggregate_formatter_omits_placeholder_retry_target(self) -> None:
         assert format_aggregated_block_reason(
             [("first-gate", "First gate"), ("second-gate", "Second gate")],

@@ -38,7 +38,6 @@ pub(super) fn collection_path(collection: &str) -> String {
     format!("/collections/{}", urlencoding::encode(collection))
 }
 
-#[cfg(test)]
 pub fn delete_project_collection(
     qdrant: &QdrantConfig,
     project_id: &str,
@@ -349,7 +348,6 @@ pub(super) fn qdrant_request_for_config(
     Ok(req)
 }
 
-#[cfg(test)]
 fn delete_qdrant_collection(
     client: &reqwest::blocking::Client,
     qdrant: &QdrantConfig,

@@ -245,16 +245,7 @@ pub fn challenge_and_handshake(
     // The handshake route binds identity: managed callers must present the
     // caller-project, session, and owner headers matching their capability
     // claims, or the daemon treats the call as an operator handshake.
-    let mut identity_headers: Vec<(&str, &str)> = Vec::new();
-    if let Some(claims) = managed {
-        identity_headers.push((CALLER_PROJECT_HEADER, claims.project_id.as_str()));
-        identity_headers.push((SESSION_HEADER, claims.session_id.as_str()));
-        if let Some(run_id) = claims.agent_run_id.as_deref() {
-            identity_headers.push((AGENT_RUN_HEADER, run_id));
-        } else if let Some(execution_id) = claims.managed_execution_id.as_deref() {
-            identity_headers.push((MANAGED_EXECUTION_HEADER, execution_id));
-        }
-    }
+    let identity_headers = managed.map(managed_identity_headers).unwrap_or_default();
     let handshake = http_json(
         "POST",
         &format!("{}{HANDSHAKE_PATH}", trim_url(daemon_url)),
@@ -265,6 +256,22 @@ pub fn challenge_and_handshake(
         remaining,
     )?;
     grant_from_handshake(handshake)
+}
+
+/// Identity headers a managed caller must present on identity-bound daemon
+/// routes (`/api/runtime/handshake`, `/api/runtime/config`): the caller project,
+/// session, and owning run or execution from its capability claims.
+pub fn managed_identity_headers(claims: &CapabilityClaims) -> Vec<(&'static str, &str)> {
+    let mut headers = vec![
+        (CALLER_PROJECT_HEADER, claims.project_id.as_str()),
+        (SESSION_HEADER, claims.session_id.as_str()),
+    ];
+    if let Some(run_id) = claims.agent_run_id.as_deref() {
+        headers.push((AGENT_RUN_HEADER, run_id));
+    } else if let Some(execution_id) = claims.managed_execution_id.as_deref() {
+        headers.push((MANAGED_EXECUTION_HEADER, execution_id));
+    }
+    headers
 }
 
 pub fn grant_from_handshake(response: HttpResponse) -> Result<GrantBundle, GrantError> {

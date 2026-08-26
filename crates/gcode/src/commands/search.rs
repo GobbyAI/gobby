@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+mod output;
+
 use crate::commands::{scope, token_budget};
 use crate::config::Context;
 use crate::db;
-use crate::models::{
-    PagedResponse, SearchResult, SearchWarning, SearchWarningCause, SearchWarningLane, Symbol,
-};
-use crate::output::{self, Format};
+use crate::models::{SearchResult, SearchWarning, SearchWarningCause, SearchWarningLane, Symbol};
+use crate::output::Format;
 use crate::search::{fts, graph_boost, rrf};
 use crate::vector::code_symbols;
 use crate::visibility;
@@ -21,12 +21,20 @@ pub struct SearchOptions<'a> {
     pub format: Format,
     pub with_graph: bool,
     pub token_budget: Option<usize>,
+    pub verbose: bool,
+}
+
+pub struct TextSearchOptions<'a> {
+    pub limit: usize,
+    pub offset: usize,
+    pub language: Option<&'a str>,
+    pub paths: &'a [String],
+    pub format: Format,
+    pub token_budget: Option<usize>,
+    pub verbose: bool,
 }
 
 const LITERAL_QUERY_HINT: &str = "`gcode search` is hybrid/fuzzy concept search. For exact strings, call sites, dotted config keys, quoted strings, or paths, use `gcode grep \"pattern\" [PATH...] -m 50`; for ranked file-content matches, use `gcode search-content \"query\" [PATH...]`.";
-const SEARCH_TOKEN_BUDGET_REFINE_HINT: &str =
-    "`--kind`, `--language`, PATH filters, or a narrower query";
-
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum SemanticLane {
     Hits(Vec<(String, f64)>),
@@ -207,50 +215,36 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
             result
         })
         .collect();
-    let unbudgeted_result_count = results.len();
-    let budgeted = token_budget::trim_results(
-        results,
-        options.token_budget,
-        SEARCH_TOKEN_BUDGET_REFINE_HINT,
-        format_search_result_line,
-    );
-    let results = budgeted.results;
-
-    print_empty_diagnostic(ctx, unbudgeted_result_count == 0, options.offset, total);
+    output::print_empty_diagnostic(ctx, results.is_empty(), options.offset, total);
     let literal_hint = literal_query_hint(query);
     let path_hint =
         fts::path_filter_requires_post_filter(&expanded_paths).then(path_filter_post_filter_hint);
-    let hint = token_budget::combine_hints(
-        token_budget::combine_hints(literal_hint, path_hint),
-        budgeted.hint,
+    let hint = token_budget::combine_hints(literal_hint, path_hint);
+    let meta = output::SearchPageMeta {
+        project_id: &ctx.project_id,
+        total,
+        offset: options.offset,
+        limit: options.limit,
+        hint: hint.as_deref(),
+        warnings: &assembled.warnings,
+    };
+    let page = output::paginate(
+        results,
+        meta,
+        options.token_budget,
+        options.format,
+        |rows| output::render_search_results(rows, options.verbose),
     );
 
-    match options.format {
-        Format::Json => output::print_json(&PagedResponse {
-            project_id: ctx.project_id.clone(),
-            total,
-            offset: options.offset,
-            limit: options.limit,
-            results,
-            hint,
-            warnings: assembled.warnings,
-        }),
-        Format::Text => {
-            for warning in &assembled.warnings {
-                print_search_warning(ctx, Some(&warning.message));
-            }
-            print_search_warning(ctx, hint.as_deref());
-            let lines = results
-                .iter()
-                .map(format_search_result_line)
-                .collect::<Vec<_>>();
-            if !lines.is_empty() {
-                output::print_text(&lines.join("\n"))?;
-            }
-            print_pagination_hint(total, options.offset, results.len());
-            Ok(())
+    if matches!(options.format, Format::Text) {
+        for warning in &assembled.warnings {
+            output::print_search_warning(ctx, options.verbose, Some(&warning.message));
         }
+        output::print_search_warning(ctx, options.verbose, hint.as_deref());
     }
+    output::print_page(&page, meta, options.format, |rows| {
+        output::render_search_results(rows, options.verbose)
+    })
 }
 
 pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow::Result<()> {
@@ -302,43 +296,38 @@ pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> 
         .take(options.limit)
         .collect();
 
-    print_empty_diagnostic(ctx, results.is_empty(), options.offset, total);
+    output::print_empty_diagnostic(ctx, results.is_empty(), options.offset, total);
     let hint =
         fts::path_filter_requires_post_filter(&expanded_paths).then(path_filter_post_filter_hint);
-
-    match options.format {
-        Format::Json => {
-            let results: Vec<SearchResult> = results
-                .iter()
-                .map(|s| {
-                    let mut result = s.to_brief();
-                    result.score = exact_tier_score(query, s);
-                    result
-                })
-                .collect();
-            output::print_json(&PagedResponse {
-                project_id: ctx.project_id.clone(),
-                total,
-                offset: options.offset,
-                limit: options.limit,
-                results,
-                hint,
-                warnings: Vec::new(),
-            })
-        }
-        Format::Text => {
-            print_search_warning(ctx, hint.as_deref());
-            let lines = results
-                .iter()
-                .map(format_symbol_lookup_text)
-                .collect::<Vec<_>>();
-            if !lines.is_empty() {
-                output::print_text(&lines.join("\n"))?;
-            }
-            print_pagination_hint(total, options.offset, results.len());
-            Ok(())
-        }
+    let results = results
+        .into_iter()
+        .map(|symbol| {
+            let mut result = symbol.to_brief();
+            result.score = exact_tier_score(query, &symbol);
+            result
+        })
+        .collect();
+    let meta = output::SearchPageMeta {
+        project_id: &ctx.project_id,
+        total,
+        offset: options.offset,
+        limit: options.limit,
+        hint: hint.as_deref(),
+        warnings: &[],
+    };
+    let page = output::paginate(
+        results,
+        meta,
+        options.token_budget,
+        options.format,
+        |rows| output::render_exact_results(rows, options.verbose),
+    );
+    if matches!(options.format, Format::Text) {
+        output::print_search_warning(ctx, options.verbose, hint.as_deref());
     }
+    output::print_page(&page, meta, options.format, |rows| {
+        output::render_exact_results(rows, options.verbose)
+    })
 }
 
 struct SymbolGraphSearchContext<'a> {
@@ -416,64 +405,51 @@ fn search_symbol_with_graph(
         })
         .collect();
 
-    print_empty_diagnostic(ctx, results.is_empty(), options.offset, total);
+    output::print_empty_diagnostic(ctx, results.is_empty(), options.offset, total);
     let hint =
         fts::path_filter_requires_post_filter(expanded_paths).then(path_filter_post_filter_hint);
-
-    match options.format {
-        Format::Json => output::print_json(&PagedResponse {
-            project_id: ctx.project_id.clone(),
-            total,
-            offset: options.offset,
-            limit: options.limit,
-            results,
-            hint,
-            warnings: Vec::new(),
-        }),
-        Format::Text => {
-            print_search_warning(ctx, hint.as_deref());
-            let lines = results
-                .iter()
-                .map(|r| {
-                    let sources = r.sources.as_ref().map(|s| s.join("+")).unwrap_or_default();
-                    format!(
-                        "{}:{} [{}] {} (score: {:.4}, via: {})",
-                        r.file_path, r.line_start, r.kind, r.qualified_name, r.score, sources
-                    )
-                })
-                .collect::<Vec<_>>();
-            if !lines.is_empty() {
-                output::print_text(&lines.join("\n"))?;
-            }
-            print_pagination_hint(total, options.offset, results.len());
-            Ok(())
-        }
+    let meta = output::SearchPageMeta {
+        project_id: &ctx.project_id,
+        total,
+        offset: options.offset,
+        limit: options.limit,
+        hint: hint.as_deref(),
+        warnings: &[],
+    };
+    let page = output::paginate(
+        results,
+        meta,
+        options.token_budget,
+        options.format,
+        |rows| output::render_exact_results(rows, options.verbose),
+    );
+    if matches!(options.format, Format::Text) {
+        output::print_search_warning(ctx, options.verbose, hint.as_deref());
     }
+    output::print_page(&page, meta, options.format, |rows| {
+        output::render_exact_results(rows, options.verbose)
+    })
 }
 
 pub fn search_text(
     ctx: &Context,
     query: &str,
-    limit: usize,
-    offset: usize,
-    language: Option<&str>,
-    paths: &[String],
-    format: Format,
+    options: TextSearchOptions<'_>,
 ) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
-    let expanded_paths = fts::expand_paths(paths);
+    let expanded_paths = fts::expand_paths(options.paths);
     let path_patterns = fts::compile_patterns(&expanded_paths)?;
     let has_path_filters = !expanded_paths.is_empty();
     let fetch_limit = if has_path_filters {
         fts::FILTERED_FETCH_CAP
     } else {
-        ((offset + limit) * 3).max(200)
+        ((options.offset + options.limit) * 3).max(200)
     };
     let all_results = fts::search_text_visible(
         &mut conn,
         query,
         ctx,
-        language,
+        options.language,
         &expanded_paths,
         fetch_limit,
     )?;
@@ -484,47 +460,43 @@ pub fn search_text(
     let hint = token_budget::combine_hints(cap_hint, path_hint);
     let all_results: Vec<_> = all_results
         .into_iter()
-        .filter(|r| search_result_matches_filters(&mut conn, ctx, r, language, &path_patterns))
+        .filter(|r| {
+            search_result_matches_filters(&mut conn, ctx, r, options.language, &path_patterns)
+        })
         .collect();
     let total = if has_path_filters {
         all_results.len()
     } else {
-        fts::count_text_visible(&mut conn, query, ctx, language, &expanded_paths)?
+        fts::count_text_visible(&mut conn, query, ctx, options.language, &expanded_paths)?
     };
-    let results: Vec<_> = all_results.into_iter().skip(offset).take(limit).collect();
+    let results: Vec<_> = all_results
+        .into_iter()
+        .skip(options.offset)
+        .take(options.limit)
+        .collect();
 
-    print_empty_diagnostic(ctx, results.is_empty(), offset, total);
-
-    match format {
-        Format::Json => output::print_json(&PagedResponse {
-            project_id: ctx.project_id.clone(),
-            total,
-            offset,
-            limit,
-            results,
-            hint,
-            warnings: Vec::new(),
-        }),
-        Format::Text => {
-            print_search_warning(ctx, hint.as_deref());
-            let lines = results
-                .iter()
-                .map(|r| {
-                    format!(
-                        "{}:{} [{}] {}",
-                        r.file_path, r.line_start, r.kind, r.qualified_name
-                    )
-                })
-                .collect::<Vec<_>>();
-            if !lines.is_empty() {
-                output::print_text(&lines.join("\n"))?;
-            }
-            if total > offset + results.len() {
-                print_pagination_hint(total, offset, results.len());
-            }
-            Ok(())
-        }
+    output::print_empty_diagnostic(ctx, results.is_empty(), options.offset, total);
+    let meta = output::SearchPageMeta {
+        project_id: &ctx.project_id,
+        total,
+        offset: options.offset,
+        limit: options.limit,
+        hint: hint.as_deref(),
+        warnings: &[],
+    };
+    let page = output::paginate(
+        results,
+        meta,
+        options.token_budget,
+        options.format,
+        |rows| output::render_search_results(rows, options.verbose),
+    );
+    if matches!(options.format, Format::Text) {
+        output::print_search_warning(ctx, options.verbose, hint.as_deref());
     }
+    output::print_page(&page, meta, options.format, |rows| {
+        output::render_search_results(rows, options.verbose)
+    })
 }
 
 /// Extract unique symbol IDs from the top BM25 and semantic results for graph expansion.
@@ -556,26 +528,22 @@ fn extract_seed_ids(
 pub fn search_content(
     ctx: &Context,
     query: &str,
-    limit: usize,
-    offset: usize,
-    language: Option<&str>,
-    paths: &[String],
-    format: Format,
+    options: TextSearchOptions<'_>,
 ) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
-    let expanded_paths = fts::expand_paths(paths);
+    let expanded_paths = fts::expand_paths(options.paths);
     let path_patterns = fts::compile_patterns(&expanded_paths)?;
     let has_path_filters = !expanded_paths.is_empty();
     let fetch_limit = if has_path_filters {
         fts::FILTERED_FETCH_CAP
     } else {
-        ((offset + limit) * 3).max(200)
+        ((options.offset + options.limit) * 3).max(200)
     };
     let all_results = fts::search_content_visible(
         &mut conn,
         query,
         ctx,
-        language,
+        options.language,
         &expanded_paths,
         fetch_limit,
     )?;
@@ -587,7 +555,9 @@ pub fn search_content(
     let all_results: Vec<_> = all_results
         .into_iter()
         .filter(|r| {
-            language.is_none_or(|lang| r.language.as_deref() == Some(lang))
+            options
+                .language
+                .is_none_or(|lang| r.language.as_deref() == Some(lang))
                 && path_matches_filters(&path_patterns, &r.file_path)
                 && scope::current_indexed_path_is_valid(&mut conn, ctx, &r.file_path)
         })
@@ -595,45 +565,34 @@ pub fn search_content(
     let total = if has_path_filters {
         all_results.len()
     } else {
-        fts::count_content_visible(&mut conn, query, ctx, language, &expanded_paths)?
+        fts::count_content_visible(&mut conn, query, ctx, options.language, &expanded_paths)?
     };
-    let results: Vec<_> = all_results.into_iter().skip(offset).take(limit).collect();
+    let results: Vec<_> = all_results
+        .into_iter()
+        .skip(options.offset)
+        .take(options.limit)
+        .collect();
 
-    print_empty_diagnostic(ctx, results.is_empty(), offset, total);
-
-    match format {
-        Format::Json => output::print_json(&PagedResponse {
-            project_id: ctx.project_id.clone(),
-            total,
-            offset,
-            limit,
-            results,
-            hint,
-            warnings: Vec::new(),
-        }),
-        Format::Text => {
-            print_search_warning(ctx, hint.as_deref());
-            let lines = results
-                .iter()
-                .map(|r| {
-                    format!(
-                        "{}:{}-{} {}",
-                        r.file_path,
-                        r.line_start,
-                        r.line_end,
-                        compact_snippet(&r.snippet)
-                    )
-                })
-                .collect::<Vec<_>>();
-            if !lines.is_empty() {
-                output::print_text(&lines.join("\n"))?;
-            }
-            if total > offset + results.len() {
-                print_pagination_hint(total, offset, results.len());
-            }
-            Ok(())
-        }
+    output::print_empty_diagnostic(ctx, results.is_empty(), options.offset, total);
+    let meta = output::SearchPageMeta {
+        project_id: &ctx.project_id,
+        total,
+        offset: options.offset,
+        limit: options.limit,
+        hint: hint.as_deref(),
+        warnings: &[],
+    };
+    let page = output::paginate(
+        results,
+        meta,
+        options.token_budget,
+        options.format,
+        output::render_content_results,
+    );
+    if matches!(options.format, Format::Text) {
+        output::print_search_warning(ctx, options.verbose, hint.as_deref());
     }
+    output::print_page(&page, meta, options.format, output::render_content_results)
 }
 
 fn exact_tier(query: &str, symbol: &Symbol) -> u8 {
@@ -783,76 +742,6 @@ fn is_dotted_literal(query: &str) -> bool {
 
 fn is_dotted_literal_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-')
-}
-
-fn print_search_warning(ctx: &Context, hint: Option<&str>) {
-    if let Some(hint) = hint
-        && !ctx.quiet
-    {
-        eprintln!("warning: {hint}");
-    }
-}
-
-fn format_search_result_line(result: &SearchResult) -> String {
-    let sources = result
-        .sources
-        .as_ref()
-        .map(|sources| sources.join("+"))
-        .unwrap_or_default();
-    format!(
-        "{}:{} [{}] {} (score: {:.4}, via: {})",
-        result.file_path,
-        result.line_start,
-        result.kind,
-        result.qualified_name,
-        result.score,
-        sources
-    )
-}
-
-fn format_symbol_lookup_text(symbol: &Symbol) -> String {
-    let mut line = format!(
-        "{}:{}-{} [{}] {} id={}",
-        symbol.file_path,
-        symbol.line_start,
-        symbol.line_end,
-        symbol.kind,
-        symbol.qualified_name,
-        symbol.id
-    );
-    if let Some(sig) = symbol.signature.as_deref().filter(|sig| !sig.is_empty()) {
-        line.push_str(" sig=");
-        line.push_str(sig);
-    }
-    line
-}
-
-fn compact_snippet(snippet: &str) -> String {
-    snippet.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn print_empty_diagnostic(ctx: &Context, is_empty: bool, offset: usize, total: usize) {
-    if !is_empty || ctx.quiet {
-        return;
-    }
-    if offset == 0 && !crate::project::has_identity_file(&ctx.project_root) {
-        eprintln!("No index found for this project. Run `gcode index` first.");
-    } else if offset > 0 {
-        eprintln!("No results at offset {offset} (total {total})");
-    } else {
-        eprintln!("No results.");
-    }
-}
-
-fn print_pagination_hint(total: usize, offset: usize, result_count: usize) {
-    if total > offset + result_count {
-        eprintln!(
-            "-- {} of {} results (use --offset {} for more)",
-            result_count,
-            total,
-            offset + result_count
-        );
-    }
 }
 
 #[cfg(test)]

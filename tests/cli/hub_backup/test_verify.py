@@ -540,6 +540,54 @@ def test_verify_postgres_restore_ignores_managed_principals_drained_before_dump(
 
     assert state.verified is True
     assert details["roles_checked"] == 1
+    assert "managed_principals_skipped" not in details
+
+    # Defense in depth: a managed principal that reaches the expectations anyway
+    # (minted between role collection and the drain) is reported by name, never fatal.
+    unfiltered = hub_cli._role_expectations(
+        [
+            {"rolname": name, "rolsuper": is_super, "rolcanlogin": can_login}
+            for name, is_super, can_login in source_rows
+        ]
+    )
+    fake = _DockerFake()
+    fake.role_rows = [("gobby", False, True)]
+    fake.table_counts = {"tasks": 0}
+    _install(monkeypatch, fake)
+
+    state, details = _verify.verify_postgres_restore(
+        dump_path,
+        globals_path,
+        expected_probes={"tasks": 0},
+        expected_roles=unfiltered,
+    )
+
+    assert state.verified is True
+    assert details["roles_checked"] == 1
+    assert details["managed_principals_skipped"] == [
+        "gobby_ix_e94cf5ac3163ddb1_1",
+        "gobby_ix_fa3149beb8d9b5c5_89",
+        "gobby_mnt_0123456789abcdef0123456789abcdef_4",
+        "gobby_agent_0123456789abcdef0123456789abcdef_9",
+    ]
+
+    # A missing role outside the managed namespace is still fatal.
+    fake = _DockerFake()
+    fake.role_rows = [("gobby", False, True)]
+    fake.table_counts = {"tasks": 0}
+    _install(monkeypatch, fake)
+    with pytest.raises(
+        click.ClickException, match=r"gobby_reporter \(missing from restored cluster\)"
+    ):
+        _verify.verify_postgres_restore(
+            dump_path,
+            globals_path,
+            expected_probes={"tasks": 0},
+            expected_roles=[
+                *unfiltered,
+                RoleExpectation("gobby_reporter", rolsuper=False, rolcanlogin=True),
+            ],
+        )
 
 
 def test_verify_postgres_restore_skips_attribute_compare_for_bootstrap_postgres_role(
@@ -800,6 +848,11 @@ class _FakeCountResult:
         self.count = count
 
 
+class _FakeSnapshot:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
 class _FakeSnapshotsApi:
     def __init__(self, owner: _FakeQdrantClient) -> None:
         self._owner = owner
@@ -812,6 +865,9 @@ class _FakeSnapshotsApi:
         wait: bool = False,
     ) -> object:
         self._owner.recovered.append((collection_name, wait, snapshot.read()))
+        # Qdrant stores the uploaded file under snapshots/<collection>/ and keeps
+        # it after the collection is deleted; the fake mirrors that retention.
+        self._owner.snapshots.setdefault(collection_name, []).append(f"{collection_name}.snapshot")
         return object()
 
 
@@ -826,10 +882,24 @@ class _FakeQdrantClient:
         self.recovered: list[tuple[str, bool, bytes]] = []
         self.counted: list[tuple[str, bool]] = []
         self.deleted: list[str] = []
+        self.snapshots: dict[str, list[str]] = {}
+        self.cleanup_events: list[str] = []
+        self.fail_snapshot_delete = False
         self.closed = False
         self.counts: dict[str, int] = {}
         self.points: dict[str, list[dict[str, object]]] = {}
         self.http = _FakeHttp(self)
+
+    def list_snapshots(self, collection_name: str) -> list[_FakeSnapshot]:
+        return [_FakeSnapshot(name) for name in self.snapshots.get(collection_name, [])]
+
+    def delete_snapshot(self, collection_name: str, snapshot_name: str, wait: bool = True) -> bool:
+        assert wait is True
+        if self.fail_snapshot_delete:
+            raise RuntimeError("snapshot delete refused")
+        self.snapshots[collection_name].remove(snapshot_name)
+        self.cleanup_events.append(f"snapshot:{collection_name}:{snapshot_name}")
+        return True
 
     def count(self, collection_name: str, exact: bool = True) -> _FakeCountResult:
         self.counted.append((collection_name, exact))
@@ -852,6 +922,7 @@ class _FakeQdrantClient:
 
     def delete_collection(self, collection_name: str) -> bool:
         self.deleted.append(collection_name)
+        self.cleanup_events.append(f"collection:{collection_name}")
         return True
 
     def close(self) -> None:
@@ -934,6 +1005,40 @@ def test_verify_qdrant_restore_recovers_each_collection_into_scratch_and_counts(
         [("hub_backup_verify_code", True), ("hub_backup_verify_memory", True)]
     )
     assert sorted(client.deleted) == ["hub_backup_verify_code", "hub_backup_verify_memory"]
+    # Uploaded snapshot files are removed before each scratch collection is dropped.
+    assert client.cleanup_events == [
+        "snapshot:hub_backup_verify_code:hub_backup_verify_code.snapshot",
+        "collection:hub_backup_verify_code",
+        "snapshot:hub_backup_verify_memory:hub_backup_verify_memory.snapshot",
+        "collection:hub_backup_verify_memory",
+    ]
+    assert client.snapshots == {"hub_backup_verify_code": [], "hub_backup_verify_memory": []}
+
+
+def test_verify_qdrant_restore_snapshot_delete_failure_warns_and_still_drops_scratch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    points = {"hub_backup_verify_memory": [{"id": 1, "payload": {"kind": "memory"}}]}
+    client = _install_qdrant(monkeypatch, {"hub_backup_verify_memory": 1}, points)
+    client.fail_snapshot_delete = True
+
+    state, details = _verify.verify_qdrant_restore(
+        "http://localhost:6333",
+        None,
+        {"memory": _snapshot(tmp_path, "memory")},
+        {"memory": 1},
+        {"memory": _point_digest(points["hub_backup_verify_memory"])},
+    )
+
+    assert state.verified is True
+    assert details["points_verified"] == {"memory": 1}
+    assert client.cleanup_events == ["collection:hub_backup_verify_memory"]
+    assert client.snapshots == {"hub_backup_verify_memory": ["hub_backup_verify_memory.snapshot"]}
+    err = capsys.readouterr().err
+    assert "Warning: failed to delete scratch snapshots for hub_backup_verify_memory" in err
+    assert "snapshot delete refused" in err
 
 
 def test_verify_qdrant_restore_refuses_local_mode_without_url(
@@ -971,6 +1076,10 @@ def test_verify_qdrant_restore_raises_on_count_mismatch_and_still_deletes_scratc
     assert "9" in message
     assert "3" in message
     assert client.deleted == ["hub_backup_verify_memory"]
+    assert client.cleanup_events == [
+        "snapshot:hub_backup_verify_memory:hub_backup_verify_memory.snapshot",
+        "collection:hub_backup_verify_memory",
+    ]
 
 
 def test_verify_qdrant_restore_raises_when_expected_count_missing(

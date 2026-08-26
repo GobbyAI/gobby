@@ -159,7 +159,8 @@ def _close_eligible_ancestors(
             return
         parent = conn.execute(
             """
-            SELECT id, seq_num, title, task_type, project_id, closed_at
+            SELECT id, seq_num, title, task_type, project_id, closed_at,
+                   claimed_by_session_id
               FROM tasks
              WHERE id = %s
              FOR UPDATE
@@ -167,6 +168,12 @@ def _close_eligible_ancestors(
             (parent_id,),
         ).fetchone()
         if parent is None or parent["closed_at"] is not None:
+            return
+        if parent["claimed_by_session_id"] is not None:
+            # A claimed ancestor is in-flight work its owner closes through the
+            # leaf gates: linked commit, clean attribution, validation, review.
+            # Closing it here skips every gate and drops the claim — found-work
+            # child #21046 took its worked parent #20969 and epic #20964 that way.
             return
         open_child = conn.execute(
             """

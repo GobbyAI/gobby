@@ -307,7 +307,11 @@ def delete_worktree(
         args.append(str(worktree_path))
 
         path_existed_before_remove = worktree_path.exists()
-        result = runner._run_git(args, timeout=30)
+        # `git worktree remove` unlinks the tree file by file; a worktree that
+        # carries a build directory (cargo target/, node_modules) needs minutes,
+        # and a timeout here kills git mid-deletion, leaving a prunable stub
+        # (#21058). The MCP caller's budget for delete_worktree is 300s.
+        result = runner._run_git(args, timeout=240)
         output = result.stdout
         remove_warning = ""
 

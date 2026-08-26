@@ -219,14 +219,14 @@ already-created registry continue to use the live per-epoch configuration contra
 | digest.candidates | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for array | mismatched-type | fix | runtime-infrastructure | array items=string map= |
 | digest.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | runtime-infrastructure |  |
 | digest.timeout | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
-| memory_recall.profile | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField select | live | keep | memory-knowledge |  |
-| memory_recall.candidates | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for array | mismatched-type | fix | memory-knowledge | array items=string map= |
-| memory_recall.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | memory-knowledge |  |
+| memory_recall.profile | Retired with automatic recall injection (#21009); MemoryRecallConfig was deleted | (none — no surface) | retired | drop | (none) | removed from the runtime config contract; the settings section dropped its Recall group (#21022) |
+| memory_recall.candidates | Retired with automatic recall injection (#21009); MemoryRecallConfig was deleted | (none — no surface) | retired | drop | (none) | removed from the runtime config contract (#21022) |
+| memory_recall.enabled | Retired with automatic recall injection (#21009); MemoryRecallConfig was deleted | (none — no surface) | retired | drop | (none) | removed from the runtime config contract (#21022) |
 | memory_recall.timeout | Retired with the substantive-prompt classifier; recall makes no LLM call | (none — no surface) | retired | drop | (none) | removed from the runtime config contract; the hook load-order chain now starts at workflow.timeout |
-| memory_recall.candidate_limit | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | memory-knowledge |  |
+| memory_recall.candidate_limit | Retired with automatic recall injection (#21009); MemoryRecallConfig was deleted | (none — no surface) | retired | drop | (none) | removed from the runtime config contract (#21022) |
 | memory_recall.selected_limit | Retired with the substantive-prompt classifier (#20765); the rank limit is now candidate_limit | (none — no surface) | retired | drop | (none) | removed from the runtime config contract |
-| memory_recall.min_score | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | memory-knowledge | search floor; the backfill loop chases it |
-| memory_recall.selection_min_score | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | memory-knowledge | added #20771; selection floor, the only control that reduces per-turn injection; reads the UNDECAYED score while min_score reads the decayed one (#20831) |
+| memory_recall.min_score | Retired with automatic recall injection (#21009); the search floor now lives on the search_memories tool | (none — no surface) | retired | drop | (none) | removed from the runtime config contract (#21022) |
+| memory_recall.selection_min_score | Retired with automatic recall injection (#21009); `gobby memory recall-signals` takes the floor as a CLI option | (none — no surface) | retired | drop | (none) | removed from the runtime config contract (#21022) |
 | memory_recall.query_synthesis_threshold | Retired with the substantive-prompt classifier (#20765); the query is built without an LLM | (none — no surface) | retired | drop | (none) | removed from the runtime config contract |
 | memory_recall.query_max_chars | Retired with the substantive-prompt classifier (#20765); the query is built without an LLM | (none — no surface) | retired | drop | (none) | removed from the runtime config contract |
 | recommend_tools.profile | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField select | live | keep | providers-models |  |
@@ -309,7 +309,7 @@ already-created registry continue to use the live per-epoch configuration contra
 | memory.dream.reconcile_after_revert | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | memory-knowledge |  |
 | memory.code_link_min_score | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | memory-knowledge |  |
 | memory.temporal_decay_half_life_days | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | memory-knowledge |  |
-| memory.min_recall_score | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | memory-knowledge |  |
+| memory.min_recall_score | Retired with automatic recall injection (#21009); the key had no live reader | (none — no surface) | retired | drop | (none) | removed from the runtime config contract (#21022) |
 | memory_backup.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | memory-knowledge |  |
 | memory_backup.backup_path | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | memory-knowledge |  |
 | skills.inject_core_skills | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | mcp-tools |  |
@@ -489,7 +489,6 @@ These are the rows that P13 must either fix before/while building the overlay or
 | agent_sandbox.extra_read_paths | ConfigFormTab -> SchemaField text input fallback for array | runtime-infrastructure |
 | agent_sandbox.extra_write_paths | ConfigFormTab -> SchemaField text input fallback for array | runtime-infrastructure |
 | digest.candidates | ConfigFormTab -> SchemaField text input fallback for array | runtime-infrastructure |
-| memory_recall.candidates | ConfigFormTab -> SchemaField text input fallback for array | memory-knowledge |
 | recommend_tools.candidates | ConfigFormTab -> SchemaField text input fallback for array | providers-models |
 | tool_summarizer.candidates | ConfigFormTab -> SchemaField text input fallback for array | providers-models |
 | import_mcp_server.candidates | ConfigFormTab -> SchemaField text input fallback for array | providers-models |

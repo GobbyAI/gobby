@@ -445,16 +445,12 @@ def test_replay_candidate_filter_forwards_the_exact_cohort_fences() -> None:
     assert kwargs["candidate_scope"] == "full"
 
 
-def test_replay_candidate_filter_defaults_the_static_arm_to_selection_min_score() -> None:
-    runtime = SimpleNamespace(
-        config=SimpleNamespace(memory_recall=SimpleNamespace(selection_min_score=0.92))
-    )
-    with patch("gobby.cli.memory.signals.get_cli_runtime", return_value=runtime):
-        _store, result = _invoke_replay([])
+def test_replay_candidate_filter_defaults_the_static_arm_to_the_retired_live_floor() -> None:
+    _store, result = _invoke_replay([])
 
     assert result.exit_code == 0, result.output
     arms = json.loads(result.output)["arms"]
-    assert arms["static_constants"]["selection_threshold"] == 0.92
+    assert arms["static_constants"]["selection_threshold"] == 0.70
 
 
 def test_replay_candidate_filter_records_the_graph_confidence_floor_it_ran_under() -> None:

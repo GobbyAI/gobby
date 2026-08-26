@@ -82,8 +82,8 @@ class FakeRepository:
                     "profile_defaults": {"feature_low": overrides[FEATURE_LOW_PROFILE_DEFAULT_KEY]}
                 }
             }
-        if "memory_recall.candidates" in overrides:
-            candidate["memory_recall"] = {"candidates": overrides["memory_recall.candidates"]}
+        if "digest.candidates" in overrides:
+            candidate["digest"] = {"candidates": overrides["digest.candidates"]}
         return DaemonConfig.model_validate(candidate)
 
 
@@ -266,7 +266,7 @@ async def test_sparse_profile_override_propagates_to_omitted_feature_candidates(
                 1,
                 values={
                     FEATURE_LOW_PROFILE_DEFAULT_KEY: low_candidates,
-                    "memory_recall.candidates": ["claude/haiku"],
+                    "digest.candidates": ["claude/haiku"],
                 },
                 overrides={FEATURE_LOW_PROFILE_DEFAULT_KEY: low_candidates},
             )
@@ -276,9 +276,7 @@ async def test_sparse_profile_override_propagates_to_omitted_feature_candidates(
 
     await runtime.start()
 
-    assert candidate_labels(runtime.snapshot.active.memory_recall.candidates) == tuple(
-        low_candidates
-    )
+    assert candidate_labels(runtime.snapshot.active.digest.candidates) == tuple(low_candidates)
     assert repository.candidate_inputs[-1] == {FEATURE_LOW_PROFILE_DEFAULT_KEY: low_candidates}
     await runtime.close()
 
@@ -310,7 +308,7 @@ async def test_live_profile_override_updates_inherited_feature_candidates() -> N
 
     await runtime.reconcile_revision(2)
 
-    assert candidate_labels(runtime.snapshot.active.memory_recall.candidates) == tuple(updated)
+    assert candidate_labels(runtime.snapshot.active.digest.candidates) == tuple(updated)
     assert runtime.snapshot.active_overrides == {FEATURE_LOW_PROFILE_DEFAULT_KEY: updated}
     await runtime.close()
 
@@ -326,11 +324,11 @@ async def test_explicit_feature_candidates_override_profile_default() -> None:
                 1,
                 values={
                     FEATURE_LOW_PROFILE_DEFAULT_KEY: profile_candidates,
-                    "memory_recall.candidates": explicit_candidates,
+                    "digest.candidates": explicit_candidates,
                 },
                 overrides={
                     FEATURE_LOW_PROFILE_DEFAULT_KEY: profile_candidates,
-                    "memory_recall.candidates": explicit_candidates,
+                    "digest.candidates": explicit_candidates,
                 },
             )
         ]
@@ -339,9 +337,7 @@ async def test_explicit_feature_candidates_override_profile_default() -> None:
 
     await runtime.start()
 
-    assert candidate_labels(runtime.snapshot.active.memory_recall.candidates) == tuple(
-        explicit_candidates
-    )
+    assert candidate_labels(runtime.snapshot.active.digest.candidates) == tuple(explicit_candidates)
     await runtime.close()
 
 

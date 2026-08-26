@@ -38,7 +38,6 @@ def test_delimit_untrusted_content_prevents_delimiter_breakout() -> None:
             {"prompt_text": _INJECTION, "response_text": _INJECTION},
             2,
         ),
-        ("memory/fact_extraction", {"content": _INJECTION}, 1),
         (
             "expansion/user",
             {

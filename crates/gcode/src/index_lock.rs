@@ -127,7 +127,10 @@ pub(crate) fn lock_project_by_id(
         }
     };
 
-    Ok(acquired.then_some(ProjectIndexLock {
+    // `then` builds the guard only once the lock is held. An eagerly built
+    // guard was dropped on the busy path, and its `Drop` sent
+    // `pg_advisory_unlock` for a lock this session never owned (#21053).
+    Ok(acquired.then(|| ProjectIndexLock {
         conn,
         key,
         quiet: true,
@@ -320,8 +323,117 @@ mod tests {
         }
     }
 
+    /// Records every `log` line so a test can prove which SQL a lock path sent:
+    /// the postgres driver logs each prepared statement at debug level.
+    struct RecordingLogger {
+        records: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl RecordingLogger {
+        fn lock_records(&self) -> std::sync::MutexGuard<'_, Vec<String>> {
+            self.records
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+        }
+    }
+
+    impl log::Log for RecordingLogger {
+        fn enabled(&self, _metadata: &log::Metadata<'_>) -> bool {
+            true
+        }
+
+        fn log(&self, record: &log::Record<'_>) {
+            self.lock_records()
+                .push(format!("{}: {}", record.level(), record.args()));
+        }
+
+        fn flush(&self) {}
+    }
+
+    static RECORDING_LOGGER: RecordingLogger = RecordingLogger {
+        records: std::sync::Mutex::new(Vec::new()),
+    };
+    static RECORDING_LOGGER_INIT: std::sync::Once = std::sync::Once::new();
+
+    fn capture_logs<R>(f: impl FnOnce() -> R) -> (R, Vec<String>) {
+        RECORDING_LOGGER_INIT.call_once(|| {
+            log::set_logger(&RECORDING_LOGGER).expect("install recording logger");
+            log::set_max_level(log::LevelFilter::Debug);
+        });
+        RECORDING_LOGGER.lock_records().clear();
+        let result = f();
+        let records = RECORDING_LOGGER.lock_records().clone();
+        (result, records)
+    }
+
+    fn unlock_lines(records: &[String]) -> Vec<&String> {
+        records
+            .iter()
+            .filter(|line| {
+                line.contains("pg_advisory_unlock") || line.contains("was not held during unlock")
+            })
+            .collect()
+    }
+
     mod serial_db {
         use super::*;
+
+        #[test]
+        #[cfg_attr(
+            not(gcode_postgres_tests),
+            ignore = "requires a PostgreSQL test database URL"
+        )]
+        #[serial_test::serial(serial_db)]
+        fn busy_project_id_lock_sends_no_unlock_while_an_acquired_guard_does() {
+            let database_url = connect_postgres_test_db();
+            let project_id = "gcode-lock-by-id-busy-no-unlock";
+            let holder = hold_project_lock(&database_url, project_id);
+
+            let (busy, busy_logs) = capture_logs(|| {
+                lock_project_by_id(
+                    &database_url,
+                    project_id,
+                    IndexLockPolicy::maintenance_try(),
+                )
+            });
+
+            assert!(
+                busy.expect("busy project lock must defer without error")
+                    .is_none(),
+                "busy project lock must return None"
+            );
+            let leaked = unlock_lines(&busy_logs);
+            assert!(
+                leaked.is_empty(),
+                "a busy try-lock must not release a lock it never acquired: {leaked:?}"
+            );
+
+            drop(holder);
+
+            let (_, acquired_logs) = capture_logs(|| {
+                let guard = lock_project_by_id(
+                    &database_url,
+                    project_id,
+                    IndexLockPolicy::maintenance_try(),
+                )
+                .expect("acquire project lock by id")
+                .expect("project lock should be available once the holder releases it");
+                drop(guard);
+            });
+
+            assert!(
+                acquired_logs
+                    .iter()
+                    .any(|line| line.contains("pg_advisory_unlock")),
+                "an acquired guard must release its lock on drop: {acquired_logs:?}"
+            );
+            assert!(
+                !acquired_logs
+                    .iter()
+                    .any(|line| line.contains("was not held during unlock")),
+                "an acquired guard must own the lock it releases: {acquired_logs:?}"
+            );
+        }
 
         #[test]
         #[cfg_attr(

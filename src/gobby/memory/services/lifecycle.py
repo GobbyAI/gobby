@@ -40,7 +40,6 @@ from gobby.storage.memories import (
 
 if TYPE_CHECKING:
     from gobby.config.persistence import MemoryConfig
-    from gobby.memory.services.dedup import DedupService
     from gobby.memory.services.knowledge_graph import KnowledgeGraphService
     from gobby.memory.vectorstore import VectorStore
 
@@ -49,7 +48,6 @@ EMBEDDING_WARNING_INTERVAL_SECONDS = 60.0
 SUPERSESSION_CLEANUP_BUDGET_SECONDS = 5.0
 MUTATOR_RECONCILIATION_BUDGET_SECONDS = 5.0
 WRITE_MARK_DUE_MAX_CONCURRENCY = 2
-_local_mode_dedup_warning_logged = False
 
 # Memory bodies are bounded at write time so an oversize row can never reach the
 # recall injection budget. 3,000 comes from the live distribution rather than
@@ -80,7 +78,6 @@ class MemoryLifecycleService:
         vector_store: VectorStore | None,
         embed_fn: Callable[..., Any] | None,
         crossref_service: CrossrefService,
-        dedup_service_provider: Callable[[], DedupService | None],
         kg_service_provider: Callable[[], KnowledgeGraphService | None],
         background_tasks: set[asyncio.Task[Any]],
         record_to_memory: Callable[[MemoryRecord], Memory],
@@ -95,7 +92,6 @@ class MemoryLifecycleService:
         self._vector_store = vector_store
         self._embed_fn = embed_fn
         self._crossref_service = crossref_service
-        self._dedup_service_provider = dedup_service_provider
         self._kg_service_provider = kg_service_provider
         self._background_tasks = background_tasks
         self._record_to_memory = record_to_memory
@@ -177,54 +173,6 @@ class MemoryLifecycleService:
             self._last_embedding_warning_at = now
         else:
             logger.debug("%s: %s", message, error)
-
-    def fire_background_dedup(
-        self,
-        content: str,
-        project_id: str,
-        is_global: bool,
-        memory_type: str,
-        tags: list[str] | None,
-        source_type: str,
-        source_session_id: str | None,
-        exclude_memory_id: str | None = None,
-        rationale: str | None = None,
-        source_task_id: str | None = None,
-        created_by_agent: str | None = None,
-    ) -> None:
-        """Fire a background dedup task."""
-        global _local_mode_dedup_warning_logged
-        is_remote = getattr(self._vector_store, "is_remote", None)
-        if callable(is_remote) and not is_remote():
-            if not _local_mode_dedup_warning_logged:
-                logger.warning("Background memory dedup is disabled for local Qdrant mode")
-                _local_mode_dedup_warning_logged = True
-            return
-
-        async def _run_dedup() -> None:
-            try:
-                dedup_service = self._dedup_service_provider()
-                if dedup_service is None:
-                    return
-                await dedup_service.process(
-                    content=content,
-                    project_id=project_id,
-                    is_global=is_global,
-                    memory_type=memory_type,
-                    tags=tags,
-                    source_type=source_type,
-                    source_session_id=source_session_id,
-                    exclude_memory_id=exclude_memory_id,
-                    rationale=rationale,
-                    source_task_id=source_task_id,
-                    created_by_agent=created_by_agent,
-                )
-            except Exception as e:
-                logger.warning("Background dedup failed: %s", e)
-
-        task = asyncio.create_task(_run_dedup(), name="memory-dedup")
-        self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
 
     def schedule_write_mark_due(
         self,
@@ -394,21 +342,6 @@ class MemoryLifecycleService:
         await self._reconcile_active_snapshot(memory)
 
         self.schedule_write_mark_due(memory, result.outcome)
-
-        if self._dedup_service_provider():
-            self.fire_background_dedup(
-                content=content,
-                project_id=project_id,
-                is_global=is_global,
-                memory_type=memory_type,
-                tags=tags,
-                source_type=source_type,
-                source_session_id=source_session_id,
-                exclude_memory_id=memory.id,
-                rationale=rationale,
-                source_task_id=source_task_id,
-                created_by_agent=created_by_agent,
-            )
 
         return memory
 
@@ -630,7 +563,9 @@ class MemoryLifecycleService:
     async def _sync_updated_indices(self, old_memory: Memory | None, memory: Memory) -> None:
         if old_memory is None:
             return
-        if old_memory.content != memory.content:
+        if old_memory.content != memory.content or old_memory.rationale != memory.rationale:
+            # The vector embeds content and rationale together, so either edit
+            # re-embeds (#21010).
             await self._refresh_content_indices(old_memory=old_memory, memory=memory)
         elif old_memory.memory_type != memory.memory_type:
             await self._reconcile_active_snapshot(memory, payload_only=True)
@@ -641,12 +576,13 @@ class MemoryLifecycleService:
         content: str | None = None,
         tags: list[str] | None = None,
         memory_type: str | None = None,
+        rationale: str | None = None,
     ) -> Memory:
         """Update a memory and refresh secondary indices after content revisions."""
         _enforce_content_cap(content)
         old_memory = (
             await self._run_storage(self.storage.get_memory, memory_id, visibility="all")
-            if content is not None or memory_type is not None
+            if content is not None or memory_type is not None or rationale is not None
             else None
         )
         result = await self._run_storage(
@@ -655,6 +591,7 @@ class MemoryLifecycleService:
             content=content,
             tags=tags,
             memory_type=memory_type,
+            rationale=rationale,
         )
         await self._sync_updated_indices(old_memory, result)
         return result
@@ -666,6 +603,7 @@ class MemoryLifecycleService:
         content: str | None = None,
         tags: list[str] | None = None,
         memory_type: str | None = None,
+        rationale: str | None = None,
     ) -> Memory:
         """Update a memory visible to a project and refresh its secondary indices."""
         _enforce_content_cap(content)
@@ -676,7 +614,7 @@ class MemoryLifecycleService:
                 scope=MemoryScope.project_visible(project_id),
                 visibility="all",
             )
-            if content is not None or memory_type is not None
+            if content is not None or memory_type is not None or rationale is not None
             else None
         )
         result = await self._run_storage(
@@ -686,6 +624,7 @@ class MemoryLifecycleService:
             content=content,
             tags=tags,
             memory_type=memory_type,
+            rationale=rationale,
         )
         await self._sync_updated_indices(old_memory, result)
         return result

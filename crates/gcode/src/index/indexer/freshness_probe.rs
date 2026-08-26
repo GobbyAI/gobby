@@ -60,13 +60,19 @@ pub fn project_changed_since(
         };
         discovered_paths.insert(rel.clone());
         if !indexed_paths.contains(rel.as_str()) {
+            log::debug!("treating project as changed: {rel} is discovered but not indexed");
             return true;
         }
 
         match path.metadata() {
             Ok(meta) => match meta.modified() {
                 Ok(modified) if modified <= threshold => {}
-                Ok(_) => return true,
+                Ok(_) => {
+                    log::debug!(
+                        "treating project as changed: {rel} was modified after the last index"
+                    );
+                    return true;
+                }
                 Err(error) => {
                     log::debug!(
                         "treating project as changed: failed to read mtime for {}: {error}",
@@ -87,9 +93,14 @@ pub fn project_changed_since(
 
     // Delete, rename, or newly excluded: an indexed path absent from discovery
     // needs a reconcile so stale facts and projections are pruned.
-    indexed_paths
+    if let Some(missing) = indexed_paths
         .iter()
-        .any(|rel| !discovered_paths.contains(*rel))
+        .find(|rel| !discovered_paths.contains(**rel))
+    {
+        log::debug!("treating project as changed: indexed path {missing} is no longer discovered");
+        return true;
+    }
+    false
 }
 
 #[cfg(test)]

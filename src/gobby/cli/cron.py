@@ -267,9 +267,13 @@ def list_runs(job_id: str, limit: int, json_format: bool) -> None:
 
     click.echo(f"Runs for {job.name} ({len(runs)}):\n")
     for run in runs:
-        status_icon = {"completed": "✓", "failed": "✗", "running": "→", "pending": "○"}.get(
-            run.status, "?"
-        )
+        status_icon = {
+            "completed": "✓",
+            "failed": "✗",
+            "running": "→",
+            "pending": "○",
+            "interrupted": "↯",
+        }.get(run.status, "?")
         duration = ""
         if run.started_at and run.completed_at:
             secs = (run.completed_at - run.started_at).total_seconds()

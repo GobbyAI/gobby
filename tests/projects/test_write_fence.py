@@ -3,11 +3,11 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from gobby.memory.services.dedup import DedupService
 from gobby.memory.services.lifecycle import MemoryLifecycleService
 from gobby.projects.fenced_vector_store import ProjectFencedVectorStore
 from gobby.projects.write_fence import (
@@ -42,20 +42,18 @@ class BlockingVectorStore:
 
 
 def make_lifecycle_service(
-    vector_store: object,
+    vector_store: Any,
     *,
-    embed_fn: object,
-    dedup_service: DedupService | None = None,
+    embed_fn: Any,
     background_tasks: set[asyncio.Task[object]] | None = None,
 ) -> MemoryLifecycleService:
     return MemoryLifecycleService(
         config=MagicMock(),
         storage_provider=MagicMock(),
         backend_provider=MagicMock(),
-        vector_store=vector_store,  # type: ignore[arg-type]
-        embed_fn=embed_fn,  # type: ignore[arg-type]
+        vector_store=vector_store,
+        embed_fn=embed_fn,
         crossref_service=MagicMock(),
-        dedup_service_provider=lambda: dedup_service,
         kg_service_provider=lambda: None,
         background_tasks=background_tasks if background_tasks is not None else set(),
         record_to_memory=MagicMock(),
@@ -222,56 +220,4 @@ async def test_memory_writer_finishes_after_purge_claims_exclusive() -> None:
     assert await write_task is True
     await asyncio.wait_for(purge_task, timeout=TEST_WAIT_TIMEOUT_SECONDS)
     assert inner.upsert_finished.is_set()
-    assert exclusive_entered.is_set()
-
-
-@pytest.mark.asyncio
-async def test_spawned_dedup_task_holds_writer_admission_for_full_lifetime() -> None:
-    project = FakeProject()
-    fence = ProjectWriteFence(lambda _project_id: project)
-    inner = BlockingVectorStore()
-    vector_store = ProjectFencedVectorStore(inner, fence)  # type: ignore[arg-type]
-    embed_started = asyncio.Event()
-    release_embed = asyncio.Event()
-
-    async def embed(_content: str) -> list[float]:
-        embed_started.set()
-        await asyncio.wait_for(release_embed.wait(), timeout=TEST_WAIT_TIMEOUT_SECONDS)
-        return [0.1]
-
-    dedup = DedupService(vector_store=vector_store, storage=MagicMock(), embed_fn=embed)
-    background_tasks: set[asyncio.Task[object]] = set()
-    lifecycle = make_lifecycle_service(
-        vector_store,
-        embed_fn=embed,
-        dedup_service=dedup,
-        background_tasks=background_tasks,
-    )
-    lifecycle.fire_background_dedup(
-        content="content",
-        project_id="project",
-        is_global=False,
-        memory_type="fact",
-        tags=None,
-        source_type="agent",
-        source_session_id=None,
-    )
-    await asyncio.wait_for(embed_started.wait(), timeout=TEST_WAIT_TIMEOUT_SECONDS)
-    project.deleted_at = datetime.now()
-    exclusive_entered = asyncio.Event()
-
-    async def purge() -> None:
-        async with fence.exclusive("project", timeout=1.0):
-            exclusive_entered.set()
-
-    purge_task = asyncio.create_task(purge())
-    await wait_for_exclusive_claim(fence, "project")
-    assert not exclusive_entered.is_set()
-
-    release_embed.set()
-    await asyncio.wait_for(
-        asyncio.gather(*background_tasks),
-        timeout=TEST_WAIT_TIMEOUT_SECONDS,
-    )
-    await asyncio.wait_for(purge_task, timeout=TEST_WAIT_TIMEOUT_SECONDS)
     assert exclusive_entered.is_set()

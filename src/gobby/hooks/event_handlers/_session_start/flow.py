@@ -18,7 +18,7 @@ from gobby.hooks.terminal_context import (
 from gobby.storage.session_activity import reconcile_compact_session_activity
 from gobby.storage.sessions._update_sentinel import UNSET
 
-from .agents import _seed_memory_recall_vars, _seed_wiki_overview_var
+from .agents import _seed_parent_turn_seq, _seed_wiki_overview_var
 from .context import classify_session_start_context, mark_startup_context_injected
 from .handoff import (
     rebind_resumed_session_start,
@@ -572,7 +572,7 @@ def handle_pre_created_session(
 
     if handler._session_manager is not None:
         try:
-            _seed_memory_recall_vars(handler, session_id)
+            _seed_parent_turn_seq(handler, session_id)
         except Exception as e:
             handler.logger.warning("Failed to seed memory recall vars: %s", e)
         _seed_wiki_overview_var(handler, session_id, session_obj.project_id)

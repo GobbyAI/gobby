@@ -621,7 +621,6 @@ class TestRuleEngineIntegration:
             ("gobby-skills", "list_skills"),
             ("gobby-skills", "get_skill"),
             ("gobby-skills", "search_skills"),
-            ("gobby-memory", "get_recall_memories"),
         ],
     )
     async def test_call_tool_allows_bootstrap_tools_without_schema(

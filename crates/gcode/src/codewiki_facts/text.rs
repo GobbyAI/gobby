@@ -131,6 +131,8 @@ impl CodewikiFacts {
             before_context: query.before_context,
             after_context: query.after_context,
             max_count: Some(query.limit),
+            offset: 0,
+            token_budget: None,
             files_with_matches: false,
             format: Format::Text,
         };

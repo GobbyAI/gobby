@@ -147,6 +147,8 @@ fn grep_scopes_chunks_to_local_machine_file_state() {
     )
     .expect("local machine uuid");
     let foreign_machine = fixture_uuid(&format!("{project_id}:foreign-machine"));
+    crate::test_env::seed_test_machine(&mut conn, &foreign_machine.to_string())
+        .expect("seed foreign machine");
     let root_path = root.path().to_string_lossy().to_string();
 
     insert_file_version(&mut conn, &project_uuid, "src/lib.rs", "hash-local");
@@ -208,6 +210,8 @@ fn grep_scopes_chunks_to_local_machine_file_state() {
         before_context: None,
         after_context: None,
         max_count: None,
+        offset: 0,
+        token_budget: None,
         files_with_matches: false,
         format: Format::Json,
     };

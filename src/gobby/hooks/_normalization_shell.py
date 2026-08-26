@@ -63,6 +63,39 @@ class ShellToken:
     quoted: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class HeredocBody:
+    """One heredoc body and the facts that decide whether it is data or code.
+
+    ``quoted`` records a quoted delimiter (``<<'EOF'``), which disables
+    expansion inside the body. ``opener`` is the index of the delimiter token
+    in the owning scan, which places the body in its consumer's segment even
+    when a pipeline continuation defers the body past later tokens.
+    """
+
+    text: str
+    quoted: bool
+    terminated: bool
+    opener: int
+
+
+@dataclass(frozen=True, slots=True)
+class ShellScan:
+    """Tokens of a shell command, their source spans, and its heredoc bodies."""
+
+    tokens: list[ShellToken]
+    spans: list[tuple[int, int]]
+    heredocs: list[HeredocBody]
+
+
+@dataclass(frozen=True, slots=True)
+class _PendingHeredoc:
+    delimiter: str
+    strip_tabs: bool
+    quoted: bool
+    opener: int
+
+
 def tokenize_shell_command(
     command: str,
     *,
@@ -73,27 +106,59 @@ def tokenize_shell_command(
     When ``heredoc_bodies`` is provided, terminated heredoc body text is
     appended to it in encounter order.
     """
+    scan = scan_shell_command(command)
+    if heredoc_bodies is not None:
+        heredoc_bodies.extend(body.text for body in scan.heredocs if body.terminated)
+    return scan.tokens
+
+
+def scan_shell_command(command: str) -> ShellScan:
+    """Tokenize ``command`` and keep each token's source span and heredoc bodies.
+
+    Spans index into ``command`` with quotes and escapes included, so a token
+    range maps back to its raw text. Raises ``ValueError`` on an unclosed
+    quote or a trailing escape.
+    """
     tokens: list[ShellToken] = []
+    spans: list[tuple[int, int]] = []
+    heredocs: list[HeredocBody] = []
     current: list[str] = []
     quoted = False
     in_single_quote = False
     in_double_quote = False
     escaped = False
-    # Heredoc delimiters awaiting their body: (delimiter, strip_leading_tabs).
-    pending_heredocs: list[tuple[str, bool]] = []
+    token_start: int | None = None
+    pending_heredocs: list[_PendingHeredoc] = []
     heredoc_operator: str | None = None
     logical_continuation = False
 
-    def flush() -> None:
-        nonlocal quoted, heredoc_operator
+    def begin(index: int) -> None:
+        nonlocal token_start
+        if token_start is None:
+            token_start = index
+
+    def flush(end: int) -> None:
+        nonlocal quoted, heredoc_operator, token_start, logical_continuation
         if current or quoted:
             value = "".join(current)
             tokens.append(ShellToken(value, quoted=quoted))
+            spans.append((end if token_start is None else token_start, end))
+            # A word after ``|``/``&&``/``||`` completes the continuation; the
+            # next newline ends the command and starts any pending heredoc body.
+            logical_continuation = False
             if heredoc_operator is not None:
-                pending_heredocs.append((value, heredoc_operator == "<<-"))
+                pending_heredocs.append(
+                    _PendingHeredoc(
+                        value,
+                        strip_tabs=heredoc_operator == "<<-",
+                        quoted=quoted,
+                        opener=len(tokens) - 1,
+                    )
+                )
                 heredoc_operator = None
             current.clear()
             quoted = False
+        token_start = None
 
     index = 0
     while index < len(command):
@@ -131,18 +196,21 @@ def tokenize_shell_command(
             if index + 1 < len(command) and command[index + 1] == "\n":
                 index += 2
                 continue
+            begin(index)
             quoted = True
             escaped = True
             index += 1
             continue
 
         if char == "'":
+            begin(index)
             quoted = True
             in_single_quote = True
             index += 1
             continue
 
         if char == '"':
+            begin(index)
             quoted = True
             in_double_quote = True
             index += 1
@@ -150,13 +218,12 @@ def tokenize_shell_command(
 
         operator = _scan_unquoted_shell_operator(command, index)
         if operator:
-            flush()
+            flush(index)
             tokens.append(ShellToken(operator))
+            spans.append((index, index + len(operator)))
             if operator == "\n":
                 if pending_heredocs and not logical_continuation:
-                    index = _skip_heredoc_bodies(
-                        command, index + 1, pending_heredocs, heredoc_bodies
-                    )
+                    index = _skip_heredoc_bodies(command, index + 1, pending_heredocs, heredocs)
                     continue
                 logical_continuation = False
             elif operator in {"&&", "||", "|"}:
@@ -167,35 +234,36 @@ def tokenize_shell_command(
             continue
 
         if char.isspace():
-            flush()
+            flush(index)
             index += 1
             continue
 
+        begin(index)
         current.append(char)
         index += 1
 
     if in_single_quote or in_double_quote or escaped:
         raise ValueError("Unclosed shell quote or escape")
 
-    flush()
-    return tokens
+    flush(len(command))
+    return ShellScan(tokens, spans, heredocs)
 
 
 def _skip_heredoc_bodies(
     command: str,
     index: int,
-    pending_heredocs: list[tuple[str, bool]],
-    bodies: list[str] | None = None,
+    pending_heredocs: list[_PendingHeredoc],
+    heredocs: list[HeredocBody],
 ) -> int:
     """Advance past heredoc body lines, consuming pending delimiters in order.
 
     An unterminated heredoc swallows the rest of the command, matching how the
-    shell would refuse to execute anything after it. When ``bodies`` is given,
-    each terminated heredoc's body text is appended to it.
+    shell would refuse to execute anything after it; the swallowed text is
+    still recorded, unterminated, so callers can treat it as live input.
     """
     body_lines: list[str] = []
     while pending_heredocs and index < len(command):
-        delimiter, strip_tabs = pending_heredocs[0]
+        pending = pending_heredocs[0]
         line_end = command.find("\n", index)
         if line_end == -1:
             line_end = len(command)
@@ -203,15 +271,32 @@ def _skip_heredoc_bodies(
         else:
             next_index = line_end + 1
         line = command[index:line_end]
-        stripped = line.lstrip("\t") if strip_tabs else line
-        if stripped == delimiter:
+        stripped = line.lstrip("\t") if pending.strip_tabs else line
+        if stripped == pending.delimiter:
             pending_heredocs.pop(0)
-            if bodies is not None:
-                bodies.append("\n".join(body_lines))
+            heredocs.append(
+                HeredocBody(
+                    "\n".join(body_lines),
+                    quoted=pending.quoted,
+                    terminated=True,
+                    opener=pending.opener,
+                )
+            )
             body_lines = []
         else:
-            body_lines.append(stripped if strip_tabs else line)
+            body_lines.append(stripped)
         index = next_index
+    if pending_heredocs:
+        pending = pending_heredocs[0]
+        pending_heredocs.clear()
+        heredocs.append(
+            HeredocBody(
+                "\n".join(body_lines),
+                quoted=pending.quoted,
+                terminated=False,
+                opener=pending.opener,
+            )
+        )
     return index
 
 
@@ -267,6 +352,37 @@ def _scan_unquoted_shell_operator(command: str, index: int) -> str | None:
 
 def shell_token_values(tokens: list[ShellToken]) -> list[str]:
     return [token.value for token in tokens]
+
+
+def _is_env_assignment(part: str) -> bool:
+    name, separator, _value = part.partition("=")
+    return bool(
+        separator
+        and name
+        and (name[0].isalpha() or name[0] == "_")
+        and all(char.isalnum() or char == "_" for char in name)
+    )
+
+
+def _strip_shell_wrappers(parts: list[str]) -> list[str]:
+    """Drop env assignments and transparent prefixes ahead of a segment's command."""
+    stripped = list(parts)
+    while stripped:
+        while stripped and _is_env_assignment(stripped[0]):
+            stripped = stripped[1:]
+        if stripped[:1] == ["command"]:
+            stripped = stripped[1:]
+            continue
+        if stripped[:1] == ["env"]:
+            stripped = stripped[1:]
+            continue
+        # Loop/conditional body keywords prefix the real command after a
+        # segment split (`do grep ...`, `then cat ...`); classify what follows.
+        if stripped[:1] in (["do"], ["then"], ["else"]):
+            stripped = stripped[1:]
+            continue
+        break
+    return stripped
 
 
 def is_fd_duplication_token(token: ShellToken) -> bool:

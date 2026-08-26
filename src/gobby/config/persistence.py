@@ -492,14 +492,6 @@ class MemoryConfig(BaseModel):
             "Set to 0 to disable temporal decay."
         ),
     )
-    min_recall_score: float = Field(
-        default=0.6,
-        description=(
-            "Minimum similarity score for memory recall (0.0-1.0). "
-            "Memories below this threshold are excluded from search results. "
-            "Applies to cosine similarity after source boost and temporal decay."
-        ),
-    )
     graph_edge_weighting: bool = Field(
         default=False,
         description=(
@@ -668,7 +660,7 @@ class MemoryConfig(BaseModel):
             raise ValueError("recall_drift_accuracy_drop must be in (0.0, 1.0)")
         return v
 
-    @field_validator("crossref_threshold", "code_link_min_score", "min_recall_score")
+    @field_validator("crossref_threshold", "code_link_min_score")
     @classmethod
     def validate_probability(cls, v: float) -> float:
         """Validate value is between 0.0 and 1.0."""

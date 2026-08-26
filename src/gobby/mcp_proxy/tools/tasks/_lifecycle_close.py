@@ -211,7 +211,12 @@ async def _evaluate_close(
                 extra=parent_result.extra,
             )
     evaluation.is_epic = task.task_type == "epic"
-    evaluation.skip_leaf_checks = has_children or evaluation.is_epic
+    # A task with children is organizational only when it owns no work of its
+    # own. A claimed task, or one with linked commits, is a worked leaf that
+    # gained found-work children; its own gates still apply (#20969 closed
+    # without them once #21046 hung under it).
+    owns_work = task.claimed_by_session_id is not None or bool(task.commits)
+    evaluation.skip_leaf_checks = evaluation.is_epic or (has_children and not owns_work)
     evaluation.pass_gate(4, "children_closed", "Every child task is closed.")
     if evaluation.skip_leaf_checks:
         evaluation.fingerprint = CloseEvaluationFingerprint.capture(
@@ -749,8 +754,10 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             "Leaf tasks require criteria, a changes summary, commits for attributed edits, "
             "a clean transcript-derived validation run, and one bounded criteria review "
             "unless a justified deliberate close exits escalation. "
-            "Epics and other parents close when they have no open children; closing the "
-            "last child auto-closes eligible ancestors. "
+            "Epics and parents that own no work close when they have no open children; a "
+            "claimed task or one with linked commits keeps its leaf gates even with "
+            "children. Closing the last child auto-closes eligible ancestors, stopping at "
+            "a claimed ancestor, which its owner closes through its own gates. "
             "preview=true returns diagnostics when blocked and still closes when ready."
         ),
         input_schema={

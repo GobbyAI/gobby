@@ -26,7 +26,7 @@ pytestmark = pytest.mark.unit
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RULES_ROOT = REPO_ROOT / "src/gobby/install/shared/workflows/rules"
-RULES_REFERENCE = RULES_ROOT / "CLAUDE.md"
+RULES_REFERENCE = RULES_ROOT / "AGENTS.md"
 MANAGED_GIT_RULES = {
     "block-git-clone",
     "block-git-clone-interactive",

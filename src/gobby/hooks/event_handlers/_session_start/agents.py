@@ -85,7 +85,7 @@ def setup_code_index(handler: Any, session_id: str | None, project_id: str | Non
         handler.logger.debug("Could not check code index availability: %s", e)
 
 
-def _seed_memory_recall_vars(handler: Any, session_id: str) -> None:
+def _seed_parent_turn_seq(handler: Any, session_id: str) -> None:
     """Seed parent turn tracking before activation guards run."""
     from gobby.workflows.state_manager import SessionVariableManager
 

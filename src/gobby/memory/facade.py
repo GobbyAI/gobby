@@ -7,7 +7,6 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from gobby.memory.context import build_memory_context
 from gobby.memory.protocol import MemoryRecord
 from gobby.memory.services.maintenance import export_markdown as _export_markdown
 from gobby.memory.services.maintenance import get_stats as _get_stats
@@ -104,27 +103,6 @@ class MemoryManagerFacadeMethods:
     ) -> bool:
         """Embed content and upsert to VectorStore when available."""
         return await self._lifecycle_service.embed_and_upsert(memory_id, content, payload)
-
-    def _fire_background_dedup(
-        self,
-        content: str,
-        project_id: str,
-        is_global: bool,
-        memory_type: str,
-        tags: list[str] | None,
-        source_type: str,
-        source_session_id: str | None,
-    ) -> None:
-        """Fire a background dedup task."""
-        self._lifecycle_service.fire_background_dedup(
-            content,
-            project_id,
-            is_global,
-            memory_type,
-            tags,
-            source_type,
-            source_session_id,
-        )
 
     async def _enqueue_for_graph(
         self,
@@ -223,18 +201,6 @@ class MemoryManagerFacadeMethods:
             caller=caller,
             include_global=include_global,
         )
-
-    async def search_memories_as_context(
-        self,
-        project_id: str | None = None,
-        limit: int = DEFAULT_SEARCH_LIMIT,
-    ) -> str:
-        memories = await self.search_memories(
-            project_id=project_id,
-            limit=limit,
-            caller="memory.context",
-        )
-        return build_memory_context(memories)
 
     async def _update_access_stats(self, memories: list[Memory]) -> None:
         await self._search_service.update_access_stats(memories)
@@ -523,12 +489,14 @@ class MemoryManagerFacadeMethods:
         content: str | None = None,
         tags: list[str] | None = None,
         memory_type: str | None = None,
+        rationale: str | None = None,
     ) -> Memory:
         return await self._lifecycle_service.update_memory(
             memory_id=memory_id,
             content=content,
             tags=tags,
             memory_type=memory_type,
+            rationale=rationale,
         )
 
     async def update_memory_scoped(
@@ -538,6 +506,7 @@ class MemoryManagerFacadeMethods:
         content: str | None = None,
         tags: list[str] | None = None,
         memory_type: str | None = None,
+        rationale: str | None = None,
     ) -> Memory:
         return await self._lifecycle_service.update_memory_scoped(
             memory_id=memory_id,
@@ -545,6 +514,7 @@ class MemoryManagerFacadeMethods:
             content=content,
             tags=tags,
             memory_type=memory_type,
+            rationale=rationale,
         )
 
     async def move_memory(self, memory_id: str, new_project_id: str) -> Memory:

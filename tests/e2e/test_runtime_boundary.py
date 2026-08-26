@@ -989,7 +989,7 @@ def test_symbol_summary_regression(
         boundary.daemon.read_error_logs(),
     )
     assert summary_llm_server.requests
-    retrieved = boundary.run("gcode", "--allow-stale", "search-symbol", "greet")
+    retrieved = boundary.run("gcode", "--allow-stale", "search-symbol", "greet", "--format", "json")
     assert retrieved.returncode == 0, retrieved.stderr or retrieved.stdout
     payload = _json_payload(retrieved)
     rendered = json.dumps(payload) if payload else retrieved.stdout
@@ -1171,7 +1171,7 @@ def test_diagnostics_under_expiry(boundary: BoundaryHarness) -> None:
 
 def test_search_degrades_with_warning(boundary: BoundaryHarness) -> None:
     boundary.daemon.stop()
-    search = boundary.run("gcode", "--allow-stale", "search", "fixture")
+    search = boundary.run("gcode", "--allow-stale", "search", "fixture", "--format", "json")
     assert search.returncode == 0, search.stderr or search.stdout
     payload = _json_payload(search)
     warnings = payload.get("warnings") or []

@@ -278,3 +278,6 @@ gobby_yc_demo_script.md
 
 # Impeccable critique snapshots and detector config (written by the vendored detector/critique scripts)
 .impeccable/
+
+# Raw taskless agent feedback; curated research reports remain tracked.
+docs/research/gobby-feedback/inbox/

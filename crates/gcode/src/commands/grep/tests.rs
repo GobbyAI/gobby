@@ -20,6 +20,8 @@ fn options(pattern: &str) -> GrepOptions<'_> {
         before_context: None,
         after_context: None,
         max_count: None,
+        offset: 0,
+        token_budget: None,
         files_with_matches: false,
         format: Format::Json,
     }
@@ -136,6 +138,29 @@ fn context_flags_include_bounded_neighbors() {
         format_text_matches(&result.matches),
         "src/lib.rs\n2-two\n3:needle\n4-four\n5-five"
     );
+}
+
+#[test]
+fn token_paging_keeps_match_context_blocks_complete() {
+    let chunks = vec![chunk(
+        "src/lib.rs",
+        1,
+        "before one\nneedle one\nafter one\nbefore two\nneedle two\nafter two",
+    )];
+    let mut opts = options("needle");
+    opts.context = Some(1);
+    let result = grep_chunks(&chunks, &opts).expect("grep chunks");
+    let render = |rows: &[GrepMatch], next_offset, _| {
+        format!("{}\nnext={next_offset:?}", format_text_matches(rows))
+    };
+    let budget = token_budget::estimate_tokens(&render(&result.matches[..1], Some(1), false));
+    let page = token_budget::paginate_results(result.matches, 0, false, Some(budget), render);
+
+    assert_eq!(page.results.len(), 1);
+    assert_eq!(page.results[0].text, "needle one");
+    assert_eq!(page.results[0].before[0].text, "before one");
+    assert_eq!(page.results[0].after[0].text, "after one");
+    assert_eq!(page.next_offset, Some(1));
 }
 
 #[test]
@@ -303,7 +328,8 @@ fn files_with_matches_json_populates_files_and_empties_matches() {
     let mut opts = options("needle");
     opts.files_with_matches = true;
     let result = grep_chunks(&chunks, &opts).expect("grep chunks");
-    let response = grep_response("proj", &opts, &result);
+    let (files, _) = matching_files(&result.matches, None);
+    let response = grep_response("proj", &opts, &result, &[], Some(&files), None, false);
     let value = serde_json::to_value(&response).expect("serialize response");
 
     assert_eq!(value["files"], serde_json::json!(["a.rs", "z.rs"]));
@@ -324,17 +350,15 @@ fn files_with_matches_max_count_caps_files_not_lines() {
     opts.max_count = Some(2);
     let result = grep_chunks(&chunks, &opts).expect("grep chunks");
     let (files, truncated) = matching_files(&result.matches, opts.max_count);
-    let response = grep_response("proj", &opts, &result);
+    let response = grep_response("proj", &opts, &result, &[], Some(&files), Some(2), false);
 
     assert_eq!(result.matched_lines, 4);
     assert_eq!(result.matches.len(), 4);
     assert_eq!(files, vec!["a.rs", "b.rs"]);
     assert!(truncated);
     assert!(response.truncated);
-    assert_eq!(
-        response.files,
-        Some(vec!["a.rs".to_string(), "b.rs".to_string()])
-    );
+    assert_eq!(response.next_offset, Some(2));
+    assert_eq!(response.files, Some(files.as_slice()));
     assert!(response.matches.is_empty());
 }
 

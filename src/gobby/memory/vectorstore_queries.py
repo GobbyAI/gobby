@@ -140,6 +140,37 @@ class VectorStoreQueries:
             raise
         return [(str(point.id), point.score, point.payload or {}) for point in results.points]
 
+    async def get_vectors(
+        self,
+        ids: list[str],
+        *,
+        collection_name: str | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, list[float]]:
+        """Return the stored vectors for ``ids`` in one retrieve; absent ids are omitted."""
+        if not ids:
+            return {}
+        store = self._store
+        client = await store._ensure_initialized(timeout=timeout)
+        try:
+            records = await store._call_client(
+                client,
+                "retrieve",
+                collection_name=collection_name or store._collection_name,
+                ids=ids,
+                with_payload=False,
+                with_vectors=True,
+                timeout=timeout,
+            )
+        except Exception as exc:
+            store._raise_if_recoverable(exc)
+            raise
+        return {
+            str(record.id): [float(value) for value in record.vector]
+            for record in records
+            if isinstance(record.vector, list)
+        }
+
     async def search_by_stored_vectors(
         self,
         ids: list[str],

@@ -1,7 +1,7 @@
 ---
 name: build-rule
-description: "Use when user asks to 'build rule', 'create rule', 'author rule', 'write rule', 'add enforcement'. Interactive guide for authoring Gobby rule YAML definitions."
-version: "1.0.0"
+description: "Use when authoring or updating a Gobby rule definition."
+version: "1.0.1"
 category: authoring
 triggers: build rule, create rule, author rule, write rule, add enforcement
 metadata:
@@ -50,14 +50,36 @@ Common behaviors and their effect types:
 
 Ask: **"When should this rule fire?"**
 
+Prefer normalized turn boundaries for cross-provider behavior:
+
+- `turn_start` — once at the start of a normalized agent turn; use for per-turn
+  context, reminders, and state initialization.
+- `turn_end` — once when the normalized turn is ending; use for response-time
+  checks and stop gates that must work across supported CLIs.
+
+Provider and lifecycle events remain available for rules that need their narrower
+semantics. The complete current `RuleTriggerEvent` surface is:
+
+`turn_start`, `turn_end`, `session_start`, `session_end`, `setup`, `before_agent`,
+`after_agent`, `stop`, `user_prompt_expansion`, `before_tool`, `after_tool`,
+`before_tool_selection`, `post_tool_batch`, `before_model`, `after_model`,
+`pre_compact`, `post_compact`, `subagent_start`, `subagent_stop`,
+`permission_request`, `permission_denied`, `notification`, `message_display`,
+`directory_added`, `stop_failure`, `task_created`, `task_completed`,
+`teammate_idle`, `instructions_loaded`, `config_change`, `cwd_changed`,
+`file_changed`, `worktree_create`, `worktree_remove`, `elicitation`, and
+`elicitation_result`.
+
 | Event | When It Fires | Best For |
 |-------|--------------|----------|
+| `turn_start` | At normalized turn start | Cross-provider per-turn guidance and state |
+| `turn_end` | At normalized turn end | Cross-provider response checks and stop gates |
 | `before_tool` | Before any tool call | Blocking tools, tracking tool usage |
 | `after_tool` | After a tool completes | Tracking results, setting flags on success |
-| `before_agent` | Before each agent turn | Injecting context, checking messages |
+| `before_agent` | On provider before-agent hooks | Provider-specific agent lifecycle behavior |
 | `session_start` | When session begins | Initialization, importing data |
 | `session_end` | When session ends | Cleanup, exporting data |
-| `stop` | When agent tries to stop | Preventing premature exit |
+| `stop` | On provider stop hooks | Provider-specific stop behavior |
 | `pre_compact` | Before context compaction | Saving state before memory loss |
 
 **Most common combinations:**
@@ -65,9 +87,9 @@ Ask: **"When should this rule fire?"**
 | Goal | Event + Effect |
 |------|---------------|
 | Block a tool | `before_tool` + `block` |
-| Block stop | `stop` + `block` |
+| Block normalized turn end | `turn_end` + `block` |
 | Track tool usage | `after_tool` + `set_variable` |
-| Inject context per turn | `before_agent` + `inject_context` |
+| Inject context per turn | `turn_start` + `inject_context` |
 | Auto-run tool at start | `session_start` + `mcp_call` |
 | Save state before compact | `pre_compact` + `mcp_call` |
 
@@ -91,6 +113,11 @@ effect:
 - `tools` — Native tools: `Edit`, `Write`, `Bash`, `NotebookEdit`, `mcp__gobby__call_tool`
 - `mcp_tools` — MCP tools: `"server:tool"` format. Supports `"server:*"` wildcards.
 - `command_pattern` / `command_not_pattern` — Only for Bash tool. Regex patterns.
+  `command_pattern` runs against each executable shell segment — one pipeline
+  per segment (heredoc bodies whose stages are all `cat`/`tee`/`git`/`gh` or a
+  bare redirection are data and excluded; bodies reaching shells, interpreters,
+  or unknown tools stay in). `command_not_pattern` exempts when it matches the
+  executable text as a whole.
 - No tools/mcp_tools specified → blocks ALL tools for the event.
 
 ### set_variable — Update State
@@ -139,7 +166,7 @@ Templates support Jinja2: `{{ var }}`, `{{ var | default('') }}`, `{{ list | joi
 effect:
   type: mcp_call
   server: gobby-memory        # MCP server name
-tool: memory_stats          # Tool name
+  tool: memory_stats          # Tool name
   arguments:                  # Optional args (supports {{ }} templates)
     session_id: "{{ session_id }}"
   background: true            # Optional: async execution (default: false)
@@ -295,7 +322,7 @@ rules:
 
   require-commit:
     description: "Require commit before stop if files were edited"
-    event: stop
+    event: turn_end
     when: "variables.get('files_edited', 0) > 0 and not variables.get('committed', False)"
     effect:
       type: block
@@ -337,7 +364,7 @@ rules:
 
 1. **Group name is kebab-case** — `my-rules`, not `myRules`.
 2. **Rule names are kebab-case** — `no-push`, not `noPush`.
-3. **Event is valid** — One of: `before_tool`, `after_tool`, `before_agent`, `session_start`, `session_end`, `stop`, `pre_compact`.
+3. **Event is valid** — It appears in the complete current `RuleTriggerEvent` list in Step 2; prefer `turn_start` and `turn_end` for normalized turn behavior.
 4. **Effect type is valid** — One of: `block`, `set_variable`, `inject_context`, `mcp_call`, `observe`.
 5. **Block effects have `reason`** — Required field.
 6. **set_variable effects have `variable` and `value`** — Both required.
@@ -410,7 +437,7 @@ require-tests-before-commit:
 ### Count and gate
 ```yaml
 count-attempts:
-  event: stop
+  event: turn_end
   priority: 10
   effect:
     type: set_variable
@@ -418,7 +445,7 @@ count-attempts:
     value: "variables.get('stop_attempts', 0) + 1"
 
 block-after-threshold:
-  event: stop
+  event: turn_end
   priority: 50
   when: "variables.get('stop_attempts', 0) < 5"
   effect:
@@ -429,7 +456,7 @@ block-after-threshold:
 ### Inject context conditionally
 ```yaml
 inject-tdd-reminder:
-  event: before_agent
+  event: turn_start
   when: "variables.get('enforce_tdd') and variables.get('task_claimed')"
   effect:
     type: inject_context
@@ -446,7 +473,7 @@ observe-memory-stats:
   effect:
     type: mcp_call
     server: gobby-memory
-tool: memory_stats
+    tool: memory_stats
     background: true
 ```
 

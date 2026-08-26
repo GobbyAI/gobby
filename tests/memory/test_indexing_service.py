@@ -839,3 +839,49 @@ async def test_reconcile_backfill_holds_global_admission_across_embedding_and_ba
     assert result["qdrant"]["missing_embedded"] == 1
     assert inner.ids == ["missing"]
     assert exclusive_entered.is_set()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_backfill_embeds_content_with_rationale() -> None:
+    """The backfilled vector is computed from content plus rationale (#21010)."""
+    missing = _memory("missing", "Missing")
+    missing.rationale = "Needed when a future session re-derives the DSN."
+    storage = _MemoryStorage([missing])
+    vector_store = _VectorStore()
+    embed_fn = AsyncMock(return_value=[0.4, 0.5])
+
+    await _service(storage, vector_store, embed_fn=embed_fn).reconcile_stores()
+
+    embed_fn.assert_awaited_once_with(
+        "Missing\n\nWhy: Needed when a future session re-derives the DSN."
+    )
+    # The payload and the reindex marker still carry the bare content.
+    upsert = vector_store.batch_upsert.await_args
+    assert upsert is not None
+    payload = upsert.args[0][0][2]
+    assert payload["content"] == "Missing"
+    assert "rationale" not in payload
+
+
+@pytest.mark.asyncio
+async def test_project_reindex_embeds_content_with_rationale_and_keeps_payload_bare() -> None:
+    memory = _memory("m1", "Body")
+    memory.rationale = "Why."
+    storage = _MemoryStorage([memory])
+    vector_store = _VectorStore()
+    embed_fn = AsyncMock(return_value=[0.1, 0.2])
+    service = _service(storage, vector_store, embed_fn=embed_fn)
+
+    report = await service.reindex_embeddings(project_id="project-1")
+
+    assert report["success"] is True
+    embed_fn.assert_awaited_once_with("Body\n\nWhy: Why.")
+    upsert = vector_store.batch_upsert.await_args
+    assert upsert is not None
+    batch = upsert.args[0]
+    assert batch[0][2] == {
+        "content": "Body",
+        "project_id": "project-1",
+        "is_global": False,
+        "memory_type": "fact",
+    }

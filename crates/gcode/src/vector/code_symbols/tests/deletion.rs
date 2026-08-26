@@ -285,6 +285,38 @@ fn global_prune_collection_discovery_lists_without_deleting() {
 }
 
 #[test]
+fn drop_project_collection_deletes_the_collection_without_a_schema_probe() {
+    let (qdrant_url, handle) = spawn_http_responses(vec![(200, json!({"result": true}))]);
+    let lifecycle = CodeSymbolVectorLifecycle::new(
+        "project-1".to_string(),
+        QdrantConfig {
+            url: Some(qdrant_url),
+            api_key: None,
+        },
+        EmbeddingConfig {
+            api_base: "http://127.0.0.1:9/v1".to_string(),
+            model: "unused".to_string(),
+            api_key: None,
+            query_prefix: None,
+            timeout_seconds: 10,
+        },
+        CodeVectorSettings::with_vector_dim(Some(3)),
+    )
+    .expect("lifecycle");
+
+    let dropped = lifecycle
+        .drop_project_collection()
+        .expect("drop collection");
+    let requests = handle.join().expect("qdrant requests");
+
+    assert_eq!(dropped.action, CodeSymbolVectorLifecycleAction::Clear);
+    assert_eq!(dropped.collection, "code_symbols_project-1");
+    assert_eq!(dropped.delete_operations_issued, 1);
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].contains("DELETE /collections/code_symbols_project-1 HTTP/1.1"));
+}
+
+#[test]
 fn global_prune_collection_delete_404_is_already_missing() {
     let project_id = "11111111-1111-1111-1111-111111111111";
     let (qdrant_url, handle) = spawn_http_responses(vec![(404, json!({"status": "not found"}))]);

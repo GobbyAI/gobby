@@ -127,31 +127,6 @@ fn combines_fetch_cap_and_path_post_filter_hints() {
 }
 
 #[test]
-fn search_result_token_budget_uses_text_row_estimate() {
-    let mut first = symbol("src/lib.rs", "function", "rust").to_brief();
-    first.score = 1.0;
-    first.sources = Some(vec!["exact".to_string()]);
-    let mut second = symbol("src/other.rs", "function", "rust").to_brief();
-    second.score = 0.9;
-    second.sources = Some(vec!["semantic".to_string()]);
-    let budget = token_budget::estimate_tokens(&format_search_result_line(&first));
-    let expected_path = first.file_path.clone();
-
-    let trimmed = token_budget::trim_results(
-        vec![first, second],
-        Some(budget),
-        SEARCH_TOKEN_BUDGET_REFINE_HINT,
-        format_search_result_line,
-    );
-
-    assert_eq!(trimmed.results.len(), 1);
-    assert_eq!(trimmed.results[0].file_path, expected_path);
-    let hint = trimmed.hint.expect("token budget hint");
-    assert!(hint.contains("1 of 2 results"));
-    assert!(hint.contains("refine with `--kind`, `--language`, PATH filters"));
-}
-
-#[test]
 fn literal_query_hint_detects_literal_like_queries() {
     for query in [
         "spawn_ui_server(",
@@ -173,7 +148,7 @@ fn literal_query_hint_skips_natural_language_queries() {
 #[test]
 fn content_snippet_compaction_collapses_whitespace() {
     assert_eq!(
-        compact_snippet("  first line\n    second\tline\r\nthird  "),
+        output::compact_snippet("  first line\n    second\tline\r\nthird  "),
         "first line second line third"
     );
 }
@@ -222,6 +197,8 @@ fn outage_degrades_with_warning() {
         offset: 0,
         limit: 10,
         results: Vec::<crate::models::SearchResult>::new(),
+        next_offset: None,
+        budget_exceeded: false,
         hint: None,
         warnings: assembled.warnings.clone(),
     })

@@ -347,6 +347,9 @@ function RunStatusGlyph({ status }: { status: string }) {
   if (kind === "skipped") {
     return <ActivityRowStatusDot kind="warning" label="Skipped" />;
   }
+  if (kind === "interrupted") {
+    return <ActivityRowStatusDot kind="warning" label="Interrupted" />;
+  }
   return <ActivityRowStatusDot kind="disabled" label={status} />;
 }
 

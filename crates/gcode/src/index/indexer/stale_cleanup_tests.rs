@@ -212,16 +212,19 @@ mod serial_db {
         .expect("index seed file");
 
         let project_uuid = db::id_param(&project_id).expect("uuid");
+        // Inheritance facts reference an indexed content version, so seed the
+        // row against the version the index run just wrote.
         conn.execute(
             "INSERT INTO code_inheritance (
                  project_id, source_symbol_id, source_name, source_kind, source_external_module,
                  target_symbol_id, target_name, target_kind, target_external_module,
                  heritage_kind, file_path, content_hash, line
-             ) VALUES (
-                 $1, NULL, 'Derived', 'symbol', '',
-                 NULL, 'Base', 'symbol', '',
-                 'INHERITS', 'src/lib.rs', 'hash-seed', 1
-             )",
+             )
+             SELECT $1, NULL, 'Derived', 'symbol', '',
+                    NULL, 'Base', 'symbol', '',
+                    'INHERITS', file_path, content_hash, 1
+             FROM code_indexed_files
+             WHERE project_id = $1 AND file_path = 'src/lib.rs'",
             &[&project_uuid],
         )
         .expect("seed inheritance");

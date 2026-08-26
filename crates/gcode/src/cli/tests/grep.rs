@@ -138,6 +138,18 @@ fn parse_grep_max_count() {
         _ => panic!("expected grep command"),
     }
 
+    let cli = Cli::try_parse_from(["gcode", "grep", "needle", "--limit", "5", "src"])
+        .expect("grep with --limit parses");
+    match cli.command {
+        Command::Grep {
+            paths, max_count, ..
+        } => {
+            assert_eq!(paths, vec!["src"]);
+            assert_eq!(max_count, Some(5));
+        }
+        _ => panic!("expected grep command"),
+    }
+
     let cli = Cli::try_parse_from(["gcode", "grep", "needle", "src", "-m", "5"])
         .expect("grep with -m after path parses");
     match cli.command {
@@ -168,18 +180,6 @@ fn parse_grep_max_count() {
         Err(error) => error,
     };
     assert!(error.to_string().contains("no more than 10000"));
-}
-
-#[test]
-fn parse_grep_rejects_limit() {
-    let err = match Cli::try_parse_from(["gcode", "grep", "needle", "src", "--limit", "5"]) {
-        Ok(_) => panic!("--limit should be rejected by clap"),
-        Err(err) => err,
-    };
-    assert!(
-        err.to_string().contains("unexpected argument '--limit'"),
-        "unexpected error: {err}"
-    );
 }
 
 #[test]
@@ -366,12 +366,12 @@ fn effective_format_honors_explicit_grep_json() {
 }
 
 #[test]
-fn effective_format_keeps_other_commands_json_by_default() {
+fn effective_format_defaults_other_navigation_commands_to_text() {
     let cli = Cli::try_parse_from(["gcode", "search-content", "needle"]).expect("search parses");
 
     assert!(cli.format.is_none());
     assert!(matches!(
         effective_format(cli.format, &cli.command),
-        output::Format::Json
+        output::Format::Text
     ));
 }

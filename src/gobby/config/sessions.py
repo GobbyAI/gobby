@@ -4,7 +4,6 @@ Session configuration module.
 Contains session-related Pydantic config models:
 - SessionSummaryConfig: Session summary (handoff) generation settings
 - DigestConfig: Rolling digest and title generation settings
-- MemoryRecallConfig: Daemon-owned memory recall settings
 - MessageTrackingConfig: Session message tracking settings
 - SessionLifecycleConfig: Session lifecycle management settings
 
@@ -18,7 +17,6 @@ from gobby.config.feature_base import FeatureDefaultConfig
 __all__ = [
     "ChatHistoryConfig",
     "DigestConfig",
-    "MemoryRecallConfig",
     "SessionSummaryConfig",
     "MessageTrackingConfig",
     "SessionLifecycleConfig",
@@ -137,72 +135,6 @@ class MemoryUsefulnessConfig(FeatureDefaultConfig):
         default=30,
         gt=0,
         description="Timeout in seconds for usefulness-judge LLM calls (default 30s).",
-    )
-
-
-class MemoryRecallConfig(FeatureDefaultConfig):
-    """Inline parent-prompt memory recall configuration."""
-
-    enabled: bool = Field(
-        default=True,
-        description="Enable inline substantive-prompt memory recall.",
-    )
-    candidate_limit: int = Field(
-        default=8,
-        gt=0,
-        description="Maximum ranked candidates returned by the single hybrid search.",
-    )
-    min_score: float = Field(
-        default=0.55,
-        ge=0.0,
-        le=1.0,
-        description=(
-            "Minimum UNDECAYED semantic similarity the hybrid search itself applies, "
-            "recovered as similarity / temporal_decay_factor just like "
-            "selection_min_score (#20858): age orders candidates, it no longer "
-            "decides search eligibility. The backfill loop doubles the candidate "
-            "pool until candidate_limit hits clear this floor, so raising it "
-            "sharpens the pool without reducing how much a turn injects. A "
-            "graph-expander find is gated on its entity-match confidence (search "
-            "floor 0.611) instead of this axis, and a candidate with no score at "
-            "all passes here and is judged by the selection gate's "
-            "null-similarity backstop (#20873). Default 0.55 was calibrated "
-            "against the DECAYED recall_signal similarity distribution "
-            "(memory.recall caller, 2026-07 through 2026-08: p10=0.45, "
-            "p25=0.50), so it is off-axis and provisional; the Phase 4 refit "
-            "re-fits it together with selection_min_score."
-        ),
-    )
-    selection_min_score: float = Field(
-        default=0.70,
-        ge=0.0,
-        le=1.0,
-        description=(
-            "Minimum UNDECAYED similarity a candidate must carry to be injected, "
-            "recovered as similarity / temporal_decay_factor -- the same axis "
-            "min_score reads since #20858. This is the last gate before the "
-            "model, so it asks only whether a memory is on topic and leaves "
-            "temporal decay to order candidates (#20831); on the decayed axis a "
-            "30-day half-life demanded score * boost >= 1.30 to inject at all. "
-            "The backfill loop does not chase this floor, so it is the only "
-            "control that can make a turn inject less than the rank limit. A "
-            "candidate with no similarity at all is dropped rather than "
-            "admitted; since #20858 rescored every candidate the collection can "
-            "score, that is now only a memory with no stored vector, and a "
-            "keyword-found hit carrying one is judged here like any other "
-            "(#20873). In a deployment with no vector store that is every hit "
-            "-- a normalized BM25 rank is not a similarity -- so keyword-only "
-            "search never injects (#20874). A graph-expander find is judged on its entity-match "
-            "confidence instead, because its cosine is what the vector leg "
-            "already missed it on; that floor is 0.653, the p90 of the 2026-08 "
-            "confidence distribution (n=17,975), provisional and owned by the "
-            "Phase 4 refit. "
-            "Default 0.70 re-seats #20771's calibration knee on the undecayed "
-            "axis: 0.65 was fitted against decayed recall_signal_hits.similarity, "
-            "whose live p82 is 0.649, so carrying it over unchanged would have "
-            "loosened selection roughly threefold (zero-inject turns 46.7% -> "
-            "18.8%, haiku precision 52.3 -> 42.3)."
-        ),
     )
 
 

@@ -42,6 +42,7 @@ from gobby.cli.hub_backup._integrity import (
     require_regular_file,
 )
 from gobby.cli.hub_backup._manifest import VerificationState
+from gobby.cli.hub_backup._stores import MANAGED_PRINCIPAL_RE
 from gobby.cli.installers.docker_guard import ensure_docker_allowed
 from gobby.cli.postgres_backup import _process_output, _raise_for_subprocess_error
 
@@ -111,11 +112,12 @@ def verify_postgres_restore(
 
     container = f"gobby-hub-verify-pg-{uuid.uuid4().hex[:8]}"
     disposable: DisposableContainer | None = None
+    skipped_principals: list[str] = []
     try:
         disposable = _start_scratch_postgres(container)
         _wait_for_postgres(container)
         _replay_globals(container, globals_path)
-        _check_roles(container, expected_roles)
+        skipped_principals = _check_roles(container, expected_roles)
         _restore_dump(container, dump_path)
         _check_row_counts(container, expected_probes)
         if expected_schema_objects is not None:
@@ -126,9 +128,11 @@ def verify_postgres_restore(
 
     details: dict[str, object] = {
         "tables_checked": len(expected_probes),
-        "roles_checked": len(expected_roles),
+        "roles_checked": len(expected_roles) - len(skipped_principals),
         "scratch_container": container,
     }
+    if skipped_principals:
+        details["managed_principals_skipped"] = skipped_principals
     if expected_schema_objects is not None:
         details["schema_objects_checked"] = len(expected_schema_objects)
     return _verified(_PG_METHOD), details
@@ -205,9 +209,15 @@ def _replay_globals(container: str, globals_path: Path) -> None:
         )
 
 
-def _check_roles(container: str, expected_roles: list[RoleExpectation]) -> None:
+def _check_roles(container: str, expected_roles: list[RoleExpectation]) -> list[str]:
+    """Prove the expected roles exist with matching bits; return skipped managed principals.
+
+    Managed principals (agent, interactive, and maintenance generations) are revoked by
+    the pre-dump drain, so one that still reached the expectations is reported by name
+    instead of failing verification. Any other missing role is fatal.
+    """
     if not expected_roles:
-        return
+        return []
     output = _psql_query(container, _SUPERUSER, _ROLE_QUERY, action="Scratch role query")
     actual: dict[str, tuple[bool, bool]] = {}
     for line in output.splitlines():
@@ -217,8 +227,12 @@ def _check_roles(container: str, expected_roles: list[RoleExpectation]) -> None:
         actual[fields[0].strip()] = (fields[1].strip() == "t", fields[2].strip() == "t")
 
     problems: list[str] = []
+    skipped: list[str] = []
     for role in expected_roles:
         if role.rolname not in actual:
+            if MANAGED_PRINCIPAL_RE.match(role.rolname) is not None:
+                skipped.append(role.rolname)
+                continue
             problems.append(f"{role.rolname} (missing from restored cluster)")
             continue
         if role.rolname == _SUPERUSER:
@@ -235,6 +249,7 @@ def _check_roles(container: str, expected_roles: list[RoleExpectation]) -> None:
         raise click.ClickException(
             "Scratch restore role/ACL verification failed: " + "; ".join(problems)
         )
+    return skipped
 
 
 def _restore_dump(container: str, dump_path: Path) -> None:
@@ -452,6 +467,17 @@ def _recover_qdrant_collection(client: QdrantClient, scratch: str, snapshot_path
 
 
 def _delete_qdrant_collection(client: QdrantClient, scratch: str) -> None:
+    """Drop the scratch collection after its uploaded snapshot files.
+
+    Qdrant keeps an uploaded snapshot under ``snapshots/<collection>/`` even after
+    the collection is deleted, so the snapshots go first or every backup leaves
+    the full snapshot set behind in the Qdrant container.
+    """
+    try:
+        for snapshot in client.list_snapshots(scratch):
+            client.delete_snapshot(collection_name=scratch, snapshot_name=snapshot.name, wait=True)
+    except Exception as exc:  # cleanup must never mask the verification outcome
+        click.echo(f"Warning: failed to delete scratch snapshots for {scratch}: {exc}", err=True)
     try:
         client.delete_collection(scratch)
     except Exception as exc:  # cleanup must never mask the verification outcome

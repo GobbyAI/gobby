@@ -992,6 +992,193 @@ class TestTouchedFileHelpers:
 
         assert result is False
 
+    @pytest.mark.parametrize(
+        "feedback_path",
+        [
+            "docs/research/gobby-feedback/inbox/2026-08-26-codex-session-11117.md",
+            "/project/docs/research/gobby-feedback/inbox/2026-08-26-claude-session-11103.md",
+        ],
+    )
+    def test_requires_task_for_any_touched_file_allows_feedback_markdown(
+        self, feedback_path: str
+    ) -> None:
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+
+        result = requires_task_for_any_touched_file(
+            {"file_paths": [feedback_path]},
+            source="codex",
+            plan_mode=False,
+        )
+
+        assert result is False
+
+    @pytest.mark.parametrize(
+        "feedback_path",
+        [
+            "docs/research/gobby-feedback/inbox/report.json",
+            "docs/research/gobby-feedback/report.md",
+            "docs/research/gobby-feedback/inbox-adjacent/report.md",
+            "docs/research/gobby-feedback",
+            "docs/research/gobby-feedback/inbox-adjacent",
+        ],
+    )
+    def test_requires_task_for_any_touched_file_rejects_feedback_lookalikes(
+        self, feedback_path: str
+    ) -> None:
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+
+        result = requires_task_for_any_touched_file(
+            {"file_paths": [feedback_path]},
+            source="codex",
+            plan_mode=False,
+        )
+
+        assert result is True
+
+    def test_requires_task_for_any_touched_file_blocks_mixed_feedback_paths(self) -> None:
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+
+        result = requires_task_for_any_touched_file(
+            {
+                "file_paths": [
+                    "docs/research/gobby-feedback/inbox/session.md",
+                    "src/gobby/workflows/enforcement/blocking.py",
+                ]
+            },
+            source="codex",
+            plan_mode=False,
+        )
+
+        assert result is True
+
+    def test_requires_task_for_feedback_apply_patch_canonical_path(self) -> None:
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+
+        feedback_path = (
+            "docs/research/gobby-feedback/inbox/2026-08-26T073000-codex-session-11117.md"
+        )
+        result = requires_task_for_any_touched_file(
+            {
+                "patch": (
+                    f"*** Begin Patch\n*** Add File: {feedback_path}\n+# Feedback\n*** End Patch"
+                )
+            },
+            source="codex",
+            plan_mode=False,
+            event_data={
+                "canonical_repo_mutation": True,
+                "canonical_file_paths": [feedback_path],
+            },
+        )
+
+        assert result is False
+
+    @pytest.mark.parametrize(
+        "inbox_dir",
+        [
+            "docs/research/gobby-feedback/inbox",
+            "docs/research/gobby-feedback/inbox/",
+            "/project/docs/research/gobby-feedback/inbox",
+        ],
+    )
+    def test_requires_task_for_any_touched_file_allows_feedback_inbox_directory(
+        self, inbox_dir: str
+    ) -> None:
+        """`mkdir -p` of the Git-ignored inbox is part of a taskless report write."""
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+
+        result = requires_task_for_any_touched_file(
+            {"file_paths": [inbox_dir]},
+            source="claude",
+            plan_mode=False,
+        )
+
+        assert result is False
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param(
+                "mkdir -p docs/research/gobby-feedback/inbox && cat > "
+                "docs/research/gobby-feedback/inbox/2026-08-26T190000-claude-session-11103.md "
+                "<<'EOF'\n---\nsession_id: 11103\n---\nEOF\n",
+                id="mkdir-then-heredoc",
+            ),
+            pytest.param(
+                "mkdir -p docs/research/gobby-feedback/inbox && cat > "
+                "docs/research/gobby-feedback/inbox/2026-08-26T$(date +%H%M%S)"
+                "-claude-session-11103.md <<'EOF'\n---\nsession_id: 11103\n---\nEOF\n",
+                id="mkdir-then-heredoc-with-substitution",
+            ),
+            pytest.param(
+                "cat > docs/research/gobby-feedback/inbox/"
+                "2026-08-26T190000-claude-session-11103.md "
+                "<<'EOF'\n---\nsession_id: 11103\n---\nEOF\n",
+                id="heredoc-only",
+            ),
+        ],
+    )
+    def test_requires_task_for_feedback_inbox_shell_write_shapes(self, command: str) -> None:
+        """The rule's documented inbox write passes through the shell adapter path (#21052)."""
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+
+        data: dict[str, object] = {"tool_name": "Bash", "tool_input": {"command": command}}
+        normalize_tool_fields(data)
+
+        assert data["canonical_repo_mutation"] is True
+        result = requires_task_for_any_touched_file(
+            data["tool_input"], source="claude", plan_mode=False, event_data=data
+        )
+
+        assert result is False
+
+    def test_substituted_feedback_inbox_heredoc_without_mkdir_is_pathless(self) -> None:
+        """A substituted redirect target is the documented path-less execute residual.
+
+        No repo mutation is recorded, so require-task-before-edit never reaches the
+        helper; the helper alone keeps failing closed on a path-less write.
+        """
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+
+        data: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": (
+                    "cat > docs/research/gobby-feedback/inbox/2026-08-26T$(date +%H%M%S)"
+                    "-claude-session-11103.md <<'EOF'\n---\nsession_id: 11103\n---\nEOF\n"
+                )
+            },
+        }
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "execute"
+        assert "canonical_repo_mutation" not in data
+        assert "canonical_file_paths" not in data
+        result = requires_task_for_any_touched_file(
+            data["tool_input"], source="claude", plan_mode=False, event_data=data
+        )
+
+        assert result is True
+
+    def test_requires_task_for_feedback_inbox_mkdir_beside_a_source_write(self) -> None:
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+
+        data: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": (
+                    "mkdir -p docs/research/gobby-feedback/inbox && echo x > src/gobby/new.py"
+                )
+            },
+        }
+        normalize_tool_fields(data)
+
+        result = requires_task_for_any_touched_file(
+            data["tool_input"], source="claude", plan_mode=False, event_data=data
+        )
+
+        assert result is True
+
     def test_requires_task_for_any_touched_file_blocks_mixed_paths(self) -> None:
         from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
 

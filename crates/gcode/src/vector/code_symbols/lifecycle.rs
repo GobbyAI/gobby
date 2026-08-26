@@ -12,8 +12,9 @@ use super::embedding::{
     EmbeddingBackend, EmbeddingSource, dimension_probe_text, vector_text_for_symbol,
 };
 use super::qdrant::{
-    VECTOR_DISTANCE_COSINE, collection_name, collection_path, delete_vectors_for_filter,
-    parse_collection_schema, qdrant_http_error, qdrant_request_for_config,
+    VECTOR_DISTANCE_COSINE, collection_name, collection_path, delete_project_collection,
+    delete_vectors_for_filter, parse_collection_schema, qdrant_http_error,
+    qdrant_request_for_config,
 };
 use super::types::{
     CodeSymbolVectorLifecycleAction, CodeSymbolVectorLifecycleOutput, CodeSymbolVectorPayload,
@@ -110,6 +111,19 @@ impl CodeSymbolVectorLifecycle {
             None => 0,
         };
 
+        Ok(self.output(CodeSymbolVectorLifecycleAction::Clear, None, 0, 0, deleted))
+    }
+
+    /// Delete the project's whole Qdrant collection.
+    ///
+    /// For purging an indexed project: no schema probe, so a collection left by an
+    /// older embedding dimension still goes away, and a missing collection is a
+    /// no-op rather than an error.
+    pub fn drop_project_collection(
+        &self,
+    ) -> Result<CodeSymbolVectorLifecycleOutput, VectorLifecycleError> {
+        self.require_qdrant_boundary()?;
+        let deleted = delete_project_collection(&self.qdrant, &self.project_id)?;
         Ok(self.output(CodeSymbolVectorLifecycleAction::Clear, None, 0, 0, deleted))
     }
 

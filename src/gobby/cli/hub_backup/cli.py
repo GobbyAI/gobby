@@ -123,7 +123,6 @@ SCRATCH_QDRANT_CONTAINER = "gobby-qdrant-test-1"
 SCRATCH_FALKORDB_CONTAINER = "gobby-falkordb-test-1"
 SCRATCH_HUB_VOLUMES: tuple[str, ...] = (
     "gobby_test_postgres_data",
-    "gobby_test_pgaudit_log",
     "gobby_test_qdrant_data",
     "gobby_test_falkordb_data",
 )

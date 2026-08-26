@@ -80,8 +80,8 @@ The storage model accepts these common types:
 | `context` | Broader project context that should be injected as prose |
 
 The MCP and CLI accept a string `memory_type`, so additional values may be
-stored, but the formatter groups the four types above into the cleanest
-`<project-memory>` output.
+stored; search results carry the type so an agent can weigh a preference
+differently from a fact.
 
 ### Scope
 
@@ -176,12 +176,12 @@ for the authoritative signature before calling a tool.
 
 | Tool | Purpose |
 | --- | --- |
-| `create_memory` | Store a memory. Accepts `content`, optional `memory_type`, `tags`, and `session_id`. Returns similar memories to help catch duplicates. |
-| `search_memories` | Search project-scoped memories with `query`, `limit`, `min_score`, and tag filters. |
+| `create_memory` | Store a memory. Requires `content` and `rationale`; accepts optional `memory_type`, `tags`, `supersedes`, and `session_id`. Returns the five nearest existing memories (`similar_existing`, undecayed score) and auto-supersedes any at raw cosine >= 0.9. |
+| `search_memories` | Hybrid search with `query`, `limit`, `min_score` (undecayed axis), and tag filters. Hits carry `rationale`, `similarity`, `raw_semantic_score`, `undecayed_similarity`, provenance, and `collapsed_duplicates`; `diagnostics` reports candidates and the score range. |
 | `list_memories` | List project-scoped memories with optional `memory_type`, `limit`, and tag filters. |
 | `get_memory` | Read one memory by ID. |
-| `update_memory` | Update content or tags for one memory. |
-| `delete_memory` | Delete one memory by ID. |
+| `update_memory` | Update `content`, `tags`, `rationale`, or `memory_type` for one memory. A content change requires a fresh `rationale`; content and rationale edits re-embed the vector. |
+| `delete_memory` | Hard-delete one memory by ID (unrecoverable). Prefer `create_memory(..., supersedes=[id])` when a replacement exists. |
 | `get_related_memories` | Return cross-reference neighbors for one memory. |
 | `memory_stats` | Return counts and summary stats. |
 | `search_knowledge_graph` | Search extracted FalkorDB memory entities. |
@@ -210,6 +210,7 @@ call_tool(server_name="gobby-memory", tool_name="list_memories", arguments={
 call_tool(server_name="gobby-memory", tool_name="update_memory", arguments={
     "memory_id": "mm-abc123",
     "content": "Use task-linked commits for Gobby work.",
+    "rationale": "Closing a leaf requires a linked commit; sessions re-derive this every week.",
     "tags": ["workflow", "commits"]
 })
 ```
@@ -287,8 +288,8 @@ Search uses the best available local infrastructure:
 4. Result metadata can include `similarity`, `search_via`, `ranking_score`,
    `raw_semantic_score`, `temporal_decay_factor`, and `ranking_mode`.
 
-`search_memories` supports an explicit `min_score` threshold. The automatic
-memory-recall rule currently uses `limit: 2` and `min_score: 0.7`.
+`search_memories` supports an explicit `min_score` threshold. Agents search on
+demand; no rule injects memories automatically.
 
 ### Knowledge Graph
 
@@ -312,7 +313,6 @@ memory:
   crossref_max_links: 5
   access_debounce_seconds: 60
   temporal_decay_half_life_days: 30.0
-  min_recall_score: 0.6
   code_link_min_score: 0.82
   kg:
     profile: feature_low
@@ -379,11 +379,10 @@ sequenceDiagram
     participant Agent
 
     User->>RuleEngine: turn_start(prompt)
-    RuleEngine->>Memory: search_memories(limit=2, min_score=0.7)
-    RuleEngine-->>Agent: inject <project-memory>
     RuleEngine-->>Agent: memory skill on the initial turn, concise reminder later
+    Agent->>Memory: search_memories(query) when the work needs prior knowledge
     Agent-->>User: response
-    RuleEngine-->>Agent: post-close review request on turn_end (when tasks closed)
+    RuleEngine-->>Agent: post-close review request on turn_end or before compact_self (when tasks closed)
     RuleEngine->>Memory: build_turn_and_digest on turn_end
 ```
 
@@ -391,35 +390,27 @@ Current bundled memory rules:
 
 | Rule | Event | Behavior |
 | --- | --- | --- |
-| `memory-recall-on-prompt` | `turn_start` | Searches relevant memories and injects a `<project-memory>` block. |
 | `load-memory-guidance-on-initial-turn` | `turn_start` | Loads the `memory` skill until the first turn-end check passes. |
 | `check-memory-guidance-on-initial-stop` | `turn_end` | Blocks the first turn end once until the `memory` skill is loaded or its fetch failed. |
 | `remind-memory-guidance-on-later-turns` | `turn_start` | Injects a concise memory reminder once per later parent turn. |
 | `queue-task-memory-review-after-close` | `after_tool` | Queues completed worked leaves closed through `close_task` for one review. |
-| `review-closed-task-memories-on-stop` | `turn_end` | Blocks once per queued closure set with a `review_task_memories` request. |
+| `review-closed-task-memories-before-compact` | `before_tool` | Blocks `gobby-sessions:compact_self` once per queued closure set with the same request, so a compaction right after `close_task` cannot defer the review past the closing context (the manual-compact bypass skips the `turn_end` gate); silent once every queued closure is reviewed. |
+| `review-closed-task-memories-on-stop` | `turn_end` | Blocks once per queued closure set with a `review_task_memories` request; silent once every queued closure is reviewed. |
 | `digest-on-response` | `turn_end` | Builds a turn record and appends to the session digest in the background. |
 | `digest-on-plan-turn-end` | `after_tool` | Builds a digest when plan mode ends through supported plan tools. |
-| `reset-memory-tracking-on-start` | `session_start` | Clears injected-memory tracking after clear, compact, or selected resume events. |
+| `reset-memory-tracking-on-start` | `session_start` | Clears injected review-lesson tracking after clear, compact, or selected resume events. |
 | `increment-parent-turn-seq` | `turn_start` | Increments the parent session turn sequence counter. |
 
 Author new lifecycle rules against semantic events such as `turn_start` and
 `turn_end`. Raw provider/runtime hook names are transport details.
 
-## Automatic Injection
+## Retrieval Is Agent-Driven
 
-When the prompt is long enough, `memory-recall-on-prompt` calls
-`search_memories` through the MCP proxy and injects the result:
-
-```markdown
-<project-memory>
-- Use task-linked commits for Gobby work. (score: 0.8123, via: semantic)
-- Markdown guide line count is not subject to the source-file monolith rule.
-</project-memory>
-```
-
-Injected memory IDs are tracked in the `injected_memory_ids` session variable so
-the same memory is not repeatedly injected in one session. Context reset rules
-clear that tracking after compaction or selected resumes.
+No rule injects project memories into a turn. Agents call `search_memories`
+when the work needs prior knowledge and judge each hit by its `similarity`,
+`memory_type`, and `rationale`. The `injected_memory_ids` session variable now
+tracks only rule-delivered review lessons; context reset rules clear it after
+compaction or selected resumes.
 
 ## Backup Format
 
@@ -449,10 +440,10 @@ Use `gobby memory backup` or MCP `backup_memories` to write the file. Use
 
 ## Troubleshooting
 
-### Memories are not injected
+### A search returns nothing useful
 
-Check that memory is enabled, the prompt has enough content to trigger recall,
-and the relevant memories are in the current project scope. Then search manually:
+Check that memory is enabled and the relevant memories are in the current
+project scope, then widen the search:
 
 ```python
 call_tool(server_name="gobby-memory", tool_name="search_memories", arguments={

@@ -19,8 +19,17 @@ ShadowCohortPhase = Literal["polling", "fitting", "drift", "audit_scored", "audi
 SUPPORTED_SHADOW_SIGNAL_SCHEMA_VERSIONS = (4,)
 SHADOW_CLAIM_LEASE = timedelta(minutes=10)
 
+# Callers whose requests the shadow judge labels. ``memory.recall`` is the
+# archived prompt-injection cohort (#21009); the agent-driven search tools are
+# the live cohort (#21011). Probe searches (similar_existing, CLI) never enter.
+SHADOW_ELIGIBLE_CALLERS = (
+    "memory.recall",
+    "mcp_proxy.memory.search_memories",
+    "mcp_proxy.memory.review_task_memories",
+)
+
 _IMMUTABLE_ELIGIBILITY = (
-    "r.caller = 'memory.recall'",
+    "r.caller IN (" + ", ".join(f"'{caller}'" for caller in SHADOW_ELIGIBLE_CALLERS) + ")",
     "NULLIF(BTRIM(r.query), '') IS NOT NULL",
     "r.schema_version = 4",
     "EXISTS (SELECT 1 FROM recall_signal_hits present "

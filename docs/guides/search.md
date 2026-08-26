@@ -162,7 +162,6 @@ Memory-specific ranking settings:
 ```yaml
 memory:
   temporal_decay_half_life_days: 30.0
-  min_recall_score: 0.6
   auto_crossref: false
   crossref_threshold: 0.3
   crossref_max_links: 5

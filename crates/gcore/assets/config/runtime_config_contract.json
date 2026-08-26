@@ -650,7 +650,7 @@
     },
     {
       "activation": "live",
-      "default": 30,
+      "default": 1,
       "description": "Days to retain unreferenced indexed content and recent Git history",
       "key": "code_index.content_retention_days",
       "machineExport": false,
@@ -3146,17 +3146,6 @@
     },
     {
       "activation": "live",
-      "default": 0.6,
-      "description": "Minimum similarity score for memory recall (0.0-1.0). Memories below this threshold are excluded from search results. Applies to cosine similarity after source boost and temporal decay.",
-      "key": "memory.min_recall_score",
-      "machineExport": false,
-      "namespace": "memory",
-      "secrecy": "none",
-      "type": "number",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
       "default": 0.05,
       "description": "Alarm threshold: live pairwise accuracy this far below the recorded holdout baseline accuracy raises the drift alarm.",
       "key": "memory.recall_drift_accuracy_drop",
@@ -3277,83 +3266,6 @@
       "namespace": "memory_backup",
       "secrecy": "none",
       "type": "boolean",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": 8,
-      "description": "Maximum ranked candidates returned by the single hybrid search.",
-      "key": "memory_recall.candidate_limit",
-      "machineExport": false,
-      "namespace": "memory_recall",
-      "secrecy": "none",
-      "type": "integer",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": [
-        {
-          "candidate": "codex/gpt-5.6-luna",
-          "reasoning_effort": null
-        },
-        {
-          "candidate": "claude/haiku",
-          "reasoning_effort": null
-        }
-      ],
-      "description": "Ordered provider/model candidates with optional reasoning pins, for example [{'candidate': 'codex/gpt-5.6-sol', 'reasoning_effort': 'xhigh'}, {'candidate': 'claude/haiku'}].",
-      "key": "memory_recall.candidates",
-      "machineExport": false,
-      "namespace": "memory_recall",
-      "secrecy": "none",
-      "type": [
-        "string"
-      ],
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": true,
-      "description": "Enable inline substantive-prompt memory recall.",
-      "key": "memory_recall.enabled",
-      "machineExport": false,
-      "namespace": "memory_recall",
-      "secrecy": "none",
-      "type": "boolean",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": 0.55,
-      "description": "Minimum UNDECAYED semantic similarity the hybrid search itself applies, recovered as similarity / temporal_decay_factor just like selection_min_score (#20858): age orders candidates, it no longer decides search eligibility. The backfill loop doubles the candidate pool until candidate_limit hits clear this floor, so raising it sharpens the pool without reducing how much a turn injects. A graph-expander find is gated on its entity-match confidence (search floor 0.611) instead of this axis, and a candidate with no score at all passes here and is judged by the selection gate's null-similarity backstop (#20873). Default 0.55 was calibrated against the DECAYED recall_signal similarity distribution (memory.recall caller, 2026-07 through 2026-08: p10=0.45, p25=0.50), so it is off-axis and provisional; the Phase 4 refit re-fits it together with selection_min_score.",
-      "key": "memory_recall.min_score",
-      "machineExport": false,
-      "namespace": "memory_recall",
-      "secrecy": "none",
-      "type": "number",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": "feature_low",
-      "description": "Provider-agnostic capability profile requested by this feature.",
-      "key": "memory_recall.profile",
-      "machineExport": false,
-      "namespace": "memory_recall",
-      "secrecy": "none",
-      "type": "string",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": 0.7,
-      "description": "Minimum UNDECAYED similarity a candidate must carry to be injected, recovered as similarity / temporal_decay_factor -- the same axis min_score reads since #20858. This is the last gate before the model, so it asks only whether a memory is on topic and leaves temporal decay to order candidates (#20831); on the decayed axis a 30-day half-life demanded score * boost >= 1.30 to inject at all. The backfill loop does not chase this floor, so it is the only control that can make a turn inject less than the rank limit. A candidate with no similarity at all is dropped rather than admitted; since #20858 rescored every candidate the collection can score, that is now only a memory with no stored vector, and a keyword-found hit carrying one is judged here like any other (#20873). In a deployment with no vector store that is every hit -- a normalized BM25 rank is not a similarity -- so keyword-only search never injects (#20874). A graph-expander find is judged on its entity-match confidence instead, because its cosine is what the vector leg already missed it on; that floor is 0.653, the p90 of the 2026-08 confidence distribution (n=17,975), provisional and owned by the Phase 4 refit. Default 0.70 re-seats #20771's calibration knee on the undecayed axis: 0.65 was fitted against decayed recall_signal_hits.similarity, whose live p82 is 0.649, so carrying it over unchanged would have loosened selection roughly threefold (zero-inject turns 46.7% -> 18.8%, haiku precision 52.3 -> 42.3).",
-      "key": "memory_recall.selection_min_score",
-      "machineExport": false,
-      "namespace": "memory_recall",
-      "secrecy": "none",
-      "type": "number",
       "visibility": "public"
     },
     {

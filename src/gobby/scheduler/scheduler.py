@@ -16,6 +16,7 @@ from gobby.scheduler.executor import CronExecutor
 from gobby.storage.cron import CronJobStorage, compute_next_run, is_removed_automation_job
 from gobby.storage.cron_models import CronJob, CronRun
 from gobby.storage.hub.protocol import CronRunAdmission
+from gobby.utils.datetime import utc_now
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.project_context import (
     get_project_context,
@@ -103,12 +104,45 @@ class CronScheduler:
 
     def _reconcile_interrupted_runs_on_startup(self) -> None:
         result = self.storage.reconcile_interrupted_runs(self._machine_id)
-        if result["dispatched"] or result["failed"]:
+        if result["dispatched"] or result["interrupted"]:
             logger.info(
-                "Reconciled cron runs at scheduler startup: dispatched=%s failed=%s",
+                "Reconciled cron runs at scheduler startup: "
+                "dispatched=%s interrupted=%s requeued=%s",
                 result["dispatched"],
-                result["failed"],
+                result["interrupted"],
+                result["requeued"],
             )
+
+    def list_protected_runs(self) -> list[dict[str, Any]]:
+        """Report this daemon's active restart-protected cron runs.
+
+        The running ``cron_runs`` row is the restart lease: it exists from run
+        start until any terminal status, and startup reconciliation closes the
+        rows a dead daemon left behind. A run past its own action timeout no
+        longer holds the lease — the executor is already failing it.
+        """
+        now = utc_now()
+        protected: list[dict[str, Any]] = []
+        for run in self.storage.list_active_runs(scheduler_owner=self._scheduler_owner):
+            job = self.storage.get_job(run.cron_job_id)
+            if job is None or not job.restart_protected:
+                continue
+            started_at = run.started_at or run.triggered_at
+            elapsed = max(0.0, (now - started_at).total_seconds())
+            remaining = self.executor.action_timeout_seconds(job) - elapsed
+            if remaining <= 0:
+                continue
+            protected.append(
+                {
+                    "run_id": run.id,
+                    "job_id": job.id,
+                    "job_name": job.name,
+                    "started_at": started_at.isoformat(),
+                    "elapsed_seconds": elapsed,
+                    "remaining_seconds": remaining,
+                }
+            )
+        return protected
 
     def _track_run_task(self, task: asyncio.Task[None], run_id: str) -> None:
         """Track an in-flight execution task and the cron run row it owns."""

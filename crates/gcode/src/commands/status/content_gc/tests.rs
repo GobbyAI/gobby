@@ -147,6 +147,8 @@ mod serial_db {
             true,
         );
         let foreign_machine = uuid::Uuid::new_v4();
+        crate::test_env::seed_test_machine(&mut conn, &foreign_machine.to_string())
+            .expect("seed foreign machine");
         seed_file_state(
             &mut conn,
             foreign_machine,

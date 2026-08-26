@@ -126,6 +126,7 @@ pub(super) fn index_overlay_files(
     let mut rels = overlay_reconcile_candidates(
         request,
         root_path,
+        parent_root,
         &ast_by_rel,
         &content_by_rel,
         &parent_files,
@@ -177,8 +178,18 @@ pub(super) fn index_overlay_files(
         let overlay = overlay_files.get(&rel);
         let current_hash = hash_by_rel.get(&rel).map(String::as_str);
         let indexable = ast_by_rel.contains_key(&rel) || content_by_rel.contains_key(&rel);
-        let action =
-            overlay_reconcile_action(abs.exists(), current_hash, parent, overlay, indexable);
+        // An overlay row that already carries the file's current content is a
+        // finished shadow: re-parsing it changes nothing. Read-path refreshes
+        // run with sync_projections=false, so adoption below (which requires
+        // synced projections) would fail and re-index every diverged file on
+        // every read. `--full` keeps the re-parse escape hatch.
+        let overlay_is_current = !request.full
+            && overlay.is_some_and(|state| Some(state.content_hash.as_str()) == current_hash);
+        let action = if overlay_is_current {
+            OverlayReconcileAction::Skip
+        } else {
+            overlay_reconcile_action(abs.exists(), current_hash, parent, overlay, indexable)
+        };
         // Reuse an existing overlay content version instead of re-parsing;
         // `--full` forces the re-parse escape hatch just like the primary
         // pipeline.
@@ -260,9 +271,10 @@ pub(super) fn index_overlay_files(
     Ok(outcome)
 }
 
-fn overlay_reconcile_candidates(
+pub(super) fn overlay_reconcile_candidates(
     request: &IndexRequest,
     root_path: &Path,
+    parent_root: &Path,
     ast_by_rel: &HashMap<String, PathBuf>,
     content_by_rel: &HashMap<String, PathBuf>,
     parent_files: &HashMap<String, IndexedFileState>,
@@ -278,9 +290,20 @@ fn overlay_reconcile_candidates(
         rels.extend(content_by_rel.keys().cloned());
         rels.extend(parent_files.keys().cloned());
         rels.extend(overlay_files.keys().cloned());
-    } else if let Ok(status_paths) = git_status_relative_paths(root_path) {
-        rels.extend(status_paths);
+    } else if let Ok(divergent) = overlay_divergent_relative_paths(root_path, parent_root) {
+        rels.extend(divergent);
         rels.extend(overlay_files.keys().cloned());
+        // Parent rows for paths the overlay tree lacks and git cannot report —
+        // gitignored or explicitly indexed in the parent, like the wiki vault —
+        // would otherwise show through the overlay forever and trip every
+        // read-time pre-gate. A missing file with no overlay row is tombstoned
+        // on this pass.
+        rels.extend(
+            parent_files
+                .keys()
+                .filter(|rel| !overlay_files.contains_key(*rel) && !root_path.join(rel).exists())
+                .cloned(),
+        );
     } else {
         rels.extend(ast_by_rel.keys().cloned());
         rels.extend(content_by_rel.keys().cloned());
@@ -333,49 +356,59 @@ fn indexed_file_states(
     Ok(files)
 }
 
+/// Paths whose content may differ between the overlay checkout and the
+/// parent's indexed tree: working-tree changes on either side plus every path
+/// that differs between the parent's HEAD and the overlay's HEAD. Every other
+/// path is byte-identical in both checkouts, so the parent's rows already
+/// describe it and it needs no overlay reconciliation.
+fn overlay_divergent_relative_paths(
+    root_path: &Path,
+    parent_root: &Path,
+) -> anyhow::Result<HashSet<String>> {
+    let mut paths = git_status_relative_paths(root_path)?;
+    paths.extend(git_status_relative_paths(parent_root)?);
+    let parent_head = git_head_commit(parent_root)?;
+    paths.extend(git_diff_relative_paths(root_path, &parent_head)?);
+    Ok(paths)
+}
+
+fn git_head_commit(root_path: &Path) -> anyhow::Result<String> {
+    let stdout = run_git_with_timeout(root_path, &["rev-parse", "--verify", "HEAD^{commit}"])?;
+    let head = String::from_utf8_lossy(&stdout).trim().to_string();
+    if head.is_empty() {
+        anyhow::bail!("git rev-parse resolved no HEAD commit");
+    }
+    Ok(head)
+}
+
+fn git_diff_relative_paths(root_path: &Path, base: &str) -> anyhow::Result<HashSet<String>> {
+    let stdout = run_git_with_timeout(
+        root_path,
+        &["diff", "--name-only", "-z", "--no-renames", base, "HEAD"],
+    )?;
+    Ok(stdout
+        .split(|b| *b == 0)
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| String::from_utf8_lossy(entry).into_owned())
+        .collect())
+}
+
 fn git_status_relative_paths(root_path: &Path) -> anyhow::Result<HashSet<String>> {
-    let mut child = Command::new("git")
-        .arg("-C")
-        .arg(root_path)
-        .args([
+    let stdout = run_git_with_timeout(
+        root_path,
+        &[
             "status",
             "--porcelain=v1",
             "-z",
             "--untracked-files=all",
             "--no-renames",
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("spawn git status")?;
-    let timeout = git_status_timeout();
-    let output = match child.wait_timeout(timeout)? {
-        Some(_) => child.wait_with_output()?,
-        None => {
-            let _ = child.kill();
-            let output = child.wait_with_output()?;
-            let stderr = compact_stderr(&output.stderr);
-            if stderr.is_empty() {
-                anyhow::bail!("git status timed out after {}ms", timeout.as_millis());
-            }
-            anyhow::bail!(
-                "git status timed out after {}ms: {stderr}",
-                timeout.as_millis()
-            );
-        }
-    };
-    if !output.status.success() {
-        let stderr = compact_stderr(&output.stderr);
-        if stderr.is_empty() {
-            anyhow::bail!("git status failed");
-        }
-        anyhow::bail!("git status failed: {stderr}");
-    }
+        ],
+    )?;
 
     let mut paths = HashSet::new();
     // Porcelain v1 `-z` entries are NUL-delimited records with two status
     // bytes, a separating space, then the changed path.
-    for entry in output.stdout.split(|b| *b == 0) {
+    for entry in stdout.split(|b| *b == 0) {
         if !is_porcelain_status_entry(entry) {
             continue;
         }
@@ -385,6 +418,44 @@ fn git_status_relative_paths(root_path: &Path) -> anyhow::Result<HashSet<String>
         }
     }
     Ok(paths)
+}
+
+/// Run `git -C root_path <args>` under the overlay git timeout, returning its
+/// stdout. Kills the child on timeout and reports git's stderr on failure.
+fn run_git_with_timeout(root_path: &Path, args: &[&str]) -> anyhow::Result<Vec<u8>> {
+    let verb = args.first().copied().unwrap_or("git");
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(root_path)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("spawn git {verb}"))?;
+    let timeout = git_status_timeout();
+    let output = match child.wait_timeout(timeout)? {
+        Some(_) => child.wait_with_output()?,
+        None => {
+            let _ = child.kill();
+            let output = child.wait_with_output()?;
+            let stderr = compact_stderr(&output.stderr);
+            if stderr.is_empty() {
+                anyhow::bail!("git {verb} timed out after {}ms", timeout.as_millis());
+            }
+            anyhow::bail!(
+                "git {verb} timed out after {}ms: {stderr}",
+                timeout.as_millis()
+            );
+        }
+    };
+    if !output.status.success() {
+        let stderr = compact_stderr(&output.stderr);
+        if stderr.is_empty() {
+            anyhow::bail!("git {verb} failed");
+        }
+        anyhow::bail!("git {verb} failed: {stderr}");
+    }
+    Ok(output.stdout)
 }
 
 fn git_status_timeout() -> Duration {

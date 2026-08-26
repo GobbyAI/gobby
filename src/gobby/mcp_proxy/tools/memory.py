@@ -23,7 +23,6 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.memory_dream import register_memory_dream_tools
-from gobby.mcp_proxy.tools.memory_recall import register_memory_recall_tool
 from gobby.mcp_proxy.tools.memory_review import register_memory_review_tools
 from gobby.mcp_proxy.tools.memory_scope import (
     get_current_project_id,
@@ -34,6 +33,7 @@ from gobby.memory.digest import (
     build_turn_and_digest as _build_turn_and_digest,
 )
 from gobby.memory.manager import MemoryManager
+from gobby.memory.scoring import undecay
 from gobby.storage.memories import MemoryType, validate_memory_type
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 
@@ -45,6 +45,43 @@ if TYPE_CHECKING:
     from gobby.memory.dream.coordinator import MemoryDreamCoordinator
 
 logger = logging.getLogger(__name__)
+
+_SEARCH_CALLER = "mcp_proxy.memory.search_memories"
+
+
+def _record_delivered_hits(
+    manager: MemoryManager,
+    *,
+    session_id: str | None,
+    recall_request_id: str,
+    project_id: str,
+    hits: list[dict[str, Any]],
+) -> None:
+    """Write one ``recall_injection_outcomes`` row per hit the agent received.
+
+    The tool result is the delivery point of the search cohort (usefulness-label
+    contract §5.1): a returned hit is ``injected`` at its list position; hits cut
+    by ``limit`` or ``min_score`` never reach the agent and get no row. Fails
+    open — the recorder is None while the signal hub is off and swallows its own
+    write errors.
+    """
+    recorder = getattr(manager, "injection_outcome_recorder", None)
+    if recorder is None or not session_id or not hits:
+        return
+    recorder(
+        [
+            {
+                "session_id": session_id,
+                "recall_request_id": recall_request_id,
+                "memory_id": hit["id"],
+                "project_id": project_id,
+                "outcome": "injected",
+                "injection_position": position,
+                "caller": _SEARCH_CALLER,
+            }
+            for position, hit in enumerate(hits)
+        ]
+    )
 
 
 def create_memory_registry(
@@ -111,7 +148,14 @@ def create_memory_registry(
 
     @registry.tool(
         name="search_memories",
-        description="Search memories based on query and filters. Supports tag-based filtering.",
+        description=(
+            "Hybrid search (semantic + keyword + graph) over memories with tag "
+            "filtering. Scores are for the agent's judgment: raw cosine on the live "
+            "corpus sits in a narrow band (p10 0.62 / p50 0.69 / p90 0.75), so read "
+            "each hit's rationale and content rather than expecting a bimodal score. "
+            "Near-duplicate hits are folded into the best-ranked one "
+            "(collapsed_duplicates)."
+        ),
     )
     async def search_memories(
         query: str | None = None,
@@ -128,10 +172,20 @@ def create_memory_registry(
         Args:
             query: Search query string
             limit: Maximum number of memories to return
-            min_score: Optional minimum semantic similarity score (0.0-1.0).
+            min_score: Optional floor (0.0-1.0) on the undecayed similarity —
+                cosine times source boost with the age penalty removed, the same
+                axis results are ranked on. 0.0 (default) returns the top ``limit``
+                by rank; the scores are there for judgment, not admission.
             tags_all: Memory must have ALL of these tags
             tags_any: Memory must have at least ONE of these tags
             tags_none: Memory must have NONE of these tags
+
+        Each hit carries ``similarity`` (age-decayed), ``raw_semantic_score``,
+        ``undecayed_similarity``, ``rationale``, ``updated_at``,
+        ``graph_confidence``, ``source_task_id``, ``created_by_agent``, and
+        ``collapsed_duplicates`` (ids of near-identical lower-ranked hits folded
+        into this one). ``diagnostics`` always reports ``candidates_considered``
+        and the undecayed ``score_range``.
         """
         try:
             from uuid import uuid4
@@ -142,69 +196,92 @@ def create_memory_registry(
             # Joinable correlation id (contract §2): threads the signal event,
             # the returned payload, and any downstream injection outcome.
             recall_request_id = str(uuid4())
+            current_session_id = get_current_session_id()
             current_project_id = get_current_project_id() or PERSONAL_PROJECT_ID
             canonical_memory_type = (
                 validate_memory_type(memory_type) if memory_type is not None else None
             )
 
-            # Fetch extra candidates so we can report diagnostics when
-            # nothing passes the threshold.
-            candidates = await _memory_manager().search_memories(
+            # The floor travels to the service so its backfill loop chases the
+            # same undecayed axis this tool reports (#21010).
+            manager = _memory_manager()
+            candidates = await manager.search_memories(
                 query=query,
                 project_id=current_project_id,
-                limit=limit * 2 if effective_min_score > 0 else limit,
-                min_score=None,  # no threshold — filter below
+                limit=limit,
+                min_score=effective_min_score if effective_min_score > 0 else None,
                 memory_type=canonical_memory_type,
                 tags_all=tags_all,
                 tags_any=tags_any,
                 tags_none=tags_none,
-                session_id=get_current_session_id(),
+                session_id=current_session_id,
                 recall_request_id=recall_request_id,
-                caller="mcp_proxy.memory.search_memories",
+                caller=_SEARCH_CALLER,
             )
 
-            # Split by threshold
-            above: list[dict[str, Any]] = []
-            below_count = 0
-            max_score_seen = 0.0
+            hits: list[dict[str, Any]] = []
+            undecayed_scores: list[float] = []
             for m in candidates:
                 similarity = getattr(m, "similarity", None)
-                threshold_score = similarity or 0.0
-                max_score_seen = max(max_score_seen, threshold_score)
-                if effective_min_score > 0 and threshold_score < effective_min_score:
-                    below_count += 1
-                    continue
-                if len(above) < limit:
-                    above.append(
+                undecayed_similarity = (
+                    undecay(similarity, getattr(m, "temporal_decay_factor", None))
+                    if isinstance(similarity, int | float) and not isinstance(similarity, bool)
+                    else None
+                )
+                if undecayed_similarity is not None:
+                    undecayed_scores.append(undecayed_similarity)
+                    if effective_min_score > 0 and undecayed_similarity < effective_min_score:
+                        continue
+                if len(hits) < limit:
+                    hits.append(
                         {
                             "id": m.id,
                             "content": m.content,
+                            "rationale": getattr(m, "rationale", None),
                             "type": m.memory_type,
                             "created_at": m.created_at,
+                            "updated_at": getattr(m, "updated_at", None),
                             "tags": m.tags,
                             "project_id": m.project_id,
                             "is_global": m.is_global,
+                            "source_task_id": getattr(m, "source_task_id", None),
+                            "created_by_agent": getattr(m, "created_by_agent", None),
                             "similarity": similarity,
+                            "undecayed_similarity": undecayed_similarity,
                             "search_via": getattr(m, "search_via", None),
                             "ranking_score": getattr(m, "ranking_score", None),
                             "raw_semantic_score": getattr(m, "raw_semantic_score", None),
                             "temporal_decay_factor": getattr(m, "temporal_decay_factor", None),
+                            "graph_confidence": getattr(m, "graph_confidence", None),
                             "ranking_mode": getattr(m, "ranking_mode", None),
+                            "collapsed_duplicates": getattr(m, "collapsed_duplicates", None),
                         }
                     )
 
-            result: dict[str, Any] = {
+            _record_delivered_hits(
+                manager,
+                session_id=current_session_id,
+                recall_request_id=recall_request_id,
+                project_id=current_project_id,
+                hits=hits,
+            )
+            return {
                 "success": True,
-                "memories": above,
+                "memories": hits,
                 "recall_request_id": recall_request_id,
                 "project_id": current_project_id,
+                "diagnostics": {
+                    "candidates_considered": len(candidates),
+                    "returned": len(hits),
+                    "threshold": effective_min_score,
+                    "threshold_axis": "undecayed_similarity",
+                    "score_range": (
+                        [round(min(undecayed_scores), 4), round(max(undecayed_scores), 4)]
+                        if undecayed_scores
+                        else None
+                    ),
+                },
             }
-            if not above and below_count > 0:
-                result["below_threshold_count"] = below_count
-                result["max_score_seen"] = round(max_score_seen, 4)
-                result["threshold"] = effective_min_score
-
-            return result
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -303,11 +380,14 @@ def create_memory_registry(
                     {
                         "id": m.id,
                         "content": m.content,
+                        "rationale": getattr(m, "rationale", None),
                         "type": m.memory_type,
                         "created_at": m.created_at,
+                        "updated_at": getattr(m, "updated_at", None),
                         "tags": m.tags,
                         "project_id": m.project_id,
                         "is_global": m.is_global,
+                        "source_task_id": getattr(m, "source_task_id", None),
                     }
                     for m in memories
                 ],
@@ -335,12 +415,15 @@ def create_memory_registry(
                     "memory": {
                         "id": memory.id,
                         "content": memory.content,
+                        "rationale": getattr(memory, "rationale", None),
                         "type": memory.memory_type,
                         "created_at": memory.created_at,
                         "updated_at": memory.updated_at,
                         "project_id": memory.project_id,
                         "is_global": memory.is_global,
                         "source_type": memory.source_type,
+                        "source_task_id": getattr(memory, "source_task_id", None),
+                        "created_by_agent": getattr(memory, "created_by_agent", None),
                         "access_count": memory.access_count,
                         "tags": memory.tags,
                     },
@@ -667,13 +750,6 @@ def create_memory_registry(
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    register_memory_recall_tool(
-        registry,
-        memory_manager_resolver,
-        config_resolver=lambda: (
-            config.memory_recall if (config := _config()) is not None else None
-        ),
-    )
     register_memory_dream_tools(
         registry,
         coordinator_resolver=dream_coordinator_resolver or (lambda: None),

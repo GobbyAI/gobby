@@ -13,7 +13,7 @@ import logging
 import os
 import shutil
 import subprocess  # nosec B404 # subprocess needed for git commands
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, MutableMapping
 from pathlib import Path
 from typing import TypedDict
 from uuid import uuid4
@@ -22,6 +22,7 @@ from weakref import WeakKeyDictionary
 logger = logging.getLogger(__name__)
 
 GIT_FALLBACK_PATHS = ("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin")
+GIT_OPTIONAL_LOCKS_ENV = "GIT_OPTIONAL_LOCKS"
 _CHECKOUT_MUTATION_LOCKS: WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, asyncio.Lock]] = (
     WeakKeyDictionary()
 )
@@ -117,6 +118,22 @@ class GitMetadata(TypedDict, total=False):
 
     github_url: str | None
     git_branch: str | None
+
+
+def disable_optional_git_locks(environ: MutableMapping[str, str] | None = None) -> None:
+    """Make every git subprocess of this process skip optional index locks.
+
+    Read-only commands such as ``git status`` and ``git diff`` opportunistically
+    refresh the index by writing ``.git/index.lock`` and renaming it over the
+    index. A daemon read killed on timeout mid-refresh leaves that lock behind,
+    and every later git write in the shared checkout fails with
+    ``index.lock: File exists`` until someone removes it by hand (#21055).
+    ``GIT_OPTIONAL_LOCKS=0`` skips the refresh write — the setting IDE git
+    integrations run with — while the required locks of real writes are
+    unaffected. Child processes inherit it.
+    """
+    target = os.environ if environ is None else environ
+    target[GIT_OPTIONAL_LOCKS_ENV] = "0"
 
 
 def git_subprocess_env() -> dict[str, str] | None:

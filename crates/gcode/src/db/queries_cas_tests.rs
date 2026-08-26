@@ -107,7 +107,10 @@ fn dirty_graph_sync_for_unreferenced_hash_does_not_change_active_state() {
     assert_eq!(synced_before, synced_after);
     assert_eq!(attempt_cleared_before, attempt_cleared_after);
     assert!(synced_after);
-    assert!(attempt_cleared_after);
+    assert!(
+        !attempt_cleared_after,
+        "a successful CAS keeps graph_sync_attempted_at as the last-attempt marker"
+    );
     let (unref_synced, unref_cleared) =
         graph_sync_flags(&mut conn, &project_id, "hash-unreferenced");
     assert!(!unref_synced);

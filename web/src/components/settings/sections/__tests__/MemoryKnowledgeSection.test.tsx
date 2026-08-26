@@ -35,17 +35,16 @@ function resolveRepoFile(relative: string): string {
   throw new Error(`Could not locate ${relative} from cwd ${process.cwd()}`);
 }
 
-const RECALL_CONTRACT_KEYS: readonly string[] = (
-  JSON.parse(readFileSync(resolveRepoFile(CONTRACT_REL), "utf8")) as {
-    exactKeys: ReadonlyArray<{ key: string }>;
-  }
-).exactKeys
-  .map((entry) => entry.key)
-  .filter((key) => key.startsWith("memory_recall."))
-  .sort();
+const CONTRACT_KEYS: ReadonlySet<string> = new Set(
+  (
+    JSON.parse(readFileSync(resolveRepoFile(CONTRACT_REL), "utf8")) as {
+      exactKeys: ReadonlyArray<{ key: string }>;
+    }
+  ).exactKeys.map((entry) => entry.key),
+);
 
-// Schema covering the rows the assertions touch. The three `profile` selects
-// (`memory_recall.profile`, `memory.kg.profile`, `memory.dream.profile`) prove
+// Schema covering the rows the assertions touch. The two `profile` selects
+// (`memory.kg.profile`, `memory.dream.profile`) prove
 // multi-hop `$ref` traversal through the real DaemonConfig shape down to the
 // shared `FeatureProfile` enum; `candidates`, `wiki.roots`, and `ignore_globs`
 // cover the array "fix" rows from the configuration audit.
@@ -57,17 +56,6 @@ const FEATURE_PROFILE = {
 const SCHEMA: Record<string, unknown> = {
   $defs: {
     FeatureProfile: FEATURE_PROFILE,
-    MemoryRecallConfig: {
-      type: "object",
-      properties: {
-        profile: { $ref: "#/$defs/FeatureProfile" },
-        candidates: { type: "array", items: { type: "string" } },
-        enabled: { type: "boolean" },
-        candidate_limit: { type: "integer" },
-        min_score: { type: "number", minimum: 0, maximum: 1 },
-        selection_min_score: { type: "number", minimum: 0, maximum: 1 },
-      },
-    },
     MemoryKnowledgeGraphConfig: {
       type: "object",
       properties: {
@@ -189,7 +177,6 @@ const SCHEMA: Record<string, unknown> = {
   type: "object",
   properties: {
     memory: { $ref: "#/$defs/MemoryConfig" },
-    memory_recall: { $ref: "#/$defs/MemoryRecallConfig" },
     ai: {
       type: "object",
       properties: { embeddings: { $ref: "#/$defs/EmbeddingsConfig" } },
@@ -231,21 +218,12 @@ function makeConfigValues(): Record<string, unknown> {
       },
       code_link_min_score: 0.5,
       temporal_decay_half_life_days: 30,
-      min_recall_score: 0.2,
       graph_edge_weighting: true,
       materialize_cooccurrence: false,
       graph_edge_decay: true,
       edge_half_life_days: 14,
       recall_signal_logging: false,
       recall_signal_log_path: null,
-    },
-    memory_recall: {
-      profile: "feature_high",
-      candidates: ["claude/sonnet"],
-      enabled: true,
-      candidate_limit: 40,
-      min_score: 0.3,
-      selection_min_score: 0.7,
     },
     ai: {
       embeddings: {
@@ -321,7 +299,6 @@ describe("MemoryKnowledgeSection", () => {
 
     expect(screen.getByRole("switch", { name: "Enable memory" })).toBeChecked();
     expect(screen.getByLabelText("Cross-reference threshold")).toHaveValue(0.7);
-    expect(screen.getByLabelText("Minimum recall score")).toHaveValue(0.2);
     expect(
       screen.getByRole("switch", { name: "Log recall signals" }),
     ).not.toBeChecked();
@@ -335,38 +312,20 @@ describe("MemoryKnowledgeSection", () => {
     expect(within(backend).getAllByRole("option")).toHaveLength(2);
   });
 
-  it("renders exactly the memory_recall rows the config contract registers", () => {
+  it("renders only rows for keys the config contract registers", () => {
     // Guard against a vacuous pass if the contract moves or its shape changes.
-    expect(RECALL_CONTRACT_KEYS).toContain("memory_recall.min_score");
-    expect(RECALL_CONTRACT_KEYS.length).toBeGreaterThan(3);
+    expect(CONTRACT_KEYS.has("memory.crossref_threshold")).toBe(true);
+    expect(CONTRACT_KEYS.size).toBeGreaterThan(100);
 
     const { container } = renderSection(makeContext());
-    const rendered = [
-      ...container.querySelectorAll("[data-config-path^='memory_recall.']"),
-    ]
+    const rendered = [...container.querySelectorAll("[data-config-path]")]
       .map((node) => node.getAttribute("data-config-path"))
-      .sort();
+      .filter((path): path is string => path !== null);
 
-    // Both directions matter: a row for a key the daemon dropped edits nothing,
-    // and a key with no row is a setting the user cannot reach.
-    expect(rendered).toEqual([...RECALL_CONTRACT_KEYS]);
-  });
-
-  it("renders the recall selection floor as a bounded 0..1 number row", () => {
-    renderSection(makeContext());
-
-    const floor = screen.getByLabelText("Recall selection floor");
-    expect(floor).toHaveValue(0.7);
-    expect(floor).toHaveAttribute("min", "0");
-    expect(floor).toHaveAttribute("max", "1");
-  });
-
-  it("resolves the recall profile enum through a multi-hop $ref", () => {
-    renderSection(makeContext());
-
-    const profile = screen.getByLabelText("Recall model profile");
-    expect(profile).toHaveValue("feature_high");
-    expect(within(profile).getAllByRole("option")).toHaveLength(3);
+    // A row bound to a key the daemon dropped edits nothing; the recall rows
+    // retired with MemoryRecallConfig (#21009, #21022) are the precedent.
+    expect(rendered.length).toBeGreaterThan(0);
+    expect(rendered.filter((path) => !CONTRACT_KEYS.has(path))).toEqual([]);
   });
 
   it("resolves the knowledge-graph and dream profile enums", () => {
@@ -383,9 +342,6 @@ describe("MemoryKnowledgeSection", () => {
   it("renders candidate arrays as editable string lists", () => {
     renderSection(makeContext());
 
-    expect(screen.getByLabelText("Recall model candidates item 1")).toHaveValue(
-      "claude/sonnet",
-    );
     expect(
       screen.getByLabelText("Knowledge graph model candidates item 1"),
     ).toHaveValue("claude/haiku");

@@ -104,6 +104,52 @@ class CodeIndexProjectStorageMixin:
         run_hub_mutation(self.db, _write)
         return counts
 
+    def list_orphaned_index_projects(self) -> list[str]:
+        """Indexed project ids with no machine selector anywhere and no registry row.
+
+        Path-derived overlay and clone identities never get a ``projects`` row, so
+        once their last selector is gone nothing references the shared content; the
+        maintenance sweep purges them. Registry-backed projects stay with the
+        registry lifecycle even when unselected.
+        """
+        rows = self.db.fetchall(
+            """SELECT p.id::text AS id
+               FROM code_indexed_projects p
+               WHERE NOT EXISTS (
+                   SELECT 1 FROM code_indexed_project_states s WHERE s.project_id = p.id
+               )
+               AND NOT EXISTS (SELECT 1 FROM projects r WHERE r.id = p.id)
+               ORDER BY p.updated_at, p.id""",
+        )
+        return [str(row["id"]) for row in rows]
+
+    def purge_index_project(self, project_id: str) -> dict[str, int]:
+        """Delete a shared indexed project row; the FK chain cascades its content."""
+        counted = {
+            "files": "SELECT COUNT(*) AS cnt FROM code_indexed_files WHERE project_id = %s",
+            "symbols": "SELECT COUNT(*) AS cnt FROM code_symbols WHERE project_id = %s",
+            "calls": "SELECT COUNT(*) AS cnt FROM code_calls WHERE project_id = %s",
+            "content_chunks": (
+                "SELECT COUNT(*) AS cnt FROM code_content_chunks WHERE project_id = %s"
+            ),
+            "imports": "SELECT COUNT(*) AS cnt FROM code_imports WHERE project_id = %s",
+        }
+        counts = dict.fromkeys(counted, 0)
+        counts["projects"] = 0
+
+        def _write(conn: Transaction) -> None:
+            for key, sql in counted.items():
+                row = conn.execute(sql, (project_id,)).fetchone()
+                counts[key] = int(row["cnt"]) if row else 0
+            cursor = conn.execute(
+                "DELETE FROM code_indexed_projects WHERE id = %s",
+                (project_id,),
+            )
+            counts["projects"] = cursor.rowcount
+
+        run_hub_mutation(self.db, _write)
+        return counts
+
     def count_symbols(self, project_id: str) -> int:
         """Count total symbols for a project."""
         row = self.db.fetchone(

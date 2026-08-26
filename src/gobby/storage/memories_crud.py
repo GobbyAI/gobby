@@ -1,6 +1,7 @@
 import json
 import logging
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -599,12 +600,14 @@ class MemoryCrudMixin(MemoryStoreBase):
         content: str | None = None,
         tags: list[str] | None = None,
         memory_type: str | MemoryType | None = None,
+        rationale: str | None = None,
     ) -> Memory:
         return self._update_memory_in_scope(
             memory_id=memory_id,
             content=content,
             tags=tags,
             memory_type=memory_type,
+            rationale=rationale,
             scope_clause="",
             scope_params=(),
         )
@@ -616,6 +619,7 @@ class MemoryCrudMixin(MemoryStoreBase):
         content: str | None = None,
         tags: list[str] | None = None,
         memory_type: str | MemoryType | None = None,
+        rationale: str | None = None,
     ) -> Memory:
         """Update a memory only when it is visible in the requested project scope."""
         scope_predicate, scope_params = memory_scope_predicate(
@@ -627,6 +631,7 @@ class MemoryCrudMixin(MemoryStoreBase):
             content=content,
             tags=tags,
             memory_type=memory_type,
+            rationale=rationale,
             scope_clause=scope_clause,
             scope_params=scope_params,
         )
@@ -639,23 +644,29 @@ class MemoryCrudMixin(MemoryStoreBase):
         memory_type: str | MemoryType | None,
         scope_clause: str,
         scope_params: tuple[str, ...],
+        rationale: str | None = None,
     ) -> Memory:
         updates = []
         params: list[Any] = []
         needs_vector_reindex = False
         canonical_memory_type: MemoryType | None = None
+        current: Mapping[str, Any] | None = None
+
+        if content is not None or rationale is not None:
+            current = self.db.fetchone(
+                f"SELECT project_id, is_global, content, rationale FROM memories"
+                f" WHERE id = %s{scope_clause}",  # nosec
+                (memory_id, *scope_params),
+            )
+            if current is None:
+                raise ValueError(f"Memory {memory_id} not found")
 
         if content is not None:
             content = content.strip()
             if not content:
                 raise ValueError("Memory content cannot be empty")
+            assert current is not None
             with self.db.transaction() as conn:
-                current = conn.execute(
-                    f"SELECT project_id, is_global, content FROM memories WHERE id = %s{scope_clause}",  # nosec
-                    (memory_id, *scope_params),
-                ).fetchone()
-                if current is None:
-                    raise ValueError(f"Memory {memory_id} not found")
                 duplicate = conn.execute(
                     """
                     SELECT id FROM memories
@@ -674,6 +685,14 @@ class MemoryCrudMixin(MemoryStoreBase):
             updates.append("content = %s")
             params.append(content)
             if content != current["content"]:
+                needs_vector_reindex = True
+        if rationale is not None:
+            assert current is not None
+            # The vector embeds content and rationale together (#21010), so a
+            # rationale edit stales it exactly as a content edit does.
+            updates.append("rationale = %s")
+            params.append(rationale)
+            if rationale != current["rationale"]:
                 needs_vector_reindex = True
         if tags is not None:
             updates.append("tags = %s")

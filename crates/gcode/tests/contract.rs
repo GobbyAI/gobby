@@ -65,9 +65,9 @@ fn output_keys(contract: &Value, name: &str) -> Vec<String> {
 }
 
 #[test]
-fn contract_is_version_five_without_codewiki() {
+fn contract_is_version_six_without_codewiki() {
     let contract = serde_json::to_value(gobby_code::contract::contract()).expect("contract json");
-    assert_eq!(contract["contract_version"], serde_json::json!(5));
+    assert_eq!(contract["contract_version"], serde_json::json!(6));
     let global_flags = contract["global_flags"]
         .as_array()
         .expect("global flags array");
@@ -167,10 +167,21 @@ fn graph_view_payload_keys_are_complete() {
         .collect();
     assert!(callees_flags.contains(&"--limit".to_string()));
     assert!(callees_flags.contains(&"--offset".to_string()));
-    assert!(
-        !callees_flags.contains(&"--token-budget".to_string()),
-        "callees must not grow an output-clip --token-budget; flags={callees_flags:?}"
-    );
+    assert!(callees_flags.contains(&"--token-budget".to_string()));
+}
+
+#[test]
+fn structural_graph_payload_keys_match_serialized_graph_payload() {
+    let contract = serde_json::to_value(gobby_code::contract::contract()).expect("contract json");
+
+    for name in [
+        "graph overview",
+        "graph file",
+        "graph neighbors",
+        "graph blast-radius",
+    ] {
+        assert_eq!(output_keys(&contract, name), ["nodes", "links", "center"]);
+    }
 }
 
 fn grep_flag_names(contract: &Value) -> Vec<String> {
@@ -192,6 +203,9 @@ fn grep_flags_include_files_with_matches_and_noop_switches() {
         "--line-number",
         "--recursive",
         "-R",
+        "--limit",
+        "--offset",
+        "--token-budget",
     ] {
         assert!(
             flags.contains(&expected.to_string()),
@@ -228,14 +242,12 @@ fn daemon_query_surface_is_consumed_with_keys() {
         );
     }
 
-    assert_eq!(
-        output_keys(&contract, "outline"),
-        ["id", "name", "kind", "line_start", "line_end", "signature"]
-    );
-    assert_eq!(
-        output_keys(&contract, "tree"),
-        ["file_path", "language", "symbol_count"]
-    );
+    for expected in ["id", "name", "kind", "line_start", "line_end", "signature"] {
+        assert!(output_keys(&contract, "outline").contains(&expected.to_string()));
+    }
+    for expected in ["file_path", "language", "symbol_count"] {
+        assert!(output_keys(&contract, "tree").contains(&expected.to_string()));
+    }
 
     // symbol = record + source; symbol-at adds lookup; symbols is record only.
     // All three carry `summary`, never `docstring`.
@@ -255,6 +267,8 @@ fn daemon_query_surface_is_consumed_with_keys() {
             "total",
             "offset",
             "limit",
+            "next_offset",
+            "budget_exceeded",
             "results",
             "relation",
             "distance",
@@ -264,6 +278,48 @@ fn daemon_query_surface_is_consumed_with_keys() {
                 "{name} paged envelope missing {expected}"
             );
         }
+    }
+
+    for name in [
+        "search",
+        "search-symbol",
+        "search-text",
+        "search-content",
+        "grep",
+        "outline",
+        "symbols",
+        "kinds",
+        "tree",
+        "callers",
+        "callees",
+        "usages",
+        "imports",
+        "blast-radius",
+        "repo-outline",
+    ] {
+        let keys = output_keys(&contract, name);
+        assert!(keys.contains(&"next_offset".to_string()), "{name}");
+        assert!(keys.contains(&"budget_exceeded".to_string()), "{name}");
+        let flags = command(&contract, name)["flags"]
+            .as_array()
+            .expect("collection flags");
+        for expected in ["--limit", "--offset", "--token-budget"] {
+            assert!(
+                flags.iter().any(|flag| flag["name"] == expected),
+                "{name} missing {expected}"
+            );
+        }
+    }
+
+    for name in [
+        "graph overview",
+        "graph file",
+        "graph view",
+        "graph rebuild",
+    ] {
+        let keys = output_keys(&contract, name);
+        assert!(!keys.contains(&"next_offset".to_string()), "{name}");
+        assert!(!keys.contains(&"budget_exceeded".to_string()), "{name}");
     }
 }
 

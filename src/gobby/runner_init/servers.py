@@ -513,6 +513,22 @@ def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
             return False
         return row is not None
 
+    def _indexed_project_admitted(project_id: str) -> bool:
+        # Maintenance targets: any shared code-index identity, registered or not,
+        # so orphaned path-derived projects can be granted for projection purge.
+        try:
+            row = database.fetchone(
+                "SELECT 1 FROM code_indexed_projects WHERE id = %s",
+                (project_id,),
+            )
+        except psycopg.Error as exc:
+            logger.warning(
+                "indexed project admission query failed",
+                extra={"project_id": project_id, "error": str(exc)},
+            )
+            return False
+        return row is not None
+
     def _managed_bootstrap_dsn(bootstrap_path: object) -> str:
         payload = json.loads(Path(str(bootstrap_path)).read_text())
         return str(payload["database_url"])
@@ -552,6 +568,7 @@ def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
             operator_token=operator_token,
             issue_postgres=_issue_postgres,
             admitted_projects=_project_admitted,
+            admitted_maintenance_targets=_indexed_project_admitted,
             clock=lambda: int(time.time()),
         )
 

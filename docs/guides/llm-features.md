@@ -149,7 +149,6 @@ the same `api_base` shape. There is no `vllm-metal` protocol value.
 | --- | --- | --- | --- | --- |
 | `session_summary` | `session_summary` | `feature_low` | `LLMService.call_feature(config.session_summary, ...)` | `sessions.summary`: session handoff summaries |
 | `digest` | `digest` | `feature_low` | `LLMService.call_feature(config.digest, ...)` | `memory.turn_record`, `memory.title_synthesis`: rolling digest and title synthesis |
-| `memory_recall` | `memory_recall` | `feature_low` | Daemon recall runner invokes `LLMService.call_json_feature(...)` | Daemon-owned memory recall selection |
 | `memory.kg` | `memory.kg` | `feature_low` | `LLMService.call_json_feature(config.memory.kg, ...)` | `memory.kg.extract_entities`, `memory.kg.extract_relationships`, `memory.kg.select_outdated_relations` |
 | `memory.dream` | `memory.dream` | `feature_mid` | `LLMService.call_json_feature(config.memory.dream, ...)` | `memory.dream`: validated memory maintenance planning |
 | `tool_summarizer` | `tool_summarizer` | `feature_low` | `LLMService.call_feature(config.tool_summarizer, ...)` | `tools.tool_summary`, `tools.server_description`: MCP tool/server summaries |

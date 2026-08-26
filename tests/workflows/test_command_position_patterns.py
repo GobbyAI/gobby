@@ -8,7 +8,8 @@ path prefix (``/usr/bin/git`` is still an invocation). These tests sync
 the bundled templates into the hub database and assert through the synced
 ``RuleDefinitionBody`` effects — the same evaluation harness the engine
 uses — that real invocations block and prose mentions in commit messages
-or echoes do not.
+or echoes do not. The engine matches each executable segment on its own and
+leaves inert heredoc bodies out of the subject (#21056).
 """
 
 from __future__ import annotations
@@ -24,8 +25,8 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody
+from gobby.workflows.engine.command_matching import command_patterns_match, mask_quoted_spans
 from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.engine.effects import mask_quoted_spans
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
 pytestmark = pytest.mark.unit
@@ -80,17 +81,17 @@ def _get_rule(manager: RuleDefinitionManager, name: str) -> RuleDefinitionBody:
 
 
 def _blocks(body: RuleDefinitionBody, command: str) -> bool:
-    """Mirror the engine's block matching: pattern hits, not_pattern vetoes."""
-    for effect in body.resolved_effects:
-        if effect.type != "block" or effect.command_pattern is None:
-            continue
-        target = mask_quoted_spans(command) if effect.mask_quoted else command
-        if not re.search(effect.command_pattern, target):
-            continue
-        if effect.command_not_pattern and re.search(effect.command_not_pattern, target):
-            continue
-        return True
-    return False
+    """Apply the engine's own selector matching to each block effect."""
+    return any(
+        command_patterns_match(
+            command,
+            pattern=effect.command_pattern,
+            not_pattern=effect.command_not_pattern,
+            mask_quoted=effect.mask_quoted,
+        )
+        for effect in body.resolved_effects
+        if effect.type == "block" and effect.command_pattern is not None
+    )
 
 
 def _block_pattern_entries(body: RuleDefinitionBody) -> list[tuple[str, str | None]]:
@@ -501,6 +502,83 @@ def test_interactive_variants_share_patterns(
         base = _block_pattern_entries(bodies[base_name])
         variant = _block_pattern_entries(bodies[variant_name])
         assert base == variant, f"{variant_name} patterns drifted from {base_name}"
+
+
+# Heredoc bodies are stdin data: prose quoting a blocked command reaches the
+# matcher only when something can execute it (#21056).
+HEREDOC_RULE_BODIES = (
+    ("require-task-before-commit", "Then run `git commit` in the shared checkout."),
+    ("no-force-push", "git push --force origin main"),
+)
+HEREDOC_DATA_OPENERS = (
+    "cat >> docs/notes.md <<'EOF'",
+    "tee -a docs/notes.md <<'EOF'",
+    "> docs/notes.md <<'EOF'",
+    "gh pr create --title t --body-file - <<'EOF'",
+)
+HEREDOC_EXECUTING_OPENERS = (
+    "bash <<'EOF'",
+    "sh <<'EOF'",
+    "python <<'EOF'",
+    "zsh -s <<'EOF'",
+    "ssh build-host <<'EOF'",
+    "unknown-tool <<'EOF'",
+    "cat <<'EOF' | bash",
+)
+
+
+@pytest.mark.parametrize(("rule_name", "body"), HEREDOC_RULE_BODIES)
+async def test_heredoc_bodies_select_a_block_only_when_executable(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    rule_name: str,
+    body: str,
+) -> None:
+    _sync_bundled(db)
+    rule = _get_rule(manager, rule_name)
+    data = [f"{opener}\n{body}\nEOF" for opener in HEREDOC_DATA_OPENERS]
+    executing = [f"{opener}\n{body}\nEOF" for opener in HEREDOC_EXECUTING_OPENERS]
+    for command in data:
+        assert not _blocks(rule, command), f"{rule_name} should allow: {command}"
+    for command in executing:
+        assert _blocks(rule, command), f"{rule_name} should block: {command}"
+
+    db.execute("DELETE FROM rule_definitions WHERE name != %s", (rule_name,))
+    engine = RuleEngine(db)
+    variables = ENGINE_VARIABLE_OVERRIDES.get(rule_name, DEFAULT_ENGINE_VARIABLES)
+    allowed = await engine.evaluate(
+        _bash_event(data[0]), session_id=SESSION_ID, variables=dict(variables)
+    )
+    assert allowed.decision != "block", f"{rule_name} engine should allow: {data[0]}"
+    blocked = await engine.evaluate(
+        _bash_event(executing[0]), session_id=SESSION_ID, variables=dict(variables)
+    )
+    assert blocked.decision == "block", f"{rule_name} engine should block: {executing[0]}"
+
+
+def test_commit_message_from_stdin_is_data_for_the_push_rule(
+    db: HubDatabase, manager: RuleDefinitionManager
+) -> None:
+    _sync_bundled(db)
+    rule = _get_rule(manager, "no-force-push")
+
+    assert not _blocks(rule, "git commit -F - <<'EOF'\nfix: stop the git push --force habit\nEOF")
+
+
+def test_environment_exported_in_an_earlier_segment_still_exempts(
+    db: HubDatabase, manager: RuleDefinitionManager
+) -> None:
+    """command_not_pattern reads the whole executable text: an exported guard env counts."""
+    _sync_bundled(db)
+    rule = _get_rule(manager, "require-pytest-guard-env")
+    exported = (
+        "export GOBBY_TEST_PROTECT=1\n"
+        "export DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test\n"
+        "uv run pytest tests/tasks/test_validation.py"
+    )
+
+    assert not _blocks(rule, exported)
+    assert _blocks(rule, "cd /repo && uv run pytest tests/tasks/test_validation.py")
 
 
 def _bash_event(command: str) -> HookEvent:

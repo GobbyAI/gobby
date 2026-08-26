@@ -8,7 +8,7 @@ import hmac
 import json
 import os
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, cast
@@ -84,7 +84,11 @@ def _postgres() -> PostgresDirect:
     )
 
 
-def _handshake(service: GrantService | None = None) -> HandshakeService:
+def _handshake(
+    service: GrantService | None = None,
+    *,
+    admitted_maintenance_targets: Callable[[str], bool] | None = None,
+) -> HandshakeService:
     grants = service or _grant_service()
 
     def issue_postgres(_principal: Any) -> PostgresDirect:
@@ -96,6 +100,7 @@ def _handshake(service: GrantService | None = None) -> HandshakeService:
         operator_token=OPERATOR_TOKEN,
         issue_postgres=issue_postgres,
         admitted_projects=frozenset({PROJECT_ID}),
+        admitted_maintenance_targets=admitted_maintenance_targets,
         clock=lambda: 1_700_000_000,
     )
 
@@ -309,6 +314,38 @@ def test_maintenance_overlay_claim_binding() -> None:
             code_overlay_project_id=PROJECT_ID,
         )
     assert same_project.value.code == "claims_mismatch"
+
+
+def test_maintenance_admits_indexed_project_targets_beyond_registry() -> None:
+    """Maintenance grants may target indexed ids with no registry row (#21025)."""
+    indexed_only = "0d1a4ce8-6f21-5d59-8abc-9d2f5b2b8a7c"
+    handshake = _handshake(
+        admitted_maintenance_targets=lambda project_id: project_id == indexed_only
+    )
+
+    grant = handshake.issue_for_maintenance(
+        machine_id=LOCAL_MACHINE_ID,
+        project_id=indexed_only,
+        execution_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+    )
+    assert grant.principal.kind == "maintenance"
+    assert grant.principal.project_id == indexed_only
+
+    with pytest.raises(HandshakeRejection) as operator_rejected:
+        handshake.issue_for_operator(
+            machine_id=LOCAL_MACHINE_ID,
+            project_id=indexed_only,
+            session_id=SESSION_ID,
+        )
+    assert operator_rejected.value.code == "claims_mismatch"
+
+    with pytest.raises(HandshakeRejection) as registry_only:
+        _handshake().issue_for_maintenance(
+            machine_id=LOCAL_MACHINE_ID,
+            project_id=indexed_only,
+            execution_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        )
+    assert registry_only.value.code == "claims_mismatch"
 
 
 def test_expiry_bounded_and_serialized() -> None:

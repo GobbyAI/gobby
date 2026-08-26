@@ -62,7 +62,7 @@ rules:
       and event.data.get('canonical_code_navigation_repo_scope') is not False
     effects:
       - type: block
-        reason: '{{ skill_fetch_directive("code-index") }} If that call fails, its recorded failure fails this rule open — re-run the search command that was just blocked, not the failing fetch. After loading, use `gcode grep "pattern" [PATH...] -m 50` (supports -F -i -w -l -A/-B/-C -g), `gcode search-content "query" [PATH...]`, `gcode outline path/to/file`, or `gcode symbol <id>`.'
+        reason: '{{ skill_fetch_directive("code-index") }} If that call fails, its recorded failure fails this rule open — re-run the search command that was just blocked, not the failing fetch. After loading, use compact `gcode grep "pattern" [PATH...] -m 50` (supports -F -i -w -l -A/-B/-C -g), `gcode search-content "query" [PATH...]`, `gcode outline path/to/file`, or `gcode symbol-at path/to/file:line`; run printed continuation commands exactly.'
 
   prefer-gcode-for-code-search:
     description: "Block broad shell search in indexed projects after code-index is loaded"
@@ -80,7 +80,7 @@ rules:
       and event.data.get('canonical_code_navigation_repo_scope') is not False
     effects:
       - type: block
-        reason: 'Use `gcode grep "pattern" -m 50` (supports -F -i -w -l -g; exit 0 even with no matches) or `gcode search-content "query"` — the code index has full access to this repo and returns ranked, token-cheap results. If gcode errors, read its one-line JSON and follow the `recovery` directive; do NOT re-run the failing gcode call — its recorded failure fails this rule open, so re-run the grep/rg command that was blocked instead.'
+        reason: 'Use compact `gcode grep "pattern" -m 50` (supports -F -i -w -l -g; exit 0 even with no matches) or `gcode search-content "query"` — the code index has full access to this repo and returns ranked, token-cheap pages. Run any printed continuation command exactly. If gcode errors, read its one-line JSON and follow the `recovery` directive; do NOT re-run the failing gcode call — its recorded failure fails this rule open, so re-run the grep/rg command that was blocked instead.'
 
   prefer-gcode-for-source-read:
     description: "Block broad source reads in indexed projects after code-index is loaded"
@@ -102,4 +102,4 @@ rules:
       )
     effects:
       - type: block
-        reason: 'Use `gcode outline <file>` then `gcode symbol <id>` — ranged Read (offset/limit, ≤40 lines) is always available. If gcode errors, read its one-line JSON and follow the `recovery` directive; do NOT re-run the failing gcode call — its recorded failure fails this rule open, so use Read on the file instead.'
+        reason: 'Use `gcode outline <file>`, then `gcode symbol-at <file>:<line>` for the relevant result. Request `--format json` or `--verbose` only when an ID is required. Ranged Read (offset/limit, ≤40 lines) is always available. If gcode errors, read its one-line JSON and follow the `recovery` directive; do NOT re-run the failing gcode call — its recorded failure fails this rule open, so use Read on the file instead.'

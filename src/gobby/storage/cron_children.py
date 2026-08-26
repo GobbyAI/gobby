@@ -4,15 +4,22 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import replace
+from datetime import timedelta
 from typing import Literal
 
 from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES, TERMINAL_AGENT_RUN_STATUSES
 from gobby.storage.cron_models import CronRun, CronRunChild
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import utc_now
 
 PIPELINE_ACTIVE_STATUSES = ("pending", "running", "waiting_approval", "interrupted")
 PIPELINE_TERMINAL_STATUSES = ("completed", "failed", "cancelled")
 CHILD_STATUS_TABLES = frozenset({"pipeline_executions", "agent_runs"})
+INTERRUPTED_RUN_ERROR = "Cron run was interrupted by a daemon restart"
+# Re-queue delay for a job whose run a dead daemon left active: long enough for
+# the daemon to finish starting, short enough that a checkpointed sweep (memory
+# dream) resumes tonight instead of at its next scheduled slot.
+INTERRUPTED_RUN_RETRY_DELAY_SECONDS = 60
 
 ChildActionType = Literal["agent_spawn", "pipeline", "shell", "handler", "dispatcher"]
 
@@ -52,13 +59,25 @@ def active_children_for_job(
 
 
 def reconcile_interrupted_runs(db: HubDatabase, machine_id: str) -> dict[str, int]:
-    """Normalize active cron rows owned by one scheduler machine."""
+    """Normalize active cron rows owned by one scheduler machine.
+
+    Runs with live durable children become ``dispatched``. Every other active
+    row belonged to a daemon incarnation that is gone: it is closed as
+    ``interrupted`` — an interruption is not a failure, so the job's backoff
+    counter is untouched — and the job is re-queued for a near-term retry so
+    checkpointed work resumes instead of waiting for its next schedule slot.
+    """
     dispatched = _reconcile_linked_pipeline_runs(
         db,
         machine_id,
     ) + _reconcile_linked_agent_runs(db, machine_id)
-    failed = _fail_remaining_active_runs(db, machine_id)
-    return {"dispatched": dispatched, "failed": failed}
+    interrupted_job_ids = _interrupt_remaining_active_runs(db, machine_id)
+    requeued = _requeue_interrupted_jobs(db, interrupted_job_ids)
+    return {
+        "dispatched": dispatched,
+        "interrupted": len(interrupted_job_ids),
+        "requeued": requeued,
+    }
 
 
 def _fetch_statuses(db: HubDatabase, table: str, ids: Sequence[str | None]) -> dict[str, str]:
@@ -189,19 +208,40 @@ def _reconcile_linked_agent_runs(db: HubDatabase, machine_id: str) -> int:
     return cursor.rowcount
 
 
-def _fail_remaining_active_runs(db: HubDatabase, machine_id: str) -> int:
-    cursor = db.execute(
+def _interrupt_remaining_active_runs(db: HubDatabase, machine_id: str) -> list[str]:
+    rows = db.fetchall(
         """
         UPDATE cron_runs
-           SET status = 'failed',
+           SET status = 'interrupted',
                completed_at = COALESCE(completed_at, NOW()),
-               error = COALESCE(
-                   error,
-                   'Cron run was still active when the scheduler started'
-               )
+               error = COALESCE(error, %s)
          WHERE status IN ('pending', 'running')
            AND machine_id = %s
+        RETURNING cron_job_id
         """,
-        (machine_id,),
+        (INTERRUPTED_RUN_ERROR, machine_id),
+    )
+    return [str(row["cron_job_id"]) for row in rows]
+
+
+def _requeue_interrupted_jobs(db: HubDatabase, job_ids: Sequence[str]) -> int:
+    """Pull each interrupted job's next run forward to a near-term retry.
+
+    Only enabled, scheduled jobs move; a parked system row (``next_run_at``
+    NULL) or a disabled one-shot stays where its owner left it, and a schedule
+    that is already sooner is kept.
+    """
+    if not job_ids:
+        return 0
+    retry_at = utc_now() + timedelta(seconds=INTERRUPTED_RUN_RETRY_DELAY_SECONDS)
+    cursor = db.execute(
+        """
+        UPDATE cron_jobs
+           SET next_run_at = %s
+         WHERE id = ANY(%s::uuid[])
+           AND enabled
+           AND next_run_at > %s
+        """,
+        (retry_at, sorted(set(job_ids)), retry_at),
     )
     return cursor.rowcount

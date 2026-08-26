@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
 
 from gobby.shutdown_intent import ShutdownIntent, write_shutdown_intent
+from gobby.utils.git import disable_optional_git_locks
 
 if TYPE_CHECKING:
     from gobby.adapters.codex_impl.client import CodexAppServerClient
@@ -78,6 +79,11 @@ if TYPE_CHECKING:
     from gobby.worktrees.git import WorktreeGitManager
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+# Daemon git reads must never take the optional index lock: a `git status`
+# killed on timeout mid index-refresh leaves `.git/index.lock` behind and
+# blocks every commit in the shared checkout (#21055).
+disable_optional_git_locks()
 
 # Strip Claude Code session marker so SDK subprocess calls don't fail with
 # "cannot be launched inside another Claude Code session" when the daemon
@@ -513,6 +519,15 @@ def main(config_path: Path | None = None, verbose: bool = False) -> None:
     # which lets unified-memory allocations balloon past physical RAM.
     os.environ.setdefault("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.8")
     _raise_fd_limit()
+
+    # Refuse a linked-worktree source tree before any subsystem touches the
+    # database: startup sync would publish this checkout's templates to every
+    # session (#21031).
+    from gobby.utils.dev import worktree_daemon_refusal
+
+    if refusal := worktree_daemon_refusal():
+        print(refusal, file=sys.stderr)
+        sys.exit(1)
 
     # Fast guard: if a healthy daemon is already serving on our port, exit
     # cleanly so launchd (KeepAlive.SuccessfulExit=false) won't respawn us.

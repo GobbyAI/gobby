@@ -132,6 +132,9 @@ class Memory:
     # leg missed. It is the admission axis for that hit at both floors, while
     # `similarity` ranks it (#20873). None for every other candidate.
     graph_confidence: float | None = None  # Set at search time, not persisted
+    # Ids of lower-ranked hits folded into this one because their stored vectors
+    # were near-identical (#21010). None when nothing collapsed into it.
+    collapsed_duplicates: list[str] | None = None  # Set at search time, not persisted
 
     def __post_init__(self) -> None:
         self.memory_type = validate_memory_type(self.memory_type)

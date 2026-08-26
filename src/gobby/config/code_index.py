@@ -78,7 +78,7 @@ class CodeIndexConfig(BaseModel):
         description="Dedicated rotating log file for code-index prune and nightly maintenance",
     )
     content_retention_days: int = Field(
-        default=30,
+        default=1,
         ge=1,
         description="Days to retain unreferenced indexed content and recent Git history",
     )

@@ -8,17 +8,15 @@ Active memory-lifecycle rules:
 - digest-on-plan-turn-end: mcp_call on provider-specific plan boundaries
 - digest-catch-up-on-turn-start: mcp_call on turn_start to catch up undigested prior turns
 - reset-memory-tracking-on-start: set_variable on session_start
-- increment-parent-turn-seq: set_variable on turn_start before daemon recall
-- memory-recall-on-prompt: mcp_call on turn_start
+- increment-parent-turn-seq: set_variable on turn_start
 - load-memory-guidance-on-initial-turn: load_skill on the initial turn_start
 - check-memory-guidance-on-initial-stop: acknowledged block on the first turn_end
 - remind-memory-guidance-on-later-turns: inject_context on later parent turn_starts
 - queue-task-memory-review-after-close: set_variable on after_tool close_task
+- review-closed-task-memories-before-compact: acknowledged block on before_tool compact_self
 - review-closed-task-memories-on-stop: acknowledged block on turn_end
 - guard-plan-memory-writes: one-time block on create_memory and update_memory
-- require-memory-recall-before-tool: block on before_tool
-- require-memory-recall-before-turn-end: block on turn_end
-- clear-memory-review-on-create: set_variable on before_tool
+- search-memories-on-claim: inject_context on after_tool claim_task/create_task claims
 
 """
 
@@ -50,21 +48,23 @@ MEMORY_RULES = {
     "digest-on-plan-turn-end",
     "reset-memory-tracking-on-start",
     "increment-parent-turn-seq",
-    "memory-recall-on-prompt",
     "load-memory-guidance-on-initial-turn",
     "check-memory-guidance-on-initial-stop",
     "remind-memory-guidance-on-later-turns",
     "queue-task-memory-review-after-close",
+    "review-closed-task-memories-before-compact",
     "review-closed-task-memories-on-stop",
     "guard-plan-memory-writes",
-    "require-memory-recall-before-tool",
-    "require-memory-recall-before-turn-end",
+    "search-memories-on-claim",
 }
 
 REMOVED_HELPER_RULES = {
     "bootstrap-session-title-on-prompt",
     "cancel-stale-memory-recall-helpers",
     "memory-capture-nudge",
+    "memory-recall-on-prompt",
+    "require-memory-recall-before-tool",
+    "require-memory-recall-before-turn-end",
     "spawn-memory-recall-helper",
 }
 
@@ -268,63 +268,6 @@ class TestResetMemoryTrackingOnStart:
         assert "compact" in body.when
 
 
-# memory-recall-on-prompt
-# ═══════════════════════════════════════════════════════════════════════
-
-
-class TestMemoryRecallOnPrompt:
-    """Substantive recall runs synchronously once per parent turn."""
-
-    def test_inline_rule_uses_single_recall_tool_and_attempt_watermark(self, db, manager) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("memory-recall-on-prompt")
-        assert row is not None
-        body = RuleDefinitionBody.model_validate(row.definition_json)
-        assert body.event.value == "turn_start"
-        assert body.when is not None
-        assert "is_spawned_agent" in body.when
-        assert "memory_recall_attempted_turn_seq" in body.when
-        assert body.effects[0].type == "set_variable"
-        assert body.effects[0].variable == "memory_recall_attempted_turn_seq"
-        recall = body.effects[1]
-        assert recall.type == "mcp_call"
-        assert recall.server == "gobby-memory"
-        assert recall.tool == "recall_memories_for_prompt"
-        assert recall.background is False
-        assert recall.inject_result is True
-        assert all(effect.tool != "search_memories" for effect in body.effects)
-
-    def test_duplicate_hook_for_same_parent_turn_is_rejected(self, db, manager) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("memory-recall-on-prompt")
-        body = RuleDefinitionBody.model_validate(row.definition_json)
-        assert body.when is not None
-
-        first = SafeExpressionEvaluator(
-            {
-                "variables": {
-                    "is_spawned_agent": False,
-                    "parent_turn_seq": 7,
-                }
-            },
-            {},
-        )
-        duplicate = SafeExpressionEvaluator(
-            {
-                "variables": {
-                    "is_spawned_agent": False,
-                    "parent_turn_seq": 7,
-                    "memory_recall_attempted_turn_seq": 7,
-                }
-            },
-            {},
-        )
-
-        assert first.evaluate(body.when) is True
-        assert duplicate.evaluate(body.when) is False
-
-
-# ═══════════════════════════════════════════════════════════════════════
 # increment-parent-turn-seq
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -421,6 +364,69 @@ def _review_variables(*pending: dict[str, str], **overrides: Any) -> dict[str, A
     return variables
 
 
+def _sessions_tool_event(tool_name: str = "compact_self") -> HookEvent:
+    """A `gobby-sessions` call as the before_tool gate sees it."""
+    return HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id=SESSION_ID,
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "mcp__gobby__call_tool",
+            "mcp_server": "gobby-sessions",
+            "mcp_tool": tool_name,
+            "tool_input": {
+                "server_name": "gobby-sessions",
+                "tool_name": tool_name,
+                "arguments": {},
+            },
+        },
+    )
+
+
+def _close_task_event(task_ref: str, summary: str) -> HookEvent:
+    """A successful `gobby-tasks:close_task` after_tool event for TASK_ID."""
+    return HookEvent(
+        event_type=HookEventType.AFTER_TOOL,
+        session_id=SESSION_ID,
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": "gobby-tasks",
+                "tool_name": "close_task",
+                "arguments": {
+                    "task_id": task_ref,
+                    "changes_summary": summary,
+                    "commit_sha": "abc1234",
+                },
+            },
+            "tool_output": {
+                "success": True,
+                "closed": True,
+                "task_id": TASK_ID,
+                "commit_shas": ["abc1234"],
+            },
+        },
+    )
+
+
+def _closed_leaf_task_manager() -> MagicMock:
+    task_manager = MagicMock()
+    task_manager.get_task.return_value = SimpleNamespace(
+        id=TASK_ID,
+        seq_num=43,
+        task_type="task",
+        category="code",
+        closed_reason="completed",
+        closed_at=datetime(2026, 8, 25, tzinfo=UTC),
+        commits=["abc1234"],
+    )
+    task_manager.list_tasks.return_value = []
+    return task_manager
+
+
 class TestLayeredMemoryGuidance:
     def test_initial_turn_requests_memory_skill(
         self, db: HubDatabase, manager: RuleDefinitionManager
@@ -511,9 +517,8 @@ class TestLayeredMemoryGuidance:
         assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.resolved_effects[0].template == (
-            "Memory reminder: use recalled memories; search `gobby-memory` when injected "
-            "context is insufficient. Record only explicitly requested or durable, "
-            "non-obvious knowledge. Most turns need no memory write.\n"
+            "Memory reminder: search `gobby-memory` before touching unfamiliar code; "
+            "record durable knowledge with a rationale. Most turns need no memory write.\n"
         )
 
         first = SafeExpressionEvaluator(
@@ -753,6 +758,125 @@ class TestPostCloseMemoryReviewRules:
         assert variables["_memory_pending_task_reviews"] == [pending]
         assert variables["_memory_review_stop_delivered"] is False
 
+    def test_before_compact_review_mirrors_the_stop_gate(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        """compact_self right after close_task must not defer the review past the context."""
+        _sync_bundled(db)
+        row = manager.get_by_name("review-closed-task-memories-before-compact")
+        assert row is not None
+        assert row.priority == 1
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+        effects = body.resolved_effects
+
+        assert body.event.value == "before_tool"
+        when = body.when or ""
+        assert "event.data.get('mcp_server') == 'gobby-sessions'" in when
+        assert "event.data.get('mcp_tool') == 'compact_self'" in when
+        assert "_memory_pending_task_reviews" in when
+        assert "_memory_review_stop_delivered" in when
+        assert len(effects) == 1
+        assert effects[0].type == "block"
+        assert effects[0].mcp_tools == ["gobby-sessions:compact_self"]
+        assert effects[0].acknowledge_variable == "_memory_review_stop_delivered"
+        reason = effects[0].reason or ""
+        assert "{% for item in variables.get('_memory_pending_task_reviews') or [] %}" in reason
+        assert "review_task_memories" in reason
+        assert "source_task_id" in reason
+        assert "retry `gobby-sessions:compact_self`" in reason
+
+    @pytest.mark.asyncio
+    async def test_compact_self_delivers_pending_review_once_and_settles_the_stop_gate(
+        self, db: HubDatabase
+    ) -> None:
+        """The manual-compact bypass skips turn_end, so the review lands on compact_self."""
+        _sync_bundled(db)
+        pending = [
+            _pending_review("#42", "Implemented layered memory guidance."),
+            _pending_review("#43", "Documented the review tool."),
+        ]
+        variables = _review_variables(*pending, _gobby_feedback_epoch_reviewed=True)
+        engine = RuleEngine(db)
+        compact = _sessions_tool_event()
+
+        first = await engine.evaluate(compact, SESSION_ID, variables)
+        retry = await engine.evaluate(compact, SESSION_ID, variables)
+        stop = await engine.evaluate(_turn_end_event(), SESSION_ID, variables)
+
+        assert first.decision == "block"
+        reason = first.reason or ""
+        assert "#42 (task_id `task-42`): Implemented layered memory guidance." in reason
+        assert "#43 (task_id `task-43`): Documented the review tool." in reason
+        assert "gobby-memory:review_task_memories(task_id, changes_summary)" in reason
+        assert "retry `gobby-sessions:compact_self`" in reason
+        assert variables["_memory_review_stop_delivered"] is True
+        assert variables["_memory_pending_task_reviews"] == pending
+        assert retry.decision == "allow"
+        assert stop.decision == "allow"
+        assert "review_task_memories" not in (stop.reason or "")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("overrides", "tool_name"),
+        [
+            pytest.param(
+                {"_memory_pending_task_reviews": []}, "compact_self", id="nothing_pending"
+            ),
+            pytest.param({"_memory_review_stop_delivered": True}, "compact_self", id="delivered"),
+            pytest.param({}, "get_handoff_context", id="other_sessions_tool"),
+        ],
+    )
+    async def test_compact_gate_stays_silent_without_an_undelivered_review(
+        self, db: HubDatabase, overrides: dict[str, Any], tool_name: str
+    ) -> None:
+        _sync_bundled(db)
+        variables = _review_variables(
+            _pending_review("#42", "Completed work."),
+            _gobby_feedback_epoch_reviewed=True,
+            **overrides,
+        )
+        delivered_before = variables["_memory_review_stop_delivered"]
+        engine = RuleEngine(db)
+
+        response = await engine.evaluate(_sessions_tool_event(tool_name), SESSION_ID, variables)
+
+        assert response.decision == "allow"
+        assert variables["_memory_review_stop_delivered"] is delivered_before
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "rearmed_channel",
+        [
+            pytest.param(HookEventType.BEFORE_TOOL, id="before_tool_compact_self"),
+            pytest.param(HookEventType.STOP, id="turn_end"),
+        ],
+    )
+    async def test_later_close_rearms_both_gates_after_compact_delivery(
+        self, db: HubDatabase, rearmed_channel: HookEventType
+    ) -> None:
+        """A close after a compact_self delivery re-arms both delivery channels."""
+        _sync_bundled(db)
+        variables = _review_variables(
+            _pending_review("#42", "Earlier closure."), _gobby_feedback_epoch_reviewed=True
+        )
+        engine = RuleEngine(db, task_manager=_closed_leaf_task_manager())
+        compact = _sessions_tool_event()
+        rearmed_event = (
+            compact if rearmed_channel is HookEventType.BEFORE_TOOL else _turn_end_event()
+        )
+
+        delivered = await engine.evaluate(compact, SESSION_ID, variables)
+        await engine.evaluate(_close_task_event("#43", "Second closure."), SESSION_ID, variables)
+        requeued_flag = variables["_memory_review_stop_delivered"]
+        rearmed = await engine.evaluate(rearmed_event, SESSION_ID, variables)
+
+        assert delivered.decision == "block"
+        assert requeued_flag is False
+        assert rearmed.decision == "block"
+        assert f"#43 (task_id `{TASK_ID}`): Second closure." in (rearmed.reason or "")
+        assert "Earlier closure." not in (rearmed.reason or "")
+        assert variables["_memory_review_stop_delivered"] is True
+
     @pytest.mark.asyncio
     async def test_after_agent_aggregates_both_memory_gates_once(self, db: HubDatabase) -> None:
         _sync_bundled(db)
@@ -761,6 +885,9 @@ class TestPostCloseMemoryReviewRules:
             _memory_initial_stop_checked=False,
             loaded_skills=[],
             open_tool_errors=[],
+            # The research-feedback stop gate shares this trigger; keep it quiet
+            # so the aggregate counts only the two memory gates.
+            _gobby_feedback_epoch_reviewed=True,
         )
         engine = RuleEngine(db)
         event = _turn_end_event(HookEventType.AFTER_AGENT, source=SessionSource.QWEN)
@@ -884,7 +1011,7 @@ class TestGuardPlanMemoryWrites:
             "write satisfies that boundary."
         )
 
-    def test_condition_covers_planning_contexts_and_recall_precedence(
+    def test_condition_covers_planning_contexts_without_recall_gate(
         self,
         db: HubDatabase,
         manager: RuleDefinitionManager,
@@ -896,7 +1023,7 @@ class TestGuardPlanMemoryWrites:
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.when is not None
         assert "variables.get('plan_mode')" in body.when
-        assert "not pending_memory_recall_request_id()" in body.when
+        assert "pending_memory_recall_request_id" not in body.when
         for agent_type in (
             "planner",
             "plan-adversary",
@@ -905,3 +1032,239 @@ class TestGuardPlanMemoryWrites:
             "plan-enhancer-taskless",
         ):
             assert f"'{agent_type}'" in body.when
+
+
+# ---------------------------------------------------------------------------
+# guard-plan-memory-writes through the engine
+# ---------------------------------------------------------------------------
+
+_GUARD_SESSION_ID = "287cefb3-355b-4795-a64d-2f52bc4be2a8"
+_GUARD_EXTERNAL_SESSION_ID = "f9d7010b-681c-41cd-8b99-6c778f832831"
+
+
+def _memory_tool_event(tool_name: str) -> HookEvent:
+    return HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id=_GUARD_EXTERNAL_SESSION_ID,
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": "gobby-memory",
+                "tool_name": tool_name,
+                "arguments": {},
+            },
+        },
+        metadata={"_platform_session_id": _GUARD_SESSION_ID},
+    )
+
+
+@pytest.fixture
+def guard_engine(db: HubDatabase) -> RuleEngine:
+    _sync_bundled(db)
+    with db.transaction() as conn:
+        conn.execute("UPDATE rule_definitions SET enabled = FALSE")
+        conn.execute(
+            "UPDATE rule_definitions SET enabled = TRUE WHERE name = %s",
+            ("guard-plan-memory-writes",),
+        )
+    return RuleEngine(db)
+
+
+class TestGuardPlanMemoryWritesEngine:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("memory_tool", ["create_memory", "update_memory"])
+    @pytest.mark.parametrize(
+        "planning_context",
+        [
+            {"plan_mode": True},
+            {"_agent_type": "planner"},
+            {"_agent_type": "plan-enhancer-taskless"},
+        ],
+    )
+    async def test_plan_memory_write_blocks_once_then_allows_retry(
+        self,
+        guard_engine: RuleEngine,
+        memory_tool: str,
+        planning_context: dict[str, object],
+    ) -> None:
+        variables = dict(planning_context)
+        event = _memory_tool_event(memory_tool)
+
+        first = await guard_engine.evaluate(event, _GUARD_SESSION_ID, variables)
+        second = await guard_engine.evaluate(event, _GUARD_SESSION_ID, variables)
+
+        assert first.decision == "block"
+        assert first.reason is not None
+        assert "Use the plan artifact or evidence for plan drafts" in first.reason
+        assert variables["plan_memory_write_nudge_fired"] is True
+        assert second.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_plan_memory_guard_does_not_affect_normal_sessions(
+        self, guard_engine: RuleEngine
+    ) -> None:
+        variables: dict[str, object] = {}
+
+        result = await guard_engine.evaluate(
+            _memory_tool_event("create_memory"), _GUARD_SESSION_ID, variables
+        )
+
+        assert result.decision == "allow"
+        assert "plan_memory_write_nudge_fired" not in variables
+
+    @pytest.mark.asyncio
+    async def test_plan_memory_guard_does_not_affect_non_write_memory_tools(
+        self, guard_engine: RuleEngine
+    ) -> None:
+        variables: dict[str, object] = {"plan_mode": True}
+
+        result = await guard_engine.evaluate(
+            _memory_tool_event("search_memories"), _GUARD_SESSION_ID, variables
+        )
+
+        assert result.decision == "allow"
+        assert "plan_memory_write_nudge_fired" not in variables
+
+
+# ---------------------------------------------------------------------------
+# search-memories-on-claim through the engine
+# ---------------------------------------------------------------------------
+
+_CLAIM_SESSION_ID = "6f3a1f62-4d1e-4a4b-9a8e-3f7c2b1d0e55"
+_CLAIM_TASK_ID = "33333333-3333-4333-8333-333333330043"
+_CLAIM_NUDGE = "Task claimed. Before editing, search project memory for its subject:"
+
+
+def _task_tool_event(tool_name: str, arguments: dict[str, Any], tool_output: Any) -> HookEvent:
+    return HookEvent(
+        event_type=HookEventType.AFTER_TOOL,
+        session_id=_CLAIM_SESSION_ID,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": "gobby-tasks",
+                "tool_name": tool_name,
+                "arguments": arguments,
+            },
+            "mcp_server": "gobby-tasks",
+            "mcp_tool": tool_name,
+            "tool_output": tool_output,
+        },
+        metadata={"_platform_session_id": _CLAIM_SESSION_ID},
+    )
+
+
+@pytest.fixture
+def claim_engine(db: HubDatabase) -> RuleEngine:
+    _sync_bundled(db)
+    with db.transaction() as conn:
+        conn.execute("UPDATE rule_definitions SET enabled = FALSE")
+        conn.execute(
+            "UPDATE rule_definitions SET enabled = TRUE WHERE name = %s",
+            ("search-memories-on-claim",),
+        )
+    return RuleEngine(db)
+
+
+class TestSearchMemoriesOnClaim:
+    def test_rule_contract(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("search-memories-on-claim")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+
+        assert row.priority == 13
+        assert body.event.value == "after_tool"
+        assert "claimed_tasks" in (body.when or "")
+        assert [effect.type for effect in body.resolved_effects] == ["inject_context"]
+        assert "gobby-memory:search_memories" in (body.resolved_effects[0].template or "")
+
+    @pytest.mark.parametrize(
+        "tool_output",
+        [
+            pytest.param({"success": True, "task_id": _CLAIM_TASK_ID}, id="bare-payload"),
+            pytest.param(
+                {"success": True, "result": {"success": True, "task_id": _CLAIM_TASK_ID}},
+                id="proxy-envelope",
+            ),
+        ],
+    )
+    async def test_claim_task_nudges_a_search_with_the_title_placeholder(
+        self, claim_engine: RuleEngine, tool_output: dict[str, Any]
+    ) -> None:
+        variables: dict[str, Any] = {"claimed_tasks": {_CLAIM_TASK_ID: "#43"}}
+        event = _task_tool_event("claim_task", {"task_id": "#43"}, tool_output)
+
+        result = await claim_engine.evaluate(event, _CLAIM_SESSION_ID, variables)
+
+        assert result.decision == "allow"
+        assert result.context is not None
+        assert _CLAIM_NUDGE in result.context
+        assert '`gobby-memory:search_memories(query="<task title>")`' in result.context
+
+    async def test_create_task_with_claim_names_the_new_title_as_the_query(
+        self, claim_engine: RuleEngine
+    ) -> None:
+        variables: dict[str, Any] = {"claimed_tasks": {_CLAIM_TASK_ID: "#43"}}
+        event = _task_tool_event(
+            "create_task",
+            {"title": "Fix session cleanup on missing transcripts", "claim": True},
+            {"success": True, "result": {"id": _CLAIM_TASK_ID, "seq_num": 43, "ref": "#43"}},
+        )
+
+        result = await claim_engine.evaluate(event, _CLAIM_SESSION_ID, variables)
+
+        assert result.context is not None
+        assert (
+            'search_memories(query="Fix session cleanup on missing transcripts")' in result.context
+        )
+
+    @pytest.mark.parametrize(
+        ("tool_name", "arguments", "tool_output", "claimed"),
+        [
+            pytest.param(
+                "create_task",
+                {"title": "Unclaimed follow-up"},
+                {"success": True, "result": {"id": _CLAIM_TASK_ID, "seq_num": 43, "ref": "#43"}},
+                {},
+                id="create-without-claim",
+            ),
+            pytest.param(
+                "claim_task",
+                {"task_id": "#43"},
+                {
+                    "success": False,
+                    "error": "Task already claimed by another session",
+                    "code": "task_claim_conflict",
+                },
+                {"44444444-4444-4444-8444-444444440007": "#7"},
+                id="claim-conflict",
+            ),
+            pytest.param(
+                "get_task",
+                {"task_id": "#43"},
+                {"success": True, "result": {"id": _CLAIM_TASK_ID, "ref": "#43"}},
+                {_CLAIM_TASK_ID: "#43"},
+                id="non-claim-tool",
+            ),
+        ],
+    )
+    async def test_stays_silent_unless_the_returned_task_was_claimed(
+        self,
+        claim_engine: RuleEngine,
+        tool_name: str,
+        arguments: dict[str, Any],
+        tool_output: dict[str, Any],
+        claimed: dict[str, str],
+    ) -> None:
+        variables: dict[str, Any] = {"claimed_tasks": claimed}
+        event = _task_tool_event(tool_name, arguments, tool_output)
+
+        result = await claim_engine.evaluate(event, _CLAIM_SESSION_ID, variables)
+
+        assert result.decision == "allow"
+        assert not (result.context and _CLAIM_NUDGE in result.context)

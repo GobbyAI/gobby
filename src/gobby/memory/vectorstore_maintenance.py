@@ -14,6 +14,7 @@ from qdrant_client.http.models.models import (
     DeleteAliasOperation,
 )
 
+from gobby.memory.embedding_text import memory_embedding_text
 from gobby.memory.vectorstore_client import QdrantClientLike, VectorStoreCollectionDimensionError
 from gobby.memory.vectorstore_rebuild import RebuildCollectionPlan
 
@@ -185,10 +186,13 @@ class VectorStoreMaintenance:
                         memory_id = str(memory["id"])
                         if stale_delete_strategy == "streaming":
                             incoming_ids.add(memory_id)
-                        content = memory["content"]
-                        embedding = await embed_fn(content)
+                        embedding = await embed_fn(
+                            memory_embedding_text(memory["content"], memory.get("rationale"))
+                        )
                         payload = {
-                            key: value for key, value in memory.items() if key not in ("id",)
+                            key: value
+                            for key, value in memory.items()
+                            if key not in ("id", "rationale")
                         }
                         batch.append((memory_id, embedding, payload))
                         if len(batch) >= batch_size:

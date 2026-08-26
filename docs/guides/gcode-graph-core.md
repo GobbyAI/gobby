@@ -97,7 +97,8 @@ FalkorDB nodes with code-index labels (`CodeFile`, `CodeSymbol`, `CodeModule`,
 match memory graph labels or memory-owned `RELATES_TO_CODE` bridge queries.
 
 `gcode vector clear` deletes points from `code_symbols_{project_id}` filtered by
-`project_id`. It must not list, drop, or mutate memory vector collections.
+`project_id`; with `--drop-collection` it deletes that one collection outright
+(project purge). It must not list, drop, or mutate memory vector collections.
 
 `gcode index` handles deleted-file projection cleanup in Rust before hub fact
 deletion. Missing explicit files and whole-project stale/orphan files delete the

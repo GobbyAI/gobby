@@ -2,10 +2,14 @@ use gobby_core::cli_contract::{
     CliContract, CommandContract, ExitCodeContract, FlagContract, PositionalContract, ScopeContract,
 };
 
+mod schema;
+
+use schema::*;
+
 pub fn contract() -> CliContract {
     CliContract {
         tool: "gcode",
-        contract_version: 5,
+        contract_version: 6,
         summary: "Fast code index CLI for Gobby.",
         global_flags: vec![
             FlagContract::value("--project", "ROOT"),
@@ -132,6 +136,7 @@ pub fn contract() -> CliContract {
                 flags: {
                     let mut flags = search_flags();
                     flags.push(FlagContract::switch("--with-graph"));
+                    flags.push(token_budget_flag());
                     flags
                 },
                 json_output_keys: search_keys(),
@@ -153,6 +158,7 @@ pub fn contract() -> CliContract {
                     FlagContract::value("--limit", "N"),
                     FlagContract::value("--offset", "N"),
                     FlagContract::value("--language", "LANG"),
+                    token_budget_flag(),
                 ],
                 daemon_consumed: true,
                 json_output_keys: search_keys(),
@@ -174,6 +180,7 @@ pub fn contract() -> CliContract {
                     FlagContract::value("--limit", "N"),
                     FlagContract::value("--offset", "N"),
                     FlagContract::value("--language", "LANG"),
+                    token_budget_flag(),
                 ],
                 daemon_consumed: true,
                 json_output_keys: search_keys(),
@@ -202,7 +209,7 @@ pub fn contract() -> CliContract {
             CommandContract {
                 daemon_consumed: true,
                 positionals: vec![PositionalContract::required("FILE")],
-                flags: vec![],
+                flags: paged_navigation_flags(),
                 json_output_keys: outline_keys(),
                 ..CommandContract::new("outline", "Show a hierarchical symbol tree for a file.")
             },
@@ -230,20 +237,20 @@ pub fn contract() -> CliContract {
             CommandContract {
                 daemon_consumed: true,
                 positionals: vec![PositionalContract::repeatable("ID")],
-                flags: vec![format_flag()],
-                json_output_keys: symbol_record_keys(),
+                flags: paged_navigation_flags(),
+                json_output_keys: symbol_batch_keys(),
                 ..CommandContract::new("symbols", "Batch retrieve symbols by ID.")
             },
             CommandContract {
                 positionals: vec![],
-                flags: vec![format_flag()],
-                json_output_keys: vec![],
+                flags: paged_navigation_flags(),
+                json_output_keys: collection_keys(),
                 ..CommandContract::new("kinds", "List distinct symbol kinds in the index.")
             },
             CommandContract {
                 daemon_consumed: true,
                 positionals: vec![],
-                flags: vec![format_flag()],
+                flags: paged_navigation_flags(),
                 json_output_keys: tree_keys(),
                 ..CommandContract::new("tree", "Show file tree with symbol counts.")
             },
@@ -264,11 +271,7 @@ pub fn contract() -> CliContract {
             CommandContract {
                 daemon_consumed: true,
                 positionals: vec![PositionalContract::required("SYMBOL")],
-                flags: {
-                    let mut flags = graph_read_flags();
-                    flags.push(token_budget_flag());
-                    flags
-                },
+                flags: graph_read_flags(),
                 json_output_keys: graph_read_keys(),
                 ..CommandContract::new(
                     "usages",
@@ -278,7 +281,7 @@ pub fn contract() -> CliContract {
             CommandContract {
                 daemon_consumed: true,
                 positionals: vec![PositionalContract::required("FILE")],
-                flags: vec![format_flag()],
+                flags: paged_navigation_flags(),
                 json_output_keys: paged_graph_keys(),
                 ..CommandContract::new("imports", "Show import graph for a file.")
             },
@@ -298,11 +301,11 @@ pub fn contract() -> CliContract {
             CommandContract {
                 daemon_consumed: true,
                 positionals: vec![PositionalContract::required("SYMBOL")],
-                flags: vec![
-                    FlagContract::value("--depth", "N"),
-                    token_budget_flag(),
-                    format_flag(),
-                ],
+                flags: {
+                    let mut flags = vec![FlagContract::value("--depth", "N")];
+                    flags.extend(paged_navigation_flags());
+                    flags
+                },
                 json_output_keys: paged_graph_keys(),
                 ..CommandContract::new(
                     "blast-radius",
@@ -463,8 +466,13 @@ pub fn contract() -> CliContract {
                 )
             },
             CommandContract {
+                daemon_consumed: true,
                 positionals: vec![],
-                flags: vec![format_flag()],
+                flags: vec![
+                    FlagContract::value("--project-id", "PROJECT_ID"),
+                    FlagContract::switch("--drop-collection"),
+                    format_flag(),
+                ],
                 json_output_keys: vector_lifecycle_keys(),
                 ..CommandContract::new(
                     "vector clear",
@@ -502,8 +510,8 @@ pub fn contract() -> CliContract {
             },
             CommandContract {
                 positionals: vec![],
-                flags: vec![format_flag()],
-                json_output_keys: vec![],
+                flags: paged_navigation_flags(),
+                json_output_keys: repo_outline_keys(),
                 ..CommandContract::new("repo-outline", "Show directory-grouped project stats.")
             },
             CommandContract {
@@ -560,316 +568,4 @@ pub fn contract() -> CliContract {
             },
         ],
     }
-}
-
-fn format_flag() -> FlagContract {
-    FlagContract::value("--format", "json|text").allowed(vec!["json", "text"])
-}
-
-fn token_budget_flag() -> FlagContract {
-    FlagContract::value("--token-budget", "N")
-}
-
-fn search_flags() -> Vec<FlagContract> {
-    vec![
-        FlagContract::value("--limit", "N"),
-        FlagContract::value("--offset", "N"),
-        FlagContract::value("--kind", "KIND"),
-        FlagContract::value("--language", "LANG"),
-    ]
-}
-
-fn grep_flags() -> Vec<FlagContract> {
-    vec![
-        FlagContract::switch("--fixed-strings"),
-        FlagContract::switch("--ignore-case"),
-        FlagContract::switch("--word"),
-        FlagContract::switch("--files-with-matches"),
-        FlagContract::switch("--extended-regexp"),
-        FlagContract::switch("--line-number"),
-        FlagContract::switch("--recursive"),
-        FlagContract::switch("-R"),
-        FlagContract::value("--before-context", "N"),
-        FlagContract::value("--after-context", "N"),
-        FlagContract::value("--context", "N"),
-        FlagContract::repeatable_value("--glob", "GLOB"),
-        FlagContract::value("--max-count", "N"),
-        format_flag(),
-    ]
-}
-
-fn graph_read_flags() -> Vec<FlagContract> {
-    vec![
-        FlagContract::value("--limit", "N"),
-        FlagContract::value("--offset", "N"),
-        format_flag(),
-    ]
-}
-
-fn outline_keys() -> Vec<&'static str> {
-    vec!["id", "name", "kind", "line_start", "line_end", "signature"]
-}
-
-fn tree_keys() -> Vec<&'static str> {
-    vec!["file_path", "language", "symbol_count"]
-}
-
-/// The serialized fields of a stored symbol, shared by `symbol`, `symbol-at`,
-/// and `symbols`. `docstring`/`parent_symbol_id` are omitted: they serialize
-/// only when present, and the daemon-consumed surface relies on the AI
-/// `summary`, not the raw `docstring`.
-fn symbol_record_keys() -> Vec<&'static str> {
-    vec![
-        "id",
-        "project_id",
-        "file_path",
-        "name",
-        "qualified_name",
-        "kind",
-        "language",
-        "byte_start",
-        "byte_end",
-        "line_start",
-        "line_end",
-        "signature",
-        "content_hash",
-        "summary",
-        "created_at",
-        "updated_at",
-    ]
-}
-
-/// `symbol` wraps the record with the on-disk `source` snippet.
-fn symbol_keys() -> Vec<&'static str> {
-    let mut keys = symbol_record_keys();
-    keys.push("source");
-    keys
-}
-
-/// `symbol-at` adds a `lookup` block describing how the location resolved.
-fn symbol_at_keys() -> Vec<&'static str> {
-    let mut keys = symbol_keys();
-    keys.push("lookup");
-    keys
-}
-
-/// Paged graph-result envelope for `imports` and `blast-radius`. Kept distinct
-/// from [`graph_read_keys`] (callers/usages) so the two surfaces can diverge
-/// without coupling, even though they currently share the same key set.
-fn paged_graph_keys() -> Vec<&'static str> {
-    vec![
-        "project_id",
-        "total",
-        "offset",
-        "limit",
-        "results",
-        "id",
-        "name",
-        "file_path",
-        "line",
-        "confidence",
-        "relation",
-        "distance",
-        "metadata",
-        "hint",
-    ]
-}
-
-fn search_keys() -> Vec<&'static str> {
-    vec![
-        "project_id",
-        "total",
-        "offset",
-        "limit",
-        "results",
-        "id",
-        "name",
-        "qualified_name",
-        "kind",
-        "language",
-        "file_path",
-        "line_start",
-        "line_end",
-        "signature",
-        "score",
-    ]
-}
-
-fn grep_keys() -> Vec<&'static str> {
-    vec![
-        "project_id",
-        "pattern",
-        "fixed_strings",
-        "ignore_case",
-        "word",
-        "paths",
-        "globs",
-        "max_count",
-        "matched_lines",
-        "truncated",
-        "scanned_chunks",
-        "matches",
-        "path",
-        "line",
-        "text",
-        "spans",
-        "start",
-        "end",
-        "before",
-        "after",
-    ]
-}
-
-fn graph_read_keys() -> Vec<&'static str> {
-    vec![
-        "project_id",
-        "total",
-        "offset",
-        "limit",
-        "results",
-        "id",
-        "name",
-        "file_path",
-        "line",
-        "confidence",
-        "relation",
-        "distance",
-        "metadata",
-        "hint",
-    ]
-}
-
-fn graph_path_keys() -> Vec<&'static str> {
-    vec![
-        "project_id",
-        "found",
-        "from",
-        "to",
-        "max_depth",
-        "hops",
-        "path",
-        "position",
-        "id",
-        "display_name",
-        "name",
-        "file_path",
-        "line",
-        "hint",
-    ]
-}
-
-fn contract_keys() -> Vec<&'static str> {
-    vec![
-        "tool",
-        "contract_version",
-        "summary",
-        "global_flags",
-        "scope",
-        "commands",
-        "error_codes",
-        "exit_codes",
-    ]
-}
-
-fn graph_payload_keys() -> Vec<&'static str> {
-    vec!["nodes", "links", "summary"]
-}
-
-fn graph_view_output_keys() -> Vec<&'static str> {
-    vec![
-        "project_id",
-        "project_root",
-        "view",
-        "seed",
-        "depth",
-        "incoming_truncated",
-        "outgoing_truncated",
-        "hint",
-        "nodes",
-        "edges",
-        "communities",
-        "mermaid",
-    ]
-}
-
-fn graph_lifecycle_keys() -> Vec<&'static str> {
-    vec![
-        "status",
-        "action",
-        "project_id",
-        "synced_files",
-        "synced_symbols",
-        "skipped_files",
-        "failed_files",
-        "synced_relationships",
-        "deleted_nodes",
-        "deleted_relationships",
-        "summary",
-    ]
-}
-
-fn graph_cleanup_keys() -> Vec<&'static str> {
-    vec![
-        "status",
-        "action",
-        "project_id",
-        "stale_graph_files_deleted",
-        "graph_nodes_deleted",
-    ]
-}
-
-fn graph_report_keys() -> Vec<&'static str> {
-    vec!["project_id", "summary", "hotspots", "bridges", "degraded"]
-}
-
-fn vector_lifecycle_keys() -> Vec<&'static str> {
-    vec![
-        "success",
-        "status",
-        "project_id",
-        "projection",
-        "action",
-        "file_path",
-        "collection",
-        "synced_files",
-        "synced_symbols",
-        "skipped_files",
-        "failed_files",
-        "symbols",
-        "vectors_upserted",
-        "delete_operations_issued",
-        "degraded",
-        "error",
-        "summary",
-    ]
-}
-
-fn vector_cleanup_keys() -> Vec<&'static str> {
-    vec![
-        "project_id",
-        "projection",
-        "action",
-        "collection",
-        "status",
-        "vector_files_scanned",
-        "orphan_files_deleted",
-        "vectors_deleted",
-        "summary",
-    ]
-}
-
-fn embeddings_doctor_keys() -> Vec<&'static str> {
-    vec![
-        "endpoint",
-        "model",
-        "dim",
-        "probe_error",
-        "peer_error",
-        "api_key_present",
-        "api_key_fingerprint",
-        "namespace_resolved",
-        "source",
-        "agrees",
-        "drift",
-    ]
 }

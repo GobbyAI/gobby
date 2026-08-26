@@ -98,7 +98,7 @@ gcode search "Context" --language rust         # Scope to Rust sources
 - `--offset N` — Skip first N results for pagination (default: 0)
 - `--kind <kind>` — Filter by symbol kind: `function`, `class`, `method`, `type`, etc. Use `gcode kinds` to list what's available in the current index.
 - `--language <lang>` — Filter by source language (e.g. `rust`, `python`, `typescript`, `css`).
-- `--token-budget N` — Trim returned rows to an approximate token ceiling. The estimate is `ceil(chars/4)` per rendered row; when rows are dropped, JSON includes a `hint` and text output prints a narrowing hint.
+- `--token-budget N` — Page complete hits under an approximate token ceiling. The estimate is `ceil(chars/4)` for the fully rendered page; JSON returns `next_offset`, while text prints the exact continuation command.
 - Positional `PATH` arguments after the query — Filter by one or more paths or globs (e.g. `src`, `src/**/*.rs`, `tests/*`). Bare paths match the exact file path and descendants; multiple paths use OR semantics.
 
 `--kind`, `--language`, and positional paths compose — combine them to narrow as far as you need. Globs that cannot be converted to SQL prefixes are still honored through post-filtering; JSON output includes a hint and text output prints a warning when that broader fetch path is used.
@@ -120,7 +120,7 @@ gcode search-symbol "Context" --with-graph
 
 **When to use:** You know the symbol's name (or close to it) and want a stable, top-ranked match — for example, before calling `gcode symbol <id>`.
 
-**Options:** `--limit N`, `--offset N`, `--kind <kind>`, `--language <lang>`, `--with-graph`, positional `PATH ...`. `--with-graph` keeps exact-first ranking but adds FalkorDB graph neighbors when available.
+**Options:** `--limit N`, `--offset N`, `--token-budget N`, `--kind <kind>`, `--language <lang>`, `--with-graph`, positional `PATH ...`. `--with-graph` keeps exact-first ranking but adds FalkorDB graph neighbors when available.
 
 ### Text Search (`gcode search-text`)
 
@@ -135,7 +135,7 @@ gcode search-text "parseConfig" --language python
 
 **When to use:** You know the exact name or part of a symbol name. Fastest mode.
 
-**Options:** `--limit N`, `--offset N`, `--language <lang>`, positional `PATH ...`
+**Options:** `--limit N`, `--offset N`, `--token-budget N`, `--language <lang>`, positional `PATH ...`
 
 ### Indexed Grep (`gcode grep`)
 
@@ -159,8 +159,8 @@ spans and context.
 **Options:** `-n/--line-number` (accepted; text always shows line numbers),
 `-i/--ignore-case`, `-F/--fixed-strings`, `-C/--context N`,
 `-A/--after-context N`, `-B/--before-context N`, `-g/--glob GLOB`,
-`-m/--max-count N`, positional `PATH ...`. `--limit` is intentionally rejected;
-use `-m/--max-count` for matching-line caps. Use raw `rg` for filesystem grep
+`-m/--limit N`, `--offset N`, `--token-budget N`, positional `PATH ...`.
+`--max-count` is an alias for `--limit`. Use raw `rg` for filesystem grep
 or unsupported ripgrep flags.
 
 For `-g/--glob`, a bare glob such as `*.rs` matches basenames in any directory,
@@ -186,7 +186,7 @@ Unsupported text files use their extension as the language label when one
 exists, otherwise `text`. Binary, secret-like, excluded, empty, and >10MB files
 are skipped.
 
-**Options:** `--limit N`, `--offset N`, `--language <lang>`, positional `PATH ...`
+**Options:** `--limit N`, `--offset N`, `--token-budget N`, `--language <lang>`, positional `PATH ...`
 
 ## Symbol Retrieval
 
@@ -198,10 +198,10 @@ Get the hierarchical symbol tree for a file:
 gcode outline src/config.rs
 ```
 
-Returns all functions, classes, methods, structs, Markdown headings, JSON/YAML
-properties, etc. in the file with their line ranges and signatures. JSON output
-uses a slim format (id, name, kind, line_start, line_end, signature) — use
-`--verbose` for full symbol details. Much cheaper than reading the entire file.
+Returns functions, classes, methods, structs, Markdown headings, JSON/YAML
+properties, etc. with their line ranges and signatures. Each page unit is one
+complete top-level symbol subtree. Compact text omits IDs; use `--verbose` or
+`--format json` when IDs are required. Much cheaper than reading the entire file.
 
 ### Symbol by ID
 
@@ -370,11 +370,10 @@ gcode blast-radius "handleAuth" --depth 3
 gcode blast-radius "handleAuth" --depth 3 --token-budget 160
 ```
 
-Walks the call graph to find all downstream dependents up to `--depth` levels deep.
-`usages` and `blast-radius` preserve the existing graph order, then trim rows
-from the tail when `--token-budget` is set. The estimate is `ceil(chars/4)` per
-rendered row, so it is a fast context-window guard rather than tokenizer-specific
-accounting. Budget-trimmed output includes a `refine with ...` hint.
+Walks the call graph to find all downstream dependents up to `--depth` levels
+deep. Graph order remains stable across pages. `--token-budget` selects complete
+relationship rows under the approximate `ceil(chars/4)` fully rendered page
+budget and supplies the next offset when more remain.
 
 ## Project Management
 
@@ -505,9 +504,16 @@ vector collections:
 
 ```bash
 gcode vector clear
+gcode vector clear --project-id <PROJECT_ID> --drop-collection
 gcode vector rebuild
 gcode vector cleanup-orphans
 ```
+
+`--drop-collection` deletes the project's whole `code_symbols_{project_id}`
+collection instead of its points; the daemon uses it when it purges an indexed
+project that no machine selects any more. The `--project-id` forms of
+`graph clear`, `vector clear`, and `invalidate` resolve from the caller's grant
+alone, so they work for projects whose checkout is already gone.
 
 ## Operating Model
 
@@ -555,14 +561,20 @@ shared `gobby_core::daemon_url` contract:
 
 ## Output Formats
 
-All commands support `--format`:
+All commands support `--format`. Navigation defaults to compact text:
 
 ```bash
-gcode search "query" --format json   # Default — structured JSON
-gcode search "query" --format text   # Human-readable text
+gcode search "query"                 # Default compact navigation text
+gcode search "query" --format json   # Stable compact JSON machine surface
 ```
 
-JSON output for search/callers/usages/blast-radius is wrapped in a pagination envelope:
+The compact-text defaults are `search`, `search-symbol`, `search-text`,
+`search-content`, `grep`, `outline`, `symbol`, `symbol-at`, `symbols`, `kinds`,
+`tree`, `repo-outline`, `callers`, `callees`, `usages`, `imports`, `path`, and
+`blast-radius`. Nested structural graph and lifecycle commands retain complete
+JSON defaults.
+
+JSON collection output uses a pagination envelope:
 
 ```json
 {
@@ -570,33 +582,40 @@ JSON output for search/callers/usages/blast-radius is wrapped in a pagination en
   "total": 47,
   "offset": 0,
   "limit": 10,
-  "results": [...],
-  "hint": "Token budget limited output to 3 of 10 results using ceil(chars/4) row estimates; refine with ..."
+  "next_offset": 3,
+  "results": [...]
 }
 ```
 
-`hint` is omitted when there is no warning or narrowing guidance.
+`next_offset` is omitted on the final page. `budget_exceeded` is emitted only
+when one complete oversized item or page metadata exceeds the requested budget.
+Existing hints remain available in JSON for search and graph diagnostics.
 
 Graph `callers` and `usages` result rows include `confidence`. AST-derived
 edges are emitted as `EXTRACTED`; future inferred edges can report `INFERRED`
 or `AMBIGUOUS` while preserving the same result shape.
 
-Text output shows a pagination hint when more results are available:
+Collection commands accept `--limit`, `--offset`, and `--token-budget`.
+Compact text automatically uses a 2,000-token budget. Each page selects the
+largest prefix of complete semantic items whose fully rendered output fits the
+approximate `ceil(chars/4)` budget. An oversized first item is emitted complete.
+Text output prints a shell-safe command that retrieves the next page:
 
 ```text
--- 10 of 47 results (use --offset 10 for more)
+continue: gcode search query --offset 3
 ```
+
+Run the printed command unchanged to traverse pages without gaps or duplicates.
 
 ### Verbose output
 
-`--verbose` currently affects `outline` output only:
+`--verbose` restores IDs and diagnostics in compact search and outline output:
 
 ```bash
-gcode outline src/main.rs --verbose  # Full symbol details instead of slim
+gcode outline src/main.rs --verbose
 ```
 
-Default outline output is optimized for token efficiency — slim fields only.
-Use `--verbose` when you need the full symbol record.
+Use explicit JSON when programmatic consumers need stable result fields.
 
 Suppress warnings and progress bars with `--quiet`:
 
@@ -624,9 +643,22 @@ Set `GCODE_FRESHNESS_INFLIGHT=1` in nested processes (or scripts that already
 run their own re-index) to short-circuit the same checks. gcode also sets this
 flag internally to prevent the indexer from recursing into itself.
 
-Overlay indexing uses `git status` to find changed paths. Set
+Incremental overlay indexing (a worktree or clone layered over its parent
+project's index) reconciles only the paths that can differ from the parent:
+`git status` in the overlay, `git status` in the parent checkout, and
+`git diff --name-only <parent HEAD> HEAD` for commit-level divergence in either
+direction. A path that differs is indexed from the overlay's own tree (or
+tombstoned when it only exists in the parent), so overlay reads never serve
+parent rows for content that differs on disk. Set
 `GCODE_GIT_STATUS_TIMEOUT_SECS` to a positive number to override the default
-5-second timeout; invalid or nonpositive values are ignored with a warning.
+5-second timeout for each of those git calls; invalid or nonpositive values are
+ignored with a warning. When any call fails (for example a clone whose object
+store lacks the parent's HEAD), the run falls back to hashing every discovered
+path. The read-time pre-gate is overlay-aware too: a project-scope read in a
+worktree skips the refresh when every visible path (the overlay's own rows plus
+the parent rows it inherits) is unchanged since the overlay's last index and the
+parent has not been re-indexed since; a parent re-index, a worktree edit, or a
+deleted or re-created inherited file trips it.
 
 ## Troubleshooting
 

@@ -11,6 +11,7 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.tasks._id import resolve_task_reference
+from gobby.workflows.memory_review_conditions import pending_memory_reviews_complete
 from gobby.workflows.state_manager import SessionVariableManager
 
 if TYPE_CHECKING:
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
 
 
 REVIEW_RECORDS_VARIABLE = "_memory_task_review_records"
+REVIEW_DELIVERED_VARIABLE = "_memory_review_stop_delivered"
 _MAX_REVIEW_RECORDS = 50
 _CANDIDATE_LIMIT = 5
 
@@ -37,6 +39,25 @@ def _task_ref(task: Task) -> str:
 def _closure_id(task: Task) -> str:
     closed_at = task.closed_at.isoformat() if task.closed_at is not None else "open"
     return f"{task.id}:{closed_at}"
+
+
+def _record_review(state: SessionVariableManager, session_id: str, record: dict[str, Any]) -> bool:
+    """Persist one review record; return whether the queued batch is now fully reviewed.
+
+    A fully reviewed batch releases the post-close stop/compact gate exactly as
+    delivering its block would, so proactive reviews are never re-requested.
+    """
+    state.upsert_bounded_list_variable(
+        session_id,
+        REVIEW_RECORDS_VARIABLE,
+        record,
+        identity={"closure_id": record["closure_id"]},
+        max_items=_MAX_REVIEW_RECORDS,
+    )
+    if not pending_memory_reviews_complete(state.get_variables(session_id)):
+        return False
+    state.set_variable(session_id, REVIEW_DELIVERED_VARIABLE, True)
+    return True
 
 
 def _enum_value(value: Any) -> Any:
@@ -93,7 +114,8 @@ def register_memory_review_tools(
         name="review_task_memories",
         description=(
             "Search project/global memories related to a task closed by the calling session. "
-            "Returns candidates for optional cleanup or durable capture; never writes memories."
+            "Returns candidates for optional cleanup or durable capture; never writes memories. "
+            "Reviewing every queued closure releases the post-close stop/compact review gate."
         ),
     )
     async def review_task_memories(
@@ -180,13 +202,8 @@ def register_memory_review_tools(
             "candidate_ids": [candidate["id"] for candidate in serialized],
             "reviewed_at": datetime.now(UTC).isoformat(),
         }
-        await asyncio.to_thread(
-            SessionVariableManager(session_manager.db).upsert_bounded_list_variable,
-            resolved_session_id,
-            REVIEW_RECORDS_VARIABLE,
-            record,
-            identity={"closure_id": record["closure_id"]},
-            max_items=_MAX_REVIEW_RECORDS,
+        reviews_complete = await asyncio.to_thread(
+            _record_review, SessionVariableManager(session_manager.db), resolved_session_id, record
         )
         return {
             "success": True,
@@ -195,4 +212,5 @@ def register_memory_review_tools(
             "source_task_id": task.id,
             "candidate_count": len(serialized),
             "candidates": serialized,
+            "pending_reviews_complete": reviews_complete,
         }

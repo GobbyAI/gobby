@@ -7,14 +7,8 @@ pub enum Format {
     Text,
 }
 
-/// Print a serializable value to stdout in the requested format.
-pub fn print_json<T: Serialize + ?Sized>(value: &T) -> anyhow::Result<()> {
-    println!("{}", serde_json::to_string_pretty(value)?);
-    Ok(())
-}
-
 /// Print a serializable value to stdout as compact JSON.
-pub fn print_json_compact<T: Serialize + ?Sized>(value: &T) -> anyhow::Result<()> {
+pub fn print_json<T: Serialize + ?Sized>(value: &T) -> anyhow::Result<()> {
     println!("{}", serde_json::to_string(value)?);
     Ok(())
 }

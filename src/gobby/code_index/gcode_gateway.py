@@ -420,8 +420,10 @@ class GcodeGateway:
         project_root: Path | None = None,
         *,
         project_id: str | None = None,
+        drop_collection: bool = False,
         env: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
+        """Clear a project's code-symbol vectors; ``drop_collection`` deletes the collection."""
         if project_id is not None:
             project_id = _validate_user_gcode_value("project_id", project_id)
             args = ["vector", "clear", "--project-id", project_id]
@@ -429,6 +431,8 @@ class GcodeGateway:
             args = ["vector", "clear", "--project", str(project_root)]
         else:
             raise GcodeInputValidationError("project", "", "project root or project_id is required")
+        if drop_collection:
+            args.append("--drop-collection")
         return await self._run_json(
             args,
             timeout=self._rebuild_timeout_seconds,

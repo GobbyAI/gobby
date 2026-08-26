@@ -126,6 +126,7 @@ def test_register_memory_dream_cron_creates_single_system_job() -> None:
     assert kwargs["action_config"] == {
         "handler": MEMORY_DREAM_CRON_HANDLER,
         "timeout_seconds": 16200.0,
+        "restart_protected": True,
     }
     assert kwargs["is_system"] is True
 
@@ -198,6 +199,7 @@ def test_register_memory_dream_cron_repairs_existing_job_action_timeout() -> Non
     assert kwargs["action_config"] == {
         "handler": MEMORY_DREAM_CRON_HANDLER,
         "timeout_seconds": 16200.0,
+        "restart_protected": True,
     }
 
 

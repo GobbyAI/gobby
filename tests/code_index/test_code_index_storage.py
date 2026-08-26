@@ -697,6 +697,89 @@ def test_get_stale_files(code_storage: CodeIndexStorage) -> None:
     assert "same.py" not in stale
 
 
+def _insert_shared_index_project(code_storage: CodeIndexStorage, project_id: str) -> None:
+    code_storage.db.execute(
+        "INSERT INTO code_indexed_projects (id) VALUES (%s) ON CONFLICT (id) DO NOTHING",
+        (project_id,),
+    )
+
+
+def test_list_orphaned_index_projects_excludes_selected_and_registered(
+    code_storage: CodeIndexStorage,
+) -> None:
+    orphan_id = _ordered_uuid(0xA1)
+    registered_id = _ordered_uuid(0xA2)
+    remote_selected_id = _ordered_uuid(0xA3)
+    remote_machine_id = "eeeeeeee-eeee-4eee-8eee-000000000003"
+    code_storage.db.execute(
+        "INSERT INTO machines (id, hostname, owner_user_id) VALUES (%s, %s, %s)"
+        " ON CONFLICT (id) DO NOTHING",
+        (remote_machine_id, "test-0003", TEST_USER_ID),
+    )
+    code_storage.upsert_project_stats(IndexedProject(id=PROJECT_ID, root_path="/local/repo"))
+    with patch("gobby.utils.machine_id.get_machine_id", return_value=remote_machine_id):
+        code_storage.upsert_project_stats(
+            IndexedProject(id=remote_selected_id, root_path="/remote/repo")
+        )
+    code_storage.db.execute(
+        "INSERT INTO projects (id, name, created_at) VALUES (%s, %s, NOW())"
+        " ON CONFLICT (id) DO NOTHING",
+        (registered_id, "registered-unselected"),
+    )
+    _insert_shared_index_project(code_storage, registered_id)
+    _insert_shared_index_project(code_storage, orphan_id)
+
+    orphans = code_storage.list_orphaned_index_projects()
+
+    assert orphan_id in orphans
+    assert PROJECT_ID not in orphans
+    assert remote_selected_id not in orphans
+    assert registered_id not in orphans
+
+
+def test_purge_index_project_cascades_shared_content_and_spares_neighbours(
+    code_storage: CodeIndexStorage,
+) -> None:
+    orphan_id = _ordered_uuid(0xB1)
+    orphan_symbol_id = _ordered_uuid(0xB2)
+    code_storage.upsert_project_stats(IndexedProject(id=orphan_id, root_path="/gone/worktree"))
+    orphan_file = _upsert_test_file(code_storage, "src/gone.py", "gone-hash", project_id=orphan_id)
+    code_storage.upsert_symbols(
+        [
+            Symbol(
+                id=orphan_symbol_id,
+                project_id=orphan_id,
+                file_path=orphan_file.file_path,
+                name="gone",
+                qualified_name="gone",
+                kind="function",
+                language="python",
+                byte_start=0,
+                byte_end=10,
+                line_start=1,
+                line_end=1,
+                signature="def gone() -> None:",
+                file_content_hash=orphan_file.content_hash,
+                content_hash=orphan_symbol_id,
+            )
+        ]
+    )
+    code_storage.delete_project_index(orphan_id)
+    code_storage.upsert_project_stats(IndexedProject(id=PROJECT_ID, root_path="/local/repo"))
+    kept_file = _upsert_test_file(code_storage, "src/kept.py")
+    assert code_storage.list_orphaned_index_projects() == [orphan_id]
+
+    counts = code_storage.purge_index_project(orphan_id)
+
+    assert counts["projects"] == 1
+    assert counts["files"] == 1
+    assert counts["symbols"] == 1
+    assert code_storage.get_symbol(orphan_symbol_id) is None
+    assert code_storage.list_orphaned_index_projects() == []
+    assert code_storage.get_file(PROJECT_ID, kept_file.file_path) is not None
+    assert code_storage.purge_index_project(orphan_id)["projects"] == 0
+
+
 def test_file_states_coexist_across_machines(code_storage: CodeIndexStorage) -> None:
     local_machine_id = "eeeeeeee-eeee-4eee-8eee-000000000001"
     remote_machine_id = "eeeeeeee-eeee-4eee-8eee-000000000002"

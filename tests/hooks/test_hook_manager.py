@@ -1793,50 +1793,6 @@ class TestTerminalIngressGate:
         handler.assert_called_once_with(event)
 
 
-def test_rules_block_delivers_staged_memory_on_returned_response(
-    manager_with_mocks: HookManager,
-    make_event: Callable[..., HookEvent],
-) -> None:
-    from gobby.workflows.engine.delivery_formatting import _STAGED_MEMORY_RECALLS
-
-    manager = manager_with_mocks
-    cast(MagicMock, manager._event_handlers.get_handler).return_value = MagicMock()
-    cast(MagicMock, manager._session_lookup.resolve).return_value = None
-    cast(MagicMock, manager._workflow_handler.handle).return_value = HookResponse(
-        decision="block",
-        reason="Blocked by rule",
-    )
-    event = make_event(event_type=HookEventType.BEFORE_TOOL)
-    event.metadata["_platform_session_id"] = "platform-session"
-    event.metadata[_STAGED_MEMORY_RECALLS] = [
-        {
-            "recall_request_id": "recall-request",
-            "origin_turn_seq": 1,
-            "memories": [
-                {
-                    "id": "memory-id",
-                    "content": "Preserve this recalled context.",
-                    "memory_type": "fact",
-                }
-            ],
-        }
-    ]
-
-    with patch(
-        "gobby.workflows.engine.delivery_formatting.SessionVariableManager"
-    ) as variable_manager_cls:
-        response = manager._handle_internal(event)
-
-    assert response.decision == "block"
-    assert response.context is not None
-    assert "Preserve this recalled context." in response.context
-    variable_manager_cls.return_value.append_to_set_variable.assert_called_once_with(
-        "platform-session",
-        "injected_memory_ids",
-        ["memory-id"],
-    )
-
-
 def _register_grok_session(
     session_manager: SessionManager,
     project_id: str,

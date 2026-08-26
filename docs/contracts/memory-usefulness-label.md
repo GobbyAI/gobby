@@ -1,6 +1,12 @@
 # Memory-Recall Usefulness Label + Labeled-Row Data Contract
 
 Status: **normative** (epic #17099 Phase 0a gate deliverable, task #17192)
+Data source note (2026-08-26, #21009/#21011): automatic prompt-time recall
+(`memory.recall` caller, `MemoryRecallRunner`, `build_memory_context`) was
+retired; rows with that caller are the archived injection cohort. The live
+cohort is agent-driven search — `mcp_proxy.memory.search_memories` and
+`mcp_proxy.memory.review_task_memories` requests (§2, §3.1) — and the search
+tool writes delivery outcomes for the hits it returns (§5.1).
 Owners: memory subsystem
 Consumers: #17193 (retrospective judge + ablation calibration), #17195 (digest
 forward labels), #17196 (hub tables + injection-outcome capture), #17197
@@ -49,16 +55,20 @@ The canonical labeled-row key is:
   NOT the CLI external id. All session-keyed state on the injection path
   (e.g. the `injected_memory_ids` session variable) is keyed by the platform
   id; mixing in external ids silently breaks the join.
-- `recall_request_id` — UUID minted once per recall request
-  (`src/gobby/memory/recall.py`) and threaded through the search service into
-  the recall-signal event. This is the correlation id between features,
-  injection outcome, and label.
+- `recall_request_id` — UUID minted once per request by its entry point
+  (`search_memories` in `src/gobby/mcp_proxy/tools/memory.py` for the live
+  cohort; `src/gobby/memory/recall.py` for the archived one) and threaded
+  through the search service into the recall-signal event. This is the
+  correlation id between features, injection outcome, and label.
 - `memory_id` — the memory row UUID.
 
-Daemon-owned recall mints `recall_request_id` in `MemoryRecallRunner.run`,
-threads it through `MemoryRecallResult`, and keeps it on the queued delivery.
-Generic recalled memories render through `build_memory_context`; review lessons
-use the separate installed-rule path through
+Live cohort: the `search_memories` tool mints `recall_request_id`, passes it
+to `MemoryManager.search_memories` (which logs the signal event), returns it in
+the tool payload, and keys the delivery outcomes it writes (§5.1) on it.
+Archived cohort: daemon-owned recall minted it in `MemoryRecallRunner.run`,
+threaded it through `MemoryRecallResult`, and rendered generic memories
+through `build_memory_context`. Review lessons still use the separate
+installed-rule path through
 `DeliveryFormattingMixin._format_review_lessons_result`.
 
 ## 3. Labeled-row contract
@@ -75,7 +85,7 @@ promoted to a hub table by #17196. Request-level fields:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `caller` | text | Recall entry point (e.g. `memory.recall`, `memory.search`). Fits use injection-path callers only. |
+| `caller` | text | Entry point. Shadow-eligible callers (`SHADOW_ELIGIBLE_CALLERS`, `src/gobby/storage/recall_shadow_signals.py`): `memory.recall` (archived), `mcp_proxy.memory.search_memories`, `mcp_proxy.memory.review_task_memories`. Probe searches (`mcp_proxy.memory.create_memory.similar_existing`, `cli.memory.recall`, `memory.shadow_relevance`) are logged but never judged or fit. |
 | `query` | text | The recall query string. |
 | `merged_ids` | text[] | Candidate set after merge, before the returned cut. |
 | `returned_ids` | text[] | Final returned ranking (defines `rank`). |
@@ -209,9 +219,9 @@ may write new `digest` rows; they never enter the shadow fit.
 
 ## 5. Injection-outcome record (implemented by #17196)
 
-**New record — does not exist today** (verified 2026-07-02). One row per
-`(recall_request_id, memory_id)` for every memory in `returned_ids` of an
-injection-path recall, written at injection-decision time.
+One row per `(recall_request_id, memory_id)` for every memory in
+`returned_ids` of an injection-path recall, written at injection-decision time
+(archived cohort; the live cohort's rule is §5.1).
 
 | Column | Type | Constraints | Meaning |
 | --- | --- | --- | --- |
@@ -228,6 +238,22 @@ injection-path recall, written at injection-decision time.
 | `created_at` | timestamptz | not null | Write time. |
 
 Primary key: `(recall_request_id, memory_id)`.
+
+### 5.1 Search-cohort delivery outcomes (#21011)
+
+For the live cohort the delivery point is the `search_memories` tool result.
+The tool writes one row per hit in its returned `memories` list through
+`make_injection_outcome_recorder` (`src/gobby/memory/recall_signal_log.py`):
+`outcome = 'injected'` (the hit reached the agent's context),
+`injection_position` = the hit's 0-based index in `memories` (a tool result
+renders in list order, so position and rank coincide here), `injection_group`
+NULL (no type grouping), `caller = 'mcp_proxy.memory.search_memories'`,
+`turn_seq` NULL. Candidates the agent never saw — cut by `limit` or the
+`min_score` floor — get no row; `filtered` rows and the `drop_reason` enum
+below belong to the archived injection cohort. Rows are written only when the
+request carries a platform session id and `recall_signal_hub` is on; the
+write fails open. `review_task_memories` requests are judge-eligible but write
+no outcome rows, so they contribute to the `full` candidate scope only.
 
 `drop_reason` enum, grounded in the daemon-owned recall filters
 (`MemoryRecallRunner._filter_candidates`, `src/gobby/memory/recall.py`) and

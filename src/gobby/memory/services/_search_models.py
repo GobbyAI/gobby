@@ -70,3 +70,6 @@ class _Candidates:
     graph_score_map: dict[str, float] | None = None
     graph_component_map: dict[str, dict[str, float | None]] | None = None
     exhausted: bool = True
+    # Stored vectors for ``merged_ids`` when the store could serve them in one
+    # retrieve; materialization uses them to collapse near-duplicates (#21010).
+    vectors: dict[str, list[float]] | None = None

@@ -30,7 +30,7 @@ When using an execution wrapper, emit only `structuredContent.result.skill.conte
 
 <code_search>
 If the project has a code index, use `gcode` via Bash for fast symbol-level search and retrieval.
-Key commands: `gcode search "query"`, `gcode outline path/to/file`, `gcode symbol <full-uuid>` with a UUID from search or outline output.
+Key commands: `gcode search "query"`, `gcode outline path/to/file`, and `gcode symbol-at path/to/file:line` after a search hit. Navigation defaults to compact text with lossless pages; run the printed continuation command exactly. Use `--format json` or `--verbose` only when IDs or diagnostics are required.
 Use these instead of reading entire files — saves 90%+ tokens on large files.
 Run `gcode --help` for all available commands.
 </code_search>

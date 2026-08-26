@@ -87,6 +87,7 @@ async def _run_maintenance(
         missing_root_observations = {}
 
     await _retry_pending_projection_cleanups(context)
+    await _sweep_orphaned_index_projects(context)
     projects = await context.run_db(context.storage.list_indexed_projects)
     gcode_gateway = context.gcode_gateway
     daemon_config_breaker = context.daemon_config_breaker
@@ -230,7 +231,64 @@ async def _reconcile_stale_selector(context: CodeIndexContext, project_id: str, 
             return "failed"
     await context.run_db(context.storage.delete_project_index, project_id)
     logger.info("Reconciled stale code-index selector %s (%s)", project_id, reason)
+    if reason == "unregistered":
+        # A path-derived overlay/clone whose root is gone has no registry row, so
+        # dropping its last selector orphans the shared content: purge it in the
+        # same pass instead of leaving it to the content-retention window.
+        await _sweep_orphaned_index_projects(context)
     return "reconciled"
+
+
+async def _sweep_orphaned_index_projects(context: CodeIndexContext) -> int:
+    """Purge indexed projects that no machine selects and no registry row owns.
+
+    Projections go first under a per-project maintenance grant; the hub row (and
+    its cascaded files, symbols, calls, chunks, imports) goes only after both
+    stores confirmed. A disabled or unavailable store retains the row for a later
+    pass rather than stranding projections nothing references.
+    """
+    gateway = context.gcode_gateway
+    factory = context.launch_factory
+    if gateway is None or factory is None:
+        logger.debug("Orphaned code-index sweep skipped: gcode launch path unavailable")
+        return 0
+    if not context.config.graph_enabled or not context.config.embedding_enabled:
+        logger.debug("Orphaned code-index sweep skipped: a projection store is disabled")
+        return 0
+
+    orphan_ids = await context.run_db(context.storage.list_orphaned_index_projects)
+    purged = 0
+    for project_id in orphan_ids:
+        try:
+            async with open_launch_async(factory, project_id, timeout_seconds=60) as launch:
+                graph = await gateway.graph_clear(project_id, env=launch.env)
+                if graph.get("success", True) is False:
+                    raise RuntimeError(graph.get("error", "gcode graph clear failed"))
+                vectors = await gateway.vector_clear(
+                    project_id=project_id, drop_collection=True, env=launch.env
+                )
+                if vectors.get("success", True) is False:
+                    raise RuntimeError(vectors.get("error", "gcode vector clear failed"))
+        except Exception:
+            logger.warning(
+                "Orphaned code-index project %s projection cleanup failed; retaining for retry",
+                project_id,
+                exc_info=True,
+            )
+            continue
+        counts = await context.run_db(context.storage.purge_index_project, project_id)
+        purged += 1
+        logger.info(
+            "Purged orphaned code-index project %s (files=%s symbols=%s calls=%s chunks=%s)",
+            project_id,
+            counts.get("files", 0),
+            counts.get("symbols", 0),
+            counts.get("calls", 0),
+            counts.get("content_chunks", 0),
+        )
+    if purged:
+        logger.info("Purged %d orphaned code-index project(s)", purged)
+    return purged
 
 
 async def _retry_pending_projection_cleanups(

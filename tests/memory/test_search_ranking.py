@@ -1476,3 +1476,170 @@ async def test_a_failed_semantic_leg_is_not_given_a_second_timeout(monkeypatch: 
     # The graph leg's own answer still stands, on its synthetic cosine.
     assert [mem.id for mem in results] == ["graph-found"]
     assert results[0].ranking_mode == "graph_synthetic"
+
+
+# --------------------------------------------------------------------------- #21010: undecayed axis + collapse
+
+
+def test_build_results_ranks_on_undecayed_similarity_with_age_as_tiebreak() -> None:
+    # "old" carries the stronger cosine but is 60 days stale; at a 30-day half-life
+    # its decayed similarity (0.85 * 0.25) falls under "fresh" (0.70). Ranking on
+    # the decayed value buried the better match under a newer weaker one (#21010).
+    service = _service([], storage=_AgedStorage({"old": 60.0, "fresh": 0.0}))
+
+    results = service._build_results(
+        merged_ids=["fresh", "old"],
+        ranking_score_map={"fresh": 0.02, "old": 0.01},
+        qdrant_score_map={"old": 0.85, "fresh": 0.70},
+        qdrant_set={"old", "fresh"},
+        keyword_set=set(),
+        graph_set=None,
+        rrf_applied=False,
+        project_id=None,
+        memory_type=None,
+        tags_all=None,
+        tags_any=None,
+        tags_none=None,
+        half_life=30.0,
+        effective_min_score=0.0,
+        limit=2,
+    )
+
+    assert [mem.id for mem in results] == ["old", "fresh"]
+    assert results[0].similarity is not None and results[0].similarity < 0.70
+
+
+def test_build_results_uses_decayed_similarity_only_to_break_undecayed_ties() -> None:
+    service = _service([], storage=_AgedStorage({"old": 60.0, "fresh": 0.0}))
+
+    results = service._build_results(
+        merged_ids=["old", "fresh"],
+        ranking_score_map={"fresh": 0.01, "old": 0.02},
+        qdrant_score_map={"old": 0.80, "fresh": 0.80},
+        qdrant_set={"old", "fresh"},
+        keyword_set=set(),
+        graph_set=None,
+        rrf_applied=False,
+        project_id=None,
+        memory_type=None,
+        tags_all=None,
+        tags_any=None,
+        tags_none=None,
+        half_life=30.0,
+        effective_min_score=0.0,
+        limit=2,
+    )
+
+    assert [mem.id for mem in results] == ["fresh", "old"]
+
+
+def test_build_results_collapses_near_duplicates_before_the_limit_cut() -> None:
+    service = _service(["a", "b", "c"])
+    vectors = {"a": [1.0, 0.0], "b": [0.999, 0.04], "c": [0.0, 1.0]}
+
+    results = service._build_results(
+        merged_ids=["a", "b", "c"],
+        ranking_score_map={"a": 0.03, "b": 0.02, "c": 0.01},
+        qdrant_score_map={"a": 0.90, "b": 0.85, "c": 0.80},
+        qdrant_set={"a", "b", "c"},
+        keyword_set=set(),
+        graph_set=None,
+        rrf_applied=False,
+        project_id=None,
+        memory_type=None,
+        tags_all=None,
+        tags_any=None,
+        tags_none=None,
+        half_life=0.0,
+        effective_min_score=0.0,
+        limit=2,
+        candidate_vectors=vectors,
+    )
+
+    # "b" folds into "a" instead of taking the second slot, so "c" is returned.
+    assert [mem.id for mem in results] == ["a", "c"]
+    assert results[0].collapsed_duplicates == ["b"]
+    assert results[1].collapsed_duplicates is None
+
+
+def test_build_results_keeps_distinct_vectors_and_hits_without_vectors() -> None:
+    service = _service(["a", "b", "c"])
+    # a/b sit at cosine ~0.707, far under the 0.92 fold threshold; "c" has no vector.
+    vectors = {"a": [1.0, 0.0], "b": [0.7, 0.7]}
+
+    results = service._build_results(
+        merged_ids=["a", "b", "c"],
+        ranking_score_map={"a": 0.03, "b": 0.02, "c": 0.01},
+        qdrant_score_map={"a": 0.90, "b": 0.85, "c": 0.80},
+        qdrant_set={"a", "b", "c"},
+        keyword_set=set(),
+        graph_set=None,
+        rrf_applied=False,
+        project_id=None,
+        memory_type=None,
+        tags_all=None,
+        tags_any=None,
+        tags_none=None,
+        half_life=0.0,
+        effective_min_score=0.0,
+        limit=3,
+        candidate_vectors=vectors,
+    )
+
+    assert [mem.id for mem in results] == ["a", "b", "c"]
+    assert all(mem.collapsed_duplicates is None for mem in results)
+
+
+class _VectorStoreWithVectors(_VectorStore):
+    def __init__(
+        self,
+        results: list[tuple[str, float]],
+        vectors: dict[str, list[float]] | Exception,
+    ) -> None:
+        super().__init__(results)
+        self._vectors = vectors
+        self.get_vectors_calls: list[list[str]] = []
+
+    async def get_vectors(
+        self, ids: list[str], *, timeout: float | None = None
+    ) -> dict[str, list[float]]:
+        self.get_vectors_calls.append(list(ids))
+        if isinstance(self._vectors, Exception):
+            raise self._vectors
+        return self._vectors
+
+
+@pytest.mark.asyncio
+async def test_search_fetches_stored_vectors_once_and_collapses_duplicates() -> None:
+    store = _VectorStoreWithVectors(
+        [("a", 0.9), ("b", 0.85), ("c", 0.8)],
+        {"a": [1.0, 0.0], "b": [0.999, 0.04], "c": [0.0, 1.0]},
+    )
+    service = _service(["a", "b", "c"], vector_store=store)
+
+    results = await service.search(query="anything", limit=2)
+
+    assert [mem.id for mem in results] == ["a", "c"]
+    assert results[0].collapsed_duplicates == ["b"]
+    assert store.get_vectors_calls == [["a", "b", "c"]]
+
+
+@pytest.mark.asyncio
+async def test_search_returns_uncollapsed_when_vector_fetch_fails() -> None:
+    store = _VectorStoreWithVectors([("a", 0.9), ("b", 0.85)], RuntimeError("retrieve down"))
+    service = _service(["a", "b"], vector_store=store)
+
+    results = await service.search(query="anything", limit=2)
+
+    assert [mem.id for mem in results] == ["a", "b"]
+    assert all(mem.collapsed_duplicates is None for mem in results)
+
+
+@pytest.mark.asyncio
+async def test_search_returns_uncollapsed_when_store_cannot_serve_vectors() -> None:
+    service = _service(["a", "b"], vector_results=[("a", 0.9), ("b", 0.85)])
+
+    results = await service.search(query="anything", limit=2)
+
+    assert [mem.id for mem in results] == ["a", "b"]
+    assert all(mem.collapsed_duplicates is None for mem in results)

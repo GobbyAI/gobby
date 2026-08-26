@@ -20,7 +20,7 @@ from gobby.sessions.clear_continuation import (
     take_clear_handoff_marker,
 )
 
-from .agents import _seed_memory_recall_vars, _seed_wiki_overview_var
+from .agents import _seed_parent_turn_seq, _seed_wiki_overview_var
 from .claims import preserve_task_claim_state
 from .context import classify_session_start_context
 from .handoff import SessionStartResolution, prepare_compact_continuation_variables
@@ -271,7 +271,7 @@ def activate_materialized_session(
 
     if handler._session_manager is not None:
         try:
-            _seed_memory_recall_vars(handler, session_id)
+            _seed_parent_turn_seq(handler, session_id)
         except Exception as exc:
             handler.logger.warning("Failed to seed memory recall vars: %s", exc)
         _seed_wiki_overview_var(handler, session_id, project_id)

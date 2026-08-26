@@ -7,8 +7,7 @@ rules:
     enabled: true
     priority: 11
     when: >-
-      not pending_memory_recall_request_id()
-      and not variables.get('plan_memory_write_nudge_fired')
+      not variables.get('plan_memory_write_nudge_fired')
       and (
         variables.get('plan_mode')
         or variables.get('_agent_type') in [

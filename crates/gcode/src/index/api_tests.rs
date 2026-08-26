@@ -205,6 +205,8 @@ mod serial_db {
             format!("{project_id}:foreign-machine").as_bytes(),
         )
         .to_string();
+        crate::test_env::seed_test_machine(&mut conn, &foreign_machine)
+            .expect("seed foreign machine");
         seed_project_for_machine(&mut conn, &foreign_machine, &project_id);
 
         let local_file = indexed_file(&project_id, "src/local.rs", "hash-local", 1, 16);
@@ -273,6 +275,7 @@ mod serial_db {
             database_url,
             project_id: project_id.clone(),
         };
+        crate::test_env::seed_test_machine(&mut conn, &machine_id).expect("seed test machine");
         seed_project_for_machine(&mut conn, &machine_id, &project_id);
 
         let file = indexed_file(&project_id, "src/lib.rs", "file-hash", 1, 16);

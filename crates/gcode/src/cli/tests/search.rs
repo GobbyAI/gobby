@@ -23,6 +23,7 @@ fn test_parse_search_symbol_filters() {
             kind,
             language,
             with_graph,
+            token_budget: _,
         } => {
             assert_eq!(query, "outline");
             assert_eq!(paths, vec!["crates/gcode/src"]);

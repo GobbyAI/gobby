@@ -4921,3 +4921,76 @@ async def test_restart_preserve_set_returns_none_when_run_enumeration_fails() ->
     assert await_args is not None
     assert await_args.args[1] is runner
     assert await_args.kwargs == {"include_fenced": True}
+
+
+def test_main_refuses_linked_worktree_before_bootstrap(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A linked-worktree source tree exits 1 before bootstrap or the singleton claim (#21031)."""
+    refusal = "Refusing to start the Gobby daemon from linked worktree /wt"
+    with (
+        patch("gobby.utils.dev.worktree_daemon_refusal", return_value=refusal),
+        patch("gobby.config.bootstrap.load_bootstrap") as load_bootstrap,
+        patch("gobby.runner.run_gobby") as run_gobby,
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        main()
+
+    assert exc_info.value.code == 1
+    assert refusal in capsys.readouterr().err
+    load_bootstrap.assert_not_called()
+    run_gobby.assert_not_called()
+
+
+def _worktree_package(tmp_path: Path) -> tuple[Path, Path]:
+    """Lay out ``main/.git/worktrees/wt-1`` and a worktree package dir pointing at it."""
+    base = tmp_path.resolve()
+    git_dir = base / "main" / ".git" / "worktrees" / "wt-1"
+    git_dir.mkdir(parents=True)
+    worktree = base / "worktrees" / "wt-1"
+    package = worktree / "src" / "gobby"
+    package.mkdir(parents=True)
+    (worktree / ".git").write_text(f"gitdir: {git_dir}\n", encoding="utf-8")
+    return worktree, package
+
+
+def test_main_refuses_a_worktree_package_without_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The real helper refuses a linked-worktree package in main() (#21031)."""
+    worktree, package = _worktree_package(tmp_path)
+    monkeypatch.delenv("GOBBY_ALLOW_WORKTREE_DAEMON", raising=False)
+    with (
+        patch("gobby.__file__", str(package / "__init__.py")),
+        patch("gobby.config.bootstrap.load_bootstrap") as load_bootstrap,
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        main()
+
+    assert exc_info.value.code == 1
+    assert str(worktree) in capsys.readouterr().err
+    load_bootstrap.assert_not_called()
+
+
+def test_main_override_env_lets_a_worktree_package_start(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """GOBBY_ALLOW_WORKTREE_DAEMON=1 passes the guard and reaches the health probe (#21031)."""
+    _worktree, package = _worktree_package(tmp_path)
+    monkeypatch.setenv("GOBBY_ALLOW_WORKTREE_DAEMON", "1")
+    stub = MagicMock(daemon_port=8765, bind_host="localhost")
+    with (
+        patch("gobby.__file__", str(package / "__init__.py")),
+        patch("gobby.config.bootstrap.load_bootstrap", return_value=stub) as load_bootstrap,
+        patch("gobby.runner._healthy_daemon_running", return_value=True),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        main()
+
+    assert exc_info.value.code == 0
+    assert "already healthy" in capsys.readouterr().err
+    load_bootstrap.assert_called_once()

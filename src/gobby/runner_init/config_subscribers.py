@@ -231,7 +231,6 @@ _PER_OPERATION_ROUTES: Mapping[str, _ConsumerRoute] = {
     "indexing": _route("memory indexing", "operation ConfigRuntime.capture"),
     "launch_defaults": _route("agent launch", "operation ConfigRuntime.capture"),
     "logging": _route("logging operations", "operation ConfigRuntime.capture"),
-    "memory_recall": _route("memory recall", "operation ConfigRuntime.capture"),
     "memory_usefulness": _route("memory usefulness", "operation ConfigRuntime.capture"),
     "merge_resolution": _route("merge resolution", "operation ConfigRuntime.capture"),
     "metrics": _route("metrics cleanup", "iteration ConfigRuntime.capture"),

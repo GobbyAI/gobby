@@ -11,6 +11,7 @@ import pytest
 
 from gobby.workflows.memory_review_conditions import (
     classify_memory_review_close,
+    pending_memory_reviews_complete,
     queue_memory_review_close,
 )
 
@@ -167,6 +168,38 @@ def test_payload_without_task_id_skips_even_when_input_names_task() -> None:
 
     assert classify_memory_review_close(manager, event, _input()) is None
     manager.get_task.assert_not_called()
+
+
+def _closure(closure_id: str) -> dict[str, str]:
+    return {"closure_id": closure_id, "task_id": "task", "task_ref": "#1", "changes_summary": "x"}
+
+
+@pytest.mark.parametrize(
+    ("pending", "reviewed", "expected"),
+    [
+        pytest.param([_closure("a")], [{"closure_id": "a"}], True, id="single_reviewed"),
+        pytest.param(
+            [_closure("a"), _closure("b")],
+            [{"closure_id": "b"}, {"closure_id": "a"}],
+            True,
+            id="all_reviewed_any_order",
+        ),
+        pytest.param([_closure("a"), _closure("b")], [{"closure_id": "a"}], False, id="partial"),
+        pytest.param([], [{"closure_id": "a"}], False, id="nothing_pending"),
+        pytest.param([_closure("a")], [], False, id="nothing_reviewed"),
+        pytest.param("not-a-list", [{"closure_id": "a"}], False, id="malformed_pending"),
+        pytest.param([_closure("a")], {"closure_id": "a"}, False, id="malformed_records"),
+    ],
+)
+def test_pending_reviews_complete_only_when_every_closure_has_a_record(
+    pending: Any, reviewed: Any, expected: bool
+) -> None:
+    variables = {
+        "_memory_pending_task_reviews": pending,
+        "_memory_task_review_records": reviewed,
+    }
+
+    assert pending_memory_reviews_complete(variables) is expected
 
 
 def test_delivered_flag_drops_consumed_closures_before_queueing() -> None:

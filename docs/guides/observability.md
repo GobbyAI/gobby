@@ -142,7 +142,6 @@ surfaces:
 - `recall_signal.jsonl`, which is structured recall data rather than a log.
 - Standalone `ghook` stderr outside the daemon-managed hook surface.
 - Gwiki vault `log.md` and `_meta/` dumps.
-- PostgreSQL `pgaudit` records.
 
 Add separate receivers only after choosing parsing, access, and retention rules
 for each format. They can contain different or more sensitive data than the

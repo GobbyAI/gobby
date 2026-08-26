@@ -123,7 +123,7 @@ pub(crate) enum Command {
         /// Filter by source language (e.g. rust, python, css)
         #[arg(long)]
         language: Option<String>,
-        /// Trim returned rows to an approximate token budget
+        /// Page complete results to an approximate token budget
         #[arg(long, value_parser = positive_usize)]
         token_budget: Option<usize>,
     },
@@ -147,6 +147,9 @@ pub(crate) enum Command {
         /// Include FalkorDB graph neighbors in the exact-first ranking [requires graph backend]
         #[arg(long)]
         with_graph: bool,
+        /// Page results to an approximate token budget
+        #[arg(long, value_parser = positive_usize)]
+        token_budget: Option<usize>,
     },
     /// pg_search BM25 search on symbol metadata (names, signatures, docstrings)
     SearchText {
@@ -162,6 +165,9 @@ pub(crate) enum Command {
         /// Filter by source language (e.g. rust, python, css)
         #[arg(long)]
         language: Option<String>,
+        /// Page results to an approximate token budget
+        #[arg(long, value_parser = positive_usize)]
+        token_budget: Option<usize>,
     },
     /// pg_search BM25 search on file content chunks
     SearchContent {
@@ -177,6 +183,9 @@ pub(crate) enum Command {
         /// Filter by source language (e.g. rust, python, css)
         #[arg(long)]
         language: Option<String>,
+        /// Page results to an approximate token budget
+        #[arg(long, value_parser = positive_usize)]
+        token_budget: Option<usize>,
     },
     /// Indexed grep: exact pattern search on content chunks
     #[command(
@@ -226,13 +235,27 @@ pub(crate) enum Command {
         #[arg(short = 'g', long)]
         glob: Vec<String>,
         /// Maximum matching lines to include, up to 10000
-        #[arg(short = 'm', long, value_parser = grep_max_count)]
+        #[arg(short = 'm', long = "limit", visible_alias = "max-count", value_parser = grep_max_count)]
         max_count: Option<usize>,
+        /// Skip first N matches (for pagination)
+        #[arg(long, default_value = "0")]
+        offset: usize,
+        /// Page results to an approximate token budget
+        #[arg(long, value_parser = positive_usize)]
+        token_budget: Option<usize>,
     },
 
     // ── Symbol Retrieval (works in all modes) ────────────────────────
     /// Hierarchical symbol tree for a file
-    Outline { file: String },
+    Outline {
+        file: String,
+        #[arg(long, value_parser = positive_usize)]
+        limit: Option<usize>,
+        #[arg(long, default_value = "0")]
+        offset: usize,
+        #[arg(long, value_parser = positive_usize)]
+        token_budget: Option<usize>,
+    },
     /// Fetch symbol source code by ID (byte-offset read)
     Symbol { id: String },
     /// Fetch symbol source code at PATH:LINE or PATH:LINE:COLUMN
@@ -245,11 +268,33 @@ pub(crate) enum Command {
         line: Option<usize>,
     },
     /// Batch retrieve symbols by ID
-    Symbols { ids: Vec<String> },
+    Symbols {
+        ids: Vec<String>,
+        #[arg(long, value_parser = positive_usize)]
+        limit: Option<usize>,
+        #[arg(long, default_value = "0")]
+        offset: usize,
+        #[arg(long, value_parser = positive_usize)]
+        token_budget: Option<usize>,
+    },
     /// List distinct symbol kinds in the index
-    Kinds,
+    Kinds {
+        #[arg(long, value_parser = positive_usize)]
+        limit: Option<usize>,
+        #[arg(long, default_value = "0")]
+        offset: usize,
+        #[arg(long, value_parser = positive_usize)]
+        token_budget: Option<usize>,
+    },
     /// File tree with symbol counts
-    Tree,
+    Tree {
+        #[arg(long, value_parser = positive_usize)]
+        limit: Option<usize>,
+        #[arg(long, default_value = "0")]
+        offset: usize,
+        #[arg(long, value_parser = positive_usize)]
+        token_budget: Option<usize>,
+    },
     // ── Dependency Graph (requires graph backend) ──────────────────────
     /// Find callers of a symbol query, resolved to a canonical symbol ID [requires graph backend]
     Callers {
@@ -259,6 +304,8 @@ pub(crate) enum Command {
         /// Skip first N results (for pagination)
         #[arg(long, default_value = "0")]
         offset: usize,
+        #[arg(long, value_parser = positive_usize)]
+        token_budget: Option<usize>,
     },
     /// Find callees of a symbol query, resolved to a canonical symbol ID [requires graph backend]
     Callees {
@@ -268,6 +315,8 @@ pub(crate) enum Command {
         /// Skip first N results (for pagination)
         #[arg(long, default_value = "0")]
         offset: usize,
+        #[arg(long, value_parser = positive_usize)]
+        token_budget: Option<usize>,
     },
     /// Find incoming call usages of a symbol query, resolved to a canonical symbol ID [requires graph backend]
     Usages {
@@ -277,12 +326,20 @@ pub(crate) enum Command {
         /// Skip first N results (for pagination)
         #[arg(long, default_value = "0")]
         offset: usize,
-        /// Trim returned rows to an approximate token budget
+        /// Page complete results to an approximate token budget
         #[arg(long, value_parser = positive_usize)]
         token_budget: Option<usize>,
     },
     /// Show import graph for a file [requires graph backend]
-    Imports { file: String },
+    Imports {
+        file: String,
+        #[arg(long, value_parser = positive_usize)]
+        limit: Option<usize>,
+        #[arg(long, default_value = "0")]
+        offset: usize,
+        #[arg(long, value_parser = positive_usize)]
+        token_budget: Option<usize>,
+    },
     /// Shortest CALLS path from one symbol query to another [requires graph backend]
     Path {
         /// Source symbol query
@@ -301,14 +358,25 @@ pub(crate) enum Command {
         target: String,
         #[arg(long, default_value = "3")]
         depth: usize,
-        /// Trim returned rows to an approximate token budget
+        #[arg(long, value_parser = positive_usize)]
+        limit: Option<usize>,
+        #[arg(long, default_value = "0")]
+        offset: usize,
+        /// Page results to an approximate token budget
         #[arg(long, value_parser = positive_usize)]
         token_budget: Option<usize>,
     },
 
     // ── Project Management ───────────────────────────────────────────
     /// Directory-grouped project stats
-    RepoOutline,
+    RepoOutline {
+        #[arg(long, value_parser = positive_usize)]
+        limit: Option<usize>,
+        #[arg(long, default_value = "0")]
+        offset: usize,
+        #[arg(long, value_parser = positive_usize)]
+        token_budget: Option<usize>,
+    },
     /// List indexed projects
     Projects,
     /// Remove stale projects and reconcile orphaned graph + vector projection state across indexed projects
@@ -317,7 +385,8 @@ pub(crate) enum Command {
         #[arg(long)]
         force: bool,
         /// Retain unreferenced content and recent Git history for this many days
-        #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u32).range(1..))]
+        /// (matches the daemon's `code_index.content_retention_days` default)
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
         retention_days: u32,
     },
 }
@@ -528,6 +597,9 @@ pub(crate) enum VectorCommand {
         /// Clear vector projection for this project id without resolving cwd project context
         #[arg(long)]
         project_id: Option<String>,
+        /// Delete the project's whole code-symbol collection instead of its points (project purge)
+        #[arg(long)]
+        drop_collection: bool,
     },
     /// Rebuild the current project's code-symbol vector projection from PostgreSQL facts
     Rebuild,
@@ -554,7 +626,7 @@ fn positive_usize(value: &str) -> Result<usize, String> {
 }
 
 fn grep_max_count(value: &str) -> Result<usize, String> {
-    bounded_positive_usize(value, MAX_GREP_MAX_COUNT, "--max-count")
+    bounded_positive_usize(value, MAX_GREP_MAX_COUNT, "--limit")
 }
 
 fn bounded_positive_usize(value: &str, max: usize, name: &str) -> Result<usize, String> {
@@ -574,10 +646,75 @@ pub(crate) fn effective_format(
     explicit_format: Option<output::Format>,
     command: &Command,
 ) -> output::Format {
-    explicit_format.unwrap_or(match command {
-        Command::Grep { .. } => output::Format::Text,
-        _ => output::Format::Json,
+    explicit_format.unwrap_or_else(|| {
+        if command.is_navigation() {
+            output::Format::Text
+        } else {
+            output::Format::Json
+        }
     })
+}
+
+pub(crate) fn effective_token_budget(format: output::Format, command: &Command) -> Option<usize> {
+    command.requested_token_budget().or_else(|| {
+        (matches!(format, output::Format::Text) && command.is_paged_navigation())
+            .then_some(crate::commands::token_budget::AUTOMATIC_TEXT_TOKEN_BUDGET)
+    })
+}
+
+impl Command {
+    fn is_navigation(&self) -> bool {
+        matches!(
+            self,
+            Self::Search { .. }
+                | Self::SearchSymbol { .. }
+                | Self::SearchText { .. }
+                | Self::SearchContent { .. }
+                | Self::Grep { .. }
+                | Self::Outline { .. }
+                | Self::Symbol { .. }
+                | Self::SymbolAt { .. }
+                | Self::Symbols { .. }
+                | Self::Kinds { .. }
+                | Self::Tree { .. }
+                | Self::Callers { .. }
+                | Self::Callees { .. }
+                | Self::Usages { .. }
+                | Self::Imports { .. }
+                | Self::Path { .. }
+                | Self::BlastRadius { .. }
+                | Self::RepoOutline { .. }
+        )
+    }
+
+    fn is_paged_navigation(&self) -> bool {
+        self.is_navigation()
+            && !matches!(
+                self,
+                Self::Symbol { .. } | Self::SymbolAt { .. } | Self::Path { .. }
+            )
+    }
+
+    fn requested_token_budget(&self) -> Option<usize> {
+        match self {
+            Self::Search { token_budget, .. }
+            | Self::SearchSymbol { token_budget, .. }
+            | Self::SearchText { token_budget, .. }
+            | Self::SearchContent { token_budget, .. }
+            | Self::Grep { token_budget, .. }
+            | Self::Outline { token_budget, .. }
+            | Self::Symbols { token_budget, .. }
+            | Self::Kinds { token_budget, .. }
+            | Self::Tree { token_budget, .. }
+            | Self::Callers { token_budget, .. }
+            | Self::Callees { token_budget, .. }
+            | Self::Usages { token_budget, .. }
+            | Self::Imports { token_budget, .. }
+            | Self::BlastRadius { token_budget, .. }
+            | Self::RepoOutline { token_budget, .. } => *token_budget,
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]

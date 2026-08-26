@@ -11,10 +11,6 @@ use serde::Serialize;
 
 const GRAPH_BACKEND_HINT: &str =
     "Graph commands require a configured FalkorDB graph backend and synced graph projection.";
-const USAGES_TOKEN_BUDGET_REFINE_HINT: &str =
-    "`--limit`, `--offset`, or a more specific symbol query";
-const BLAST_RADIUS_TOKEN_BUDGET_REFINE_HINT: &str =
-    "`--depth`, a more specific symbol query, or a symbol UUID";
 
 pub(super) fn hint_for(ctx: &Context) -> Option<String> {
     if ctx.falkordb.is_none() {
@@ -72,6 +68,8 @@ fn empty_paged_response<T: Serialize>(
             offset,
             limit,
             results: vec![],
+            next_offset: None,
+            budget_exceeded: false,
             hint: error
                 .and_then(|err| hint_for_error(ctx, err))
                 .or_else(|| hint_for(ctx)),
@@ -399,6 +397,7 @@ pub fn callers(
     symbol_name: &str,
     limit: usize,
     offset: usize,
+    token_budget: Option<usize>,
     format: Format,
 ) -> anyhow::Result<()> {
     let Some((symbol, total, results)) = read_paged_symbol_graph_results(
@@ -414,38 +413,33 @@ pub fn callers(
         return Ok(());
     };
 
-    match format {
-        Format::Json => output::print_json(&PagedResponse {
-            project_id: ctx.project_id.clone(),
-            total,
-            offset,
-            limit,
-            results,
-            hint: hint_for(ctx),
-            warnings: Vec::new(),
-        }),
-        Format::Text => {
-            if results.is_empty() && offset == 0 {
-                output::print_text(&format!("No callers found for '{}'", symbol.display_name))?;
-                print_graph_hint_text(ctx, None);
-            } else if results.is_empty() {
-                eprintln!("No callers at offset {offset} (total {total})");
-            } else {
-                output::print_text(&format_grouped_graph_results(&results, |r| {
-                    format_caller_result_line(r, &symbol.display_name)
-                }))?;
-                if total > offset + results.len() {
-                    eprintln!(
-                        "-- {} of {} results (use --offset {} for more)",
-                        results.len(),
-                        total,
-                        offset + results.len()
-                    );
-                }
-            }
-            Ok(())
+    if matches!(format, Format::Text) && results.is_empty() {
+        if offset == 0 {
+            output::print_text(&format!("No callers found for '{}'", symbol.display_name))?;
+            print_graph_hint_text(ctx, None);
+        } else {
+            eprintln!("No callers at offset {offset} (total {total})");
         }
+        return Ok(());
     }
+    let hint = hint_for(ctx);
+    let meta = token_budget::CollectionPageMeta {
+        project_id: &ctx.project_id,
+        total,
+        offset,
+        limit,
+        hint: hint.as_deref(),
+    };
+    let page = token_budget::paginate(results, meta, token_budget, format, |rows| {
+        format_grouped_graph_results(rows, |result| {
+            format_caller_result_line(result, &symbol.display_name)
+        })
+    });
+    token_budget::print_page(&page, meta, format, |rows| {
+        format_grouped_graph_results(rows, |result| {
+            format_caller_result_line(result, &symbol.display_name)
+        })
+    })
 }
 
 pub fn callees(
@@ -453,6 +447,7 @@ pub fn callees(
     symbol_name: &str,
     limit: usize,
     offset: usize,
+    token_budget: Option<usize>,
     format: Format,
 ) -> anyhow::Result<()> {
     let Some((symbol, total, results)) = read_paged_symbol_graph_results(
@@ -468,38 +463,33 @@ pub fn callees(
         return Ok(());
     };
 
-    match format {
-        Format::Json => output::print_json(&PagedResponse {
-            project_id: ctx.project_id.clone(),
-            total,
-            offset,
-            limit,
-            results,
-            hint: hint_for(ctx),
-            warnings: Vec::new(),
-        }),
-        Format::Text => {
-            if results.is_empty() && offset == 0 {
-                output::print_text(&format!("No callees found for '{}'", symbol.display_name))?;
-                print_graph_hint_text(ctx, None);
-            } else if results.is_empty() {
-                eprintln!("No callees at offset {offset} (total {total})");
-            } else {
-                output::print_text(&format_grouped_graph_results(&results, |r| {
-                    format_callee_result_line(r, &symbol.display_name)
-                }))?;
-                if total > offset + results.len() {
-                    eprintln!(
-                        "-- {} of {} results (use --offset {} for more)",
-                        results.len(),
-                        total,
-                        offset + results.len()
-                    );
-                }
-            }
-            Ok(())
+    if matches!(format, Format::Text) && results.is_empty() {
+        if offset == 0 {
+            output::print_text(&format!("No callees found for '{}'", symbol.display_name))?;
+            print_graph_hint_text(ctx, None);
+        } else {
+            eprintln!("No callees at offset {offset} (total {total})");
         }
+        return Ok(());
     }
+    let hint = hint_for(ctx);
+    let meta = token_budget::CollectionPageMeta {
+        project_id: &ctx.project_id,
+        total,
+        offset,
+        limit,
+        hint: hint.as_deref(),
+    };
+    let page = token_budget::paginate(results, meta, token_budget, format, |rows| {
+        format_grouped_graph_results(rows, |result| {
+            format_callee_result_line(result, &symbol.display_name)
+        })
+    });
+    token_budget::print_page(&page, meta, format, |rows| {
+        format_grouped_graph_results(rows, |result| {
+            format_callee_result_line(result, &symbol.display_name)
+        })
+    })
 }
 
 pub fn usages(
@@ -522,54 +512,46 @@ pub fn usages(
     else {
         return Ok(());
     };
-    let unbudgeted_result_count = results.len();
-    let budgeted = token_budget::trim_results(
-        results,
-        token_budget,
-        USAGES_TOKEN_BUDGET_REFINE_HINT,
-        |result| format_usage_result_line(result, &symbol.display_name),
-    );
-    let results = budgeted.results;
-    let hint = token_budget::combine_hints(hint_for(ctx), budgeted.hint);
-
-    match format {
-        Format::Json => output::print_json(&PagedResponse {
-            project_id: ctx.project_id.clone(),
-            total,
-            offset,
-            limit,
-            results,
-            hint,
-            warnings: Vec::new(),
-        }),
-        Format::Text => {
-            if unbudgeted_result_count == 0 && offset == 0 {
-                output::print_text(&format!("No usages found for '{}'", symbol.display_name))?;
-                print_graph_hint_text(ctx, None);
-            } else if unbudgeted_result_count == 0 {
-                eprintln!("No usages at offset {offset} (total {total})");
-            } else if results.is_empty() {
-                print_hint_text(hint.as_deref());
-            } else {
-                output::print_text(&format_grouped_graph_results(&results, |r| {
-                    format_usage_result_line(r, &symbol.display_name)
-                }))?;
-                print_hint_text(hint.as_deref());
-                if total > offset + results.len() {
-                    eprintln!(
-                        "-- {} of {} results (use --offset {} for more)",
-                        results.len(),
-                        total,
-                        offset + results.len()
-                    );
-                }
-            }
-            Ok(())
+    if matches!(format, Format::Text) && results.is_empty() {
+        if offset == 0 {
+            output::print_text(&format!("No usages found for '{}'", symbol.display_name))?;
+            print_graph_hint_text(ctx, None);
+        } else {
+            eprintln!("No usages at offset {offset} (total {total})");
         }
+        return Ok(());
     }
+    let hint = hint_for(ctx);
+    let meta = token_budget::CollectionPageMeta {
+        project_id: &ctx.project_id,
+        total,
+        offset,
+        limit,
+        hint: hint.as_deref(),
+    };
+    let page = token_budget::paginate(results, meta, token_budget, format, |rows| {
+        format_grouped_graph_results(rows, |result| {
+            format_usage_result_line(result, &symbol.display_name)
+        })
+    });
+    if matches!(format, Format::Text) {
+        print_hint_text(hint.as_deref());
+    }
+    token_budget::print_page(&page, meta, format, |rows| {
+        format_grouped_graph_results(rows, |result| {
+            format_usage_result_line(result, &symbol.display_name)
+        })
+    })
 }
 
-pub fn imports(ctx: &Context, file: &str, format: Format) -> anyhow::Result<()> {
+pub fn imports(
+    ctx: &Context,
+    file: &str,
+    limit: Option<usize>,
+    offset: usize,
+    token_budget: Option<usize>,
+    format: Format,
+) -> anyhow::Result<()> {
     let Some(()) =
         graph_read_or_empty::<()>(ctx, 0, 0, format, || code_graph::require_graph_reads(ctx))?
     else {
@@ -582,29 +564,36 @@ pub fn imports(ctx: &Context, file: &str, format: Format) -> anyhow::Result<()> 
     else {
         return Ok(());
     };
-    let total = results.len();
-    match format {
-        Format::Json => output::print_json(&PagedResponse {
-            project_id: ctx.project_id.clone(),
-            total,
-            offset: 0,
-            limit: total,
-            results,
-            hint: hint_for(ctx),
-            warnings: Vec::new(),
-        }),
-        Format::Text => {
-            if results.is_empty() {
-                output::print_text(&format!("No imports found for '{file}'"))?;
-                print_graph_hint_text(ctx, None);
-            } else {
-                for r in &results {
-                    output::print_text(&r.name)?;
-                }
-            }
-            Ok(())
+    let (total, limit, results) = token_budget::window(results, offset, limit);
+    if matches!(format, Format::Text) && results.is_empty() {
+        if offset == 0 {
+            output::print_text(&format!("No imports found for '{file}'"))?;
+            print_graph_hint_text(ctx, None);
+        } else {
+            eprintln!("No imports at offset {offset} (total {total})");
         }
+        return Ok(());
     }
+    let hint = hint_for(ctx);
+    let meta = token_budget::CollectionPageMeta {
+        project_id: &ctx.project_id,
+        total,
+        offset,
+        limit,
+        hint: hint.as_deref(),
+    };
+    let page = token_budget::paginate(results, meta, token_budget, format, |rows| {
+        rows.iter()
+            .map(|result| result.name.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    });
+    token_budget::print_page(&page, meta, format, |rows| {
+        rows.iter()
+            .map(|result| result.name.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    })
 }
 
 pub fn path(
@@ -634,6 +623,8 @@ pub fn blast_radius(
     ctx: &Context,
     target: &str,
     depth: usize,
+    limit: Option<usize>,
+    offset: usize,
     token_budget: Option<usize>,
     format: Format,
 ) -> anyhow::Result<()> {
@@ -643,7 +634,13 @@ pub fn blast_radius(
         return Ok(());
     };
     let Some(symbol) = resolve_blast_radius_target(ctx, target)? else {
-        empty_paged_response::<crate::models::GraphResult>(ctx, 0, 0, format, None)?;
+        empty_paged_response::<crate::models::GraphResult>(
+            ctx,
+            offset,
+            limit.unwrap_or(0),
+            format,
+            None,
+        )?;
         return Ok(());
     };
     let Some(results) =
@@ -653,43 +650,36 @@ pub fn blast_radius(
     else {
         return Ok(());
     };
-    let total = results.len();
-    let budgeted = token_budget::trim_results(
-        results,
-        token_budget,
-        BLAST_RADIUS_TOKEN_BUDGET_REFINE_HINT,
-        format_blast_radius_result_line,
-    );
-    let results = budgeted.results;
-    let hint = token_budget::combine_hints(hint_for(ctx), budgeted.hint);
-    match format {
-        Format::Json => output::print_json(&PagedResponse {
-            project_id: ctx.project_id.clone(),
-            total,
-            offset: 0,
-            limit: total,
-            results,
-            hint,
-            warnings: Vec::new(),
-        }),
-        Format::Text => {
-            if total == 0 {
-                output::print_text(&format!(
-                    "No blast radius found for '{}'",
-                    symbol.display_name
-                ))?;
-                print_graph_hint_text(ctx, None);
-            } else if results.is_empty() {
-                print_hint_text(hint.as_deref());
-            } else {
-                output::print_text(&format_grouped_graph_results(&results, |r| {
-                    format_blast_radius_result_line(r)
-                }))?;
-                print_hint_text(hint.as_deref());
-            }
-            Ok(())
+    let (total, limit, results) = token_budget::window(results, offset, limit);
+    if matches!(format, Format::Text) && results.is_empty() {
+        if offset == 0 {
+            output::print_text(&format!(
+                "No blast radius found for '{}'",
+                symbol.display_name
+            ))?;
+            print_graph_hint_text(ctx, None);
+        } else {
+            eprintln!("No blast-radius rows at offset {offset} (total {total})");
         }
+        return Ok(());
     }
+    let hint = hint_for(ctx);
+    let meta = token_budget::CollectionPageMeta {
+        project_id: &ctx.project_id,
+        total,
+        offset,
+        limit,
+        hint: hint.as_deref(),
+    };
+    let page = token_budget::paginate(results, meta, token_budget, format, |rows| {
+        format_grouped_graph_results(rows, format_blast_radius_result_line)
+    });
+    if matches!(format, Format::Text) {
+        print_hint_text(hint.as_deref());
+    }
+    token_budget::print_page(&page, meta, format, |rows| {
+        format_grouped_graph_results(rows, format_blast_radius_result_line)
+    })
 }
 
 #[cfg(test)]

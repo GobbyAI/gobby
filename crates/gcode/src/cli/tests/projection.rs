@@ -206,7 +206,10 @@ fn parse_projection_lifecycle_commands() {
     assert!(matches!(
         cli.command,
         Command::Vector {
-            command: VectorCommand::Clear { project_id: None }
+            command: VectorCommand::Clear {
+                project_id: None,
+                drop_collection: false,
+            }
         }
     ));
     let cli = Cli::try_parse_from([
@@ -215,13 +218,15 @@ fn parse_projection_lifecycle_commands() {
         "clear",
         "--project-id",
         "11111111-1111-1111-1111-111111111111",
+        "--drop-collection",
     ])
-    .expect("vector clear --project-id parses");
+    .expect("vector clear --project-id --drop-collection parses");
     assert!(matches!(
         cli.command,
         Command::Vector {
             command: VectorCommand::Clear {
-                project_id: Some(_)
+                project_id: Some(_),
+                drop_collection: true,
             }
         }
     ));

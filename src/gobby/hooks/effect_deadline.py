@@ -2,7 +2,7 @@
 
 import time
 
-BLOCKING_EFFECT_BUDGET_SECONDS = 15.0
+BLOCKING_EFFECT_BUDGET_SECONDS = 20.0
 
 
 def new_blocking_effect_deadline() -> float:

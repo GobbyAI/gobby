@@ -99,6 +99,7 @@ async def test_review_returns_candidates_and_records_success(candidate_count: in
         task=_task(), candidates=candidates
     )
     state_manager = MagicMock()
+    state_manager.get_variables.return_value = {}
     state_manager_cls = MagicMock(return_value=state_manager)
 
     with patch(
@@ -131,6 +132,66 @@ async def test_review_returns_candidates_and_records_success(candidate_count: in
     assert search_kwargs["include_global"] is True
     state_manager_cls.assert_called_once_with(session_manager.db)
     state_manager.upsert_bounded_list_variable.assert_called_once()
+    assert result["pending_reviews_complete"] is False
+    state_manager.set_variable.assert_not_called()
+
+
+CLOSURE_ID = f"{TASK_ID}:2026-08-25T00:00:00+00:00"
+
+
+def _state_manager(variables: dict[str, Any]) -> tuple[MagicMock, MagicMock]:
+    state_manager = MagicMock()
+    state_manager.get_variables.return_value = variables
+    return state_manager, MagicMock(return_value=state_manager)
+
+
+@pytest.mark.asyncio
+async def test_reviewing_every_queued_closure_releases_the_stop_gate() -> None:
+    registry = _registry(task=_task())[0]
+    state_manager, state_manager_cls = _state_manager(
+        {
+            "_memory_pending_task_reviews": [{"closure_id": CLOSURE_ID, "task_ref": "#42"}],
+            "_memory_task_review_records": [{"closure_id": CLOSURE_ID}],
+        }
+    )
+
+    with patch("gobby.mcp_proxy.tools.memory_review.SessionVariableManager", state_manager_cls):
+        result = await registry.call(
+            "review_task_memories",
+            {"task_id": "#42", "changes_summary": "Reviewed.", "session_id": SESSION_ID},
+        )
+
+    assert result["success"] is True
+    assert result["pending_reviews_complete"] is True
+    state_manager.upsert_bounded_list_variable.assert_called_once()
+    state_manager.get_variables.assert_called_once_with(SESSION_ID)
+    state_manager.set_variable.assert_called_once_with(
+        SESSION_ID, "_memory_review_stop_delivered", True
+    )
+
+
+@pytest.mark.asyncio
+async def test_partial_review_leaves_the_stop_gate_armed() -> None:
+    registry = _registry(task=_task())[0]
+    state_manager, state_manager_cls = _state_manager(
+        {
+            "_memory_pending_task_reviews": [
+                {"closure_id": CLOSURE_ID, "task_ref": "#42"},
+                {"closure_id": "other-task:2026-08-25T00:00:00+00:00", "task_ref": "#43"},
+            ],
+            "_memory_task_review_records": [{"closure_id": CLOSURE_ID}],
+        }
+    )
+
+    with patch("gobby.mcp_proxy.tools.memory_review.SessionVariableManager", state_manager_cls):
+        result = await registry.call(
+            "review_task_memories",
+            {"task_id": "#42", "changes_summary": "Reviewed.", "session_id": SESSION_ID},
+        )
+
+    assert result["success"] is True
+    assert result["pending_reviews_complete"] is False
+    state_manager.set_variable.assert_not_called()
 
 
 @pytest.mark.asyncio

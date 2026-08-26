@@ -390,6 +390,7 @@ class SearchService:
         half_life: float,
         effective_min_score: float,
         limit: int,
+        candidate_vectors: dict[str, list[float]] | None = None,
     ) -> list[Memory]:
         return build_results(
             storage=self._storage,
@@ -410,6 +411,7 @@ class SearchService:
             effective_min_score=effective_min_score,
             limit=limit,
             graph_synthetic_discount=self._recall_constants.graph_synthetic_discount,
+            candidate_vectors=candidate_vectors,
         )
 
     async def _search_graph_scored(

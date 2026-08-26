@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from types import MappingProxyType
-from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -17,9 +16,6 @@ from gobby.config.values import ConfigValuesService
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.mcp_proxy.tools.config import create_config_registry
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager, InternalToolRegistry
-from gobby.mcp_proxy.tools.memory import create_memory_registry
-from gobby.memory.manager import MemoryManager
-from gobby.memory.recall import MemoryRecallRunner
 from gobby.servers.http import HTTPServer
 from gobby.storage.config_mutations import ConfigMutationResult, ConfigPatch
 from gobby.storage.hub.protocol import HubDatabase
@@ -28,7 +24,7 @@ from gobby.utils.session_context import session_context_for_test
 pytestmark = pytest.mark.unit
 
 _SESSION_ID = "796c13d5-34bd-4b6a-b60c-b022df873ad2"
-_CONFIG_KEY = "memory_recall.candidate_limit"
+_CONFIG_KEY = "digest.num_pairs"
 
 
 class _MutableRuntime(ConfigRuntime):
@@ -69,8 +65,8 @@ class _MemoryManager:
         self.db = db
 
 
-def _snapshot(revision: int, candidate_limit: int) -> ConfigSnapshot:
-    config = DaemonConfig.model_validate({"memory_recall": {"candidate_limit": candidate_limit}})
+def _snapshot(revision: int, num_pairs: int) -> ConfigSnapshot:
+    config = DaemonConfig.model_validate({"digest": {"num_pairs": num_pairs}})
     return ConfigSnapshot(
         revision=revision,
         desired=config,
@@ -78,8 +74,8 @@ def _snapshot(revision: int, candidate_limit: int) -> ConfigSnapshot:
         row_revisions={_CONFIG_KEY: revision},
         pending_restart_keys=frozenset(),
         failed_live_keys={},
-        desired_values={_CONFIG_KEY: candidate_limit},
-        active_values={_CONFIG_KEY: candidate_limit},
+        desired_values={_CONFIG_KEY: num_pairs},
+        active_values={_CONFIG_KEY: num_pairs},
     )
 
 
@@ -150,7 +146,7 @@ def _epoch_probe(
         second = server.resolve_runtime_config()
         assert first is not None
         assert second is not None
-        return [first.memory_recall.candidate_limit, second.memory_recall.candidate_limit]
+        return [first.digest.num_pairs, second.digest.num_pairs]
 
     manager = InternalRegistryManager()
     manager.add_registry(registry)
@@ -172,12 +168,12 @@ async def test_in_process_mcp_call_pins_one_active_runtime_epoch() -> None:
     assert runtime.capture_count == 1
     current = http_server.resolve_runtime_config()
     assert current is not None
-    assert current.memory_recall.candidate_limit == 17
+    assert current.digest.num_pairs == 17
 
 
 @pytest.mark.asyncio
 async def test_in_process_mcp_call_pins_pre_start_fallback() -> None:
-    startup_config = DaemonConfig.model_validate({"memory_recall": {"candidate_limit": 3}})
+    startup_config = DaemonConfig.model_validate({"digest": {"num_pairs": 3}})
     runtime = _MutableRuntime(_snapshot(2, 17), ready=False)
     http_server = _http_server(startup_config)
     http_server.services.config_runtime = runtime
@@ -194,14 +190,12 @@ async def test_in_process_mcp_call_pins_pre_start_fallback() -> None:
     assert runtime.capture_count == 0
     current = http_server.resolve_runtime_config()
     assert current is not None
-    assert current.memory_recall.candidate_limit == 17
+    assert current.digest.num_pairs == 17
 
 
 @pytest.mark.asyncio
-async def test_live_config_patch_changes_next_memory_recall_mcp_call(
-    temp_db: HubDatabase,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_live_config_patch_changes_next_mcp_call(temp_db: HubDatabase) -> None:
+    del temp_db
     initial = _snapshot(1, 3)
     runtime = _MutableRuntime(initial)
     runtime.reconciled = _snapshot(2, 17)
@@ -209,46 +203,32 @@ async def test_live_config_patch_changes_next_memory_recall_mcp_call(
         runtime=runtime,
         mutations=_MutationWriter(revision=2),
     )
-    memory_manager = cast(MemoryManager, _MemoryManager(temp_db))
+    observed: list[int] = []
+    probe = InternalToolRegistry("gobby-probe")
+
+    @probe.tool(name="read_num_pairs", description="Record the digest pair budget in force.")
+    async def read_num_pairs() -> int:
+        value = runtime.snapshot.active.digest.num_pairs
+        observed.append(value)
+        return value
+
     manager = InternalRegistryManager()
     manager.add_registry(create_config_registry(lambda: config_service))
-    manager.add_registry(
-        create_memory_registry(
-            lambda: memory_manager,
-            startup_config=initial.active,
-            config_resolver=lambda: runtime.snapshot.active,
-        )
-    )
+    manager.add_registry(probe)
     proxy = _proxy(manager)
-    observed_limits: list[int] = []
-
-    async def capture_config(
-        runner: MemoryRecallRunner,
-        _event: Any,
-        _session_id: str,
-        _variables: dict[str, Any],
-    ) -> None:
-        observed_limits.append(runner.config.candidate_limit)
-
-    monkeypatch.setattr(MemoryRecallRunner, "run", capture_config)
-    recall_args = {
-        "prompt": "Use the current memory recall configuration.",
-        "source": "codex",
-        "parent_turn_seq": "7",
-    }
 
     with session_context_for_test(_SESSION_ID):
-        await proxy.call_tool("gobby-memory", "recall_memories_for_prompt", recall_args)
+        await proxy.call_tool("gobby-probe", "read_num_pairs", {})
         patch_result = await proxy.call_tool(
             "gobby-config",
             "patch_config_values",
             {
                 "expected_revision": 1,
-                "values": {"memory_recall": {"candidate_limit": 17}},
+                "values": {"digest": {"num_pairs": 17}},
             },
         )
-        await proxy.call_tool("gobby-memory", "recall_memories_for_prompt", recall_args)
+        await proxy.call_tool("gobby-probe", "read_num_pairs", {})
 
     assert patch_result["committed"] is True
     assert patch_result["apply_status"] == "applied"
-    assert observed_limits == [3, 17]
+    assert observed == [3, 17]

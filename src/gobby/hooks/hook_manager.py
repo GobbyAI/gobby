@@ -578,20 +578,6 @@ class HookManager:
                 self.logger.exception("Response enrichment failed: %s", e)
 
         try:
-            from gobby.workflows.engine.delivery_formatting import (
-                finalize_staged_memory_delivery,
-            )
-
-            finalize_staged_memory_delivery(
-                event,
-                response if preserve_original else observer_response,
-                database=self._database,
-                logger=self.logger,
-            )
-        except Exception as e:
-            self.logger.exception("Staged memory delivery failed: %s", e)
-
-        try:
             grok_pending_context.process_response(
                 self,
                 event,

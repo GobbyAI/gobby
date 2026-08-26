@@ -53,6 +53,7 @@ impl Harness {
     fn request<'a>(&'a self, daemon_url: Option<String>) -> AcquireRequest<'a> {
         AcquireRequest {
             project_root: &self.project_root,
+            project_id: None,
             home: Some(&self.home),
             daemon_url,
             now: Some(NOW),
@@ -95,6 +96,27 @@ fn acquire_with_ignores_process_environment() {
         Some("not-this-test")
     );
     assert_eq!(process.daemon_url.as_deref(), Some("http://127.0.0.1:9"));
+}
+
+#[test]
+fn acquire_with_explicit_project_id_needs_no_project_root() {
+    let harness = Harness::new();
+    let grant = fixture_grant(PrincipalKind::Interactive);
+    write_binding_for(&harness, "http://127.0.0.1:1", &grant.deployment.token);
+    write_cache(&harness, &grant, None);
+
+    let rootless = tempfile::tempdir().expect("rootless dir");
+    let mut request = harness.request(Some("http://127.0.0.1:1".into()));
+    request.project_root = rootless.path();
+    request.project_id = Some(PROJECT.into());
+
+    let acquired = acquire_with(&request).expect("acquire by explicit project id");
+    assert_eq!(acquired.source, GrantSource::Cache);
+    assert_eq!(acquired.bundle.principal.project_id, PROJECT);
+
+    let process = AcquireRequest::from_process_for_project_id(PROJECT);
+    assert_eq!(process.project_id.as_deref(), Some(PROJECT));
+    assert!(process.project_root.as_os_str().is_empty());
 }
 
 struct PoisonedEnv {
@@ -1429,6 +1451,49 @@ fn machine_config_is_grant_presented_and_not_capability() {
     assert!(has_header(&requests[0], GRANT_HEADER));
     assert!(!settings.settings.contains_key("databases.postgres.dsn"));
     assert_eq!(settings.config_revision, grant.config_revision);
+}
+
+#[test]
+fn managed_runtime_config_fetch_sends_identity_headers() {
+    let grant = fixture_grant(PrincipalKind::AgentRun);
+    let token = envelope_token(NOW + 60, PROJECT);
+    let claims = parse_capability_token(&token).expect("claims");
+    let scripted = spawn_scripted(vec![Step::Config {
+        revision: grant.config_revision,
+    }]);
+    fetch_runtime_config(&scripted.url, &grant, Some(&token), Duration::from_secs(1))
+        .expect("config");
+    let requests = join(scripted);
+    assert!(requests[0].contains("GET /api/runtime/config"));
+    assert!(has_header(&requests[0], GRANT_HEADER));
+    assert_eq!(
+        header_value(&requests[0], CALLER_PROJECT_HEADER).as_deref(),
+        Some(PROJECT)
+    );
+    assert_eq!(
+        header_value(&requests[0], SESSION_HEADER).as_deref(),
+        Some(claims.session_id.as_str())
+    );
+    assert_eq!(
+        header_value(&requests[0], AGENT_RUN_HEADER).as_deref(),
+        claims.agent_run_id.as_deref()
+    );
+    assert!(!has_header(&requests[0], MANAGED_EXECUTION_HEADER));
+}
+
+#[test]
+fn operator_runtime_config_fetch_sends_no_identity_headers() {
+    let grant = fixture_grant(PrincipalKind::Interactive);
+    let scripted = spawn_scripted(vec![Step::Config {
+        revision: grant.config_revision,
+    }]);
+    fetch_runtime_config(&scripted.url, &grant, Some(TOKEN), Duration::from_secs(1))
+        .expect("config");
+    let requests = join(scripted);
+    assert!(!has_header(&requests[0], CALLER_PROJECT_HEADER));
+    assert!(!has_header(&requests[0], SESSION_HEADER));
+    assert!(!has_header(&requests[0], AGENT_RUN_HEADER));
+    assert!(!has_header(&requests[0], MANAGED_EXECUTION_HEADER));
 }
 
 fn spawn_managed_challenge(token: &str, grant: GrantBundle) -> Scripted {

@@ -23,15 +23,6 @@ RUN test -n "$PG_SEARCH_VERSION" \
     && rm /tmp/pg_search.deb \
     && rm -rf /var/lib/apt/lists/*
 
-RUN { \
-        echo "shared_preload_libraries = 'pg_search,pgaudit'"; \
-        echo "pgaudit.log = 'write'"; \
-    } >> /usr/share/postgresql/postgresql.conf.sample
-
-RUN mkdir -p /var/log/pgaudit \
-    && chown postgres:postgres /var/log/pgaudit \
-    && chmod 0750 /var/log/pgaudit
+RUN echo "shared_preload_libraries = 'pg_search,pgaudit'" >> /usr/share/postgresql/postgresql.conf.sample
 
 COPY initdb.d/ /docker-entrypoint-initdb.d/
-COPY scripts/pg_audit_export.sh /usr/local/bin/pg_audit_export.sh
-RUN chmod 0755 /usr/local/bin/pg_audit_export.sh

@@ -5,36 +5,40 @@ The machine-readable contract lives at `crates/gcode/contract/gcode.contract.jso
 
 ## Version
 
-`contract_version`: 5
+`contract_version`: 6
 
-Version 5 pins exit codes, adds `callees`, and adds `graph view`. Each command below emits
-a stable JSON shape under `--format json`; the keys are pinned in
-`gcode.contract.json` and asserted by the drift tests.
+Version 6 makes compact text the default navigation surface and replaces
+token-budget row trimming with lossless whole-item pagination. Each command
+below emits a stable, whitespace-compact JSON shape under `--format json`; the
+keys are pinned in `gcode.contract.json` and asserted by drift tests.
 
 ### Query surfaces
 
 - `contract`, `index` — project and index metadata
-- `search`, `search-symbol`, `search-text`, `search-content` — ranked results
-  (`project_id, total, offset, limit, results[]`, each hit carrying `id, name,
+- `search`, `search-symbol`, `search-text`, `search-content` — paged ranked results
+  (`project_id, total, offset, limit, next_offset, budget_exceeded, results[]`, each hit carrying `id, name,
   qualified_name, kind, language, file_path, line_start, line_end, signature,
   score`)
-- `grep` — exact pattern matches with spans
-- `outline` — `id, name, kind, line_start, line_end, signature` per symbol
+- `grep` — paged exact pattern matches with intact spans and context blocks
+- `outline` — paged top-level subtrees containing `id, name, kind, line_start,
+  line_end, signature` symbols
 - `symbol` — a stored symbol record plus the on-disk `source` snippet
 - `symbol-at` — same as `symbol`, plus a `lookup` block describing how the
   location resolved
-- `symbols` — the stored symbol record (no `source`)
-- `tree` — `file_path, language, symbol_count` per file
+- `symbols` — paged complete stored symbol records (no `source`)
+- `kinds` — paged kind strings
+- `tree` — paged directory groups containing `file_path, language,
+  symbol_count` rows
 - `callers`, `callees`, `usages` — graph reads (the `graph_read_keys` envelope).
-  `callees` is caller-parity `limit`/`offset` only; it has no output-clip
-  `--token-budget`
+  Each relationship remains a complete page unit.
 - `graph view` — scoped `fcg` / `mcg` / `class-hierarchy` dump. JSON keys:
   `project_id, project_root, view, seed, depth, incoming_truncated,
   outgoing_truncated, hint, nodes, edges, communities, mermaid`. Mermaid is
   always present and is never character/token-sliced
 - `imports`, `blast-radius` — the paged graph envelope (`project_id, total,
-  offset, limit, results[]`, each row carrying `id, name, file_path, line,
-  confidence, relation, distance, metadata, hint`)
+  offset, limit, next_offset, budget_exceeded, results[]`, each row carrying
+  `id, name, file_path, line, confidence, relation, distance, metadata, hint`)
+- `repo-outline` — paged directory summaries with complete file groups
 
 Stored symbol records carry the AI `summary`, never the raw `docstring`.
 
@@ -47,8 +51,25 @@ identify the resolved project with `project_id` and, where path context matters,
 
 ## Format
 
-Use `--format json` for daemon calls. Text output is for humans and is not a
-stable integration surface.
+Navigation commands default to compact text: `search`, `search-symbol`,
+`search-text`, `search-content`, `grep`, `outline`, `symbol`, `symbol-at`,
+`symbols`, `kinds`, `tree`, `repo-outline`, `callers`, `callees`, `usages`,
+`imports`, `path`, and `blast-radius`. Nested structural graph and lifecycle
+commands retain complete JSON defaults.
+
+Use explicit `--format json` for daemon and programmatic calls. JSON is the
+stable machine surface. Compact text omits UUIDs, scores, and ranking-lane
+diagnostics; `--verbose` restores those fields in text where applicable.
+
+Collection commands accept `--limit`, `--offset`, and `--token-budget`.
+Compact text receives an automatic 2,000-token page budget. Explicit JSON is
+token-paged only when requested and keeps existing command limits. Each budgeted
+page chooses the largest complete prefix whose fully rendered response fits
+`ceil(chars / 4)`, returns one complete oversized first item when necessary,
+and exposes a retrieval path through `next_offset` or an exact shell-safe text
+continuation command. `budget_exceeded` is present only when a complete item or
+page metadata exceeds the requested budget. `grep -m/--max-count` remains an
+alias for canonical `--limit`.
 
 ## Embeddings Doctor
 

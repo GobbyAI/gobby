@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
@@ -31,6 +32,15 @@ from tests.runner_helpers import (
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("fast_stop_hook_grace_window")]
+
+
+def test_daemon_process_disables_optional_git_locks() -> None:
+    """Importing the runner marks every daemon git subprocess lock-free (#21055).
+
+    A `git status` killed on timeout mid index-refresh would otherwise leave
+    `.git/index.lock` behind in the shared checkout.
+    """
+    assert os.environ["GIT_OPTIONAL_LOCKS"] == "0"
 
 
 def _set_config_value(db: Any, key: str, value: Any, *, is_secret: bool = False) -> None:

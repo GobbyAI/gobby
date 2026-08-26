@@ -54,6 +54,9 @@ RETIRED_AGENTS = (
 )
 RETIRED_SKILLS = ("dev", "qa", "wiki-research")
 RETIRED_RULES = {
+    "memory-recall-on-prompt",
+    "require-memory-recall-before-tool",
+    "require-memory-recall-before-turn-end",
     "block-and-teach-context7",
     "block-writes-outside-plan-artifact",
     "memory-capture-nudge",
