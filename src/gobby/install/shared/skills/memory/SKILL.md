@@ -1,7 +1,7 @@
 ---
 name: memory
-description: Use Gobby's persistent memory for durable cross-session knowledge, recall, and stale-memory maintenance while keeping tasks, plans, code, and git authoritative for their own concerns.
-version: "1.1.0"
+description: Use Gobby's persistent memory for durable cross-session knowledge, search-first retrieval, and stale-memory maintenance while keeping tasks, plans, code, and git authoritative for their own concerns.
+version: "1.2.0"
 category: core
 alwaysApply: false
 triggers: remember, recall, forget, memory
@@ -21,15 +21,21 @@ Most turns and most completed tasks need no memory write. Memory is for knowledg
 that remains useful across unrelated future sessions and would take meaningful
 exploration to rediscover.
 
-## Recall
+## Search
 
-Gobby automatically recalls memories for each eligible parent-user turn. It makes
-one attempt per turn, injects at most three results, and suppresses memory IDs already
-injected during the current context epoch. Use recalled knowledge when it applies.
+Memories reach a session only through `search_memories`; nothing arrives on its own.
+Search at these points:
 
-Automatic recall is a bounded first pass. Call `search_memories` when injected recall
-is absent, too shallow, or insufficient for the work. Search again before creating a
-memory so you can update, replace, or avoid duplicating an existing entry.
+- At task claim: search the task subject before editing (the claim nudge names the
+  query).
+- Before working in an unfamiliar subsystem.
+- Before creating a memory, so you can update, replace, or avoid duplicating an
+  existing entry.
+
+Every hit carries `rationale`, `similarity`, and `memory_type`. Judge relevance from
+the rationale and content; `similarity` ranks candidates within one search and is a
+weak absolute signal because most raw scores fall in a narrow 0.62-0.75 band. Search
+results are evidence, not authority.
 
 ## Capture
 
@@ -46,7 +52,8 @@ unrelated session would still benefit in three months.
 `create_memory` requires a rationale of at most 500 characters. The rationale argues
 why a future unrelated session should receive the memory; it is different from a
 summary of the content. One-time outcomes, run IDs, and dated status rarely support a
-durable rationale.
+durable rationale. The rationale is embedded with the content, so it also decides
+which searches find the memory.
 
 Prevent duplicates. Search first, review `similar_existing`, update the existing
 memory when its identity remains valid, or supersede stale entries when a durable
@@ -54,17 +61,18 @@ decision replaces them.
 
 ## Maintenance
 
-Recall is evidence, not authority. When a memory conflicts with current truth:
+When a memory conflicts with current truth:
 
-- Update it when the durable subject remains the same and its content changed.
+- Update it when the durable subject remains the same and its content changed
+  (`update_memory` requires a fresh rationale with new content).
 - Delete it when it is obsolete, misleading, duplicated, or cheaply derivable.
 - Create a replacement with `supersedes` when provenance of the durable change matters.
 
 Use `review_task_memories(task_id, changes_summary)` after the post-close prompt for a
-worked leaf. It searches memories related to the closed task without hiding memories
-already recalled in this context. Update or delete stale candidates, and create a new
-memory only when durable knowledge warrants one. Use the returned `source_task_id` for
-any new memory. Zero candidates is a complete and valid review.
+worked leaf. It searches memories related to the closed task. Update or delete stale
+candidates, and create a new memory only when durable knowledge warrants one. Use the
+returned `source_task_id` for any new memory. Zero candidates is a complete and valid
+review.
 
 ## Persistence Boundaries
 

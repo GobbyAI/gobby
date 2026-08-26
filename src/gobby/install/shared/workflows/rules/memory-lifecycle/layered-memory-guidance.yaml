@@ -57,9 +57,8 @@ rules:
     effects:
       - type: inject_context
         template: >
-          Memory reminder: use recalled memories; search `gobby-memory` when injected
-          context is insufficient. Record only explicitly requested or durable,
-          non-obvious knowledge. Most turns need no memory write.
+          Memory reminder: search `gobby-memory` before touching unfamiliar code;
+          record durable knowledge with a rationale. Most turns need no memory write.
       - type: set_variable
         variable: _memory_reminder_turn_seq
         value: "{{ variables.get('parent_turn_seq') }}"

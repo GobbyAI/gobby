@@ -15,7 +15,7 @@ Active memory-lifecycle rules:
 - queue-task-memory-review-after-close: set_variable on after_tool close_task
 - review-closed-task-memories-on-stop: acknowledged block on turn_end
 - guard-plan-memory-writes: one-time block on create_memory and update_memory
-- clear-memory-review-on-create: set_variable on before_tool
+- search-memories-on-claim: inject_context on after_tool claim_task/create_task claims
 
 """
 
@@ -53,6 +53,7 @@ MEMORY_RULES = {
     "queue-task-memory-review-after-close",
     "review-closed-task-memories-on-stop",
     "guard-plan-memory-writes",
+    "search-memories-on-claim",
 }
 
 REMOVED_HELPER_RULES = {
@@ -451,9 +452,8 @@ class TestLayeredMemoryGuidance:
         assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.resolved_effects[0].template == (
-            "Memory reminder: use recalled memories; search `gobby-memory` when injected "
-            "context is insufficient. Record only explicitly requested or durable, "
-            "non-obvious knowledge. Most turns need no memory write.\n"
+            "Memory reminder: search `gobby-memory` before touching unfamiliar code; "
+            "record durable knowledge with a rationale. Most turns need no memory write.\n"
         )
 
         first = SafeExpressionEvaluator(
@@ -701,6 +701,9 @@ class TestPostCloseMemoryReviewRules:
             _memory_initial_stop_checked=False,
             loaded_skills=[],
             open_tool_errors=[],
+            # The research-feedback stop gate shares this trigger; keep it quiet
+            # so the aggregate counts only the two memory gates.
+            _gobby_feedback_epoch_reviewed=True,
         )
         engine = RuleEngine(db)
         event = _turn_end_event(HookEventType.AFTER_AGENT, source=SessionSource.QWEN)
@@ -939,3 +942,145 @@ class TestGuardPlanMemoryWritesEngine:
 
         assert result.decision == "allow"
         assert "plan_memory_write_nudge_fired" not in variables
+
+
+# ---------------------------------------------------------------------------
+# search-memories-on-claim through the engine
+# ---------------------------------------------------------------------------
+
+_CLAIM_SESSION_ID = "6f3a1f62-4d1e-4a4b-9a8e-3f7c2b1d0e55"
+_CLAIM_TASK_ID = "33333333-3333-4333-8333-333333330043"
+_CLAIM_NUDGE = "Task claimed. Before editing, search project memory for its subject:"
+
+
+def _task_tool_event(tool_name: str, arguments: dict[str, Any], tool_output: Any) -> HookEvent:
+    return HookEvent(
+        event_type=HookEventType.AFTER_TOOL,
+        session_id=_CLAIM_SESSION_ID,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": "gobby-tasks",
+                "tool_name": tool_name,
+                "arguments": arguments,
+            },
+            "mcp_server": "gobby-tasks",
+            "mcp_tool": tool_name,
+            "tool_output": tool_output,
+        },
+        metadata={"_platform_session_id": _CLAIM_SESSION_ID},
+    )
+
+
+@pytest.fixture
+def claim_engine(db: HubDatabase) -> RuleEngine:
+    _sync_bundled(db)
+    with db.transaction() as conn:
+        conn.execute("UPDATE rule_definitions SET enabled = FALSE")
+        conn.execute(
+            "UPDATE rule_definitions SET enabled = TRUE WHERE name = %s",
+            ("search-memories-on-claim",),
+        )
+    return RuleEngine(db)
+
+
+class TestSearchMemoriesOnClaim:
+    def test_rule_contract(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("search-memories-on-claim")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+
+        assert row.priority == 13
+        assert body.event.value == "after_tool"
+        assert "claimed_tasks" in (body.when or "")
+        assert [effect.type for effect in body.resolved_effects] == ["inject_context"]
+        assert "gobby-memory:search_memories" in (body.resolved_effects[0].template or "")
+
+    @pytest.mark.parametrize(
+        "tool_output",
+        [
+            pytest.param({"success": True, "task_id": _CLAIM_TASK_ID}, id="bare-payload"),
+            pytest.param(
+                {"success": True, "result": {"success": True, "task_id": _CLAIM_TASK_ID}},
+                id="proxy-envelope",
+            ),
+        ],
+    )
+    async def test_claim_task_nudges_a_search_with_the_title_placeholder(
+        self, claim_engine: RuleEngine, tool_output: dict[str, Any]
+    ) -> None:
+        variables: dict[str, Any] = {"claimed_tasks": {_CLAIM_TASK_ID: "#43"}}
+        event = _task_tool_event("claim_task", {"task_id": "#43"}, tool_output)
+
+        result = await claim_engine.evaluate(event, _CLAIM_SESSION_ID, variables)
+
+        assert result.decision == "allow"
+        assert result.context is not None
+        assert _CLAIM_NUDGE in result.context
+        assert '`gobby-memory:search_memories(query="<task title>")`' in result.context
+
+    async def test_create_task_with_claim_names_the_new_title_as_the_query(
+        self, claim_engine: RuleEngine
+    ) -> None:
+        variables: dict[str, Any] = {"claimed_tasks": {_CLAIM_TASK_ID: "#43"}}
+        event = _task_tool_event(
+            "create_task",
+            {"title": "Fix session cleanup on missing transcripts", "claim": True},
+            {"success": True, "result": {"id": _CLAIM_TASK_ID, "seq_num": 43, "ref": "#43"}},
+        )
+
+        result = await claim_engine.evaluate(event, _CLAIM_SESSION_ID, variables)
+
+        assert result.context is not None
+        assert (
+            'search_memories(query="Fix session cleanup on missing transcripts")' in result.context
+        )
+
+    @pytest.mark.parametrize(
+        ("tool_name", "arguments", "tool_output", "claimed"),
+        [
+            pytest.param(
+                "create_task",
+                {"title": "Unclaimed follow-up"},
+                {"success": True, "result": {"id": _CLAIM_TASK_ID, "seq_num": 43, "ref": "#43"}},
+                {},
+                id="create-without-claim",
+            ),
+            pytest.param(
+                "claim_task",
+                {"task_id": "#43"},
+                {
+                    "success": False,
+                    "error": "Task already claimed by another session",
+                    "code": "task_claim_conflict",
+                },
+                {"44444444-4444-4444-8444-444444440007": "#7"},
+                id="claim-conflict",
+            ),
+            pytest.param(
+                "get_task",
+                {"task_id": "#43"},
+                {"success": True, "result": {"id": _CLAIM_TASK_ID, "ref": "#43"}},
+                {_CLAIM_TASK_ID: "#43"},
+                id="non-claim-tool",
+            ),
+        ],
+    )
+    async def test_stays_silent_unless_the_returned_task_was_claimed(
+        self,
+        claim_engine: RuleEngine,
+        tool_name: str,
+        arguments: dict[str, Any],
+        tool_output: dict[str, Any],
+        claimed: dict[str, str],
+    ) -> None:
+        variables: dict[str, Any] = {"claimed_tasks": claimed}
+        event = _task_tool_event(tool_name, arguments, tool_output)
+
+        result = await claim_engine.evaluate(event, _CLAIM_SESSION_ID, variables)
+
+        assert result.decision == "allow"
+        assert not (result.context and _CLAIM_NUDGE in result.context)
