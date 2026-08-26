@@ -233,10 +233,10 @@ def test_tdd_evidence_accepts_later_repair_cycle() -> None:
     )
     repaired = TranscriptEvidence(
         edits=(
-            _edit("tests/test_feature.py", started, 1),
-            _edit("src/feature.py", started + timedelta(minutes=1), 2),
-            _edit("tests/test_feature.py", started + timedelta(minutes=2), 3),
-            _edit("src/feature.py", started + timedelta(minutes=4), 5),
+            _edit("tests/test_feature.py", started + timedelta(hours=6), 1),
+            _edit("src/feature.py", started + timedelta(hours=6, minutes=1), 2),
+            _edit("tests/test_feature.py", started + timedelta(hours=6, minutes=2), 3),
+            _edit("src/feature.py", started + timedelta(hours=6, minutes=4), 5),
         ),
         validation_runs=(
             _run(

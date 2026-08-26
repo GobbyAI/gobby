@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 
 from gobby.tasks.acceptance_artifacts import (
     AcceptanceTest,
@@ -51,7 +50,7 @@ def evaluate_tdd_evidence(
     for test in tests:
         test_edits = sorted(
             (edit for edit in evidence.edits if edit.path == test.path),
-            key=lambda edit: (edit.timestamp, edit.order),
+            key=lambda edit: edit.order,
         )
         if not test_edits:
             findings.append(f"{test.reference}: transcript has no edit of the named test")
@@ -62,13 +61,12 @@ def evaluate_tdd_evidence(
                 (
                     edit
                     for edit in evidence.edits
-                    if not is_test_convention_path(edit.path)
-                    and edit.timestamp >= test_edit.timestamp
+                    if not is_test_convention_path(edit.path) and edit.order > test_edit.order
                 ),
-                key=lambda edit: (edit.timestamp, edit.order),
+                key=lambda edit: edit.order,
                 default=None,
             )
-            red = _find_red_run(test, evidence, test_edit.timestamp, first_non_test_edit)
+            red = _find_red_run(test, evidence, test_edit.order, first_non_test_edit)
             if red is not None:
                 break
         if red is None:
@@ -96,13 +94,13 @@ def evaluate_tdd_evidence(
 def _find_red_run(
     test: AcceptanceTest,
     evidence: TranscriptEvidence,
-    test_edit_at: datetime,
+    test_edit_order: int,
     first_non_test_edit: TranscriptEdit | None,
 ) -> TranscriptValidationRun | None:
-    for run in sorted(evidence.validation_runs, key=lambda item: item.started_at):
-        if run.outcome != "failure" or run.started_at < test_edit_at:
+    for run in sorted(evidence.validation_runs, key=lambda item: item.order):
+        if run.outcome != "failure" or run.order <= test_edit_order:
             continue
-        if first_non_test_edit is not None and run.started_at >= first_non_test_edit.timestamp:
+        if first_non_test_edit is not None and run.order >= first_non_test_edit.order:
             continue
         if not validation_run_names_test(run.command, run.output, test):
             continue
@@ -116,8 +114,8 @@ def _find_green_run(
     evidence: TranscriptEvidence,
     red: TranscriptValidationRun,
 ) -> TranscriptValidationRun | None:
-    for run in sorted(evidence.validation_runs, key=lambda item: item.completed_at):
-        if run.outcome != "success" or run.completed_at <= red.completed_at:
+    for run in sorted(evidence.validation_runs, key=lambda item: item.order):
+        if run.outcome != "success" or run.order <= red.order:
             continue
         if validation_run_covers_test(run.command, run.output, test):
             return run
