@@ -540,6 +540,54 @@ def test_verify_postgres_restore_ignores_managed_principals_drained_before_dump(
 
     assert state.verified is True
     assert details["roles_checked"] == 1
+    assert "managed_principals_skipped" not in details
+
+    # Defense in depth: a managed principal that reaches the expectations anyway
+    # (minted between role collection and the drain) is reported by name, never fatal.
+    unfiltered = hub_cli._role_expectations(
+        [
+            {"rolname": name, "rolsuper": is_super, "rolcanlogin": can_login}
+            for name, is_super, can_login in source_rows
+        ]
+    )
+    fake = _DockerFake()
+    fake.role_rows = [("gobby", False, True)]
+    fake.table_counts = {"tasks": 0}
+    _install(monkeypatch, fake)
+
+    state, details = _verify.verify_postgres_restore(
+        dump_path,
+        globals_path,
+        expected_probes={"tasks": 0},
+        expected_roles=unfiltered,
+    )
+
+    assert state.verified is True
+    assert details["roles_checked"] == 1
+    assert details["managed_principals_skipped"] == [
+        "gobby_ix_e94cf5ac3163ddb1_1",
+        "gobby_ix_fa3149beb8d9b5c5_89",
+        "gobby_mnt_0123456789abcdef0123456789abcdef_4",
+        "gobby_agent_0123456789abcdef0123456789abcdef_9",
+    ]
+
+    # A missing role outside the managed namespace is still fatal.
+    fake = _DockerFake()
+    fake.role_rows = [("gobby", False, True)]
+    fake.table_counts = {"tasks": 0}
+    _install(monkeypatch, fake)
+    with pytest.raises(
+        click.ClickException, match=r"gobby_reporter \(missing from restored cluster\)"
+    ):
+        _verify.verify_postgres_restore(
+            dump_path,
+            globals_path,
+            expected_probes={"tasks": 0},
+            expected_roles=[
+                *unfiltered,
+                RoleExpectation("gobby_reporter", rolsuper=False, rolcanlogin=True),
+            ],
+        )
 
 
 def test_verify_postgres_restore_skips_attribute_compare_for_bootstrap_postgres_role(

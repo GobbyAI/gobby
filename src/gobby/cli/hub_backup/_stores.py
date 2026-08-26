@@ -87,7 +87,7 @@ _MANAGED_PRINCIPAL_PATTERN = (
     r"|gobby_ix_([0-9a-f]{16}|[A-Za-z0-9]{1,8}_[0-9a-f]{8}_[0-9a-f]{8})"
     r"|gobby_mnt_[0-9a-f]{32})_[1-9][0-9]*$"
 )
-_MANAGED_PRINCIPAL_RE = re.compile(_MANAGED_PRINCIPAL_PATTERN)
+MANAGED_PRINCIPAL_RE = re.compile(_MANAGED_PRINCIPAL_PATTERN)
 _ROLE_LIST_SQL = (
     "SELECT rolname, rolsuper, rolcanlogin FROM pg_roles "
     "WHERE rolname NOT LIKE 'pg\\_%' "
@@ -199,7 +199,7 @@ def collect_source_roles(database_url: str) -> list[dict[str, object]]:
             "rolcanlogin": bool(row[2]),
         }
         for row in rows
-        if _MANAGED_PRINCIPAL_RE.match(str(row[0])) is None
+        if MANAGED_PRINCIPAL_RE.match(str(row[0])) is None
     ]
 
 
