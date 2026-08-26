@@ -401,6 +401,15 @@ def _pending_review(task_ref: str, summary: str) -> dict[str, str]:
     }
 
 
+# Hardcoded turn-end overrides in RuleEngine core: each returns before the
+# rule-level block is delivered, so gate state must survive it untouched.
+TURN_END_OVERRIDES = [
+    pytest.param({"tool_block_pending": True}, "block", "tool-failure-recovery", id="tool_block"),
+    pytest.param({"edit_write_pending": True}, "block", "edit-write-recovery", id="edit_write"),
+    pytest.param({"force_allow_stop": True}, "allow", "", id="force_allow"),
+]
+
+
 def _review_variables(*pending: dict[str, str], **overrides: Any) -> dict[str, Any]:
     variables: dict[str, Any] = {
         "_memory_initial_stop_checked": True,
@@ -570,20 +579,30 @@ class TestLayeredMemoryGuidance:
         assert variables["_memory_initial_stop_checked"] is True
 
     @pytest.mark.asyncio
-    async def test_turn_end_override_leaves_initial_gate_armed(self, db: HubDatabase) -> None:
+    @pytest.mark.parametrize(("override", "decision", "marker"), TURN_END_OVERRIDES)
+    async def test_turn_end_override_leaves_initial_gate_armed(
+        self,
+        db: HubDatabase,
+        override: dict[str, bool],
+        decision: str,
+        marker: str,
+    ) -> None:
         _sync_bundled(db)
-        variables = _initial_gate_variables(tool_block_pending=True)
+        variables = _initial_gate_variables(**override)
         engine = RuleEngine(db)
         event = _turn_end_event()
 
         overridden = await engine.evaluate(event, SESSION_ID, variables)
         overridden_flag = variables["_memory_initial_stop_checked"]
+        for key in override:
+            variables[key] = False
         delivered = await engine.evaluate(event, SESSION_ID, variables)
 
-        assert overridden.decision == "block"
-        assert "tool-failure-recovery" in (overridden.reason or "")
+        assert overridden.decision == decision
+        assert marker in (overridden.reason or "")
         assert skill_fetch_directive("memory") not in (overridden.reason or "")
         assert overridden_flag is False
+        assert delivered.decision == "block"
         assert skill_fetch_directive("memory") in (delivered.reason or "")
         assert variables["_memory_initial_stop_checked"] is True
 
@@ -685,22 +704,32 @@ class TestPostCloseMemoryReviewRules:
         assert "review-closed-task-memories-on-stop" not in (second.reason or "")
 
     @pytest.mark.asyncio
-    async def test_turn_end_override_preserves_pending_review(self, db: HubDatabase) -> None:
+    @pytest.mark.parametrize(("override", "decision", "marker"), TURN_END_OVERRIDES)
+    async def test_turn_end_override_preserves_pending_review(
+        self,
+        db: HubDatabase,
+        override: dict[str, bool],
+        decision: str,
+        marker: str,
+    ) -> None:
         _sync_bundled(db)
         pending = _pending_review("#42", "Completed work.")
-        variables = _review_variables(pending, tool_block_pending=True)
+        variables = _review_variables(pending, **override)
         engine = RuleEngine(db)
         event = _turn_end_event()
 
         overridden = await engine.evaluate(event, SESSION_ID, variables)
         overridden_flag = variables["_memory_review_stop_delivered"]
+        for key in override:
+            variables[key] = False
         delivered = await engine.evaluate(event, SESSION_ID, variables)
         settled = await engine.evaluate(event, SESSION_ID, variables)
 
-        assert overridden.decision == "block"
-        assert "tool-failure-recovery" in (overridden.reason or "")
+        assert overridden.decision == decision
+        assert marker in (overridden.reason or "")
         assert "review-closed-task-memories-on-stop" not in (overridden.reason or "")
         assert overridden_flag is False
+        assert delivered.decision == "block"
         assert "#42 (task_id `task-42`): Completed work." in (delivered.reason or "")
         assert variables["_memory_pending_task_reviews"] == [pending]
         assert variables["_memory_review_stop_delivered"] is True
