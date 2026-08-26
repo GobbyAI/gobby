@@ -8,6 +8,7 @@ Tests cover:
 """
 
 import logging
+import os
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -16,6 +17,7 @@ import pytest
 
 from gobby.utils.git import (
     GitMetadata,
+    disable_optional_git_locks,
     get_checkout_mutation_lock,
     get_git_branch,
     get_git_metadata,
@@ -75,6 +77,66 @@ class TestStashMarkers:
 
     def test_missing_marker_returns_none(self) -> None:
         assert stash_oid_for_marker("other-oid\x00On main: other", "missing") is None
+
+
+_GIT_IDENTITY = ["-c", "user.name=Gobby Tests", "-c", "user.email=gobby-tests@example.com"]
+
+
+def _stat_dirty_status_rewrites_index(repo: Path, tracked: Path, env: dict[str, str]) -> bool:
+    """Touch a tracked file, run `git status`, and report whether `.git/index` was rewritten."""
+    stat = tracked.stat()
+    os.utime(tracked, ns=(stat.st_atime_ns, stat.st_mtime_ns + 2_000_000_000))
+    index = repo / ".git" / "index"
+    before = index.stat()
+    subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=repo,
+        env=env,
+        check=True,
+        capture_output=True,
+        timeout=10,
+    )
+    after = index.stat()
+    return (before.st_ino, before.st_mtime_ns) != (after.st_ino, after.st_mtime_ns)
+
+
+class TestDisableOptionalGitLocks:
+    """A timed-out daemon `git status` must not leave `.git/index.lock` behind (#21055)."""
+
+    def test_sets_the_flag_on_a_supplied_environment(self) -> None:
+        env = {"PATH": "/usr/bin"}
+
+        disable_optional_git_locks(env)
+
+        assert env == {"PATH": "/usr/bin", "GIT_OPTIONAL_LOCKS": "0"}
+
+    def test_defaults_to_the_process_environment(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("GIT_OPTIONAL_LOCKS", raising=False)
+
+        disable_optional_git_locks()
+
+        assert os.environ["GIT_OPTIONAL_LOCKS"] == "0"
+
+    def test_stat_dirty_status_no_longer_rewrites_the_index(self, tmp_path: Path) -> None:
+        """Optional locks off: `git status` reads without the index.lock write-and-rename."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True, timeout=10)
+        tracked = repo / "tracked.txt"
+        tracked.write_text("hello\n")
+        subprocess.run(["git", *_GIT_IDENTITY, "add", "tracked.txt"], cwd=repo, check=True)
+        subprocess.run(
+            ["git", *_GIT_IDENTITY, "commit", "-q", "--no-gpg-sign", "-m", "init"],
+            cwd=repo,
+            check=True,
+            timeout=10,
+        )
+        default_env = {k: v for k, v in os.environ.items() if k != "GIT_OPTIONAL_LOCKS"}
+        lock_free_env = dict(default_env)
+        disable_optional_git_locks(lock_free_env)
+
+        assert _stat_dirty_status_rewrites_index(repo, tracked, lock_free_env) is False
+        assert _stat_dirty_status_rewrites_index(repo, tracked, default_env) is True
 
 
 class TestRunGitCommand:

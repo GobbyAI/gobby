@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
 
 from gobby.shutdown_intent import ShutdownIntent, write_shutdown_intent
+from gobby.utils.git import disable_optional_git_locks
 
 if TYPE_CHECKING:
     from gobby.adapters.codex_impl.client import CodexAppServerClient
@@ -78,6 +79,11 @@ if TYPE_CHECKING:
     from gobby.worktrees.git import WorktreeGitManager
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+# Daemon git reads must never take the optional index lock: a `git status`
+# killed on timeout mid index-refresh leaves `.git/index.lock` behind and
+# blocks every commit in the shared checkout (#21055).
+disable_optional_git_locks()
 
 # Strip Claude Code session marker so SDK subprocess calls don't fail with
 # "cannot be launched inside another Claude Code session" when the daemon
