@@ -9,7 +9,7 @@ This module tests:
 
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -376,7 +376,7 @@ class TestAddMcpServer:
             "gobby.mcp_proxy.actions.generate_server_description",
             new_callable=AsyncMock,
         ) as mock_gen:
-            await add_mcp_server(
+            result = await add_mcp_server(
                 mcp_manager=mock_mcp_manager,
                 name="test-server",
                 transport="http",
@@ -386,6 +386,12 @@ class TestAddMcpServer:
             )
 
             mock_gen.assert_not_called()
+            mock_mcp_manager.set_server_description.assert_not_called()
+            assert result["success"] is True
+            assert result["name"] == "test-server"
+            assert result["description"] == "My custom description"
+            config = mock_mcp_manager.add_server.call_args.args[0]
+            assert config.description == "My custom description"
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -403,7 +409,7 @@ class TestAddMcpServer:
             "gobby.mcp_proxy.actions.generate_server_description",
             new_callable=AsyncMock,
         ) as mock_gen:
-            await add_mcp_server(
+            result = await add_mcp_server(
                 mcp_manager=mock_mcp_manager,
                 name="test-server",
                 transport="http",
@@ -412,6 +418,8 @@ class TestAddMcpServer:
             )
 
             mock_gen.assert_not_called()
+            mock_mcp_manager.set_server_description.assert_not_called()
+            assert result == {"success": True, "name": "test-server", "full_tool_schemas": []}
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -558,21 +566,23 @@ class TestRemoveMcpServer:
         """Test removing servers from different projects."""
         mock_mcp_manager.remove_server.return_value = {"success": True}
 
-        # Remove from project A
-        await remove_mcp_server(
+        result_a = await remove_mcp_server(
             mcp_manager=mock_mcp_manager,
             name="server-a",
             project_id="project-a",
         )
-        mock_mcp_manager.remove_server.assert_called_with("server-a", project_id="project-a")
-
-        # Remove from project B
-        await remove_mcp_server(
+        result_b = await remove_mcp_server(
             mcp_manager=mock_mcp_manager,
             name="server-b",
             project_id="project-b",
         )
-        mock_mcp_manager.remove_server.assert_called_with("server-b", project_id="project-b")
+
+        assert result_a == {"success": True}
+        assert result_b == {"success": True}
+        assert mock_mcp_manager.remove_server.call_args_list == [
+            call("server-a", project_id="project-a"),
+            call("server-b", project_id="project-b"),
+        ]
 
     @pytest.mark.unit
     @pytest.mark.asyncio
