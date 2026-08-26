@@ -87,7 +87,8 @@ def test_pre_tool_use_allow_response_is_compact() -> None:
         hook_type="PreToolUse",
     )
 
-    assert result == {"decision": "allow"}
+    # A plain allow carries no decision field since #20926 (6cf347dfc0).
+    assert result == {}
 
 
 def test_pre_tool_use_block_response_becomes_agy_deny() -> None:
@@ -177,7 +178,8 @@ def test_handle_native_uses_agy_source_and_compact_response() -> None:
 
     result = AgyAdapter().handle_native(native_event, hook_manager)
 
-    assert result == {"decision": "allow"}
+    # A plain allow carries no decision field since #20926 (6cf347dfc0).
+    assert result == {}
     hook_event = hook_manager.handle.call_args.args[0]
     assert hook_event.source is SessionSource.AGY
     assert hook_event.event_type is HookEventType.BEFORE_TOOL
