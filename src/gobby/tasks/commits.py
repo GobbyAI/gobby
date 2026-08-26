@@ -4,7 +4,10 @@ Provides utilities for linking commits to tasks and computing diffs.
 """
 
 import logging
+import os
 import re
+import subprocess  # nosec B404 # internal git commands
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -19,7 +22,7 @@ from gobby.tasks.diff_paging import (
     decode_content,
     get_task_diff_page,
 )
-from gobby.utils.git import run_git_command
+from gobby.utils.git import git_subprocess_env, run_git_command
 
 if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager, Task
@@ -67,14 +70,30 @@ def collect_task_diff_text(
     return b"".join(chunks).decode("utf-8", errors="replace"), first_page
 
 
+# `git hash-object -t tree /dev/null`: the base for a root commit's net patch.
+_EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+_NET_PATCH_GIT_TIMEOUT_SECONDS = 30
+
+
 def collect_commit_diff_text(
     commit_shas: list[str],
     *,
     cwd: str | Path,
 ) -> str:
-    """Return the complete patch stream for a prospective close commit set."""
+    """Return the net patch of a prospective close commit set.
+
+    The criteria review must judge the code as it stands after every linked
+    commit, so the commits are replayed onto the first one's parent in a
+    temporary index and diffed once: a later commit that rewrites an earlier
+    one leaves no superseded hunk behind for the reviewer to mistake for the
+    current code. A set that cannot be replayed (a linked commit that does not
+    apply onto the others' history) falls back to the raw per-commit stream.
+    """
     if not commit_shas:
         return ""
+    net = _net_commit_patch(commit_shas, cwd=cwd)
+    if net is not None:
+        return net
     result = run_git_command(
         [
             "git",
@@ -91,6 +110,101 @@ def collect_commit_diff_text(
     if result is None:
         raise RuntimeError("git show failed while assembling the close criteria-review diff")
     return result
+
+
+def _git_bytes(
+    args: list[str],
+    *,
+    cwd: str | Path,
+    env: dict[str, str] | None = None,
+    stdin: bytes | None = None,
+) -> bytes | None:
+    """Run one git command; stdout bytes on success, None on any failure."""
+    base_env = git_subprocess_env() or os.environ
+    try:
+        completed = subprocess.run(  # nosec B603 # internal git command
+            ["git", *args],
+            cwd=cwd,
+            input=stdin,
+            capture_output=True,
+            timeout=_NET_PATCH_GIT_TIMEOUT_SECONDS,
+            check=False,
+            env={**base_env, **(env or {})},
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.debug("git %s failed while assembling the net close patch: %s", args[0], exc)
+        return None
+    if completed.returncode != 0:
+        logger.debug(
+            "git %s failed while assembling the net close patch: %s",
+            args[0],
+            completed.stderr.decode("utf-8", errors="replace").strip(),
+        )
+        return None
+    return completed.stdout
+
+
+def _ancestry_order(commit_shas: list[str], *, cwd: str | Path) -> list[str] | None:
+    """Canonicalize the linked commits and order them oldest-first by topology.
+
+    Commit timestamps cannot order commits made within one second, so the walk
+    is topological, bounded below by the set's common ancestor.
+    """
+    resolved = _git_bytes(["rev-parse", *commit_shas], cwd=cwd)
+    if not resolved:
+        return None
+    wanted = list(dict.fromkeys(resolved.decode("ascii", errors="replace").split()))
+    common = _git_bytes(["merge-base", "--octopus", *wanted], cwd=cwd)
+    if not common:
+        return None
+    floor = common.decode("ascii", errors="replace").strip()
+    bounds: list[str] = []
+    if _git_bytes(["rev-parse", "--verify", "--quiet", f"{floor}^"], cwd=cwd):
+        bounds.append(f"^{floor}^")
+    listed = _git_bytes(["rev-list", "--topo-order", "--reverse", *wanted, *bounds], cwd=cwd)
+    if not listed:
+        return None
+    members = set(wanted)
+    ordered = [sha for sha in listed.decode("ascii", errors="replace").split() if sha in members]
+    return ordered if len(ordered) == len(members) else None
+
+
+def _net_commit_patch(commit_shas: list[str], *, cwd: str | Path) -> str | None:
+    """Replay the commits onto a temporary index and diff it against their base."""
+    ordered = _ancestry_order(commit_shas, cwd=cwd)
+    if not ordered:
+        return None
+    parent = _git_bytes(["rev-parse", "--verify", "--quiet", f"{ordered[0]}^"], cwd=cwd)
+    base = parent.decode("ascii", errors="replace").strip() if parent else _EMPTY_TREE_SHA
+    with tempfile.TemporaryDirectory(prefix="gobby-close-index-") as scratch:
+        env = {"GIT_INDEX_FILE": str(Path(scratch) / "index")}
+        if _git_bytes(["read-tree", base], cwd=cwd, env=env) is None:
+            return None
+        for sha in ordered:
+            patch = _git_bytes(
+                ["show", "--format=", "--find-renames", "--find-copies", "--binary", sha],
+                cwd=cwd,
+            )
+            if patch is None:
+                return None
+            if not patch.strip():
+                continue
+            applied = _git_bytes(
+                ["apply", "--cached", "--binary", "--whitespace=nowarn", "-"],
+                cwd=cwd,
+                env=env,
+                stdin=patch,
+            )
+            if applied is None:
+                return None
+        net = _git_bytes(
+            ["diff", "--cached", "--find-renames", "--find-copies", "--binary", base],
+            cwd=cwd,
+            env=env,
+        )
+    if net is None:
+        return None
+    return net.decode("utf-8", errors="replace").strip()
 
 
 # Doc file extensions that don't need LLM validation
