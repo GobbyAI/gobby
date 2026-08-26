@@ -44,10 +44,11 @@ def _compat_module() -> Any:
 def session_start_should_defer(
     event: HookEvent,
     existing_session: Any | None,
-    session_source: str,
+    session_source: str | None,
 ) -> bool:
     """Return whether this startup SessionStart may defer row creation."""
-    if session_source not in STARTUP_SOURCES:
+    effective_source = session_source if session_source is not None else "startup"
+    if effective_source not in STARTUP_SOURCES:
         return False
     if existing_session is not None and getattr(existing_session, "status", None) not in {
         "expired",

@@ -38,6 +38,7 @@ pytestmark = pytest.mark.unit
         ("startup", None, None, True),
         ("new", None, None, True),
         ("", None, None, True),
+        (None, None, None, True),
         ("resume", None, None, False),
         ("startup", SimpleNamespace(status="active"), None, False),
         ("startup", SimpleNamespace(status="expired"), None, True),
@@ -45,7 +46,7 @@ pytestmark = pytest.mark.unit
     ],
 )
 def test_session_start_should_defer(
-    session_source: str,
+    session_source: str | None,
     existing_session: object | None,
     terminal_context: dict[str, str] | None,
     expected: bool,
