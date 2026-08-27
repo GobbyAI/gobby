@@ -2352,6 +2352,21 @@ class TestExternalNavigationScope:
         assert data["canonical_repo_mutation"] is True
         assert data["canonical_file_paths"] == ["out.txt"]
 
+    def test_git_restore_pathspecs_without_separator_are_write_paths(self) -> None:
+        for command, expected in (
+            ("git restore --staged src/gobby/x.py", ["src/gobby/x.py"]),
+            ("git restore -s HEAD~1 --worktree a.md b.md", ["a.md", "b.md"]),
+            ("git restore --staged -- notes.md", ["notes.md"]),
+            ("git checkout main", []),
+        ):
+            data: dict[str, Any] = {"tool_name": "Bash", "tool_input": {"command": command}}
+
+            normalize_tool_fields(data)
+
+            assert data["canonical_tool_kind"] == "write", command
+            assert data["canonical_repo_mutation"] is True, command
+            assert data.get("canonical_file_paths", []) == expected, command
+
     def test_python_heredoc_literal_targets_become_write_paths(self) -> None:
         command = (
             "cd docs && python3 - <<'PYEOF'\n"

@@ -163,6 +163,18 @@ def _git_add_positional_args_after(parts: list[str], start: int) -> list[str]:
     )
 
 
+def _git_restore_positional_args_after(parts: list[str], start: int) -> list[str]:
+    return [
+        candidate
+        for candidate in _shell_positional_args_after(
+            parts,
+            start,
+            option_args={"-s", "--source", "--pathspec-from-file"},
+        )
+        if _looks_path_target(candidate)
+    ]
+
+
 def _search_command_paths(cmd: str, parts: list[str]) -> list[str]:
     if cmd in {"rg", "grep"}:
         positional = _shell_positional_args_after(parts, 1)

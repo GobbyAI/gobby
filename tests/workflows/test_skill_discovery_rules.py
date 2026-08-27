@@ -3999,14 +3999,14 @@ class TestCodeIndexNavigationRules:
         scratchpad = tmp_path / "scratchpad"
         command_template = (
             "cd {root} && "
-            "echo alpha > first.py && "
-            "grep alpha first.py && "
-            "echo beta > second.py && "
-            "grep beta second.py | head -1 && "
-            "echo gamma > third.py && "
-            "grep gamma third.py"
+            "echo alpha > first.txt && "
+            "grep -r alpha . && "
+            "echo beta > second.txt && "
+            "grep -r beta . | head -1 && "
+            "echo gamma > third.txt && "
+            "grep -r gamma ."
         )
-        expected_names = ("first.py", "second.py", "third.py")
+        expected_names = ("first.txt", "second.txt", "third.txt")
 
         for loaded in (False, True):
             event = self._normalized_bash_event(

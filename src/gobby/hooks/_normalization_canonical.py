@@ -9,6 +9,7 @@ from typing import Any
 from gobby.hooks._normalization_operands import (
     _curl_output_paths,
     _git_add_positional_args_after,
+    _git_restore_positional_args_after,
     _search_command_paths,
     _truncate_positional_paths,
 )
@@ -604,7 +605,14 @@ def _classify_shell_segment_without_redirection(
         try:
             pathspec_index = parts.index("--", git_subcommand_index + 1)
         except ValueError:
-            paths = []
+            # `git restore [--staged] <pathspec...>` takes only pathspecs after
+            # its options; `git checkout <ref>` names a ref, so its scope stays
+            # unknown without `--`.
+            paths = (
+                _git_restore_positional_args_after(parts, git_subcommand_index + 1)
+                if parts[git_subcommand_index] == "restore"
+                else []
+            )
         else:
             paths = [
                 candidate
