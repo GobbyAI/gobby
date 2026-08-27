@@ -40,7 +40,8 @@ from gobby.memory.title_heuristics import (
 from gobby.sessions.transcripts.grok import GrokTranscriptParser
 
 
-def test_extract_digest_pairs_includes_tool_activity() -> None:
+@pytest.mark.asyncio
+async def test_extract_digest_pairs_includes_tool_activity() -> None:
     fixture = (
         Path(__file__).parents[1]
         / "sessions"
@@ -58,19 +59,6 @@ def test_extract_digest_pairs_includes_tool_activity() -> None:
 
     assert "search_replace" in activity
     assert "mcp gobby-tasks:claim_task" in activity
-
-
-@pytest.mark.asyncio
-async def test_last_turn_reader_omits_tool_activity() -> None:
-    fixture = (
-        Path(__file__).parents[1]
-        / "sessions"
-        / "transcripts"
-        / "fixtures"
-        / "grok_audit"
-        / "10711"
-        / "updates.jsonl"
-    )
 
     last_turn = await _read_last_turn_from_transcript(str(fixture), "grok")
 
