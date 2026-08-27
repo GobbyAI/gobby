@@ -464,6 +464,36 @@ class TestProjectScopedUserSync:
         assert untouched.project_id == owner
         assert untouched.definition_json == owned.definition_json
 
+    def test_resync_leaves_a_live_custom_row_in_the_project_untouched(
+        self, manager: RuleDefinitionManager, temp_db: HubDatabase, tmp_path: Path
+    ) -> None:
+        """A project's own live custom row is never overwritten by a same-named template."""
+        from gobby.workflows.sync_rules import sync_bundled_rules
+
+        project_id = _register_project(temp_db, "scoped-rules")
+        custom = _create_rule(
+            manager, "custom-rule", source="custom", tags=["user"], project_id=project_id
+        )
+        project_rules = tmp_path / "project-rules"
+        _write_rule(project_rules, "custom-rule")
+
+        result = sync_bundled_rules(
+            temp_db,
+            rules_path=[project_rules],
+            tag="user",
+            project_id=project_id,
+            project_root=project_rules,
+        )
+
+        assert result["errors"] == []
+        assert result["updated"] == 0
+        assert result["synced"] == 0
+        assert result["skipped"] == 1
+        untouched = manager.get(custom.id)
+        assert untouched is not None
+        assert untouched.source == "custom"
+        assert untouched.definition_json == custom.definition_json
+
     def test_installer_scopes_the_project_rules_dir_to_the_registered_project(
         self, temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
