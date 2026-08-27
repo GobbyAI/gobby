@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from gobby.mcp_proxy.tools._task_query_pagination import collect_task_query_pages
@@ -52,12 +53,17 @@ def children_state(
     return children, state
 
 
-def _linked_commit_paths(task: Task, repo_path: str) -> frozenset[str]:
+def _linked_commit_paths(
+    task: Task,
+    repo_path: str,
+    prospective_commit_shas: Sequence[str] = (),
+) -> frozenset[str]:
     """Return the paths this task's linked commits changed, or nothing on failure."""
-    if not task.commits:
+    commits = list(dict.fromkeys([*(task.commits or ()), *prospective_commit_shas]))
+    if not commits:
         return frozenset()
     try:
-        return frozenset(collect_commit_paths(task.commits, repo_path))
+        return frozenset(collect_commit_paths(commits, repo_path))
     except RuntimeError as exc:
         # A sha git cannot inspect here (rebased away, wrong checkout) leaves the
         # checklist exactly where it was before this fallback existed. Gate 7 and
@@ -73,6 +79,7 @@ async def capture_attribution(
     task_id: str,
     resolved_session_id: str,
     repo_path: str,
+    prospective_commit_shas: Sequence[str] = (),
 ) -> CloseAttributionSnapshot:
     """Capture the session-owned inputs used by close gates 7 through 9."""
     owner_session_id = get_claimed_session_id(task) or resolved_session_id
@@ -88,7 +95,12 @@ async def capture_attribution(
         # a task that really did edit files. Linked commits are the durable record, so
         # fall back to them instead of reading committed work as a no-edit close --
         # which would skip gate 10 and starve gate 12 of transcript evidence.
-        raw_paths = await asyncio.to_thread(_linked_commit_paths, task, repo_path)
+        raw_paths = await asyncio.to_thread(
+            _linked_commit_paths,
+            task,
+            repo_path,
+            prospective_commit_shas,
+        )
         attributed = attributed or bool(raw_paths)
     edited_paths = frozenset(
         await asyncio.to_thread(
@@ -152,6 +164,7 @@ async def commit_close(
                 task_id=task.id,
                 resolved_session_id=evaluation.resolved_session_id,
                 repo_path=evaluation.repo_path,
+                prospective_commit_shas=evaluation.commit_shas,
             )
         except (KeyError, TypeError, ValueError):
             return stale_close_response(

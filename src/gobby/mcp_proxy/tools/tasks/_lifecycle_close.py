@@ -286,6 +286,7 @@ async def _evaluate_close(
             task_id=resolved_id,
             resolved_session_id=resolved_session_id,
             repo_path=repo_path,
+            prospective_commit_shas=(commit_sha,) if commit_sha else (),
         )
     except (KeyError, TypeError, ValueError) as exc:
         return evaluation.fail(

@@ -100,6 +100,26 @@ async def test_linked_commit_paths_stand_in_for_lost_session_attribution(
 
 
 @pytest.mark.asyncio
+async def test_prospective_commit_paths_survive_released_session_attribution(
+    repo_with_task_commit: tuple[str, str],
+) -> None:
+    repo_path, commit_sha = repo_with_task_commit
+
+    snapshot = await capture_attribution(
+        _ctx({"task_edited_files": {}}),
+        task=_task(commits=None),
+        task_id=TASK_ID,
+        resolved_session_id="closing-session",
+        repo_path=repo_path,
+        prospective_commit_shas=(commit_sha,),
+    )
+
+    assert snapshot.raw_paths == COMMITTED_PATHS
+    assert snapshot.edited_paths == snapshot.raw_paths
+    assert snapshot.had_attributed_edits is True
+
+
+@pytest.mark.asyncio
 async def test_session_attribution_wins_and_a_commitless_task_is_still_no_edit(
     repo_with_task_commit: tuple[str, str],
 ) -> None:
