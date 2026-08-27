@@ -488,7 +488,7 @@
     "workflows/rules/progressive-discovery/track-listed-servers.yaml": "50540409ad5d9e4fce4fee522612495b312724f81ff966dfd5923de05892a7f3",
     "workflows/rules/progressive-discovery/track-schema-lookup.yaml": "3f10d14f6d1152bcab54abced1a3f5796aa8ce245d8b8b7024838bd0d0387886",
     "workflows/rules/progressive-discovery/track-servers-listed.yaml": "9c68005caeb22340265f97ce31756df44e3356eec911485d52ef2a8d08e3d1ed",
-    "workflows/rules/research-feedback/session-feedback.yaml": "ad591fd79896c372270d113babae763bed3b6d820bc605cec7513e4a0390a697",
+    "workflows/rules/research-feedback/session-feedback.yaml": "ea712fa008eb5ebc3d9bf3c2b2189418520af17d1d37d9ebf01e06399770b87a",
     "workflows/rules/restraint/require-restraint-skill.yaml": "b8a0add84c7df8f68eb9f2ea95b4ee492fc351746b8324ea0e6d6fb144ab3c55",
     "workflows/rules/review-learning/inject-plan-enhancer-lessons.yaml": "882b7afd9aee748c08f27b1f574fae29b957fe1eec0a63004dfd52b6b8a90612",
     "workflows/rules/review-learning/inject-plan-reviewer-lessons.yaml": "6d8c015447a39e8cfb4f719f2e0ec551229f8f1f2a3c607571daa268baa63e94",

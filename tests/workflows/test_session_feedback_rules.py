@@ -63,7 +63,9 @@ class TestSessionFeedbackRules:
         assert "at most 3 observations" in reason
         assert "Most sessions should produce no report" in reason
         assert "docs/research/gobby-feedback/inbox/" in reason
-        assert "Rule 4" in reason
+        assert "create a claimed task and fix it in" in reason
+        assert "needs-decision" in reason
+        assert "`Disposition` line" in reason
         assert "gobby-memory" in reason
 
     @pytest.mark.asyncio

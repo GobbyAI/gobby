@@ -33,6 +33,9 @@ trigger: post-close
 - Disposition: research-signal | fixed-in-task #NNNNN | existing-task #NNNNN
 ```
 
-Concrete defects follow Rule 4 and should reference their resolving task and commit.
+A concrete defect is found work, never just an observation: create a claimed task and
+fix it in the reporting session; hand it off to the session that owns the surface; file
+it labeled `needs-decision` or `clean-window` only as a last resort. Record the resolving
+task and commit in the observation's `Disposition` line.
 Durable project knowledge belongs in `gobby-memory`. Reports must omit secrets,
 private user content, and transcript dumps.
