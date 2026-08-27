@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import json
+import asyncio
 import logging
 import re
-from collections import deque
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
-import aiofiles
-
+from gobby.sessions.transcripts.base import decode_transcript_record
 from gobby.utils.injected_context import strip_injected_context
 
 logger = logging.getLogger("gobby.sessions.summarize")
@@ -20,6 +18,7 @@ TURN_PATTERN = re.compile(r"^### Turn \d+", re.MULTILINE)
 TRANSCRIPT_FALLBACK_MAX_TURNS = 80
 TRANSCRIPT_FALLBACK_MAX_CHARS = 24_000
 DIGEST_FALLBACK_MAX_CHARS = 24_000
+TRANSCRIPT_TAIL_RETRY_DELAY_SECONDS = 0.2
 _HANDOFF_RETRIEVAL = (
     "get_handoff_context (gobby-sessions) retrieves the full stored content for the current "
     "session.\n... [truncated]"
@@ -42,27 +41,51 @@ async def _read_transcript(
         source: Session source (``"claude"``, ``"qwen"``, ``"codex"``,
             ``"droid"``).
     """
-    turns: list[dict[str, Any]] | deque[dict[str, Any]] = (
-        deque(maxlen=max_turns) if max_turns is not None else []
-    )
-    async with aiofiles.open(path, encoding="utf-8") as f:
-        async for idx, line in async_enumerate(f):
-            if line.strip():
-                try:
-                    obj = json.loads(line)
-                    if isinstance(obj, dict):
-                        turns.append(obj)
-                    else:
-                        logger.warning(
-                            "Skipping non-dict JSONL value",
-                            extra={"line": idx + 1, "path": str(path)},
-                        )
-                except json.JSONDecodeError:
-                    logger.warning(
-                        "Skipping malformed JSONL line",
-                        extra={"line": idx + 1, "path": str(path)},
-                    )
-    return list(turns)
+    return await _read_transcript_window(path, max_turns=max_turns)
+
+
+async def _read_transcript_window(
+    path: Path,
+    *,
+    max_turns: int | None = None,
+) -> list[dict[str, Any]]:
+    data = await asyncio.to_thread(path.read_bytes)
+    records, tail_withheld = _decode_transcript_window(data, path, max_turns)
+    if not tail_withheld:
+        return records
+    await asyncio.sleep(TRANSCRIPT_TAIL_RETRY_DELAY_SECONDS)
+    data = await asyncio.to_thread(path.read_bytes)
+    records, _ = _decode_transcript_window(data, path, max_turns)
+    return records
+
+
+def _decode_transcript_window(
+    data: bytes,
+    path: Path,
+    max_turns: int | None,
+) -> tuple[list[dict[str, Any]], bool]:
+    positioned: list[tuple[bytes, int]] = []
+    offset = 0
+    for raw_record in data.splitlines(keepends=True):
+        if raw_record.strip():
+            positioned.append((raw_record, offset))
+        offset += len(raw_record)
+    if max_turns is not None:
+        positioned = positioned[-max_turns:]
+
+    records: list[dict[str, Any]] = []
+    for raw_record, byte_offset in positioned:
+        record = decode_transcript_record(
+            raw_record,
+            path=path,
+            byte_offset=byte_offset,
+            line_number=None,
+            is_final=byte_offset + len(raw_record) == len(data),
+        )
+        if record is None:
+            return records, True
+        records.append(record)
+    return records, False
 
 
 def _summary_source_text(value: str | None) -> str:
