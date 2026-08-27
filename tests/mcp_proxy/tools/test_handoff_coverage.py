@@ -197,3 +197,48 @@ class TestGetHandoffContextProjectScope:
         assert result["success"] is False
         assert "different project" in result["error"]
         mock_session_manager.update_parent_session_id.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# get_handoff_context self-read after in-place compaction (#21090)
+# ---------------------------------------------------------------------------
+
+
+class TestGetHandoffContextSelfReadAfterCompaction:
+    """A session reading its own row keeps the pre-compaction summary."""
+
+    @patch(
+        "gobby.mcp_proxy.tools.sessions._handoff.get_project_context",
+        return_value={"id": "11111111-1111-4111-8111-111111110001"},
+    )
+    def test_stale_self_read_serves_summary_plus_digest_tail(
+        self, _mock_project_context: MagicMock, mock_session_manager: MagicMock
+    ) -> None:
+        own = _make_session(
+            id="sess-uuid-1",
+            summary_markdown="## Current State\n\n#20728 is in progress in a backend-developer run.",
+            status="active",
+        )
+        own.digest_markdown = (
+            "<!-- gobby:digest-turn:1 -->\n### Turn 1\nKicked off #21085.\n\n"
+            "<!-- gobby:digest-turn:2 -->\n### Turn 2\nClosed #21085 and spawned the #20728 agent."
+        )
+        own.summary_digest_turn_count = 1
+        own.last_turn_markdown = (
+            "The user asked the agent to continue work after a compaction interruption."
+        )
+        mock_session_manager.resolve_session_reference.return_value = "sess-uuid-1"
+        mock_session_manager.get.return_value = own
+        registry = _register_tools(mock_session_manager)
+
+        tool = registry.get_tool("get_handoff_context")
+        assert tool is not None
+        with session_context_for_test("sess-uuid-1"):
+            result = tool(session_id="#1")
+
+        assert result["success"] is True
+        assert result["stale"] is True
+        assert result["context_type"] == "summary_with_digest_tail"
+        assert result["context"].startswith("## Current State")
+        assert "Closed #21085 and spawned the #20728 agent." in result["context"]
+        assert "continue work after a compaction interruption" not in result["context"]

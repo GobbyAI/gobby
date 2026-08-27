@@ -10,7 +10,6 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.wait_tools import clamp_wait_tool_timeout
-from gobby.utils.injected_context import strip_injected_context
 from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import get_current_session_id
 
@@ -354,14 +353,9 @@ def register_handoff_tools(
                 },
             }
 
-        from gobby.sessions.summary_refresh import live_handoff_context, summary_is_stale
+        from gobby.sessions.summary_refresh import handoff_context
 
-        summary = strip_injected_context(parent_session.summary_markdown or "")
-        stale = summary_is_stale(parent_session)
-        if stale:
-            context, context_type = live_handoff_context(parent_session)
-        else:
-            context, context_type = summary, "summary_markdown"
+        context, context_type, stale = handoff_context(parent_session)
 
         if not context:
             return {
@@ -473,30 +467,22 @@ def register_handoff_tools(
                     "error": f"Session {session_id} not found",
                 }
 
-            from gobby.sessions.summary_refresh import live_handoff_context, summary_is_stale
+            from gobby.sessions.summary_refresh import handoff_context
 
             summary = getattr(session, "summary_markdown", None)
             if isinstance(summary, str) and summary.strip():
-                if summary_is_stale(session):
-                    live, live_type = live_handoff_context(session)
-                    if live:
-                        return {
-                            "success": True,
-                            "completed": True,
-                            "session_id": resolved_id,
-                            "has_context": True,
-                            "context": live,
-                            "context_type": live_type,
-                            "stale": True,
-                        }
-                return {
+                context, context_type, stale = handoff_context(session)
+                result: dict[str, Any] = {
                     "success": True,
                     "completed": True,
                     "session_id": resolved_id,
                     "has_context": True,
-                    "context": summary,
-                    "context_type": "summary_markdown",
+                    "context": context,
+                    "context_type": context_type,
                 }
+                if stale:
+                    result["stale"] = True
+                return result
 
             remaining = deadline - loop.time()
             if remaining <= 0:

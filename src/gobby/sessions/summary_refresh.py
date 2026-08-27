@@ -122,6 +122,37 @@ def live_handoff_context(session: Any) -> tuple[str, str]:
     return _plain_markdown(getattr(session, "summary_markdown", None)), "summary_markdown"
 
 
+def handoff_context(session: Any) -> tuple[str, str, bool]:
+    """Return ``(context, context_type, stale)`` for a handoff read.
+
+    A stored summary is never demoted to a single observer turn: when the
+    digest advanced past the summary watermark, the digest turns the summary
+    does not cover are appended so the reader gets the snapshot plus
+    everything newer, and ``stale`` is reported. Sessions without a summary
+    fall back to the freshest live context.
+    """
+    summary = _plain_markdown(getattr(session, "summary_markdown", None))
+    stale = summary_is_stale(session)
+    if not summary:
+        context, context_type = live_handoff_context(session)
+        return context, context_type, stale
+    if not stale:
+        return summary, "summary_markdown", False
+    watermark = coerce_digest_turn_count(getattr(session, "summary_digest_turn_count", None)) or 0
+    digest_value = getattr(session, "digest_markdown", None)
+    digest_tail = digest_turns_since(
+        digest_value if isinstance(digest_value, str) else None,
+        watermark,
+    ).strip()
+    if not digest_tail:
+        return summary, "summary_markdown", True
+    return (
+        f"{summary}\n\n## Digest turns since this summary\n\n{digest_tail}",
+        "summary_with_digest_tail",
+        True,
+    )
+
+
 def choose_summary_refresh(
     *,
     current_source_hash: str,

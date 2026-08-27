@@ -416,7 +416,7 @@ async def test_get_handoff_context_by_session_id(mock_session_manager, full_sess
     assert "stale" not in result
 
 
-async def test_get_handoff_context_returns_last_turn_when_summary_lags_digest(
+async def test_get_handoff_context_appends_digest_tail_when_summary_lags_digest(
     mock_session_manager, full_sessions_registry
 ):
     mock_session = _make_mock_session("sess-abc")
@@ -434,9 +434,10 @@ async def test_get_handoff_context_returns_last_turn_when_summary_lags_digest(
 
     assert result["success"] is True
     assert result["stale"] is True
-    assert result["context_type"] == "last_turn_markdown"
-    assert "Round 14 is still active" in result["context"]
-    assert "Round 13 repairs" not in result["context"]
+    assert result["context_type"] == "summary_with_digest_tail"
+    assert result["context"].startswith("## Current State\nRound 13 repairs")
+    assert "### Turn 2\nRound 14 wait" in result["context"]
+    assert "Round 14 is still active" not in result["context"]
 
 
 @pytest.mark.asyncio
@@ -639,7 +640,7 @@ async def test_wait_for_summary_returns_ready_context(mock_session_manager, full
     }
 
 
-async def test_wait_for_summary_returns_last_turn_when_summary_lags_digest(
+async def test_wait_for_summary_appends_digest_tail_when_summary_lags_digest(
     mock_session_manager, full_sessions_registry
 ):
     stale_session = _make_mock_session("sess-wait")
@@ -665,8 +666,12 @@ async def test_wait_for_summary_returns_last_turn_when_summary_lags_digest(
         "completed": True,
         "session_id": "sess-wait",
         "has_context": True,
-        "context": "Round 14 is still active and the child summary is stale.",
-        "context_type": "last_turn_markdown",
+        "context": (
+            "## Current State\nRound 13 repairs\n\n"
+            "## Digest turns since this summary\n\n"
+            "### Turn 2\nRound 14 wait"
+        ),
+        "context_type": "summary_with_digest_tail",
         "stale": True,
     }
 

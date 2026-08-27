@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from gobby.sessions.summary_refresh import (
     digest_turn_count,
     digest_turns,
+    handoff_context,
     live_handoff_context,
     summary_is_stale,
 )
@@ -99,3 +100,41 @@ def test_summary_is_current_when_sentinel_digest_contains_forged_heading() -> No
         summary_markdown="## Current State\nOne",
     )
     assert summary_is_stale(session) is False
+
+
+def test_handoff_context_keeps_summary_and_appends_digest_tail_when_stale() -> None:
+    session = _session(
+        digest_markdown="### Turn 1\nOne\n\n### Turn 2\nTwo",
+        summary_digest_turn_count=1,
+        summary_markdown="## Current State\nOne",
+        last_turn_markdown="Lanes finished and synthesis is underway.",
+    )
+    context, context_type, stale = handoff_context(session)
+    assert stale is True
+    assert context_type == "summary_with_digest_tail"
+    assert context.startswith("## Current State\nOne")
+    assert "## Digest turns since this summary" in context
+    assert "### Turn 2\nTwo" in context
+    assert "Lanes finished" not in context
+
+
+def test_handoff_context_returns_current_summary_unchanged() -> None:
+    session = _session(
+        digest_markdown="### Turn 1\nOne\n\n### Turn 2\nTwo",
+        summary_digest_turn_count=2,
+        summary_markdown="## Current State\nTwo",
+        last_turn_markdown="Lanes finished and synthesis is underway.",
+    )
+    assert handoff_context(session) == ("## Current State\nTwo", "summary_markdown", False)
+
+
+def test_handoff_context_falls_back_to_live_context_without_summary() -> None:
+    session = _session(
+        digest_markdown="### Turn 1\nOne",
+        last_turn_markdown="Lanes finished and synthesis is underway.",
+    )
+    assert handoff_context(session) == (
+        "Lanes finished and synthesis is underway.",
+        "last_turn_markdown",
+        True,
+    )
