@@ -526,7 +526,12 @@ def _extract_text(content: Any) -> str:
 def _extract_tool_result(update: dict[str, Any]) -> dict[str, Any]:
     output = _extract_text(update.get("content"))
     error = update.get("error")
-    return {"output": output, "error": error, "raw": update}
+    return {
+        "output": output,
+        "error": error,
+        "status": update.get("status"),
+        "raw": update,
+    }
 
 
 def _tool_use_id(index: int, tool_name: str) -> str:
