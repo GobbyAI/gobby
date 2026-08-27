@@ -34,6 +34,19 @@ def test_artifact_references_ignore_prose_file_line_token() -> None:
     assert artifacts_module.extract_artifact_references(criteria, "file") == ("docs/evidence.md",)
 
 
+def test_deliberate_missing_file_reference_keeps_actionable_diagnostic(tmp_path: Path) -> None:
+    result = evaluate_acceptance_artifacts(
+        criteria="Required evidence file: `docs/missing.md`.",
+        repo_path=str(tmp_path),
+        commit_shas=[],
+    )
+
+    assert result.evidence_files == ("docs/missing.md",)
+    assert result.findings == (
+        "docs/missing.md: referenced evidence file is missing or unreadable",
+    )
+
+
 def test_transcript_evidence_imports_in_fresh_interpreter() -> None:
     result = subprocess.run(
         [
