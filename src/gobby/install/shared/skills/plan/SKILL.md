@@ -137,9 +137,10 @@ name, so the workflow remains portable across profile inventories.
 Enhancement is advisory, default-on for Full, and capped at one round unless
 the user changes the cap. Start it only after explicit enhancement approval.
 
-1. Prepare evidence, spawn `plan-enhancer-taskless` without `task_id` using
-   `isolation="none"`, and pass `evidence_id`, `artifact_path`, round number,
-   cap, and parent session id.
+1. Spawn `plan-enhancer-taskless` without `task_id` using `isolation="none"`,
+   and pass `artifact_path`, round number, cap, and parent session id. No
+   evidence is prepared for enhancement; `prepare_plan_review_round` and
+   `bind_evidence_run` belong to adversary rounds only.
 2. Immediately call `gobby-sessions:compact_self`, then use **Waiting on
    Spawned Runs**. In a terminal session that call comes back as a rejected or
    cancelled tool use attributed to the user. That is the daemon interrupting
