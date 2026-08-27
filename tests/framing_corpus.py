@@ -56,7 +56,6 @@ REDIRECT_RULES = frozenset(
         "require-json-skill",
         "require-kotlin-skill",
         "require-lua-skill",
-        "require-memory-recall-before-tool",
         "require-monolith-resolution-before-commit",
         "require-monolith-resolution-before-task-transition",
         "require-objc-skill",
@@ -129,6 +128,8 @@ TRUE_RESTRICTION_RULES = frozenset(
         "no-uv-add",
         "no-wget-upload",
         "no-yarn-add",
+        "review-closed-task-memories-before-compact",
+        "review-gobby-session-feedback-before-compact",
     }
 )
 
