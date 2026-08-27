@@ -41,12 +41,53 @@ def _event(event_type: HookEventType, data: dict[str, object] | None = None) -> 
     )
 
 
+def _close_task_event(task_ref: str = "#42") -> HookEvent:
+    return _event(
+        HookEventType.AFTER_TOOL,
+        {
+            "tool_name": "mcp__gobby__call_tool",
+            "mcp_server": "gobby-tasks",
+            "mcp_tool": "close_task",
+            "tool_input": {
+                "server_name": "gobby-tasks",
+                "tool_name": "close_task",
+                "arguments": {"task_id": task_ref},
+            },
+            "tool_output": {"success": True, "closed": True},
+        },
+    )
+
+
+def _enable_rules(db: HubDatabase, *names: str) -> None:
+    with db.transaction() as conn:
+        conn.execute("UPDATE rule_definitions SET enabled = FALSE")
+        conn.execute(
+            "UPDATE rule_definitions SET enabled = TRUE WHERE name = ANY(%s)",
+            (list(names),),
+        )
+
+
 class TestSessionFeedbackRules:
-    def test_bundled_feedback_rule_is_bounded_and_post_close(
+    def test_bundled_feedback_rules_are_bounded_and_closure_driven(
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         _sync_bundled(db)
+        rearm = manager.get_by_name("rearm-gobby-session-feedback-after-close")
         row = manager.get_by_name("review-gobby-session-feedback-on-stop")
+
+        assert manager.get_by_name("reset-gobby-session-feedback-on-context-reset") is None
+        assert rearm is not None
+        assert rearm.priority == 11
+        rearm_body = RuleDefinitionBody.model_validate(rearm.definition_json)
+        rearm_effects = rearm_body.resolved_effects
+        assert rearm_body.event.value == "after_tool"
+        assert "mcp_server" in (rearm_body.when or "")
+        assert "mcp_tool" in (rearm_body.when or "")
+        assert "tool_call_succeeded" in (rearm_body.when or "")
+        assert "get('closed') is True" in (rearm_body.when or "")
+        assert len(rearm_effects) == 1
+        assert rearm_effects[0].variable == "_gobby_feedback_epoch_reviewed"
+        assert rearm_effects[0].value is False
 
         assert row is not None
         assert row.priority == 3
@@ -178,21 +219,71 @@ class TestSessionFeedbackRules:
         assert "_gobby_feedback_epoch_reviewed" not in variables
 
     @pytest.mark.asyncio
-    async def test_compact_session_start_resets_feedback_epoch(self, db: HubDatabase) -> None:
+    async def test_feedback_acknowledgement_survives_compaction_without_a_new_close(
+        self, db: HubDatabase
+    ) -> None:
         _sync_bundled(db)
-        with db.transaction() as conn:
-            conn.execute("UPDATE rule_definitions SET enabled = FALSE")
-            conn.execute(
-                "UPDATE rule_definitions SET enabled = TRUE WHERE name = %s",
-                ("reset-gobby-session-feedback-on-context-reset",),
-            )
-        variables: dict[str, object] = {"_gobby_feedback_epoch_reviewed": True}
+        _enable_rules(
+            db,
+            "rearm-gobby-session-feedback-after-close",
+            "review-gobby-session-feedback-before-compact",
+            "review-gobby-session-feedback-on-stop",
+        )
+        variables: dict[str, object] = {
+            "_memory_pending_task_reviews": [{"task_ref": "#42"}],
+            "_gobby_feedback_epoch_reviewed": True,
+            "task_claimed": True,
+            "session_task": "#21080",
+        }
+        engine = RuleEngine(db)
 
-        result = await RuleEngine(db).evaluate(
+        resumed = await engine.evaluate(
             _event(HookEventType.SESSION_START, {"source": "compact"}),
             SESSION_ID,
             variables,
         )
+        compact = await engine.evaluate(
+            _event(
+                HookEventType.BEFORE_TOOL,
+                {"mcp_server": "gobby-sessions", "mcp_tool": "compact_self"},
+            ),
+            SESSION_ID,
+            variables,
+        )
+        stop = await engine.evaluate(_event(HookEventType.STOP), SESSION_ID, variables)
 
-        assert result.decision == "allow"
-        assert variables["_gobby_feedback_epoch_reviewed"] is False
+        assert resumed.decision == "allow"
+        assert compact.decision == "allow"
+        assert stop.decision == "allow"
+        assert variables["_gobby_feedback_epoch_reviewed"] is True
+
+    @pytest.mark.asyncio
+    async def test_successful_closure_batch_rearms_feedback_once_after_compaction(
+        self, db: HubDatabase
+    ) -> None:
+        _sync_bundled(db)
+        _enable_rules(
+            db,
+            "rearm-gobby-session-feedback-after-close",
+            "review-gobby-session-feedback-on-stop",
+        )
+        variables: dict[str, object] = {
+            "_memory_pending_task_reviews": [{"task_ref": "#42"}],
+            "_gobby_feedback_epoch_reviewed": True,
+        }
+        engine = RuleEngine(db)
+
+        await engine.evaluate(
+            _event(HookEventType.SESSION_START, {"source": "compact"}),
+            SESSION_ID,
+            variables,
+        )
+        await engine.evaluate(_close_task_event("#43"), SESSION_ID, variables)
+        await engine.evaluate(_close_task_event("#44"), SESSION_ID, variables)
+        first = await engine.evaluate(_event(HookEventType.STOP), SESSION_ID, variables)
+        second = await engine.evaluate(_event(HookEventType.STOP), SESSION_ID, variables)
+
+        assert first.decision == "block"
+        assert "bounded Gobby session-feedback review" in (first.reason or "")
+        assert variables["_gobby_feedback_epoch_reviewed"] is True
+        assert second.decision == "allow"
