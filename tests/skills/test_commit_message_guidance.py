@@ -26,9 +26,17 @@ def test_commit_message_guidance_uses_project_placeholder(
         assert "[<project_name>-#<task_number>]" in body
         assert "[gobby-#" not in body
         assert "[gobby-cli-#" not in body
-        git_commit_examples = re.findall(r"git commit -m \"([^\"]+)\"", body)
+        git_commit_examples = re.findall(r"git commit(?: --only)? -m \"([^\"]+)\"", body)
         if skill_name == "coderabbit":
             assert "Commit with the task ref" in body
         else:
             assert git_commit_examples, f"{skill_name} must include a git commit example"
         assert not any("[#N]" in example for example in git_commit_examples)
+
+
+def test_tasks_skill_scopes_commits_to_owned_task_paths(bundled_skills_root: Path) -> None:
+    body = (bundled_skills_root / "tasks" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "git commit --only -- <task paths>" in body
+    assert 'git commit --only -m "[<project_name>-#<task_number>]' in body
+    assert "foreign staged entries remain intact" in body

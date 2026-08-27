@@ -490,6 +490,40 @@ async def test_unscoped_commit_blocks_foreign_staged_path_with_owner_diagnostic(
 
 
 @pytest.mark.asyncio
+async def test_unscoped_commit_reports_every_foreign_staged_path(
+    guard_harness: GuardHarness,
+) -> None:
+    foreign_paths = [f"foreign-{index}.txt" for index in range(6)]
+    for path in foreign_paths:
+        (guard_harness.repo / path).write_text(f"foreign change for {path}\n", encoding="utf-8")
+    _git(guard_harness.repo, "add", "--", *foreign_paths)
+    SessionVariableManager(guard_harness.db).merge_variables(
+        guard_harness.foreign_session.id,
+        {
+            "task_edited_files": {guard_harness.foreign_task.id: foreign_paths},
+            "task_edited_file_checkouts": {
+                guard_harness.foreign_task.id: {
+                    str(guard_harness.repo): foreign_paths,
+                }
+            },
+        },
+    )
+
+    response = await guard_harness.handler._evaluate_rules(
+        guard_harness.event("git commit -m 'unsafe shared-index commit'")
+    )
+
+    assert response.decision == "block"
+    assert response.reason is not None
+    assert all(path in response.reason for path in foreign_paths)
+    assert guard_harness.foreign_session.ref in response.reason
+    assert f"#{guard_harness.foreign_task.seq_num}" in response.reason
+    assert set(_git(guard_harness.repo, "diff", "--cached", "--name-only").splitlines()) == set(
+        foreign_paths
+    )
+
+
+@pytest.mark.asyncio
 async def test_same_relative_path_commits_from_separate_worktrees(
     guard_harness: GuardHarness,
     tmp_path: Path,
@@ -558,7 +592,8 @@ async def test_owned_path_only_commit_succeeds_and_preserves_foreign_index_entry
 ) -> None:
     (guard_harness.repo / "owned.txt").write_text("current change\n", encoding="utf-8")
     (guard_harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
-    _git(guard_harness.repo, "add", "--", "owned.txt", "foreign.txt")
+    (guard_harness.repo / "unowned.txt").write_text("unowned change\n", encoding="utf-8")
+    _git(guard_harness.repo, "add", "--", "owned.txt", "foreign.txt", "unowned.txt")
     command = "git commit --only -m 'scoped' -- owned.txt"
 
     response = await guard_harness.handler._evaluate_rules(guard_harness.event(command))
@@ -568,7 +603,10 @@ async def test_owned_path_only_commit_succeeds_and_preserves_foreign_index_entry
 
     assert _git(guard_harness.repo, "show", "HEAD:owned.txt") == "current change"
     assert _git(guard_harness.repo, "show", "HEAD:foreign.txt") == "base foreign"
-    assert _git(guard_harness.repo, "diff", "--cached", "--name-only") == "foreign.txt"
+    assert set(_git(guard_harness.repo, "diff", "--cached", "--name-only").splitlines()) == {
+        "foreign.txt",
+        "unowned.txt",
+    }
 
 
 @pytest.mark.asyncio

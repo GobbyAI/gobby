@@ -164,8 +164,11 @@ Stage and commit only the files for this task:
 
 ```bash
 git add <specific-files>
-git commit -m "[<project_name>-#<task_number>] <type>: <description>"
+git commit --only -m "[<project_name>-#<task_number>] <type>: <description>" -- <task paths>
 ```
+
+Always scope the commit as `git commit --only -- <task paths>` (with message options
+before `--`). Only the named task paths enter the commit; foreign staged entries remain intact.
 
 Preview after validation and commit:
 
