@@ -331,6 +331,11 @@ def test_python_module_flag_is_not_mistaken_for_pytest_marker_selection(
             ("pytest", "tests/config"),
             ("bash-lc", "uv-run"),
         ),
+        (
+            "GOBBY_TEST_PROTECT=1 uv run rtk pytest tests/config",
+            ("pytest", "tests/config"),
+            ("uv-run", "rtk"),
+        ),
         ("env RUSTFLAGS=-Awarnings -- cargo check", ("cargo", "check"), ("env",)),
     ],
 )

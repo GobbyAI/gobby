@@ -18,12 +18,13 @@ from gobby.config.validation_detection import (
 )
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.transcript_evidence import (
-    EvidenceOutcome,
     TranscriptEvidence,
     TranscriptValidationRun,
     TranscriptValidationSegment,
 )
+from gobby.tasks.transcript_outcomes import EvidenceOutcome
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.found_work_gate import (
     FoundWorkStopAnalyzer,
@@ -395,6 +396,19 @@ class TestPermissionDeferralConfirmation:
 
 
 class TestTerminalValidationFailures:
+    def test_category_green_supersedes_failure_in_close_and_stop(self) -> None:
+        runs = [_run(1, "failure"), _run(2, "success")]
+
+        close_gate = evaluate_validation_commands(
+            task_category="code",
+            evidence=TranscriptEvidence(validation_runs=tuple(runs)),
+            has_attributed_edits=True,
+        )
+
+        assert close_gate.passed is True
+        assert close_gate.details["latest_outcomes"] == {"test": "success"}
+        assert unresolved_validation_failures(runs, owner_handoff=False) == ()
+
     def test_terminal_failure_remains(self) -> None:
         assert unresolved_validation_failures([_run(1, "failure")], owner_handoff=False)
 
@@ -671,7 +685,7 @@ class TestFoundWorkDeclarativeRules:
         self, temp_db: HubDatabase
     ) -> None:
         engine = RuleEngine(temp_db)
-        variables: dict[str, Any] = {}
+        variables: dict[str, Any] = {"_memory_initial_stop_checked": True}
 
         response = await engine.evaluate(
             _event(HookEventType.STOP),
@@ -699,7 +713,7 @@ class TestFoundWorkDeclarativeRules:
 
     @pytest.mark.asyncio
     async def test_confirmed_shirk_records_confirmation(self, temp_db: HubDatabase) -> None:
-        variables: dict[str, Any] = {}
+        variables: dict[str, Any] = {"_memory_initial_stop_checked": True}
 
         response = await RuleEngine(temp_db).evaluate(
             _event(HookEventType.STOP),
@@ -714,7 +728,10 @@ class TestFoundWorkDeclarativeRules:
 
     @pytest.mark.asyncio
     async def test_prior_shirk_alert_allows_stop(self, temp_db: HubDatabase) -> None:
-        variables: dict[str, Any] = {"found_work_shirk_alerted": True}
+        variables: dict[str, Any] = {
+            "_memory_initial_stop_checked": True,
+            "found_work_shirk_alerted": True,
+        }
 
         response = await RuleEngine(temp_db).evaluate(
             _event(HookEventType.STOP),
@@ -731,7 +748,7 @@ class TestFoundWorkDeclarativeRules:
         response = await RuleEngine(temp_db).evaluate(
             _event(HookEventType.STOP),
             session_id=SESSION_ID,
-            variables={"stop_attempts": 20},
+            variables={"_memory_initial_stop_checked": True, "stop_attempts": 20},
             eval_context={
                 "found_work_shirk": True,
                 "terminal_validation_failure": True,
@@ -768,7 +785,7 @@ class TestFoundWorkDeclarativeRules:
         response = await RuleEngine(temp_db).evaluate(
             _event(HookEventType.STOP),
             session_id=SESSION_ID,
-            variables={},
+            variables={"_memory_initial_stop_checked": True},
             eval_context={
                 "terminal_validation_failure": True,
                 "terminal_validation_failure_commands": ["pytest tests/unit"],
@@ -783,7 +800,7 @@ class TestFoundWorkDeclarativeRules:
         response = await RuleEngine(temp_db).evaluate(
             _event(HookEventType.STOP),
             session_id=SESSION_ID,
-            variables={},
+            variables={"_memory_initial_stop_checked": True},
             eval_context={
                 "found_work_shirk": False,
                 "terminal_validation_failure": False,

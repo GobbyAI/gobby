@@ -15,7 +15,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from gobby.config.validation_detection import (
     ValidationCommandMatch,
@@ -26,7 +26,6 @@ from gobby.sessions.machine_scope import require_local_session_ownership
 from gobby.sessions.transcript_archive import get_archive_dir
 from gobby.sessions.transcript_io import _iter_archive_lines
 from gobby.sessions.transcript_paths import find_transcript_on_disk
-from gobby.sessions.transcript_tool_metadata import extract_result_metadata
 from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import (
     ParsedMessage,
@@ -35,10 +34,17 @@ from gobby.sessions.transcripts.base import (
     raw_lines_from_texts,
 )
 from gobby.storage.session_models import Session
+from gobby.tasks.transcript_outcomes import (
+    EvidenceOutcome,
+)
+from gobby.tasks.transcript_outcomes import (
+    extract_outcome as _extract_outcome,
+)
+from gobby.tasks.transcript_outcomes import (
+    extract_output as _extract_output,
+)
 
 logger = logging.getLogger(__name__)
-
-EvidenceOutcome = Literal["success", "failure", "unknown"]
 
 # How much transcript before the claim window still reaches the parser.
 #
@@ -76,34 +82,6 @@ _SHELL_TOOLS = {
 _EDIT_TOOLS = {"edit", "multiedit", "notebookedit", "write", "apply_patch", "exec"}
 _COMMAND_KEYS = ("cmd", "command", "script")
 _PATH_KEYS = ("file_path", "path", "notebook_path")
-_EXIT_CODE_KEYS = ("exit_code", "exitCode")
-_SUCCESS_STATUSES = {"completed", "ok", "passed", "success", "succeeded"}
-_FAILURE_STATUSES = {"error", "failed", "failure"}
-_OUTPUT_CHAR_LIMIT = 16_000
-
-# Terminal summaries that prove the runner itself reported failures. Consulted only
-# when the shell's aggregate status cannot speak for the matched segment; see
-# `_extract_outcome`.
-_RUNNER_FAILURE_PATTERNS = (
-    # Counted summaries: pytest's "5 failed, 16 passed" and "178 errors in 4.90s",
-    # vitest/jest's "Tests  3 failed | 5 passed", mypy's "Found 2 errors in 1 file",
-    # ruff's "Found 3 errors.". The [1-9] guard keeps "0 failed" and "0 errors" out,
-    # and requiring the word immediately after the count keeps "1 xfailed" out.
-    # Count and word must share a line ([^\S\n], not \s): every counted summary
-    # puts them on one, and letting the gap span a newline misread a PASSING
-    # `gobby test-types audit` ratchet — "Files scanned: 2\nErrors: 10" (ten
-    # baselined errors, zero new) — as "2 errors" (#20880).
-    re.compile(r"\b[1-9]\d*[^\S\n]+(?:failed|failures?|errors?)\b", re.IGNORECASE),
-    # Per-test failure lines: pytest's "FAILED path::test" and "ERROR path::test",
-    # go's "--- FAIL: TestX" and "FAIL\tpkg\t0.1s", cargo's "test result: FAILED.".
-    re.compile(
-        r"(?m)^\s*(?:FAILED\s+\S|ERROR\s+\S+::|---\s+FAIL:|FAIL\s+\S|test result:\s*FAILED\b)"
-    ),
-    # Gobby audit ratchets (`gobby test-types audit`, `gobby test-quality audit`):
-    # a passing run still headlines the TOTAL count of baselined findings
-    # ("Errors: 10"), so only the ratchet's own failing tally proves failure.
-    re.compile(r"(?m)^\s*Failing new (?:errors|issues) >= \w+: [1-9]\d*\b"),
-)
 
 
 @dataclass(frozen=True)
@@ -724,6 +702,18 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
         output,
         aggregate_status_is_trustworthy=not match.is_compound,
     )
+    provenance = outcome.result.get("outcome_provenance")
+    if provenance == "codex.functions_exec.wrapper" and state.runs:
+        prior = state.runs[-1]
+        elapsed = (completed_at - prior.completed_at).total_seconds()
+        if (
+            prior.source == "codex"
+            and prior.exit_code is not None
+            and prior.validation_segments == segments
+            and prior.output == output
+            and 0 <= elapsed <= 1
+        ):
+            return
     if direct_pending:
         if status == "unknown":
             # Keep the call pending so ParsedMessage can recover structured
@@ -827,30 +817,6 @@ def _record_validation_run(
     )
 
 
-def _extract_output(result: Any) -> tuple[str | None, bool]:
-    """Extract bounded command output needed to classify validation failures."""
-    parts: list[str] = []
-    seen: set[str] = set()
-    for value in _walk_values(result):
-        if not isinstance(value, str):
-            continue
-        text = value.strip()
-        if not text or text in seen:
-            continue
-        seen.add(text)
-        parts.append(text)
-    if not parts:
-        return None, False
-    output = "\n".join(parts)
-    if len(output) <= _OUTPUT_CHAR_LIMIT:
-        return output, False
-    half = (_OUTPUT_CHAR_LIMIT - len("\n...[output truncated]...\n")) // 2
-    return (
-        f"{output[:half]}\n...[output truncated]...\n{output[-half:]}",
-        True,
-    )
-
-
 def _record_edit(
     state: _DerivationState,
     tool_name: str,
@@ -907,97 +873,6 @@ def _extract_command(arguments: dict[str, Any]) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return ""
-
-
-def _extract_outcome(
-    result: Any,
-    output: str | None = None,
-    *,
-    aggregate_status_is_trustworthy: bool = True,
-) -> tuple[EvidenceOutcome, int | None, str | None]:
-    """Classify one shell result as a validation pass, failure, or unknown.
-
-    A shell reports the status of the LAST element of a list or pipeline, so
-    ``pytest ... | tail``, ``pytest ... ; echo``, and ``pytest ... && other`` all
-    record a zero status for a genuinely failing run — which is how a real red
-    gets filed as a pass. Pass ``aggregate_status_is_trustworthy=False`` for a
-    compound match (``ValidationCommandMatch.is_compound``); the runner's own
-    terminal summary then decides, because the aggregate status cannot prove the
-    matched segment passed. A non-compound run keeps its recorded status verbatim.
-    """
-    if not aggregate_status_is_trustworthy and _runner_reported_failures(output):
-        return "failure", _find_exit_code(result), None
-
-    exit_code = _find_exit_code(result)
-    if exit_code is not None:
-        return ("success" if exit_code == 0 else "failure"), exit_code, None
-
-    values = list(_walk_values(result))
-    for value in values:
-        if not isinstance(value, dict):
-            continue
-        success = value.get("success")
-        if isinstance(success, bool):
-            return ("success" if success else "failure"), None, None
-        status = value.get("status")
-        if isinstance(status, str):
-            normalized = status.strip().casefold()
-            if normalized in _SUCCESS_STATUSES:
-                return "success", None, None
-            if normalized in _FAILURE_STATUSES:
-                return "failure", None, None
-        is_error = value.get("is_error")
-        if isinstance(is_error, bool):
-            return ("failure" if is_error else "success"), None, None
-        error = value.get("error")
-        if error not in (None, "", False, []):
-            return "failure", None, None
-
-    unknown_reason = None
-    for value in values:
-        if isinstance(value, dict):
-            reason = value.get("unknown_reason")
-            if isinstance(reason, str) and reason:
-                unknown_reason = reason
-                break
-    return "unknown", None, unknown_reason or "missing definitive provider outcome"
-
-
-def _runner_reported_failures(output: str | None) -> bool:
-    """Return whether command output carries a runner's own failure summary."""
-    if not output:
-        return False
-    return any(pattern.search(output) for pattern in _RUNNER_FAILURE_PATTERNS)
-
-
-def _find_exit_code(result: Any) -> int | None:
-    for value in _walk_values(result):
-        if not isinstance(value, dict):
-            continue
-        metadata = extract_result_metadata("bash", value)
-        candidates = [metadata.get("exit_code"), *(value.get(key) for key in _EXIT_CODE_KEYS)]
-        for candidate in candidates:
-            if isinstance(candidate, int) and not isinstance(candidate, bool):
-                return candidate
-    return None
-
-
-def _walk_values(value: Any, *, depth: int = 0) -> Iterable[Any]:
-    if depth > 8:
-        return
-    yield value
-    if isinstance(value, dict):
-        for nested in value.values():
-            yield from _walk_values(nested, depth=depth + 1)
-    elif isinstance(value, list):
-        for nested in value:
-            yield from _walk_values(nested, depth=depth + 1)
-    elif isinstance(value, str) and value[:1] in {"{", "["}:
-        try:
-            decoded = json.loads(value)
-        except json.JSONDecodeError:
-            return
-        yield from _walk_values(decoded, depth=depth + 1)
 
 
 def _tool_basename(tool_name: str) -> str:

@@ -169,6 +169,7 @@ def default_validation_wrappers() -> list[str]:
     """Return shell wrappers that should be ignored before command matching."""
     return [
         "uv run",
+        "rtk",
         "poetry run",
         "pipenv run",
         "pdm run",
@@ -192,6 +193,7 @@ def default_validation_wrapper_rules() -> list[ValidationCommandWrapper]:
             ["uv run"],
             strip_options_with_values=_UV_RUN_OPTIONS_WITH_VALUES,
         ),
+        _wrapper_rule("rtk", "rtk", "prefix", ["rtk"]),
         _wrapper_rule("poetry-run", "poetry run", "prefix", ["poetry run"]),
         _wrapper_rule("pdm-run", "pdm run", "prefix", ["pdm run"]),
         _wrapper_rule("pipenv-run", "pipenv run", "prefix", ["pipenv run"]),

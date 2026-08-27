@@ -12,21 +12,21 @@ import pytest
 
 from gobby.config.validation_detection import default_validation_detection_config
 from gobby.storage.session_models import Session
-from gobby.tasks import transcript_evidence
+from gobby.tasks import transcript_outcomes
 from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.transcript_evidence import (
     WINDOW_LOOKBACK,
-    EvidenceOutcome,
     TranscriptEdit,
     TranscriptEvidence,
     TranscriptEvidenceUnavailable,
     TranscriptValidationRun,
     TranscriptValidationSegment,
-    _extract_output,
     derive_transcript_evidence,
     merge_transcript_evidence,
     select_window_raw_lines,
 )
+from gobby.tasks.transcript_outcomes import EvidenceOutcome
+from gobby.tasks.transcript_outcomes import extract_output as _extract_output
 
 BASE_TIME = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000003"
@@ -345,6 +345,139 @@ async def test_codex_ingests_unified_exec_failure_event(tmp_path: Path) -> None:
 
     assert [(run.command, run.outcome, run.exit_code) for run in evidence.validation_runs] == [
         (command, "failure", 1)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_codex_authoritative_exec_supersedes_successful_outer_wrapper(
+    tmp_path: Path,
+) -> None:
+    transcript = tmp_path / "codex-wrapper.jsonl"
+    command = "uv run pytest tests/tasks/test_example.py::test_behavior -q"
+    rewritten = "uv run rtk pytest tests/tasks/test_example.py::test_behavior -q"
+    failed_output = "FAILED test_behavior - AssertionError"
+    _write_jsonl(
+        transcript,
+        [
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "outer-exec",
+                    "name": "exec",
+                    "input": (
+                        f"const r = await tools.exec_command({{cmd:{json.dumps(command)}}}); "
+                        "text(r.output);"
+                    ),
+                },
+                BASE_TIME,
+            ),
+            {
+                "type": "event_msg",
+                "timestamp": (BASE_TIME + timedelta(seconds=1)).isoformat(),
+                "payload": {
+                    "type": "item_completed",
+                    "item": {
+                        "type": "CommandExecution",
+                        "id": "native-exec",
+                        "command": ["/bin/zsh", "-lc", rewritten],
+                        "status": "failed",
+                        "exit_code": 1,
+                        "aggregated_output": failed_output,
+                    },
+                },
+            },
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call_output",
+                    "call_id": "outer-exec",
+                    "output": [
+                        {
+                            "type": "input_text",
+                            "text": "Script completed\nWall time 0.8 seconds\nOutput:\n",
+                        },
+                        {"type": "input_text", "text": failed_output},
+                    ],
+                },
+                BASE_TIME + timedelta(seconds=2),
+            ),
+        ],
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("codex", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [(run.command, run.outcome, run.exit_code) for run in evidence.validation_runs] == [
+        (rewritten, "failure", 1)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_codex_compound_timeout_preserves_completed_segment_outcomes(
+    tmp_path: Path,
+) -> None:
+    transcript = tmp_path / "codex-timeout.jsonl"
+    command = "uv run ruff check src && uv run pytest tests/unit -q"
+    completed = "uv run ruff check src"
+    _write_jsonl(
+        transcript,
+        [
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "outer-exec",
+                    "name": "exec",
+                    "input": (
+                        f"const r = await tools.exec_command({{cmd:{json.dumps(command)}}}); "
+                        "text(r.output);"
+                    ),
+                },
+                BASE_TIME,
+            ),
+            {
+                "type": "event_msg",
+                "timestamp": (BASE_TIME + timedelta(seconds=1)).isoformat(),
+                "payload": {
+                    "type": "item_completed",
+                    "item": {
+                        "type": "CommandExecution",
+                        "id": "completed-segment",
+                        "command": ["/bin/zsh", "-lc", completed],
+                        "status": "completed",
+                        "exit_code": 0,
+                        "aggregated_output": "All checks passed!",
+                    },
+                },
+            },
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call_output",
+                    "call_id": "outer-exec",
+                    "output": "command timed out before pytest completed",
+                },
+                BASE_TIME + timedelta(seconds=2),
+            ),
+        ],
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("codex", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [
+        (run.command, run.categories, run.outcome, run.exit_code)
+        for run in evidence.validation_runs
+    ] == [
+        (completed, ("lint", "type_check"), "success", 0),
+        (command, ("lint", "type_check", "test"), "unknown", None),
     ]
 
 
@@ -1127,7 +1260,7 @@ def test_compound_zero_exit_yields_failure_when_the_runner_reported_failures(
     output: str,
 ) -> None:
     """A.1: aggregate shell status cannot prove a compound segment passed."""
-    outcome, exit_code, unknown_reason = transcript_evidence._extract_outcome(
+    outcome, exit_code, unknown_reason = transcript_outcomes.extract_outcome(
         {"exit_code": 0, "stdout": output},
         output,
         aggregate_status_is_trustworthy=False,
@@ -1141,7 +1274,7 @@ def test_compound_zero_exit_yields_failure_when_the_runner_reported_failures(
 @pytest.mark.parametrize("output", _RUNNER_FAILURE_OUTPUTS)
 def test_compound_provider_success_is_also_overridden(output: str) -> None:
     """A.1: the provider `success`/`is_error` fallbacks lie the same way as `$?`."""
-    outcome, _exit_code, _reason = transcript_evidence._extract_outcome(
+    outcome, _exit_code, _reason = transcript_outcomes.extract_outcome(
         {"success": True, "stdout": output},
         output,
         aggregate_status_is_trustworthy=False,
@@ -1157,14 +1290,14 @@ def test_clean_run_output_is_not_misread_as_failure(output: str) -> None:
     Clean output stays a success even for a compound segment, and a non-compound
     run's recorded exit code stays authoritative whatever the output says.
     """
-    compound, _code, _reason = transcript_evidence._extract_outcome(
+    compound, _code, _reason = transcript_outcomes.extract_outcome(
         {"exit_code": 0, "stdout": output},
         output,
         aggregate_status_is_trustworthy=False,
     )
     assert compound == "success"
 
-    plain, _code, _reason = transcript_evidence._extract_outcome(
+    plain, _code, _reason = transcript_outcomes.extract_outcome(
         {"exit_code": 0, "stdout": _RED_PYTEST_OUTPUT},
         _RED_PYTEST_OUTPUT,
         aggregate_status_is_trustworthy=True,
@@ -1175,7 +1308,7 @@ def test_clean_run_output_is_not_misread_as_failure(output: str) -> None:
 def test_nonzero_exit_stays_a_failure_however_clean_the_output() -> None:
     """A.4: the new rule only ever adds failures, never removes one."""
     for trustworthy in (True, False):
-        outcome, exit_code, _reason = transcript_evidence._extract_outcome(
+        outcome, exit_code, _reason = transcript_outcomes.extract_outcome(
             {"exit_code": 1, "stdout": "21 passed in 0.13s"},
             "21 passed in 0.13s",
             aggregate_status_is_trustworthy=trustworthy,
@@ -1254,7 +1387,7 @@ _TEST_TYPES_AUDIT_COMMAND = (
 def test_failing_audit_nonzero_exit_stays_a_failure_in_both_trust_modes() -> None:
     """#20880: a genuinely failing ratchet keeps its exit-1 failure, bare or compound."""
     for trustworthy in (True, False):
-        outcome, exit_code, _reason = transcript_evidence._extract_outcome(
+        outcome, exit_code, _reason = transcript_outcomes.extract_outcome(
             {"exit_code": 1, "stdout": _FAILING_TEST_TYPES_AUDIT_OUTPUT},
             _FAILING_TEST_TYPES_AUDIT_OUTPUT,
             aggregate_status_is_trustworthy=trustworthy,
@@ -1464,14 +1597,15 @@ async def test_pre_window_history_does_not_change_derived_evidence(tmp_path: Pat
 async def test_compound_run_records_only_its_validation_segments(tmp_path: Path) -> None:
     """Cover scoping needs the validation argv, not the git/shell segments around it."""
     transcript = tmp_path / "compound.jsonl"
+    command = (
+        'git stash push -m "tmp" src/gobby/servers/auth.py -q\n'
+        "GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/test_auth.py -q\n"
+        "git stash pop -q"
+    )
     _write_jsonl(
         transcript,
         _claude_tool_pair(
-            command=(
-                'git stash push -m "tmp" src/gobby/servers/auth.py -q\n'
-                "GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/test_auth.py -q\n"
-                "git stash pop -q"
-            ),
+            command=command,
             call_id="red-1",
             start=BASE_TIME,
             result={"exit_code": 1, "stdout": _RED_PYTEST_OUTPUT},
@@ -1486,6 +1620,7 @@ async def test_compound_run_records_only_its_validation_segments(tmp_path: Path)
         str(tmp_path),
     )
 
+    assert [run.command for run in evidence.validation_runs] == [command]
     assert [run.validation_segments for run in evidence.validation_runs] == [
         (
             TranscriptValidationSegment(
