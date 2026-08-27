@@ -24,7 +24,7 @@ ACTIVE_CODEWIKI_DOCS = (
     ROOT / "crates/gcore/src/vault/mermaid.rs",
     ROOT / "crates/gwiki/src/commands/code/repair.rs",
     ROOT / "crates/gwiki/src/commands/code/run.rs",
-    ROOT / "crates/gwiki/src/commands/code/tool_executor.rs",
+    ROOT / "crates/gwiki/src/commands/code/text/generation/tool_loop.rs",
     ROOT / "crates/gwiki/src/catalog.rs",
 )
 

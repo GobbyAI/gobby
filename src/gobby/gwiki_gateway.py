@@ -89,6 +89,7 @@ def _vault_write_lock(key: str) -> asyncio.Lock:
 INTERACTIVE_GWIKI_TIMEOUT_SECONDS = 30.0
 INTERACTIVE_HEALTH_GWIKI_TIMEOUT_SECONDS = 25.0
 GENERATION_GWIKI_TIMEOUT_SECONDS = 270.0
+GWIKI_AI_MODES = frozenset({"auto", "off"})
 
 
 def normalize_kind(value: str | None) -> str | None:
@@ -99,6 +100,21 @@ def normalize_kind(value: str | None) -> str | None:
         allowed = ", ".join(sorted(COMPILE_KINDS))
         raise ValueError(f"kind must be one of {allowed}")
     return kind
+
+
+def normalize_ai_mode(value: str | None) -> str | None:
+    if value is None:
+        return None
+    mode = value.strip().lower()
+    if mode not in GWIKI_AI_MODES:
+        allowed = ", ".join(sorted(GWIKI_AI_MODES))
+        raise ValueError(f"ai must be one of {allowed}")
+    return mode
+
+
+def append_ai_mode(args: list[str], value: str | None) -> None:
+    if normalize_ai_mode(value) == "off":
+        args.append("--no-ai")
 
 
 def normalize_page_write_mode(value: str) -> str:
@@ -328,8 +344,7 @@ class GwikiGateway:
             args.extend(["--target", str(target)])
         if write_intent:
             args.append("--write-intent")
-        if ai is not None:
-            args.extend(["--ai", ai])
+        append_ai_mode(args, ai)
         return await self._run_json("compile", args)
 
     async def audit(self) -> dict[str, Any]:
@@ -399,8 +414,7 @@ class GwikiGateway:
         args = ["upkeep"]
         if dry_run:
             args.append("--dry-run")
-        if ai is not None:
-            args.extend(["--ai", ai])
+        append_ai_mode(args, ai)
         if max_pages is not None:
             args.extend(["--max-pages", str(max_pages)])
         if time_budget_seconds is not None:

@@ -12,6 +12,7 @@ from gobby.gwiki_gateway import (
     GwikiCommandError,
     GwikiGateway,
     GwikiGatewayError,
+    normalize_ai_mode,
     normalize_kind,
     normalize_page_write_mode,
 )
@@ -23,8 +24,6 @@ from gobby.wiki.update_coordinator import WikiUpdateCoordinator
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
-
-_AI_VALUES = {"auto", "daemon", "direct", "off"}
 
 
 class GwikiGatewayFactory(Protocol):
@@ -477,10 +476,7 @@ def _validation_error(message: str) -> dict[str, Any]:
 
 
 def _normalize_ai(value: str | None) -> str:
-    ai = (value or "daemon").strip().lower()
-    if ai not in _AI_VALUES:
-        raise ValueError("ai must be one of auto, daemon, direct, off")
-    return ai
+    return normalize_ai_mode(value) or "auto"
 
 
 def _normalize_kind(value: str | None) -> str | None:

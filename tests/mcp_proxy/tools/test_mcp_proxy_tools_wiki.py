@@ -734,7 +734,7 @@ async def test_wiki_compile_passes_full_param_surface() -> None:
             "outline": ["Intro"],
             "target": "knowledge/topics/hooks.md",
             "write_intent": True,
-            "ai": "direct",
+            "ai": "off",
             "topic": "docs",
         },
     )
@@ -751,7 +751,7 @@ async def test_wiki_compile_passes_full_param_surface() -> None:
                 "outline": ["Intro"],
                 "target": "knowledge/topics/hooks.md",
                 "write_intent": True,
-                "ai": "direct",
+                "ai": "off",
             },
         )
     ]
@@ -767,7 +767,7 @@ async def test_wiki_compile_rejects_unknown_kind_and_ai() -> None:
 
     bad_ai = await registry.call("wiki_compile", {"ai": "cloud"})
     assert bad_ai["ok"] is False
-    assert bad_ai["error"] == "ai must be one of auto, daemon, direct, off"
+    assert bad_ai["error"] == "ai must be one of auto, off"
     assert FakeGateway.instances == [] or all(
         call[0] != "compile" for gateway in FakeGateway.instances for call in gateway.calls
     )
@@ -777,7 +777,7 @@ async def test_wiki_compile_rejects_unknown_kind_and_ai() -> None:
 async def test_wiki_compile_uses_generation_gateway_timeout() -> None:
     registry = _registry()
 
-    result = await registry.call("wiki_compile", {"ai": "daemon"})
+    result = await registry.call("wiki_compile", {"ai": "auto"})
 
     assert result["success"] is True
     assert FakeGateway.instances[-1].timeout_seconds == GENERATION_GWIKI_TIMEOUT_SECONDS

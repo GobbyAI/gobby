@@ -158,7 +158,7 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
                 outline=["Intro"],
                 target="/tmp/out.md",
                 write_intent=True,
-                ai="direct",
+                ai="off",
             ),
         ),
         ("audit", "audit", gateway.audit),
@@ -215,7 +215,7 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
                 "--outline",
                 "--target",
                 "--write-intent",
-                "--ai",
+                "--no-ai",
             } <= _observed_flags(argv)
             assert argv[2] == "Ownership Story"
         assert "--project" in argv

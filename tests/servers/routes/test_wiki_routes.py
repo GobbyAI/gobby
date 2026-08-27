@@ -188,6 +188,27 @@ class FakeGateway:
             "compile", payload={"command": "compile", "changed_paths": ["wiki/a.md"]}
         )
 
+    async def upkeep(
+        self,
+        *,
+        dry_run: bool = False,
+        ai: str | None = None,
+        max_pages: int | None = None,
+        time_budget_seconds: int | None = None,
+    ) -> dict[str, Any]:
+        self.calls.append(
+            (
+                "upkeep",
+                {
+                    "dry_run": dry_run,
+                    "ai": ai,
+                    "max_pages": max_pages,
+                    "time_budget_seconds": time_budget_seconds,
+                },
+            )
+        )
+        return self._result("upkeep", payload={"command": "upkeep", "changed_paths": ["wiki/a.md"]})
+
     async def audit(self) -> dict[str, Any]:
         self.calls.append(("audit", None))
         return self._result("audit")
@@ -743,7 +764,7 @@ def test_compile_route_passes_full_param_surface(client: TestClient) -> None:
             "outline": ["Intro"],
             "target": "knowledge/topics/hooks.md",
             "write_intent": True,
-            "ai": "direct",
+            "ai": "off",
         },
     )
 
@@ -757,7 +778,7 @@ def test_compile_route_passes_full_param_surface(client: TestClient) -> None:
             "outline": ["Intro"],
             "target": "knowledge/topics/hooks.md",
             "write_intent": True,
-            "ai": "direct",
+            "ai": "off",
         },
     )
 
@@ -769,14 +790,33 @@ def test_compile_route_rejects_unknown_kind_and_ai(client: TestClient) -> None:
 
     bad_ai = client.post("/api/wiki/compile", json={"ai": "cloud"})
     assert bad_ai.status_code == 400
-    assert bad_ai.json()["detail"] == "ai must be one of auto, daemon, direct, off"
+    assert bad_ai.json()["detail"] == "ai must be one of auto, off"
 
 
 def test_compile_route_uses_generation_gateway_timeout(client: TestClient) -> None:
-    response = client.post("/api/wiki/compile", json={"ai": "daemon"})
+    response = client.post("/api/wiki/compile", json={"ai": "auto"})
 
     assert response.status_code == 200
     assert FakeGateway.instances[-1].timeout_seconds == GENERATION_GWIKI_TIMEOUT_SECONDS
+
+
+def test_upkeep_route_normalizes_current_ai_modes(client: TestClient) -> None:
+    response = client.post("/api/wiki/upkeep", json={"ai": "off"})
+
+    assert response.status_code == 200
+    assert FakeGateway.instances[-1].calls[0] == (
+        "upkeep",
+        {
+            "dry_run": False,
+            "ai": "off",
+            "max_pages": None,
+            "time_budget_seconds": None,
+        },
+    )
+
+    rejected = client.post("/api/wiki/upkeep", json={"ai": "direct"})
+    assert rejected.status_code == 400
+    assert rejected.json()["detail"] == "ai must be one of auto, off"
 
 
 def test_write_routes_delegate_to_coordinator(
