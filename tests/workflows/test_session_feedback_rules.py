@@ -176,7 +176,9 @@ class TestSessionFeedbackRules:
         assert "at most 3 observations" in reason
         assert "Most sessions should produce no report" in reason
         assert "docs/research/gobby-feedback/inbox/" in reason
-        assert "create a claimed task and fix it in" in reason
+        assert "create a claimed task with" in reason
+        assert 'parent_task_id: "#21128"' in reason
+        assert "and fix it in this session" in reason
         assert "needs-decision" in reason
         assert "`Disposition` line" in reason
         assert "gobby-memory" in reason
