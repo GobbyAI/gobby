@@ -62,6 +62,7 @@ def test_hook_guide_maps_stop_failure_and_grok_hooks() -> None:
         "user_prompt_submit",
         "pre_tool_use",
         "post_tool_use",
+        "post_tool_use_failure",
         "stop",
         "stop_failure",
         "pre_compact",

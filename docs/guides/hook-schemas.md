@@ -240,6 +240,7 @@ Grok uses lowercase snake-case native hook names and camelCase payload fields.
 | `user_prompt_submit` | `before_agent` | `turn_start` |
 | `pre_tool_use` | `before_tool` | `before_tool` |
 | `post_tool_use` | `after_tool` | `after_tool` |
+| `post_tool_use_failure` | `after_tool` | `after_tool` |
 | `stop` | `stop` | `turn_end` |
 | `stop_failure` | `stop_failure` | `turn_end` |
 | `pre_compact` | `pre_compact` | `pre_compact` |
