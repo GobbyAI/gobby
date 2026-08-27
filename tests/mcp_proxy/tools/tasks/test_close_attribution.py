@@ -10,6 +10,7 @@ validation evidence the gate exists to demand.
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,10 +18,14 @@ from typing import Any, cast
 
 import pytest
 
+from gobby.config.validation_detection import default_validation_detection_config
 from gobby.mcp_proxy.tools.tasks import _lifecycle_close_finalization as close_finalization
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization import capture_attribution
+from gobby.storage.session_models import Session
 from gobby.storage.tasks import Task
+from gobby.tasks.transcript_evidence import derive_transcript_evidence
+from gobby.utils.machine_id import get_machine_id
 
 pytestmark = pytest.mark.unit
 
@@ -123,6 +128,54 @@ async def test_prospective_commit_paths_survive_released_session_attribution(
     assert snapshot.raw_paths == COMMITTED_PATHS
     assert snapshot.edited_paths == snapshot.raw_paths
     assert snapshot.had_attributed_edits is True
+
+    transcript = Path(repo_path) / "codex.jsonl"
+    records = [
+        {
+            "timestamp": "2026-08-27T03:00:00Z",
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call",
+                "call_id": "owned-edit",
+                "name": "apply_patch",
+                "input": "*** Begin Patch\n*** Update File: src/gobby/memory/recall.py\n",
+            },
+        },
+        {
+            "timestamp": "2026-08-27T03:00:01Z",
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call",
+                "call_id": "unrelated-edit",
+                "name": "apply_patch",
+                "input": "*** Begin Patch\n*** Update File: src/gobby/other.py\n",
+            },
+        },
+    ]
+    transcript.write_text(
+        "".join(f"{json.dumps(record)}\n" for record in records),
+        encoding="utf-8",
+    )
+    session = cast(
+        Session,
+        SimpleNamespace(
+            id="session-1",
+            external_id="external-1",
+            machine_id=get_machine_id(),
+            source="codex",
+            transcript_path=str(transcript),
+        ),
+    )
+
+    evidence = await derive_transcript_evidence(
+        session,
+        None,
+        default_validation_detection_config(),
+        set(snapshot.edited_paths),
+        repo_path,
+    )
+
+    assert [edit.path for edit in evidence.edits] == ["src/gobby/memory/recall.py"]
 
 
 @pytest.mark.asyncio
