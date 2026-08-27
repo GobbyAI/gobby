@@ -129,7 +129,7 @@ All commands accept these global options unless noted:
 | `gcode search-content <QUERY>` | Full-text search over file content chunks |
 | `gcode outline <FILE>` | Hierarchical symbol outline for one file |
 | `gcode symbol <ID>` | Fetch one symbol's source by byte offset |
-| `gcode symbols <IDS>...` | Fetch multiple symbols by ID |
+| `gcode symbols <IDS>...` | Fetch bounded source for multiple symbols and report stale IDs |
 | `gcode kinds` | List indexed symbol kinds |
 | `gcode tree` | File tree with symbol counts |
 | `gcode repo-outline` | Directory-grouped project stats |

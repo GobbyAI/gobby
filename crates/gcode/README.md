@@ -129,13 +129,13 @@ gcode search-content "query" docs/**/*.md crates/gcode/src
 gcode outline src/auth.ts                 # Hierarchical symbol tree
 gcode symbol-at src/auth.ts:42            # Symbol containing or nearest to a line
 gcode symbol <id>                         # Source code by symbol ID
-gcode symbols <id1> <id2> ...             # Batch retrieve
+gcode symbols <id1> <id2> ...             # Batch source; reports stale IDs
 gcode tree                                # File tree with symbol counts
 
 # Dependency graph reads (requires FalkorDB)
 gcode graph overview --limit 100          # Project overview graph
 gcode callers <symbol-id>                 # Who calls this symbol?
-gcode usages <symbol-id>                  # Incoming call sites for this symbol
+gcode usages <symbol-id>                  # Incoming call/import graph edges
 gcode usages <symbol-id> --token-budget 120 # Page complete rows under a token budget
 gcode imports src/auth.ts                 # Import graph for a file
 gcode path "handleAuth" "writeDb"         # Shortest CALLS path between two symbols
@@ -170,6 +170,10 @@ gcode search --project /path/to/app "q"   # By path
 --quiet                                   # Suppress warnings and progress
 --allow-stale                             # Allow stale data by skipping freshness checks
 ```
+
+Edited files invalidate content-derived symbol IDs. Rerun `gcode outline` or use
+`gcode symbol-at` when `symbol`/`symbols` reports a missing ID. `gcode usages`
+covers call/import edges; callback references require `gcode grep -w <symbol>`.
 
 Navigation commands default to compact agent-readable text; nested structural
 graph and lifecycle commands retain complete JSON defaults. Use explicit

@@ -1,4 +1,6 @@
 use std::collections::{BTreeMap, HashSet};
+use std::io::ErrorKind;
+use std::path::Path;
 
 use crate::commands::{scope, token_budget};
 use crate::config::Context;
@@ -9,6 +11,14 @@ use crate::output::{self, Format};
 use crate::savings;
 use crate::utils::short_id;
 use crate::visibility;
+
+mod batch;
+pub use batch::symbols;
+#[cfg(test)]
+use batch::{
+    RetrievedSymbol, missing_symbols_hint, prepare_symbol_batch, render_symbol_batch_json,
+    render_symbols_text,
+};
 
 pub fn outline(
     ctx: &Context,
@@ -263,22 +273,14 @@ pub fn symbol(ctx: &Context, id: &str, format: Format) -> anyhow::Result<()> {
 
     match sym {
         Some(s) => {
-            let file_path = ctx.project_root.join(&s.file_path);
-            if file_path.exists() {
-                let source = std::fs::read(&file_path)?;
-                let file_bytes = source.len();
-                let end = s.byte_end.min(source.len());
-                let start = s.byte_start.min(end);
-                let symbol_bytes = end - start;
-                let snippet = String::from_utf8_lossy(&source[start..end]);
-
+            if let Some(source) = read_symbol_source(&ctx.project_root, &s)? {
                 // Report savings: symbol bytes vs full file bytes
-                if symbol_bytes > 0 && file_bytes > symbol_bytes {
+                if source.symbol_bytes > 0 && source.file_bytes > source.symbol_bytes {
                     let url = gobby_core::daemon_url::daemon_url();
                     savings::report_savings(
                         &url,
-                        file_bytes,
-                        symbol_bytes,
+                        source.file_bytes,
+                        source.symbol_bytes,
                         ctx.grant_ai.as_ref().map(|grant| &grant.bundle),
                     );
                 }
@@ -286,11 +288,11 @@ pub fn symbol(ctx: &Context, id: &str, format: Format) -> anyhow::Result<()> {
                 match format {
                     Format::Json => {
                         let mut result = serde_json::to_value(&s)?;
-                        result["source"] = serde_json::Value::String(snippet.to_string());
+                        result["source"] = serde_json::Value::String(source.text);
                         output::print_json(&result)
                     }
                     Format::Text => {
-                        println!("{snippet}");
+                        println!("{}", source.text);
                         Ok(())
                     }
                 }
@@ -308,68 +310,30 @@ pub fn symbol(ctx: &Context, id: &str, format: Format) -> anyhow::Result<()> {
     }
 }
 
-pub fn symbols(
-    ctx: &Context,
-    ids: &[String],
-    limit: Option<usize>,
-    offset: usize,
-    token_budget: Option<usize>,
-    format: Format,
-) -> anyhow::Result<()> {
-    let mut conn = db::connect_readonly(&ctx.database_url)?;
-    let results = visibility::visible_symbols_by_ids(&mut conn, ctx, ids)?;
-    let mut by_id = results
-        .into_iter()
-        .map(|symbol| (symbol.id.clone(), symbol))
-        .collect::<BTreeMap<_, _>>();
-    let results = ids
-        .iter()
-        .filter_map(|id| by_id.remove(id))
-        .collect::<Vec<_>>();
-
-    // Report aggregate savings across batch
-    let mut total_file_bytes = 0usize;
-    let mut total_symbol_bytes = 0usize;
-    for s in &results {
-        let file_path = ctx.project_root.join(&s.file_path);
-        if let Ok(meta) = file_path.metadata() {
-            total_file_bytes += meta.len() as usize;
-            total_symbol_bytes += s.byte_end - s.byte_start;
-        }
-    }
-    if total_symbol_bytes > 0 && total_file_bytes > total_symbol_bytes {
-        let url = gobby_core::daemon_url::daemon_url();
-        savings::report_savings(
-            &url,
-            total_file_bytes,
-            total_symbol_bytes,
-            ctx.grant_ai.as_ref().map(|grant| &grant.bundle),
-        );
-    }
-
-    let (total, limit, results) = token_budget::window(results, offset, limit);
-    let meta = token_budget::CollectionPageMeta {
-        project_id: &ctx.project_id,
-        total,
-        offset,
-        limit,
-        hint: None,
-    };
-    let page = token_budget::paginate(results, meta, token_budget, format, render_symbols_text);
-    token_budget::print_page(&page, meta, format, render_symbols_text)
+#[derive(Debug)]
+pub(super) struct ReadSymbolSource {
+    pub(super) text: String,
+    pub(super) file_bytes: usize,
+    pub(super) symbol_bytes: usize,
 }
 
-fn render_symbols_text(symbols: &[Symbol]) -> String {
-    symbols
-        .iter()
-        .map(|symbol| {
-            format!(
-                "{}:{} [{}] {}",
-                symbol.file_path, symbol.line_start, symbol.kind, symbol.qualified_name
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+pub(super) fn read_symbol_source(
+    root: &Path,
+    symbol: &Symbol,
+) -> anyhow::Result<Option<ReadSymbolSource>> {
+    let source = match std::fs::read(root.join(&symbol.file_path)) {
+        Ok(source) => source,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let end = symbol.byte_end.min(source.len());
+    let start = symbol.byte_start.min(end);
+    let bytes = &source[start..end];
+    Ok(Some(ReadSymbolSource {
+        text: String::from_utf8_lossy(bytes).to_string(),
+        file_bytes: source.len(),
+        symbol_bytes: bytes.len(),
+    }))
 }
 
 pub fn kinds(
@@ -699,5 +663,157 @@ mod tests {
         assert_eq!(page.results[0].directory, "src");
         assert_eq!(page.results[0].files.len(), 2);
         assert_eq!(page.next_offset, Some(1));
+    }
+
+    #[test]
+    fn symbol_batch_preserves_request_order_source_and_all_missing_ids() {
+        let root = tempfile::tempdir().expect("temp project root");
+        let source_dir = root.path().join("src");
+        std::fs::create_dir_all(&source_dir).expect("create source directory");
+        std::fs::write(source_dir.join("commands.rs"), "alpha\nbeta\ngamma\n")
+            .expect("write source file");
+
+        let mut first = symbol();
+        first.id = "first".to_string();
+        first.byte_start = 0;
+        first.byte_end = 5;
+        let mut second = symbol();
+        second.id = "second".to_string();
+        second.byte_start = 6;
+        second.byte_end = 10;
+
+        let ids = ["second", "missing-a", "first", "missing-b", "second"].map(str::to_string);
+        let batch = prepare_symbol_batch(root.path(), &ids, vec![first, second])
+            .expect("prepare symbol batch");
+
+        assert_eq!(
+            batch
+                .results
+                .iter()
+                .map(|result| result.symbol.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["second", "first", "second"]
+        );
+        assert_eq!(
+            batch
+                .results
+                .iter()
+                .map(|result| result.source.as_deref())
+                .collect::<Vec<_>>(),
+            vec![Some("beta"), Some("alpha"), Some("beta")]
+        );
+        assert_eq!(batch.missing_ids, vec!["missing-a", "missing-b"]);
+    }
+
+    #[test]
+    fn symbol_source_clamps_stale_byte_ranges_to_current_file() {
+        let root = tempfile::tempdir().expect("temp project root");
+        let source_dir = root.path().join("src");
+        std::fs::create_dir_all(&source_dir).expect("create source directory");
+        std::fs::write(source_dir.join("commands.rs"), b"012345").expect("write source file");
+        let mut stale = symbol();
+        stale.byte_start = 3;
+        stale.byte_end = usize::MAX;
+
+        let source = read_symbol_source(root.path(), &stale)
+            .expect("read symbol source")
+            .expect("source file exists");
+
+        assert_eq!(source.text, "345");
+        assert_eq!(source.symbol_bytes, 3);
+        assert_eq!(source.file_bytes, 6);
+    }
+
+    #[test]
+    fn symbol_batch_text_renders_bounded_source_and_missing_id_recovery() {
+        let result = RetrievedSymbol {
+            symbol: symbol(),
+            source: Some("fn example() {}".to_string()),
+        };
+        let missing = vec!["missing-a".to_string(), "missing-b".to_string()];
+
+        let rendered = render_symbols_text(std::slice::from_ref(&result), &missing);
+
+        assert!(rendered.contains("src/commands.rs:7-63 [function] outline"));
+        assert!(rendered.contains("fn example() {}"));
+        assert!(rendered.contains("missing-a, missing-b"));
+        assert!(rendered.contains("Edited files invalidate content-derived symbol IDs"));
+        assert!(rendered.contains("gcode outline <file> --verbose"));
+        assert!(rendered.contains("gcode symbol-at <path:line>"));
+    }
+
+    #[test]
+    fn symbol_batch_json_pagination_is_lossless_with_source_and_missing_ids() {
+        let mut results = Vec::new();
+        for id in ["first", "second", "third"] {
+            let mut stored = symbol();
+            stored.id = id.to_string();
+            results.push(RetrievedSymbol {
+                symbol: stored,
+                source: Some(id.repeat(200)),
+            });
+        }
+        let missing = vec!["stale-id".to_string()];
+        let hint = missing_symbols_hint(&missing).expect("missing hint");
+        let first_meta = token_budget::CollectionPageMeta {
+            project_id: "current-project",
+            total: results.len(),
+            offset: 0,
+            limit: results.len(),
+            hint: None,
+        };
+        let first_render = |rows: &[RetrievedSymbol], next_offset, budget_exceeded| {
+            render_symbol_batch_json(
+                rows,
+                &missing,
+                first_meta,
+                next_offset,
+                budget_exceeded,
+                Some(&hint),
+            )
+        };
+        let budget = token_budget::estimate_tokens(&first_render(&results[..1], Some(1), false));
+
+        let mut offset = 0usize;
+        let mut seen = Vec::new();
+        while offset < results.len() {
+            let meta = token_budget::CollectionPageMeta {
+                project_id: "current-project",
+                total: results.len(),
+                offset,
+                limit: results.len() - offset,
+                hint: None,
+            };
+            let render = |rows: &[RetrievedSymbol], next_offset, budget_exceeded| {
+                render_symbol_batch_json(
+                    rows,
+                    &missing,
+                    meta,
+                    next_offset,
+                    budget_exceeded,
+                    Some(&hint),
+                )
+            };
+            let page = token_budget::paginate_results(
+                results.iter().skip(offset).cloned().collect(),
+                offset,
+                false,
+                Some(budget),
+                render,
+            );
+            let rendered = render(&page.results, page.next_offset, page.budget_exceeded);
+            let value: serde_json::Value =
+                serde_json::from_str(&rendered).expect("symbol batch JSON");
+            assert_eq!(value["missing_ids"], serde_json::json!(["stale-id"]));
+            assert!(value["results"][0]["source"].is_string());
+            seen.extend(page.results.iter().map(|result| result.symbol.id.clone()));
+            let Some(next_offset) = page.next_offset else {
+                break;
+            };
+            assert!(next_offset > offset);
+            offset = next_offset;
+        }
+
+        assert_eq!(seen, vec!["first", "second", "third"]);
     }
 }

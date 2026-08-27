@@ -249,12 +249,14 @@ fn daemon_query_surface_is_consumed_with_keys() {
         assert!(output_keys(&contract, "tree").contains(&expected.to_string()));
     }
 
-    // symbol = record + source; symbol-at adds lookup; symbols is record only.
-    // All three carry `summary`, never `docstring`.
+    // symbol = record + source; symbol-at adds lookup; symbols pages source-bearing
+    // records and reports every missing requested ID. All three carry `summary`,
+    // never `docstring`.
     let symbols = output_keys(&contract, "symbols");
     assert!(symbols.contains(&"summary".to_string()));
     assert!(!symbols.contains(&"docstring".to_string()));
-    assert!(!symbols.contains(&"source".to_string()));
+    assert!(symbols.contains(&"source".to_string()));
+    assert!(symbols.contains(&"missing_ids".to_string()));
     assert!(output_keys(&contract, "symbol").contains(&"source".to_string()));
     assert!(output_keys(&contract, "symbol-at").contains(&"lookup".to_string()));
 

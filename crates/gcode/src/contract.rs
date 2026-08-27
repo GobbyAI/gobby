@@ -239,7 +239,10 @@ pub fn contract() -> CliContract {
                 positionals: vec![PositionalContract::repeatable("ID")],
                 flags: paged_navigation_flags(),
                 json_output_keys: symbol_batch_keys(),
-                ..CommandContract::new("symbols", "Batch retrieve symbols by ID.")
+                ..CommandContract::new(
+                    "symbols",
+                    "Batch retrieve symbol source by ID and report stale IDs.",
+                )
             },
             CommandContract {
                 positionals: vec![],

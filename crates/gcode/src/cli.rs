@@ -267,7 +267,10 @@ pub(crate) enum Command {
         #[arg(value_name = "LINE", value_parser = positive_usize)]
         line: Option<usize>,
     },
-    /// Batch retrieve symbols by ID
+    /// Batch retrieve symbol source by ID and report stale or missing IDs
+    #[command(
+        after_help = "Edited files invalidate content-derived symbol IDs. Rerun `gcode outline <file> --verbose` for current IDs, or use `gcode symbol-at <path:line>`."
+    )]
     Symbols {
         ids: Vec<String>,
         #[arg(long, value_parser = positive_usize)]
