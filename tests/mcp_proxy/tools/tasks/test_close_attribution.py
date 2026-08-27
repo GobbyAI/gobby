@@ -17,6 +17,7 @@ from typing import Any, cast
 
 import pytest
 
+from gobby.mcp_proxy.tools.tasks import _lifecycle_close_finalization as close_finalization
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization import capture_attribution
 from gobby.storage.tasks import Task
@@ -104,6 +105,10 @@ async def test_prospective_commit_paths_survive_released_session_attribution(
     repo_with_task_commit: tuple[str, str],
 ) -> None:
     repo_path, commit_sha = repo_with_task_commit
+    commit_union = getattr(close_finalization, "_attribution_commit_shas", None)
+
+    assert callable(commit_union)
+    assert commit_union(_task(commits=[commit_sha]), (commit_sha,)) == (commit_sha,)
 
     snapshot = await capture_attribution(
         _ctx({"task_edited_files": {}}),
