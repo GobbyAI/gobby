@@ -102,30 +102,7 @@ pub(crate) fn lock_project_by_id(
     let key = project_lock_key(project_id);
     let mut conn = db::connect_readwrite(database_url)
         .with_context(|| "failed to connect PostgreSQL hub for gcode index lock")?;
-
-    let acquired = match policy {
-        IndexLockPolicy::Wait { max_wait } => {
-            // Poll rather than block in `pg_advisory_lock`: a parked blocking
-            // waiter is not reclaimed when its client dies (#17701), and an
-            // unbounded wait lets one hung holder starve every other index and
-            // codewiki run indefinitely. Bounded + poll-based means a killed
-            // waiter is idle between polls, and a genuinely hung holder trips
-            // the cap and fails loudly below instead of hanging forever.
-            if !try_advisory_lock_until(&mut conn, key, max_wait, WAIT_LOCK_POLL)? {
-                anyhow::bail!(
-                    "gave up acquiring gcode index lock for project {} after {}s: \
-                     a lock holder is likely hung (check for a stalled index or \
-                     codewiki run)",
-                    project_id,
-                    max_wait.as_secs(),
-                );
-            }
-            true
-        }
-        IndexLockPolicy::BriefTry { total_wait, poll } => {
-            try_advisory_lock_until(&mut conn, key, total_wait, poll)?
-        }
-    };
+    let acquired = try_acquire_project_key(&mut conn, project_id, key, policy)?;
 
     // `then` builds the guard only once the lock is held. An eagerly built
     // guard was dropped on the busy path, and its `Drop` sent
@@ -135,6 +112,53 @@ pub(crate) fn lock_project_by_id(
         key,
         quiet: true,
     }))
+}
+
+/// Lease the project lock on a caller-owned connection; released on drop.
+///
+/// A maintenance loop that locks the same project once per item keeps one
+/// hub connection for the whole run instead of opening a fresh TLS session per
+/// item: that per-item reconnect parked mid-connect and hung a content GC run
+/// (#21085).
+pub(crate) fn lease_project_lock<'a>(
+    conn: &'a mut Client,
+    project_id: &str,
+    policy: IndexLockPolicy,
+) -> anyhow::Result<Option<ProjectIndexLease<'a>>> {
+    let key = project_lock_key(project_id);
+    let acquired = try_acquire_project_key(conn, project_id, key, policy)?;
+    Ok(acquired.then(|| ProjectIndexLease { conn, key }))
+}
+
+fn try_acquire_project_key(
+    conn: &mut Client,
+    project_id: &str,
+    key: i64,
+    policy: IndexLockPolicy,
+) -> anyhow::Result<bool> {
+    match policy {
+        IndexLockPolicy::Wait { max_wait } => {
+            // Poll rather than block in `pg_advisory_lock`: a parked blocking
+            // waiter is not reclaimed when its client dies (#17701), and an
+            // unbounded wait lets one hung holder starve every other index and
+            // codewiki run indefinitely. Bounded + poll-based means a killed
+            // waiter is idle between polls, and a genuinely hung holder trips
+            // the cap and fails loudly below instead of hanging forever.
+            if !try_advisory_lock_until(conn, key, max_wait, WAIT_LOCK_POLL)? {
+                anyhow::bail!(
+                    "gave up acquiring gcode index lock for project {} after {}s: \
+                     a lock holder is likely hung (check for a stalled index or \
+                     codewiki run)",
+                    project_id,
+                    max_wait.as_secs(),
+                );
+            }
+            Ok(true)
+        }
+        IndexLockPolicy::BriefTry { total_wait, poll } => {
+            try_advisory_lock_until(conn, key, total_wait, poll)
+        }
+    }
 }
 
 fn acquire_project_lock(
@@ -225,6 +249,25 @@ pub(crate) struct ProjectIndexLock {
     conn: Client,
     key: i64,
     quiet: bool,
+}
+
+/// A project lock held on a borrowed connection; see [`lease_project_lock`].
+pub(crate) struct ProjectIndexLease<'a> {
+    conn: &'a mut Client,
+    key: i64,
+}
+
+impl Drop for ProjectIndexLease<'_> {
+    fn drop(&mut self) {
+        match self
+            .conn
+            .query_one("SELECT pg_advisory_unlock($1)", &[&self.key])
+        {
+            Ok(row) if row.try_get::<_, bool>(0).unwrap_or(false) => {}
+            Ok(_) => log::debug!("leased gcode index lock was not held during unlock"),
+            Err(error) => log::debug!("failed to release leased gcode index lock: {error}"),
+        }
+    }
 }
 
 impl Drop for ProjectIndexLock {
@@ -475,6 +518,42 @@ mod tests {
                 .expect("reacquire released project lock by id")
                 .is_some(),
                 "dropping the guard must release the project advisory lock"
+            );
+        }
+
+        #[test]
+        #[cfg_attr(
+            not(gcode_postgres_tests),
+            ignore = "requires a PostgreSQL test database URL"
+        )]
+        #[serial_test::serial(serial_db)]
+        fn leased_lock_on_a_borrowed_connection_releases_on_drop() {
+            let database_url = connect_postgres_test_db();
+            let project_id = "gcode-lock-lease";
+            let mut conn = db::connect_readwrite(&database_url).expect("connect lease connection");
+
+            let lease =
+                lease_project_lock(&mut conn, project_id, IndexLockPolicy::maintenance_try())
+                    .expect("lease project lock")
+                    .expect("project lock should be available");
+            assert!(
+                lock_project_by_id(
+                    &database_url,
+                    project_id,
+                    IndexLockPolicy::maintenance_try(),
+                )
+                .expect("retry project lock from another session")
+                .is_none(),
+                "the lease must hold the project advisory lock"
+            );
+
+            drop(lease);
+
+            assert!(
+                lease_project_lock(&mut conn, project_id, IndexLockPolicy::maintenance_try())
+                    .expect("re-lease on the same connection")
+                    .is_some(),
+                "dropping the lease must release the lock without closing the connection"
             );
         }
 

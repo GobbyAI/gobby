@@ -11,7 +11,7 @@ use crate::config::{Context, ServiceConfigSelection};
 use crate::db;
 use crate::graph::code_graph;
 use crate::index::hasher;
-use crate::index_lock::{IndexLockPolicy, lock_project_by_id};
+use crate::index_lock::{IndexLockPolicy, lease_project_lock};
 use crate::vector::code_symbols;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -183,6 +183,10 @@ fn prune_content_versions_with(
     mut sweep_graph_orphans: impl FnMut(&Context) -> anyhow::Result<()>,
 ) -> anyhow::Result<ContentGcTotals> {
     let mut conn = db::connect_readwrite(&services.database_url)?;
+    // One lock session for the whole run: the project lock is leased per
+    // candidate on it, so a backlog costs two hub connections rather than one
+    // TLS session per version (#21085).
+    let mut lock_conn = db::connect_readwrite(&services.database_url)?;
     let mut totals = ContentGcTotals::default();
     let mut project_contexts: HashMap<String, Option<Context>> = HashMap::new();
     // Projects whose graph facts were deleted get one orphan sweep after the
@@ -194,8 +198,8 @@ fn prune_content_versions_with(
             totals.deferred_versions = candidates.len() - index;
             break;
         }
-        let Some(_lock) = lock_project_by_id(
-            &services.database_url,
+        let Some(_lock) = lease_project_lock(
+            &mut lock_conn,
             &candidate.project_id,
             IndexLockPolicy::maintenance_try(),
         )?

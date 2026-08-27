@@ -602,8 +602,9 @@ mod serial_db {
         assert_eq!(candidates.len(), 2);
 
         // The first delete outlives the budget, so the second candidate is
-        // deferred while the first stays committed.
-        let budget = Duration::from_millis(50);
+        // deferred while the first stays committed. The budget leaves room for
+        // the run's two hub connections before the first deadline check.
+        let budget = Duration::from_millis(400);
         let services = test_context(&database_url, &project_id);
         let totals = prune_content_versions_with(
             &services,
