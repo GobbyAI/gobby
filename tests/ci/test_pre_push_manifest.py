@@ -25,6 +25,12 @@ def git_repo(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def test_pre_push_runs_committed_bundled_manifest_checker(repo_root: Path) -> None:
+    script = (repo_root / "pre-push-test.sh").read_text(encoding="utf-8")
+
+    assert "uv_run python -m gobby.install.manifest --repo-root . --treeish HEAD" in script
+
+
 def test_manifest_records_identity_commands_and_success(
     repo_root: Path,
     git_repo: Path,

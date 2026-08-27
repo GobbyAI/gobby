@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
+import io
 import json
 import string
+import subprocess
+import sys
+import tarfile
+from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TypedDict
 
@@ -20,6 +27,9 @@ _EXCLUDED_DIR_NAMES = {"__pycache__"}
 _HASH_CHUNK_BYTES = 64 * 1024
 _SHA256_HEX_LENGTH = 64
 _HEX_DIGITS = set(string.hexdigits)
+_INSTALL_TREE_PATH = PurePosixPath("src/gobby/install")
+_SHARED_TREE_PATH = _INSTALL_TREE_PATH / MANIFEST_ROOT
+_MANIFEST_TREE_PATH = _INSTALL_TREE_PATH / MANIFEST_FILENAME
 
 
 class BundledContentManifest(TypedDict):
@@ -29,6 +39,16 @@ class BundledContentManifest(TypedDict):
     hash_algorithm: str
     root: str
     files: dict[str, str]
+
+
+@dataclass(frozen=True)
+class CommittedManifestCheck:
+    """Result of comparing committed shared blobs with the committed manifest."""
+
+    ok: bool
+    treeish: str
+    errors: tuple[str, ...]
+    expected_file_count: int
 
 
 def hash_file_bytes(path: Path) -> str:
@@ -51,13 +71,7 @@ def should_include_bundled_file(path: Path, shared_dir: Path) -> bool:
         relative = path.relative_to(shared_dir)
     except ValueError:
         return False
-    if any(part.startswith(".") for part in relative.parts):
-        return False
-    if any(part in _EXCLUDED_DIR_NAMES for part in relative.parts):
-        return False
-    if path.name in _EXCLUDED_FILE_NAMES:
-        return False
-    return path.suffix not in _EXCLUDED_SUFFIXES
+    return _should_include_relative_path(PurePosixPath(relative.as_posix()))
 
 
 def iter_bundled_manifest_files(shared_dir: Path) -> list[Path]:
@@ -159,3 +173,177 @@ def _is_safe_manifest_path(relative_path: str) -> bool:
 
 def _is_sha256_hexdigest(value: str) -> bool:
     return len(value) == _SHA256_HEX_LENGTH and all(char in _HEX_DIGITS for char in value)
+
+
+def check_committed_bundled_content_manifest(
+    repo_root: Path,
+    *,
+    treeish: str = "HEAD",
+) -> CommittedManifestCheck:
+    """Compare manifest-eligible blobs and the manifest from one committed Git tree."""
+    try:
+        shared_files = _committed_shared_files(repo_root, treeish)
+        expected: BundledContentManifest = {
+            "schema_version": MANIFEST_SCHEMA_VERSION,
+            "hash_algorithm": MANIFEST_HASH_ALGORITHM,
+            "root": MANIFEST_ROOT,
+            "files": {
+                relative: hashlib.sha256(content).hexdigest()
+                for relative, content in shared_files.items()
+            },
+        }
+        raw_manifest = _git_bytes(
+            repo_root,
+            "show",
+            f"{treeish}:{_MANIFEST_TREE_PATH.as_posix()}",
+        )
+        committed = json.loads(raw_manifest.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, subprocess.SubprocessError) as exc:
+        return CommittedManifestCheck(
+            ok=False,
+            treeish=treeish,
+            errors=(f"Cannot verify committed bundled content manifest: {_git_error_text(exc)}",),
+            expected_file_count=0,
+        )
+
+    if committed == expected:
+        return CommittedManifestCheck(True, treeish, (), len(expected["files"]))
+    return CommittedManifestCheck(
+        ok=False,
+        treeish=treeish,
+        errors=tuple(_manifest_parity_errors(committed, expected)),
+        expected_file_count=len(expected["files"]),
+    )
+
+
+def check_linked_committed_bundled_manifest(
+    repo_root: Path,
+    commit_shas: Iterable[str],
+) -> CommittedManifestCheck | None:
+    """Check HEAD parity only when a prospective linked commit changes shared content."""
+    for sha in commit_shas:
+        try:
+            changed = _git_bytes(
+                repo_root,
+                "diff-tree",
+                "--root",
+                "--no-commit-id",
+                "--name-only",
+                "-r",
+                "-z",
+                sha,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            return CommittedManifestCheck(
+                ok=False,
+                treeish="HEAD",
+                errors=(f"Cannot inspect linked commit {sha}: {_git_error_text(exc)}",),
+                expected_file_count=0,
+            )
+        if any(
+            path.startswith(f"{_SHARED_TREE_PATH.as_posix()}/")
+            for path in changed.decode("utf-8", errors="surrogateescape").split("\0")
+            if path
+        ):
+            return check_committed_bundled_content_manifest(repo_root)
+    return None
+
+
+def _committed_shared_files(repo_root: Path, treeish: str) -> dict[str, bytes]:
+    raw_archive = _git_bytes(
+        repo_root,
+        "archive",
+        "--format=tar",
+        treeish,
+        _SHARED_TREE_PATH.as_posix(),
+    )
+    files: dict[str, bytes] = {}
+    with tarfile.open(fileobj=io.BytesIO(raw_archive), mode="r:") as archive:
+        for member in archive.getmembers():
+            path = PurePosixPath(member.name)
+            if not member.isfile() or path == _SHARED_TREE_PATH:
+                continue
+            relative = path.relative_to(_SHARED_TREE_PATH)
+            if not _should_include_relative_path(relative):
+                continue
+            handle = archive.extractfile(member)
+            if handle is None:
+                raise OSError(f"Cannot read committed bundled file {member.name}")
+            files[relative.as_posix()] = handle.read()
+    return dict(sorted(files.items()))
+
+
+def _should_include_relative_path(relative: PurePosixPath) -> bool:
+    if any(part.startswith(".") for part in relative.parts):
+        return False
+    if any(part in _EXCLUDED_DIR_NAMES for part in relative.parts):
+        return False
+    if relative.name in _EXCLUDED_FILE_NAMES:
+        return False
+    return relative.suffix not in _EXCLUDED_SUFFIXES
+
+
+def _git_bytes(repo_root: Path, *args: str) -> bytes:
+    return subprocess.run(
+        ["git", "-C", str(repo_root), *args],
+        check=True,
+        capture_output=True,
+        timeout=10,
+    ).stdout
+
+
+def _git_error_text(exc: BaseException) -> str:
+    if isinstance(exc, subprocess.CalledProcessError):
+        stderr = exc.stderr
+        if isinstance(stderr, bytes):
+            text = stderr.decode("utf-8", errors="replace").strip()
+            if text:
+                return text
+        elif isinstance(stderr, str) and stderr.strip():
+            return stderr.strip()
+    return str(exc)
+
+
+def _manifest_parity_errors(
+    committed: object,
+    expected: BundledContentManifest,
+) -> list[str]:
+    errors = ["Committed bundled content manifest is stale."]
+    if not isinstance(committed, dict) or not isinstance(committed.get("files"), dict):
+        return [*errors, "The committed manifest does not have the expected schema."]
+    actual_files = committed["files"]
+    expected_files = expected["files"]
+    missing = sorted(set(expected_files) - set(actual_files))
+    extra = sorted(set(actual_files) - set(expected_files))
+    changed = sorted(
+        path
+        for path in set(expected_files) & set(actual_files)
+        if expected_files[path] != actual_files[path]
+    )
+    for label, paths in (("missing", missing), ("extra", extra), ("changed", changed)):
+        if paths:
+            errors.append(f"{label.title()} entries: {', '.join(paths[:10])}")
+    if not missing and not extra and not changed:
+        errors.append("Manifest metadata differs from the committed schema.")
+    return errors
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Check committed bundled-content parity.")
+    parser.add_argument("--repo-root", type=Path, default=Path.cwd())
+    parser.add_argument("--treeish", default="HEAD")
+    args = parser.parse_args(argv)
+    result = check_committed_bundled_content_manifest(args.repo_root, treeish=args.treeish)
+    if result.ok:
+        print(
+            f"Committed bundled content manifest matches {result.treeish} "
+            f"({result.expected_file_count} files)."
+        )
+        return 0
+    for error in result.errors:
+        print(error, file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

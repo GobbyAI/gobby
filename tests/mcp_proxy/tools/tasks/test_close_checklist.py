@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from contextlib import nullcontext
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -33,6 +34,12 @@ NAMED_TEST = AcceptanceTest(
     symbol="test_batched_read_failure_injects_nothing",
     body="async def test_batched_read_failure_injects_nothing() -> None:\n    assert True\n",
 )
+
+
+@pytest.fixture(autouse=True)
+def _committed_manifest_is_current() -> Iterator[None]:
+    with patch.object(lifecycle, "check_linked_committed_bundled_manifest", return_value=None):
+        yield
 
 
 def _task(*, escalated: bool) -> Task:

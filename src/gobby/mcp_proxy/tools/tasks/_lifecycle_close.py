@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from dataclasses import replace
+from pathlib import Path
 from typing import Any, Literal
 
+from gobby.install.manifest import check_linked_committed_bundled_manifest
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.task_repo_paths import (
     RepoPathValidationError,
@@ -349,6 +351,29 @@ async def _evaluate_close(
                 commit_result.message or "Link a commit for the attributed task edits.",
                 extra=commit_extra,
             )
+    manifest_check = await asyncio.to_thread(
+        check_linked_committed_bundled_manifest,
+        Path(repo_path),
+        commit_shas,
+    )
+    if manifest_check is not None and not manifest_check.ok:
+        details = {
+            "treeish": manifest_check.treeish,
+            "errors": list(manifest_check.errors),
+            "expected_file_count": manifest_check.expected_file_count,
+        }
+        return evaluation.fail(
+            7,
+            "linked_commits",
+            "stale_bundled_content_manifest",
+            manifest_check.errors[0],
+            action=(
+                "Regenerate src/gobby/install/bundled_content_manifest.json from the committed "
+                "shared tree, commit it, and retry close_task."
+            ),
+            details=details,
+            extra={"bundled_manifest": details},
+        )
     evaluation.pass_gate(
         7,
         "linked_commits",
