@@ -20,7 +20,6 @@ from gobby.sessions.transcripts.base import (
     UNMODELED_RECORD_CONTENT_TYPE,
     ParsedMessage,
     ParsedToolEvent,
-    TranscriptParser,
 )
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
