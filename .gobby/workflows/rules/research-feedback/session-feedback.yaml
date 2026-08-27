@@ -1,4 +1,4 @@
-tags: [research-feedback, research, lifecycle, gobby, default]
+tags: [research-feedback, research, lifecycle, default]
 
 rules:
   rearm-gobby-session-feedback-after-close:

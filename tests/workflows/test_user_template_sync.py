@@ -8,10 +8,14 @@ Covers:
 """
 
 import json
+from pathlib import Path
+from typing import Literal
 
 import pytest
 
-from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.definitions.rules import RuleDefinitionManager, RuleDefinitionRow
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
 
 pytestmark = pytest.mark.unit
 
@@ -22,7 +26,15 @@ def manager(temp_db):
     return RuleDefinitionManager(temp_db)
 
 
-def _create_rule(manager, name, *, source="installed", tags=None, enabled=False, project_id=None):
+def _create_rule(
+    manager: RuleDefinitionManager,
+    name: str,
+    *,
+    source: Literal["installed", "custom", "project"] = "installed",
+    tags: list[str] | None = None,
+    enabled: bool = False,
+    project_id: str | None = None,
+) -> RuleDefinitionRow:
     """Helper to create a rule definition row."""
     tags = tags or ["gobby"]
     definition = {
@@ -203,8 +215,13 @@ class TestMultiRootUserSync:
         self, temp_db, tmp_path, monkeypatch
     ):
         import gobby.paths
+        import gobby.utils.project_context
         from gobby.cli.installers.shared import _sync_user_templates_to_db
 
+        # The test cwd is a registered Gobby checkout; keep this run unscoped.
+        monkeypatch.setattr(
+            gobby.utils.project_context, "get_project_context", lambda cwd=None: None
+        )
         project_rules = tmp_path / "project-rules"
         global_rules = tmp_path / "global-rules"
         project_variables = tmp_path / "project-variables"
@@ -270,3 +287,167 @@ class TestMultiRootUserSync:
             "project_variable",
             "global_variable",
         }
+
+
+_RULE_YAML = (
+    "rules:\n  {name}:\n    event: before_tool\n    effect:\n"
+    "      type: inject_context\n      template: {name}\n"
+)
+
+
+def _write_rule(directory: Path, name: str) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / f"{name}.yaml").write_text(_RULE_YAML.format(name=name))
+
+
+def _register_project(temp_db: HubDatabase, name: str) -> str:
+    return LocalProjectManager(temp_db).create(name).id
+
+
+def _rule_scope(temp_db: HubDatabase, name: str) -> str | None:
+    """Return the live row's project id, "global" for a global row, None when absent."""
+    row = temp_db.fetchone(
+        "SELECT project_id FROM rule_definitions WHERE name = %s AND deleted_at IS NULL",
+        (name,),
+    )
+    if row is None:
+        return None
+    return "global" if row["project_id"] is None else str(row["project_id"])
+
+
+class TestProjectScopedUserSync:
+    def test_project_root_rows_belong_to_the_project_and_global_root_stays_global(
+        self, temp_db: HubDatabase, tmp_path: Path
+    ) -> None:
+        from gobby.workflows.sync_rules import sync_bundled_rules
+
+        project_id = _register_project(temp_db, "scoped-rules")
+        project_rules = tmp_path / "project-rules"
+        global_rules = tmp_path / "global-rules"
+        _write_rule(project_rules, "project-rule")
+        _write_rule(global_rules, "global-rule")
+
+        result = sync_bundled_rules(
+            temp_db,
+            rules_path=[project_rules, global_rules],
+            tag="user",
+            project_id=project_id,
+            project_root=project_rules,
+        )
+
+        assert result["errors"] == []
+        assert result["synced"] == 2
+        assert _rule_scope(temp_db, "project-rule") == project_id
+        assert _rule_scope(temp_db, "global-rule") == "global"
+
+    def test_orphan_pruning_never_touches_another_projects_rows(
+        self, manager: RuleDefinitionManager, temp_db: HubDatabase, tmp_path: Path
+    ) -> None:
+        from gobby.workflows.sync_rules import sync_bundled_rules
+
+        project_id = _register_project(temp_db, "scoped-rules")
+        other_project_id = _register_project(temp_db, "other-project")
+        project_rules = tmp_path / "project-rules"
+        global_rules = tmp_path / "global-rules"
+        _write_rule(project_rules, "project-rule")
+        _write_rule(global_rules, "global-rule")
+        _create_rule(manager, "foreign-rule", tags=["user"], project_id=other_project_id)
+        _create_rule(manager, "stale-project-rule", tags=["user"], project_id=project_id)
+        _create_rule(manager, "stale-global-rule", tags=["user"])
+
+        result = sync_bundled_rules(
+            temp_db,
+            rules_path=[project_rules, global_rules],
+            tag="user",
+            project_id=project_id,
+            project_root=project_rules,
+        )
+
+        assert result["errors"] == []
+        assert result["orphaned"] == 2
+        assert _rule_scope(temp_db, "foreign-rule") == other_project_id
+        assert _rule_scope(temp_db, "stale-project-rule") is None
+        assert _rule_scope(temp_db, "stale-global-rule") is None
+
+    def test_resync_rescopes_a_global_user_row_to_the_project(
+        self, manager: RuleDefinitionManager, temp_db: HubDatabase, tmp_path: Path
+    ) -> None:
+        """Rows synced before project scoping existed adopt the project on the next sync."""
+        from gobby.workflows.sync_rules import sync_bundled_rules
+
+        project_id = _register_project(temp_db, "scoped-rules")
+        project_rules = tmp_path / "project-rules"
+        _write_rule(project_rules, "project-rule")
+        legacy = _create_rule(manager, "project-rule", tags=["user"], enabled=True)
+
+        result = sync_bundled_rules(
+            temp_db,
+            rules_path=[project_rules],
+            tag="user",
+            project_id=project_id,
+            project_root=project_rules,
+        )
+
+        assert result["errors"] == []
+        assert result["updated"] == 1
+        assert result["synced"] == 0
+        refreshed = manager.get(legacy.id)
+        assert refreshed is not None
+        assert refreshed.project_id == project_id
+        assert refreshed.enabled is True
+
+    def test_installer_scopes_the_project_rules_dir_to_the_registered_project(
+        self, temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import gobby.paths
+        import gobby.utils.project_context
+        from gobby.cli.installers.shared import _sync_user_templates_to_db
+
+        project_id = _register_project(temp_db, "scoped-rules")
+        project_rules = tmp_path / "project-rules"
+        global_rules = tmp_path / "global-rules"
+        _write_rule(project_rules, "project-rule")
+        _write_rule(global_rules, "global-rule")
+        monkeypatch.setattr(gobby.paths, "get_project_rules_dir", lambda _path: project_rules)
+        monkeypatch.setattr(gobby.paths, "get_global_rules_dir", lambda: global_rules)
+        monkeypatch.setattr(
+            gobby.paths, "get_project_variables_dir", lambda _path: tmp_path / "no-variables"
+        )
+        monkeypatch.setattr(
+            gobby.paths, "get_global_variables_dir", lambda: tmp_path / "no-global-variables"
+        )
+        monkeypatch.setattr(
+            gobby.utils.project_context,
+            "get_project_context",
+            lambda cwd=None: {"id": project_id, "project_path": str(cwd)},
+        )
+
+        assert _sync_user_templates_to_db(temp_db) == 2
+        assert _rule_scope(temp_db, "project-rule") == project_id
+        assert _rule_scope(temp_db, "global-rule") == "global"
+
+    def test_installer_keeps_rules_global_for_an_unregistered_project(
+        self, temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import gobby.paths
+        import gobby.utils.project_context
+        from gobby.cli.installers.shared import _sync_user_templates_to_db
+
+        project_rules = tmp_path / "project-rules"
+        _write_rule(project_rules, "project-rule")
+        monkeypatch.setattr(gobby.paths, "get_project_rules_dir", lambda _path: project_rules)
+        monkeypatch.setattr(gobby.paths, "get_global_rules_dir", lambda: tmp_path / "no-global")
+        monkeypatch.setattr(
+            gobby.paths, "get_project_variables_dir", lambda _path: tmp_path / "no-variables"
+        )
+        monkeypatch.setattr(
+            gobby.paths, "get_global_variables_dir", lambda: tmp_path / "no-global-variables"
+        )
+        monkeypatch.setattr(
+            gobby.utils.project_context,
+            "get_project_context",
+            lambda cwd=None: {"id": "7e2b0f41-9c6d-4a15-8b3e-5d0a9f2c6e71"},
+        )
+
+        assert _sync_user_templates_to_db(temp_db) == 1
+        assert _rule_scope(temp_db, "project-rule") == "global"

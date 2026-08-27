@@ -45,7 +45,9 @@ _UPDATE_FIELDS = frozenset(
         "tags",
     }
 )
-_SYNC_FIELDS = _UPDATE_FIELDS
+# Template sync may re-scope a row when its YAML moves between the global and a
+# project rules directory; interactive updates never change ownership.
+_SYNC_FIELDS = _UPDATE_FIELDS | {"project_id"}
 
 
 def _lock_live_row(txn: Transaction, definition_id: str) -> RuleDefinitionRow:

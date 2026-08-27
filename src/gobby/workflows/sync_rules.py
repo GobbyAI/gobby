@@ -59,6 +59,8 @@ def sync_rule_file(
     db: HubDatabase,
     rule_file: Path,
     tag: str = "user",
+    *,
+    project_id: str | None = None,
 ) -> dict[str, Any]:
     """Sync one user rule YAML file without scanning siblings or pruning orphans."""
     result = _new_rules_sync_result()
@@ -73,6 +75,7 @@ def sync_rule_file(
         yaml_file=rule_file,
         tag=tag,
         result=result,
+        project_id=project_id,
     )
     result["success"] = not result["errors"]
     return result
@@ -82,6 +85,9 @@ def sync_bundled_rules(
     db: HubDatabase,
     rules_path: Path | list[Path] | None = None,
     tag: str = "gobby",
+    *,
+    project_id: str | None = None,
+    project_root: Path | None = None,
 ) -> dict[str, Any]:
     """Sync rule YAML files to rule_definitions.
 
@@ -95,6 +101,12 @@ def sync_bundled_rules(
             Defaults to all bundled rules roots. A single non-gobby root is a
             partial scan and does not prune orphans.
         tag: Tag to apply to synced rules. Defaults to "gobby" for bundled.
+        project_id: Owner of the rows synced from ``project_root`` (or from
+            every root when ``project_root`` is None). Rows from other roots
+            stay global. The engine serves a project's rows only to that
+            project, so a project rules directory never fires elsewhere.
+        project_root: The root under ``rules_path`` whose files belong to
+            ``project_id``.
 
     Returns:
         Dict with success status and counts.
@@ -117,10 +129,13 @@ def sync_bundled_rules(
         return result
 
     manager = RuleDefinitionManager(db)
-    on_disk: set[str] = set()
+    on_disk: set[tuple[str, str | None]] = set()
 
     rule_files = _iter_active_rule_files(existing_paths)
     for current_rules_path, yaml_file in rule_files:
+        file_project_id = (
+            project_id if project_root is None or current_rules_path == project_root else None
+        )
         _sync_rule_file(
             manager=manager,
             current_rules_path=current_rules_path,
@@ -128,12 +143,20 @@ def sync_bundled_rules(
             tag=tag,
             result=result,
             on_disk=on_disk,
+            project_id=file_project_id,
         )
 
     result["orphaned"] = 0
     if scan_is_authoritative and rule_files and not result["errors"]:
+        # Only the scopes this scan covers (global plus ``project_id``) are
+        # authoritative; another project's rows are never on this disk.
         for row in manager.list_all():
-            if row.source == "installed" and tag in (row.tags or []) and row.name not in on_disk:
+            if (
+                row.source == "installed"
+                and tag in (row.tags or [])
+                and row.project_id in (None, project_id)
+                and (row.name, row.project_id) not in on_disk
+            ):
                 manager.delete(row.id)
                 logger.debug("Soft-deleted orphaned rule", extra={"rule": row.name, "tag": tag})
                 result["orphaned"] += 1
@@ -172,7 +195,8 @@ def _sync_rule_file(
     yaml_file: Path,
     tag: str,
     result: dict[str, Any],
-    on_disk: set[str] | None = None,
+    on_disk: set[tuple[str, str | None]] | None = None,
+    project_id: str | None = None,
 ) -> None:
     try:
         raw_content = yaml_file.read_text(encoding="utf-8")
@@ -212,7 +236,7 @@ def _sync_rule_file(
                 continue
 
             if on_disk is not None:
-                on_disk.add(rule_name)
+                on_disk.add((rule_name, project_id))
 
             if _has_gobby_rule_name_collision(manager, rule_name, tag):
                 logger.debug(
@@ -233,6 +257,7 @@ def _sync_rule_file(
                     file_audience=file_audience,
                     sync_tag=tag,
                     result=result,
+                    project_id=project_id,
                 )
             except Exception as e:
                 error_msg = f"Failed to sync rule '{rule_name}' from {yaml_file.name}: {e}"
@@ -286,12 +311,14 @@ def _sync_single_rule(
     file_audience: str | None,
     sync_tag: str,
     result: dict[str, Any],
+    project_id: str | None = None,
 ) -> None:
     """Sync a single rule to rule_definitions.
 
     Creates an installed row if none exists. Existing sync-managed rows are
     refreshed when the YAML changes, applying enabled defaults until the user
-    edits them.
+    edits them, and re-scoped to ``project_id`` when the YAML moved between
+    the global and a project rules directory.
     Soft-deleted sync-managed rows are restored. Live user/custom rows stay
     protected, but a soft-deleted user/custom row expresses no continuing
     intent for the name: it is hard-deleted so the template can adopt it.
@@ -339,8 +366,9 @@ def _sync_single_rule(
     enabled = metadata["enabled"]
     tags = metadata["tags"]
 
-    # Check if rule already exists (any source, including soft-deleted)
-    existing = manager.get_by_name(rule_name, include_deleted=True)
+    # Check if rule already exists (any source, including soft-deleted). The
+    # lookup prefers the project-scoped row and falls back to the global one.
+    existing = manager.get_by_name(rule_name, project_id=project_id, include_deleted=True)
 
     if existing is not None and existing.deleted_at is not None:
         if _is_sync_managed_rule(existing, sync_tag):
@@ -353,6 +381,7 @@ def _sync_single_rule(
                 priority=priority,
                 sources=file_sources,
                 tags=tags,
+                project_id=project_id,
             )
             if update_fields:
                 manager.update_from_sync(existing.id, **update_fields)
@@ -376,6 +405,7 @@ def _sync_single_rule(
                 priority=priority,
                 sources=file_sources,
                 tags=tags,
+                project_id=project_id,
             )
             if update_fields:
                 manager.update_from_sync(existing.id, **update_fields)
@@ -389,7 +419,7 @@ def _sync_single_rule(
     manager.create(
         name=rule_name,
         definition_json=definition_json,
-        project_id=None,
+        project_id=project_id,
         description=description,
         enabled=enabled,
         priority=priority,
@@ -418,10 +448,13 @@ def _build_rule_update_fields(
     priority: int,
     sources: list[str] | None,
     tags: list[str] | None,
+    project_id: str | None = None,
 ) -> dict[str, Any]:
     """Build the minimal field set needed to refresh a bundled rule row."""
     update_fields: dict[str, Any] = {}
 
+    if existing.project_id != project_id:
+        update_fields["project_id"] = project_id
     if not _json_payloads_equal(existing.definition_json, definition_json):
         update_fields["definition_json"] = definition_json
     if existing.description != description:

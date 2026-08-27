@@ -406,7 +406,11 @@ class RuleEngine(
                     )
 
                 # 1. Load enabled rules for this event, sorted by priority
-                rules = await offload(self._load_rules, resolved_rule_events)
+                rules = await offload(
+                    self._load_rules,
+                    resolved_rule_events,
+                    project_id=_project_id_from_event(event),
+                )
 
                 # 2. Filter by agent_scope
                 agent_type = variables.get("_agent_type")
@@ -668,15 +672,23 @@ class RuleEngine(
                 raise
 
     def _load_rules(
-        self, rule_events: list[RuleTriggerEvent]
+        self,
+        rule_events: list[RuleTriggerEvent],
+        *,
+        project_id: str | None = None,
     ) -> list[tuple[RuleDefinitionRow, RuleDefinitionBody]]:
-        """Load enabled rules matching any trigger event, sorted by priority."""
+        """Load enabled rules matching any trigger event, sorted by priority.
+
+        Global rows always apply; project-owned rows apply only to events from
+        that project.
+        """
         ordered: list[tuple[int, RuleDefinitionRow, RuleDefinitionBody]] = []
         seen_rows: set[str] = set()
 
         for trigger_index, rule_event in enumerate(rule_events):
             rows = self.rule_manager.list_by_event(
                 event=rule_event.value,
+                project_id=project_id,
                 enabled=True,
             )
             for row in rows:

@@ -13,7 +13,6 @@ This directory contains bundled rule groups. These are **templates** — they ar
 | `stop-gates` | `stop-gates/` | 6 | Require workflow completion and enforce the Found Work ladder before turn end |
 | `plan-mode` | `plan-mode/` | 6 | Track plan-mode entry and exit, block edits, teach plan navigation, and reset state |
 | `memory-lifecycle` | `memory-lifecycle/` | 13 | Digest, layered guidance, claim-time search nudge, post-close review (at turn end or before `compact_self` defers it), plan-memory guards, turn sequencing, and tracking reset |
-| `research-feedback` | `research-feedback/` | 3 | Request bounded Gobby feedback after completed work or before eligible compaction, once per context epoch |
 | `context-handoff` | `context-handoff/` | 10 | Compact/resume handoffs, task context, user profile, wiki context, and pressure nudges |
 | `auto-task` | `auto-task/` | 3 | Autonomous task execution context, task continuation, notify tree complete |
 | `build-coordinator` | `build-coordinator/` | 1 | Require build-coordinator guidance for Gobby build work |
@@ -27,6 +26,12 @@ This directory contains bundled rule groups. These are **templates** — they ar
 | `restraint` | `restraint/` | 3 | Block first code write/edit until restraint is loaded, opt-out phrases, per-turn reinforcement |
 | `review-learning` | `review-learning/` | 5 | Inject confirmed planning and review lessons into matching work |
 | `reviewer-lifecycle` | `reviewer-lifecycle/` | 3 | Track reviewer validation and require a terminal review verdict |
+
+Experiments that belong to one project are not bundled. They live in that
+repository's `.gobby/workflows/rules/` (the `research-feedback` session-feedback
+group lives in this repo's), which `gobby install`/`gobby sync` syncs as `user`
+rows owned by the project's id, so the engine never serves them to another
+project.
 
 ## File Convention
 
