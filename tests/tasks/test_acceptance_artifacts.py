@@ -168,7 +168,7 @@ def test_structured_evidence_rejects_postdated_sha_and_missing_workflow(
 
     assert any("newer than the cited run timestamp" in finding for finding in findings)
     assert any("producer workflow 'Weekly Producer' is absent" in finding for finding in findings)
-    assert all("404" not in finding for finding in findings)
+    assert len(findings) == 2
 
 
 def test_structured_evidence_accepts_locally_provable_run(tmp_path: Path) -> None:
