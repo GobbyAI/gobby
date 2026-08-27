@@ -1260,13 +1260,6 @@ class TestTmuxOutputReader:
             stop_event.set()
             return b""
 
-        monkeypatch.setattr(output_reader_mod.os, "open", lambda path, flags: 123)
-        monkeypatch.setattr(output_reader_mod.os, "read", fake_read)
-        monkeypatch.setattr(output_reader_mod.os, "close", lambda fd: None)
-        monkeypatch.setattr(
-            output_reader_mod.select, "select", lambda r, w, e, timeout: (r, [], [])
-        )
-
         async def callback(run_id: str, text: str) -> None:
             assert run_id == "run-1"
             chunks.append(text)
@@ -1274,10 +1267,20 @@ class TestTmuxOutputReader:
 
         reader.set_output_callback(callback)
 
-        await asyncio.wait_for(
-            reader._read_loop("run-1", "ignored.pipe", stop_event),
-            timeout=1.0,
-        )
+        # output_reader_mod.os is the process-wide os module. Restore these
+        # replacements before TemporaryDirectory teardown needs the real os.open.
+        with monkeypatch.context() as context:
+            context.setattr(output_reader_mod.os, "open", lambda path, flags: 123)
+            context.setattr(output_reader_mod.os, "read", fake_read)
+            context.setattr(output_reader_mod.os, "close", lambda fd: None)
+            context.setattr(
+                output_reader_mod.select, "select", lambda r, w, e, timeout: (r, [], [])
+            )
+
+            await asyncio.wait_for(
+                reader._read_loop("run-1", "ignored.pipe", stop_event),
+                timeout=1.0,
+            )
 
         assert chunks == ["\u2500"]
         assert reads == []

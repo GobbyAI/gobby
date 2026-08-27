@@ -25,12 +25,14 @@ keys are pinned in `gcode.contract.json` and asserted by drift tests.
 - `symbol` — a stored symbol record plus the on-disk `source` snippet
 - `symbol-at` — same as `symbol`, plus a `lookup` block describing how the
   location resolved
-- `symbols` — paged complete stored symbol records (no `source`)
+- `symbols` — paged complete stored symbol records with bounded `source`, plus
+  `missing_ids` and recovery guidance when edited files invalidate requested IDs
 - `kinds` — paged kind strings
 - `tree` — paged directory groups containing `file_path, language,
   symbol_count` rows
-- `callers`, `callees`, `usages` — graph reads (the `graph_read_keys` envelope).
-  Each relationship remains a complete page unit.
+- `callers`, `callees`, `usages` — call/import graph reads (the `graph_read_keys`
+  envelope). Each relationship remains a complete page unit; callback references
+  require `gcode grep -w`.
 - `graph view` — scoped `fcg` / `mcg` / `class-hierarchy` dump. JSON keys:
   `project_id, project_root, view, seed, depth, incoming_truncated,
   outgoing_truncated, hint, nodes, edges, communities, mermaid`. Mermaid is

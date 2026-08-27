@@ -463,6 +463,10 @@ async def test_crossref_create_fills_links_from_project_and_global_only(
     assert created == 2
     refs = storage.get_crossrefs(source.id, limit=10)
     targets = {ref.target_id if ref.source_id == source.id else ref.source_id for ref in refs}
+    expected_similarity = {
+        ref.target_id if ref.source_id == source.id else ref.source_id: ref.similarity
+        for ref in refs
+    }
     assert targets == {same_project.id, global_memory.id}
     assert foreign.id not in targets
 
@@ -470,6 +474,7 @@ async def test_crossref_create_fills_links_from_project_and_global_only(
     storage.create_crossref(source.id, foreign.id, 0.99)
     related = service.get_related(source.id, limit=10, project_id=project_a)
     assert {memory.id for memory in related} == {same_project.id, global_memory.id}
+    assert {memory.id: memory.similarity for memory in related} == expected_similarity
 
 
 @pytest.mark.asyncio

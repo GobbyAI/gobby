@@ -39,10 +39,16 @@ Write criteria so another engineer can verify the result independently:
 - Specific: names relevant functions, files, commands, or interfaces.
 - Complete: covers success and important failure/boundary behavior.
 
+When criteria depend on named test bodies, use a structured reference such as
+``test: `tests/path/test_file.py::test_name` ``. Task-close validation can then
+resolve and inspect the committed test body instead of treating its name as prose.
+
 Good:
 
-> `close_task` tests pass, a blocked conditional close stays read-only, and a
-> ready conditional close reports and links the exact commit set.
+> A blocked conditional close stays read-only, and a ready conditional close
+> reports and links the exact commit set.
+>
+> test: `tests/skills/test_tasks_skill.py::test_lifecycle_scenario_closes_with_one_conditional_call`.
 
 Weak:
 
@@ -54,13 +60,15 @@ Bug:
 
 ```python
 call_tool("gobby-tasks", "create_task", {
-    "title": "Fix null handling in session cleanup",
+    "title": "Fix missing session lookup",
     "category": "code",
     "implementation_domain": "backend",
     "task_type": "bug",
     "priority": 1,
     "validation_criteria": (
-        "SessionManager.cleanup() handles missing sessions and focused tests pass."
+        "SessionManager.get() returns None for a missing session. "
+        "test: `tests/sessions/test_sessions_manager.py::"
+        "TestSessionManagerLookup::test_get_session_nonexistent`."
     )
 }, session_id="#2333")
 ```

@@ -31,9 +31,11 @@ Bare `gcode grep "pattern"` is regex-backed. Use `-F` for literal text containin
 - `gcode outline path/to/file.py` — hierarchical symbol map (much cheaper than Read)
 - `gcode symbol-at path/to/file.py:42` or `gcode symbol-at path/to/file.py:42:7` — retrieve the symbol containing a known file location, falling back to the nearest visible symbol
 - `gcode symbol <full-uuid>` — retrieve one symbol by exact stored ID (O(1) via byte offsets)
-- `gcode symbols <full-uuid> <full-uuid> ...` — batch-retrieve symbols by exact stored IDs
+- `gcode symbols <full-uuid> <full-uuid> ...` — batch-retrieve bounded source bodies by exact stored IDs
 
 Symbol IDs must be full stored UUIDs from `gcode search --format json`, `gcode search-symbol --verbose`, or `gcode outline --verbose`. Literal placeholders, wildcards, globs, and prefix IDs such as `id1`, `514??`, `abc*`, or `80abc77f` are invalid.
+
+Edited files invalidate content-derived symbol IDs. When an ID is missing, rerun `gcode outline` for the edited file or use `gcode symbol-at`; batch retrieval still returns every valid requested symbol and reports every missing ID.
 
 ## Recommended Workflow
 
@@ -78,7 +80,7 @@ Use these **before making changes** to understand what you'll affect:
 - `gcode blast-radius <name>` — walk call/import graph transitively to find all affected code
 - `gcode callers <symbol-id>` — who calls this function/method? Prefer a full symbol ID after resolving one
 - `gcode callees <symbol>` — who this function/method calls
-- `gcode usages <symbol-id>` — all usages (calls + imports). Prefer a full symbol ID after resolving one
+- `gcode usages <symbol-id>` — call and import edges for a symbol. Prefer a full symbol ID after resolving one; callback references are outside the current graph surface, so use `gcode grep -w` with the symbol name as its pattern
 - `gcode imports <file>` — what does this file import?
 - `gcode path <from> <to>` — shortest CALLS path between two symbol queries (requires the graph backend); `--max-depth` bounds the hop search
 

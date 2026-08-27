@@ -25,6 +25,14 @@ settings, register inline step workflows, receive task/session variables, and
 publish completion state back to waiting parents. Every spawn mode uses the
 complete `prompts.agent` preamble.
 
+Bundled `memory-lifecycle` rules apply consistently to personas and spawned
+agents; agent definitions do not need to duplicate them. In task work,
+`search-memories-on-claim` prompts search before editing. During planning,
+`guard-plan-memory-writes` keeps provisional findings in plan evidence. After
+closure, `review-closed-task-memories-before-compact` and
+`review-closed-task-memories-on-stop` request one bounded review for the
+closure batch.
+
 ## Definition Storage
 
 Agent definitions are stored in `agent_definitions`. An optional one-to-one

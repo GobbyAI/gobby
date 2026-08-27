@@ -877,7 +877,7 @@
     },
     {
       "name": "symbols",
-      "summary": "Batch retrieve symbols by ID.",
+      "summary": "Batch retrieve symbol source by ID and report stale IDs.",
       "daemon_consumed": true,
       "positionals": [
         {
@@ -947,7 +947,9 @@
         "summary",
         "created_at",
         "updated_at",
-        "hint"
+        "source",
+        "hint",
+        "missing_ids"
       ]
     },
     {

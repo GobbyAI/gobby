@@ -86,7 +86,11 @@ pub(super) fn symbol_record_keys() -> Vec<&'static str> {
 }
 
 pub(super) fn symbol_batch_keys() -> Vec<&'static str> {
-    paged_keys(&symbol_record_keys())
+    let mut item_keys = symbol_record_keys();
+    item_keys.push("source");
+    let mut keys = paged_keys(&item_keys);
+    keys.push("missing_ids");
+    keys
 }
 
 pub(super) fn symbol_keys() -> Vec<&'static str> {

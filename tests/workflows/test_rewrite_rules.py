@@ -10,7 +10,7 @@ import pytest
 
 from gobby.adapters.claude_code import _ACTION_FIRST_PREFIXES, is_action_first_reason
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.skills.formatting import skill_fetch_directive
+from gobby.skills.formatting import skill_fetch_batch_directive
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import (
@@ -136,7 +136,9 @@ class TestBundledBlockReasonFraming:
         templated_skill_rules = {
             name
             for name, reason in reasons.items()
-            if reason.lstrip().startswith("{{ skill_fetch_directive(")
+            if reason.lstrip().startswith(
+                ("{{ skill_fetch_directive(", "{{ skill_fetch_batch_directive(")
+            )
         }
 
         for rule_name in sorted(REDIRECT_RULES - templated_skill_rules):
@@ -148,7 +150,9 @@ class TestBundledBlockReasonFraming:
         reasons = _bundled_before_tool_block_reasons()
 
         assert reasons["require-claimed-task-required-skills"] == _SKILL_FETCH_TEMPLATE
-        assert skill_fetch_directive("python").startswith("Load and fully read the skill")
+        assert skill_fetch_batch_directive(["python", "rust"]).startswith(
+            "Load and fully read these skills"
+        )
 
     def test_critical_redirects_retain_literal_offset_zero_actions(self) -> None:
         reasons = _bundled_before_tool_block_reasons()
@@ -161,10 +165,13 @@ class TestBundledBlockReasonFraming:
 
     def test_bundled_skill_reasons_use_one_canonical_fetch_call(self) -> None:
         for reason in _bundled_before_tool_block_reasons().values():
-            if "skill_fetch_directive(" not in reason:
+            helper_count = reason.count("skill_fetch_directive(") + reason.count(
+                "skill_fetch_batch_directive("
+            )
+            if helper_count == 0:
                 continue
 
-            assert reason.count("skill_fetch_directive(") == 1
+            assert helper_count == 1
             assert 'call_tool("gobby-skills", "get_skill"' not in reason
 
 

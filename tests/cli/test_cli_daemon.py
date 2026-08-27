@@ -22,6 +22,7 @@ from gobby.cli import cli
 from gobby.cli.daemon import _reconcile_ui_exposure, _start_dependency_errors
 from gobby.config.logging import RUNTIME_LOG_FILENAME, resolved_log_path
 from gobby.ui_exposure import UiExposeError, UiExposeResult
+from gobby.utils.status import RichStatusProbe
 
 pytestmark = pytest.mark.unit
 
@@ -1764,7 +1765,10 @@ class TestStatusCommand:
     )
     @patch("gobby.cli.daemon.probe_daemon_lock")
     @patch("gobby.cli.daemon.get_gobby_home")
-    @patch("gobby.cli.daemon.fetch_rich_status", return_value={"process": {}})
+    @patch(
+        "gobby.cli.daemon.fetch_rich_status",
+        return_value=RichStatusProbe(api_data={"process": {}}, health_confirmed=True),
+    )
     @patch("gobby.cli.daemon.psutil.Process")
     @patch("gobby.cli.daemon._is_process_alive", side_effect=[False, True])
     @patch("gobby.cli.runtime.CliRuntime.require_config")
@@ -1880,7 +1884,10 @@ class TestStatusCommand:
             state=ProbeState.DAEMON, pid=os.getpid(), role="daemon"
         )
         mock_load_config.return_value = mock_daemon_config
-        mock_fetch_status.return_value = {"process": {}}
+        mock_fetch_status.return_value = RichStatusProbe(
+            api_data={"process": {}},
+            health_confirmed=True,
+        )
         mock_port_listener_pid.return_value = os.getpid()
 
         # Mock psutil.Process
@@ -1936,7 +1943,10 @@ class TestStatusCommand:
             state=ProbeState.DAEMON, pid=os.getpid(), role="daemon"
         )
         mock_load_config.return_value = mock_daemon_config
-        mock_fetch_status.return_value = {"process": {}}
+        mock_fetch_status.return_value = RichStatusProbe(
+            api_data={"process": {}},
+            health_confirmed=True,
+        )
         mock_psutil_process.side_effect = psutil.NoSuchProcess(pid=12345)
 
         with runner.isolated_filesystem(temp_dir=str(temp_dir)):
@@ -2275,19 +2285,22 @@ class TestEdgeCases:
                 "lmstudio": {"running": True},
             },
         }
-        mock_fetch_status.return_value = {
-            "process": {"memory_rss_mb": 128.5, "cpu_percent": 2.5},
-            "sessions": {"active": 3, "paused": 0},
-            "tasks": {"open": 5, "in_progress": 2},
-            "postgres": {
-                "mode": "docker",
-                "dsn_host": "localhost",
-                "dsn_db": "gobby",
-                "database_url": "postgresql://gobby:secret@localhost:60891/gobby",
-                "healthy": True,
-                "extensions": {"pg_search": True, "pgaudit": True, "pgcrypto": True},
+        mock_fetch_status.return_value = RichStatusProbe(
+            api_data={
+                "process": {"memory_rss_mb": 128.5, "cpu_percent": 2.5},
+                "sessions": {"active": 3, "paused": 0},
+                "tasks": {"open": 5, "in_progress": 2},
+                "postgres": {
+                    "mode": "docker",
+                    "dsn_host": "localhost",
+                    "dsn_db": "gobby",
+                    "database_url": "postgresql://gobby:secret@localhost:60891/gobby",
+                    "healthy": True,
+                    "extensions": {"pg_search": True, "pgaudit": True, "pgcrypto": True},
+                },
             },
-        }
+            health_confirmed=True,
+        )
 
         mock_proc = MagicMock()
         mock_proc.create_time.return_value = time.time() - 7200  # 2 hours ago

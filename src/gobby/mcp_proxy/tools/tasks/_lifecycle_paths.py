@@ -16,6 +16,7 @@ from gobby.utils.session_context import get_current_session_id
 from gobby.workflows.commit_guard import (
     DirtyEditOwnershipInspectionError,
     foreign_owned_dirty_paths,
+    inspect_checkout_path_ownership,
 )
 from gobby.workflows.task_claim_state import (
     normalize_task_edited_path,
@@ -23,6 +24,23 @@ from gobby.workflows.task_claim_state import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _claimed_session_worktree_path(
+    ctx: RegistryContext,
+    *,
+    session_id: str,
+    project_id: str,
+) -> str | None:
+    worktrees = ctx.worktree_manager.list_worktrees(
+        project_id=project_id,
+        status="active",
+        agent_session_id=session_id,
+        limit=2,
+    )
+    if len(worktrees) > 1:
+        raise ValueError("Session owns multiple active worktrees; release one before inspection")
+    return worktrees[0].worktree_path if worktrees else None
 
 
 def _dirty_repo_paths(repo_path: str, paths: list[str]) -> list[str]:
@@ -93,7 +111,72 @@ def register_release_task_paths(
     registry: InternalToolRegistry,
     ctx: RegistryContext,
 ) -> None:
-    """Register the owner-only task path release tool."""
+    """Register task path ownership inspection and owner-controlled release."""
+
+    def inspect_task_path_ownership() -> dict[str, Any]:
+        """Inspect dirty and staged path attribution in the caller's checkout."""
+        session_ref = get_current_session_id()
+        if not session_ref:
+            return task_error(
+                "No session context available. Ensure session_id is set.",
+                TaskToolErrorCode.SESSION_REQUIRED,
+            )
+        try:
+            session_id = ctx.resolve_session_id(session_ref)
+            project_id = ctx.resolve_project_from_session(session_ref)
+            checkout_root = _claimed_session_worktree_path(
+                ctx,
+                session_id=session_id,
+                project_id=project_id,
+            ) or ctx.get_project_repo_path(project_id)
+        except ValueError as exc:
+            return task_error(str(exc), TaskToolErrorCode.TASK_INVALID_STATUS)
+        if checkout_root is None:
+            return task_error(
+                "Cannot inspect path ownership because the project has no repository path",
+                TaskToolErrorCode.TASK_INVALID_STATUS,
+            )
+        try:
+            ownership = inspect_checkout_path_ownership(
+                ctx.task_manager.db,
+                project_id=project_id,
+                checkout_root=checkout_root,
+            )
+        except DirtyEditOwnershipInspectionError as exc:
+            return task_error(
+                f"Cannot inspect path ownership: {exc}",
+                TaskToolErrorCode.TASK_INVALID_STATUS,
+            )
+
+        paths = [
+            {
+                "path": item.path,
+                "dirty": item.dirty,
+                "staged": item.staged,
+                "owners": [
+                    {"task": owner.task_ref, "session": owner.session_ref} for owner in item.owners
+                ],
+                "unowned": not item.owners,
+            }
+            for item in ownership
+        ]
+        return {
+            "success": True,
+            "project_id": project_id,
+            "checkout_root": checkout_root,
+            "paths": paths,
+            "unowned_paths": [item["path"] for item in paths if item["unowned"]],
+        }
+
+    registry.register(
+        name="inspect_task_path_ownership",
+        description=(
+            "Read-only inspection of every dirty or staged path in the caller's checkout, "
+            "including active owner session/task references and explicit unowned entries."
+        ),
+        input_schema={"type": "object", "properties": {}},
+        func=inspect_task_path_ownership,
+    )
 
     def release_task_paths(task_id: str, paths: list[str]) -> dict[str, Any]:
         """Release committed or abandoned paths from the current session's task ledger."""
@@ -158,7 +241,19 @@ def register_release_task_paths(
             )
 
         artifacts = ctx.task_manager.artifacts.get_artifacts(resolved_task_id)
-        repo_path = artifacts.worktree_path or ctx.get_project_repo_path(task.project_id)
+        try:
+            session_worktree_path = _claimed_session_worktree_path(
+                ctx,
+                session_id=session_id,
+                project_id=task.project_id,
+            )
+        except ValueError as exc:
+            return task_error(str(exc), TaskToolErrorCode.TASK_INVALID_STATUS)
+        repo_path = (
+            session_worktree_path
+            or artifacts.worktree_path
+            or ctx.get_project_repo_path(task.project_id)
+        )
         if repo_path is None:
             return task_error(
                 "Cannot verify task paths because the project has no repository path",

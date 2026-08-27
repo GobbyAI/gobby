@@ -36,6 +36,7 @@ RUN_TERMINAL_STATUSES = frozenset(
 )
 
 _ADMISSION_ATTEMPTS = 3
+_RESTART_RESUME_PENDING = "_restart_resume_pending"
 _RUN_JSON_COLUMNS = frozenset({"options", "plan", "summary", "checkpoint"})
 _RUN_UPDATE_SET_CLAUSES = {
     "project_id": "project_id = %s",
@@ -63,7 +64,7 @@ INTERRUPTED_CANCELLED_ERROR = "Interrupted: dream run cancelled before completio
 class DreamAdmission:
     """Outcome of one atomic run-admission attempt."""
 
-    outcome: Literal["admitted", "coalesced", "conflict"]
+    outcome: Literal["admitted", "resumed", "coalesced", "conflict"]
     run_id: str | None
     active: dict[str, Any] | None = None
 
@@ -89,6 +90,8 @@ class _DreamRunHost(Protocol):
     def set_truth_digest_hash(self, project_id: str, digest_hash: str) -> None: ...
 
     def update_run(self, run_id: str, **fields: Any) -> dict[str, Any] | None: ...
+
+    def _resume_interrupted_run(self, request: dict[str, Any]) -> str | None: ...
 
     def _resolve_against_holder(
         self,
@@ -139,6 +142,9 @@ class _DreamRunMixin:
             if active is not None:
                 return self._resolve_against_holder(active, request)
             try:
+                resumed_id = self._resume_interrupted_run(request)
+                if resumed_id is not None:
+                    return DreamAdmission(outcome="resumed", run_id=resumed_id)
                 run_id = self.create_run(project_id=project_id, dry_run=dry_run, options=options)
             except UniqueViolation:
                 # Raced another admission; re-read the holder on the next pass.
@@ -157,6 +163,47 @@ class _DreamRunMixin:
         if _covers(normalize_dream_options(active.get("options") or {}), request):
             return DreamAdmission(outcome="coalesced", run_id=view["run_id"], active=view)
         return DreamAdmission(outcome="conflict", run_id=None, active=view)
+
+    def _resume_interrupted_run(
+        self: _DreamRunHost,
+        request: dict[str, Any],
+    ) -> str | None:
+        """Atomically reopen the restart-interrupted aggregate matching ``request``."""
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                """
+                SELECT *
+                  FROM memory_dream_runs
+                 WHERE status = 'interrupted'
+                   AND options ->> %s = 'true'
+                 ORDER BY updated_at DESC
+                 LIMIT 1
+                 FOR UPDATE
+                """,
+                (_RESTART_RESUME_PENDING,),
+            ).fetchone()
+            if row is None:
+                return None
+            run = _decode_run_row(row)
+            options = dict(run.get("options") or {})
+            if not _covers(normalize_dream_options(options), request):
+                return None
+            options.pop(_RESTART_RESUME_PENDING, None)
+            run_id = str(run["id"])
+            conn.execute(
+                """
+                UPDATE memory_dream_runs
+                   SET status = 'running',
+                       options = %s,
+                       error = NULL,
+                       completed_at = NULL,
+                       updated_at = %s
+                 WHERE id = %s
+                   AND status = 'interrupted'
+                """,
+                (_json(options), _now(), run_id),
+            )
+            return run_id
 
     def get_active_run(self: _DreamRunHost) -> dict[str, Any] | None:
         """Return the sole 'running' row, decoded, or None."""
@@ -260,12 +307,18 @@ class _DreamRunMixin:
         run_ids = [str(row["id"]) for row in rows]
         completed_at = _now()
         for run_id in run_ids:
-            self.update_run(
-                run_id,
-                status="interrupted",
-                completed_at=completed_at,
-                error=error,
-            )
+            run = self.get_run(run_id)
+            fields: dict[str, Any] = {
+                "status": "interrupted",
+                "completed_at": completed_at,
+                "error": error,
+            }
+            if run is not None and run["status"] == "running":
+                options = dict(run.get("options") or {})
+                if options.get("aggregate") is True and not run.get("dry_run"):
+                    options[_RESTART_RESUME_PENDING] = True
+                    fields["options"] = options
+            self.update_run(run_id, **fields)
         return run_ids
 
     def prune_runs(

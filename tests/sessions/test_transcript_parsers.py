@@ -20,6 +20,7 @@ from gobby.sessions.transcripts.base import (
     UNMODELED_RECORD_CONTENT_TYPE,
     ParsedMessage,
     ParsedToolEvent,
+    TranscriptParser,
 )
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
@@ -2423,6 +2424,34 @@ def test_tool_activity_flag_preserves_pair_shape(source: str, fixture_path: Path
         )
         assert "- search_replace /repo/widget.py" in ledgers, ledgers
         assert "unknown-tool" not in ledgers
+
+    fixture_root = Path(__file__).parent / "transcripts" / "fixtures"
+    fixture_parsers: list[tuple[TranscriptParser, Path]] = [
+        *[
+            (GrokTranscriptParser(), path)
+            for path in sorted((fixture_root / "grok_audit").glob("*/updates.jsonl"))
+        ],
+        *[
+            (DroidTranscriptParser(), path)
+            for path in sorted((fixture_root / "droid").glob("*.jsonl"))
+        ],
+    ]
+    assert fixture_parsers
+    for fixture_parser, path in fixture_parsers:
+        fixture_turns = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+        plain = fixture_parser.extract_last_messages(fixture_turns, num_pairs=10_000)
+        annotated = fixture_parser.extract_last_messages(
+            fixture_turns,
+            num_pairs=10_000,
+            include_tool_activity=True,
+        )
+
+        assert [(message["role"], message["content"]) for message in annotated] == [
+            (message["role"], message["content"]) for message in plain
+        ], path
+        assert all(
+            "tool_activity" not in message or message["role"] == "user" for message in annotated
+        ), path
 
 
 @pytest.mark.parametrize(

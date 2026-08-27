@@ -9,14 +9,22 @@ Covers:
 from __future__ import annotations
 
 import ast
+import asyncio
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.events.wake import CONTINUE_WAKE_MESSAGE, WakeDispatcher
+from gobby.hooks.event_enrichment import EventEnricher
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.inter_session_messages import InterSessionMessageManager
+from gobby.storage.sessions import SessionManager
 from gobby.utils.session_context import (
     reset_session_context,
     session_context_for_test,
@@ -295,6 +303,9 @@ class TestSendMessage:
         )
         assert "target='session'" in description
         assert "target='all' forbids target_id" in description
+        assert "target='project' fans out to active agent runs" in description
+        assert "target='all' reaches every deliverable session in the project" in description
+        assert "include_wakeup=true is an explicit urgent terminal interrupt" in description
         assert "target" in schema["inputSchema"]["properties"]
         assert "target_id" in schema["inputSchema"]["properties"]
         assert "from_session" in schema["inputSchema"]["properties"]
@@ -488,6 +499,205 @@ class TestSendMessage:
         assert result["wake_results"] == [
             {"session_id": "s-child", "delivered": True, "method": "fake"}
         ]
+
+    @pytest.mark.asyncio
+    async def test_normal_send_does_not_interrupt_long_running_recipient_work(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, Any],
+    ) -> None:
+        """Routine delivery is durable, non-interrupting, and injected by the next hook."""
+        from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
+
+        session_manager = SessionManager(temp_db)
+        sender = session_manager.register(
+            external_id="routine-message-sender",
+            machine_id=None,
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        recipient = session_manager.register(
+            external_id="busy-message-recipient",
+            machine_id=None,
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        message_manager = InterSessionMessageManager(temp_db)
+        wake_dispatcher = FakeWakeDispatcher()
+        registry = InternalToolRegistry(
+            name="gobby-agents",
+            description="Agent messaging v2",
+        )
+        add_messaging_tools(
+            registry=registry,
+            message_manager=message_manager,
+            session_manager=session_manager,
+            db=temp_db,
+            wake_dispatcher=wake_dispatcher,
+        )
+
+        work_started = asyncio.Event()
+        release_work = asyncio.Event()
+
+        async def long_running_tool() -> None:
+            work_started.set()
+            await release_work.wait()
+
+        recipient_work = asyncio.create_task(long_running_tool())
+        await work_started.wait()
+        try:
+            result = await registry.call(
+                "send_message",
+                {
+                    "from_session": sender.id,
+                    "target": "session",
+                    "target_id": recipient.id,
+                    "content": "routine update",
+                },
+            )
+
+            assert result["success"] is True
+            assert wake_dispatcher.calls == []
+            assert not recipient_work.done()
+            message_id = result["message_ids"][0]
+            stored = message_manager.get_message(message_id)
+            assert stored is not None
+            assert stored.content == "routine update"
+            assert stored.delivered_at is None
+
+            event = HookEvent(
+                event_type=HookEventType.BEFORE_TOOL,
+                session_id=recipient.external_id,
+                source=SessionSource.CLAUDE,
+                timestamp=datetime.now(UTC),
+                data={},
+                project_id=sample_project["id"],
+                metadata={
+                    "_platform_session_id": recipient.id,
+                    "_native_hook_type": "pre-tool-use",
+                },
+            )
+            response = HookResponse()
+            EventEnricher(
+                session_manager=session_manager,
+                injected_sessions=set(),
+                inter_session_msg_manager=message_manager,
+            ).enrich(event, response)
+
+            assert response.context is not None
+            assert "routine update" in response.context
+            delivered = message_manager.get_message(message_id)
+            assert delivered is not None
+            assert delivered.delivered_at is not None
+        finally:
+            release_work.set()
+            await recipient_work
+
+    @pytest.mark.asyncio
+    async def test_send_message_empty_fanout_reports_selector_failure(
+        self,
+        messaging_registry,
+        mock_session_manager,
+        mock_message_manager,
+        mock_db,
+    ) -> None:
+        """Empty fanout is an actionable result for the tool caller."""
+        mock_session_manager.get.return_value = MockSession(id="s-from")
+        mock_db.fetchone.return_value = {"id": "project-1"}
+        mock_db.fetchall.return_value = []
+
+        result = await messaging_registry.call(
+            "send_message",
+            {
+                "from_session": "s-from",
+                "target": "project",
+                "target_id": "project-1",
+                "content": "hello agents",
+            },
+        )
+
+        assert result["success"] is False
+        assert result["error_code"] == "no_recipients"
+        assert result["selector_metadata"] == {
+            "target": "project",
+            "project_id": "project-1",
+            "agent_run_status": ["pending", "running"],
+            "session_status": ["active", "paused"],
+            "exclude_session_id": "s-from",
+        }
+        mock_message_manager.create_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_explicit_urgent_send_message_dispatches_to_tmux(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, Any],
+    ) -> None:
+        """Explicit include_wakeup links public send_message to tmux delivery."""
+        from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
+
+        session_manager = SessionManager(temp_db)
+        sender = session_manager.register(
+            external_id="urgent-message-sender",
+            machine_id=None,
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        recipient = session_manager.register(
+            external_id="urgent-message-recipient",
+            machine_id=None,
+            source="codex",
+            project_id=sample_project["id"],
+            terminal_context={
+                "tmux_pane": "%9",
+                "tmux_socket_path": "/tmp/tmux-gobby",
+            },
+        )
+        message_manager = InterSessionMessageManager(temp_db)
+        tmux_pane_sender = AsyncMock()
+        wake_dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=message_manager,
+            tmux_pane_sender=tmux_pane_sender,
+        )
+        registry = InternalToolRegistry(
+            name="gobby-agents",
+            description="Agent messaging v2",
+        )
+        add_messaging_tools(
+            registry=registry,
+            message_manager=message_manager,
+            session_manager=session_manager,
+            db=temp_db,
+            wake_dispatcher=wake_dispatcher,
+        )
+
+        result = await registry.call(
+            "send_message",
+            {
+                "from_session": sender.id,
+                "target": "session",
+                "target_id": recipient.id,
+                "content": "urgent update",
+                "include_wakeup": True,
+            },
+        )
+
+        assert result["success"] is True
+        assert result["wake_results"] == [
+            {
+                "session_id": recipient.id,
+                "delivered": True,
+                "method": "tmux_pane",
+            }
+        ]
+        tmux_pane_sender.assert_awaited_once_with(
+            "%9",
+            CONTINUE_WAKE_MESSAGE,
+            "/tmp/tmux-gobby",
+            submit=True,
+            escape_before_submit=True,
+        )
 
     @pytest.mark.asyncio
     async def test_send_message_build_target_uses_context_project_for_coordinator(
@@ -1033,7 +1243,7 @@ class TestGetInterSessionMessages:
         assert not mock_message_manager.mark_delivered.called
 
     @pytest.mark.asyncio
-    async def test_empty_list(self, messaging_registry, mock_message_manager) -> None:
+    async def test_empty_list(self, messaging_registry: Any, mock_message_manager: Any) -> None:
         """Returns empty list when no messages match."""
         mock_message_manager.list_messages.return_value = []
 
@@ -1047,7 +1257,11 @@ class TestGetInterSessionMessages:
         assert result["count"] == 0
 
     @pytest.mark.asyncio
-    async def test_passes_all_filters(self, messaging_registry, mock_message_manager) -> None:
+    async def test_passes_all_filters(
+        self,
+        messaging_registry: Any,
+        mock_message_manager: Any,
+    ) -> None:
         """All filter parameters are forwarded to list_messages."""
         mock_message_manager.list_messages.return_value = []
 

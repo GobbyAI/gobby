@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import time
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
@@ -575,6 +576,7 @@ async def _execute_tool_dispatch(
         tool_name=tool_name,
         arguments=arguments,
         effective_session_id=effective_session_id,
+        project_id=project_id,
         timeout=timeout,
     )
     if emit_after_workflow:
@@ -604,6 +606,38 @@ async def _execute_tool_dispatch(
     return result
 
 
+async def _record_internal_call_metrics(
+    *,
+    service: Any,
+    server_name: str,
+    tool_name: str,
+    project_id: str | None,
+    session_id: str | None,
+    latency_ms: float,
+    success: bool,
+) -> None:
+    metrics_manager = getattr(service._mcp_manager, "metrics_manager", None)
+    if metrics_manager is None or not project_id:
+        return
+    try:
+        await asyncio.to_thread(
+            metrics_manager.record_call,
+            server_name=server_name,
+            tool_name=tool_name,
+            project_id=project_id,
+            latency_ms=latency_ms,
+            success=success,
+            session_id=session_id,
+        )
+    except Exception:
+        logger.warning(
+            "Failed to record metrics for internal tool %s.%s",
+            server_name,
+            tool_name,
+            exc_info=True,
+        )
+
+
 async def _execute_tool(
     *,
     service: Any,
@@ -611,26 +645,42 @@ async def _execute_tool(
     tool_name: str,
     arguments: dict[str, Any],
     effective_session_id: str | None,
+    project_id: str | None,
     timeout: float | None,
 ) -> Any:
     try:
         if service._internal_manager and service._internal_manager.is_internal(server_name):
-            registry = service._internal_manager.get_registry(server_name)
-            if registry:
-                _inject_agent_parent_session_argument(
-                    server_name,
-                    tool_name,
-                    arguments,
-                    effective_session_id,
-                )
-                result = await registry.call(tool_name, arguments)
-                return normalize_internal_success_result(result)
+            start_time = time.perf_counter()
+            success = False
+            try:
+                registry = service._internal_manager.get_registry(server_name)
+                if registry:
+                    _inject_agent_parent_session_argument(
+                        server_name,
+                        tool_name,
+                        arguments,
+                        effective_session_id,
+                    )
+                    result = await registry.call(tool_name, arguments)
+                    normalized_result = normalize_internal_success_result(result)
+                    success = True
+                    return normalized_result
 
-            error_msg = f"Internal server '{server_name}' not found"
-            suggestion = service._get_server_suggestion(server_name)
-            if suggestion:
-                error_msg += f". Did you mean '{suggestion}'?"
-            raise MCPError(error_msg)
+                error_msg = f"Internal server '{server_name}' not found"
+                suggestion = service._get_server_suggestion(server_name)
+                if suggestion:
+                    error_msg += f". Did you mean '{suggestion}'?"
+                raise MCPError(error_msg)
+            finally:
+                await _record_internal_call_metrics(
+                    service=service,
+                    server_name=server_name,
+                    tool_name=tool_name,
+                    project_id=project_id,
+                    session_id=effective_session_id,
+                    latency_ms=(time.perf_counter() - start_time) * 1000,
+                    success=success,
+                )
 
         call_kwargs: dict[str, Any] = {"session_id": effective_session_id}
         if timeout is not None:

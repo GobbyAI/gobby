@@ -14,6 +14,7 @@ import gobby.storage.cron_runs as cron_runs_module
 from gobby.config.cron import CronConfig
 from gobby.scheduler.scheduler import CronScheduler
 from gobby.storage.cron import CronJobStorage
+from gobby.storage.cron_children import INTERRUPTED_RUN_ERROR
 from gobby.storage.cron_models import CronRun
 from tests.config_runtime_helpers import static_cron_capture
 from tests.fixtures.postgres import TEST_USER_ID
@@ -64,7 +65,7 @@ def _seed_active_runs(
     return storage, local_machine_id, local_run, remote_run
 
 
-def test_restart_does_not_fail_remote_runs(
+def test_restart_interrupts_local_run_and_preserves_remote_run(
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -89,7 +90,8 @@ def test_restart_does_not_fail_remote_runs(
     refreshed_local = storage.get_run(local_run.id)
     refreshed_remote = storage.get_run(remote_run.id)
     assert refreshed_local is not None
-    assert refreshed_local.status == "failed"
+    assert refreshed_local.status == "interrupted"
+    assert refreshed_local.error == INTERRUPTED_RUN_ERROR
     assert refreshed_remote is not None
     assert refreshed_remote.status == "running"
 

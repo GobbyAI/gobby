@@ -11,6 +11,14 @@ stores installed skills in its database, keeps bundled skills synced from the
 install tree, and exposes skills through both CLI commands and the
 `gobby-skills` MCP server.
 
+The bundled `memory-lifecycle` rules load the `memory` skill on the initial
+turn, while `search-memories-on-claim` prompts a subject search after task
+claim. `guard-plan-memory-writes` keeps transient plan evidence out of durable
+memory, and the `review-closed-task-memories-before-compact` and
+`review-closed-task-memories-on-stop` gates request a post-close memory review.
+Skill loading supplies the judgment contract; memory retrieval remains an
+explicit `gobby-memory:search_memories` call.
+
 Gobby uses these scopes:
 
 | Scope | How it is created | What it means |

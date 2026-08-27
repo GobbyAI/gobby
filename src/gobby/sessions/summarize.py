@@ -46,6 +46,7 @@ from gobby.sessions.summary_generation import (
 )
 from gobby.sessions.summary_refresh import (
     choose_summary_refresh,
+    coerce_digest_turn_count,
     digest_turn_count,
     source_context_hash,
 )
@@ -632,4 +633,67 @@ async def generate_session_summaries(
     )
     result = copy.deepcopy(core_result.result)
     result["files_written"] = files_written
+    return result
+
+
+async def refresh_session_summary_to_watermark(
+    *,
+    session_id: str,
+    minimum_digest_turn_count: int,
+    session_manager: SessionManagerProtocol,
+    llm_service: LLMServiceProtocol | None = None,
+    session_summary_config: SessionSummaryConfigProtocol | None = None,
+    db: HubDatabase | None = None,
+) -> dict[str, Any]:
+    """Run a scheduled refresh and catch up after joining stale in-flight work."""
+    result = await generate_session_summaries(
+        session_id=session_id,
+        session_manager=session_manager,
+        llm_service=llm_service,
+        session_summary_config=session_summary_config,
+        db=db,
+        set_handoff_ready=False,
+    )
+    observed = coerce_digest_turn_count(result.get("source_digest_turn_count"))
+    if result.get("success") and observed is not None and observed >= minimum_digest_turn_count:
+        return result
+
+    if not result.get("success"):
+        reason = result.get("error") or result.get("refresh_reason") or "unknown"
+        logger.warning(
+            "Scheduled session summary refresh skipped for %s (target_digest_turns=%s, reason=%s)",
+            session_id,
+            minimum_digest_turn_count,
+            reason,
+        )
+        return result
+
+    logger.debug(
+        "Scheduled session summary refresh for %s joined stale generation "
+        "(target_digest_turns=%s, observed_digest_turns=%s); retrying",
+        session_id,
+        minimum_digest_turn_count,
+        observed,
+    )
+    result = await generate_session_summaries(
+        session_id=session_id,
+        session_manager=session_manager,
+        llm_service=llm_service,
+        session_summary_config=session_summary_config,
+        db=db,
+        set_handoff_ready=False,
+    )
+    observed = coerce_digest_turn_count(result.get("source_digest_turn_count"))
+    if result.get("success") and observed is not None and observed >= minimum_digest_turn_count:
+        return result
+
+    reason = result.get("error") or result.get("refresh_reason") or "no_watermark_progress"
+    logger.warning(
+        "Scheduled session summary refresh did not reach its watermark for %s "
+        "(target_digest_turns=%s, observed_digest_turns=%s, reason=%s)",
+        session_id,
+        minimum_digest_turn_count,
+        observed,
+        reason,
+    )
     return result

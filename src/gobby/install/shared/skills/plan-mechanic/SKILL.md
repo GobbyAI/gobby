@@ -1,7 +1,7 @@
 ---
 name: plan-mechanic
 description: Use when a gobby plan fails `gobby plans validate`, or after any pass that edited the plan (draft, enhancement fold-in, semantic repair, cut), and it needs bounded mechanical repair before the next adversary round.
-version: "1.0.0"
+version: "1.1.0"
 category: methodology
 internal: true
 triggers: plan mechanic, mechanical plan repair, plan validate failure, fix plan targets, plan-mechanic
@@ -14,7 +14,7 @@ metadata:
 # plan-mechanic — Bounded Mechanical Plan Repair
 
 > Internal methodology skill; loaded with `get_skill(name="plan-mechanic")` by
-> the mid-tier repair agent the plan coordinator spawns whenever plan bytes
+> the mid-tier provider-native internal subagent the plan coordinator uses whenever plan bytes
 > changed since the last clean validation — after the first draft, after an
 > enhancement fold-in, after the planner's semantic repair, after a cut pass —
 > and always before the next `plan-adversary-taskless` round. Not a
@@ -106,7 +106,7 @@ Findings").
 
 ## Report
 
-Return exactly this shape as your final result (and, when spawned as a gobby
+Return exactly this deterministic sweep report as your final result (and, when spawned as a gobby
 agent, send it to the parent via `send_message` before `end_agent_run`):
 
 ```yaml

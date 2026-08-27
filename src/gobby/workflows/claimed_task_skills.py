@@ -180,16 +180,16 @@ def refresh_claimed_task_skill_metadata(
     return merge
 
 
-def first_unloaded_claimed_task_required_skill(
+def missing_claimed_task_required_skills(
     variables: dict[str, Any],
     tool_input: Any = None,
     event_data: dict[str, Any] | None = None,
-) -> str:
-    """Return the first required skill for the files touched by this write."""
+) -> list[str]:
+    """Return every unloaded required skill for the files touched by this write."""
     required = _required_skills_for_write(variables, tool_input, event_data)
     loaded = variables.get("loaded_skills") or []
     if not isinstance(loaded, list):
-        return ""
+        return []
 
     loaded_set = {skill for skill in loaded if isinstance(skill, str)}
     unresolvable = variables.get("unresolvable_required_skills") or []
@@ -198,15 +198,11 @@ def first_unloaded_claimed_task_required_skill(
         if isinstance(unresolvable, list)
         else set()
     )
-    for skill in required:
-        if (
-            isinstance(skill, str)
-            and skill
-            and skill not in loaded_set
-            and skill not in unresolvable_set
-        ):
-            return skill
-    return ""
+    return [
+        skill
+        for skill in required
+        if skill and skill not in loaded_set and skill not in unresolvable_set
+    ]
 
 
 def _required_skills_for_write(

@@ -235,6 +235,7 @@ async def _call_llm_planner(
         dream_config,
         prompt,
         json_schema=DREAM_ACTIONS_SCHEMA,
+        max_tokens=getattr(dream_config, "max_tokens", None),
         caller="memory.dream",
         total_timeout_seconds=PLANNER_TOTAL_DEADLINE_SECONDS,
     )

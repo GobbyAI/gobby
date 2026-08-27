@@ -12,6 +12,7 @@ from uuid import uuid4
 
 TMUX_TEXT_INJECTION_TIMEOUT_SECONDS = 10.0
 TMUX_TEXT_ENTER_DELAY_SECONDS = 1.0
+TMUX_TEXT_ENTER_RETRY_DELAY_SECONDS = 0.25
 
 # tmux rejects any command whose imsg exceeds MAX_IMSGSIZE with "command too long".
 # Measured against tmux 3.x: a 16000-byte set-buffer payload succeeds, 20000 fails.
@@ -153,11 +154,21 @@ async def send_literal_text_to_tmux_target(
     if send_enter:
         if literal_text and enter_delay_seconds > 0:
             await asyncio.sleep(enter_delay_seconds)
-        await send_enter_key_to_tmux_target(
-            target,
-            tmux_cmd=base_cmd,
-            timeout=timeout,
-        )
+        try:
+            await send_enter_key_to_tmux_target(
+                target,
+                tmux_cmd=base_cmd,
+                timeout=timeout,
+            )
+        except TmuxTextInjectionTimeout:
+            if not literal_text:
+                raise
+            await asyncio.sleep(TMUX_TEXT_ENTER_RETRY_DELAY_SECONDS)
+            await send_enter_key_to_tmux_target(
+                target,
+                tmux_cmd=base_cmd,
+                timeout=timeout,
+            )
 
 
 async def paste_literal_text_to_tmux_target(

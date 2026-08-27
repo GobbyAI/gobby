@@ -547,6 +547,105 @@ class TestSessionLifecycleManager:
             manager.session_manager.mark_transcript_processed.assert_called_once_with("s-sub")
 
     @pytest.mark.asyncio
+    async def test_process_pending_transcripts_digests_spawned_codex_session(
+        self,
+        tmp_path: Path,
+        mock_db: MagicMock,
+        mock_config: SessionLifecycleConfig,
+    ) -> None:
+        """Expired spawned Codex sessions get a final transcript digest before processing."""
+        memory_manager = SimpleNamespace(config=SimpleNamespace(enabled=True))
+        with patch(_SESSION_MANAGER_PATCH):
+            manager = SessionLifecycleManager(
+                mock_db,
+                static_session_capture(
+                    mock_config,
+                    services=_memory_services(memory_manager),
+                ),
+            )
+        llm_service = _set_llm_service(manager, object())
+        session = SimpleNamespace(
+            id="spawned-codex",
+            transcript_path=str(tmp_path / "codex.jsonl"),
+            external_id="codex-child",
+            agent_depth=1,
+            source="codex",
+            digest_markdown=None,
+        )
+        manager.session_manager.get_pending_transcript_sessions.return_value = [session]
+        Path(session.transcript_path).write_text('{"type": "event_msg"}\n')
+
+        digest = AsyncMock(return_value={"turn_num": 1, "digest_length": 120})
+        with (
+            patch.object(manager, "_process_session_transcript", new_callable=AsyncMock) as process,
+            patch.object(
+                manager, "_generate_artifacts_if_needed", new_callable=AsyncMock
+            ) as mock_sum,
+            patch("gobby.memory.digest.build_turn_and_digest", digest),
+        ):
+            processed = await manager._process_pending_transcripts(manager._capture_active())
+
+        assert processed == 1
+        process.assert_awaited_once_with("spawned-codex", session.transcript_path)
+        assert digest.await_count == 1
+        digest.assert_awaited_once_with(
+            memory_manager=memory_manager,
+            session_manager=manager.session_manager,
+            session_id="spawned-codex",
+            llm_service=llm_service,
+            db=mock_db,
+            config=manager._capture_active(),
+        )
+        mock_sum.assert_not_awaited()
+        manager.session_manager.mark_transcript_processed.assert_called_once_with("spawned-codex")
+
+    @pytest.mark.asyncio
+    async def test_process_pending_transcripts_retries_spawned_codex_digest_failure(
+        self,
+        tmp_path: Path,
+        mock_db: MagicMock,
+        mock_config: SessionLifecycleConfig,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A concrete digest failure stays pending and logs its reason for diagnosis."""
+        memory_manager = SimpleNamespace(config=SimpleNamespace(enabled=True))
+        with patch(_SESSION_MANAGER_PATCH):
+            manager = SessionLifecycleManager(
+                mock_db,
+                static_session_capture(
+                    mock_config,
+                    services=_memory_services(memory_manager),
+                ),
+            )
+        _set_llm_service(manager, object())
+        session = SimpleNamespace(
+            id="spawned-codex",
+            transcript_path=str(tmp_path / "codex.jsonl"),
+            external_id="codex-child",
+            agent_depth=1,
+            source="codex",
+            digest_markdown=None,
+        )
+        manager.session_manager.get_pending_transcript_sessions.return_value = [session]
+        Path(session.transcript_path).write_text('{"type": "event_msg"}\n')
+
+        with (
+            patch.object(manager, "_process_session_transcript", new_callable=AsyncMock),
+            patch(
+                "gobby.memory.digest.build_turn_and_digest",
+                new_callable=AsyncMock,
+                return_value={"error": "provider unavailable"},
+            ),
+            caplog.at_level("WARNING", logger="gobby.sessions.transcript_processing"),
+        ):
+            processed = await manager._process_pending_transcripts(manager._capture_active())
+
+        assert processed == 0
+        manager.session_manager.mark_transcript_processed.assert_not_called()
+        assert "provider unavailable" in caplog.text
+        assert "deferring transcript processing" in caplog.text
+
+    @pytest.mark.asyncio
     async def test_process_pending_transcripts_skips_pipeline_sessions(
         self, tmp_path: Path, manager: SessionLifecycleManager
     ) -> None:

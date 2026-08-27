@@ -124,3 +124,25 @@ def test_plan_adversary_prompt_documents_upstream_draft_validation_contract() ->
     assert "uv run gobby plans validate <plan-file>" in prompt
     assert "spawn gate runs the same internal validator" in prompt
     assert "typed grammar has already passed the draft-mode contract gate" in prompt
+
+
+def test_review_methodology_delegates_mechanical_blast_radius_verification() -> None:
+    body = " ".join(_plan_review_body().split())
+
+    assert "semantic and architectural" in body
+    assert "repository_blast_radius" in body
+    assert "spot-check" in body
+    assert "deterministic sweep report" in body
+    assert "delegated-verified" in body
+
+
+def test_review_methodology_records_deterministic_gate_trial_outcome() -> None:
+    body = " ".join(_plan_review_body().split()).lower()
+
+    assert "session #11061" in body
+    assert "rounds 5–10" in body
+    assert "six consecutive rounds" in body
+    assert "zero validator-class findings" in body
+    assert "3 of 10" in body
+    assert "8 blocking semantic findings" in body
+    assert "did not establish semantic convergence" in body

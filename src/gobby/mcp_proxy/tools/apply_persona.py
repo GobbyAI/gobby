@@ -129,7 +129,7 @@ def build_session_persona_changes(
     active_skills = resolve_skills_for_agent(agent_body, all_skills)
 
     changes: dict[str, Any] = {
-        "_agent_type": agent_body.name,
+        "_persona_name": agent_body.name,
         "_active_skill_names": list(active_skills) if active_skills is not None else None,
         "_skill_format": (agent_body.workflows.skill_format if agent_body.workflows else None),
         "_agent_context_injected": False,
@@ -205,7 +205,7 @@ async def apply_persona_impl(
     """Apply a session persona to the current session.
 
     This path updates prompt-facing persona state only:
-    - current persona / agent name
+    - persona prompt identity
     - skill selection
     - deferred context reinjection flags
 

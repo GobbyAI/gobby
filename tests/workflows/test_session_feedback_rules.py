@@ -80,6 +80,36 @@ def _close_task_event(task_ref: str = "#42") -> HookEvent:
     )
 
 
+def _offloaded_close_task_event(
+    task_ref: str = "#42",
+    *,
+    success: bool = True,
+    closed: bool = True,
+) -> HookEvent:
+    return _event(
+        HookEventType.AFTER_TOOL,
+        {
+            "tool_name": "mcp__gobby__call_tool",
+            "mcp_server": "gobby-tasks",
+            "mcp_tool": "close_task",
+            "tool_input": {
+                "server_name": "gobby-tasks",
+                "tool_name": "close_task",
+                "arguments": {"task_id": task_ref},
+            },
+            "tool_output": {
+                "success": success,
+                "result": {
+                    "offloaded": True,
+                    "result_id": "11111111-1111-1111-1111-111111111111",
+                    "success": success,
+                    "closed": closed,
+                },
+            },
+        },
+    )
+
+
 def _enable_rules(db: HubDatabase, *names: str) -> None:
     with db.transaction() as conn:
         conn.execute("UPDATE rule_definitions SET enabled = FALSE")
@@ -104,6 +134,20 @@ class TestSessionFeedbackRules:
         assert rearm.project_id == PROJECT_ID
         assert "user" in (rearm.tags or [])
         assert "gobby" not in (rearm.tags or [])
+        assert rearm.priority == 11
+        rearm_body = RuleDefinitionBody.model_validate(rearm.definition_json)
+        rearm_effects = rearm_body.resolved_effects
+        assert rearm_body.event.value == "after_tool"
+        assert "mcp_server" in (rearm_body.when or "")
+        assert "mcp_tool" in (rearm_body.when or "")
+        assert "tool_call_succeeded" in (rearm_body.when or "")
+        assert "get('closed') is True" in (rearm_body.when or "")
+        assert len(rearm_effects) == 1
+        assert rearm_effects[0].variable == "_gobby_feedback_epoch_reviewed"
+        assert rearm_effects[0].value is False
+
+        assert manager.get_by_name("reset-gobby-session-feedback-on-context-reset") is None
+        assert rearm is not None
         assert rearm.priority == 11
         rearm_body = RuleDefinitionBody.model_validate(rearm.definition_json)
         rearm_effects = rearm_body.resolved_effects
@@ -196,6 +240,30 @@ class TestSessionFeedbackRules:
 
         assert result.decision == "allow"
         assert "_gobby_feedback_epoch_reviewed" not in variables
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("event", "expected_reviewed"),
+        [
+            (_offloaded_close_task_event(), False),
+            (_offloaded_close_task_event(success=False), True),
+            (_offloaded_close_task_event(closed=False), True),
+        ],
+        ids=("successful-close", "failed-call", "preview-only"),
+    )
+    async def test_offloaded_close_rearms_only_after_successful_closure(
+        self,
+        db: HubDatabase,
+        event: HookEvent,
+        expected_reviewed: bool,
+    ) -> None:
+        _sync_project_rules(db)
+        _enable_rules(db, "rearm-gobby-session-feedback-after-close")
+        variables: dict[str, object] = {"_gobby_feedback_epoch_reviewed": True}
+
+        await RuleEngine(db).evaluate(event, SESSION_ID, variables)
+
+        assert variables["_gobby_feedback_epoch_reviewed"] is expected_reviewed
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -325,7 +393,7 @@ class TestSessionFeedbackRules:
             SESSION_ID,
             variables,
         )
-        await engine.evaluate(_close_task_event("#43"), SESSION_ID, variables)
+        await engine.evaluate(_offloaded_close_task_event("#43"), SESSION_ID, variables)
         await engine.evaluate(_close_task_event("#44"), SESSION_ID, variables)
         first = await engine.evaluate(_event(HookEventType.STOP), SESSION_ID, variables)
         second = await engine.evaluate(_event(HookEventType.STOP), SESSION_ID, variables)

@@ -53,7 +53,7 @@ export interface WikiCompileRequest {
   outline?: string[];
   target?: string;
   write_intent?: boolean;
-  ai?: "auto" | "daemon" | "direct" | "off";
+  ai?: "auto" | "off";
 }
 
 interface UseWikiOptions {

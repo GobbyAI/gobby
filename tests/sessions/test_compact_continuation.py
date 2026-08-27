@@ -716,7 +716,7 @@ def test_in_place_compact_does_not_steal_pending_from_other_terminal(
     assert COMPACT_SELF_CONTINUE_VARIABLE in variables
 
 
-def test_persist_compact_resume_required_skills_reloads_claimed_task_skill(
+def test_persist_compact_resume_skills_keeps_core_and_active_task_requirements(
     session_db: HubDatabase,
 ) -> None:
     db = session_db
@@ -724,8 +724,9 @@ def test_persist_compact_resume_required_skills_reloads_claimed_task_skill(
     sv_mgr.merge_variables(
         SESSION_ID,
         {
-            "required_skills": ["loading-skills", "python"],
+            "required_skills": ["loading-skills", "memory"],
             "claimed_task_required_skills": ["tasks", "python", "development-discipline"],
+            WORKFLOW_REQUESTED_SKILLS_VARIABLE: ["goal"],
             "loaded_skills": ["code-index", "tasks"],
         },
     )
@@ -734,10 +735,11 @@ def test_persist_compact_resume_required_skills_reloads_claimed_task_skill(
 
     assert skill_tiers == {
         "required": [
-            "python",
+            "memory",
             "tasks",
+            "python",
             "development-discipline",
-            "code-index",
+            "goal",
         ],
         "advisory": [],
     }
@@ -746,7 +748,7 @@ def test_persist_compact_resume_required_skills_reloads_claimed_task_skill(
     assert variables[COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE] == skill_tiers["advisory"]
 
 
-def test_loaded_skills_remain_required_across_two_compactions(
+def test_no_task_compaction_omits_historical_loaded_language_skills(
     session_db: HubDatabase,
 ) -> None:
     db = session_db
@@ -754,10 +756,10 @@ def test_loaded_skills_remain_required_across_two_compactions(
     sv_mgr.merge_variables(
         SESSION_ID,
         {
-            "required_skills": ["loading-skills", "python"],
+            "required_skills": ["loading-skills", "tasks", "memory"],
             "additional_skills": ["pytest"],
             WORKFLOW_REQUESTED_SKILLS_VARIABLE: ["plan", "elicit"],
-            "loaded_skills": ["code-index", "brevity", "code-index"],
+            "loaded_skills": ["rust", "typescript", "code-index", "brevity"],
         },
     )
 
@@ -765,10 +767,10 @@ def test_loaded_skills_remain_required_across_two_compactions(
 
     assert first_tiers == {
         "required": [
-            "python",
+            "tasks",
+            "memory",
             "plan",
             "elicit",
-            "code-index",
         ],
         "advisory": ["pytest"],
     }
@@ -776,20 +778,21 @@ def test_loaded_skills_remain_required_across_two_compactions(
     sv_mgr.set_variable(SESSION_ID, "loaded_skills", [])
     assert sv_mgr.get_variables(SESSION_ID)["loaded_skills"] == []
 
-    # Successful get_skill calls repopulate the current-context ledger in first-load order.
+    # Successful get_skill calls repopulate the current-context ledger, but that historical
+    # ledger does not expand the next compaction's reload scope.
     sv_mgr.append_to_set_variable(
         SESSION_ID,
         "loaded_skills",
-        ["code-index"],
+        ["rust"],
         preserve_order=True,
     )
     sv_mgr.append_to_set_variable(
         SESSION_ID,
         "loaded_skills",
-        ["brevity", "code-index"],
+        ["typescript", "rust"],
         preserve_order=True,
     )
-    assert sv_mgr.get_variables(SESSION_ID)["loaded_skills"] == ["code-index", "brevity"]
+    assert sv_mgr.get_variables(SESSION_ID)["loaded_skills"] == ["rust", "typescript"]
 
     second_tiers = persist_compact_resume_required_skills(db, SESSION_ID)
 
@@ -814,7 +817,7 @@ def test_meta_skills_never_enter_resume_tiers(session_db: HubDatabase) -> None:
     skill_tiers = persist_compact_resume_required_skills(db, SESSION_ID)
 
     assert skill_tiers == {
-        "required": ["tasks", "code-index"],
+        "required": ["tasks"],
         "advisory": ["restraint"],
     }
     assert not set(skill_tiers["required"]) & COMPACT_RESUME_EXCLUDED_SKILLS
@@ -872,8 +875,8 @@ async def test_load_skill_effect_flows_to_persisted_resume_prompt(
     prompt = build_compact_self_continue_prompt()
 
     assert skill_tiers == {
-        "required": ["python", "plan", "pytest"],
-        "advisory": ["hypothesis"],
+        "required": ["python", "plan"],
+        "advisory": ["pytest", "hypothesis"],
     }
     # The inject-compact-handoff rule reads both persisted tiers into the
     # SessionStart injected context; the typed trigger stays skill-free.

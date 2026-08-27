@@ -14,7 +14,7 @@ import {
   ACTIVITY_PANEL_TABS,
   type ActivityTab,
 } from "../activity/ActivityPanelTabs";
-import { requestDaemonRestart } from "../../lib/api";
+import { readDaemonRestartFailure, requestDaemonRestart } from "../../lib/api";
 
 type ActiveModal = "skills" | "gobby" | null;
 
@@ -84,8 +84,20 @@ export function useAppCommandPalette({
       addSystemMessage("Requesting daemon restart...");
       try {
         const response = await requestDaemonRestart();
-        if (!response.ok) {
-          throw new Error(`Restart failed: ${response.status}`);
+        const failure = await readDaemonRestartFailure(response);
+        if (failure?.protectedRuns.length) {
+          addSystemMessage(failure.message);
+          const shouldForce = window.confirm(
+            `${failure.message}\n\nForce restart and interrupt this work?`,
+          );
+          if (!shouldForce) return;
+
+          addSystemMessage("Forcing daemon restart...");
+          const forcedResponse = await requestDaemonRestart(true);
+          const forcedFailure = await readDaemonRestartFailure(forcedResponse);
+          if (forcedFailure) throw new Error(forcedFailure.message);
+        } else if (failure) {
+          throw new Error(failure.message);
         }
         addSystemMessage("Daemon restart requested; reconnecting...");
       } catch (err) {

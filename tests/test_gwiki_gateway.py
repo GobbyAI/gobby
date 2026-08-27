@@ -367,7 +367,7 @@ async def test_compile_builds_full_arg_vector(monkeypatch: pytest.MonkeyPatch) -
         outline=["Intro", "Details"],
         target="knowledge/topics/hooks.md",
         write_intent=True,
-        ai="direct",
+        ai="off",
     )
 
     assert result["payload"] == payload
@@ -389,8 +389,7 @@ async def test_compile_builds_full_arg_vector(monkeypatch: pytest.MonkeyPatch) -
             "--target",
             "knowledge/topics/hooks.md",
             "--write-intent",
-            "--ai",
-            "direct",
+            "--no-ai",
             "--project",
             "/repo",
             "--topic",
@@ -407,7 +406,7 @@ async def test_compile_without_arguments_emits_bare_command(
     payload = {"command": "compile", "status": "written"}
     calls = _patch_subprocess(monkeypatch, [FakeProcess(stdout=_json_bytes(payload))])
 
-    result = await _gateway().compile()
+    result = await _gateway().compile(ai="auto")
 
     assert result["payload"] == payload
     assert calls == [
@@ -427,6 +426,30 @@ async def test_compile_without_arguments_emits_bare_command(
 async def test_compile_rejects_unknown_kind() -> None:
     with pytest.raises(ValueError, match="kind must be one of concept, source, topic"):
         await _gateway().compile("Hooks Overview", kind="article")
+
+
+async def test_compile_rejects_removed_ai_routing_modes() -> None:
+    with pytest.raises(ValueError, match="ai must be one of auto, off"):
+        await _gateway().compile("Hooks Overview", ai="direct")
+
+
+async def test_upkeep_ai_modes_match_cli_contract(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = {"command": "upkeep", "status": "completed"}
+    calls = _patch_subprocess(
+        monkeypatch,
+        [
+            FakeProcess(stdout=_json_bytes(payload)),
+            FakeProcess(stdout=_json_bytes(payload)),
+        ],
+    )
+
+    await _gateway().upkeep(ai="off")
+    await _gateway().upkeep(ai="auto")
+
+    assert "--no-ai" in calls[0]
+    assert "--no-ai" not in calls[1]
+    assert "--ai" not in calls[0]
+    assert "--ai" not in calls[1]
 
 
 async def test_sync_sessions_passes_archive_dir_and_limit(

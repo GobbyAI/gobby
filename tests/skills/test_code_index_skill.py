@@ -133,6 +133,17 @@ def test_code_index_skill_prefers_compact_location_retrieval() -> None:
     assert "Use `--verbose` or `--format json`" in body
 
 
+def test_code_index_skill_documents_stale_ids_and_callback_fallback() -> None:
+    body = parse_skill_file(SKILL_PATH).content
+
+    assert "Edited files invalidate content-derived symbol IDs" in body
+    assert "rerun `gcode outline`" in body
+    assert "use `gcode symbol-at`" in body
+    assert "call and import edges" in body
+    assert "callback references" in body
+    assert "`gcode grep -w`" in body
+
+
 def test_code_index_skill_matches_gcode_bundled_asset_when_present() -> None:
     """Keep Gobby's install template byte-identical to gcode's bundled skill."""
     assert SKILL_PATH.read_bytes() == _gcode_bundled_skill_path().read_bytes()

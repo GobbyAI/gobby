@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from contextlib import nullcontext
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -39,7 +40,13 @@ NAMED_TEST = AcceptanceTest(
 )
 
 
-def _task(*, escalated: bool) -> Task:
+@pytest.fixture(autouse=True)
+def _committed_manifest_is_current() -> Iterator[None]:
+    with patch.object(lifecycle, "check_linked_committed_bundled_manifest", return_value=None):
+        yield
+
+
+def _task(*, escalated: bool, tdd_required: bool = False) -> Task:
     task = Task(
         id="00000000-0000-4000-8000-000000000101",
         project_id="00000000-0000-4000-8000-000000000201",
@@ -56,6 +63,7 @@ def _task(*, escalated: bool) -> Task:
             f"- test: `{NAMED_TEST.reference}`"
         ),
         validation_fail_count=0,
+        labels=["tdd:required"] if tdd_required else [],
         stages=({"stage_name": "development", "position": 0, "state": "in_progress"},),
     )
     if not escalated:
@@ -283,7 +291,10 @@ async def test_justified_deliberate_close_waives_tdd_evidence() -> None:
 @pytest.mark.asyncio
 async def test_escalated_close_without_justification_still_fails_tdd_evidence() -> None:
     """The waiver is the justification, so an escalated task alone does not earn it."""
-    evaluation = await _evaluate(_task(escalated=True), override_justification=None)
+    evaluation = await _evaluate(
+        _task(escalated=True, tdd_required=True),
+        override_justification=None,
+    )
 
     assert evaluation.error == "tdd_evidence_missing"
     assert _gate(evaluation, 12).status == "failed"
@@ -293,7 +304,7 @@ async def test_escalated_close_without_justification_still_fails_tdd_evidence() 
 async def test_unescalated_close_with_justification_still_fails_tdd_evidence() -> None:
     """An ordinary leaf cannot buy its way past gate 12 by supplying a justification."""
     evaluation = await _evaluate(
-        _task(escalated=False),
+        _task(escalated=False, tdd_required=True),
         override_justification="No red evidence, closing anyway.",
     )
 

@@ -729,6 +729,9 @@ class TestAdminRoutes:
     ) -> None:
         import gobby.servers.routes.admin._lifecycle as lifecycle
 
+        scheduler = SimpleNamespace(list_protected_runs=MagicMock(return_value=[]))
+        mock_server._runner.cron_scheduler = scheduler
+
         with patch("gobby.runner_maintenance.write_shutdown_source") as mock_write_shutdown:
             response = client.post("/api/admin/restart")
         assert response.status_code == 200
@@ -747,6 +750,81 @@ class TestAdminRoutes:
 
         mock_server._process_shutdown.assert_not_called()
         assert mock_server._background_tasks == set()
+        mock_server.run_db.assert_awaited_once_with(scheduler.list_protected_runs)
+
+    @patch("gobby.servers.routes.admin._lifecycle._spawn_restart_helper")
+    @patch(
+        "gobby.servers.routes.admin._lifecycle.asyncio.to_thread",
+        new_callable=AsyncMock,
+        return_value=False,
+    )
+    def test_restart_endpoint_refuses_active_protected_runs(
+        self,
+        mock_to_thread,
+        mock_spawn,
+        client,
+        mock_server,
+    ) -> None:
+        protected_runs = [
+            {
+                "run_id": "run-1",
+                "job_id": "job-1",
+                "job_name": "gobby:memory-dream",
+                "started_at": "2026-08-27T07:00:00+00:00",
+                "elapsed_seconds": 3725.0,
+                "remaining_seconds": 12475.0,
+            }
+        ]
+        scheduler = SimpleNamespace(list_protected_runs=MagicMock(return_value=protected_runs))
+        mock_server._runner.cron_scheduler = scheduler
+
+        response = client.post("/api/admin/restart")
+
+        assert response.status_code == 409
+        assert response.json() == {
+            "status": "restart_protected",
+            "message": "Restart blocked by active protected cron runs",
+            "protected_runs": protected_runs,
+        }
+        mock_server.run_db.assert_awaited_once_with(scheduler.list_protected_runs)
+        mock_to_thread.assert_not_awaited()
+        mock_spawn.assert_not_called()
+        assert mock_server._runner._shutdown_requested is False
+
+    @patch("gobby.servers.routes.admin._lifecycle._spawn_restart_helper")
+    @patch(
+        "gobby.servers.routes.admin._lifecycle.asyncio.to_thread",
+        new_callable=AsyncMock,
+        return_value=False,
+    )
+    def test_restart_endpoint_force_bypasses_active_protected_runs(
+        self,
+        _mock_to_thread,
+        mock_spawn,
+        client,
+        mock_server,
+    ) -> None:
+        scheduler = SimpleNamespace(
+            list_protected_runs=MagicMock(
+                return_value=[
+                    {
+                        "job_name": "gobby:memory-dream",
+                        "elapsed_seconds": 3725.0,
+                        "remaining_seconds": 12475.0,
+                    }
+                ]
+            )
+        )
+        mock_server._runner.cron_scheduler = scheduler
+
+        with patch("gobby.runner_maintenance.write_shutdown_source"):
+            response = client.post("/api/admin/restart?force=true")
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "restarting"
+        mock_server.run_db.assert_not_awaited()
+        mock_spawn.assert_called_once()
+        assert mock_server._runner._shutdown_requested is True
 
     @patch("gobby.servers.routes.admin._lifecycle.os.getpid", return_value=4321)
     @patch(
@@ -1409,7 +1487,7 @@ class TestTestEndpoints:
         assert data["status"] == "not_found"
         assert "nonexistent" in data["message"]
 
-    def test_set_session_usage_defaults(self, client, mock_server) -> None:
+    def test_set_session_usage_defaults(self, client: TestClient, mock_server: MagicMock) -> None:
         """When only session_id is provided, defaults should be zero."""
         mock_server.session_manager.update_usage.return_value = True
 
@@ -1424,7 +1502,7 @@ class TestTestEndpoints:
         assert data["usage_set"]["input_tokens"] == 0
         assert data["usage_set"]["output_tokens"] == 0
 
-    def test_set_session_usage_forbidden_when_not_test_mode(self, mock_server) -> None:
+    def test_set_session_usage_forbidden_when_not_test_mode(self, mock_server: MagicMock) -> None:
         mock_server.test_mode = False
 
         from fastapi import FastAPI

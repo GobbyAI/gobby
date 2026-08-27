@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import tomllib
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from gobby.code_index.gcode_gateway import (
+    MIN_GCODE_PRUNE_BUDGET_VERSION,
     GcodeCommandError,
     GcodeDaemonConfigUnavailableError,
     GcodeFalkorTransportError,
@@ -26,10 +28,20 @@ from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 GCODE_PIN = MANAGED_BIN_VERSION_PINS["gcode"]
 GCODE_PIN_STDOUT = f"gcode {GCODE_PIN}\n".encode()
+PRUNE_BUDGET_VERSION_STDOUT = f"gcode {MIN_GCODE_PRUNE_BUDGET_VERSION}\n".encode()
 
 
 async def test_managed_gcode_pin_requires_1_5_0() -> None:
     assert GCODE_PIN == "1.5.0"
+
+
+async def test_prune_budget_version_matches_gcode_crate_version() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    manifest = tomllib.loads(
+        (repo_root / "crates" / "gcode" / "Cargo.toml").read_text(encoding="utf-8")
+    )
+
+    assert MIN_GCODE_PRUNE_BUDGET_VERSION == manifest["package"]["version"]
 
 
 class FakeProcess:
@@ -310,7 +322,7 @@ async def test_gateway_builds_vector_and_prune_args_with_timeouts(
     tmp_path: Path,
 ) -> None:
     processes = [
-        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        FakeProcess(stdout=PRUNE_BUDGET_VERSION_STDOUT),
         FakeProcess(stdout=b'{"success": true, "file": "src/app.py"}'),
         FakeProcess(stdout=b'{"success": true, "cleared": true}'),
         FakeProcess(stdout=b'{"success": true, "rebuilt": true}'),
@@ -600,6 +612,29 @@ async def test_gateway_rejects_stale_version(monkeypatch: pytest.MonkeyPatch) ->
         await gateway.graph_clear("proj-1")
 
 
+async def test_gateway_prune_refuses_binary_without_budget_flag(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls = _patch_subprocess(monkeypatch, [FakeProcess(stdout=b"gcode 1.6.1\n")])
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    with pytest.raises(
+        GcodeVersionError,
+        match=(
+            rf"gcode >= {MIN_GCODE_PRUNE_BUDGET_VERSION} required for maintenance prune; "
+            r"found 1\.6\.1; reinstall gcode"
+        ),
+    ):
+        await gateway.prune_project_for_maintenance(
+            tmp_path,
+            retention_days=1,
+            max_seconds=90,
+        )
+
+    assert calls == [("/tmp/gcode", "--version")]
+
+
 async def test_gateway_raises_for_invalid_json(monkeypatch: pytest.MonkeyPatch) -> None:
     processes = [
         FakeProcess(stdout=GCODE_PIN_STDOUT),
@@ -696,7 +731,7 @@ async def test_maintenance_command_classifies_daemon_config_transport(
 ) -> None:
     stderr = b"Error: daemon effective config request failed: daemon could not be reached (timeout)"
     processes = [
-        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        FakeProcess(stdout=PRUNE_BUDGET_VERSION_STDOUT),
         FakeProcess(returncode=1, stderr=stderr),
     ]
     _patch_subprocess(monkeypatch, processes)

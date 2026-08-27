@@ -22,6 +22,7 @@ from gobby.runtime_output import (
 from gobby.utils.native_bin import resolve_native_bin
 
 MIN_GCODE_GRAPH_VERSION = MANAGED_BIN_VERSION_PINS["gcode"]
+MIN_GCODE_PRUNE_BUDGET_VERSION = "1.7.0"
 GCODE_ALLOW_MISSING_INDEXED_FILE_VERSION = "0.9.5"
 _VERSION_PATTERN = re.compile(r"\b(\d+\.\d+\.\d+(?:\.\d+)?)\b")
 _PROJECT_NOT_FOUND_PATTERN = re.compile(r"Project '([^']+)' not found")
@@ -525,6 +526,15 @@ class GcodeGateway:
         deferred versions instead of being killed at ``timeout``.
         """
         binary = await self._ensure_version()
+        assert self._checked_version is not None
+        if not is_at_least_version(
+            self._checked_version,
+            MIN_GCODE_PRUNE_BUDGET_VERSION,
+        ):
+            raise GcodeVersionError(
+                f"gcode >= {MIN_GCODE_PRUNE_BUDGET_VERSION} required for maintenance prune; "
+                f"found {self._checked_version}; reinstall gcode"
+            )
         command = [
             binary,
             "prune",
@@ -760,4 +770,5 @@ __all__ = [
     "GcodeUnavailableError",
     "GcodeVersionError",
     "MIN_GCODE_GRAPH_VERSION",
+    "MIN_GCODE_PRUNE_BUDGET_VERSION",
 ]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from collections.abc import Callable
@@ -10,6 +11,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
+from gobby.install.manifest import write_bundled_content_manifest
 
 pytestmark = pytest.mark.unit
 
@@ -23,6 +26,57 @@ def git_repo(tmp_path: Path) -> Path:
     _run(("git", "add", "tracked.py"), tmp_path)
     _run(("git", "commit", "-qm", "initial"), tmp_path)
     return tmp_path
+
+
+def test_pre_push_runs_committed_bundled_manifest_checker(repo_root: Path) -> None:
+    script = (repo_root / "pre-push-test.sh").read_text(encoding="utf-8")
+
+    assert "uv_run python -m gobby.install.manifest --repo-root . --treeish HEAD" in script
+
+
+def test_pre_push_execution_fails_on_stale_committed_bundled_manifest(
+    repo_root: Path,
+    git_repo: Path,
+) -> None:
+    install_dir = git_repo / "src" / "gobby" / "install"
+    shared_dir = install_dir / "shared"
+    shared_dir.mkdir(parents=True)
+    bundled = shared_dir / "rule.yaml"
+    bundled.write_text("enabled: true\n", encoding="utf-8")
+    write_bundled_content_manifest(install_dir)
+    _run(("git", "add", "src/gobby/install"), git_repo)
+    _run(("git", "commit", "-qm", "add bundled manifest"), git_repo)
+    bundled.write_text("enabled: false\n", encoding="utf-8")
+    _run(("git", "add", "src/gobby/install/shared/rule.yaml"), git_repo)
+    _run(("git", "commit", "-qm", "stale bundled manifest"), git_repo)
+
+    fake_bin = git_repo / "fake-bin"
+    fake_bin.mkdir()
+    fake_uv = fake_bin / "uv"
+    fake_uv.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "run" ]; then shift; fi\n'
+        'if [ "$1" = "python" ]; then shift; '
+        f'exec "{sys.executable}" "$@"; fi\n'
+        'exec "$@"\n',
+        encoding="utf-8",
+    )
+    fake_uv.chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(repo_root / "pre-push-test.sh"), "--bundled-manifest-only"],
+        cwd=git_repo,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+            "PYTHONPATH": str(repo_root / "src"),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "Committed bundled content manifest is stale." in result.stderr
 
 
 def test_manifest_records_identity_commands_and_success(

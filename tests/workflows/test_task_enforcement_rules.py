@@ -7,6 +7,7 @@ task claim/release tracking.
 
 from __future__ import annotations
 
+import shlex
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -15,7 +16,10 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
-from gobby.skills.formatting import skill_fetch_directive
+from gobby.skills.formatting import (
+    skill_fetch_directive,
+    skill_fetch_proxy_path,
+)
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody
@@ -44,7 +48,7 @@ def manager(db: HubDatabase) -> RuleDefinitionManager:
     return RuleDefinitionManager(db)
 
 
-def _sync_bundled(db):
+def _sync_bundled(db: HubDatabase) -> object:
     """Sync bundled rules from the real rules directory."""
     from gobby.workflows.sync_rules import get_bundled_rules_path
 
@@ -358,6 +362,118 @@ class TestRequireTaskBeforeEdit:
         assert "requires_task_for_any_touched_file" in body.when
         assert "plan_mode" in body.when
 
+    @pytest.mark.asyncio
+    async def test_workbook_diagnostic_heredoc_is_not_treated_as_an_edit(
+        self, db: HubDatabase
+    ) -> None:
+        _sync_bundled(db)
+        read_only = """python3 - <<'PYEOF'
+from pathlib import Path
+import zipfile
+import xml.etree.ElementTree as ET
+base = Path('/tmp/workbook-extract')
+for path in sorted(base.glob('*.xlsx')):
+    with zipfile.ZipFile(path) as archive:
+        root = ET.fromstring(archive.read('xl/workbook.xml'))
+        print(path.relative_to(base), root.find('.//sheet').text)
+PYEOF"""
+        mutating = """python3 - <<'PYEOF'
+from pathlib import Path
+Path('result.txt').write_text('changed')
+PYEOF"""
+        variables = {
+            "require_task_before_edit": True,
+            "task_claimed": False,
+            "loaded_skills": ["python", "tasks"],
+            "brevity_disabled": True,
+            "skill_discovery_instructions_shown": True,
+        }
+
+        for command, expected_kind, expected_decision in (
+            (read_only, "execute", "allow"),
+            (mutating, "write", "block"),
+        ):
+            data: dict[str, object] = {
+                "tool_name": "Bash",
+                "tool_input": {"command": command},
+            }
+            normalize_tool_fields(data)
+            event = HookEvent(
+                event_type=HookEventType.BEFORE_TOOL,
+                session_id=SESSION_ID,
+                source=SessionSource.CODEX,
+                timestamp=datetime.now(UTC),
+                data=data,
+            )
+
+            response = await RuleEngine(db).evaluate(
+                event,
+                session_id=SESSION_ID,
+                variables=variables,
+            )
+
+            assert data["canonical_tool_kind"] == expected_kind
+            assert response.decision == expected_decision
+
+    @pytest.mark.asyncio
+    async def test_indeterminate_aws_mcp_diagnostic_does_not_require_task(
+        self, db: HubDatabase
+    ) -> None:
+        _sync_bundled(db)
+        script = """
+import asyncio
+from gobby.mcp_proxy.manager import MCPClientManager
+from gobby.mcp_proxy.models import MCPServerConfig
+
+
+async def main():
+    config = MCPServerConfig(
+        name="aws-openapi-smoke",
+        project_id="00000000-0000-0000-0000-000000000001",
+        transport="stdio",
+        command="uvx",
+        args=["awslabs.openapi-mcp-server@1.1.5"],
+    )
+    manager = MCPClientManager([config])
+    try:
+        await manager.list_tools("aws-openapi-smoke")
+        session = await manager.get_client_session("aws-openapi-smoke")
+        await session.list_prompts()
+        await session.list_resources()
+    finally:
+        await manager.disconnect_all()
+
+
+asyncio.run(main())
+"""
+        data: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": f"uv run python -c {shlex.quote(script)}"},
+        }
+        normalize_tool_fields(data)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data=data,
+        )
+
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={
+                "require_task_before_edit": True,
+                "task_claimed": False,
+                "plan_mode": False,
+            },
+        )
+
+        assert data["canonical_tool_kind"] == "execute"
+        assert data["canonical_tool_confidence"] == "low"
+        assert "canonical_repo_mutation" not in data
+        assert response.decision == "allow"
+
     def test_when_condition_evaluates_with_plan_file(self) -> None:
         """Plan files should stay exempt when the helper is registered."""
         from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
@@ -668,7 +784,7 @@ class TestRequireClaimedTaskRequiredSkills:
     CONDITION = (
         "event.data.get('canonical_tool_kind') == 'write' "
         "and claimed_task_source_code_write(tool_input, event.data) "
-        "and first_unloaded_claimed_task_required_skill(tool_input, event.data) != ''"
+        "and missing_claimed_task_required_skills(tool_input, event.data) != []"
     )
 
     def _eval(
@@ -714,8 +830,9 @@ class TestRequireClaimedTaskRequiredSkills:
 
         assert body.event.value == "before_tool"
         assert body.effects[0].type == "block"
-        assert "first_unloaded_claimed_task_required_skill(tool_input, event.data)" in body.when
-        assert "skill_fetch_directive" in body.effects[0].reason
+        helper = "missing_claimed_task_required_skills(tool_input, event.data)"
+        assert helper in body.when
+        assert "skill_fetch_batch_directive" in body.effects[0].reason
 
     def test_condition_blocks_inferred_python_from_task_metadata(self) -> None:
         assert (
@@ -785,7 +902,7 @@ class TestRequireClaimedTaskRequiredSkills:
         ],
     )
     @pytest.mark.asyncio
-    async def test_rule_blocks_with_first_unloaded_skill_directive(
+    async def test_rule_blocks_with_every_missing_skill_in_load_order(
         self,
         db: HubDatabase,
         source: SessionSource,
@@ -822,7 +939,13 @@ class TestRequireClaimedTaskRequiredSkills:
 
         assert response.decision == "block"
         assert response.reason is not None
-        assert skill_fetch_directive("tasks") in response.reason
+        calls = [
+            skill_fetch_proxy_path(skill) for skill in ("tasks", "python", "development-discipline")
+        ]
+        assert all(call in response.reason for call in calls)
+        assert [response.reason.index(call) for call in calls] == sorted(
+            response.reason.index(call) for call in calls
+        )
 
     @pytest.mark.asyncio
     async def test_rule_allows_when_all_relevant_skills_loaded(self, db: HubDatabase) -> None:
@@ -2038,7 +2161,13 @@ class TestWriteRouteParity:
                 True,
             ),
             ('python3 -c "print(1)"', "execute", False, False),
-            ('printf content | python3 -c "unknown()"', "write", True, True),
+            (
+                "python3 -c \"from pathlib import Path; Path('notes.md').replace('renamed.md')\"",
+                "write",
+                True,
+                True,
+            ),
+            ('printf content | python3 -c "unknown()"', "execute", False, False),
             (
                 "printf content | python3 -c "
                 '\'import json, sys; json = sys.modules["os"]; '

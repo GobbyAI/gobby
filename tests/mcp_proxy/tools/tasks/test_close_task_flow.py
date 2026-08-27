@@ -8,6 +8,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -43,6 +44,12 @@ from gobby.tasks.transcript_evidence import TranscriptEvidence, TranscriptValida
 from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def _committed_manifest_is_current() -> Iterator[None]:
+    with patch.object(lifecycle, "check_linked_committed_bundled_manifest", return_value=None):
+        yield
 
 
 def _task(*, criteria: str | None = "Focused tests pass.") -> Task:
@@ -492,6 +499,59 @@ async def test_scope_mismatch_stops_before_dirty_and_validation_gates() -> None:
     assert evaluation.gates[-1].item == 8
     assert evaluation.extra["out_of_scope_paths"] == ["src/gobby/service.py"]
     transcript.assert_not_awaited()
+    review.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stale_committed_bundled_manifest_blocks_close() -> None:
+    task = replace(_task(), category="research")
+    ctx = _ctx(task, validator=object())
+    ctx.session_var_manager = cast(
+        SessionVariableManager,
+        SimpleNamespace(get_variables=lambda _session_id: {"task_edited_files": {task.id: []}}),
+    )
+    stale = SimpleNamespace(
+        ok=False,
+        treeish="HEAD",
+        errors=("Committed bundled content manifest is stale.",),
+        expected_file_count=3,
+    )
+    review = AsyncMock(
+        return_value=ValidationResult(
+            can_close=True,
+            validation_status="valid",
+            validation_feedback="Criteria satisfied.",
+            reset_reason="llm_valid",
+        )
+    )
+
+    with (
+        patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
+        patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
+        patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
+        patch.object(lifecycle, "resolve_close_commit_shas", return_value=(["abc123"], None)),
+        patch.object(lifecycle, "collect_commit_diff_text", return_value=""),
+        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch.object(
+            lifecycle,
+            "check_linked_committed_bundled_manifest",
+            return_value=stale,
+            create=True,
+        ) as check_manifest,
+    ):
+        evaluation = await _evaluate_close(
+            ctx,
+            task_id=task.id,
+            reason="completed",
+            changes_summary="Updated bundled templates.",
+            commit_sha="abc123",
+            project_path=None,
+            response_detail="diagnostic",
+        )
+
+    assert evaluation.error == "stale_bundled_content_manifest"
+    assert evaluation.message == "Committed bundled content manifest is stale."
+    check_manifest.assert_called_once_with(Path("/repo"), ["abc123"])
     review.assert_not_awaited()
 
 

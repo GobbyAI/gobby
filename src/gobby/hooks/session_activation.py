@@ -13,7 +13,10 @@ from typing import Any
 from pydantic import ValidationError
 
 from gobby.hooks.events import HookEvent
-from gobby.storage.definitions.revisions import register_revision_listener
+from gobby.storage.definitions.revisions import (
+    get_definitions_revision,
+    register_revision_listener,
+)
 from gobby.storage.hub.protocol import AgentStepInstanceMutation
 from gobby.storage.sessions import TERMINAL_SESSION_STATUSES
 
@@ -52,7 +55,7 @@ _AGENT_KEYS = (
 _AGENT_RUN_ROW_KEYS = ("id", "workflow_name", "agent_name", "prompt")
 _ACTIVE_RULE_NAMES_CACHE_TTL_SECONDS = 5.0
 _ACTIVE_RULE_NAMES_CACHE_MAX_ENTRIES = 256
-_ACTIVE_RULE_NAMES_CACHE: dict[tuple[str, str | None], tuple[float, set[str]]] = {}
+_ACTIVE_RULE_NAMES_CACHE: dict[tuple[str, str | None], tuple[float, int, set[str]]] = {}
 _ACTIVE_RULE_NAMES_CACHE_LOCK = threading.Lock()
 
 
@@ -91,7 +94,7 @@ register_revision_listener("rules", clear_active_rule_names_cache)
 def _purge_expired_active_rule_names_cache(now: float) -> None:
     expired = [
         cache_key
-        for cache_key, (cached_at, _) in _ACTIVE_RULE_NAMES_CACHE.items()
+        for cache_key, (cached_at, _, _) in _ACTIVE_RULE_NAMES_CACHE.items()
         if now - cached_at >= _ACTIVE_RULE_NAMES_CACHE_TTL_SECONDS
     ]
     for cache_key in expired:
@@ -355,12 +358,16 @@ def _resolve_active_rule_names(
     from gobby.workflows.selectors import resolve_rules_for_agent
 
     cache_key = (agent_name, project_id)
+    rules_revision = get_definitions_revision("rules")
     now = time.monotonic()
     with _ACTIVE_RULE_NAMES_CACHE_LOCK:
         cached = _ACTIVE_RULE_NAMES_CACHE.get(cache_key)
         if cached is not None:
-            cached_at, active_rules = cached
-            if now - cached_at < _ACTIVE_RULE_NAMES_CACHE_TTL_SECONDS:
+            cached_at, cached_revision, active_rules = cached
+            if (
+                cached_revision == rules_revision
+                and now - cached_at < _ACTIVE_RULE_NAMES_CACHE_TTL_SECONDS
+            ):
                 return set(active_rules)
 
     agent_manager = AgentDefinitionManager(db)
@@ -402,7 +409,7 @@ def _resolve_active_rule_names(
         _purge_expired_active_rule_names_cache(now)
         incoming = 0 if cache_key in _ACTIVE_RULE_NAMES_CACHE else 1
         _evict_active_rule_names_cache_to_limit(incoming=incoming)
-        _ACTIVE_RULE_NAMES_CACHE[cache_key] = (now, set(active_rules))
+        _ACTIVE_RULE_NAMES_CACHE[cache_key] = (now, rules_revision, set(active_rules))
     return active_rules
 
 

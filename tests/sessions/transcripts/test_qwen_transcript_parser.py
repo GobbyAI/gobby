@@ -147,6 +147,7 @@ def test_qwen_failed_function_response_in_ledger() -> None:
         ("call-response", "response-error"),
         ("call-malformed-id", "fallback-call-id"),
         ("call-none", "none-is-success"),
+        ("call-statusless", "statusless-error"),
     ]
     turns = [
         {"type": "user", "message": {"parts": [{"text": "inspect"}]}},
@@ -238,6 +239,48 @@ def test_qwen_failed_function_response_in_ledger() -> None:
                 ]
             },
         },
+        {
+            "type": "tool_result",
+            "toolCallResult": {"callId": "call-2", "status": "cancelled"},
+            "message": {
+                "parts": [
+                    {
+                        "functionResponse": {
+                            "name": "Read",
+                            "response": {"output": "cancelled by user"},
+                        }
+                    }
+                ]
+            },
+        },
+        {
+            "type": "tool_result",
+            "message": {
+                "parts": [
+                    {
+                        "functionResponse": {
+                            "id": "call-3",
+                            "name": "Read",
+                            "response": {"error": "quota exceeded"},
+                        }
+                    }
+                ]
+            },
+        },
+        {
+            "type": "tool_result",
+            "message": {
+                "parts": [
+                    {
+                        "functionResponse": {
+                            "id": "call-statusless",
+                            "name": "Read",
+                            "response": {"error": "quota exceeded"},
+                        }
+                    }
+                ]
+            },
+        },
         {"type": "assistant", "message": {"parts": [{"text": "done"}]}},
     ]
 
@@ -250,4 +293,5 @@ def test_qwen_failed_function_response_in_ledger() -> None:
         "- Read response-error ! failed: response-only failure",
         "- Read fallback-call-id ! failed: fallback id failure",
         "- Read none-is-success",
+        "- Read statusless-error ! failed: quota exceeded",
     ]

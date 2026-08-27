@@ -444,3 +444,59 @@ async def test_release_refuses_the_owners_own_uncommitted_rename(
     assert refused["dirty_paths"] == [RENAMED_PATH]
     owner_files = harness.variables.get_variables(harness.owner.id)["task_edited_files"]
     assert owner_files[harness.task.id] == [SHARED_PATH, RENAMED_PATH]
+
+
+@pytest.mark.asyncio
+async def test_inspect_task_path_ownership_reports_staged_dirty_and_unowned_paths(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    harness = _harness(temp_db, _committed_repo(tmp_path))
+    foreign_path = "src/foreign.py"
+    unowned_path = "src/unowned.py"
+    foreign, other = _foreign_claimant(harness, foreign_path)
+    checkout_root = normalize_task_checkout_root(str(harness.repo))
+    assert checkout_root is not None
+    harness.variables.merge_variables(
+        harness.owner.id,
+        {
+            "task_edited_file_checkouts": {
+                harness.task.id: {checkout_root: [SHARED_PATH]},
+            }
+        },
+    )
+
+    (harness.repo / SHARED_PATH).write_text("owner staged\n", encoding="utf-8")
+    subprocess.run(["git", "add", "--", SHARED_PATH], cwd=harness.repo, check=True)
+    (harness.repo / foreign_path).write_text("foreign dirty\n", encoding="utf-8")
+    (harness.repo / unowned_path).write_text("unowned dirty\n", encoding="utf-8")
+
+    with session_context_for_test(harness.owner.id):
+        inspected = await harness.registry.call("inspect_task_path_ownership", {})
+
+    assert inspected["success"] is True
+    assert inspected["checkout_root"] == checkout_root
+    entries = {entry["path"]: entry for entry in inspected["paths"]}
+    assert entries[SHARED_PATH] == {
+        "path": SHARED_PATH,
+        "dirty": True,
+        "staged": True,
+        "owners": [{"task": f"#{harness.task.seq_num}", "session": f"#{harness.owner.seq_num}"}],
+        "unowned": False,
+    }
+    assert entries[foreign_path] == {
+        "path": foreign_path,
+        "dirty": True,
+        "staged": False,
+        "owners": [{"task": f"#{other.seq_num}", "session": f"#{foreign.seq_num}"}],
+        "unowned": False,
+    }
+    assert entries[unowned_path] == {
+        "path": unowned_path,
+        "dirty": True,
+        "staged": False,
+        "owners": [],
+        "unowned": True,
+    }
+    assert inspected["unowned_paths"] == [unowned_path]
+    assert "inspect_task_path_ownership" in {item["name"] for item in harness.registry.list_tools()}

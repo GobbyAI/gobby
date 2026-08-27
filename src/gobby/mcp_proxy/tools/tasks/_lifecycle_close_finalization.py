@@ -58,13 +58,25 @@ def children_state(
     return children, state
 
 
+def _attribution_commit_shas(
+    task: Task,
+    prospective_commit_shas: Sequence[str],
+) -> tuple[str, ...]:
+    """Return the stable union used to recover committed path attribution."""
+    return tuple(
+        dict.fromkeys(
+            sha for sha in [*(task.commits or ()), *prospective_commit_shas] if sha.strip()
+        )
+    )
+
+
 def _linked_commit_paths(
     task: Task,
     repo_path: str,
     prospective_commit_shas: Sequence[str] = (),
 ) -> frozenset[str]:
     """Return the paths this task's linked commits changed, or nothing on failure."""
-    commits = list(dict.fromkeys([*(task.commits or ()), *prospective_commit_shas]))
+    commits = _attribution_commit_shas(task, prospective_commit_shas)
     if not commits:
         return frozenset()
     try:

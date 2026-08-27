@@ -20,6 +20,11 @@ REVIEW_LANES = (
     "repository_blast_radius",
     "runtime_invariants",
 )
+_REVIEW_LANE_STATUSES = {
+    "requirements_traceability": "completed",
+    "repository_blast_radius": "delegated-verified",
+    "runtime_invariants": "completed",
+}
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -101,7 +106,7 @@ def validate_review_coverage(
         "lanes": [
             {
                 "lane_id": lane["lane_id"],
-                "status": "completed",
+                "status": _REVIEW_LANE_STATUSES[str(lane["lane_id"])],
                 "candidate_count": len(cast(list[dict[str, object]], lane["candidate_issues"])),
             }
             for lane in lanes
@@ -166,10 +171,15 @@ def validate_coverage_attestation(
                 "coverage attestation lane entry has non-canonical fields",
             )
         lane_id = lane.get("lane_id")
-        if lane_id not in REVIEW_LANES or lane.get("status") != "completed":
+        if lane_id not in REVIEW_LANES:
             raise ReviewEvidenceError(
                 "invalid_coverage_attestation",
-                "coverage attestation lanes must be the three completed canonical lanes",
+                "coverage attestation lanes must use the three canonical lane ids",
+            )
+        if lane.get("status") != _REVIEW_LANE_STATUSES[str(lane_id)]:
+            raise ReviewEvidenceError(
+                "invalid_coverage_attestation",
+                "coverage attestation lanes must use the canonical lane statuses",
             )
         lane_ids.append(str(lane_id))
         candidate_count = lane.get("candidate_count")
@@ -306,10 +316,10 @@ def _validate_lanes(
                 "invalid_lane_results",
                 f"unknown or duplicate review lane: {lane_id}",
             )
-        if lane.get("status") != "completed":
+        if lane.get("status") != _REVIEW_LANE_STATUSES[lane_id]:
             raise ReviewEvidenceError(
                 "invalid_lane_results",
-                f"review lane {lane_id} is incomplete",
+                f"review lane {lane_id} has a non-canonical status",
             )
         checked = _string_list(lane.get("section_ids_checked"), "section_ids_checked")
         if set(checked) != expected_sections or len(checked) != len(expected_sections):

@@ -58,6 +58,8 @@ class MailboxSendResult:
     selector_metadata: dict[str, Any] | None = None
     wake_results: list[dict[str, Any]] = field(default_factory=list)
     failed_broadcasts: list[dict[str, Any]] = field(default_factory=list)
+    error_code: str | None = None
+    error: str | None = None
 
     @property
     def message_ids(self) -> list[str]:
@@ -65,10 +67,10 @@ class MailboxSendResult:
 
     @property
     def success(self) -> bool:
-        return not self.failed_broadcasts
+        return self.error_code is None and not self.failed_broadcasts
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "success": self.success,
             "message_ids": self.message_ids,
             "recipient_session_ids": self.recipient_session_ids,
@@ -79,6 +81,11 @@ class MailboxSendResult:
             "wake_results": self.wake_results,
             "failed_broadcasts": self.failed_broadcasts,
         }
+        if self.error_code is not None:
+            result["error_code"] = self.error_code
+        if self.error is not None:
+            result["error"] = self.error
+        return result
 
 
 @dataclass(frozen=True)
@@ -159,6 +166,8 @@ class MailboxService:
                     target=resolution.target,
                     target_id=resolution.target_id,
                     selector_metadata=resolution.selector_metadata,
+                    error_code="no_recipients",
+                    error="No recipients matched the target selector.",
                 )
         else:
             broadcast_id = None

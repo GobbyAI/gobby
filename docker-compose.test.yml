@@ -13,6 +13,9 @@ services:
       - postgres
       - -c
       - shared_preload_libraries=pg_search,pgaudit
+      # Eight xdist workers can drop 600+ object schemas concurrently.
+      - -c
+      - max_locks_per_transaction=256
     environment:
       POSTGRES_DB: ${GOBBY_POSTGRES_TEST_DB:-gobby_test}
       POSTGRES_USER: ${GOBBY_POSTGRES_TEST_USER:-gobby_test}

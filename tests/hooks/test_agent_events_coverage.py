@@ -324,6 +324,7 @@ class TestHandleBeforeAgent:
                 "gobby.workflows.state_manager.SessionVariableManager.get_variables",
                 return_value={
                     "_agent_type": "backend-developer",
+                    "_persona_name": "qa-reviewer",
                     "_agent_context_injected": False,
                     "_agent_context_rehydrate_pending": True,
                     "is_spawned_agent": True,
@@ -413,13 +414,15 @@ class TestHandleBeforeAgent:
                 "gobby.workflows.state_manager.SessionVariableManager.get_variables",
                 side_effect=[
                     {
-                        "_agent_type": "operator",
+                        "_agent_type": "default",
+                        "_persona_name": "operator",
                         "_agent_context_injected": True,
                         "_agent_identity_reinject": True,
                         "_agent_context_rehydrate_pending": False,
                     },
                     {
-                        "_agent_type": "operator",
+                        "_agent_type": "default",
+                        "_persona_name": "operator",
                         "_agent_context_injected": True,
                         "_agent_identity_reinject": False,
                         "_agent_context_rehydrate_pending": False,
@@ -429,7 +432,10 @@ class TestHandleBeforeAgent:
             patch(
                 "gobby.workflows.state_manager.SessionVariableManager.merge_variables",
             ) as mock_merge,
-            patch("gobby.workflows.agent_resolver.resolve_agent", return_value=agent),
+            patch(
+                "gobby.workflows.agent_resolver.resolve_agent",
+                return_value=agent,
+            ) as mock_resolve,
         ):
             first = handler.handle_before_agent(event)
             second = handler.handle_before_agent(event)
@@ -438,6 +444,11 @@ class TestHandleBeforeAgent:
         assert first.context.count("## Role") == 1
         assert "## Role\nAct as the operator." in first.context
         assert second.context is None
+        mock_resolve.assert_called_once_with(
+            "operator",
+            handler._session_manager.db,
+            project_id="proj-1",
+        )
         assert mock_merge.call_args_list == [
             call("sess-1", {"subagent_count": 0, "is_subagent": False}),
             call(
@@ -1102,7 +1113,7 @@ class TestSubagentEvents:
 
         result = handler.handle_subagent_start(event)
         assert result.decision == "allow"
-        handler._session_manager.db.fetchone.assert_not_called()
+        cast(MagicMock, handler._session_manager.db.fetchone).assert_not_called()
         assert not hasattr(handler, "_pending_subagent_depths")
 
     def test_subagent_start_increments_count_and_derives_is_subagent(self) -> None:

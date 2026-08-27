@@ -10,6 +10,7 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli import cli
+from gobby.storage.cron import SystemRowProtected
 from gobby.storage.cron_models import CronJob, CronRun
 
 pytestmark = pytest.mark.unit
@@ -106,7 +107,7 @@ class TestCronCommandRegistration:
     def test_cron_subcommands_exist(self, runner) -> None:
         result = runner.invoke(cli, ["cron", "--help"])
         assert result.exit_code == 0
-        for cmd in ["list", "add", "run", "toggle", "runs", "remove", "edit"]:
+        for cmd in ["list", "add", "run", "toggle", "park", "wake", "runs", "remove", "edit"]:
             assert cmd in result.output
 
 
@@ -458,6 +459,96 @@ class TestCronToggle:
         result = runner.invoke(cli, ["cron", "toggle", "cj-nonexistent"])
         assert result.exit_code != 0
 
+    def test_toggle_system_job_names_operator_commands(self, runner, mock_storage) -> None:
+        message = (
+            "Cron row cj-abc123 is system-managed; use `gobby cron park <id>` "
+            "or `gobby cron wake <id>`."
+        )
+        mock_storage.toggle_job.side_effect = SystemRowProtected(message)
+
+        result = runner.invoke(cli, ["cron", "toggle", "cj-abc123"])
+
+        assert result.exit_code == 1
+        assert message in result.output
+        assert result.exception is not None
+        assert not isinstance(result.exception, SystemRowProtected)
+
+    def test_toggle_system_job_json_error_is_structured(self, runner, mock_storage) -> None:
+        message = (
+            "Cron row cj-abc123 is system-managed; use `gobby cron park <id>` "
+            "or `gobby cron wake <id>`."
+        )
+        mock_storage.toggle_job.side_effect = SystemRowProtected(message)
+
+        result = runner.invoke(cli, ["cron", "toggle", "cj-abc123", "--json"])
+
+        assert result.exit_code == 1
+        assert json.loads(result.output) == {"success": False, "error": message}
+
+
+class TestCronParkWake:
+    """Tests for system-managed cron scheduling controls."""
+
+    def test_park_system_job(self, runner, mock_storage) -> None:
+        mock_storage.park_system_job.return_value = _make_job(
+            id=JOB_ID,
+            name="gobby:memory-dream",
+            is_system=True,
+            next_run_at=None,
+        )
+        mock_storage.get_job_by_name.side_effect = None
+        mock_storage.get_job_by_name.return_value = _make_job(
+            id=JOB_ID,
+            name="gobby:memory-dream",
+            is_system=True,
+        )
+
+        result = runner.invoke(cli, ["cron", "park", "gobby:memory-dream"])
+
+        assert result.exit_code == 0
+        mock_storage.park_system_job.assert_called_once_with(JOB_ID)
+        assert f"Parked system cron job {JOB_ID} (gobby:memory-dream)" in result.output
+
+    def test_wake_system_job_json(self, runner, mock_storage) -> None:
+        job = _make_job(
+            id=JOB_ID,
+            name="gobby:memory-dream",
+            is_system=True,
+        )
+        mock_storage.wake_system_job.return_value = job
+
+        result = runner.invoke(cli, ["cron", "wake", JOB_ID, "--json"])
+
+        assert result.exit_code == 0
+        mock_storage.wake_system_job.assert_called_once_with(JOB_ID)
+        assert json.loads(result.output)["id"] == JOB_ID
+
+    @pytest.mark.parametrize("command", ["park", "wake"])
+    def test_system_job_command_rejects_non_system_row(
+        self, runner, mock_storage, command: str
+    ) -> None:
+        storage_method = getattr(mock_storage, f"{command}_system_job")
+        storage_method.side_effect = SystemRowProtected(
+            f"Cron row {JOB_ID} is non-system; {command}_system_job is reserved."
+        )
+
+        result = runner.invoke(cli, ["cron", command, JOB_ID])
+
+        assert result.exit_code == 1
+        assert "non-system" in result.output
+        assert result.exception is not None
+        assert not isinstance(result.exception, SystemRowProtected)
+
+    @pytest.mark.parametrize("command", ["park", "wake"])
+    def test_system_job_command_not_found(self, runner, mock_storage, command: str) -> None:
+        storage_method = getattr(mock_storage, f"{command}_system_job")
+        storage_method.return_value = None
+
+        result = runner.invoke(cli, ["cron", command, JOB_ID])
+
+        assert result.exit_code == 1
+        assert f"Job not found: {JOB_ID}" in result.output
+
 
 class TestCronRuns:
     """Tests for 'gobby cron runs'."""
@@ -599,14 +690,14 @@ class TestCronEdit:
         assert call_kwargs.kwargs["cron_expr"] is None
         assert call_kwargs.kwargs["interval_seconds"] == 300
 
-    def test_edit_invalid_schedule(self, runner, mock_storage) -> None:
+    def test_edit_invalid_schedule(self, runner: CliRunner, mock_storage: MagicMock) -> None:
         mock_storage.get_job.return_value = _make_job()
         result = runner.invoke(cli, ["cron", "edit", "cj-abc123", "--schedule", "not a cron"])
         assert result.exit_code != 0
         assert "Invalid cron schedule: not a cron" in result.output
         mock_storage.update_job.assert_not_called()
 
-    def test_edit_enabled(self, runner, mock_storage) -> None:
+    def test_edit_enabled(self, runner: CliRunner, mock_storage: MagicMock) -> None:
         mock_storage.get_job.return_value = _make_job()
         mock_storage.update_job.return_value = _make_job(enabled=False)
         result = runner.invoke(cli, ["cron", "edit", "cj-abc123", "--disabled"])
@@ -614,7 +705,7 @@ class TestCronEdit:
         call_kwargs = mock_storage.update_job.call_args
         assert call_kwargs.kwargs["enabled"] is False
 
-    def test_edit_action_config(self, runner, mock_storage) -> None:
+    def test_edit_action_config(self, runner: CliRunner, mock_storage: MagicMock) -> None:
         mock_storage.get_job.return_value = _make_job()
         new_config = {"command": "ls", "args": ["-la"]}
         mock_storage.update_job.return_value = _make_job(action_config=new_config)
@@ -624,17 +715,17 @@ class TestCronEdit:
         )
         assert result.exit_code == 0
 
-    def test_edit_no_changes(self, runner, mock_storage) -> None:
+    def test_edit_no_changes(self, runner: CliRunner, mock_storage: MagicMock) -> None:
         mock_storage.get_job.return_value = _make_job()
         result = runner.invoke(cli, ["cron", "edit", "cj-abc123"])
         assert result.exit_code != 0
 
-    def test_edit_not_found(self, runner, mock_storage) -> None:
+    def test_edit_not_found(self, runner: CliRunner, mock_storage: MagicMock) -> None:
         mock_storage.get_job.return_value = None
         result = runner.invoke(cli, ["cron", "edit", "cj-nonexistent", "--name", "X"])
         assert result.exit_code != 0
 
-    def test_edit_json_output(self, runner, mock_storage) -> None:
+    def test_edit_json_output(self, runner: CliRunner, mock_storage: MagicMock) -> None:
         mock_storage.get_job.return_value = _make_job()
         mock_storage.update_job.return_value = _make_job(name="Updated")
         result = runner.invoke(cli, ["cron", "edit", "cj-abc123", "--name", "Updated", "--json"])

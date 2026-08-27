@@ -16,6 +16,7 @@ from gobby.gwiki_gateway import (
     GwikiCommandError,
     GwikiGateway,
     GwikiGatewayError,
+    normalize_ai_mode,
     normalize_kind,
     normalize_page_write_mode,
 )
@@ -43,7 +44,6 @@ if TYPE_CHECKING:
 
 GatewayCall = Callable[[GwikiGateway], Awaitable[dict[str, Any]]]
 UPLOAD_CHUNK_SIZE = 64 * 1024
-_AI_VALUES = {"auto", "daemon", "direct", "off"}
 _GRAPH_INCLUDE_VALUES = {"all", "knowledge", "code"}
 
 
@@ -433,6 +433,8 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
         topic: str | None = Query(None),
     ) -> dict[str, Any]:
         payload = body or {}
+        ai_value = _optional_string(payload.get("ai"))
+        ai = _normalize_ai(ai_value) if ai_value is not None else None
         return await _write_call(
             server,
             request,
@@ -440,7 +442,7 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
             topic,
             lambda gateway: gateway.upkeep(
                 dry_run=bool(payload.get("dry_run", False)),
-                ai=_optional_string(payload.get("ai")),
+                ai=ai,
                 max_pages=payload.get("max_pages"),
                 time_budget_seconds=payload.get("time_budget_seconds"),
             ),
@@ -622,11 +624,10 @@ def _one_query(q: str | None, query: str | None) -> str:
 
 
 def _normalize_ai(value: str) -> str:
-    ai = value.strip().lower()
-    if ai not in _AI_VALUES:
-        allowed = ", ".join(sorted(_AI_VALUES))
-        raise HTTPException(status_code=400, detail=f"ai must be one of {allowed}")
-    return ai
+    try:
+        return normalize_ai_mode(value) or "auto"
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _normalize_include(value: str) -> str:

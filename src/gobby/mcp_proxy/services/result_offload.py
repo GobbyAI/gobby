@@ -34,12 +34,23 @@ _MANDATORY_EXEMPT_TOOLS = (
     "gobby-results/*",
 )
 _MAX_STRUCTURE_KEYS = 20
+_MAX_SCALAR_FIELDS = 16
+_MAX_SCALAR_STRING_CHARS = 256
+_SCALAR_FIELD_PRIORITY = (
+    "success",
+    "closed",
+    "can_close",
+    "task_id",
+    "status",
+    "error_code",
+)
 
 
 class _SerializedResult(NamedTuple):
     text: str
     content_kind: Literal["json", "text"]
     structure: dict[str, Any]
+    scalar_fields: dict[str, str | int | float | bool | None]
 
 
 class ToolResultOffloader:
@@ -278,6 +289,7 @@ class ToolResultOffloader:
             envelope["matches"] = []
 
         limit = self._config.max_envelope_chars - _WRAPPER_MUTATION_RESERVE
+        _fit_scalar_fields(envelope, serialized.scalar_fields, limit)
         envelope["structure"] = _fit_structure(envelope, serialized.structure, limit)
         envelope["preview"] = _fit_text_field(
             envelope,
@@ -308,6 +320,7 @@ class ToolResultOffloader:
             }
             if result_id is not None:
                 degraded["result_id"] = result_id
+            _fit_scalar_fields(degraded, serialized.scalar_fields, limit)
             return degraded
         return envelope
 
@@ -352,11 +365,39 @@ def _serialize_success_result(result: object) -> _SerializedResult:
             )
 
     if isinstance(payload, str):
-        return _SerializedResult(payload, "text", {"type": "text"})
+        return _SerializedResult(payload, "text", {"type": "text"}, {})
 
     json_payload = dict(payload) if isinstance(payload, Mapping) else payload
     text = json.dumps(json_payload, indent=2, default=str)
-    return _SerializedResult(text, "json", _summarize_structure(json_payload))
+    return _SerializedResult(
+        text,
+        "json",
+        _summarize_structure(json_payload),
+        _summarize_scalar_fields(json_payload),
+    )
+
+
+def _summarize_scalar_fields(
+    payload: object,
+) -> dict[str, str | int | float | bool | None]:
+    """Retain bounded outcome fields needed after an oversized result is offloaded."""
+    if not isinstance(payload, Mapping):
+        return {}
+
+    ordered_fields = (
+        *(field for field in _SCALAR_FIELD_PRIORITY if field in payload),
+        *(key for key in payload if key not in _SCALAR_FIELD_PRIORITY),
+    )
+    summary: dict[str, str | int | float | bool | None] = {}
+    for field in ordered_fields:
+        if len(summary) >= _MAX_SCALAR_FIELDS or not isinstance(field, str) or field in summary:
+            continue
+        value = payload[field]
+        if value is None or isinstance(value, bool | int | float):
+            summary[field] = value
+        elif isinstance(value, str) and len(value) <= _MAX_SCALAR_STRING_CHARS:
+            summary[field] = value
+    return summary
 
 
 def _summarize_structure(payload: object) -> dict[str, Any]:
@@ -420,6 +461,19 @@ def _fits(envelope: dict[str, Any], key: str, value: object, limit: int) -> bool
     candidate = dict(envelope)
     candidate[key] = value
     return _serialized_size(candidate) <= limit
+
+
+def _fit_scalar_fields(
+    envelope: dict[str, Any],
+    scalar_fields: Mapping[str, str | int | float | bool | None],
+    limit: int,
+) -> None:
+    """Copy scalar result fields that fit without replacing envelope metadata."""
+    for key, value in scalar_fields.items():
+        if key in envelope:
+            continue
+        if _fits(envelope, key, value, limit):
+            envelope[key] = value
 
 
 def _fits_match_content(

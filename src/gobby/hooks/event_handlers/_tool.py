@@ -16,11 +16,20 @@ from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.tool_error_tracker import is_wrapper_echo_event, track_tool_outcome
 from gobby.skills.formatting import format_skill_fetch_context
 from gobby.utils.git import is_path_gitignored
+from gobby.workflows.git_utils import get_dirty_files_categorized
 from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.task_claim_state import (
+    active_task_id_for_edit,
+    task_edited_file_set_for_checkout,
+)
 
 logger = logging.getLogger(__name__)
 
 EDIT_TOOLS = CANONICAL_WRITE_TOOL_NAMES
+
+_GENERATED_ARTIFACT_SOURCES = {
+    "src/gobby/install/bundled_content_manifest.json": ("src/gobby/install/shared/",),
+}
 
 
 class SkillResolutionError(RuntimeError):
@@ -216,10 +225,66 @@ class ToolEventHandlerMixin(EventHandlersBase):
                     # Don't fail the event if tracking fails
                     self.logger.warning("Failed to process file edit: %s", e, exc_info=True)
 
+            if (
+                not is_failure
+                and self._session_manager
+                and input_data.get("canonical_tool_kind") in {"write", "execute"}
+            ):
+                try:
+                    self._record_dirty_generated_artifacts(event, session_id)
+                except Exception as e:
+                    self.logger.warning(
+                        "Failed to attribute generated artifacts: %s",
+                        e,
+                        exc_info=True,
+                    )
+
         else:
             self.logger.debug("AFTER_TOOL [%s]: %s", status, tool_name)
 
         return HookResponse(decision="allow")
+
+    def _record_dirty_generated_artifacts(self, event: HookEvent, session_id: str) -> None:
+        """Attribute known dirty generated files to the task owning their sources."""
+        repo_edit = self._resolve_repo_edit_paths(
+            ".",
+            event.cwd,
+            project_id=event.project_id,
+        )
+        db = getattr(self._session_manager, "db", None)
+        if repo_edit is None or db is None:
+            return
+        repo_root, _relative_path = repo_edit
+        checkout_root = os.fspath(repo_root)
+        variable_manager = SessionVariableManager(db)
+        variables = variable_manager.get_variables(session_id)
+        task_id = active_task_id_for_edit(variables)
+        if task_id is None:
+            return
+        attributed = task_edited_file_set_for_checkout(
+            variables,
+            task_id,
+            checkout_root,
+        )
+        if not attributed:
+            return
+        dirty = get_dirty_files_categorized(checkout_root).all
+        generated = [
+            artifact
+            for artifact, source_prefixes in _GENERATED_ARTIFACT_SOURCES.items()
+            if artifact in dirty
+            and any(
+                path.startswith(source_prefix)
+                for source_prefix in source_prefixes
+                for path in attributed
+            )
+        ]
+        if generated:
+            variable_manager.record_edited_files(
+                session_id,
+                generated,
+                checkout_root=checkout_root,
+            )
 
     def _record_successful_file_mutation(
         self,
@@ -250,7 +315,11 @@ class ToolEventHandlerMixin(EventHandlersBase):
         committable_paths: list[str] = []
         paths_by_checkout: dict[str, list[str]] = {}
         for file_path in file_paths:
-            repo_edit = self._resolve_repo_edit_paths(file_path, event.cwd)
+            repo_edit = self._resolve_repo_edit_paths(
+                file_path,
+                event.cwd,
+                project_id=event.project_id,
+            )
             if repo_edit is None:
                 continue
             repo_root, repo_relative_path = repo_edit
@@ -345,7 +414,13 @@ class ToolEventHandlerMixin(EventHandlersBase):
         except Exception as e:
             self.logger.warning("Failed to record autonomous tool progress: %s", e)
 
-    def _resolve_repo_edit_paths(self, file_path: str, cwd: str | None) -> tuple[Path, str] | None:
+    def _resolve_repo_edit_paths(
+        self,
+        file_path: str,
+        cwd: str | None,
+        *,
+        project_id: str | None = None,
+    ) -> tuple[Path, str] | None:
         """Return ``(repo_root, repo_relative_path)`` for an edited file."""
         target_path = Path(os.path.expanduser(file_path))
         cwd_path = Path(cwd).resolve(strict=False) if cwd else None
@@ -358,7 +433,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
         else:
             return None
 
-        from gobby.utils.project_context import find_project_root
+        from gobby.utils.project_context import find_project_root, get_project_context
 
         # Without a project root or cwd there is no repo to attribute the edit
         # to — fabricating one from the file's parent would attribute scratchpad
@@ -367,6 +442,17 @@ class ToolEventHandlerMixin(EventHandlersBase):
         if repo_root is None:
             return None
         repo_root = repo_root.resolve(strict=False)
+        if target_path.is_absolute() and not resolved_target.is_relative_to(repo_root):
+            target_root = find_project_root(resolved_target.parent)
+            target_context = get_project_context(target_root) if target_root is not None else None
+            if (
+                project_id is None
+                or target_root is None
+                or target_context is None
+                or target_context.get("id") != project_id
+            ):
+                return None
+            repo_root = target_root.resolve(strict=False)
         if not resolved_target.is_relative_to(repo_root):
             return None
 

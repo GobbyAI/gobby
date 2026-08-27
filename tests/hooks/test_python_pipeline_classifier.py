@@ -1,5 +1,6 @@
-"""Tests for read-only inline Python pipeline classification."""
+"""Tests for inline Python pipeline classification."""
 
+import shlex
 from typing import Any
 
 import pytest
@@ -153,6 +154,47 @@ for word, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[
 print(len(counts), 'distinct words', file=sys.stderr)
 """
 
+_XLSX_WORKBOOK_DIAGNOSTIC = """
+from pathlib import Path
+import zipfile
+import xml.etree.ElementTree as ET
+
+base = Path('/tmp/workbook-extract')
+namespace = {'m': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+for path in sorted(base.glob('*/*.xlsx')):
+    with zipfile.ZipFile(path) as archive:
+        root = ET.fromstring(archive.read('xl/workbook.xml'))
+        sheet = root.find('.//m:sheet', namespace)
+        print(path.relative_to(base), sheet.get('name'), sheet.text)
+"""
+
+_AWS_MCP_DIAGNOSTIC = """
+import asyncio
+from gobby.mcp_proxy.manager import MCPClientManager
+from gobby.mcp_proxy.models import MCPServerConfig
+
+
+async def main():
+    config = MCPServerConfig(
+        name="aws-openapi-smoke",
+        project_id="00000000-0000-0000-0000-000000000001",
+        transport="stdio",
+        command="uvx",
+        args=["awslabs.openapi-mcp-server@1.1.5"],
+    )
+    manager = MCPClientManager([config])
+    try:
+        await manager.list_tools("aws-openapi-smoke")
+        session = await manager.get_client_session("aws-openapi-smoke")
+        await session.list_prompts()
+        await session.list_resources()
+    finally:
+        await manager.disconnect_all()
+
+
+asyncio.run(main())
+"""
+
 
 @pytest.mark.parametrize(
     "script",
@@ -164,6 +206,7 @@ print(len(counts), 'distinct words', file=sys.stderr)
         "import sys; print('progress', file=sys.stderr)",
         "from datetime import datetime; print(datetime.now())",
         "import json, sys; payload = json.load(sys.stdin); print(payload.get('name'))",
+        _XLSX_WORKBOOK_DIAGNOSTIC,
     ],
 )
 def test_python_pipeline_accepts_pure_stdlib_analysis_scripts(script: str) -> None:
@@ -196,10 +239,25 @@ def test_python_pipeline_accepts_pure_stdlib_analysis_scripts(script: str) -> No
         "from re import *",
         "import sys; sys.stderr = None",
         "import json; json.dump({}, open('x', 'w'))",
+        "import zipfile; zipfile.ZipFile('out.xlsx', 'w')",
+        "import zipfile; zipfile.ZipFile('out.xlsx', mode='a')",
+        "from pathlib import Path; Path('out.txt').write_text('payload')",
+        "writer = open; writer('out.txt', 'w')",
+        ("import xml.etree.ElementTree as ET\nET = open\nET('out.xml', 'w')"),
     ],
 )
 def test_python_pipeline_rejects_mutation_and_reflection_escapes(script: str) -> None:
     assert not _classify_python_pipeline(script)
+
+
+def test_workbook_diagnostic_heredoc_is_read_only() -> None:
+    command = f"python3 - <<'PYEOF'\n{_XLSX_WORKBOOK_DIAGNOSTIC}\nPYEOF"
+    data: dict[str, Any] = {"tool_name": "Bash", "tool_input": {"command": command}}
+
+    normalize_tool_fields(data)
+
+    assert data["canonical_tool_kind"] == "execute"
+    assert not data.get("canonical_repo_mutation")
 
 
 def test_python_pipeline_normalization_keeps_uv_run_analysis_script_read_only() -> None:
@@ -217,6 +275,46 @@ def test_python_pipeline_normalization_keeps_uv_run_analysis_script_read_only() 
 
     assert data["canonical_tool_kind"] == "execute"
     assert "canonical_repo_mutation" not in data
+
+
+def test_python_pipeline_normalization_marks_aws_mcp_diagnostic_indeterminate() -> None:
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {"command": f"uv run python -c {shlex.quote(_AWS_MCP_DIAGNOSTIC)}"},
+    }
+
+    normalize_tool_fields(data)
+
+    assert data["canonical_tool_kind"] == "execute"
+    assert data["canonical_tool_confidence"] == "low"
+    assert "canonical_repo_mutation" not in data
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "open('notes.md', 'w').write('changed')",
+        "from pathlib import Path; Path('notes.md').write_text('changed')",
+        "from pathlib import Path; Path('notes.md').replace('renamed.md')",
+        "from pathlib import Path; path = Path('notes.md'); path.replace('renamed.md')",
+        "import os; os.remove('notes.md')",
+        "import subprocess; subprocess.run(['rm', 'notes.md'])",
+        "import sys; sys.modules[\"builtins\"].eval(\"open('notes.md', 'w')\")",
+    ],
+)
+def test_python_pipeline_normalization_keeps_proven_mutations_as_writes(
+    script: str,
+) -> None:
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {"command": f"uv run python -c {shlex.quote(script)}"},
+    }
+
+    normalize_tool_fields(data)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_tool_confidence"] == "high"
+    assert data["canonical_repo_mutation"] is True
 
 
 def test_python_pipeline_normalization_keeps_uv_run_mutation_script_write() -> None:

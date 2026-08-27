@@ -398,6 +398,9 @@ async def test_rejected_daemon_submission_closes_coroutine_and_releases_waiter(
     done = threading.Event()
     digest = AsyncMock(return_value={"turn_num": 1})
     summarize = AsyncMock(return_value={"success": True})
+    # Flush coroutines leaked by earlier tests so the recorder below only sees
+    # warnings raised by this dispatch.
+    gc.collect()
 
     with (
         warnings.catch_warnings(record=True) as caught,

@@ -24,6 +24,7 @@ import logging
 import os
 import shutil
 import subprocess  # nosec B404
+import sys
 import tempfile
 import zipfile
 from importlib import util as importlib_util
@@ -208,7 +209,16 @@ def _load_manifest_module() -> ModuleType:
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load bundled content manifest helper: {_MANIFEST_MODULE}")
     module = importlib_util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    previous_module = sys.modules.get(spec.name)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        if previous_module is None:
+            sys.modules.pop(spec.name, None)
+        else:
+            sys.modules[spec.name] = previous_module
+        raise
     return module
 
 

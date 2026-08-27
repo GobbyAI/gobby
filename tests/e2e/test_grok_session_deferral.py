@@ -9,10 +9,13 @@ from typing import Any
 
 import pytest
 
+from gobby.agents.session import ChildSessionConfig, ChildSessionManager
 from gobby.cli.installers.shared import sync_bundled_content_to_db
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import get_machine_id
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.e2e.conftest import CLIEventSimulator, DaemonInstance
 
@@ -81,6 +84,126 @@ def _write_retained_envelope(
     path.write_text(json.dumps(envelope), encoding="utf-8")
 
 
+def test_spawned_grok_shell_briefing_and_p2p_acknowledgment(
+    cli_events: CLIEventSimulator,
+    daemon_instance: DaemonInstance,
+    postgres_db: HubDatabase,
+) -> None:
+    sessions = SessionManager(postgres_db)
+    machine_id = get_machine_id()
+    assert machine_id is not None
+    parent = sessions.register(
+        external_id=f"grok-parent-{uuid.uuid4()}",
+        machine_id=machine_id,
+        source="codex",
+        project_id=PROJECT_ID,
+    )
+    child_sessions = ChildSessionManager(sessions, max_agent_depth=5)
+    spawned_grok = child_sessions.create_child_session(
+        ChildSessionConfig(
+            parent_session_id=parent.id,
+            project_id=PROJECT_ID,
+            machine_id=machine_id,
+            source="grok",
+            sandbox_enabled=True,
+        )
+    )
+    run_manager = LocalAgentRunManager(postgres_db)
+    spawned_run = run_manager.create(
+        parent_session_id=parent.id,
+        child_session_id=spawned_grok.id,
+        claimed_session_id=spawned_grok.id,
+        provider="grok",
+        prompt="Exercise spawned Grok pending-context delivery",
+        run_id=str(uuid.uuid4()),
+    )
+    child_sessions.update_terminal_pickup_metadata(
+        spawned_grok.id,
+        agent_run_id=spawned_run.id,
+    )
+    external_id = f"grok-spawned-{uuid.uuid4()}"
+    project_dir = str(daemon_instance.project_dir)
+    terminal_context = {
+        "gobby_session_id": spawned_grok.id,
+        "gobby_agent_run_id": spawned_run.id,
+        "gobby_parent_session_id": parent.id,
+        "gobby_project_id": PROJECT_ID,
+    }
+
+    started = cli_events.session_start(
+        external_id,
+        machine_id=machine_id,
+        cli_source="grok",
+        project_id=PROJECT_ID,
+        cwd=project_dir,
+        terminal_context=terminal_context,
+    )
+
+    assert started["continue"] is True
+    assert started["decision"] == "allow"
+    bound = sessions.find_by_external_id(external_id, PROJECT_ID, "grok")
+    assert bound is not None
+    assert bound.id == spawned_grok.id
+    refreshed_run = run_manager.get(spawned_run.id)
+    assert refreshed_run is not None
+    assert refreshed_run.status == "running"
+    cli_events.user_prompt_submit(
+        external_id,
+        prompt="run the probe",
+        source="grok",
+        project_id=PROJECT_ID,
+        cwd=project_dir,
+    )
+    variable_manager = SessionVariableManager(postgres_db)
+    briefing = _component_text(
+        variable_manager.get_variables(spawned_grok.id)["grok_pending_briefing"]
+    )
+    assert "Gobby Session ID:" in briefing
+    message_manager = InterSessionMessageManager(postgres_db)
+    pending_message = message_manager.create_message(
+        parent.id,
+        spawned_grok.id,
+        "SPAWNED-GROK-P2P",
+    )
+    command = {"command": "git status --short | head -3"}
+    first_envelope = _envelope_id("spawned-first-shell")
+
+    first = cli_events.grok_pre_tool_use(
+        external_id,
+        "run_terminal_command",
+        first_envelope,
+        command,
+        project_id=PROJECT_ID,
+        cwd=project_dir,
+    )
+
+    assert first["decision"] == "deny"
+    assert "Gobby Session ID:" in first["reason"]
+    assert pending_message.content in first["reason"]
+    before_ack = variable_manager.get_variables(spawned_grok.id)
+    assert before_ack["grok_pending_delivery"]["envelope_id"] == first_envelope
+    stored_message = message_manager.get_message(pending_message.id)
+    assert stored_message is not None
+    assert stored_message.delivered_at is None
+
+    retry = cli_events.grok_pre_tool_use(
+        external_id,
+        "run_terminal_command",
+        _envelope_id("spawned-shell-retry"),
+        command,
+        project_id=PROJECT_ID,
+        cwd=project_dir,
+    )
+
+    assert retry == {"continue": True}
+    after_ack = variable_manager.get_variables(spawned_grok.id)
+    assert after_ack["grok_pending_briefing"] == []
+    assert "grok_pending_delivery" not in after_ack
+    delivered_message = message_manager.get_message(pending_message.id)
+    assert delivered_message is not None
+    assert delivered_message.delivered_at is not None
+
+
 def test_grok_session_deferral_contract(
     cli_events: CLIEventSimulator,
     daemon_instance: DaemonInstance,
@@ -90,7 +213,6 @@ def test_grok_session_deferral_contract(
     project_dir = str(daemon_instance.project_dir)
     claude_external_id = f"claude-deferral-{uuid.uuid4()}"
     grok_external_id = f"grok-deferral-{uuid.uuid4()}"
-
     for external_id, source in (
         (grok_external_id, "grok"),
         (claude_external_id, "claude"),

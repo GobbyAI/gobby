@@ -4,7 +4,7 @@ CLI commands for managing cron jobs.
 
 import json
 from datetime import datetime
-from typing import Any, Literal, NamedTuple, cast
+from typing import Any, Literal, NamedTuple, NoReturn, cast
 from uuid import UUID
 
 import click
@@ -15,7 +15,7 @@ from gobby.cli._build_daemon import _daemon_error_detail, _daemon_error_message
 from gobby.cli.runtime import require_cli_database
 from gobby.cli.utils import resolve_project_ref
 from gobby.cli.utils_config import get_daemon_client
-from gobby.storage.cron import CronJobStorage
+from gobby.storage.cron import CronJobStorage, SystemRowProtected
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.daemon_client import DaemonClient
 from gobby.utils.datetime import datetime_to_local_iso
@@ -49,6 +49,14 @@ def _resolve_job_id(storage: CronJobStorage, job_ref: str) -> str:
 
 def _get_daemon_client(_ctx: click.Context) -> DaemonClient:
     return get_daemon_client()
+
+
+def _raise_cron_error(message: str, *, json_format: bool) -> NoReturn:
+    """Raise a CLI error while preserving machine-readable output."""
+    if json_format:
+        click.echo(json_dumps({"success": False, "error": message}))
+        raise click.exceptions.Exit(1)
+    raise click.ClickException(message)
 
 
 class ParsedSchedule(NamedTuple):
@@ -229,10 +237,12 @@ def run_job(ctx: click.Context, job_id: str, json_format: bool) -> None:
 def toggle_job(job_id: str, json_format: bool) -> None:
     """Toggle a cron job enabled/disabled."""
     _, storage = get_cron_storage()
-    job = storage.toggle_job(_resolve_job_id(storage, job_id))
+    try:
+        job = storage.toggle_job(_resolve_job_id(storage, job_id))
+    except SystemRowProtected as e:
+        _raise_cron_error(str(e), json_format=json_format)
     if not job:
-        click.echo(f"Job not found: {job_id}", err=True)
-        raise SystemExit(1)
+        _raise_cron_error(f"Job not found: {job_id}", json_format=json_format)
 
     if json_format:
         click.echo(json_dumps(job.to_dict(), indent=2, default=str))
@@ -240,6 +250,46 @@ def toggle_job(job_id: str, json_format: bool) -> None:
 
     state = "enabled" if job.enabled else "disabled"
     click.echo(f"Job {job.id} ({job.name}) is now {state}")
+
+
+@cron.command("park")
+@click.argument("job_id")
+@click.option("--json", "json_format", is_flag=True, help="Output as JSON")
+def park_system_job(job_id: str, json_format: bool) -> None:
+    """Pause scheduling for a system-managed cron job."""
+    _, storage = get_cron_storage()
+    try:
+        job = storage.park_system_job(_resolve_job_id(storage, job_id))
+    except SystemRowProtected as e:
+        _raise_cron_error(str(e), json_format=json_format)
+    if not job:
+        _raise_cron_error(f"Job not found: {job_id}", json_format=json_format)
+
+    if json_format:
+        click.echo(json_dumps(job.to_dict(), indent=2, default=str))
+        return
+
+    click.echo(f"Parked system cron job {job.id} ({job.name})")
+
+
+@cron.command("wake")
+@click.argument("job_id")
+@click.option("--json", "json_format", is_flag=True, help="Output as JSON")
+def wake_system_job(job_id: str, json_format: bool) -> None:
+    """Resume scheduling for a parked system-managed cron job."""
+    _, storage = get_cron_storage()
+    try:
+        job = storage.wake_system_job(_resolve_job_id(storage, job_id))
+    except SystemRowProtected as e:
+        _raise_cron_error(str(e), json_format=json_format)
+    if not job:
+        _raise_cron_error(f"Job not found: {job_id}", json_format=json_format)
+
+    if json_format:
+        click.echo(json_dumps(job.to_dict(), indent=2, default=str))
+        return
+
+    click.echo(f"Woke system cron job {job.id} ({job.name})")
 
 
 @cron.command("runs")

@@ -112,13 +112,15 @@ def add_messaging_tools(
             "to agent_runs.result when sending to parent. Pass target_id for "
             "target='session' (session ref), target='agent' (agent run id), "
             "target='project' (project id/name), and target='build' (build run id, "
-            "build input ref, or root task ref). target='all' forbids target_id. "
+            "build input ref, or root task ref). target='project' fans out to active agent runs. "
+            "target='all' reaches every deliverable session in the project. "
+            "target='all' forbids target_id. "
             "Pass project_id to scope project/build/agent selectors to a specific "
             "project. "
             "from_session defaults to the calling session's id from SessionContext "
             "when omitted. "
             "Optional fields such as priority, message_type, metadata, and include_wakeup "
-            "are keyword-only."
+            "are keyword-only. include_wakeup=true is an explicit urgent terminal interrupt."
         ),
     )
     async def send_message(

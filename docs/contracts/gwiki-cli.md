@@ -5,11 +5,12 @@ The machine-readable contract lives at `crates/gwiki/contract/gwiki.contract.jso
 
 ## Version
 
-`contract_version`: 17
+`contract_version`: 19
 
-Version 17 renames the `gwiki code` freshness bypass to `--allow-stale`.
-The contract covers generation, purge, citation repair, and metadata comparison,
-including AI routing, graph degradation, and JSON output keys.
+Version 19 adds resolved runtime-grant metadata to `status`. AI-backed commands
+use daemon-issued routing by default and expose one override, `--no-ai`, for the
+deterministic structural path. The contract covers generation, purge, citation
+repair, metadata comparison, graph degradation, and JSON output keys.
 
 The direct command remains available for isolated/manual use. Production-vault
 execution and daemon-triggered generation are operationally paused pending the
@@ -92,7 +93,7 @@ sources/citations and unresolved link targets while dropping code edges;
 `code` keeps `code/**` documents plus code edges.
 
 Version 10 adds the `recap` surface: `gwiki recap [--date YYYY-MM-DD]
-[--ai auto|daemon|direct|off]` writes the day's session recap page at
+[--no-ai]` writes the day's session recap page at
 `recaps/YYYY-MM-DD.md`. Days attribute by UTC: each session digest's
 `session_started_at` frontmatter wins, falling back to the manifest record's
 `fetched_at`. Synthesis is one bounded single-shot completion — never an agent
@@ -102,31 +103,23 @@ an error. `--date` defaults to today (UTC).
 
 Version 9 adds the `upkeep` synthesis conductor: `gwiki upkeep [--max-pages N]
 [--min-mentions N] [--max-sources-per-page N] [--dry-run]
-[--ai auto|daemon|direct|off]` drains pending sources into entity concept
+[--no-ai]` drains pending sources into entity concept
 pages. Unresolved wiki-link targets mentioned by at least `--min-mentions`
 digests form clusters; each run synthesizes up to `--max-pages` concept pages
 from at most `--max-sources-per-page` accepted sources apiece, then reconciles
 compile status. `--dry-run` plans the run without writing to the vault.
 
-Version 8 adds a `hint` key to `search` and `ask` payloads, registers the
-`benchmark` surface in the machine-readable contract, and gives `librarian` an
-`--ai auto|daemon|direct|off` routing flag backing its service-probed patch
-suggestions.
+Version 8 adds a `hint` key to `search` payloads, registers the `benchmark`
+surface in the machine-readable contract, and gives `librarian` a `--no-ai`
+switch for deterministic patch suggestions.
 
-Version 5 makes `search` the agent retrieval primitive and rebuilds `ask` as a
-thin bounded-evidence layer over it. `search` results carry bounded
+Version 5 makes `search` the agent retrieval primitive. `search` results carry bounded
 query-token snippets (never full document bodies), provenance (`wiki_page`,
 `source_path`, `result_type`, `sources`, `explanations`), and top-level
-`code_citations` derived from the returned hits only. `ask` retrieves top-k
-hits, assembles a prompt capped at `prompt_token_budget` (~12K estimated
-tokens), runs a single completion through the daemon route or a direct
-OpenAI-compatible endpoint, and reports `evidence`, `prompt_tokens_estimated`,
-and `truncated`/`truncated_components` accounting; the whole-scope graph
-expansion (`related_pages`, `code_edges`, `gaps`, `stale_candidates`,
-`suggested_questions`) is gone. The `research` command is removed — agents
-compose `search` and `read` for retrieval and deposit results through
-`collect`/`ingest-file`; `compile` still compiles accepted research notes and
-can select ingested manifest records with repeatable
+`code_citations` derived from the returned hits only. The `ask` and `research`
+commands are removed — agents compose `search` and `read` for retrieval and
+deposit results through `collect`/`ingest-file`; `compile` still compiles accepted
+research notes and can select ingested manifest records with repeatable
 `--source SOURCE_ID_OR_PATH`.
 
 An additive version 7 update gives `compile` a source-selection surface.
@@ -138,15 +131,14 @@ the article is compiled. On a fresh vault, `compile` may create the research
 checkpoint only when a positional topic or `--topic` supplies the topic seed.
 
 An additive version 7 update gives `compile` an LLM explainer layer over its
-deterministic skeleton. `--ai auto|daemon|direct|off` routes one bounded
-completion (the same ~12K estimated-token budget as `ask`) through the daemon
-text lane or a direct OpenAI-compatible endpoint. Generated prose is grounded
+deterministic skeleton. Default execution routes one bounded completion through
+the daemon text lane; `--no-ai` selects the structural path. Generated prose is grounded
 against the accepted sources before it reaches the vault: `[source: <path>]`
 markers that match an accepted source are rewritten to vault wiki links,
 invented citations are stripped, and prose sections left uncited get a
 fallback citation to the lexically closest source. A failed attempt keeps the
 deterministic skeleton and marks the page frontmatter with
-`degraded`/`degraded_sources` (`model_provider_unavailable`); `--ai off`, an
+`degraded`/`degraded_sources` (`model_provider_unavailable`); `--no-ai`, an
 unresolvable `auto` route, or a compile with no accepted sources stays
 structural by intent with no degradation markers. The compile payload gains an
 `ai` block (`requested_mode`, `route`, `status`, `model`, `error`, citation

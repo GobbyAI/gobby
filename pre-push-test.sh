@@ -85,6 +85,18 @@ uv_run() {
     fi
 }
 
+check_committed_bundled_manifest() {
+    uv_run python -m gobby.install.manifest --repo-root . --treeish HEAD
+}
+
+if [ "${1:-}" = "--bundled-manifest-only" ]; then
+    if check_committed_bundled_manifest; then
+        exit 0
+    else
+        exit $?
+    fi
+fi
+
 # shellcheck disable=SC2329  # Invoked indirectly by the EXIT trap below.
 cleanup() {
     local exit_code=$?
@@ -311,6 +323,21 @@ check_pytest_postgres_skip_guard() {
 }
 
 python3 "$MANIFEST_TOOL" start --manifest "$MANIFEST_PATH" --repo-root .
+
+# Bundled templates and their packaged manifest must describe the same committed
+# tree. The checker reads Git blobs, so unrelated worktree dirt cannot skew it.
+echo ">>> Checking committed bundled-content manifest..."
+BUNDLED_MANIFEST_REPORT="$REPORTS_DIR/bundled-manifest-$TIMESTAMP.txt"
+BUNDLED_MANIFEST_EXIT=0
+if check_committed_bundled_manifest 2>&1 | tee "$BUNDLED_MANIFEST_REPORT"; then
+    echo "✓ Committed bundled-content manifest passed"
+else
+    BUNDLED_MANIFEST_EXIT=$?
+    echo "✗ Committed bundled-content manifest failed"
+    FAILED=1
+fi
+record_command_result "bundled-manifest" "$BUNDLED_MANIFEST_EXIT" "$BUNDLED_MANIFEST_REPORT"
+echo ""
 
 # Ruff - autofix safe changes only (no unsafe fixes)
 echo ">>> Running ruff check + format..."

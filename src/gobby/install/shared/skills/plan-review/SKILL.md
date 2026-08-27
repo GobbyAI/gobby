@@ -1,7 +1,7 @@
 ---
 name: plan-review
 description: Review a gobby plan document for missing requirements, bad sequencing, unhandled edge cases, weak testability, and traceability gaps. Use when asked to review or critique a plan.
-version: "1.4.0"
+version: "1.5.0"
 category: methodology
 internal: true
 triggers: plan review, plan critique, adversarial review, plan audit
@@ -64,13 +64,30 @@ approval re-verifies the reviewed sections against the sealed snapshot.
 ## Plan-Coverage Contract Gate
 
 Mechanical parser rejection happens upstream of the adversary. Plan-authoring
-sessions run `uv run gobby plans validate <plan-file>` before resubmission;
+sessions run project-aware base and expansion validation before resubmission;
 the planner/adversary spawn gate also calls the same internal validator before
 every adversary spawn. The validator calls `parse_plan(..., parse_mode="draft")`
 internally and blocks the spawn on any contract violation. By the time the
 adversary is invoked, the typed grammar has already passed the draft-mode
 contract gate — re-running the parser pre-verdict is structural duplication
 that wastes a spawn round on syntax the planner already cleared.
+
+The coordinator supplies the final clean deterministic sweep report from those
+two commands. Validator residue is repaired by the bounded plan-mechanic loop or
+returned to the planner before evidence preparation. Treat the report as delegated
+mechanical evidence: verify its artifact identity and spot-check its claims; never
+repeat the whole deterministic sweep inside the adversary.
+
+### Measured deterministic-gate trial
+
+Session #11061 trialed this split during rounds 5–10 of the
+`grok-hook-deferred-materialization` review. Both validator modes reported zero
+residue in six consecutive rounds, and zero validator-class findings reached the
+adversary, compared with 3 of 10 blind findings in round 4. The semantic review
+still reached the ten-round cap with 8 blocking semantic findings in round 10.
+This trial validates the mechanical gate as a finding-class filter; it did not
+establish semantic convergence. Adversary token delta was not measured, and the
+mid-tier mechanic was not exercised because every deterministic gate was clean.
 
 The adversary's approval gate validates the derived typed manifest entries
 against the expansion contract before returning them (see Manifest Handoff
@@ -168,6 +185,10 @@ work rows.
 The review's job is to find what the drafter missed — missing requirements,
 bad sequencing, unhandled edge cases, weak testability, traceability gaps —
 not to rubber-stamp the plan.
+
+The adversary mandate is semantic and architectural work. Mechanical validator
+classes belong to the deterministic sweep; surface one only when the supplied
+report is stale, incomplete, or contradicted by a spot-check.
 
 Use a precise, professional tone. No profanity, no personal attacks, no editorial
 filler. Every finding must be concrete and actionable.
@@ -348,10 +369,10 @@ snapshot:
 
 1. `requirements_traceability` — requirements, acceptance coverage,
    dependencies, and manifest parity.
-2. `repository_blast_radius` — resolve exact file-qualified Targets first, then
-   use gcode to sweep callers, consumers, constructors, destructures,
-   implementations, fakes, exhaustive matches, test seams, migration/registry
-   inventories, and source-size constraints.
+2. `repository_blast_radius` — spot-check the deterministic sweep report against
+   exact file-qualified Targets and a bounded sample of gcode callers, consumers,
+   implementations, test seams, registry inventories, and source-size constraints.
+   Mark this lane `delegated-verified` only after its report and sample agree.
 3. `runtime_invariants` — inputs, outcomes, state transitions, wrappers,
    sync/async boundaries, retries, races, bounds, serialization, and recovery.
 
@@ -370,8 +391,9 @@ sequential parent review; the round still completes.
 
 Internal subagents return candidates; the parent adversary is the sole evidence,
 finding, manifest, coverage-attestation, and verdict owner.
-Each completed lane names every deliverable in `section_ids_checked`, supplies
-hashed source citations, and returns candidate issues with stable
+The requirements and runtime lanes return `status: completed`; the repository
+lane returns `status: delegated-verified`. Each lane names every deliverable in
+`section_ids_checked`, supplies hashed source citations, and returns candidate issues with stable
 candidate id, affected section ids, violated invariant, suggested fix,
 adjacent sites checked, confidence, and citations. The parent must:
 
@@ -385,7 +407,8 @@ Call `derive_plan_review_manifest` during every round, including rejection.
 Then call `validate_plan_review_coverage` with the three lane results, all
 candidate dispositions, and the exact shadow-manifest status returned by
 derivation. The returned `coverage_attestation` is mandatory in
-`round_result`; it contains exactly three completed lanes, the source digest,
+`round_result`; it contains two completed lanes plus the delegated-verified
+repository lane, the source digest,
 disposition counts, cross-lane and adjacent-variant completion, and
 shadow-manifest status.
 

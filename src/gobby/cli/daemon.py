@@ -799,13 +799,24 @@ def status(ctx: click.Context) -> None:
                     pass
 
     # Fetch API status data
-    api_data = asyncio.run(fetch_rich_status(http_port, timeout=3.0))
+    status_probe = asyncio.run(fetch_rich_status(http_port, timeout=3.0))
+    api_data = status_probe.api_data
     control_plane_error = None
-    if not api_data:
-        control_plane_error = (
-            f"HTTP control plane unavailable at localhost:{http_port}; "
-            "PID exists but /api/admin/status did not respond"
-        )
+    status_details_error = None
+    if status_probe.status_failure:
+        status_failure = status_probe.status_failure.describe()
+        if status_probe.health_confirmed:
+            status_details_error = (
+                f"temporarily unavailable; {status_failure}; "
+                f"fallback /api/health is healthy; PID {pid}"
+            )
+        else:
+            health_failure = (
+                status_probe.health_failure.describe()
+                if status_probe.health_failure
+                else "endpoint /api/health did not confirm daemon health"
+            )
+            control_plane_error = f"{status_failure}; {health_failure}; PID {pid}"
 
     # Collect dependency/CLI version info
     from gobby.utils.deps import check_config_mismatches, collect_all_deps
@@ -873,6 +884,7 @@ def status(ctx: click.Context) -> None:
         deps_info=deps_info,
         config_issues=config_issues,
         control_plane_error=control_plane_error,
+        status_details_error=status_details_error,
         process_uptime_seconds=uptime_seconds,
     )
     click.echo(message)
