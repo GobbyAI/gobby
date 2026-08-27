@@ -19,5 +19,9 @@ rules:
     effects:
       - type: block
         reason: >-
-          Docker and Compose policy edits are operator-controlled. The operator can disable this
-          rule with toggle_rule('block-docker-policy-edits', enabled=false) or gobby rules toggle.
+          {{ "This write names no resolvable target path, so it fails closed as a content
+          mutation of unknown scope: name the target with a literal path (or use a file
+          tool) and retry." if not event.data.get('canonical_file_paths') else
+          "Docker and Compose policy edits are operator-controlled." }}
+          The operator can disable this rule with
+          toggle_rule('block-docker-policy-edits', enabled=false) or gobby rules toggle.
