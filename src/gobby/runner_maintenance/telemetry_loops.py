@@ -80,6 +80,41 @@ async def unmodeled_observation_cleanup_loop(
             break
 
 
+async def loop_progress_cleanup_loop(
+    db: Any,
+    is_shutdown_requested: Callable[[], bool],
+    retention_days: int = 7,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
+) -> None:
+    """Background loop for pruning expired autonomous progress telemetry."""
+    interval_seconds = 24 * 60 * 60
+
+    from gobby.autonomous.progress_tracker import ProgressTracker
+
+    tracker = ProgressTracker(db)
+
+    while not is_shutdown_requested():
+        try:
+            deleted = await _run_db(
+                run_db,
+                tracker.prune_older_than,
+                retention_days=retention_days,
+            )
+            if deleted > 0:
+                logger.info(
+                    "Periodic loop progress cleanup: removed %s old progress rows",
+                    deleted,
+                )
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error("Error in loop progress cleanup loop: %s", e)
+        try:
+            await asyncio.sleep(interval_seconds)
+        except asyncio.CancelledError:
+            break
+
+
 async def metric_snapshot_loop(
     db: Any,
     is_shutdown_requested: Callable[[], bool],
