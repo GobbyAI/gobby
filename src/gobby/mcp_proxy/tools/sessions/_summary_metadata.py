@@ -5,6 +5,7 @@ import logging
 
 from gobby.sessions.machine_scope import require_local_session_ownership
 from gobby.sessions.summarize import SessionManagerProtocol, SessionSummaryConfigProtocol
+from gobby.sessions.transcripts.base import TranscriptReadError
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 
@@ -14,6 +15,7 @@ _SUMMARY_METADATA_RECOMPUTE_ERRORS = (
     AttributeError,
     KeyError,
     OSError,
+    TranscriptReadError,
     TypeError,
     ValueError,
     json.JSONDecodeError,
@@ -30,20 +32,13 @@ async def compact_summary_metadata_matches(
     """Return whether cached summary metadata matches current compact source context."""
     require_local_session_ownership(session)
 
-    from gobby.sessions.analyzer import TranscriptAnalyzer
-    from gobby.sessions.summarize import (
-        _build_summary_prompt_context,
-        _digest_markdown_for_summary,
-        _source_hash_payload,
-        load_summary_prompt_template,
-    )
+    from gobby.sessions.summarize import build_summary_source_context
     from gobby.sessions.summary_refresh import (
         coerce_digest_turn_count,
         digest_turn_count,
-        source_context_hash,
     )
+    from gobby.sessions.summary_transcripts import _digest_markdown_for_summary
     from gobby.sessions.summary_validity import is_summary_markdown_valid
-    from gobby.sessions.workspace_context import enrich_git_context, resolve_session_workspace
 
     if not is_summary_markdown_valid(getattr(session, "summary_markdown", None)):
         return False
@@ -61,34 +56,14 @@ async def compact_summary_metadata_matches(
         return False
 
     try:
-        transcript_path = getattr(session, "transcript_path", None)
-        cwd = resolve_session_workspace(session, transcript_path)
-        handoff_ctx = TranscriptAnalyzer().extract_handoff_context([])
-        await enrich_git_context(handoff_ctx, cwd)
-        summary_context = await _build_summary_prompt_context(
-            session=session,
-            turns=[],
-            handoff_ctx=handoff_ctx,
+        context = await build_summary_source_context(
+            session,
             db=db,
             session_manager=session_manager,
-            project_path=str(cwd) if cwd is not None else None,
-        )
-        prompt_template = load_summary_prompt_template(
-            path="handoff/session_end",
             session_summary_config=session_summary_config,
-            db=db,
-            session_manager=session_manager,
-        )
-        current_hash = source_context_hash(
-            _source_hash_payload(
-                session=session,
-                digest_markdown=digest_markdown,
-                summary_context=summary_context,
-                prompt_template=prompt_template,
-            )
         )
     except _SUMMARY_METADATA_RECOMPUTE_ERRORS as exc:
         logger.debug("Unable to recompute compact summary metadata: %s", exc, exc_info=True)
         return False
 
-    return current_hash == stored_hash
+    return context is not None and context.source_hash == stored_hash
