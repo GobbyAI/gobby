@@ -307,7 +307,8 @@ jobs:
             --health-retries 15 \
             "${GOBBY_POSTGRES_TEST_IMAGE}" \
             postgres \
-              -c shared_preload_libraries=pg_search,pgaudit
+              -c shared_preload_libraries=pg_search,pgaudit \
+              -c max_locks_per_transaction=256
 
           for _ in $(seq 1 30); do
             status="$(
@@ -469,7 +470,8 @@ jobs:
             --health-retries 15 \
             "${GOBBY_POSTGRES_TEST_IMAGE}" \
             postgres \
-              -c shared_preload_libraries=pg_search,pgaudit
+              -c shared_preload_libraries=pg_search,pgaudit \
+              -c max_locks_per_transaction=256
 
           for _ in $(seq 1 30); do
             status="$(
