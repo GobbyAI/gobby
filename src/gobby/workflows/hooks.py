@@ -295,6 +295,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
         event: HookEvent,
         session_id: str,
         variables: dict[str, Any],
+        project_path: str | None = None,
     ) -> set[str]:
         """Run built-in observer functions to populate tracking variables.
 
@@ -311,6 +312,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
             detect_mcp_call,
             detect_task_claim,
             reconcile_claimed_tasks,
+            release_clean_task_paths_after_commit,
         )
 
         failures: set[str] = set()
@@ -375,7 +377,27 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 project_id=event.project_id,
             )
             run_observer("detect_commit_link", detect_commit_link, event, variables, session_id)
-            run_observer("detect_bash_commit", detect_bash_commit, event, variables, session_id)
+
+            def detect_bash_commit_and_release() -> None:
+                if not detect_bash_commit(event, variables, session_id):
+                    return
+                if self._session_var_manager is None or project_path is None:
+                    return
+                released = release_clean_task_paths_after_commit(
+                    event,
+                    variables,
+                    session_id,
+                    variable_manager=self._session_var_manager,
+                    project_path=project_path,
+                )
+                if released:
+                    logger.debug(
+                        "Session %s released clean task paths after commit: %s",
+                        session_id,
+                        released,
+                    )
+
+            run_observer("detect_bash_commit", detect_bash_commit_and_release)
             run_observer("detect_mcp_call", detect_mcp_call, event, variables, session_id)
             run_observer("capture_found_work_handoff", capture_found_work_handoff, event, variables)
             run_observer(
@@ -676,6 +698,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     event,
                     session_id,
                     variables,
+                    project_path,
                 )
                 if (
                     event.event_type == HookEventType.STOP

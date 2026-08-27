@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import subprocess
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -355,6 +356,78 @@ class TestToolHandlerEdgeCases:
         record_files.assert_not_called()
         mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
 
+    def test_execute_tracks_dirty_bundled_manifest_for_owned_shared_edit(
+        self,
+        mock_dependencies: dict,
+        tmp_path: Path,
+    ) -> None:
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+        shared_path = Path("src/gobby/install/shared/skills/example/SKILL.md")
+        manifest_path = Path("src/gobby/install/bundled_content_manifest.json")
+        (tmp_path / shared_path).parent.mkdir(parents=True)
+        (tmp_path / shared_path).write_text("# Example\n", encoding="utf-8")
+        (tmp_path / manifest_path).write_text("{}\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "add", "--", str(shared_path), str(manifest_path)],
+            cwd=tmp_path,
+            check=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.email=tests@gobby.local",
+                "-c",
+                "user.name=Gobby Tests",
+                "commit",
+                "-qm",
+                "seed",
+            ],
+            cwd=tmp_path,
+            check=True,
+        )
+        (tmp_path / manifest_path).write_text('{"updated": true}\n', encoding="utf-8")
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "Bash",
+                "canonical_tool_kind": "execute",
+                "tool_input": {"command": "uv run python regenerate_manifest.py"},
+            },
+            metadata={"_platform_session_id": "sess-123"},
+        )
+        event.cwd = str(tmp_path)
+        task_id = "task-123"
+        checkout_root = str(tmp_path.resolve())
+
+        with (
+            patch("gobby.hooks.event_handlers._tool.track_tool_outcome"),
+            patch(
+                "gobby.hooks.event_handlers._tool.SessionVariableManager.get_variables",
+                return_value={
+                    "claimed_tasks": {task_id: "#123"},
+                    "active_task_id": task_id,
+                    "task_edited_files": {task_id: [str(shared_path)]},
+                    "task_edited_file_checkouts": {
+                        task_id: {checkout_root: [str(shared_path)]},
+                    },
+                },
+            ),
+            patch(
+                "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files",
+                return_value=True,
+            ) as record_files,
+        ):
+            response = handlers.handle_after_tool(event)
+
+        assert response.decision == "allow"
+        record_files.assert_called_once_with(
+            "sess-123",
+            [str(manifest_path)],
+            checkout_root=checkout_root,
+        )
+
     @pytest.mark.parametrize(
         "data",
         [
@@ -580,7 +653,7 @@ class TestToolHandlerEdgeCases:
         mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
 
     def test_after_tool_notifies_code_index_with_project_root_path(
-        self, mock_dependencies: dict, tmp_path: Path
+        self, mock_dependencies: dict[str, Any], tmp_path: Path
     ) -> None:
         """Test code index notification uses project root even when cwd is nested."""
         repo_root = tmp_path / "project"

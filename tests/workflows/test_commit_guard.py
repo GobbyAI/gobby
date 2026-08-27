@@ -636,6 +636,36 @@ async def test_owner_path_release_breaks_commit_and_close_cycle(
 
 
 @pytest.mark.asyncio
+async def test_successful_owner_commit_releases_clean_checkout_attribution(
+    guard_harness: GuardHarness,
+) -> None:
+    (guard_harness.repo / "owned.txt").write_text("committed by owner\n", encoding="utf-8")
+    _git(guard_harness.repo, "add", "--", "owned.txt")
+    output = _git(
+        guard_harness.repo,
+        "commit",
+        "--only",
+        "-m",
+        "owner commit",
+        "--",
+        "owned.txt",
+    )
+    event = guard_harness.event("git commit --only -m 'owner commit' -- owned.txt")
+    event.event_type = HookEventType.AFTER_TOOL
+    event.data["tool_output"] = output
+    event.metadata["is_failure"] = False
+
+    response = await guard_harness.handler._evaluate_rules(event)
+
+    assert response.decision == "allow"
+    variables = SessionVariableManager(guard_harness.db).get_variables(
+        guard_harness.current_session.id
+    )
+    assert guard_harness.current_task.id not in variables.get("task_edited_files", {})
+    assert guard_harness.current_task.id not in variables.get("task_edited_file_checkouts", {})
+
+
+@pytest.mark.asyncio
 async def test_release_refuses_dirty_paths(guard_harness: GuardHarness) -> None:
     dirty_paths = [":(glob)literal.py", "literal[abc]*.py"]
     for path in dirty_paths:

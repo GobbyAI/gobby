@@ -16,11 +16,20 @@ from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.tool_error_tracker import is_wrapper_echo_event, track_tool_outcome
 from gobby.skills.formatting import format_skill_fetch_context
 from gobby.utils.git import is_path_gitignored
+from gobby.workflows.git_utils import get_dirty_files_categorized
 from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.task_claim_state import (
+    active_task_id_for_edit,
+    task_edited_file_set_for_checkout,
+)
 
 logger = logging.getLogger(__name__)
 
 EDIT_TOOLS = CANONICAL_WRITE_TOOL_NAMES
+
+_GENERATED_ARTIFACT_SOURCES = {
+    "src/gobby/install/bundled_content_manifest.json": ("src/gobby/install/shared/",),
+}
 
 
 class SkillResolutionError(RuntimeError):
@@ -216,10 +225,62 @@ class ToolEventHandlerMixin(EventHandlersBase):
                     # Don't fail the event if tracking fails
                     self.logger.warning("Failed to process file edit: %s", e, exc_info=True)
 
+            if (
+                not is_failure
+                and self._session_manager
+                and input_data.get("canonical_tool_kind") in {"write", "execute"}
+            ):
+                try:
+                    self._record_dirty_generated_artifacts(event, session_id)
+                except Exception as e:
+                    self.logger.warning(
+                        "Failed to attribute generated artifacts: %s",
+                        e,
+                        exc_info=True,
+                    )
+
         else:
             self.logger.debug("AFTER_TOOL [%s]: %s", status, tool_name)
 
         return HookResponse(decision="allow")
+
+    def _record_dirty_generated_artifacts(self, event: HookEvent, session_id: str) -> None:
+        """Attribute known dirty generated files to the task owning their sources."""
+        repo_edit = self._resolve_repo_edit_paths(".", event.cwd)
+        db = getattr(self._session_manager, "db", None)
+        if repo_edit is None or db is None:
+            return
+        repo_root, _relative_path = repo_edit
+        checkout_root = os.fspath(repo_root)
+        variable_manager = SessionVariableManager(db)
+        variables = variable_manager.get_variables(session_id)
+        task_id = active_task_id_for_edit(variables)
+        if task_id is None:
+            return
+        attributed = task_edited_file_set_for_checkout(
+            variables,
+            task_id,
+            checkout_root,
+        )
+        if not attributed:
+            return
+        dirty = get_dirty_files_categorized(checkout_root).all
+        generated = [
+            artifact
+            for artifact, source_prefixes in _GENERATED_ARTIFACT_SOURCES.items()
+            if artifact in dirty
+            and any(
+                path.startswith(source_prefix)
+                for source_prefix in source_prefixes
+                for path in attributed
+            )
+        ]
+        if generated:
+            variable_manager.record_edited_files(
+                session_id,
+                generated,
+                checkout_root=checkout_root,
+            )
 
     def _record_successful_file_mutation(
         self,

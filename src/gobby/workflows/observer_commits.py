@@ -6,17 +6,23 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
-from gobby.hooks.normalization import _SHELL_TOOLS
 from gobby.workflows.commit_guard import parse_git_commit_invocations
+from gobby.workflows.git_utils import get_dirty_files_categorized
 from gobby.workflows.observer_utils import (
     _extract_shell_command,
     _extract_shell_output_text,
     _shell_tool_succeeded,
     _successful_close_result,
 )
+from gobby.workflows.task_claim_state import (
+    active_task_id_for_edit,
+    task_edited_file_set,
+    task_edited_file_set_for_checkout,
+)
 
 if TYPE_CHECKING:
     from gobby.hooks.events import HookEvent
+    from gobby.workflows.state_manager import SessionVariableManager
 
 logger = logging.getLogger("gobby.workflows.observers")
 
@@ -79,19 +85,15 @@ def detect_commit_link(event: HookEvent, variables: dict[str, Any], session_id: 
     logger.debug("Session %s: task_has_commits=true (via %s)", session_id, inner_tool)
 
 
-def detect_bash_commit(event: HookEvent, variables: dict[str, Any], session_id: str) -> None:
+def detect_bash_commit(event: HookEvent, variables: dict[str, Any], session_id: str) -> bool:
     """Detect git commit success output from shell tool invocations."""
     if not event.data:
-        return
-
-    tool_name = event.data.get("tool_name", "")
-    if tool_name not in _SHELL_TOOLS:
-        return
+        return False
 
     command = _extract_shell_command(event)
     outcome = _shell_tool_succeeded(event)
     if not _is_git_commit_command(command) or outcome is False:
-        return
+        return False
 
     raw_output = event.data.get("tool_output")
     output = _extract_shell_output_text(raw_output)
@@ -102,13 +104,13 @@ def detect_bash_commit(event: HookEvent, variables: dict[str, Any], session_id: 
                 session_id,
                 type(raw_output).__name__,
             )
-        return
+        return False
 
     if _GIT_COMMIT_RE.search(output):
         variables["task_has_commits"] = True
         variables["_found_work_fix_commit_turn"] = True
         logger.debug("Session %s: task_has_commits=true (Bash git commit output)", session_id)
-        return
+        return True
 
     if outcome is True and _looks_like_commit_success(output):
         variables["task_has_commits"] = True
@@ -117,3 +119,46 @@ def detect_bash_commit(event: HookEvent, variables: dict[str, Any], session_id: 
             "Session %s: task_has_commits=true (Bash git commit command fallback)",
             session_id,
         )
+        return True
+    return False
+
+
+def release_clean_task_paths_after_commit(
+    event: HookEvent,
+    variables: dict[str, Any],
+    session_id: str,
+    *,
+    variable_manager: SessionVariableManager,
+    project_path: str,
+) -> list[str]:
+    """Release active-task paths made clean by a successful owner commit."""
+    task_id = active_task_id_for_edit(variables)
+    if task_id is None:
+        return []
+    attributed = task_edited_file_set_for_checkout(variables, task_id, project_path)
+    if not attributed:
+        attributed = task_edited_file_set(variables, task_id)
+    if not attributed:
+        return []
+
+    dirty_paths = get_dirty_files_categorized(project_path).all
+    clean_paths = sorted(attributed - dirty_paths)
+    if not clean_paths:
+        return []
+    released, _remaining = variable_manager.release_task_edited_files(
+        session_id,
+        task_id,
+        clean_paths,
+        checkout_root=project_path,
+    )
+    if not released:
+        return []
+
+    refreshed = variable_manager.get_variables(session_id)
+    for key in (
+        "task_edited_files",
+        "task_edited_file_times",
+        "task_edited_file_checkouts",
+    ):
+        variables[key] = refreshed.get(key, {})
+    return released
