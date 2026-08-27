@@ -165,6 +165,7 @@ class TestAgentRunnerGetAndListRuns:
         with patch.object(runner._run_storage, "get") as storage_get:
             assert runner.get_run("0fd6274b") is None
             assert runner.get_run("nonexistent") is None
+            assert runner.get_run("") is None
 
         storage_get.assert_not_called()
 

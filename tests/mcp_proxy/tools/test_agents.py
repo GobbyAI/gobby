@@ -2190,6 +2190,7 @@ async def test_get_agent_result_reports_ambiguous_prefix() -> None:
 
     assert result["success"] is False
     assert result["error_code"] == "INVALID_ARGUMENTS"
+    assert "11111111" in result["error"]
     assert result["matches"] == [_PREFIX_RUN_ID, _OTHER_PREFIX_RUN_ID]
     runner.get_run.assert_not_called()
 
