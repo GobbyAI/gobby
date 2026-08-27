@@ -20,7 +20,7 @@ rules:
       # pytest invocation is prose, not a command (#20887). Command
       # substitution inside double quotes stays visible and still blocks.
       mask_quoted: true
-      command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(?:uv\\s+run\\s+|python3?\\s+-m\\s+)?pytest\\b"
+      command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(?:uv\\s+run\\s+|python3?\\s+-m\\s+)?pytest(?=$|[\\s;&|<>()])"
       command_not_pattern: "(?s)(?=.*GOBBY_TEST_PROTECT=1)(?=.*DATABASE_URL=)"
       reason: >-
         Run pytest through the project's guard prefix (verification.custom.guard_tests

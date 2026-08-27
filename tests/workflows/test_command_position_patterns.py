@@ -350,7 +350,11 @@ RULE_CASES = (
     ),
     RuleCase(
         "require-pytest-guard-env",
-        blocked=("uv run pytest tests/tasks/test_validation.py", "python -m pytest tests/"),
+        blocked=(
+            "pytest tests/tasks/test_validation.py",
+            "uv run pytest tests/tasks/test_validation.py",
+            "python -m pytest tests/",
+        ),
         allowed=(
             'DATABASE_URL="${DATABASE_URL:-postgresql://gobby_test:gobby_test@127.0.0.1:60892'
             '/gobby_test}" GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_validation.py',
@@ -526,6 +530,12 @@ HEREDOC_EXECUTING_OPENERS = (
     "cat <<'EOF' | bash",
 )
 
+PYTEST_PYTHON_SOURCE_BODIES = (
+    'pytest.fixture(name="resource")(lambda: 1)',
+    'pytest.mark.parametrize("value", [1])(lambda value: None)',
+    "pytestmark = pytest.mark.unit",
+)
+
 
 @pytest.mark.parametrize(("rule_name", "body"), HEREDOC_RULE_BODIES)
 async def test_heredoc_bodies_select_a_block_only_when_executable(
@@ -554,6 +564,25 @@ async def test_heredoc_bodies_select_a_block_only_when_executable(
         _bash_event(executing[0]), session_id=SESSION_ID, variables=dict(variables)
     )
     assert blocked.decision == "block", f"{rule_name} engine should block: {executing[0]}"
+
+
+@pytest.mark.parametrize("body", PYTEST_PYTHON_SOURCE_BODIES)
+async def test_python_heredoc_pytest_references_are_not_commands(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+    body: str,
+) -> None:
+    _sync_bundled(db)
+    rule = _get_rule(manager, "require-pytest-guard-env")
+    command = f"python <<'PY'\n{body}\nPY"
+
+    assert not _blocks(rule, command)
+
+    db.execute("DELETE FROM rule_definitions WHERE name != 'require-pytest-guard-env'")
+    response = await RuleEngine(db).evaluate(
+        _bash_event(command), session_id=SESSION_ID, variables={}
+    )
+    assert response.decision != "block"
 
 
 def test_commit_message_from_stdin_is_data_for_the_push_rule(
