@@ -557,6 +557,7 @@ def test_extract_last_messages_tool_activity_ledger() -> None:
     )
 
     assert "- search_replace /repo/widget.py" in ledgers
+    assert "- search_replace" in ledgers
     assert "- mcp gobby-tasks:claim_task task_id=#20728" in ledgers
     assert "- Bash uv run pytest -k widget ! failed: exit 1" in ledgers
     assert "run_terminal_command" not in ledgers
