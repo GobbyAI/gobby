@@ -24,7 +24,7 @@ from gobby.agents.sandbox import (
     SandboxResolver,
     compute_sandbox_paths,
 )
-from gobby.agents.sandbox_policy import _nearest_package_root
+from gobby.agents.sandbox_policy import _nearest_package_root, previous_run_write_paths
 from gobby.agents.srt_runtime import (
     SandboxLaunch,
     SrtInstallation,
@@ -39,6 +39,18 @@ from gobby.utils.dependency_requirements import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+def test_previous_run_write_paths_keeps_shared_hook_inbox_writable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    gobby_home = tmp_path / "gobby-home"
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+
+    superseded = previous_run_write_paths({})
+
+    assert str((gobby_home / "hooks" / "inbox").resolve()) not in superseded
 
 
 def test_render_settings_uses_srt_credential_schema() -> None:
@@ -277,10 +289,10 @@ def test_network_capabilities_are_preserved_without_a_provider(tmp_path: Path) -
 
 @pytest.mark.parametrize(
     ("provider", "temp_env_name"),
-    [("claude", "CLAUDE_CODE_TMPDIR"), ("codex", "TMPDIR")],
+    [("claude", "CLAUDE_CODE_TMPDIR"), ("codex", "TMPDIR"), ("grok", "TMPDIR")],
 )
 @pytest.mark.asyncio
-async def test_prepare_srt_launch_writes_private_policy_outside_workspace(
+async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_writable(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     provider: str,
@@ -322,6 +334,8 @@ async def test_prepare_srt_launch_writes_private_policy_outside_workspace(
     provider_shim = shim_dir / provider
     provider_shim.symlink_to(provider_target)
     monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    hook_inbox = gobby_home / "hooks" / "inbox"
+    hook_inbox.mkdir(parents=True)
 
     def verified_installation(**_context: str | None) -> SrtInstallation:
         return SrtInstallation(runtime, node, runner, package_json)
@@ -355,7 +369,12 @@ async def test_prepare_srt_launch_writes_private_policy_outside_workspace(
     monkeypatch.setattr(shutil, "which", fake_which)
 
     launch = await prepare_sandbox_launch(
-        config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+        config=SandboxConfig(
+            enabled=True,
+            backend="srt",
+            allow_network=False,
+            extra_write_paths=[str(hook_inbox)],
+        ),
         provider=provider,
         workspace_path=str(workspace),
         run_id="run/unsafe id",
@@ -399,6 +418,8 @@ async def test_prepare_srt_launch_writes_private_policy_outside_workspace(
     assert preflight_env == {"PATH": str(shim_dir), **launch.provider_env}
     policy = json.loads(policy_path.read_text(encoding="utf-8"))
     allowed_reads = policy["filesystem"]["allowRead"]
+    allowed_writes = policy["filesystem"]["allowWrite"]
+    assert str(hook_inbox.resolve()) in allowed_writes
     assert str(provider_target.resolve()) in allowed_reads
     assert str(provider_root.resolve()) in allowed_reads
     assert str(untrusted_mcp_root.resolve()) not in allowed_reads

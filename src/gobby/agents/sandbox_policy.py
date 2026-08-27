@@ -593,8 +593,9 @@ def prepare_sandbox_run_paths(run_id: str, env: Mapping[str, str]) -> SandboxRun
 
 
 def previous_run_write_paths(env: Mapping[str, str]) -> set[str]:
-    """Return superseded shared cache/spool grants replaced by a run root."""
-    paths = {canonical_path(value) for name in _RUN_CACHE_ENV_VARS if (value := env.get(name))}
-    paths.add(canonical_path(get_gobby_home() / "hooks" / "inbox"))
-    paths.add(canonical_path(Path.home() / ".gobby" / "hooks" / "inbox"))
-    return paths
+    """Return superseded shared cache grants replaced by a run root.
+
+    The hook inbox remains shared: ghook's durable transport always resolves
+    ``$GOBBY_HOME/hooks/inbox`` and must be able to enqueue and unlink there.
+    """
+    return {canonical_path(value) for name in _RUN_CACHE_ENV_VARS if (value := env.get(name))}
