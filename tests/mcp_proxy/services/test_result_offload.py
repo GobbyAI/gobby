@@ -374,6 +374,33 @@ async def test_oversized_result_is_stored_and_returns_configured_envelope() -> N
     assert "matches" not in actual
 
 
+@pytest.mark.asyncio
+async def test_oversized_result_preserves_bounded_scalar_outcome_fields() -> None:
+    harness = _harness()
+
+    actual = await harness.offloader.maybe_offload(
+        server_name="gobby-tasks",
+        tool_name="close_task",
+        result={
+            "success": True,
+            "closed": True,
+            "task_id": "task-42",
+            "diagnostics": "x" * 4_000,
+        },
+        session_id="session",
+        intent=None,
+    )
+
+    assert actual["offloaded"] is True
+    assert actual["success"] is True
+    assert actual["closed"] is True
+    assert actual["task_id"] == "task-42"
+    assert "diagnostics" not in actual
+    assert _serialized_size(actual) <= (
+        harness.config.max_envelope_chars - _WRAPPER_MUTATION_RESERVE
+    )
+
+
 async def test_explicit_project_id_keeps_oversized_result_retrievable() -> None:
     harness = _harness(project_id=None)
 
