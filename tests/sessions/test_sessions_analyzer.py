@@ -8,6 +8,7 @@ from unittest.mock import Mock
 import pytest
 
 from gobby.sessions.analyzer import HandoffContext, TranscriptAnalyzer
+from gobby.sessions.transcripts.base import TranscriptParser
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 
 pytestmark = pytest.mark.unit
@@ -1643,3 +1644,608 @@ def test_qwen_empty_turns() -> None:
     ctx = analyzer.extract_handoff_context([])
     assert ctx.initial_goal == ""
     assert not ctx.active_gobby_task
+
+
+def test_analyzer_turns_from_grok_and_codex_transcripts() -> None:
+    """Provider tool envelopes become analyzer-visible Claude-shaped blocks."""
+    import json
+
+    from gobby.sessions.analyzer_turns import analyzer_turns_from_transcript
+    from gobby.sessions.transcripts.codex import CodexTranscriptParser
+    from gobby.sessions.transcripts.grok import GrokTranscriptParser
+
+    grok_turns = [
+        {
+            "update": {
+                "sessionUpdate": "tool_call",
+                "title": "search_replace",
+                "toolCallId": "grok-edit",
+                "rawInput": {"file_path": "src/grok.py"},
+            }
+        }
+    ]
+    codex_turns = [
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "mcp__gobby__call_tool",
+                "arguments": json.dumps(
+                    {
+                        "server_name": "gobby-tasks",
+                        "tool_name": "claim_task",
+                        "arguments": {"task_id": "#20730"},
+                    }
+                ),
+                "call_id": "codex-task",
+            },
+        }
+    ]
+
+    grok_adapted = analyzer_turns_from_transcript(GrokTranscriptParser(), grok_turns)
+    codex_adapted = analyzer_turns_from_transcript(CodexTranscriptParser(), codex_turns)
+
+    assert isinstance(grok_adapted, list)
+    assert TranscriptAnalyzer().extract_handoff_context(grok_adapted).files_modified == [
+        "src/grok.py"
+    ]
+    codex_context = TranscriptAnalyzer().extract_handoff_context(codex_adapted)
+    assert codex_context.task_progress == [
+        {"id": "#20730", "action": "claim_task", "title": "Task #20730"}
+    ]
+
+
+def test_git_commits_carry_hashes_from_results_and_task_tools() -> None:
+    turns = [
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "commit-result",
+                        "name": "Bash",
+                        "input": {"command": "git commit -m grounded"},
+                    },
+                    {
+                        "type": "tool_use",
+                        "id": "commit-pending",
+                        "name": "Bash",
+                        "input": {"command": "git commit -m pending"},
+                    },
+                ]
+            },
+        },
+        {
+            "type": "user",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "commit-result",
+                        "content": "[main abc1234] grounded",
+                    }
+                ]
+            },
+        },
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "name": "mcp__gobby__call_tool",
+                        "input": {
+                            "server_name": "gobby-tasks",
+                            "tool_name": "close_task",
+                            "arguments": {"task_id": "#1", "commit_sha": "def5678"},
+                        },
+                    },
+                    {
+                        "type": "tool_use",
+                        "name": "mcp__gobby__call_tool",
+                        "input": {
+                            "server_name": "gobby-tasks",
+                            "tool_name": "link_commit",
+                            "arguments": {"task_id": "#2", "commit_sha": "987fedc"},
+                        },
+                    },
+                ]
+            },
+        },
+    ]
+
+    commits = TranscriptAnalyzer().extract_handoff_context(turns).git_commits
+
+    assert {commit["hash"] for commit in commits} == {"", "abc1234", "def5678", "987fedc"}
+    assert next(commit for commit in commits if commit["hash"] == "abc1234")["message"] == (
+        "grounded"
+    )
+
+
+def test_adapter_consumes_every_block_of_multi_part_records() -> None:
+    from gobby.sessions.analyzer_turns import analyzer_turns_from_transcript
+    from gobby.sessions.transcripts.droid import DroidTranscriptParser
+    from gobby.sessions.transcripts.qwen import QwenTranscriptParser
+
+    timestamp = "2026-08-26T12:00:00Z"
+    qwen_turns = [
+        {
+            "type": "assistant",
+            "timestamp": timestamp,
+            "message": {
+                "parts": [
+                    {"text": "Inspecting"},
+                    {
+                        "functionCall": {
+                            "id": "qwen-read",
+                            "name": "Read",
+                            "args": {"file_path": "qwen.py"},
+                        }
+                    },
+                    {
+                        "functionResponse": {
+                            "id": "qwen-read",
+                            "name": "Read",
+                            "response": {"output": "done"},
+                        }
+                    },
+                ]
+            },
+            "toolCallResult": {"callId": "qwen-read", "status": "completed"},
+        }
+    ]
+    droid_turns = [
+        {
+            "type": "message",
+            "timestamp": timestamp,
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "Editing"},
+                    {
+                        "type": "tool_use",
+                        "id": "droid-edit",
+                        "name": "write_file",
+                        "input": {"file_path": "droid.py"},
+                    },
+                ],
+            },
+        }
+    ]
+
+    qwen_blocks = analyzer_turns_from_transcript(QwenTranscriptParser(), qwen_turns)[0]["message"][
+        "content"
+    ]
+    droid_blocks = analyzer_turns_from_transcript(DroidTranscriptParser(), droid_turns)[0][
+        "message"
+    ]["content"]
+
+    assert [block["type"] for block in qwen_blocks] == ["text", "tool_use", "tool_result"]
+    assert [block["type"] for block in droid_blocks] == ["text", "tool_use"]
+    assert TranscriptAnalyzer().extract_handoff_context(
+        analyzer_turns_from_transcript(DroidTranscriptParser(), droid_turns)
+    ).files_modified == ["droid.py"]
+
+
+def test_recent_activity_uses_canonical_tool_names() -> None:
+    turns = [
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "name": "use_tool",
+                        "input": {
+                            "tool_name": "gobby__call_tool",
+                            "tool_input": {
+                                "server_name": "gobby-tasks",
+                                "tool_name": "close_task",
+                                "arguments": {"task_id": "#1"},
+                            },
+                        },
+                    },
+                    {
+                        "type": "tool_use",
+                        "name": "call_tool",
+                        "input": {
+                            "server_name": "gobby-tasks",
+                            "tool_name": "claim_task",
+                            "arguments": {"task_id": "#2"},
+                        },
+                    },
+                ]
+            },
+        }
+    ]
+
+    recent = TranscriptAnalyzer().extract_handoff_context(turns).recent_activity
+
+    assert any("gobby-tasks:close_task" in description for description in recent)
+    assert any("gobby-tasks:claim_task" in description for description in recent)
+    assert all("use_tool" not in description for description in recent)
+    assert all("call_tool" not in description for description in recent)
+
+
+def _noncommit_provider_cases() -> list[tuple[TranscriptParser, list[dict[str, Any]]]]:
+    from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
+    from gobby.sessions.transcripts.codex import CodexTranscriptParser
+    from gobby.sessions.transcripts.droid import DroidTranscriptParser
+    from gobby.sessions.transcripts.grok import GrokTranscriptParser
+    from gobby.sessions.transcripts.qwen import QwenTranscriptParser
+
+    timestamp = "2026-08-26T12:00:00Z"
+    return [
+        (
+            ClaudeTranscriptParser(),
+            [
+                {
+                    "type": "assistant",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "read",
+                                "name": "Read",
+                                "input": {"file_path": "claude.py"},
+                            }
+                        ],
+                    },
+                },
+                {
+                    "type": "user",
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "read",
+                                "content": "secret",
+                            }
+                        ],
+                    },
+                },
+            ],
+        ),
+        (
+            GrokTranscriptParser(),
+            [
+                {
+                    "update": {
+                        "sessionUpdate": "tool_call",
+                        "title": "Read",
+                        "toolCallId": "read",
+                        "rawInput": {"file_path": "grok.py"},
+                    }
+                },
+                {
+                    "update": {
+                        "sessionUpdate": "tool_call_update",
+                        "toolCallId": "read",
+                        "status": "completed",
+                        "content": {"type": "text", "text": "secret"},
+                    }
+                },
+            ],
+        ),
+        (
+            CodexTranscriptParser(),
+            [
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call",
+                        "call_id": "read",
+                        "name": "Read",
+                        "arguments": '{"file_path":"codex.py"}',
+                    },
+                },
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call_output",
+                        "call_id": "read",
+                        "output": "secret",
+                    },
+                },
+            ],
+        ),
+        (
+            QwenTranscriptParser(),
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": timestamp,
+                    "message": {
+                        "parts": [
+                            {
+                                "functionCall": {
+                                    "id": "read",
+                                    "name": "Read",
+                                    "args": {"file_path": "qwen.py"},
+                                }
+                            }
+                        ]
+                    },
+                },
+                {
+                    "type": "tool_result",
+                    "timestamp": timestamp,
+                    "toolCallResult": {"callId": "read", "status": "completed"},
+                    "message": {
+                        "parts": [
+                            {
+                                "functionResponse": {
+                                    "id": "read",
+                                    "name": "Read",
+                                    "response": {"output": "secret"},
+                                }
+                            }
+                        ]
+                    },
+                },
+            ],
+        ),
+        (
+            DroidTranscriptParser(),
+            [
+                {
+                    "type": "message",
+                    "timestamp": timestamp,
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "read",
+                                "name": "Read",
+                                "input": {"file_path": "droid.py"},
+                            }
+                        ],
+                    },
+                },
+                {
+                    "type": "message",
+                    "timestamp": timestamp,
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "read",
+                                "content": "secret",
+                            }
+                        ],
+                    },
+                },
+            ],
+        ),
+    ]
+
+
+def test_adapter_drops_successful_noncommit_result_text() -> None:
+    from gobby.sessions.analyzer_turns import analyzer_turns_from_transcript
+    from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
+
+    for parser, native_turns in _noncommit_provider_cases():
+        adapted = analyzer_turns_from_transcript(parser, native_turns)
+        results = [
+            block
+            for turn in adapted
+            for block in turn["message"]["content"]
+            if block["type"] == "tool_result"
+        ]
+        assert results
+        assert all(result["content"] == "" for result in results)
+
+    commit_turns = [
+        {
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "commit",
+                        "name": "Bash",
+                        "input": {"command": "git commit -m retained"},
+                    }
+                ],
+            },
+        },
+        {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "commit",
+                        "content": "[main abc1234] retained",
+                    }
+                ],
+            },
+        },
+    ]
+    adapted_commit = analyzer_turns_from_transcript(ClaudeTranscriptParser(), commit_turns)
+    commit_result = adapted_commit[-1]["message"]["content"][0]
+    assert commit_result["content"] == "[main abc1234] retained"
+
+
+def test_adapter_output_survives_multi_pass_analyzer() -> None:
+    from gobby.sessions.analyzer_turns import analyzer_turns_from_transcript
+    from gobby.sessions.transcripts.droid import DroidTranscriptParser
+
+    timestamp = "2026-08-26T12:00:00Z"
+    native: list[dict[str, Any]] = [
+        {
+            "type": "message",
+            "timestamp": timestamp,
+            "message": {"role": "user", "content": [{"type": "text", "text": "Goal"}]},
+        },
+        {
+            "type": "message",
+            "timestamp": timestamp,
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "I decided because evidence."},
+                    {
+                        "type": "tool_use",
+                        "id": "edit",
+                        "name": "write_file",
+                        "input": {"file_path": "survives.py"},
+                    },
+                ],
+            },
+        },
+    ]
+
+    adapted = analyzer_turns_from_transcript(DroidTranscriptParser(), native)
+    first = TranscriptAnalyzer().extract_handoff_context(adapted)
+    second = TranscriptAnalyzer().extract_handoff_context(adapted)
+
+    assert isinstance(adapted, list)
+    assert first.initial_goal == second.initial_goal == "Goal"
+    assert first.files_modified == second.files_modified == ["survives.py"]
+    assert first.key_decisions == second.key_decisions == ["I decided because evidence."]
+    assert first.recent_activity == second.recent_activity
+
+
+def test_codex_nested_exec_outcomes_reach_analyzer() -> None:
+    from gobby.sessions.analyzer_turns import analyzer_turns_from_transcript
+    from gobby.sessions.transcripts.codex import CodexTranscriptParser
+
+    native: list[dict[str, Any]] = [
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "Work"}],
+            },
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call",
+                "call_id": "exec",
+                "name": "functions.exec",
+                "input": (
+                    'const r = await tools.exec_command({cmd:"git commit -m codex"}); text(r);'
+                ),
+            },
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call_output",
+                "call_id": "exec",
+                "output": [
+                    {
+                        "type": "input_text",
+                        "text": '{"exit_code":0,"output":"[main abc1234] codex"}',
+                    }
+                ],
+            },
+        },
+        {
+            "payload": {
+                "type": "item_completed",
+                "item": {
+                    "type": "FileChange",
+                    "changes": {"src/item.py": {"type": "update"}},
+                },
+            }
+        },
+        {
+            "payload": {
+                "type": "item_completed",
+                "item": {
+                    "type": "CommandExecution",
+                    "command": ["/bin/zsh", "-lc", "git commit -m item"],
+                    "exit_code": 0,
+                    "stdout": "[main def5678] item",
+                },
+            }
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "call_id": "covered-task",
+                "name": "mcp__gobby__call_tool",
+                "arguments": (
+                    '{"server_name":"gobby-tasks","tool_name":"claim_task",'
+                    '"arguments":{"task_id":"#covered"}}'
+                ),
+            },
+        },
+        {
+            "payload": {
+                "type": "item_completed",
+                "item": {
+                    "type": "McpToolCall",
+                    "server": "gobby",
+                    "tool": "call_tool",
+                    "arguments": {
+                        "server_name": "gobby-tasks",
+                        "tool_name": "claim_task",
+                        "arguments": {"task_id": "#covered"},
+                    },
+                    "status": "completed",
+                    "result": {"success": True},
+                },
+            }
+        },
+        {
+            "payload": {
+                "type": "item_completed",
+                "item": {
+                    "type": "McpToolCall",
+                    "server": "gobby",
+                    "tool": "call_tool",
+                    "arguments": {
+                        "server_name": "gobby-tasks",
+                        "tool_name": "close_task",
+                        "arguments": {"task_id": "#failed"},
+                    },
+                    "status": "completed",
+                    "result": {"success": False, "error": "validation failed"},
+                },
+            }
+        },
+    ]
+
+    adapted = analyzer_turns_from_transcript(CodexTranscriptParser(), native)
+    context = TranscriptAnalyzer().extract_handoff_context(adapted)
+
+    assert "src/item.py" in context.files_modified
+    assert all(progress["id"] != "#failed" for progress in context.task_progress)
+    assert [progress["id"] for progress in context.task_progress].count("#covered") == 1
+    assert {commit["hash"] for commit in context.git_commits} >= {"abc1234", "def5678"}
+    assert any(
+        block["type"] == "tool_result"
+        and block["is_error"] is True
+        and "validation failed" in block["content"]
+        for turn in adapted
+        for block in turn["message"]["content"]
+    )
+
+
+def test_adapter_scan_leaves_parser_state_untouched() -> None:
+    from gobby.sessions.analyzer_turns import analyzer_turns_from_transcript
+    from gobby.sessions.transcripts.tool_activity import fresh_scan_parser
+
+    for parser, native_turns in _noncommit_provider_cases()[2:]:
+        control = fresh_scan_parser(parser)
+        before = parser.snapshot_state()
+        parser.extract_last_messages(native_turns, include_tool_activity=True)
+        expected = analyzer_turns_from_transcript(control, native_turns)
+
+        actual = analyzer_turns_from_transcript(parser, native_turns)
+
+        assert actual == expected
+        assert parser.snapshot_state() == before

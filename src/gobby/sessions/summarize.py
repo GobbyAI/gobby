@@ -17,9 +17,14 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 
 from gobby.config.feature_base import FeatureCandidateInput
+from gobby.sessions.analyzer import HandoffContext, TranscriptAnalyzer
+from gobby.sessions.analyzer_turns import (
+    SUMMARY_ANALYZER_MAX_RECORDS,
+    analyzer_turns_from_transcript,
+)
 from gobby.sessions.machine_scope import (
     RemoteSessionOwnershipError,
     require_local_session_ownership,
@@ -49,17 +54,22 @@ from gobby.sessions.summary_transcripts import (
     TRANSCRIPT_FALLBACK_MAX_CHARS,
     TRANSCRIPT_FALLBACK_MAX_TURNS,
     TURN_PATTERN,
+    TranscriptWindow,
     _digest_markdown_for_summary,
     _extract_digest_turns,
     _format_deterministic_summary,
     _format_transcript_fallback_summary,
+    _read_first_user_goal,
     _read_transcript,
+    _read_transcript_window,
     _strip_injected_context_from_value,
     _summary_source_text,
     _truncate_markdown,
     async_enumerate,
 )
 from gobby.sessions.summary_validity import is_summary_markdown_valid
+from gobby.sessions.transcripts import get_parser
+from gobby.sessions.transcripts.base import TranscriptReadError
 from gobby.sessions.workspace_context import (
     enrich_git_context as _enrich_git_context,
 )
@@ -75,6 +85,16 @@ logger = logging.getLogger(__name__)
 class _SummaryCoreResult:
     result: dict[str, Any]
     full_markdown: str
+
+
+class SummarySourceContext(NamedTuple):
+    digest_markdown: str
+    window: TranscriptWindow
+    turns: list[dict[str, Any]]
+    handoff_ctx: HandoffContext
+    summary_context: dict[str, Any]
+    prompt_template: str
+    source_hash: str
 
 
 _SummaryTaskKey = tuple[asyncio.AbstractEventLoop, str]
@@ -221,6 +241,103 @@ def _resolve_run_db(
     return None
 
 
+async def build_summary_source_context(
+    session: Any,
+    *,
+    db: Any,
+    session_manager: Any,
+    session_summary_config: Any,
+    run_db: Any = None,
+) -> SummarySourceContext | None:
+    """Build the canonical transcript-derived source payload for a summary."""
+    digest_markdown = _digest_markdown_for_summary(session)
+    transcript_path = getattr(session, "transcript_path", None)
+    path = Path(transcript_path) if transcript_path else None
+    source = getattr(session, "source", None) or "claude"
+    window = TranscriptWindow(turns=[], truncated=False)
+
+    if path is not None and path.exists():
+        window = await _read_transcript_window(
+            path,
+            source=source,
+            max_records=SUMMARY_ANALYZER_MAX_RECORDS,
+        )
+    elif not digest_markdown:
+        return None
+
+    parser_source = _summary_parser_source(source, window.turns)
+    initial_goal = (
+        await _read_first_user_goal(path, source=parser_source)
+        if path is not None and window.truncated
+        else None
+    )
+    if parser_source == "claude":
+        turns = window.turns
+    else:
+        parser = get_parser(
+            parser_source,
+            session_id=getattr(session, "id", None),
+            transcript_path=path,
+        )
+        turns = analyzer_turns_from_transcript(parser, window.turns)
+
+    handoff_ctx = TranscriptAnalyzer().extract_handoff_context(
+        turns,
+        initial_goal=initial_goal,
+    )
+    cwd = resolve_session_workspace(session, transcript_path)
+    await _enrich_git_context(handoff_ctx, cwd)
+    db_runner = _resolve_run_db(run_db, db=db, session_manager=session_manager)
+    summary_context = await _build_summary_prompt_context(
+        session=session,
+        turns=window.turns,
+        handoff_ctx=handoff_ctx,
+        db=db,
+        session_manager=session_manager,
+        run_db=db_runner,
+        project_path=str(cwd),
+    )
+    prompt_template = (
+        load_summary_prompt_template(
+            path="handoff/session_end",
+            session_summary_config=session_summary_config,
+            db=db,
+            session_manager=session_manager,
+        )
+        or ""
+    )
+    source_hash = source_context_hash(
+        _source_hash_payload(
+            session=session,
+            digest_markdown=digest_markdown,
+            summary_context=summary_context,
+            prompt_template=prompt_template,
+        )
+    )
+    return SummarySourceContext(
+        digest_markdown=digest_markdown,
+        window=window,
+        turns=turns,
+        handoff_ctx=handoff_ctx,
+        summary_context=summary_context,
+        prompt_template=prompt_template,
+        source_hash=source_hash,
+    )
+
+
+def _summary_parser_source(source: str, turns: list[dict[str, Any]]) -> str:
+    if source != "unknown":
+        return source
+    if any(
+        isinstance(turn.get("content"), (str, list))
+        and isinstance(turn.get("type"), str)
+        and "message" not in turn
+        for turn in turns
+    ):
+        return "qwen"
+    return "claude"
+
+
 async def _generate_session_summary_core(
     session_id: str,
     session_manager: SessionManagerProtocol,
@@ -246,13 +363,26 @@ async def _generate_session_summary_core(
             full_markdown="",
         )
 
-    digest_markdown = _digest_markdown_for_summary(session)
     transcript_path = getattr(session, "transcript_path", None)
-    path = Path(transcript_path) if transcript_path else None
-    source = getattr(session, "source", None) or "claude"
-    turns: list[dict[str, Any]] = []
+    try:
+        source_context = await build_summary_source_context(
+            session,
+            db=db,
+            session_manager=session_manager,
+            session_summary_config=session_summary_config,
+            run_db=db_runner,
+        )
+    except TranscriptReadError as exc:
+        return _SummaryCoreResult(
+            result={
+                "success": False,
+                "error": str(exc),
+                "session_id": session_id,
+            },
+            full_markdown="",
+        )
 
-    if not digest_markdown:
+    if source_context is None:
         if not transcript_path:
             return _SummaryCoreResult(
                 result={
@@ -262,52 +392,22 @@ async def _generate_session_summary_core(
                 },
                 full_markdown="",
             )
-        if path is None or not path.exists():
-            return _SummaryCoreResult(
-                result={
-                    "success": False,
-                    "error": "Transcript file not found",
-                    "path": transcript_path,
-                },
-                full_markdown="",
-            )
-
-        # Transcript summarization is the fallback for older sessions with no digest.
-        turns = await _read_transcript(path, source=source)
-
-    # Analyze transcript
-    from gobby.sessions.analyzer import TranscriptAnalyzer
-
-    analyzer = TranscriptAnalyzer()
-    handoff_ctx = analyzer.extract_handoff_context(turns)
-
-    # Enrich with real-time git status
-    cwd = resolve_session_workspace(session, transcript_path)
-    await _enrich_git_context(handoff_ctx, cwd)
-
-    summary_context = await _build_summary_prompt_context(
-        session=session,
-        turns=turns,
-        handoff_ctx=handoff_ctx,
-        db=db,
-        session_manager=session_manager,
-        run_db=db_runner,
-        project_path=str(cwd),
-    )
-    full_prompt_template = load_summary_prompt_template(
-        path="handoff/session_end",
-        session_summary_config=session_summary_config,
-        db=db,
-        session_manager=session_manager,
-    )
-    source_hash = source_context_hash(
-        _source_hash_payload(
-            session=session,
-            digest_markdown=digest_markdown,
-            summary_context=summary_context,
-            prompt_template=full_prompt_template,
+        return _SummaryCoreResult(
+            result={
+                "success": False,
+                "error": "Transcript file not found",
+                "path": transcript_path,
+            },
+            full_markdown="",
         )
-    )
+
+    digest_markdown = source_context.digest_markdown
+    turns = source_context.turns
+    handoff_ctx = source_context.handoff_ctx
+    summary_context = source_context.summary_context
+    full_prompt_template = source_context.prompt_template
+    source_hash = source_context.source_hash
+    cwd = resolve_session_workspace(session, transcript_path)
     current_digest_turn_count = digest_turn_count(digest_markdown)
     decision = choose_summary_refresh(
         current_source_hash=source_hash,

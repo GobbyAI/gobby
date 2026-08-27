@@ -6,8 +6,10 @@ import asyncio
 import json
 import logging
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from types import TracebackType
+from typing import Any, BinaryIO, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -2398,3 +2400,426 @@ class TestWriteFiles:
             session_manager=sm,
         )
         assert result == []
+
+
+async def test_read_transcript_window_truncation_boundary(tmp_path: Path) -> None:
+    from gobby.sessions.analyzer_turns import SUMMARY_ANALYZER_MAX_RECORDS
+    from gobby.sessions.summary_transcripts import (
+        _read_transcript,
+        _read_transcript_window,
+    )
+
+    path = tmp_path / "boundary.jsonl"
+    path.write_text(
+        "\n".join(
+            json.dumps({"type": "assistant", "index": index})
+            for index in range(SUMMARY_ANALYZER_MAX_RECORDS)
+        )
+        + "\n"
+    )
+
+    exact = await _read_transcript_window(
+        path, source="claude", max_records=SUMMARY_ANALYZER_MAX_RECORDS
+    )
+    assert exact.truncated is False
+    assert len(exact.turns) == SUMMARY_ANALYZER_MAX_RECORDS
+    assert (
+        await _read_transcript(path, source="claude", max_turns=SUMMARY_ANALYZER_MAX_RECORDS)
+        == exact.turns
+    )
+
+    with path.open("a") as transcript:
+        transcript.write(json.dumps({"type": "assistant", "index": "extra"}) + "\n")
+    over = await _read_transcript_window(
+        path, source="claude", max_records=SUMMARY_ANALYZER_MAX_RECORDS
+    )
+
+    assert over.truncated is True
+    assert len(over.turns) == SUMMARY_ANALYZER_MAX_RECORDS
+
+
+async def test_read_transcript_window_io_is_bounded_by_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.sessions.summary_transcripts import (
+        TRANSCRIPT_TAIL_CHUNK_BYTES,
+        _read_transcript_window,
+    )
+
+    paths = [tmp_path / "5k.jsonl", tmp_path / "50k.jsonl"]
+    for count, path in zip((5_000, 50_000), paths, strict=True):
+        path.write_text(
+            "\n".join(json.dumps({"index": index, "padding": "x" * 96}) for index in range(count))
+            + "\n"
+        )
+
+    original_open = Path.open
+    bytes_read: dict[Path, int] = dict.fromkeys(paths, 0)
+
+    class CountingFile:
+        def __init__(self, wrapped: BinaryIO, path: Path) -> None:
+            self.wrapped = wrapped
+            self.path = path
+
+        def __enter__(self) -> CountingFile:
+            self.wrapped.__enter__()
+            return self
+
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc_value: BaseException | None,
+            traceback: TracebackType | None,
+        ) -> bool | None:
+            return self.wrapped.__exit__(exc_type, exc_value, traceback)
+
+        def read(self, size: int = -1) -> bytes:
+            data = self.wrapped.read(size)
+            bytes_read[self.path] += len(data)
+            return data
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self.wrapped, name)
+
+    path_open = cast(Callable[..., Any], original_open)
+
+    def counted_open(path: Path, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+        wrapped = path_open(path, mode, *args, **kwargs)
+        return (
+            CountingFile(cast(BinaryIO, wrapped), path)
+            if mode == "rb" and path in bytes_read
+            else wrapped
+        )
+
+    monkeypatch.setattr(Path, "open", counted_open)
+    for path in paths:
+        window = await _read_transcript_window(path, source="claude", max_records=100)
+        assert len(window.turns) == 100
+
+    assert abs(bytes_read[paths[0]] - bytes_read[paths[1]]) <= TRANSCRIPT_TAIL_CHUNK_BYTES
+    for path in paths:
+        assert bytes_read[path] <= TRANSCRIPT_TAIL_CHUNK_BYTES * 2
+
+    straddled = tmp_path / "straddled.jsonl"
+    straddled.write_text(
+        json.dumps({"index": 0})
+        + "\n"
+        + json.dumps({"index": 1, "padding": "z" * (TRANSCRIPT_TAIL_CHUNK_BYTES + 17)})
+        + "\n"
+        + json.dumps({"index": 2})
+        + "\n"
+    )
+    straddled_window = await _read_transcript_window(straddled, source="claude", max_records=2)
+    assert straddled_window.turns[0]["padding"] == "z" * (TRANSCRIPT_TAIL_CHUNK_BYTES + 17)
+
+
+async def test_read_first_user_goal_scan_is_bounded(tmp_path: Path) -> None:
+    from gobby.sessions.analyzer_turns import SUMMARY_ANALYZER_MAX_RECORDS
+    from gobby.sessions.summary_transcripts import _read_first_user_goal
+
+    no_user = tmp_path / "no-user.jsonl"
+    no_user.write_text(
+        "\n".join(json.dumps({"type": "system", "index": index}) for index in range(50_000)) + "\n"
+    )
+    assert await _read_first_user_goal(no_user, source="claude") is None
+
+    within = tmp_path / "within.jsonl"
+    records = [
+        {"type": "system", "index": index} for index in range(SUMMARY_ANALYZER_MAX_RECORDS - 1)
+    ]
+    records.append(
+        {
+            "type": "user",
+            "message": {"role": "user", "content": "Recovered goal"},
+        }
+    )
+    within.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+    assert await _read_first_user_goal(within, source="claude") == "Recovered goal"
+
+    beyond = tmp_path / "beyond.jsonl"
+    records.extend(
+        [
+            {"type": "system", "index": index}
+            for index in range(SUMMARY_ANALYZER_MAX_RECORDS, 25_000)
+        ]
+    )
+    records.append({"type": "user", "message": {"role": "user", "content": "Too late"}})
+    beyond.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+    assert await _read_first_user_goal(beyond, source="claude") == "Recovered goal"
+
+    late = tmp_path / "late.jsonl"
+    late_records = [{"type": "system", "index": index} for index in range(25_000)]
+    late_records.append({"type": "user", "message": {"role": "user", "content": "Too late"}})
+    late.write_text("\n".join(json.dumps(record) for record in late_records) + "\n")
+    assert await _read_first_user_goal(late, source="claude") is None
+
+
+def _grounding_records(source: str, path: str) -> list[dict[str, object]]:
+    if source == "claude":
+        return [
+            {"type": "user", "message": {"role": "user", "content": "Goal"}},
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "edit",
+                            "name": "Write",
+                            "input": {"file_path": path},
+                        }
+                    ],
+                },
+            },
+        ]
+    if source == "grok":
+        return [
+            {
+                "update": {
+                    "sessionUpdate": "user_message_chunk",
+                    "content": {"type": "text", "text": "Goal"},
+                }
+            },
+            {
+                "update": {
+                    "sessionUpdate": "tool_call",
+                    "title": "search_replace",
+                    "toolCallId": "edit",
+                    "rawInput": {"file_path": path},
+                }
+            },
+        ]
+    return [
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "Goal"}],
+            },
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "call_id": "edit",
+                "name": "apply_patch",
+                "arguments": json.dumps({"file_path": path}),
+            },
+        },
+    ]
+
+
+@pytest.mark.parametrize("source", ["claude", "grok", "codex"])
+async def test_summary_ground_truth_with_digest_present(source: str, tmp_path: Path) -> None:
+    from gobby.sessions.summarize import build_summary_source_context
+
+    edit_path = f"src/{source}.py"
+    transcript = tmp_path / f"{source}.jsonl"
+    transcript.write_text(
+        "\n".join(json.dumps(record) for record in _grounding_records(source, edit_path)) + "\n"
+    )
+    session = _make_session(
+        session_id=f"session-{source}",
+        source=source,
+        transcript_path=str(transcript),
+        digest_markdown="### Turn 1\nDigest history.",
+    )
+    session.terminal_context = None
+    manager = _RevisionAwareSummaryManager(session)
+
+    with (
+        patch("gobby.sessions.summarize._enrich_git_context", new_callable=AsyncMock),
+        patch("gobby.workflows.git_utils.get_file_changes", return_value="file changes"),
+        patch("gobby.workflows.git_utils.get_git_diff_summary", return_value="diff"),
+    ):
+        context = await build_summary_source_context(
+            session,
+            db=None,
+            session_manager=manager,
+            session_summary_config=_summary_config(),
+        )
+
+    assert context is not None
+    assert context.handoff_ctx.files_modified == [edit_path]
+    assert context.summary_context["structured_context"]
+    assert context.summary_context["file_changes"] == "file changes"
+
+
+async def test_summary_ground_truth_window_is_bounded(tmp_path: Path) -> None:
+    from gobby.sessions.analyzer_turns import SUMMARY_ANALYZER_MAX_RECORDS
+    from gobby.sessions.summarize import build_summary_source_context
+
+    transcript = tmp_path / "large.jsonl"
+    records: list[dict[str, object]] = [
+        {"type": "system", "index": index} for index in range(1_000)
+    ]
+    records.append({"type": "user", "message": {"role": "user", "content": "True original goal"}})
+    records.extend(
+        {
+            "type": "assistant",
+            "message": {"role": "assistant", "content": f"record-{index}"},
+        }
+        for index in range(1_001, 49_998)
+    )
+    records.extend(
+        [
+            {"type": "user", "message": {"role": "user", "content": "Recent prompt"}},
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "tail-edit",
+                            "name": "Write",
+                            "input": {"file_path": "src/tail.py"},
+                        }
+                    ],
+                },
+            },
+        ]
+    )
+    transcript.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+    session = _make_session(
+        session_id="bounded",
+        source="claude",
+        transcript_path=str(transcript),
+        digest_markdown="### Turn 1\nDigest history.",
+    )
+    session.terminal_context = None
+    manager = _RevisionAwareSummaryManager(session)
+
+    with (
+        patch("gobby.sessions.summarize._enrich_git_context", new_callable=AsyncMock),
+        patch("gobby.workflows.git_utils.get_file_changes", return_value="changes"),
+        patch("gobby.workflows.git_utils.get_git_diff_summary", return_value="diff"),
+    ):
+        context = await build_summary_source_context(
+            session,
+            db=None,
+            session_manager=manager,
+            session_summary_config=_summary_config(),
+        )
+
+    assert context is not None
+    assert context.window.truncated is True
+    assert len(context.turns) <= SUMMARY_ANALYZER_MAX_RECORDS
+    assert context.handoff_ctx.initial_goal == "True original goal"
+    assert context.handoff_ctx.files_modified == ["src/tail.py"]
+
+
+async def test_interior_corruption_aborts_summary_refresh(tmp_path: Path) -> None:
+    from gobby.sessions.summarize import generate_session_summaries
+    from gobby.sessions.summary_transcripts import _read_transcript_window
+    from gobby.sessions.transcripts.base import TranscriptReadError
+
+    valid = json.dumps({"type": "user", "message": {"content": "Goal"}}).encode()
+    corrupt_cases = [
+        valid + b"\nnot-json\n" + valid + b"\n",
+        valid + b"\n[]\n",
+        valid + b"\nnot-json\n",
+        valid + b"\n\xff\n" + valid + b"\n",
+        valid + b"\n\xff\n",
+    ]
+    for index, raw in enumerate(corrupt_cases):
+        path = tmp_path / f"corrupt-{index}.jsonl"
+        path.write_bytes(raw)
+        with pytest.raises(TranscriptReadError):
+            await _read_transcript_window(path, source="claude", max_records=100)
+
+    tolerated = [valid + b"\nnot-json", valid + b"\n\xe2\x82"]
+    for index, raw in enumerate(tolerated):
+        path = tmp_path / f"tail-{index}.jsonl"
+        path.write_bytes(raw)
+        window = await _read_transcript_window(path, source="claude", max_records=100)
+        assert len(window.turns) == 1
+
+    path = tmp_path / "core-corrupt.jsonl"
+    path.write_bytes(corrupt_cases[0])
+    session = _make_session(
+        session_id="corrupt",
+        source="claude",
+        transcript_path=str(path),
+        digest_markdown="### Turn 1\nDigest history.",
+    )
+    session.terminal_context = None
+    manager = _RevisionAwareSummaryManager(session)
+
+    result = await generate_session_summaries(
+        session_id=session.id,
+        session_manager=manager,
+        llm_service=_mock_llm(VALID_SUMMARY),
+        session_summary_config=_summary_config(),
+    )
+
+    assert result["success"] is False
+    assert "Corrupt transcript record" in result["error"]
+    assert manager.persist_calls == []
+
+
+@pytest.mark.parametrize("source", ["grok", "codex", "qwen", "droid"])
+async def test_no_digest_prompt_context_uses_native_parser_for_every_provider(
+    source: str, tmp_path: Path
+) -> None:
+    from gobby.sessions.summarize import build_summary_source_context
+
+    timestamp = "2026-08-26T12:00:00Z"
+    if source in {"grok", "codex"}:
+        records = _grounding_records(source, f"src/{source}.py")
+    elif source == "qwen":
+        records = [
+            {
+                "type": "user",
+                "timestamp": timestamp,
+                "message": {"parts": [{"text": "Native qwen goal"}]},
+            },
+            {
+                "type": "assistant",
+                "timestamp": timestamp,
+                "message": {"parts": [{"text": "Native qwen answer"}]},
+            },
+        ]
+    else:
+        records = [
+            {
+                "type": "message",
+                "timestamp": timestamp,
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "Native droid goal"}],
+                },
+            },
+            {
+                "type": "message",
+                "timestamp": timestamp,
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "Native droid answer"}],
+                },
+            },
+        ]
+    transcript = tmp_path / f"native-{source}.jsonl"
+    transcript.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+    session = _make_session(
+        session_id=f"native-{source}", source=source, transcript_path=str(transcript)
+    )
+    session.terminal_context = None
+    manager = _RevisionAwareSummaryManager(session)
+
+    with patch("gobby.sessions.summarize._enrich_git_context", new_callable=AsyncMock):
+        context = await build_summary_source_context(
+            session,
+            db=None,
+            session_manager=manager,
+            session_summary_config=_summary_config(),
+        )
+
+    assert context is not None
+    native_prompt = (
+        context.summary_context["transcript_summary"] + context.summary_context["last_messages"]
+    )
+    assert native_prompt
+    assert context.handoff_ctx.initial_goal
