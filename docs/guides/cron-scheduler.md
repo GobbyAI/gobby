@@ -137,13 +137,18 @@ uv run gobby cron list
 uv run gobby cron add -n NAME -s SCHEDULE -t ACTION_TYPE -c ACTION_CONFIG_JSON [options]
 uv run gobby cron run JOB_ID
 uv run gobby cron toggle JOB_ID
+uv run gobby cron park SYSTEM_JOB_ID
+uv run gobby cron wake SYSTEM_JOB_ID
 uv run gobby cron runs JOB_ID
 uv run gobby cron edit JOB_ID [--enabled | --disabled] [options]
 uv run gobby cron remove JOB_ID
 ```
 
 `toggle` flips the enabled state; use `cron edit --enabled/--disabled` to set
-it explicitly. Jobs are addressed by UUID, not name.
+it explicitly. Daemon-managed system jobs keep their enabled state: `park`
+clears their next scheduled run, and `wake` recomputes it. `toggle` rejects a
+system job and points operators to those commands. Commands accept either a job
+UUID or its name.
 
 Use the CLI for operator inspection and manual maintenance. Agents should use the
 `gobby-cron` MCP server when mutating cron state.
@@ -193,4 +198,4 @@ call_tool(server_name="gobby-cron", tool_name="list_cron_jobs", ...)
 - [agents.md](agents.md)
 - [observability.md](observability.md)
 
-_Last verified: 2026-06-01_
+_Last verified: 2026-08-27_

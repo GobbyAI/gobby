@@ -317,7 +317,10 @@ def test_reconcile_does_not_overwrite_schedule_fields(cron_storage: CronJobStora
 def test_toggle_job_refuses_system_row(cron_storage: CronJobStorage) -> None:
     job = _job(cron_storage, is_system=True)
 
-    with pytest.raises(SystemRowProtected, match="system-managed.*toggle_job"):
+    with pytest.raises(
+        SystemRowProtected,
+        match=r"system-managed.*`gobby cron park <id>`.*`gobby cron wake <id>`",
+    ):
         cron_storage.toggle_job(job.id)
 
 
