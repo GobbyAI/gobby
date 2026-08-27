@@ -60,6 +60,8 @@ class ToolActivityEntry:
     outcome: str | None = None
     resolved: bool = False
     record_index: int = -1
+    # Ledger outcomes are normalized; analyzer grounding may need the exact provider result.
+    retained_result: str | None = None
 
 
 @dataclass(frozen=True)
@@ -175,6 +177,7 @@ def codex_item_activity(turns: list[dict[str, Any]]) -> list[ToolActivityEntry] 
             )
             if outcome.success is True and is_commit_producing(entry.tool_name, entry.tool_input):
                 entry.outcome = commit_outcome(entry.tool_name, entry.tool_input, outcome.output)
+                entry.retained_result = outcome.output
             entries.append(entry)
         elif item_type == "FileChange":
             saw_tool_item = True

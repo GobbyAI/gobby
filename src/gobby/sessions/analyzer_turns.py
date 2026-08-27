@@ -221,6 +221,8 @@ def _add_codex_items(
                 "content": (
                     _bounded_text(item.error)
                     if item.error is not None
+                    else _bounded_text(item.retained_result)
+                    if item.retained_result is not None
                     else _bounded_text(item.outcome)
                     if item.outcome is not None
                     else ""
