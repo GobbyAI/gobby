@@ -33,6 +33,9 @@ CODE_INDEX_PRUNE_JOB_NAME = "gobby:code-index-prune"
 CODE_INDEX_PRUNE_HANDLER = "code-index:prune"
 CODE_INDEX_PRUNE_INTERVAL_SECONDS = 3600
 CODE_INDEX_PRUNE_TIMEOUT_SECONDS = 120
+# gcode stops content GC at this budget and reports the rest as deferred, so a
+# large backlog drains across hourly runs; the timeout above only catches hangs.
+CODE_INDEX_PRUNE_TIME_BUDGET_SECONDS = 90
 CODE_INDEX_PRUNE_LOCK_TIMEOUT_SECONDS = 5.0
 CODE_INDEX_PRUNE_DESCRIPTION = (
     "Prune stale code-index projections and perform orphan Qdrant collection cleanup"
@@ -364,6 +367,7 @@ class CodeIndexPruner:
                     return await gateway.prune_project_for_maintenance(
                         Path(root_path).expanduser(),
                         retention_days=resolved_retention,
+                        max_seconds=CODE_INDEX_PRUNE_TIME_BUDGET_SECONDS,
                         timeout=CODE_INDEX_PRUNE_TIMEOUT_SECONDS,
                         env=env,
                     )

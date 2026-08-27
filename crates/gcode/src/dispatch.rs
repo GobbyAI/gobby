@@ -163,8 +163,15 @@ fn dispatch_early_command(cli: &Cli, format: output::Format) -> anyhow::Result<b
         Command::Prune {
             force,
             retention_days,
+            max_seconds,
         } => {
-            commands::status::prune(*force, cli.project.as_deref(), cli.quiet, *retention_days)?;
+            commands::status::prune(
+                *force,
+                cli.project.as_deref(),
+                cli.quiet,
+                *retention_days,
+                *max_seconds,
+            )?;
             Ok(true)
         }
         Command::Invalidate {

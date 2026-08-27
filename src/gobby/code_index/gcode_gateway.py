@@ -515,23 +515,28 @@ class GcodeGateway:
         project_root: Path,
         *,
         retention_days: int,
+        max_seconds: int | None = None,
         timeout: float | None = None,
         env: Mapping[str, str] | None = None,
     ) -> GcodeCommandResult:
+        """Prune one project.
+
+        ``max_seconds`` bounds its content GC so the run completes and reports
+        deferred versions instead of being killed at ``timeout``.
+        """
         binary = await self._ensure_version()
-        return await self._run_command_result(
-            [
-                binary,
-                "prune",
-                "--force",
-                "--project",
-                str(project_root),
-                "--retention-days",
-                str(retention_days),
-            ],
-            timeout=timeout,
-            env=env,
-        )
+        command = [
+            binary,
+            "prune",
+            "--force",
+            "--project",
+            str(project_root),
+            "--retention-days",
+            str(retention_days),
+        ]
+        if max_seconds is not None:
+            command.extend(["--max-seconds", str(max_seconds)])
+        return await self._run_command_result(command, timeout=timeout, env=env)
 
     async def invalidate_project_by_id(
         self,

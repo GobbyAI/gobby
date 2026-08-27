@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use crate::cli_error::CliError;
 use crate::config::{self, Context};
 use crate::daemon::GlobalPruneOutcome;
@@ -92,11 +94,22 @@ pub fn prune(
     project_override: Option<&str>,
     quiet: bool,
     retention_days: u32,
+    max_seconds: Option<u64>,
 ) -> anyhow::Result<()> {
     match projection_cleanup_scope(project_override) {
-        ProjectionCleanupScope::AllIndexedProjects => prune_global(force, quiet, retention_days),
+        ProjectionCleanupScope::AllIndexedProjects => {
+            if max_seconds.is_some() {
+                anyhow::bail!(
+                    "--max-seconds requires --project: the daemon budgets each project of a global prune itself"
+                );
+            }
+            prune_global(force, quiet, retention_days)
+        }
         ProjectionCleanupScope::ResolvedProjectOverride => {
-            prune_project_scoped(force, project_override, quiet, retention_days)
+            // The budget covers discovery too, so a run whose git or SQL
+            // discovery is slow still ends on time and defers honestly.
+            let deadline = max_seconds.map(|seconds| Instant::now() + Duration::from_secs(seconds));
+            prune_project_scoped(force, project_override, quiet, retention_days, deadline)
         }
     }
 }
@@ -106,6 +119,7 @@ fn prune_project_scoped(
     project_override: Option<&str>,
     quiet: bool,
     retention_days: u32,
+    deadline: Option<Instant>,
 ) -> anyhow::Result<()> {
     let ctx = Context::resolve_with_services(
         project_override,
@@ -120,13 +134,18 @@ fn prune_project_scoped(
     }
     let stale_totals = mutate_project_scoped_stale(&discovery);
     print_reconcile_totals("Stale project reconciliation", &stale_totals);
-    let content_gc_totals =
-        prune_content_versions(&discovery.services, &discovery.content_gc_candidates)?;
+    let content_gc_totals = prune_content_versions(
+        &discovery.services,
+        &discovery.content_gc_candidates,
+        deadline,
+    )?;
     print_content_gc_totals(&content_gc_totals);
-    if stale_totals.has_failures() || content_gc_totals.failed_versions > 0 {
+    let content_gc_failures =
+        content_gc_totals.failed_versions + content_gc_totals.orphan_sweep_failures;
+    if stale_totals.has_failures() || content_gc_failures > 0 {
         anyhow::bail!(
             "gcode prune completed with {} reconciliation failure(s)",
-            stale_totals.failed + content_gc_totals.failed_versions
+            stale_totals.failed + content_gc_failures
         );
     }
     Ok(())
@@ -167,12 +186,14 @@ fn prune_global_with(
 
 fn print_content_gc_totals(totals: &super::content_gc::ContentGcTotals) {
     eprintln!(
-        "Content GC: {} version(s), {} symbol(s) deleted, {} busy project(s), {} failed version(s), {} skipped (store unconfigured)",
+        "Content GC: {} version(s), {} symbol(s) deleted, {} deferred (time budget), {} busy project(s), {} failed version(s), {} skipped (store unconfigured), {} orphan sweep failure(s)",
         totals.deleted_versions,
         totals.deleted_symbols,
+        totals.deferred_versions,
         totals.busy_projects,
         totals.failed_versions,
         totals.skipped_versions,
+        totals.orphan_sweep_failures,
     );
 }
 

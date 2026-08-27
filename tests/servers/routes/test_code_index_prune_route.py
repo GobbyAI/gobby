@@ -125,6 +125,7 @@ async def test_partial_failure_recovery(tmp_path: Path) -> None:
             project_root: Path,
             *,
             retention_days: int,
+            max_seconds: int | None = None,
             timeout: float | None = None,
             env: dict[str, str] | None = None,
         ) -> GcodeCommandResult:
@@ -142,7 +143,11 @@ async def test_partial_failure_recovery(tmp_path: Path) -> None:
                     timed_out=False,
                 )
             return await super().prune_project_for_maintenance(
-                project_root, retention_days=retention_days, timeout=timeout, env=env
+                project_root,
+                retention_days=retention_days,
+                max_seconds=max_seconds,
+                timeout=timeout,
+                env=env,
             )
 
     gateway = RecordingGateway()

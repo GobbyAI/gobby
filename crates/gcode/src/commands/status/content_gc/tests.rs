@@ -29,8 +29,28 @@ fn recent_git_blob_protects_matching_content() -> anyhow::Result<()> {
         .args(["commit", "-m", "seed"])
         .status()?;
     assert!(status.success());
+    // An annotated tag is listed by `rev-list --objects` under its tag name
+    // even with the blob type filter; the batch reader must discard it.
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(repo.path())
+        .args([
+            "-c",
+            "user.name=Gcode Test",
+            "-c",
+            "user.email=gcode@example.invalid",
+            "-c",
+            "tag.gpgsign=false",
+            "tag",
+            "-a",
+            "v1",
+            "-m",
+            "annotated",
+        ])
+        .status()?;
+    assert!(status.success());
 
-    let hashes = recent_content_hashes_in_git_history(repo.path(), "tracked.txt", 17)?;
+    let hashes = recent_content_hashes_in_git_history(repo.path(), 17)?;
     assert!(hashes.contains(&hasher::content_hash(b"retained\n")));
     assert!(!hashes.contains(&hasher::content_hash(b"different\n")));
     Ok(())
@@ -181,9 +201,14 @@ mod serial_db {
             vectors_synced: true,
         });
         let services = test_context(&database_url, &project_id);
-        let totals = prune_content_versions_with(&services, &candidates, |project_id| {
-            Ok(test_context(&database_url, project_id))
-        })
+        let totals = prune_content_versions_with(
+            &services,
+            &candidates,
+            None,
+            |project_id| Ok(test_context(&database_url, project_id)),
+            delete_candidate_projections,
+            code_graph::cleanup_orphans,
+        )
         .expect("prune content versions");
 
         assert_eq!(totals.deleted_versions, 1);
@@ -232,26 +257,41 @@ mod serial_db {
         assert!(!candidates[0].symbol_ids.is_empty());
 
         let services = test_context(&database_url, &project_id);
-        let totals = prune_content_versions_with(&services, &candidates, |project_id| {
-            let mut ctx = test_context(&database_url, project_id);
-            ctx.falkordb = Some(crate::config::FalkorConfig {
-                host: "127.0.0.1".to_string(),
-                port: 1,
-                password: None,
-                graph_name: "gcode_gc_test".to_string(),
-            });
-            // Both stores must be configured so the skip gate does not retain
-            // the candidate before the graph delete gets to fail.
-            ctx.qdrant = Some(crate::config::QdrantConfig {
-                url: Some("http://127.0.0.1:1".to_string()),
-                api_key: None,
-            });
-            Ok(ctx)
-        })
+        let swept = RefCell::new(Vec::new());
+        let totals = prune_content_versions_with(
+            &services,
+            &candidates,
+            None,
+            |project_id| {
+                let mut ctx = test_context(&database_url, project_id);
+                ctx.falkordb = Some(crate::config::FalkorConfig {
+                    host: "127.0.0.1".to_string(),
+                    port: 1,
+                    password: None,
+                    graph_name: "gcode_gc_test".to_string(),
+                });
+                // Both stores must be configured so the skip gate does not retain
+                // the candidate before the graph delete gets to fail.
+                ctx.qdrant = Some(crate::config::QdrantConfig {
+                    url: Some("http://127.0.0.1:1".to_string()),
+                    api_key: None,
+                });
+                Ok(ctx)
+            },
+            delete_candidate_projections,
+            |ctx: &Context| {
+                swept.borrow_mut().push(ctx.project_id.clone());
+                Ok(())
+            },
+        )
         .expect("prune isolates projection failures");
 
         assert_eq!(totals.deleted_versions, 0);
         assert_eq!(totals.failed_versions, 1);
+        assert!(
+            swept.into_inner().is_empty(),
+            "a failed projection delete leaves nothing to sweep"
+        );
         assert_eq!(content_row_count(&mut conn, &file_id), 1);
         let row = conn
             .query_one(
@@ -330,9 +370,14 @@ mod serial_db {
 
         // test_context configures neither FalkorDB nor Qdrant.
         let services = test_context(&database_url, &project_id);
-        let totals = prune_content_versions_with(&services, &candidates, |project_id| {
-            Ok(test_context(&database_url, project_id))
-        })
+        let totals = prune_content_versions_with(
+            &services,
+            &candidates,
+            None,
+            |project_id| Ok(test_context(&database_url, project_id)),
+            delete_candidate_projections,
+            code_graph::cleanup_orphans,
+        )
         .expect("prune content versions");
 
         assert_eq!(totals.skipped_versions, 3);
@@ -391,10 +436,17 @@ mod serial_db {
 
         let resolved = RefCell::new(Vec::new());
         let services = test_context(&database_url, &first_project);
-        let totals = prune_content_versions_with(&services, &candidates, |project_id| {
-            resolved.borrow_mut().push(project_id.to_string());
-            Ok(test_context(&database_url, project_id))
-        })
+        let totals = prune_content_versions_with(
+            &services,
+            &candidates,
+            None,
+            |project_id| {
+                resolved.borrow_mut().push(project_id.to_string());
+                Ok(test_context(&database_url, project_id))
+            },
+            delete_candidate_projections,
+            code_graph::cleanup_orphans,
+        )
         .expect("prune content versions");
 
         assert_eq!(totals.deleted_versions, 2);
@@ -402,6 +454,124 @@ mod serial_db {
             resolved.into_inner(),
             vec![first_project.clone(), second_project.clone()],
             "each candidate project resolves its own service context exactly once",
+        );
+        for candidate in &candidates {
+            assert_eq!(content_row_count(&mut conn, &candidate.id), 0);
+        }
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn expired_time_budget_defers_every_remaining_candidate() {
+        let (mut conn, database_url) = connect_test_db();
+        let project_id = unique_test_project_id("gcode-gc-deadline");
+        cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
+        let _cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: project_id.clone(),
+        };
+        let root = git_init_root();
+        seed_project(&mut conn, &project_id, root.path());
+        let file_id = seed_content_version(
+            &mut conn,
+            &project_id,
+            "src/lib.rs",
+            "gc-hash-late",
+            60,
+            true,
+        );
+        let candidates = discover_content_gc(&database_url, 17, Some(&project_id))
+            .expect("discover GC candidates");
+        assert_eq!(candidates.len(), 1);
+
+        let services = test_context(&database_url, &project_id);
+        let totals = prune_content_versions_with(
+            &services,
+            &candidates,
+            Some(Instant::now()),
+            |project_id| Ok(test_context(&database_url, project_id)),
+            |_: &Context, _: &ContentGcCandidate| {
+                panic!("an expired budget must not touch projections")
+            },
+            |_: &Context| panic!("an expired budget leaves nothing to sweep"),
+        )
+        .expect("prune honours the time budget");
+
+        assert_eq!(totals.deferred_versions, 1);
+        assert_eq!(totals.deleted_versions, 0);
+        assert_eq!(content_row_count(&mut conn, &file_id), 1);
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn graph_orphans_are_swept_once_per_project_after_its_deletions() {
+        let (mut conn, database_url) = connect_test_db();
+        let project_id = unique_test_project_id("gcode-gc-sweep");
+        cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
+        let _cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: project_id.clone(),
+        };
+        let root = git_init_root();
+        seed_project(&mut conn, &project_id, root.path());
+        for content_hash in ["gc-hash-sweep-a", "gc-hash-sweep-b"] {
+            seed_content_version(&mut conn, &project_id, "src/lib.rs", content_hash, 60, true);
+            seed_symbol(&mut conn, &project_id, "src/lib.rs", content_hash);
+        }
+        let candidates = discover_content_gc(&database_url, 17, Some(&project_id))
+            .expect("discover GC candidates");
+        assert_eq!(candidates.len(), 2);
+        assert!(candidates.iter().all(|candidate| candidate.has_graph_facts));
+
+        let deleted = RefCell::new(Vec::new());
+        let swept = RefCell::new(Vec::new());
+        let services = test_context(&database_url, &project_id);
+        let totals = prune_content_versions_with(
+            &services,
+            &candidates,
+            None,
+            |project_id| {
+                let mut ctx = test_context(&database_url, project_id);
+                // Both stores are "configured" so the skip gate lets the
+                // candidates through; the injected delete never contacts them.
+                ctx.falkordb = Some(crate::config::FalkorConfig {
+                    host: "127.0.0.1".to_string(),
+                    port: 1,
+                    password: None,
+                    graph_name: "gcode_gc_test".to_string(),
+                });
+                ctx.qdrant = Some(crate::config::QdrantConfig {
+                    url: Some("http://127.0.0.1:1".to_string()),
+                    api_key: None,
+                });
+                Ok(ctx)
+            },
+            |_: &Context, candidate: &ContentGcCandidate| {
+                deleted.borrow_mut().push(candidate.content_hash.clone());
+                Ok(())
+            },
+            |ctx: &Context| {
+                swept.borrow_mut().push(ctx.project_id.clone());
+                Ok(())
+            },
+        )
+        .expect("prune content versions");
+
+        assert_eq!(totals.deleted_versions, 2);
+        assert_eq!(totals.orphan_sweep_failures, 0);
+        assert_eq!(deleted.into_inner().len(), 2);
+        assert_eq!(
+            swept.into_inner(),
+            vec![project_id.clone()],
+            "one orphan sweep per project, after every version was deleted",
         );
         for candidate in &candidates {
             assert_eq!(content_row_count(&mut conn, &candidate.id), 0);
