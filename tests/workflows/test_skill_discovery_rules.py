@@ -3836,24 +3836,25 @@ class TestCodeIndexNavigationRules:
             assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_external_file_discovery_bypasses_code_index_rules(
+    async def test_file_discovery_scope_controls_code_index_rules(
         self, db: HubDatabase, tmp_path: Path
     ) -> None:
         _sync_bundled(db)
         repo = tmp_path / "repo"
         extraction = tmp_path / "workbook-extract"
         cases = (
-            ("rg --files", extraction),
-            (f"find {extraction} -type f", repo),
+            ("rg --files", extraction, False, "allow"),
+            (f"find {extraction} -type f", repo, False, "allow"),
+            ("rg pattern src", repo, True, "block"),
         )
 
-        for command, cwd in cases:
+        for command, cwd, expected_repo_scope, expected_decision in cases:
             event = self._normalized_bash_event(
                 command,
                 cwd=str(cwd),
                 project_path=str(repo),
             )
-            assert event.data["canonical_code_navigation_repo_scope"] is False
+            assert event.data["canonical_code_navigation_repo_scope"] is expected_repo_scope
 
             response = await RuleEngine(db).evaluate(
                 event,
@@ -3861,7 +3862,7 @@ class TestCodeIndexNavigationRules:
                 variables=self._variables(loaded=True),
             )
 
-            assert response.decision == "allow"
+            assert response.decision == expected_decision
 
     @pytest.mark.asyncio
     async def test_gcode_fail_open_allows_fallback_search(self, db) -> None:
