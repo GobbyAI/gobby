@@ -121,6 +121,18 @@ async def _send_tmux_keys(
         return False, f"tmux send-keys failed for session {session_id} while {action}: {detail}"
 
     if not ok:
+        logger.warning(
+            "tmux send-keys returned false while %s to target %s for session %s",
+            action,
+            target,
+            session_id,
+            extra={
+                "event": "tmux_key_delivery_failed",
+                "action": action,
+                "tmux_target": target,
+                "session_id": session_id,
+            },
+        )
         return False, f"tmux send-keys failed for session {session_id} while {action}"
     return True, None
 
