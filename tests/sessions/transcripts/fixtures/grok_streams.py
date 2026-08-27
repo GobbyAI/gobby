@@ -158,7 +158,7 @@ def _emit_tools(
             input_key: tool.tool_input,
         }
         if tool.malformed_primary_keys:
-            call.update({"title": "", "rawInput": "invalid"})
+            call.update({"title": "  ", "rawInput": {}})
         emit(call)
         emit(
             {

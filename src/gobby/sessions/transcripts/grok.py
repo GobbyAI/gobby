@@ -277,8 +277,11 @@ def _segment_pair_messages(
             if not isinstance(tool_name, str) or not tool_name.strip():
                 tool_name = update.get("name")
             tool_input = update.get("rawInput")
-            if not isinstance(tool_input, dict):
-                tool_input = update.get("input")
+            fallback_input = update.get("input")
+            if not isinstance(tool_input, dict) or (
+                not tool_input and isinstance(fallback_input, dict) and fallback_input
+            ):
+                tool_input = fallback_input
             name, tool_input = canonical_tool_name(
                 tool_name,
                 tool_input,

@@ -145,6 +145,7 @@ def test_qwen_failed_function_response_in_ledger() -> None:
         ("call-error", "error-id"),
         ("call-cancelled", "cancelled-id"),
         ("call-response", "response-error"),
+        ("call-malformed-id", "fallback-call-id"),
         ("call-none", "none-is-success"),
     ]
     turns = [
@@ -210,6 +211,21 @@ def test_qwen_failed_function_response_in_ledger() -> None:
         },
         {
             "type": "tool_result",
+            "toolCallResult": {"callId": "call-malformed-id", "status": "error"},
+            "message": {
+                "parts": [
+                    {
+                        "functionResponse": {
+                            "id": 7,
+                            "name": "Read",
+                            "response": {"output": "fallback id failure"},
+                        }
+                    }
+                ]
+            },
+        },
+        {
+            "type": "tool_result",
             "toolCallResult": {"callId": "call-none", "status": "completed"},
             "message": {
                 "parts": [
@@ -232,5 +248,6 @@ def test_qwen_failed_function_response_in_ledger() -> None:
         "- Read error-id ! failed: permission denied",
         "- Read cancelled-id ! failed: cancelled by user",
         "- Read response-error ! failed: response-only failure",
+        "- Read fallback-call-id ! failed: fallback id failure",
         "- Read none-is-success",
     ]
