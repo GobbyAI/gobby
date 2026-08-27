@@ -1,11 +1,13 @@
 """Tests for AgentRunner and AgentRunContext."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.agents.runner import AgentRunner
 from gobby.agents.runner_models import AgentConfig, AgentRunContext
+
+_RUN_UUID = "11111111-1111-4111-8111-111111111111"
 
 pytestmark = pytest.mark.unit
 
@@ -141,21 +143,30 @@ class TestAgentRunnerGetAndListRuns:
     def test_get_run_returns_run(self, runner) -> None:
         """get_run returns the run from storage."""
         mock_run = MagicMock()
-        mock_run.id = "run-abc"
+        mock_run.id = _RUN_UUID
         runner._run_storage.get = MagicMock(return_value=mock_run)
 
-        result = runner.get_run("run-abc")
+        result = runner.get_run(_RUN_UUID)
 
         assert result is mock_run
-        runner._run_storage.get.assert_called_once_with("run-abc")
+        runner._run_storage.get.assert_called_once_with(_RUN_UUID)
 
     def test_get_run_returns_none_for_missing(self, runner) -> None:
         """get_run returns None when run not found."""
         runner._run_storage.get = MagicMock(return_value=None)
 
-        result = runner.get_run("nonexistent")
+        result = runner.get_run("22222222-2222-4222-8222-222222222222")
 
         assert result is None
+        runner._run_storage.get.assert_called_once_with("22222222-2222-4222-8222-222222222222")
+
+    def test_get_run_skips_storage_for_non_uuid_reference(self, runner: AgentRunner) -> None:
+        """A prefix or junk reference never reaches the uuid column (#21097)."""
+        with patch.object(runner._run_storage, "get") as storage_get:
+            assert runner.get_run("0fd6274b") is None
+            assert runner.get_run("nonexistent") is None
+
+        storage_get.assert_not_called()
 
     def test_list_runs_returns_runs(self, runner) -> None:
         """list_runs returns runs from storage."""

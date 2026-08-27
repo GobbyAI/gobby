@@ -10,6 +10,7 @@ import logging
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.storage.agents import AgentRunStatus
+from gobby.utils.uuid_validation import parse_uuid_reference
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
@@ -18,7 +19,14 @@ logger = logging.getLogger(__name__)
 
 
 def get_run(runner: AgentRunner, run_id: str) -> Any | None:
-    """Get an agent run by ID."""
+    """Get an agent run by ID.
+
+    ``agent_runs.id`` is a uuid column, so a reference that is not a full UUID
+    is answered here as "not found" instead of reaching PostgreSQL, where it
+    would surface as a raw ``invalid input syntax for type uuid`` error (#21097).
+    """
+    if parse_uuid_reference(run_id) is None:
+        return None
     return runner._run_storage.get(run_id)
 
 

@@ -2144,3 +2144,79 @@ class TestKillAgentCapturePreemptedDelivery:
         assert len(registry.notify_calls) == 1
         assert removals == [("run-123", ["waiter-sess"])]
         assert registry.cleanup_calls == ["run-123"]
+
+
+_PREFIX_RUN_ID = "11111111-1111-4111-8111-111111111111"
+_OTHER_PREFIX_RUN_ID = "11111111-2222-4222-8222-222222222222"
+
+
+def _make_terminal_run(run_id: str) -> MagicMock:
+    run = _make_mock_agent_run(run_id=run_id, status="success")
+    run.result = "done"
+    run.error = None
+    run.prompt = "prompt"
+    run.completed_at = None
+    run.terminal_reason = None
+    return run
+
+
+@pytest.mark.asyncio
+async def test_get_agent_result_resolves_unique_prefix() -> None:
+    """A unique hexadecimal prefix resolves like the CLI does (#21097)."""
+    runner = _make_runner_with_run_storage()
+    runner.run_storage.find_by_id_prefix.return_value = [_make_terminal_run(_PREFIX_RUN_ID)]
+    get_result = create_agents_registry(runner)._tools["get_agent_result"].func
+
+    result = await get_result(run_id="11111111")
+
+    assert result["success"] is True
+    assert result["run_id"] == _PREFIX_RUN_ID
+    assert result["status"] == "success"
+    runner.run_storage.find_by_id_prefix.assert_called_once_with("11111111", limit=2)
+    runner.get_run.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_agent_result_reports_ambiguous_prefix() -> None:
+    """An ambiguous prefix names its candidates instead of leaking a storage error."""
+    runner = _make_runner_with_run_storage()
+    runner.run_storage.find_by_id_prefix.return_value = [
+        _make_terminal_run(_PREFIX_RUN_ID),
+        _make_terminal_run(_OTHER_PREFIX_RUN_ID),
+    ]
+    get_result = create_agents_registry(runner)._tools["get_agent_result"].func
+
+    result = await get_result(run_id="11111111")
+
+    assert result["success"] is False
+    assert result["error_code"] == "INVALID_ARGUMENTS"
+    assert result["matches"] == [_PREFIX_RUN_ID, _OTHER_PREFIX_RUN_ID]
+    runner.get_run.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_wait_for_agent_resolves_unique_prefix_to_terminal_run() -> None:
+    """wait_for_agent accepts the same prefix and reports the resolved full id."""
+    runner = _make_runner_with_run_storage()
+    runner.run_storage.find_by_id_prefix.return_value = [_make_terminal_run(_PREFIX_RUN_ID)]
+    wait = create_agents_registry(runner)._tools["wait_for_agent"].func
+
+    result = await wait(run_id="11111111")
+
+    assert result["success"] is True
+    assert result["completed"] is True
+    assert result["run_id"] == _PREFIX_RUN_ID
+    runner.get_run.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_full_uuid_keeps_the_exact_match_path() -> None:
+    runner = _make_runner_with_run_storage()
+    runner.get_run.return_value = _make_terminal_run(_PREFIX_RUN_ID)
+    get_result = create_agents_registry(runner)._tools["get_agent_result"].func
+
+    result = await get_result(run_id=_PREFIX_RUN_ID)
+
+    assert result["run_id"] == _PREFIX_RUN_ID
+    runner.get_run.assert_called_once_with(_PREFIX_RUN_ID)
+    runner.run_storage.find_by_id_prefix.assert_not_called()

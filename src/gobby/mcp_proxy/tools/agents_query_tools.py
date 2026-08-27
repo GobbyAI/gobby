@@ -43,7 +43,7 @@ from gobby.mcp_proxy.wait_tools import (
     clamp_wait_tool_timeout,
 )
 from gobby.storage.agent_resume import register_daemon_resume_waiter
-from gobby.storage.agents import AgentRunStatus
+from gobby.storage.agents import AgentRun, AgentRunStatus
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +147,31 @@ def register_agent_query_tools(
     registry: InternalToolRegistry,
     ctx: AgentsRegistryContext,
 ) -> None:
+    def _lookup_run(
+        run_id: str,
+        *,
+        get: Callable[[str], AgentRun | None] | None = None,
+    ) -> tuple[AgentRun | None, dict[str, Any] | None]:
+        """Resolve a run reference: a unique hexadecimal prefix or an exact ID.
+
+        Returns ``(run, error)``. A unique prefix resolves through storage like
+        the CLI and ``get_running_agent`` do; an ambiguous prefix returns the
+        structured INVALID_ARGUMENTS payload with its candidates (#21097).
+        """
+        validated = _validated_run_ref(run_id)
+        if validated is not None and not validated[1]:
+            run_ref = validated[0]
+            matches = ctx.agent_run_manager.find_by_id_prefix(run_ref, limit=2)
+            if len(matches) > 1:
+                return None, _invalid_run_ref(
+                    f"Ambiguous agent run ID prefix: {run_ref}",
+                    run_id=run_id,
+                    matches=[match.id for match in matches],
+                )
+            return (matches[0] if matches else None), None
+        lookup = get if get is not None else ctx.runner.get_run
+        return lookup(run_id), None
+
     @registry.tool(
         name="get_agent_result",
         description=(
@@ -155,7 +180,9 @@ def register_agent_query_tools(
         ),
     )
     async def get_agent_result(run_id: str) -> dict[str, Any]:
-        run = ctx.runner.get_run(run_id)
+        run, error = _lookup_run(run_id)
+        if error is not None:
+            return error
         if not run:
             return {"success": False, "error": f"Agent run {run_id} not found"}
         try:
@@ -267,9 +294,12 @@ def register_agent_query_tools(
     )
     async def wait_for_agent(run_id: str) -> dict[str, Any]:
         agents = facade()
-        run = ctx.runner.get_run(run_id)
+        run, error = _lookup_run(run_id)
+        if error is not None:
+            return error
         if run is None:
             return {"success": False, "error": f"Agent run {run_id} not found"}
+        run_id = run.id
         requested_run = run
         try:
             run, recovery_pending = _follow_daemon_resume_chain(
@@ -441,9 +471,12 @@ def register_agent_query_tools(
         poll_interval_seconds: float = 2.0,
     ) -> dict[str, Any]:
         agents = facade()
-        run = ctx.runner.get_run(run_id)
+        run, error = _lookup_run(run_id)
+        if error is not None:
+            return _wait_for_output_error("invalid_run", str(error["error"]))
         if run is None:
             return _wait_for_output_error("invalid_run", f"Agent run {run_id} not found")
+        run_id = run.id
         if not run.tmux_session_name:
             return _wait_for_output_error("no_terminal", f"Agent run {run_id} has no terminal")
 
@@ -747,7 +780,11 @@ def register_agent_query_tools(
             run_terminal_delivery_offload,
         )
 
-        run = ctx.agent_run_manager.get(run_id)
+        run, error = _lookup_run(run_id, get=ctx.agent_run_manager.get)
+        if error is not None:
+            return error
+        if run is not None:
+            run_id = run.id
         if run and run.status in ("running", "pending"):
             if ctx.runner.cancel_run(run_id):
                 if ctx.db is not None:
