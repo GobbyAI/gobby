@@ -246,7 +246,11 @@ class ToolEventHandlerMixin(EventHandlersBase):
 
     def _record_dirty_generated_artifacts(self, event: HookEvent, session_id: str) -> None:
         """Attribute known dirty generated files to the task owning their sources."""
-        repo_edit = self._resolve_repo_edit_paths(".", event.cwd)
+        repo_edit = self._resolve_repo_edit_paths(
+            ".",
+            event.cwd,
+            project_id=event.project_id,
+        )
         db = getattr(self._session_manager, "db", None)
         if repo_edit is None or db is None:
             return
@@ -311,7 +315,11 @@ class ToolEventHandlerMixin(EventHandlersBase):
         committable_paths: list[str] = []
         paths_by_checkout: dict[str, list[str]] = {}
         for file_path in file_paths:
-            repo_edit = self._resolve_repo_edit_paths(file_path, event.cwd)
+            repo_edit = self._resolve_repo_edit_paths(
+                file_path,
+                event.cwd,
+                project_id=event.project_id,
+            )
             if repo_edit is None:
                 continue
             repo_root, repo_relative_path = repo_edit
@@ -406,7 +414,13 @@ class ToolEventHandlerMixin(EventHandlersBase):
         except Exception as e:
             self.logger.warning("Failed to record autonomous tool progress: %s", e)
 
-    def _resolve_repo_edit_paths(self, file_path: str, cwd: str | None) -> tuple[Path, str] | None:
+    def _resolve_repo_edit_paths(
+        self,
+        file_path: str,
+        cwd: str | None,
+        *,
+        project_id: str | None = None,
+    ) -> tuple[Path, str] | None:
         """Return ``(repo_root, repo_relative_path)`` for an edited file."""
         target_path = Path(os.path.expanduser(file_path))
         cwd_path = Path(cwd).resolve(strict=False) if cwd else None
@@ -419,7 +433,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
         else:
             return None
 
-        from gobby.utils.project_context import find_project_root
+        from gobby.utils.project_context import find_project_root, get_project_context
 
         # Without a project root or cwd there is no repo to attribute the edit
         # to — fabricating one from the file's parent would attribute scratchpad
@@ -428,6 +442,17 @@ class ToolEventHandlerMixin(EventHandlersBase):
         if repo_root is None:
             return None
         repo_root = repo_root.resolve(strict=False)
+        if target_path.is_absolute() and not resolved_target.is_relative_to(repo_root):
+            target_root = find_project_root(resolved_target.parent)
+            target_context = get_project_context(target_root) if target_root is not None else None
+            if (
+                project_id is None
+                or target_root is None
+                or target_context is None
+                or target_context.get("id") != project_id
+            ):
+                return None
+            repo_root = target_root.resolve(strict=False)
         if not resolved_target.is_relative_to(repo_root):
             return None
 

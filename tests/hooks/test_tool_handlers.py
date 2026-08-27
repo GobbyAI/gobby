@@ -652,6 +652,52 @@ class TestToolHandlerEdgeCases:
         record_files.assert_not_called()
         mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
 
+    def test_absolute_path_in_same_project_worktree_tracks_target_checkout(
+        self,
+        mock_dependencies: dict[str, Any],
+        tmp_path: Path,
+    ) -> None:
+        project_id = "21000000-0000-4000-8000-000000000073"
+        main_root = tmp_path / "main"
+        worktree_root = tmp_path / "worktree"
+        for root in (main_root, worktree_root):
+            (root / ".gobby").mkdir(parents=True)
+            (root / ".gobby" / "project.json").write_text(
+                f'{{"id": "{project_id}"}}',
+                encoding="utf-8",
+            )
+        target = worktree_root / "src" / "owned.py"
+        target.parent.mkdir(parents=True)
+        target.write_text("owned = True\n", encoding="utf-8")
+        mock_dependencies["task_manager"].list_tasks.return_value = [MagicMock()]
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "Write",
+                "tool_input": {"file_path": str(target)},
+            },
+            metadata={"_platform_session_id": "sess-123"},
+        )
+        event.cwd = str(main_root)
+        event.project_id = project_id
+
+        with (
+            patch("gobby.hooks.event_handlers._tool.is_path_gitignored", return_value=False),
+            patch(
+                "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files",
+                return_value=True,
+            ) as record_files,
+        ):
+            response = handlers.handle_after_tool(event)
+
+        assert response.decision == "allow"
+        record_files.assert_called_once_with(
+            "sess-123",
+            ["src/owned.py"],
+            checkout_root=str(worktree_root.resolve()),
+        )
+
     def test_after_tool_notifies_code_index_with_project_root_path(
         self, mock_dependencies: dict[str, Any], tmp_path: Path
     ) -> None:
