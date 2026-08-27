@@ -36,7 +36,7 @@ from gobby.hooks.session_activation import (
     reconcile_session_activation,
 )
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.definitions import AgentDefinitionManager
+from gobby.storage.definitions import AgentDefinitionManager, get_definitions_revision
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
@@ -611,9 +611,11 @@ def test_active_rule_names_cache_evicts_oldest_entries(
         ),
     )
     now = time.monotonic()
+    rules_revision = get_definitions_revision("rules")
     for index in range(_ACTIVE_RULE_NAMES_CACHE_MAX_ENTRIES + 1):
         _ACTIVE_RULE_NAMES_CACHE[(f"agent-{index}", project_id)] = (
             now - 1 + (index * 0.001),
+            rules_revision,
             {f"rule-{index}"},
         )
 
@@ -640,11 +642,17 @@ def test_active_rule_names_cache_purges_expired_entries(
         ),
     )
     now = time.monotonic()
+    rules_revision = get_definitions_revision("rules")
     _ACTIVE_RULE_NAMES_CACHE[("stale-agent", project_id)] = (
         now - _ACTIVE_RULE_NAMES_CACHE_TTL_SECONDS - 1,
+        rules_revision,
         {"stale-rule"},
     )
-    _ACTIVE_RULE_NAMES_CACHE[("fresh-agent", project_id)] = (now, {"fresh-rule"})
+    _ACTIVE_RULE_NAMES_CACHE[("fresh-agent", project_id)] = (
+        now,
+        rules_revision,
+        {"fresh-rule"},
+    )
 
     from gobby.hooks.session_activation import _resolve_active_rule_names
 
