@@ -568,6 +568,8 @@ def _admission_payload(admission: DreamAdmission) -> dict[str, Any]:
     """Translate a store admission outcome into the start-result contract."""
     if admission.outcome == "admitted":
         return {"success": True, "run_id": admission.run_id}
+    if admission.outcome == "resumed":
+        return {"success": True, "run_id": admission.run_id, "resumed": True}
     if admission.outcome == "coalesced":
         return {
             "success": True,

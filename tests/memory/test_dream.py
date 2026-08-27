@@ -25,6 +25,7 @@ from gobby.memory.dream.aggregate import (
 )
 from gobby.memory.dream.apply import apply_dream_plan, revert_dream_run
 from gobby.memory.dream.candidates import list_sweep_candidates, memory_to_candidate
+from gobby.memory.dream.cron import reconcile_interrupted_dream_runs
 from gobby.memory.dream.models import (
     DreamAction,
     DreamActionName,
@@ -1333,6 +1334,28 @@ def test_postgres_admission_race_admits_exactly_one(temp_db: Any) -> None:
     assert len(rows) == 1
 
 
+def test_postgres_restart_resume_race_reuses_one_run(temp_db: Any) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    store = MemoryDreamStore(temp_db)
+    options = {"aggregate": True, "dry_run": False}
+    interrupted = store.admit_run(project_id=None, dry_run=False, options=options)
+    assert interrupted.run_id is not None
+    store.mark_interrupted_runs()
+
+    def admit() -> tuple[str, str | None]:
+        result = store.admit_run(project_id=None, dry_run=False, options=options)
+        return result.outcome, result.run_id
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        admissions = list(pool.map(lambda _: admit(), range(2)))
+
+    assert sorted(outcome for outcome, _ in admissions) == ["coalesced", "resumed"]
+    assert {run_id for _, run_id in admissions} == {interrupted.run_id}
+    rows = temp_db.fetchall("SELECT id FROM memory_dream_runs WHERE status = 'running'", ())
+    assert [str(row["id"]) for row in rows] == [interrupted.run_id]
+
+
 @pytest.mark.parametrize("terminal_status", sorted(RUN_TERMINAL_STATUSES))
 def test_postgres_admission_reopens_after_terminal_status(
     temp_db: Any,
@@ -1384,11 +1407,17 @@ def test_postgres_partial_run_checkpoint_round_trip(temp_db: Any) -> None:
     assert run["checkpoint"] == checkpoint.to_dict()
 
 
-def test_postgres_restart_recovery_interrupts_and_frees_admission(temp_db: Any) -> None:
+@pytest.mark.asyncio
+async def test_postgres_restart_recovery_resumes_checkpoint_and_completes(
+    temp_db: Any,
+) -> None:
     store = MemoryDreamStore(temp_db)
     admitted = store.admit_run(
         project_id=None, dry_run=False, options={"aggregate": True, "dry_run": False}
     )
+    checkpoint = {"phase": "coordinator", "batch_number": 2, "completed": 50}
+    assert admitted.run_id is not None
+    store.update_run(admitted.run_id, checkpoint=checkpoint)
     child_id = store.create_run(
         project_id=PERSONAL_PROJECT_ID,
         dry_run=False,
@@ -1403,23 +1432,52 @@ def test_postgres_restart_recovery_interrupts_and_frees_admission(temp_db: Any) 
     )
     store.complete_snapshot(snapshot_id, after_data={"id": memory.id})
 
-    reconciled = store.mark_interrupted_runs()
+    reconciled = reconcile_interrupted_dream_runs(SimpleNamespace(db=temp_db))
 
-    assert admitted.run_id is not None
     assert set(reconciled) == {admitted.run_id, child_id}
     for run_id in (admitted.run_id, child_id):
         run = store.get_run(run_id)
         assert run is not None
         assert run["status"] == "interrupted"
         assert run["error"] == INTERRUPTED_RESTART_ERROR
-    # Committed snapshots survive recovery untouched: a later run continues
-    # from naturally due candidates instead of replaying applied actions.
+    # Committed snapshots survive recovery untouched; resumption continues the
+    # aggregate row from its durable checkpoint instead of replaying actions.
     snapshots = store.list_snapshots(child_id)
     assert [snapshot["id"] for snapshot in snapshots] == [snapshot_id]
-    readmitted = store.admit_run(
-        project_id=None, dry_run=False, options={"aggregate": True, "dry_run": False}
+    service = MemoryDreamService(
+        memory_manager=_as_dream_manager(LocalMemoryManager(temp_db)),
+        dream_config=_sweep_config(unit_size=10),
+        llm_service=MagicMock(),
     )
-    assert readmitted.outcome == "admitted"
+    aggregate = {
+        "success": True,
+        "targets": 0,
+        "completed": 0,
+        "failed": 0,
+        "mutations": 0,
+        "runs": [],
+        "passes": 1,
+        "stop_reason": "drained",
+    }
+    run_all_due_projects = AsyncMock(return_value=aggregate)
+    _set_method(service, "run_all_due_projects", run_all_due_projects)
+
+    resumed = await service.start_all_due_projects_async(dry_run=False)
+    completed = await service.execute_all_due_projects_run(str(resumed["run_id"]))
+
+    assert resumed == {"success": True, "run_id": admitted.run_id, "resumed": True}
+    assert completed["status"] == "completed"
+    resumed_run = store.get_run(admitted.run_id)
+    assert resumed_run is not None
+    assert resumed_run["status"] == "completed"
+    assert resumed_run["checkpoint"] == checkpoint
+    run_all_due_projects.assert_awaited_once_with(
+        dry_run=False,
+        skip_consolidation=False,
+        memory_type=None,
+        full_sweep=False,
+        run_id=admitted.run_id,
+    )
 
 
 def test_dream_action_vocabulary_matches_live_pipeline() -> None:
@@ -1566,6 +1624,7 @@ class _FakeDreamDB:
         def _txn() -> Any:
             memories = copy.deepcopy(self.memories)
             crossrefs = copy.deepcopy(self.crossrefs)
+            runs = copy.deepcopy(self.runs)
             snapshots = copy.deepcopy(self.snapshots)
             projection_changes = copy.deepcopy(self.projection_changes)
             try:
@@ -1573,6 +1632,7 @@ class _FakeDreamDB:
             except Exception:
                 self.memories = memories
                 self.crossrefs = crossrefs
+                self.runs = runs
                 self.snapshots = snapshots
                 self.projection_changes = projection_changes
                 raise
@@ -3478,6 +3538,28 @@ class _FencedConn:
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> _FencedCursor:
         normalized = " ".join(sql.split())
+        if normalized.startswith(
+            "SELECT * FROM memory_dream_runs WHERE status = 'interrupted'"
+        ):
+            marker = str(params[0])
+            candidates = []
+            for run in self.db.runs.values():
+                raw_options = run.get("options")
+                options = json.loads(raw_options) if isinstance(raw_options, str) else raw_options
+                if run.get("status") == "interrupted" and (options or {}).get(marker) is True:
+                    candidates.append(run)
+            candidates.sort(key=lambda run: str(run.get("updated_at") or ""), reverse=True)
+            return _FencedCursor(row=dict(candidates[0]) if candidates else None)
+        if normalized.startswith("UPDATE memory_dream_runs SET status = 'running'"):
+            run = self.db.runs[str(params[2])]
+            run.update(
+                status="running",
+                options=params[0],
+                error=None,
+                completed_at=None,
+                updated_at=params[1],
+            )
+            return _FencedCursor()
         if normalized.startswith("SELECT * FROM memories") and "FOR UPDATE" in normalized:
             row = self.db.memories.get(str(params[0]))
             if row is None:
