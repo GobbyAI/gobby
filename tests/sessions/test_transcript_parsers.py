@@ -2419,7 +2419,7 @@ def test_tool_activity_flag_preserves_pair_shape(source: str, fixture_path: Path
         ledgers = "\n".join(
             str(message["tool_activity"]) for message in with_ledger if "tool_activity" in message
         )
-        assert "- search_replace /repo/widget.py" in ledgers
+        assert "- search_replace /repo/widget.py" in ledgers, ledgers
 
     fixture_root = Path(__file__).parent / "transcripts" / "fixtures"
     fixture_parsers: list[tuple[TranscriptParser, Path]] = [

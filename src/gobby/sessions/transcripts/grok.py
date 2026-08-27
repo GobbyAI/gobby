@@ -274,7 +274,7 @@ def _segment_pair_messages(
             pending_user = False
         elif include_tool_activity and update_type == "tool_call" and current_user is not None:
             tool_name = update.get("title")
-            if not isinstance(tool_name, str):
+            if not isinstance(tool_name, str) or not tool_name.strip():
                 tool_name = update.get("name")
             tool_input = update.get("rawInput")
             if not isinstance(tool_input, dict):
