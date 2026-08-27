@@ -2189,27 +2189,6 @@ class TestReadUndigestedTurns:
 
         assert result == ("Question", "Answer")
 
-    @pytest.mark.asyncio
-    async def test_partial_transcript_tail_withholds_trailing_pair(self, tmp_path: Path) -> None:
-        transcript = tmp_path / "transcript.jsonl"
-        self._write_claude_transcript(
-            transcript,
-            [
-                ("Complete prompt", "Complete response"),
-                ("Trailing prompt", None),
-            ],
-        )
-        with transcript.open("ab") as stream:
-            stream.write(b'{"type":"assistant"')
-
-        batch = await _read_undigested_turns(str(transcript), "claude", 0)
-
-        assert batch.pairs == [("Complete prompt", "Complete response")]
-        assert batch.next_pair_index == 1
-        assert batch.tail_withheld is True
-        assert batch.tail_pair is not None
-        assert batch.tail_pair.prompt == "Trailing prompt"
-
 
 class TestBuildTurnAndDigestCatchUp:
     """Tests for build_turn_and_digest catching up on missed turns."""
@@ -2554,6 +2533,36 @@ async def test_tool_only_turn_ledger_stays_on_current_pair(
     )
     assert catch_up.pairs == []
     assert catch_up.next_pair_index == 1
+
+
+@pytest.mark.asyncio
+async def test_partial_transcript_tail_withholds_trailing_pair(tmp_path: Path) -> None:
+    transcript = tmp_path / "transcript.jsonl"
+    records = [
+        {"type": "user", "message": {"role": "user", "content": "Complete prompt"}},
+        {
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "Complete response"}],
+            },
+        },
+        {"type": "user", "message": {"role": "user", "content": "Trailing prompt"}},
+    ]
+    transcript.write_text(
+        "".join(f"{json.dumps(record)}\n" for record in records),
+        encoding="utf-8",
+    )
+    with transcript.open("ab") as stream:
+        stream.write(b'{"type":"assistant"')
+
+    batch = await _read_undigested_turns(str(transcript), "claude", 0)
+
+    assert batch.pairs == [("Complete prompt", "Complete response")]
+    assert batch.next_pair_index == 1
+    assert batch.tail_withheld is True
+    assert batch.tail_pair is not None
+    assert batch.tail_pair.prompt == "Trailing prompt"
 
 
 @pytest.mark.asyncio
