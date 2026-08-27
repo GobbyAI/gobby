@@ -1,7 +1,7 @@
 ---
 name: memory
 description: Use Gobby's persistent memory for durable cross-session knowledge, search-first retrieval, and stale-memory maintenance while keeping tasks, plans, code, and git authoritative for their own concerns.
-version: "1.2.0"
+version: "1.2.1"
 category: core
 alwaysApply: false
 triggers: remember, recall, forget, memory
@@ -39,7 +39,12 @@ results are evidence, not authority.
 
 ## Capture
 
-Create a memory when either condition holds:
+Incorrect runtime behavior is found work. Call `gobby-tasks.create_task`
+with `claim=true` and fix it. Do not `create_memory`. That includes wrong
+status, a broken invariant, a live process with an expired row, a probe
+surprise, and "how the system currently misbehaves."
+
+Create a memory when either remaining condition holds:
 
 - The user explicitly asks Gobby to remember durable information.
 - You learn a non-obvious fact, preference, convention, relationship, external

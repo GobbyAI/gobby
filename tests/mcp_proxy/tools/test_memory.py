@@ -84,6 +84,19 @@ _VALID_RATIONALE = (
 
 
 @pytest.mark.asyncio
+def test_create_memory_description_routes_bugs_to_tasks(
+    mock_memory_manager: MagicMock,
+) -> None:
+    registry = create_memory_registry(lambda: mock_memory_manager)
+    tool = registry.get_tool_metadata("create_memory")
+    assert tool is not None
+    assert "gobby-tasks.create_task" in tool.description
+    assert "claim=true" in tool.description
+    assert tool.description.find("gobby-tasks.create_task") < tool.description.find(
+        "rationale is mandatory"
+    )
+
+
 async def test_create_memory_requires_rationale(mock_memory_manager: MagicMock) -> None:
     registry = create_memory_registry(lambda: mock_memory_manager)
     payload = {"content": "Always use psycopg %s placeholders in hub SQL."}

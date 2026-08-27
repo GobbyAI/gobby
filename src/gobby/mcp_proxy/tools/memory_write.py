@@ -114,10 +114,12 @@ def register_memory_write_tools(
     @registry.tool(
         name="create_memory",
         description=(
-            "Create a new memory. rationale is mandatory: one or two sentences "
-            "on why a future, unrelated session should be served this memory "
-            "(max 500 chars). source_task_id and created_by_agent are derived "
-            "unless overridden. Returns similar existing memories to help detect "
+            "Create a new memory. Bugs, incidents, and incorrect runtime "
+            "behavior belong on gobby-tasks.create_task with claim=true, not "
+            "here. rationale is mandatory: one or two sentences on why a "
+            "future, unrelated session should be served this memory (max 500 "
+            "chars). source_task_id and created_by_agent are derived unless "
+            "overridden. Returns similar existing memories to help detect "
             "duplicates."
         ),
     )
@@ -134,6 +136,9 @@ def register_memory_write_tools(
     ) -> dict[str, Any]:
         """
         Create a new memory.
+
+        Bugs, incidents, and incorrect runtime behavior belong on
+        ``gobby-tasks.create_task`` with ``claim=true``, not here.
 
         Args:
             content: The memory content to store
