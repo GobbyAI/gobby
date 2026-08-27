@@ -454,6 +454,8 @@ class TestGobbyRunnerShutdown:
 
             runner = await GobbyRunner.create()
             mock_message_processor.start.assert_awaited_once()
+            runner.database.open_runtime_async_connection.assert_awaited_once()
+            assert runner.definition_revision_listener.listen_task is not None
             runner._shutdown_requested = True
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
@@ -1140,7 +1142,7 @@ class TestForceExitBackstop:
 
         exits: list[int] = []
         monkeypatch.setattr(runner_module.os, "_exit", exits.append)
-        monkeypatch.setattr(runner_module.logging, "shutdown", lambda: None)
+        monkeypatch.setattr("gobby.runner.logging.shutdown", lambda: None)
         return exits
 
     def test_no_exit_when_backstop_unset(self, monkeypatch) -> None:

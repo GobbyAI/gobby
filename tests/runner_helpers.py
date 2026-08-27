@@ -1,5 +1,7 @@
 """Shared helpers for runner tests."""
 
+import asyncio
+from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import DEFAULT, AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -184,6 +186,17 @@ def create_base_patches(
 
     def make_postgres_db(*_args: Any, **_kwargs: Any) -> MagicMock:
         database = MagicMock()
+        notification_connection = MagicMock(autocommit=True)
+        notification_connection.execute = AsyncMock()
+        notification_connection.close = AsyncMock()
+
+        async def no_notifications() -> AsyncIterator[Any]:
+            await asyncio.Event().wait()
+            if False:
+                yield None
+
+        notification_connection.notifies.side_effect = no_notifications
+        database.open_runtime_async_connection = AsyncMock(return_value=notification_connection)
         database.fetchone.return_value = None
         database.fetchall.return_value = []
         database.execute.return_value = None
