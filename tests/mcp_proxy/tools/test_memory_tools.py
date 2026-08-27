@@ -483,6 +483,9 @@ class TestCreateMemory:
         """
         duplicate_id = "22222222-2222-4222-8222-222222220001"
         weaker_id = "22222222-2222-4222-8222-222222220002"
+        third_id = "22222222-2222-4222-8222-222222220003"
+        fourth_id = "22222222-2222-4222-8222-222222220004"
+        fifth_duplicate_id = "22222222-2222-4222-8222-222222220005"
         mock_memory_manager.search_memories.return_value = [
             MockMemory(
                 id=duplicate_id,
@@ -498,6 +501,13 @@ class TestCreateMemory:
                 raw_semantic_score=0.7,
                 temporal_decay_factor=1.0,
             ),
+            MockMemory(id=third_id, content="Third", raw_semantic_score=0.8),
+            MockMemory(id=fourth_id, content="Fourth", raw_semantic_score=0.75),
+            MockMemory(
+                id=fifth_duplicate_id,
+                content="Fifth duplicate",
+                raw_semantic_score=0.92,
+            ),
         ]
 
         with patch(
@@ -510,13 +520,22 @@ class TestCreateMemory:
             )
 
         assert result["success"] is True
-        assert result["auto_superseded"] == [{"id": duplicate_id, "similarity": 0.95}]
-        assert [entry["id"] for entry in result["similar_existing"]] == [duplicate_id, weaker_id]
+        assert result["auto_superseded"] == [
+            {"id": duplicate_id, "similarity": 0.95},
+            {"id": fifth_duplicate_id, "similarity": 0.92},
+        ]
+        assert [entry["id"] for entry in result["similar_existing"]] == [
+            duplicate_id,
+            weaker_id,
+            third_id,
+            fourth_id,
+            fifth_duplicate_id,
+        ]
         # similar_existing reports the undecayed score, the axis search ranks on.
         assert result["similar_existing"][0]["similarity"] == pytest.approx(0.95)
         assert result["similar_existing"][0]["raw_semantic_score"] == 0.95
         call_kwargs = mock_memory_manager.create_memory.call_args.kwargs
-        assert call_kwargs["supersedes"] == [duplicate_id]
+        assert call_kwargs["supersedes"] == [duplicate_id, fifth_duplicate_id]
         probe_kwargs = mock_memory_manager.search_memories.call_args.kwargs
         assert probe_kwargs["limit"] == 5
         assert probe_kwargs["embed_text"] == f"Test content\n\nWhy: {_VALID_RATIONALE}"
@@ -1015,8 +1034,8 @@ class TestGetRelatedMemories:
     async def test_get_related_memories_success(self, memory_registry, mock_memory_manager):
         """Test successful related memories retrieval."""
         mock_memory_manager.get_related.return_value = [
-            MockMemory(id="related-1"),
-            MockMemory(id="related-2"),
+            MockMemory(id="related-1", similarity=0.84),
+            MockMemory(id="related-2", similarity=0.63),
         ]
 
         with patch("gobby.mcp_proxy.tools.memory.get_current_project_id", return_value=None):
@@ -1028,7 +1047,7 @@ class TestGetRelatedMemories:
         assert result["success"] is True
         assert result["memory_id"] == "mem-123"
         assert result["count"] == 2
-        assert len(result["related"]) == 2
+        assert [entry["similarity"] for entry in result["related"]] == [0.84, 0.63]
         mock_memory_manager.get_related.assert_called_once_with(
             memory_id="mem-123",
             limit=5,
@@ -1211,6 +1230,18 @@ class TestRegistryCreation:
 
         assert "remember_with_image" not in tool_names
         assert "remember_screenshot" not in tool_names
+
+    def test_backup_tool_descriptions_name_machine_local_path(
+        self,
+        mock_memory_manager: MagicMock,
+    ) -> None:
+        registry = create_memory_registry(lambda: mock_memory_manager)
+
+        expected_path = "~/.gobby/backups/<project-uuid>/memories.jsonl"
+        for tool_name in ("backup_memories", "restore_memories"):
+            tool = registry.get_tool_metadata(tool_name)
+            assert tool is not None
+            assert expected_path in tool.description
 
     def test_registry_with_llm_service(self, mock_memory_manager) -> None:
         """Test registry creation with LLM service (optional parameter)."""

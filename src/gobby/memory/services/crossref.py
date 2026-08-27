@@ -266,5 +266,6 @@ class CrossrefService:
                 mem = self._storage.get_memory(other_id, scope=scope)
             except ValueError:
                 continue
+            mem.similarity = ref.similarity
             memories.append(mem)
         return memories

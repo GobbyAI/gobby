@@ -470,6 +470,7 @@ def create_memory_registry(
                         "type": m.memory_type,
                         "created_at": m.created_at,
                         "tags": m.tags,
+                        "similarity": getattr(m, "similarity", None),
                     }
                     for m in memories
                 ],
@@ -673,7 +674,10 @@ def create_memory_registry(
 
     @registry.tool(
         name="restore_memories",
-        description="Restore memories from .gobby/memories.jsonl when backup timestamps win.",
+        description=(
+            "Restore memories from ~/.gobby/backups/<project-uuid>/memories.jsonl "
+            "when backup timestamps win."
+        ),
     )
     async def restore_memories() -> dict[str, Any]:
         """Non-destructively restore memories from the configured JSONL backup."""
@@ -688,7 +692,9 @@ def create_memory_registry(
 
     @registry.tool(
         name="backup_memories",
-        description="Write current live memories to .gobby/memories.jsonl.",
+        description=(
+            "Write current live memories to ~/.gobby/backups/<project-uuid>/memories.jsonl."
+        ),
     )
     async def backup_memories() -> dict[str, Any]:
         """Write a deterministic JSONL backup from the hub database."""

@@ -530,7 +530,7 @@ async def test_planner_request_sets_overall_provider_deadline() -> None:
     with patch("gobby.memory.dream.planner.PromptLoader.render", return_value="prompt"):
         await build_raw_plan(
             candidates=[_candidate("memory-1")],
-            dream_config=SimpleNamespace(prompt_path="memory/dream"),
+            dream_config=SimpleNamespace(prompt_path="memory/dream", max_tokens=4321),
             llm_service=llm_service,
             db=_planner_db(),
             project_id="proj-1",
@@ -539,6 +539,7 @@ async def test_planner_request_sets_overall_provider_deadline() -> None:
 
     kwargs = llm_service.call_json_feature.await_args.kwargs
     assert kwargs["json_schema"] == DREAM_ACTIONS_SCHEMA
+    assert kwargs["max_tokens"] == 4321
     assert kwargs["total_timeout_seconds"] == PLANNER_TOTAL_DEADLINE_SECONDS
     assert PLANNER_TOTAL_DEADLINE_SECONDS == 1200.0
 
@@ -3538,9 +3539,7 @@ class _FencedConn:
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> _FencedCursor:
         normalized = " ".join(sql.split())
-        if normalized.startswith(
-            "SELECT * FROM memory_dream_runs WHERE status = 'interrupted'"
-        ):
+        if normalized.startswith("SELECT * FROM memory_dream_runs WHERE status = 'interrupted'"):
             marker = str(params[0])
             candidates = []
             for run in self.db.runs.values():
