@@ -1,6 +1,7 @@
 """Tests for gobby rules CLI commands."""
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -318,13 +319,17 @@ class TestImportRules:
 
         with (
             patch("gobby.cli.rules.require_cli_database", return_value=mock_db),
+            patch(
+                "gobby.cli.installers.shared.registered_project_id", return_value="project-1"
+            ) as mock_scope,
             patch("gobby.workflows.sync_rules.sync_rule_file") as mock_sync,
         ):
             mock_sync.return_value = {"success": True, "synced": 1, "updated": 0, "errors": []}
             result = cli_runner.invoke(rules, ["import", str(rule_file)])
             assert result.exit_code == 0
-            assert "Imported" in result.output
-            mock_sync.assert_called_once_with(mock_db, rule_file=rule_file)
+            assert "Imported rules: 1 new, 0 updated (project project-1)" in result.output
+            mock_scope.assert_called_once_with(mock_db, Path.cwd())
+            mock_sync.assert_called_once_with(mock_db, rule_file=rule_file, project_id="project-1")
 
     def test_import_file_not_found(self, cli_runner) -> None:
         from gobby.cli.rules import rules

@@ -252,7 +252,9 @@ def import_rules(file: str) -> None:
     """Import rules from a YAML file.
 
     FILE is a path to a rule YAML file with the standard format:
-    group, rules dict with event/effect fields.
+    group, rules dict with event/effect fields. Run inside a registered
+    project, the rules belong to that project (the same scope ``gobby
+    install`` gives ``.gobby/workflows/rules/``); elsewhere they are global.
     """
     path = Path(file)
 
@@ -264,9 +266,12 @@ def import_rules(file: str) -> None:
         click.echo("Rule file must have .yaml or .yml extension.", err=True)
         sys.exit(1)
 
+    from gobby.cli.installers.shared import registered_project_id
     from gobby.workflows.sync_rules import sync_rule_file
 
-    result = sync_rule_file(require_cli_database(), rule_file=path)
+    db = require_cli_database()
+    project_id = registered_project_id(db, Path.cwd())
+    result = sync_rule_file(db, rule_file=path, project_id=project_id)
 
     if result.get("errors"):
         for err in result["errors"]:
@@ -275,7 +280,8 @@ def import_rules(file: str) -> None:
 
     synced = result.get("synced", 0)
     updated = result.get("updated", 0)
-    click.echo(f"Imported rules: {synced} new, {updated} updated")
+    scope = f"project {project_id}" if project_id else "global"
+    click.echo(f"Imported rules: {synced} new, {updated} updated ({scope})")
 
 
 @rules.command("export")

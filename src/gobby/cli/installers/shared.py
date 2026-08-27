@@ -269,6 +269,30 @@ def sync_bundled_content_to_db(
     return result
 
 
+def registered_project_id(db: "HubDatabase", project_path: Path) -> str | None:
+    """Return the registered project id for ``project_path``.
+
+    Project rule rows reference ``projects``, so an unregistered project
+    (``gobby init`` has not run against this database) keeps its rules global
+    and says so instead of failing every row on the foreign key.
+    """
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.utils.project_context import get_project_context
+
+    context = get_project_context(project_path)
+    project_id = context.get("id") if context else None
+    if not isinstance(project_id, str) or not project_id:
+        return None
+    if LocalProjectManager(db).get(project_id) is None:
+        logger.warning(
+            "Project %s at %s is not registered; its .gobby/workflows rules sync as global",
+            project_id,
+            project_path,
+        )
+        return None
+    return project_id
+
+
 def _sync_user_templates_to_db(db: "HubDatabase") -> int:
     """Sync user-created templates from project and global directories.
 
@@ -288,6 +312,7 @@ def _sync_user_templates_to_db(db: "HubDatabase") -> int:
 
     total = 0
     project_path = Path.cwd()
+    project_id = registered_project_id(db, project_path)
 
     # Each type is synced once across its complete set of user roots so
     # same-tag orphan cleanup sees the full on-disk namespace.
@@ -313,7 +338,16 @@ def _sync_user_templates_to_db(db: "HubDatabase") -> int:
             module = __import__(module_path, fromlist=[func_name])
             sync_fn = getattr(module, func_name)
             if content_type == "rules":
-                sync_result = sync_fn(db, rules_path=paths, tag="user")
+                # Rows from the project directory belong to that project so
+                # they never fire in another project; the global root stays
+                # global.
+                sync_result = sync_fn(
+                    db,
+                    rules_path=paths,
+                    tag="user",
+                    project_id=project_id,
+                    project_root=paths[0],
+                )
             elif content_type == "variables":
                 sync_result = sync_fn(db, variables_path=paths, tag="user")
             else:
