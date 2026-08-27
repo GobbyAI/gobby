@@ -53,16 +53,28 @@ def test_core_is_compact_and_keeps_creation_and_exact_close_sequence() -> None:
         "4. Stage specific files and commit"
     )
     assert content.index("4. Stage specific files and commit") < content.index(
-        "5. Review session memories"
+        "5. Call `close_task` once"
     )
-    assert content.index("5. Review session memories") < content.index("6. Call `close_task`")
+    assert content.index("5. Call `close_task` once") < content.index(
+        "6. Call `review_task_memories`"
+    )
+    assert "review_task_memories" not in content[: content.index("5. Call `close_task` once")]
     assert "Call `close_task` once with" in content
     assert "A ready call links the commit and closes atomically." in content
+    assert "exact validation commands and results" in content
     assert "Repeat the same `close_task` call without `preview`" not in content
     assert "repeat the conditional close" not in content
     assert "references/creation.md" in content
     assert "references/no-work-closures.md" in content
     assert "references/review-flows.md" in content
+
+
+def test_creation_guidance_uses_structured_named_test_references() -> None:
+    content = (SKILL_DIR / "references" / "creation.md").read_text()
+
+    assert "When criteria depend on named test bodies" in content
+    assert "test: `tests/skills/test_tasks_skill.py::" in content
+    assert '"validation_criteria": (' in content
 
 
 def test_guides_document_single_call_conditional_close() -> None:
@@ -81,8 +93,8 @@ def test_lifecycle_scenario_closes_with_one_conditional_call() -> None:
         "edit",
         "run_validation",
         "commit",
-        "review_memory",
         "preview_close",
+        "review_memory",
         "respond",
     )
     assert "conditionally closed" in result.loaded.combined_text

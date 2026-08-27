@@ -18,14 +18,16 @@ runs:
       - tasks
     actions:
       - action: create_task
-        validation_criteria: Focused lifecycle tests prove the requested behavior and error path.
+        validation_criteria: >-
+          Focused lifecycle coverage proves the requested behavior and error path.
+          test: `tests/skills/test_tasks_skill.py::test_lifecycle_scenario_closes_with_one_conditional_call`.
       - action: edit
       - action: run_validation
       - action: commit
-      - action: review_memory
       - action: preview_close
+      - action: review_memory
       - action: respond
-        text: "Verified, committed, memory-reviewed, and conditionally closed."
+        text: "Verified, committed, conditionally closed, and memory-reviewed."
 assertions:
   baseline_action_order:
     - create_task
@@ -37,10 +39,10 @@ assertions:
     - edit
     - run_validation
     - commit
-    - review_memory
     - preview_close
+    - review_memory
     - respond
   baseline_text_contains:
     - Task closed.
   loaded_text_contains:
-    - "Verified, committed, memory-reviewed, and conditionally closed."
+    - "Verified, committed, conditionally closed, and memory-reviewed."

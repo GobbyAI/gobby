@@ -156,9 +156,11 @@ Follow this order exactly:
 3. Fix every encountered error, warning, and failure; rerun validation to success.
 4. Stage specific files and commit with
    `[<project_name>-#<task_number>] <type>: <description>`.
-5. Review session memories; create, update, or delete valuable durable facts.
-6. Call `close_task` once with `task_id`, `commit_sha`, `changes_summary`, and
-   `preview=true`. A ready call links the commit and closes atomically.
+5. Call `close_task` once with `task_id`, `commit_sha`, `changes_summary`, and
+   `preview=true`. Include exact validation commands and results in `changes_summary`.
+   A ready call links the commit and closes atomically.
+6. Call `review_task_memories` after `closed=true`, passing the closed task and
+   the same `changes_summary`; create, update, or delete only valuable durable facts.
 
 Stage and commit only the files for this task:
 
@@ -176,7 +178,10 @@ Preview after validation and commit:
 call_tool("gobby-tasks", "close_task", {
     "task_id": "#42",
     "commit_sha": "abc1234",
-    "changes_summary": "Protected explicit retrievals and consolidated task guidance.",
+    "changes_summary": (
+        "Protected explicit retrievals and consolidated task guidance. "
+        "Validation: `uv run pytest tests/tasks/test_retrieval.py -q` -> 12 passed."
+    ),
     "preview": True
 }, session_id="#2333")
 ```
@@ -206,4 +211,5 @@ Autonomous agents use the stage-specific tools on `gobby-tasks-ops`.
 
 Use `gobby-memory` for durable codebase facts, decisions, conventions, and stale
 memory cleanup. A bug you find becomes a claimed task you fix now — a task, never
-a memory. Memory maintenance is independent of task transitions.
+a memory. Task-specific review follows successful `close_task` because
+`review_task_memories` requires a closed task.
