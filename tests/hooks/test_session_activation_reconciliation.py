@@ -723,14 +723,80 @@ def test_parent_shaped_taskless_session_ignores_agent_run_step_fallback(
     assert AgentStepInstanceManager(db).get_for_session(session_id) is None
 
 
-def test_interactive_persona_session_never_materializes_step_workflow(
+@pytest.mark.asyncio
+async def test_interactive_persona_reconciliation_keeps_worker_rules_inactive(
     db: HubDatabase,
     session_manager: SessionManager,
+    handlers: EventHandlers,
     project_id: str,
     tmp_path: Path,
 ) -> None:
-    """apply_persona binds ``_agent_type`` only; turn-start repair must not add a step machine."""
-    _create_worker_agent(db)
+    """Persona prompt identity cannot become lifecycle, selector, or agent-scope identity."""
+    agent_manager = AgentDefinitionManager(db)
+    agent_manager.create(
+        name="default",
+        source="custom",
+        definition_json=json.dumps(
+            {
+                "name": "default",
+                "prompts": {
+                    "persona": "Default prompt.",
+                    "agent": "Run the assigned task.",
+                },
+                "workflows": {"rule_selectors": {"include": ["tag:interactive"], "exclude": []}},
+            }
+        ),
+    )
+    agent_manager.create(
+        name="qa-reviewer",
+        source="custom",
+        definition_json=json.dumps(
+            {
+                "name": "qa-reviewer",
+                "prompts": {
+                    "persona": "Review prompt.",
+                    "agent": "Review the assigned task.",
+                },
+                "workflows": {"rule_selectors": {"include": ["tag:worker-safety"], "exclude": []}},
+            }
+        ),
+    )
+    rule_manager = RuleDefinitionManager(db)
+    rule_manager.create(
+        name="qa-reviewer-scope-rule",
+        source="custom",
+        tags=["interactive"],
+        definition_json=json.dumps(
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.BEFORE_TOOL,
+                agent_scope=["qa-reviewer"],
+                effects=[
+                    RuleEffect(
+                        type="set_variable",
+                        variable="qa_scope_matched",
+                        value=True,
+                    )
+                ],
+            ).model_dump(mode="json"),
+        ),
+    )
+    rule_manager.create(
+        name="worker-safety-selector-rule",
+        source="custom",
+        tags=["worker-safety"],
+        definition_json=json.dumps(
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.BEFORE_TOOL,
+                effects=[
+                    RuleEffect(
+                        type="set_variable",
+                        variable="worker_selector_matched",
+                        value=True,
+                    )
+                ],
+            ).model_dump(mode="json"),
+        ),
+    )
     session_id = _register_session(
         session_manager,
         project_id,
@@ -741,17 +807,40 @@ def test_interactive_persona_session_never_materializes_step_workflow(
     assert session is not None
     assert session.parent_session_id is None
     assert session.agent_run_id is None
-    variables = {
-        "_agent_type": "worker",
-        "is_spawned_agent": False,
-        "assigned_task_id": "#14475",
-    }
+    SessionVariableManager(db).merge_variables(
+        session_id,
+        {
+            MARKER_COMPLETED: True,
+            MARKER_VERSION: SESSION_ACTIVATION_CONTRACT_VERSION,
+            MARKER_HASH: SESSION_ACTIVATION_CONTRACT_HASH,
+            "_agent_type": "default",
+            "_persona_name": "qa-reviewer",
+            "_active_rule_names": ["worker-safety-selector-rule"],
+            "_active_skill_names": None,
+            "_skill_format": None,
+            "_agent_blocked_tools": [],
+            "_agent_blocked_mcp_tools": [],
+            "is_spawned_agent": False,
+            "baseline_dirty_files": [],
+            "session_edited_files": [],
+        },
+    )
 
-    missing = _missing_step_state(db, session_id, variables, session, None)
-    created = _ensure_step_instance(db, session_id, variables, session)
+    reconcile_session_activation(
+        _event(HookEventType.BEFORE_AGENT, session_id, tmp_path),
+        handlers,
+    )
+    variables = _variables(db, session_id)
+    rule_event = _event(HookEventType.BEFORE_TOOL, session_id, tmp_path)
+    rule_event.data.update({"tool_name": "Bash", "tool_input": {"command": "pwd"}})
+    response = await RuleEngine(db).evaluate(rule_event, session_id, variables)
 
-    assert missing == []
-    assert created is False
+    assert response.decision == "allow"
+    assert variables["_agent_type"] == "default"
+    assert variables["_persona_name"] == "qa-reviewer"
+    assert variables["_active_rule_names"] == ["qa-reviewer-scope-rule"]
+    assert "qa_scope_matched" not in variables
+    assert "worker_selector_matched" not in variables
     assert AgentStepInstanceManager(db).get_for_session(session_id) is None
 
 

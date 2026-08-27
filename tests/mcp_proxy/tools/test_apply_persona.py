@@ -372,7 +372,7 @@ class TestBuildSessionPersonaChanges:
         changes, active_skills = build_session_persona_changes(agent, db)
 
         assert changes == {
-            "_agent_type": "planner",
+            "_persona_name": "planner",
             "_active_skill_names": None,
             "_skill_format": "compact",
             "_agent_context_injected": False,
@@ -477,7 +477,7 @@ class TestApplyPersonaImpl:
                 "gobby.mcp_proxy.tools.apply_persona.build_session_persona_changes",
                 return_value=(
                     {
-                        "_agent_type": "developer",
+                        "_persona_name": "developer",
                         "_active_skill_names": [],
                         "_agent_context_injected": False,
                         "_agent_identity_reinject": True,
@@ -523,7 +523,7 @@ class TestApplyPersonaImpl:
                 "gobby.mcp_proxy.tools.apply_persona.build_session_persona_changes",
                 return_value=(
                     {
-                        "_agent_type": "test",
+                        "_persona_name": "test",
                         "_agent_context_injected": False,
                         "_agent_identity_reinject": True,
                     },
@@ -548,8 +548,11 @@ class TestApplyPersonaImpl:
         assert merged_changes["custom_key"] == "custom_val"
 
     @pytest.mark.asyncio
-    async def test_stepful_persona_never_creates_step_instance(self, db: HubDatabase) -> None:
-        """A persona switch is prompt + skills only; it must not install a step workflow."""
+    async def test_stepful_persona_preserves_lifecycle_and_enforcement_state(
+        self,
+        db: HubDatabase,
+    ) -> None:
+        """A persona switch changes prompt and skills without adopting worker posture."""
         from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
         from gobby.workflows.definitions import WorkflowStep
         from gobby.workflows.state_manager import SessionVariableManager
@@ -572,10 +575,27 @@ class TestApplyPersonaImpl:
                 "active",
             ),
         )
+        state = SessionVariableManager(db)
+        state.merge_variables(
+            session_id,
+            {
+                "_agent_type": "default",
+                "_active_rule_names": ["interactive-rule"],
+                "_active_skill_names": ["old-skill"],
+                "_skill_format": "verbose",
+                "_agent_blocked_tools": ["ExistingTool"],
+                "_agent_blocked_mcp_tools": ["existing-server:existing-tool"],
+                "is_spawned_agent": False,
+                "step_workflow_complete": False,
+            },
+        )
         reviewer = AgentDefinitionBody(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="qa-reviewer",
             surfaces=["persona", "spawn"],
+            workflows=AgentWorkflows(skill_format="compact"),
+            blocked_tools=["Bash"],
+            blocked_mcp_tools=["gobby-tasks:close_task"],
             step_workflow=AgentStepWorkflowBody(
                 steps=[
                     WorkflowStep(name="claim", instructions="Claim the task"),
@@ -592,10 +612,6 @@ class TestApplyPersonaImpl:
                     MagicMock(step_workflow_id="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
                 ),
             ),
-            patch(
-                "gobby.mcp_proxy.tools.apply_persona.build_session_persona_changes",
-                return_value=({"_agent_type": "qa-reviewer"}, set()),
-            ),
         ):
             result = await apply_persona_impl(
                 agent="qa-reviewer",
@@ -609,8 +625,16 @@ class TestApplyPersonaImpl:
         row = db.fetchone("SELECT COUNT(*) AS n FROM agent_step_instances")
         assert row is not None
         assert row["n"] == 0
-        variables = SessionVariableManager(db).get_variables(session_id)
-        assert variables["_agent_type"] == "qa-reviewer"
+        variables = state.get_variables(session_id)
+        assert variables["_persona_name"] == "qa-reviewer"
+        assert variables["_agent_type"] == "default"
+        assert variables["_active_rule_names"] == ["interactive-rule"]
+        assert variables["_active_skill_names"] is None
+        assert variables["_skill_format"] == "compact"
+        assert variables["_agent_blocked_tools"] == ["ExistingTool"]
+        assert variables["_agent_blocked_mcp_tools"] == ["existing-server:existing-tool"]
+        assert variables["is_spawned_agent"] is False
+        assert variables["step_workflow_complete"] is False
 
     @pytest.mark.asyncio
     async def test_non_persona_capable_agent_errors(self, db: HubDatabase) -> None:
@@ -663,7 +687,7 @@ class TestApplyPersonaImpl:
                 "gobby.mcp_proxy.tools.apply_persona.build_session_persona_changes",
                 return_value=(
                     {
-                        "_agent_type": "test",
+                        "_persona_name": "test",
                         "_agent_context_injected": False,
                         "_agent_identity_reinject": True,
                     },
