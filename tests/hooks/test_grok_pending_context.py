@@ -228,7 +228,7 @@ def test_stop_with_briefing_blocks_once(
         HookResponse(decision="allow"),
         workflow_context=None,
     )
-    assert first.decision == "block"
+    assert first.decision == "allow"
     assert first.context == "briefing text"
 
     second = manager_with_mocks._complete_response(

@@ -17,6 +17,10 @@ def _supported_ghook(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("gobby.cli.installers.grok.get_ghook_version", lambda: "0.7.1")
 
 
+def _ghook_command(hook_type: str) -> str:
+    return f"ghook --gobby-owned --cli=grok --type={hook_type}"
+
+
 def _write_grok_template(install_dir: Path) -> None:
     template_dir = install_dir / "grok"
     template_dir.mkdir(parents=True)
@@ -24,10 +28,16 @@ def _write_grok_template(install_dir: Path) -> None:
         json.dumps(
             {
                 "hooks": {
-                    "SessionStart": [{"hooks": [{"type": "command", "command": "legacy"}]}],
-                    "PreToolUse": [{"hooks": [{"type": "command", "command": "legacy"}]}],
-                    "Stop": [{"hooks": [{"type": "command", "command": "legacy"}]}],
-                    "PostCompact": [{"hooks": [{"type": "command", "command": "legacy"}]}],
+                    "SessionStart": [
+                        {"hooks": [{"type": "command", "command": _ghook_command("session_start")}]}
+                    ],
+                    "PreToolUse": [
+                        {"hooks": [{"type": "command", "command": _ghook_command("pre_tool_use")}]}
+                    ],
+                    "Stop": [{"hooks": [{"type": "command", "command": _ghook_command("stop")}]}],
+                    "PostCompact": [
+                        {"hooks": [{"type": "command", "command": _ghook_command("post_compact")}]}
+                    ],
                 }
             }
         ),
@@ -35,14 +45,34 @@ def _write_grok_template(install_dir: Path) -> None:
     )
 
 
-def test_current_grok_hooks_are_matcherless_canonical_and_standard_timeout() -> None:
+def test_current_grok_hooks_are_matcherless_canonical_and_standard_timeout(
+    tmp_path: Path,
+) -> None:
+    from gobby.cli.installers.hook_commands import rewrite_hook_template_commands
+
     template_path = Path(__file__).parents[3] / "src/gobby/install/grok/hooks-template.json"
-    hooks = json.loads(template_path.read_text(encoding="utf-8"))["hooks"]
+    template = json.loads(template_path.read_text(encoding="utf-8"))
+    hooks = template["hooks"]
 
     for event_name in ("PermissionDenied", "StopFailure", "SubagentStart", "SubagentStop"):
         assert "matcher" not in hooks[event_name][0]
         assert hooks[event_name][0]["hooks"][0]["timeout"] == 120
     assert "SubagentEnd" not in hooks
+
+    original_types = {
+        event_name: groups[0]["hooks"][0]["command"].split("--type=", 1)[1].split()[0]
+        for event_name, groups in hooks.items()
+    }
+    ghook_bin = "/Users/test/.gobby/bin/ghook"
+    rewritten = rewrite_hook_template_commands(
+        template,
+        cli_name="grok",
+        hooks_dir=tmp_path,
+        ghook_bin=ghook_bin,
+    )
+    for event_name, type_token in original_types.items():
+        command = rewritten["hooks"][event_name][0]["hooks"][0]["command"]
+        assert command == f"{ghook_bin} --gobby-owned --cli=grok --type={type_token}"
 
 
 @pytest.mark.parametrize("installed_version", [None, "0.4.9", "not-a-version"])
@@ -249,7 +279,7 @@ def test_bundled_template_matchers_are_valid_grok_regexes() -> None:
     """Grok treats ``matcher`` as a regular expression; ``*`` alone never matches."""
     import re
 
-    from gobby.cli.installers.grok import get_install_dir
+    from gobby.cli.utils import get_install_dir
 
     template = get_install_dir() / "grok" / "hooks-template.json"
     hooks = json.loads(template.read_text())["hooks"]

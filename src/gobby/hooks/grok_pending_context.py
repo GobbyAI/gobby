@@ -457,7 +457,6 @@ def flush_response(
         )
         return
     if plan.kind == "stop_briefing":
-        response.decision = "block"
         response.context = "\n\n".join(
             part for part in (plan.briefing, plan.turn_context) if isinstance(part, str) and part
         )
