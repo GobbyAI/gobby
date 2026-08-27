@@ -490,6 +490,28 @@ async def test_unscoped_commit_blocks_foreign_staged_path_with_owner_diagnostic(
 
 
 @pytest.mark.asyncio
+async def test_unscoped_commit_blocks_handoff_ready_owner(
+    guard_harness: GuardHarness,
+) -> None:
+    guard_harness.session_manager.update_status(
+        guard_harness.foreign_session.id,
+        "handoff_ready",
+    )
+    (guard_harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    _git(guard_harness.repo, "add", "--", "foreign.txt")
+
+    response = await guard_harness.handler._evaluate_rules(
+        guard_harness.event("git commit -m 'unsafe during handoff'")
+    )
+
+    assert response.decision == "block"
+    assert response.reason is not None
+    assert "foreign.txt" in response.reason
+    assert guard_harness.foreign_session.ref in response.reason
+    assert f"#{guard_harness.foreign_task.seq_num}" in response.reason
+
+
+@pytest.mark.asyncio
 async def test_unscoped_commit_reports_every_foreign_staged_path(
     guard_harness: GuardHarness,
 ) -> None:

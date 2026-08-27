@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 import psycopg
 from psycopg_pool import PoolTimeout
 
+from gobby.terminal_ownership import TERMINAL_OWNER_STATUSES
 from gobby.workflows.observer_utils import _extract_shell_command
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import (
@@ -329,10 +330,10 @@ def _active_path_owners(
           AND tasks.claimed_by_session_id IS NOT NULL
           AND tasks.closed_at IS NULL
           AND sessions.id IS DISTINCT FROM %s
-          AND sessions.status IN ('active', 'paused')
+          AND sessions.status = ANY(%s)
         ORDER BY sessions.seq_num, tasks.seq_num
         """,
-        (project_id, exclude_session_id),
+        (project_id, exclude_session_id, list(TERMINAL_OWNER_STATUSES)),
     )
     variable_manager = SessionVariableManager(db)
     variables_by_session: dict[str, dict[str, Any]] = {}
