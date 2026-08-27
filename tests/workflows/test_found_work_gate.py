@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -64,9 +64,10 @@ def _run(
     command: str = "pytest tests/unit/test_widget.py",
     categories: tuple[str, ...] | None = None,
     output: str | None = None,
+    started_at: datetime | None = None,
 ) -> TranscriptValidationRun:
     """Build a run the way the transcript recorder does: one segment per validation match."""
-    now = datetime.now(UTC)
+    now = started_at if started_at is not None else datetime.now(UTC)
     segments = tuple(
         TranscriptValidationSegment(command=match.normalized_command, categories=match.categories)
         for match in classify_validation_segments(command)
@@ -673,6 +674,132 @@ class TestTerminalValidationFailures:
 
         assert facts.terminal_validation_failures == ("pytest tests/unit/test_widget.py",)
         derive.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_failure_before_latest_task_close_is_dispositioned(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        closed_at = datetime(2026, 8, 27, 12, 0, tzinfo=UTC)
+        derive = _window_bound_derive(
+            monkeypatch,
+            _run(1, "failure", started_at=closed_at - timedelta(hours=3)),
+        )
+        analyzer = _analyzer_with_session_tasks(
+            _closed_task_link(SESSION_ID, closed_at - timedelta(hours=1)),
+            _closed_task_link(SESSION_ID, closed_at),
+            _closed_task_link(
+                "22222222-2222-4222-8222-222222222222", closed_at + timedelta(hours=1)
+            ),
+        )
+
+        facts = await analyzer.analyze(
+            event=_event(HookEventType.STOP),
+            session_id=SESSION_ID,
+            variables={},
+            project_path=str(tmp_path),
+        )
+
+        assert facts.terminal_validation_failures == ()
+        assert derive.await_args is not None
+        assert derive.await_args.args[1] == closed_at
+
+    @pytest.mark.asyncio
+    async def test_failure_after_latest_task_close_still_blocks(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        closed_at = datetime(2026, 8, 27, 12, 0, tzinfo=UTC)
+        _window_bound_derive(
+            monkeypatch,
+            _run(1, "failure", started_at=closed_at - timedelta(hours=3)),
+            _run(2, "failure", started_at=closed_at + timedelta(minutes=5)),
+        )
+        analyzer = _analyzer_with_session_tasks(_closed_task_link(SESSION_ID, closed_at))
+
+        facts = await analyzer.analyze(
+            event=_event(HookEventType.STOP),
+            session_id=SESSION_ID,
+            variables={},
+            project_path=str(tmp_path),
+        )
+
+        assert facts.terminal_validation_failures == ("pytest tests/unit/test_widget.py",)
+
+    @pytest.mark.asyncio
+    async def test_without_own_task_close_the_window_is_the_session_start(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        created_at = datetime(2026, 8, 27, 9, 0, tzinfo=UTC)
+        derive = _window_bound_derive(
+            monkeypatch,
+            _run(1, "failure", started_at=created_at + timedelta(hours=1)),
+        )
+        analyzer = _analyzer_with_session_tasks(
+            _closed_task_link(
+                "22222222-2222-4222-8222-222222222222", created_at + timedelta(hours=2)
+            ),
+            created_at=created_at,
+        )
+
+        facts = await analyzer.analyze(
+            event=_event(HookEventType.STOP),
+            session_id=SESSION_ID,
+            variables={},
+            project_path=str(tmp_path),
+        )
+
+        assert facts.terminal_validation_failures == ("pytest tests/unit/test_widget.py",)
+        assert derive.await_args is not None
+        assert derive.await_args.args[1] == created_at
+
+
+def _closed_task_link(closed_in_session_id: str, closed_at: datetime) -> dict[str, Any]:
+    """Mirror a ``get_session_tasks`` link for a task this or another session closed."""
+    task = SimpleNamespace(
+        closed_in_session_id=closed_in_session_id,
+        closed_at=closed_at,
+        created_in_session_id=closed_in_session_id,
+        labels=[],
+    )
+    return {"task": task, "action": "closed", "link_created_at": closed_at}
+
+
+def _analyzer_with_session_tasks(
+    *links: dict[str, Any],
+    created_at: datetime = datetime(2026, 8, 27, 0, 0, tzinfo=UTC),
+) -> FoundWorkStopAnalyzer:
+    session = SimpleNamespace(created_at=created_at)
+    return FoundWorkStopAnalyzer(
+        llm_service_resolver=lambda: None,
+        config_resolver=_Config,
+        session_manager=SimpleNamespace(get=lambda _session_id: session),
+        session_task_manager=SimpleNamespace(get_session_tasks=lambda _session_id: list(links)),
+    )
+
+
+def _window_bound_derive(
+    monkeypatch: pytest.MonkeyPatch,
+    *runs: TranscriptValidationRun,
+) -> AsyncMock:
+    """Patch evidence derivation to honor ``window_start`` the way the parser does."""
+
+    async def derive(
+        _session: Any,
+        window_start: datetime | None,
+        *_args: Any,
+        **_kwargs: Any,
+    ) -> TranscriptEvidence:
+        kept = tuple(run for run in runs if window_start is None or run.started_at >= window_start)
+        return TranscriptEvidence(validation_runs=kept)
+
+    mock = AsyncMock(side_effect=derive)
+    monkeypatch.setattr("gobby.workflows.found_work_gate.derive_transcript_evidence", mock)
+    return mock
 
 
 class TestFoundWorkDeclarativeRules:

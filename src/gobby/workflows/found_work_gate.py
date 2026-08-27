@@ -11,6 +11,7 @@ import shlex
 from collections.abc import Callable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -394,9 +395,10 @@ class FoundWorkStopAnalyzer:
                 daemon_config=self._config_resolver(),
                 project_path=project_path,
             )
+            window_start = await asyncio.to_thread(self._latest_task_close, session_id)
             evidence = await derive_transcript_evidence(
                 session,
-                session.created_at,
+                window_start if window_start is not None else session.created_at,
                 config,
                 set(),
                 project_path,
@@ -422,6 +424,37 @@ class FoundWorkStopAnalyzer:
             foreign_paths=foreign_paths,
         )
         return tuple(dict.fromkeys(run.command for run in unresolved))
+
+    def _latest_task_close(self, session_id: str) -> datetime | None:
+        """Return when this session last closed a task, if it has.
+
+        A successful close is a disposition: its gates already required a
+        clean category run and a criteria review, so validation failures
+        recorded before it are resolved and only later runs can still block
+        the stop.
+        """
+        if self._session_task_manager is None:
+            return None
+        try:
+            links = self._session_task_manager.get_session_tasks(session_id)
+        except Exception:
+            logger.debug("Could not inspect session tasks for close dispositions", exc_info=True)
+            return None
+        latest: datetime | None = None
+        for link in links:
+            task = link.get("task") if isinstance(link, Mapping) else None
+            if getattr(task, "closed_in_session_id", None) != session_id:
+                continue
+            closed_at = getattr(task, "closed_at", None)
+            if isinstance(closed_at, str):
+                closed_at = datetime.fromisoformat(closed_at.replace("Z", "+00:00"))
+            if not isinstance(closed_at, datetime):
+                continue
+            if closed_at.tzinfo is None:
+                closed_at = closed_at.replace(tzinfo=UTC)
+            if latest is None or closed_at > latest:
+                latest = closed_at
+        return latest
 
     async def _foreign_owned_dirty_paths(
         self,
