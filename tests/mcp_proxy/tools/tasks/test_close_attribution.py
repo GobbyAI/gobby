@@ -109,6 +109,7 @@ async def test_prospective_commit_paths_survive_released_session_attribution(
 
     assert callable(commit_union)
     assert commit_union(_task(commits=[commit_sha]), (commit_sha,)) == (commit_sha,)
+    assert commit_union(_task(commits=[commit_sha]), ("", commit_sha)) == (commit_sha,)
 
     snapshot = await capture_attribution(
         _ctx({"task_edited_files": {}}),

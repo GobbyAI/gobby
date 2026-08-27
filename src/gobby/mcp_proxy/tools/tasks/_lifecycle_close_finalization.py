@@ -56,7 +56,11 @@ def _attribution_commit_shas(
     prospective_commit_shas: Sequence[str],
 ) -> tuple[str, ...]:
     """Return the stable union used to recover committed path attribution."""
-    return tuple(dict.fromkeys([*(task.commits or ()), *prospective_commit_shas]))
+    return tuple(
+        dict.fromkeys(
+            sha for sha in [*(task.commits or ()), *prospective_commit_shas] if sha.strip()
+        )
+    )
 
 
 def _linked_commit_paths(
