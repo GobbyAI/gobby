@@ -5,15 +5,21 @@ from collections.abc import Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, Never
-from unittest.mock import MagicMock, call, patch
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, Never, cast
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
+from gobby.mcp_proxy.metrics import ToolMetricsManager
 from gobby.mcp_proxy.metrics_events import MetricsEventRecord, MetricsEventStore
+from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
+from gobby.mcp_proxy.tools.internal import InternalRegistryManager, InternalToolRegistry
+from gobby.mcp_proxy.tools.metrics import create_metrics_registry
 
 if TYPE_CHECKING:
-    from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+    from gobby.hooks.hook_manager import HookManager
+    from gobby.mcp_proxy.manager import MCPClientManager
     from gobby.storage.hub.protocol import Cursor, HubDatabase, Transaction
 
 pytestmark = pytest.mark.unit
@@ -25,6 +31,66 @@ SESSION_ID_2 = "99999999-9999-4999-9999-999999999992"
 SESSION_ID_3 = "99999999-9999-4999-9999-999999999993"
 SESSION_ID_4 = "99999999-9999-4999-9999-999999999994"
 NO_MATCH_SESSION_ID = "99999999-9999-4999-9999-999999999995"
+FALLBACK_PROJECT_ID = "88888888-8888-4888-8888-888888888899"
+SESSION_REF_1 = "#111"
+SESSION_REF_2 = "#112"
+
+
+def _create_metrics_proxy(
+    temp_db: "HubDatabase",
+) -> tuple[ToolProxyService, MagicMock, ToolMetricsManager]:
+    metrics_manager = ToolMetricsManager(temp_db)
+    mcp_manager = MagicMock()
+    mcp_manager.project_id = FALLBACK_PROJECT_ID
+    mcp_manager.metrics_manager = metrics_manager
+    session_manager = MagicMock()
+    session_ids = {
+        SESSION_REF_1: SESSION_ID_1,
+        SESSION_REF_2: SESSION_ID_2,
+    }
+    session_manager.resolve_session_reference.side_effect = (
+        lambda session_ref, _project_id: session_ids.get(session_ref, session_ref)
+    )
+    session_manager.get.return_value = SimpleNamespace(project_id=PROJECT_ID)
+    mcp_manager.session_manager = session_manager
+    mcp_manager.has_server.side_effect = lambda server_name: server_name == "context7"
+
+    internal_manager = InternalRegistryManager()
+    memory_registry = InternalToolRegistry("gobby-memory")
+    memory_registry.register(
+        name="search_memories",
+        description="Search memories.",
+        input_schema={"type": "object", "properties": {}},
+        func=lambda: {"matches": []},
+    )
+    tasks_registry = InternalToolRegistry("gobby-tasks")
+
+    def fail_task_lookup() -> dict[str, Any]:
+        raise RuntimeError("task lookup failed")
+
+    tasks_registry.register(
+        name="get_task",
+        description="Get a task.",
+        input_schema={"type": "object", "properties": {}},
+        func=fail_task_lookup,
+    )
+    internal_manager.add_registry(memory_registry)
+    internal_manager.add_registry(tasks_registry)
+    internal_manager.add_registry(
+        create_metrics_registry(
+            metrics_manager,
+            event_store=metrics_manager.event_store,
+        )
+    )
+    hook_manager = cast("HookManager", SimpleNamespace(_session_manager=session_manager))
+
+    proxy = ToolProxyService(
+        mcp_manager=cast("MCPClientManager", mcp_manager),
+        internal_manager=internal_manager,
+        validate_arguments=False,
+        hook_manager_resolver=lambda: hook_manager,
+    )
+    return proxy, mcp_manager, metrics_manager
 
 
 @pytest.fixture
@@ -604,6 +670,105 @@ class TestMetricsManagerIntegration:
         events = manager.event_store.query_events(event_type="tool_call")
         assert len(events) == 1
         assert events[0]["session_id"] is None
+
+
+class TestInternalToolMetricsIntegration:
+    @pytest.mark.asyncio
+    async def test_internal_calls_record_effective_context_and_outcomes(
+        self,
+        temp_db: "HubDatabase",
+    ) -> None:
+        proxy, _, metrics_manager = _create_metrics_proxy(temp_db)
+
+        memory_result = await proxy.call_tool(
+            "gobby-memory",
+            "search_memories",
+            session_id=SESSION_REF_1,
+        )
+        task_result = await proxy.call_tool(
+            "gobby-tasks",
+            "get_task",
+            session_id=SESSION_REF_1,
+        )
+
+        assert memory_result == {"matches": []}
+        assert task_result["success"] is False
+        assert task_result["error"] == "task lookup failed"
+
+        summary = await proxy.call_tool(
+            "gobby-metrics",
+            "get_session_tools",
+            {"session_id": SESSION_REF_1},
+            session_id=SESSION_REF_1,
+        )
+        tools = {(row["server_name"], row["tool_name"]): row for row in summary["tools"]}
+
+        assert summary["total_calls"] == 2
+        assert tools[("gobby-memory", "search_memories")]["success_count"] == 1
+        assert tools[("gobby-memory", "search_memories")]["failure_count"] == 0
+        assert tools[("gobby-tasks", "get_task")]["success_count"] == 0
+        assert tools[("gobby-tasks", "get_task")]["failure_count"] == 1
+
+        events = metrics_manager.event_store.query_events(
+            event_type="tool_call",
+            session_id=SESSION_ID_1,
+        )
+        subject_events = [event for event in events if event["server_name"] != "gobby-metrics"]
+        assert {event["project_id"] for event in subject_events} == {PROJECT_ID}
+        assert all(event["latency_ms"] >= 0 for event in subject_events)
+
+    @pytest.mark.asyncio
+    async def test_mixed_internal_and_external_calls_aggregate_once_each(
+        self,
+        temp_db: "HubDatabase",
+    ) -> None:
+        proxy, mcp_manager, metrics_manager = _create_metrics_proxy(temp_db)
+
+        async def call_external(
+            server_name: str,
+            tool_name: str,
+            arguments: dict[str, Any],
+            *,
+            session_id: str,
+        ) -> dict[str, Any]:
+            metrics_manager.record_call(
+                server_name=server_name,
+                tool_name=tool_name,
+                project_id=PROJECT_ID,
+                latency_ms=5.0,
+                session_id=session_id,
+            )
+            return {"content": [{"type": "text", "text": "ok"}]}
+
+        mcp_manager.call_tool = AsyncMock(side_effect=call_external)
+
+        await proxy.call_tool(
+            "context7",
+            "resolve-library-id",
+            {"libraryName": "pytest"},
+            session_id=SESSION_REF_2,
+        )
+        await proxy.call_tool(
+            "gobby-memory",
+            "search_memories",
+            session_id=SESSION_REF_2,
+        )
+
+        summary = await proxy.call_tool(
+            "gobby-metrics",
+            "get_session_tools",
+            {"session_id": SESSION_REF_2},
+            session_id=SESSION_REF_2,
+        )
+        counts = {
+            (row["server_name"], row["tool_name"]): row["call_count"] for row in summary["tools"]
+        }
+
+        assert summary["total_calls"] == 2
+        assert counts == {
+            ("context7", "resolve-library-id"): 1,
+            ("gobby-memory", "search_memories"): 1,
+        }
 
 
 class TestMCPTools:
