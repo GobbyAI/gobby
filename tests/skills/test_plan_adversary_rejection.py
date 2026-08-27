@@ -134,3 +134,15 @@ def test_review_methodology_delegates_mechanical_blast_radius_verification() -> 
     assert "spot-check" in body
     assert "deterministic sweep report" in body
     assert "delegated-verified" in body
+
+
+def test_review_methodology_records_deterministic_gate_trial_outcome() -> None:
+    body = " ".join(_plan_review_body().split()).lower()
+
+    assert "session #11061" in body
+    assert "rounds 5–10" in body
+    assert "six consecutive rounds" in body
+    assert "zero validator-class findings" in body
+    assert "3 of 10" in body
+    assert "8 blocking semantic findings" in body
+    assert "did not establish semantic convergence" in body

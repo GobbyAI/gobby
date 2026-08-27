@@ -78,6 +78,17 @@ returned to the planner before evidence preparation. Treat the report as delegat
 mechanical evidence: verify its artifact identity and spot-check its claims; never
 repeat the whole deterministic sweep inside the adversary.
 
+### Measured deterministic-gate trial
+
+Session #11061 trialed this split during rounds 5–10 of the
+`grok-hook-deferred-materialization` review. Both validator modes reported zero
+residue in six consecutive rounds, and zero validator-class findings reached the
+adversary, compared with 3 of 10 blind findings in round 4. The semantic review
+still reached the ten-round cap with 8 blocking semantic findings in round 10.
+This trial validates the mechanical gate as a finding-class filter; it did not
+establish semantic convergence. Adversary token delta was not measured, and the
+mid-tier mechanic was not exercised because every deterministic gate was clean.
+
 The adversary's approval gate validates the derived typed manifest entries
 against the expansion contract before returning them (see Manifest Handoff
 below). The coordinator's `apply_plan_review_manifest` call performs the
