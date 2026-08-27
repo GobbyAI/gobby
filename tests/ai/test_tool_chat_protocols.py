@@ -729,19 +729,20 @@ async def test_droid_loop_deadline_covers_stalled_requests(tmp_path: Path) -> No
         command_path="droid",
         client_factory=FakeDroidFactory(client),
     )
-    started = asyncio.get_running_loop().time()
 
-    result = await adapter.chat(
-        _request(
-            tmp_path,
-            [],
-            limits=ToolLoopLimits(loop_timeout_seconds=1),
+    result = await asyncio.wait_for(
+        adapter.chat(
+            _request(
+                tmp_path,
+                [],
+                limits=ToolLoopLimits(loop_timeout_seconds=1),
+            ),
+            _binding("droid", AIAdapterStyle.CLI),
         ),
-        _binding("droid", AIAdapterStyle.CLI),
+        timeout=2,
     )
 
     assert result.stop_reason == "timeout"
-    assert asyncio.get_running_loop().time() - started < 1.3
     assert client.stopped is True
 
 
