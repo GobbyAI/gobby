@@ -68,7 +68,7 @@ _PYTHON_PIPELINE_BLOCKED_NODES = (
     ast.Nonlocal,
 )
 _PYTHON_REFLECTION_ESCAPE_NAMES = frozenset(
-    {"__import__", "compile", "delattr", "eval", "exec", "getattr", "setattr"}
+    {"__import__", "attrgetter", "compile", "delattr", "eval", "exec", "getattr", "setattr"}
 )
 _PYTHON_FILESYSTEM_MUTATION_CALLS = frozenset(
     {
@@ -92,7 +92,18 @@ _PYTHON_FILESYSTEM_MUTATION_CALLS = frozenset(
     }
 )
 _PYTHON_FILESYSTEM_MUTATION_METHODS = frozenset(
-    {"chmod", "lchmod", "mkdir", "rename", "rmdir", "touch", "unlink", "write_bytes", "write_text"}
+    {
+        "chmod",
+        "lchmod",
+        "mkdir",
+        "rename",
+        "replace",
+        "rmdir",
+        "touch",
+        "unlink",
+        "write_bytes",
+        "write_text",
+    }
 )
 _PYTHON_PROCESS_CALLS = frozenset(
     {
@@ -226,6 +237,37 @@ def _canonical_imported_name(
     if canonical_root is None:
         return name
     return f"{canonical_root}.{remainder}" if separator else canonical_root
+
+
+def _call_name(node: ast.Call, imported_bindings: Mapping[str, str]) -> str | None:
+    if isinstance(node.func, ast.Name):
+        return _canonical_imported_name(node.func.id, imported_bindings)
+    if isinstance(node.func, ast.Attribute):
+        return _canonical_imported_name(_python_attribute_name(node.func), imported_bindings)
+    return None
+
+
+def _path_value_names(
+    tree: ast.AST,
+    imported_bindings: Mapping[str, str],
+) -> frozenset[str]:
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        target: ast.expr | None = None
+        value: ast.expr | None = None
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target, value = node.targets[0], node.value
+        elif isinstance(node, ast.AnnAssign):
+            target, value = node.target, node.value
+        elif isinstance(node, ast.NamedExpr):
+            target, value = node.target, node.value
+        if (
+            isinstance(target, ast.Name)
+            and isinstance(value, ast.Call)
+            and _call_name(value, imported_bindings) == "pathlib.Path"
+        ):
+            names.add(target.id)
+    return frozenset(names)
 
 
 def _is_safe_python_pipeline_callable(
@@ -460,14 +502,6 @@ def _is_safe_python_pipeline_node(
     )
 
 
-def _call_name(node: ast.Call, imported_bindings: Mapping[str, str]) -> str | None:
-    if isinstance(node.func, ast.Name):
-        return _canonical_imported_name(node.func.id, imported_bindings)
-    if isinstance(node.func, ast.Attribute):
-        return _canonical_imported_name(_python_attribute_name(node.func), imported_bindings)
-    return None
-
-
 def _literal_process_command(node: ast.Call) -> str | None:
     if not node.args:
         return None
@@ -485,6 +519,7 @@ def _has_proven_python_mutation(
     tree: ast.AST,
     rebound_names: frozenset[str],
     imported_bindings: Mapping[str, str],
+    path_value_names: frozenset[str],
 ) -> bool:
     """Return whether rejected source contains an evidenced mutation or escape."""
     if rebound_names & (_PYTHON_PIPELINE_RESERVED_NAMES | imported_bindings.keys()):
@@ -503,7 +538,10 @@ def _has_proven_python_mutation(
             attribute_name = _python_attribute_name(node)
             if _has_dunder_name(attribute_name or node.attr):
                 return True
-            if node.attr in _PYTHON_REFLECTION_ESCAPE_NAMES or node.attr == "modules":
+            if (
+                node.attr in _PYTHON_REFLECTION_ESCAPE_NAMES
+                and not _is_pure_module_attribute(attribute_name)
+            ) or node.attr == "modules":
                 return True
             if not isinstance(node.ctx, ast.Load):
                 root = (attribute_name or "").partition(".")[0]
@@ -529,10 +567,16 @@ def _has_proven_python_mutation(
             call_name = _call_name(node, imported_bindings)
             if call_name in _PYTHON_FILESYSTEM_MUTATION_CALLS:
                 return True
-            if isinstance(node.func, ast.Attribute) and (
-                node.func.attr in _PYTHON_FILESYSTEM_MUTATION_METHODS
-            ):
-                return True
+            if isinstance(node.func, ast.Attribute):
+                receiver = node.func.value
+                path_receiver = (
+                    isinstance(receiver, ast.Call)
+                    and _call_name(receiver, imported_bindings) == "pathlib.Path"
+                ) or (isinstance(receiver, ast.Name) and receiver.id in path_value_names)
+                if node.func.attr in _PYTHON_FILESYSTEM_MUTATION_METHODS and (
+                    node.func.attr != "replace" or path_receiver
+                ):
+                    return True
             if call_name == "open" or (call_name or "").endswith(".open"):
                 if not _is_read_only_open_call(node):
                     return True
@@ -563,14 +607,20 @@ def _classify_python_source(script: str) -> _PythonExecutionClassification:
         return _PythonExecutionClassification.INDETERMINATE
     rebound_names = _rebound_names(tree)
     imported_bindings = _imported_bindings(tree)
+    path_value_names = _path_value_names(tree, imported_bindings)
+    if _has_proven_python_mutation(
+        tree,
+        rebound_names,
+        imported_bindings,
+        path_value_names,
+    ):
+        return _PythonExecutionClassification.MUTATION
     local_names = rebound_names | imported_bindings.keys()
     safe = not (
         rebound_names & (_PYTHON_PIPELINE_RESERVED_NAMES | imported_bindings.keys())
     ) and _is_safe_python_pipeline_node(tree, local_names, imported_bindings)
     if safe:
         return _PythonExecutionClassification.READ_ONLY
-    if _has_proven_python_mutation(tree, rebound_names, imported_bindings):
-        return _PythonExecutionClassification.MUTATION
     return _PythonExecutionClassification.INDETERMINATE
 
 

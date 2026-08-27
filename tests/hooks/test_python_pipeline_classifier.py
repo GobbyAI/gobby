@@ -295,6 +295,8 @@ def test_python_pipeline_normalization_marks_aws_mcp_diagnostic_indeterminate() 
     [
         "open('notes.md', 'w').write('changed')",
         "from pathlib import Path; Path('notes.md').write_text('changed')",
+        "from pathlib import Path; Path('notes.md').replace('renamed.md')",
+        "from pathlib import Path; path = Path('notes.md'); path.replace('renamed.md')",
         "import os; os.remove('notes.md')",
         "import subprocess; subprocess.run(['rm', 'notes.md'])",
         "import sys; sys.modules[\"builtins\"].eval(\"open('notes.md', 'w')\")",

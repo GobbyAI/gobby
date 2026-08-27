@@ -2161,6 +2161,12 @@ class TestWriteRouteParity:
                 True,
             ),
             ('python3 -c "print(1)"', "execute", False, False),
+            (
+                "python3 -c \"from pathlib import Path; Path('notes.md').replace('renamed.md')\"",
+                "write",
+                True,
+                True,
+            ),
             ('printf content | python3 -c "unknown()"', "execute", False, False),
             (
                 "printf content | python3 -c "
