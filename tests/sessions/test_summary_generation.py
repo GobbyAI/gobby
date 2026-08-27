@@ -442,7 +442,7 @@ class TestGenerateSummary:
 
         assert result is not None
         assert result["summary_generated"] is True
-        assert to_thread.await_count == 8
+        assert to_thread.await_count == 9
         to_thread.assert_any_await(
             load_open_tool_errors,
             mock_session_manager.db,
@@ -812,7 +812,7 @@ class TestGenerateSummary:
         assert result == {"error": "Transcript not found"}
 
     @pytest.mark.asyncio
-    async def test_generate_summary_skips_malformed_transcript_lines(
+    async def test_generate_summary_reports_malformed_transcript_lines(
         self,
         mock_session_manager: MagicMock,
         mock_llm_service: MagicMock,
@@ -820,7 +820,7 @@ class TestGenerateSummary:
         summary_config: SessionSummaryConfig,
         tmp_path: Path,
     ) -> None:
-        """Malformed JSONL lines do not abort summary generation."""
+        """Durable malformed JSONL records abort summary generation."""
         transcript_file = tmp_path / "bad_transcript.jsonl"
         with open(transcript_file, "w") as f:
             f.write("invalid json content\n")
@@ -838,7 +838,7 @@ class TestGenerateSummary:
         )
 
         assert result is not None
-        assert result["summary_generated"] is True
+        assert "Corrupt transcript record" in result["error"]
 
     @pytest.mark.asyncio
     async def test_generate_summary_llm_error(

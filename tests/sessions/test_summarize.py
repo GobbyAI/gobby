@@ -2316,8 +2316,9 @@ class TestReadTranscript:
         assert [turn["index"] for turn in turns] == list(range(190, 200))
 
     @pytest.mark.asyncio
-    async def test_skips_malformed_lines(self, tmp_path: Path) -> None:
+    async def test_rejects_malformed_lines(self, tmp_path: Path) -> None:
         from gobby.sessions.summarize import _read_transcript
+        from gobby.sessions.transcripts.base import TranscriptReadError
 
         path = tmp_path / "transcript.jsonl"
         lines = [
@@ -2326,8 +2327,11 @@ class TestReadTranscript:
             json.dumps({"type": "assistant"}),
         ]
         path.write_text("\n".join(lines))
-        turns = await _read_transcript(path)
-        assert len(turns) == 2
+        with pytest.raises(TranscriptReadError) as error:
+            await _read_transcript(path)
+
+        assert error.value.byte_offset == len(lines[0]) + 1
+        assert error.value.line_number is None
 
     @pytest.mark.asyncio
     async def test_skips_empty_lines(self, tmp_path: Path) -> None:
@@ -2339,9 +2343,10 @@ class TestReadTranscript:
         assert len(turns) == 1
 
     @pytest.mark.asyncio
-    async def test_skips_non_dict_json_values(self, tmp_path: Path) -> None:
-        """Non-dict JSON values (bare strings, numbers) are filtered out."""
+    async def test_rejects_non_dict_json_values(self, tmp_path: Path) -> None:
+        """Non-dict JSON values are durable corrupt transcript records."""
         from gobby.sessions.summarize import _read_transcript
+        from gobby.sessions.transcripts.base import TranscriptReadError
 
         path = tmp_path / "transcript.jsonl"
         lines = [
@@ -2351,9 +2356,11 @@ class TestReadTranscript:
             json.dumps({"type": "user"}),
         ]
         path.write_text("\n".join(lines))
-        turns = await _read_transcript(path)
-        assert len(turns) == 2
-        assert all(isinstance(t, dict) for t in turns)
+        with pytest.raises(TranscriptReadError) as error:
+            await _read_transcript(path)
+
+        assert error.value.byte_offset == len(lines[0]) + 1
+        assert error.value.line_number is None
 
     @pytest.mark.asyncio
     async def test_json_extension_uses_line_oriented_reader(self, tmp_path: Path) -> None:

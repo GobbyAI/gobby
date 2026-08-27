@@ -6,7 +6,7 @@ Consolidated from individual files.
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -2382,6 +2382,25 @@ _TRANSCRIPT_FIXTURES = (
 )
 
 
+class _ToolActivityDigestParser:
+    def __init__(self, parser: Any) -> None:
+        self._parser = parser
+
+    def extract_last_messages(
+        self,
+        turns: list[dict[str, Any]],
+        num_pairs: int = 2,
+    ) -> list[dict[str, Any]]:
+        return cast(
+            list[dict[str, Any]],
+            self._parser.extract_last_messages(
+                turns,
+                num_pairs=num_pairs,
+                include_tool_activity=True,
+            ),
+        )
+
+
 @pytest.mark.parametrize("source", ["claude", "codex", "grok", "qwen", "droid"])
 @pytest.mark.parametrize(
     "fixture_path",
@@ -2411,6 +2430,10 @@ def test_tool_activity_flag_preserves_pair_shape(source: str, fixture_path: Path
     assert [(message["role"], message["content"]) for message in with_ledger] == [
         (message["role"], message["content"]) for message in without_ledger
     ]
+    flag_off_pairs = _extract_digest_pairs(get_parser(source), turns)
+    flag_on_pairs = _extract_digest_pairs(_ToolActivityDigestParser(get_parser(source)), turns)
+    assert flag_on_pairs == flag_off_pairs
+    assert len(flag_on_pairs) == len(flag_off_pairs)
     for original, enriched in zip(without_ledger, with_ledger, strict=True):
         assert {key: value for key, value in enriched.items() if key != "tool_activity"} == original
         if "tool_activity" in enriched:
