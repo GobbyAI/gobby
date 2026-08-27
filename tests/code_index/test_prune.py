@@ -16,6 +16,7 @@ from gobby.code_index.prune import (
     CODE_INDEX_PRUNE_HANDLER,
     CODE_INDEX_PRUNE_INTERVAL_SECONDS,
     CODE_INDEX_PRUNE_JOB_NAME,
+    CODE_INDEX_PRUNE_TIME_BUDGET_SECONDS,
     CODE_INDEX_PRUNE_TIMEOUT_SECONDS,
     CodeIndexPruner,
     register_code_index_prune_cron,
@@ -121,6 +122,7 @@ class PruneGateway:
     ) -> None:
         self.targeted_result = targeted_result
         self.retention_days: list[int] = []
+        self.max_seconds: list[int | None] = []
         self.targeted_roots: list[Path] = []
 
     async def prune_project_for_maintenance(
@@ -128,11 +130,13 @@ class PruneGateway:
         project_root: Path,
         *,
         retention_days: int,
+        max_seconds: int | None = None,
         timeout: float | None = None,
         env: dict[str, str] | None = None,
     ) -> GcodeCommandResult:
         del env
         self.retention_days.append(retention_days)
+        self.max_seconds.append(max_seconds)
         self.targeted_roots.append(project_root)
         return self.targeted_result or _gcode_result(
             ("/tmp/gcode", "prune", "--force", "--project", str(project_root))
@@ -223,6 +227,7 @@ async def test_global_prune_runs_in_process_and_clears_dirty_projects(tmp_path: 
         "retried_projects": 0,
     }
     assert gateway.retention_days == [17]
+    assert gateway.max_seconds == [CODE_INDEX_PRUNE_TIME_BUDGET_SECONDS]
     assert gateway.targeted_roots == [live_root]
     assert storage.cleared_dirty == ["proj-1"]
     log_text = (tmp_path / "maintenance.log").read_text(encoding="utf-8")

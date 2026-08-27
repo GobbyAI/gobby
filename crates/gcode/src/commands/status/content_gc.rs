@@ -1,7 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::Instant;
 
 use anyhow::Context as _;
 use postgres::Client;
@@ -32,6 +33,10 @@ pub(super) struct ContentGcTotals {
     pub(super) busy_projects: usize,
     pub(super) failed_versions: usize,
     pub(super) skipped_versions: usize,
+    /// Versions left for a later run because the time budget expired.
+    pub(super) deferred_versions: usize,
+    /// Projects whose post-deletion graph orphan sweep failed.
+    pub(super) orphan_sweep_failures: usize,
 }
 
 pub(super) fn discover_content_gc(
@@ -103,43 +108,39 @@ pub(super) fn discover_content_gc(
         &[&machine_id, &retention_days, &project_filter],
     )?;
 
-    // Historical-hash lookups are cached per (root, path): candidates that share
-    // a file spawn one git subprocess batch instead of one per content version.
-    let mut history_cache: HashMap<(PathBuf, String), Option<HashSet<String>>> = HashMap::new();
+    // Recent-history lookups are one git batch per repository root: every blob
+    // reachable from a commit inside the retention window is hashed once, so
+    // the cost is bounded by that history rather than by the candidate count
+    // (two git subprocesses per candidate path timed out the daemon's prune on
+    // a 4,800-path backlog, #21085).
+    let mut history_cache: HashMap<PathBuf, Option<HashSet<String>>> = HashMap::new();
     let mut candidates = Vec::new();
     for row in rows {
         let root_path = PathBuf::from(row.try_get::<_, String>("root_path")?);
-        let file_path: String = row.try_get("file_path")?;
         let content_hash: String = row.try_get("content_hash")?;
-        let key = (root_path, file_path);
-        if !history_cache.contains_key(&key) {
-            let looked_up = match recent_content_hashes_in_git_history(
-                &key.0,
-                &key.1,
-                retention_days,
-            ) {
+        if !history_cache.contains_key(&root_path) {
+            let looked_up = match recent_content_hashes_in_git_history(&root_path, retention_days) {
                 Ok(hashes) => Some(hashes),
                 Err(error) => {
                     log::warn!(
-                        "retaining code-index content for {}:{} because recent git history could not be inspected: {error:#}",
+                        "retaining code-index content for project {} because recent git history in {} could not be inspected: {error:#}",
                         row.try_get::<_, String>("project_id")?,
-                        key.1,
+                        root_path.display(),
                     );
                     None
                 }
             };
-            history_cache.insert(key.clone(), looked_up);
+            history_cache.insert(root_path.clone(), looked_up);
         }
-        match history_cache.get(&key) {
+        match history_cache.get(&root_path) {
             Some(Some(hashes)) if !hashes.contains(&content_hash) => {}
             // Protected by recent git history, or history unavailable: retain.
             _ => continue,
         }
-        let (_, file_path) = key;
         candidates.push(ContentGcCandidate {
             id: row.try_get("id")?,
             project_id: row.try_get("project_id")?,
-            file_path,
+            file_path: row.try_get("file_path")?,
             content_hash,
             symbol_ids: row.try_get("symbol_ids")?,
             has_graph_facts: row.try_get("has_graph_facts")?,
@@ -150,28 +151,49 @@ pub(super) fn discover_content_gc(
     Ok(candidates)
 }
 
+/// Delete every candidate's projections and SQL row, stopping once `deadline`
+/// passes; the remainder is reported as deferred for a later run.
 pub(super) fn prune_content_versions(
     services: &Context,
     candidates: &[ContentGcCandidate],
+    deadline: Option<Instant>,
 ) -> anyhow::Result<ContentGcTotals> {
-    prune_content_versions_with(services, candidates, |project_id| {
-        Context::resolve_for_project_id_with_services(
-            project_id,
-            services.quiet,
-            ServiceConfigSelection::projection_cleanup(),
-        )
-    })
+    prune_content_versions_with(
+        services,
+        candidates,
+        deadline,
+        |project_id| {
+            Context::resolve_for_project_id_with_services(
+                project_id,
+                services.quiet,
+                ServiceConfigSelection::projection_cleanup(),
+            )
+        },
+        delete_candidate_projections,
+        code_graph::cleanup_orphans,
+    )
 }
 
 fn prune_content_versions_with(
     services: &Context,
     candidates: &[ContentGcCandidate],
+    deadline: Option<Instant>,
     resolve_project_services: impl Fn(&str) -> anyhow::Result<Context>,
+    mut delete_projections: impl FnMut(&Context, &ContentGcCandidate) -> anyhow::Result<()>,
+    mut sweep_graph_orphans: impl FnMut(&Context) -> anyhow::Result<()>,
 ) -> anyhow::Result<ContentGcTotals> {
     let mut conn = db::connect_readwrite(&services.database_url)?;
     let mut totals = ContentGcTotals::default();
     let mut project_contexts: HashMap<String, Option<Context>> = HashMap::new();
-    for candidate in candidates {
+    // Projects whose graph facts were deleted get one orphan sweep after the
+    // loop: `cleanup_orphans` is O(project graph size), and sweeping after
+    // every version made a large backlog take hours instead of minutes (#21085).
+    let mut graph_dirty_projects = BTreeSet::new();
+    for (index, candidate) in candidates.iter().enumerate() {
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            totals.deferred_versions = candidates.len() - index;
+            break;
+        }
         let Some(_lock) = lock_project_by_id(
             &services.database_url,
             &candidate.project_id,
@@ -223,7 +245,7 @@ fn prune_content_versions_with(
             continue;
         }
 
-        if let Err(error) = delete_candidate_projections(ctx, candidate) {
+        if let Err(error) = delete_projections(ctx, candidate) {
             // Keep the authoritative pending-cleanup flags until every store
             // succeeds. Deletes are idempotent, so a later retry can safely
             // repeat a deletion that already completed in another store.
@@ -235,6 +257,9 @@ fn prune_content_versions_with(
             );
             totals.failed_versions += 1;
             continue;
+        }
+        if candidate.has_graph_facts && ctx.falkordb.is_some() {
+            graph_dirty_projects.insert(candidate.project_id.clone());
         }
 
         let deleted = conn.execute(
@@ -255,6 +280,17 @@ fn prune_content_versions_with(
             // The row became referenced again after the unreferenced check, but
             // its projections were just deleted; flag it for re-sync.
             reset_candidate_sync_flags(&mut conn, &candidate.id)?;
+        }
+    }
+    for project_id in &graph_dirty_projects {
+        let Some(Some(ctx)) = project_contexts.get(project_id) else {
+            continue;
+        };
+        if let Err(error) = sweep_graph_orphans(ctx) {
+            log::warn!(
+                "graph orphan sweep failed for project {project_id} after content GC: {error:#}"
+            );
+            totals.orphan_sweep_failures += 1;
         }
     }
     Ok(totals)
@@ -312,9 +348,16 @@ fn content_is_unreferenced(conn: &mut Client, indexed_file_id: &str) -> anyhow::
     .map_err(Into::into)
 }
 
+/// Content hashes of every blob reachable from a commit inside the retention
+/// window, across all refs of the repository at `root_path`.
+///
+/// One `rev-list` plus one filtered `cat-file` batch per root, so the cost is
+/// bounded by the window's history rather than by the number of candidate
+/// paths. `--objects` lists a blob once, under the first path it was reached
+/// through, so protection is by content: recent content anywhere in the
+/// repository is retained, a superset of a per-path rule.
 fn recent_content_hashes_in_git_history(
     root_path: &Path,
-    file_path: &str,
     retention_days: i32,
 ) -> anyhow::Result<HashSet<String>> {
     let since = format!("{retention_days}.days");
@@ -324,11 +367,10 @@ fn recent_content_hashes_in_git_history(
         .args([
             "rev-list",
             "--objects",
+            "--filter=object:type=blob",
             "--all",
             "--since",
             &since,
-            "--",
-            file_path,
         ])
         .output()
         .with_context(|| format!("run git rev-list in {}", root_path.display()))?;
@@ -339,17 +381,17 @@ fn recent_content_hashes_in_git_history(
         );
     }
 
-    // --objects lists each blob once, so ping-ponging content versions are
-    // deduplicated before one filtered batch is read.
+    // Commits are listed bare and root trees with an empty path; both are
+    // skipped. The type filter still lists annotated tags under their tag
+    // name, which the response parser below discards by type. Each request
+    // carries the path whose filters apply when the content is read back.
     let mut requests = Vec::new();
     for line in String::from_utf8(objects.stdout)?.lines() {
-        let Some((object_id, path)) = line.split_once(' ') else {
-            continue;
-        };
-        if path != file_path {
-            continue;
+        if let Some((object_id, path)) = line.split_once(' ')
+            && !path.is_empty()
+        {
+            requests.push((object_id.to_string(), path.to_string()));
         }
-        requests.push(object_id.to_string());
     }
     if requests.is_empty() {
         return Ok(HashSet::new());
@@ -363,37 +405,49 @@ fn recent_content_hashes_in_git_history(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .with_context(|| format!("start filtered git blob batch for {file_path}"))?;
+        .with_context(|| format!("start filtered git blob batch in {}", root_path.display()))?;
     let mut stdin = child.stdin.take().context("open git cat-file stdin")?;
     let request_input = requests
         .iter()
-        .map(|object_id| format!("{object_id} {file_path}\n"))
+        .map(|(object_id, path)| format!("{object_id} {path}\n"))
         .collect::<String>();
     let writer = std::thread::spawn(move || stdin.write_all(request_input.as_bytes()));
     let stdout = child.stdout.take().context("open git cat-file stdout")?;
     let mut reader = BufReader::new(stdout);
+    // One response per request line, in order, until the batch ends: a
+    // `<request> missing` line has no body; every other response is
+    // `<oid> <type> <size>` followed by the body and a newline. Only blobs are
+    // hashed; the body of any other type is discarded.
     let parsed = (|| -> anyhow::Result<HashSet<String>> {
         let mut hashes = HashSet::new();
-        for object_id in &requests {
-            let mut header = String::new();
+        let mut header = String::new();
+        loop {
+            header.clear();
             if reader.read_line(&mut header)? == 0 {
-                anyhow::bail!("git cat-file ended before returning blob {object_id}");
+                break;
             }
             let fields = header.split_whitespace().collect::<Vec<_>>();
-            if fields.len() != 3 || fields[1] != "blob" {
-                anyhow::bail!("unexpected git cat-file response for {object_id}: {header:?}");
+            if fields.last() == Some(&"missing") {
+                continue;
             }
-            let size = fields[2]
+            let [object_id, object_type, size] = fields[..] else {
+                anyhow::bail!("unexpected git cat-file response: {header:?}");
+            };
+            let size = size
                 .parse::<usize>()
-                .with_context(|| format!("parse git blob size for {object_id}"))?;
-            let mut blob = vec![0; size];
-            reader.read_exact(&mut blob)?;
+                .with_context(|| format!("parse git object size for {object_id}"))?;
+            let mut body = vec![0; size];
+            reader.read_exact(&mut body)?;
             let mut delimiter = [0_u8; 1];
             reader.read_exact(&mut delimiter)?;
             if delimiter[0] != b'\n' {
-                anyhow::bail!("git cat-file blob {object_id} lacked a trailing newline delimiter");
+                anyhow::bail!(
+                    "git cat-file object {object_id} lacked a trailing newline delimiter"
+                );
             }
-            hashes.insert(hasher::content_hash(&blob));
+            if object_type == "blob" {
+                hashes.insert(hasher::content_hash(&body));
+            }
         }
         Ok(hashes)
     })();

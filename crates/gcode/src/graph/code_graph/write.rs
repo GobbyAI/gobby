@@ -139,6 +139,9 @@ impl<'a> CodeGraph<'a> {
         Ok(())
     }
 
+    /// Delete one content version's facts. Callers deleting many versions run
+    /// [`Self::cleanup_orphans`] once per project afterwards: the sweep is
+    /// O(project graph size), so it is not repeated per version.
     pub(crate) fn delete_content_version(
         &mut self,
         file_path: &str,
@@ -147,7 +150,7 @@ impl<'a> CodeGraph<'a> {
         for query in delete_content_version_queries(self.project_id, file_path, content_hash)? {
             execute_write_query(self.client, query)?;
         }
-        self.cleanup_orphans()
+        Ok(())
     }
 
     pub fn delete_file_graph(

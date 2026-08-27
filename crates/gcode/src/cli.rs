@@ -388,6 +388,10 @@ pub(crate) enum Command {
         /// (matches the daemon's `code_index.content_retention_days` default)
         #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
         retention_days: u32,
+        /// Stop content garbage collection after this many seconds and report the
+        /// remaining versions as deferred to a later run (requires --project)
+        #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+        max_seconds: Option<u64>,
     },
 }
 

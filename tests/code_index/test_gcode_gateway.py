@@ -343,7 +343,7 @@ async def test_gateway_builds_vector_and_prune_args_with_timeouts(
     maintenance_result = await gateway.maintenance_index(tmp_path, timeout=11)
     nightly_result = await gateway.nightly_repair(tmp_path, timeout=12)
     targeted_prune_result = await gateway.prune_project_for_maintenance(
-        tmp_path, retention_days=45, timeout=14
+        tmp_path, retention_days=45, max_seconds=90, timeout=14
     )
     invalidate_result = await gateway.invalidate_project_by_id("project-1", timeout=15)
 
@@ -415,6 +415,8 @@ async def test_gateway_builds_vector_and_prune_args_with_timeouts(
             str(tmp_path),
             "--retention-days",
             "45",
+            "--max-seconds",
+            "90",
         ),
         (
             "/tmp/gcode",
