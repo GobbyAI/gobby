@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "site_count": 245,
+  "site_count": 243,
   "sites": [
     {
       "fingerprint": "0f66536411482f1a325ea75a3b12fe585163203aa948bb885f30281b874362a0",
@@ -941,26 +941,6 @@
         "arg-type"
       ],
       "statement": "event_handlers = EventHandlers ( session_manager = session_manager )"
-    },
-    {
-      "fingerprint": "5963f86481f8317d45482d63357c47278165f9eb1fd6f06332ab7f2992c56dc3",
-      "path": "tests/mcp_proxy/tools/tasks/test_close_checklist.py",
-      "symbol": "test_escalated_close_without_justification_still_fails_tdd_evidence",
-      "directive": "type: ignore",
-      "codes": [
-        "attr-defined"
-      ],
-      "statement": "assert _gate ( evaluation , 12 ) . status == \"failed\""
-    },
-    {
-      "fingerprint": "e90ba739581c4bc5d54b3942ed358665091e23bd87141884966b5ce5e1672dee",
-      "path": "tests/mcp_proxy/tools/tasks/test_close_checklist.py",
-      "symbol": "test_unescalated_close_with_justification_still_fails_tdd_evidence",
-      "directive": "type: ignore",
-      "codes": [
-        "attr-defined"
-      ],
-      "statement": "assert _gate ( evaluation , 12 ) . status == \"failed\""
     },
     {
       "fingerprint": "d2d2d71f5a3c3dd6688f22ea3ff87d25720cea4962f1e02799d946e471665ca1",

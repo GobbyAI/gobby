@@ -6,13 +6,15 @@ import errno
 import os
 import stat
 import sys
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
 
 from gobby.storage.clones import CloneStatus, LocalCloneManager
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.worktrees import LocalWorktreeManager, WorktreeStatus
+from gobby.utils.git import run_git_command
 from gobby.utils.project_context import get_project_context
 
 if TYPE_CHECKING:
@@ -43,6 +45,63 @@ def resolve_task_repo_path(
         )
 
     return _project_repo_path(project_manager, task.project_id)
+
+
+@dataclass(frozen=True, slots=True)
+class CloseWorktreeRoot:
+    """Whether a task's registered isolation worktree is the close-gate root."""
+
+    worktree_path: str | None
+    repo_path: str | None
+    skip_reason: str | None
+
+    @property
+    def applies(self) -> bool:
+        return self.repo_path is not None
+
+
+def resolve_close_worktree_root(
+    *,
+    task_manager: LocalTaskManager,
+    task: Task,
+    commit_shas: Sequence[str],
+) -> CloseWorktreeRoot:
+    """Pick the task's registered worktree as close root when its linked commits live there.
+
+    Named acceptance tests may exist only on the worktree branch, so gates that
+    resolve them against the main checkout fail for the wrong reason (#21098).
+    The worktree qualifies when it is registered on the task, still exists, and
+    every linked commit is reachable from its HEAD; otherwise ``skip_reason``
+    says why so the close diagnostic can name it.
+    """
+    worktree_path = task_manager.artifacts.get_artifacts(task.id).worktree_path
+    if not isinstance(worktree_path, str) or not worktree_path:
+        return CloseWorktreeRoot(None, None, "the task has no registered isolation worktree")
+    try:
+        resolved = _resolve_existing_dir(worktree_path, label="registered worktree")
+    except RepoPathValidationError as exc:
+        return CloseWorktreeRoot(worktree_path, None, f"{exc} (not used)")
+    if not commit_shas:
+        return CloseWorktreeRoot(
+            worktree_path,
+            None,
+            f"registered worktree {worktree_path} was not used: "
+            "the close names no linked commit to locate there",
+        )
+    unreachable = [
+        sha
+        for sha in commit_shas
+        if run_git_command(["git", "merge-base", "--is-ancestor", sha, "HEAD"], cwd=resolved)
+        is None
+    ]
+    if unreachable:
+        return CloseWorktreeRoot(
+            worktree_path,
+            None,
+            f"registered worktree {worktree_path} was not used: linked commit "
+            f"{', '.join(unreachable)} is not reachable from its HEAD",
+        )
+    return CloseWorktreeRoot(worktree_path, str(resolved), None)
 
 
 def resolve_project_repo_path(

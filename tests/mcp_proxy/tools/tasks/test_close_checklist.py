@@ -14,12 +14,14 @@ import pytest
 
 import gobby.mcp_proxy.tools.tasks._lifecycle_close as lifecycle
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization as close_finalization
+from gobby.mcp_proxy.tools.task_repo_paths import CloseWorktreeRoot
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close import _evaluate_close
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
 from gobby.storage.tasks import Task
 from gobby.tasks.acceptance_artifacts import AcceptanceArtifactResult, AcceptanceTest
+from gobby.tasks.close_checklist import CloseGateResult
 from gobby.tasks.epic_guards import EpicGuardResult
 from gobby.tasks.transcript_evidence import TranscriptEvidence, TranscriptValidationRun
 
@@ -27,6 +29,8 @@ pytestmark = pytest.mark.unit
 
 SESSION_ID = "00000000-0000-4000-8000-000000000301"
 NOW = datetime(2026, 8, 23, 12, 5, tzinfo=UTC)
+WORKTREE = "/worktrees/wt-101"
+NO_WORKTREE = CloseWorktreeRoot(None, None, "the task has no registered isolation worktree")
 NAMED_TEST = AcceptanceTest(
     reference="tests/memory/test_recall.py::test_batched_read_failure_injects_nothing",
     path="tests/memory/test_recall.py",
@@ -107,6 +111,9 @@ async def _evaluate(
     review: AsyncMock | None = None,
     guards: EpicGuardResult | None = None,
     artifacts: AcceptanceArtifactResult | None = None,
+    close_root: CloseWorktreeRoot = NO_WORKTREE,
+    project_path: str | None = None,
+    acceptance_evaluator: MagicMock | None = None,
 ) -> CloseEvaluation:
     review = review or AsyncMock(
         return_value=ValidationResult(
@@ -129,6 +136,7 @@ async def _evaluate(
         else nullcontext(),
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
+        patch.object(lifecycle, "resolve_close_worktree_root", return_value=close_root),
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
         patch.object(close_finalization, "_committable_task_paths", return_value={"src/a.py"}),
         patch.object(lifecycle, "_has_committable_edits", return_value=False),
@@ -144,7 +152,11 @@ async def _evaluate(
             "_derive_close_transcript_evidence",
             AsyncMock(return_value=_transcript()),
         ),
-        patch.object(lifecycle, "evaluate_acceptance_artifacts", return_value=artifacts),
+        patch.object(
+            lifecycle,
+            "evaluate_acceptance_artifacts",
+            acceptance_evaluator or MagicMock(return_value=artifacts),
+        ),
         patch.object(lifecycle, "collect_commit_diff_text", return_value="diff"),
         patch.object(lifecycle, "evaluate_criteria_review", review),
         patch("gobby.workflows.task_claim_state.target_task_has_edits", return_value=True),
@@ -159,13 +171,89 @@ async def _evaluate(
             reason="completed",
             changes_summary="Implemented and tested.",
             commit_sha="abc123",
-            project_path=None,
+            project_path=project_path,
             response_detail="diagnostic",
             override_justification=override_justification,
         )
 
 
-def _gate(evaluation: CloseEvaluation, item: int) -> object:
+def _unresolved_artifacts() -> AcceptanceArtifactResult:
+    """Gate 11 output when gcode finds no such test in the evaluated root."""
+    return AcceptanceArtifactResult(
+        passed=False,
+        tests=(),
+        findings=(
+            f"{NAMED_TEST.reference}: gcode could not resolve the exact test body: "
+            "expected one matching symbol, found 0",
+        ),
+        evidence_files=(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_close_gates_evaluate_the_registered_worktree_root() -> None:
+    """A task whose linked commit lives on its worktree branch closes from there.
+
+    Named acceptance tests may exist only on that branch, so gate 11 resolving
+    them against the main checkout failed for the wrong reason (#21098).
+    """
+    acceptance = MagicMock(
+        return_value=AcceptanceArtifactResult(
+            passed=True, tests=(NAMED_TEST,), findings=(), evidence_files=()
+        )
+    )
+
+    evaluation = await _evaluate(
+        _task(escalated=False),
+        override_justification=None,
+        close_root=CloseWorktreeRoot(WORKTREE, WORKTREE, None),
+        acceptance_evaluator=acceptance,
+    )
+
+    assert evaluation.repo_path == WORKTREE
+    assert _gate(evaluation, 3).message == (
+        f"Task repository resolved to the registered worktree {WORKTREE}."
+    )
+    assert acceptance.call_args.kwargs["repo_path"] == WORKTREE
+
+
+@pytest.mark.asyncio
+async def test_unresolved_named_test_names_the_registered_worktree_and_project_path() -> None:
+    """When the worktree default cannot apply, the diagnostic says why and how to choose."""
+    skip = f"registered worktree {WORKTREE} was not used: linked commit abc123 is not reachable"
+
+    evaluation = await _evaluate(
+        _task(escalated=False),
+        override_justification=None,
+        artifacts=_unresolved_artifacts(),
+        close_root=CloseWorktreeRoot(WORKTREE, None, skip),
+    )
+
+    assert evaluation.error == "acceptance_artifacts_invalid"
+    assert evaluation.message == (
+        f"{NAMED_TEST.reference}: gcode could not resolve the exact test body: "
+        "expected one matching symbol, found 0 "
+        f"Named test {NAMED_TEST.reference} did not resolve in /repo; {skip}. "
+        "Pass project_path=<registered worktree or clone path> "
+        "to evaluate the task branch there."
+    )
+
+
+@pytest.mark.asyncio
+async def test_explicit_project_path_keeps_the_bare_gate_11_finding() -> None:
+    """The caller who chose the root does not get told to choose one."""
+    evaluation = await _evaluate(
+        _task(escalated=False),
+        override_justification=None,
+        artifacts=_unresolved_artifacts(),
+        project_path="/repo",
+    )
+
+    assert evaluation.error == "acceptance_artifacts_invalid"
+    assert evaluation.message == _unresolved_artifacts().findings[0]
+
+
+def _gate(evaluation: CloseEvaluation, item: int) -> CloseGateResult:
     return next(gate for gate in evaluation.gates if gate.item == item)
 
 
@@ -198,7 +286,7 @@ async def test_escalated_close_without_justification_still_fails_tdd_evidence() 
     evaluation = await _evaluate(_task(escalated=True), override_justification=None)
 
     assert evaluation.error == "tdd_evidence_missing"
-    assert _gate(evaluation, 12).status == "failed"  # type: ignore[attr-defined]
+    assert _gate(evaluation, 12).status == "failed"
 
 
 @pytest.mark.asyncio
@@ -210,7 +298,7 @@ async def test_unescalated_close_with_justification_still_fails_tdd_evidence() -
     )
 
     assert evaluation.error == "tdd_evidence_missing"
-    assert _gate(evaluation, 12).status == "failed"  # type: ignore[attr-defined]
+    assert _gate(evaluation, 12).status == "failed"
 
 
 @pytest.mark.asyncio
@@ -271,5 +359,5 @@ async def test_criteria_review_sees_guard_identity_without_its_stdout() -> None:
     assert guard_facts["paths"] == ["tests/memory/test_recall.py"]
     assert guard_facts["fingerprint"] == "guardfingerprint"
     assert guard_facts["command"] == "uv run pytest 'tests/memory/test_recall.py'"
-    gate_details = cast(Any, _gate(evaluation, 13)).details
+    gate_details = _gate(evaluation, 13).details
     assert gate_details["output"] == guards.output, "gate 13 keeps the runner output"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
@@ -10,8 +11,10 @@ import pytest
 
 from gobby.mcp_proxy.tools import task_repo_paths
 from gobby.mcp_proxy.tools.task_repo_paths import (
+    CloseWorktreeRoot,
     RepoPathValidationError,
     _artifact_roots,
+    resolve_close_worktree_root,
     resolve_project_repo_path,
     resolve_task_repo_path,
 )
@@ -52,11 +55,110 @@ def _project_manager(repo_path: Path) -> _ProjectManager:
     return _ProjectManager(repo_path)
 
 
-def _task_manager() -> SimpleNamespace:
+def _task_manager(worktree_path: str | None = None) -> SimpleNamespace:
     artifacts = SimpleNamespace(
-        get_artifacts=lambda _task_id: SimpleNamespace(worktree_path=None, clone_path=None)
+        get_artifacts=lambda _task_id: SimpleNamespace(worktree_path=worktree_path, clone_path=None)
     )
     return SimpleNamespace(db=object(), artifacts=artifacts)
+
+
+def _git(repo: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
+
+
+def _commit(repo: Path, name: str) -> str:
+    (repo / name).write_text(name)
+    _git(repo, "add", name)
+    _git(repo, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", name)
+    return _git(repo, "rev-parse", "HEAD")
+
+
+@pytest.fixture
+def task_worktree(tmp_path: Path) -> tuple[Path, Path]:
+    """A main checkout plus a linked worktree on its own task branch."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    _commit(repo, "base")
+    worktree = tmp_path / "wt"
+    _git(repo, "worktree", "add", "-q", "-b", "task-branch", str(worktree))
+    return repo, worktree
+
+
+def _close_root(*, worktree_path: str | None, commit_shas: list[str]) -> CloseWorktreeRoot:
+    task = SimpleNamespace(id="task-1", project_id="project-1", parent_task_id=None)
+    return resolve_close_worktree_root(
+        task_manager=cast("LocalTaskManager", _task_manager(worktree_path)),
+        task=cast("Task", task),
+        commit_shas=commit_shas,
+    )
+
+
+def test_close_root_is_the_registered_worktree_holding_the_linked_commit(
+    task_worktree: tuple[Path, Path],
+) -> None:
+    _repo, worktree = task_worktree
+    branch_commit = _commit(worktree, "feature")
+
+    root = _close_root(worktree_path=str(worktree), commit_shas=[branch_commit])
+
+    assert root.applies
+    assert root.repo_path == str(worktree)
+    assert root.worktree_path == str(worktree)
+    assert root.skip_reason is None
+
+
+def test_close_root_skips_the_worktree_that_cannot_reach_the_linked_commit(
+    task_worktree: tuple[Path, Path],
+) -> None:
+    repo, worktree = task_worktree
+    main_only = _commit(repo, "main-only")
+
+    root = _close_root(worktree_path=str(worktree), commit_shas=[main_only])
+
+    assert not root.applies
+    assert root.repo_path is None
+    assert root.worktree_path == str(worktree)
+    assert root.skip_reason == (
+        f"registered worktree {worktree} was not used: linked commit {main_only} "
+        "is not reachable from its HEAD"
+    )
+
+
+def test_close_root_names_a_deleted_registered_worktree(tmp_path: Path) -> None:
+    gone = tmp_path / "gone"
+
+    root = _close_root(worktree_path=str(gone), commit_shas=["abc123"])
+
+    assert root.repo_path is None
+    assert root.worktree_path == str(gone)
+    assert root.skip_reason == f"registered worktree does not exist: {gone} (not used)"
+
+
+def test_close_root_needs_a_registration_and_a_linked_commit(
+    task_worktree: tuple[Path, Path],
+) -> None:
+    _repo, worktree = task_worktree
+
+    unregistered = _close_root(worktree_path=None, commit_shas=["abc123"])
+    uncommitted = _close_root(worktree_path=str(worktree), commit_shas=[])
+
+    assert unregistered == CloseWorktreeRoot(
+        None, None, "the task has no registered isolation worktree"
+    )
+    assert uncommitted.repo_path is None
+    assert uncommitted.skip_reason == (
+        f"registered worktree {worktree} was not used: "
+        "the close names no linked commit to locate there"
+    )
 
 
 def test_resolve_project_repo_path_accepts_registered_descendant(tmp_path: Path) -> None:

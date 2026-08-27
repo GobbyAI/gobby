@@ -10,7 +10,9 @@ from typing import Any, Literal
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization as close_finalization
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.task_repo_paths import (
+    CloseWorktreeRoot,
     RepoPathValidationError,
+    resolve_close_worktree_root,
     resolve_task_repo_path,
 )
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import CloseEvaluationFingerprint
@@ -60,6 +62,7 @@ from gobby.storage.task_close_reviews import TaskCloseReviewStore
 from gobby.storage.tasks import Task, TaskNotFoundError
 from gobby.tasks.acceptance_artifacts import (
     evaluate_acceptance_artifacts,
+    extract_artifact_references,
     render_acceptance_test_bodies,
 )
 from gobby.tasks.close_checklist import evaluate_validation_commands
@@ -102,6 +105,30 @@ def _close_verdict_memo(
         caller_session_id=caller_session_id,
         close_arguments=close_arguments,
         criteria=criteria,
+    )
+
+
+def _acceptance_root_diagnostic(
+    finding: str,
+    *,
+    criteria: str,
+    resolved_references: set[str],
+    repo_path: str,
+    close_root: CloseWorktreeRoot,
+    project_path: str | None,
+) -> str:
+    """Name the evaluated root when a named test did not resolve outside the task worktree."""
+    unresolved = [
+        reference
+        for reference in extract_artifact_references(criteria, "test")
+        if reference not in resolved_references
+    ]
+    if not unresolved or project_path is not None or close_root.applies:
+        return finding
+    return (
+        f"{finding} Named test {', '.join(unresolved)} did not resolve in {repo_path}; "
+        f"{close_root.skip_reason}. Pass project_path=<registered worktree or clone path> "
+        "to evaluate the task branch there."
     )
 
 
@@ -198,8 +225,27 @@ async def _evaluate_close(
             "task_repo_path_unavailable",
             "close_task requires a registered repository path.",
         )
+    if project_path is None:
+        # Off the loop: git merge-base per linked commit (#20861). An explicit
+        # project_path is the caller's root choice and skips the default.
+        close_root = await asyncio.to_thread(
+            resolve_close_worktree_root,
+            task_manager=ctx.task_manager,
+            task=task,
+            commit_shas=[*(task.commits or []), *([commit_sha] if commit_sha else [])],
+        )
+    else:
+        close_root = CloseWorktreeRoot(None, None, "project_path was supplied")
+    if close_root.repo_path is not None:
+        repo_path = close_root.repo_path
     evaluation.repo_path = repo_path
-    evaluation.pass_gate(3, "repository_path", "Task repository resolved.")
+    evaluation.pass_gate(
+        3,
+        "repository_path",
+        f"Task repository resolved to the registered worktree {repo_path}."
+        if close_root.applies
+        else "Task repository resolved.",
+    )
     evaluation.edit_session_id = get_claimed_session_id(task) or resolved_session_id
 
     children, children_state = _children_state(ctx, resolved_id)
@@ -539,7 +585,14 @@ async def _evaluate_close(
                 11,
                 "acceptance_artifacts",
                 "acceptance_artifacts_invalid",
-                artifacts.findings[0],
+                _acceptance_root_diagnostic(
+                    artifacts.findings[0],
+                    criteria=task.validation_criteria or "",
+                    resolved_references={test.reference for test in artifacts.tests},
+                    repo_path=repo_path,
+                    close_root=close_root,
+                    project_path=project_path,
+                ),
                 details=acceptance_details,
                 extra={"acceptance_artifacts": acceptance_details},
             )
