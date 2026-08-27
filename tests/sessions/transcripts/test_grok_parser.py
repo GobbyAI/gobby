@@ -249,6 +249,7 @@ def test_grok_updates_jsonl_parser_renders_message_and_tool_records() -> None:
     assert messages[4].tool_result == {
         "output": "/repo",
         "error": None,
+        "status": "completed",
         "raw": {
             "sessionUpdate": "tool_call_update",
             "toolCallId": "call-grok-tool-0",
