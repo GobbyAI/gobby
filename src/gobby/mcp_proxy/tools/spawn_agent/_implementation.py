@@ -75,6 +75,21 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _link_auto_claimed_session(task_manager: Any, session_id: str, task_id: str) -> None:
+    """Record the ``claimed`` session-task link the ``claim_task`` tool writes.
+
+    The spawn-time claim replaces the agent's own ``claim_task`` call, so without
+    this row the implementer session is invisible to close-time evidence merging
+    (#21102). Best-effort, like the tool's own linking.
+    """
+    from gobby.storage.session_tasks import SessionTaskManager
+
+    try:
+        SessionTaskManager(task_manager.db).link_task(session_id, task_id, "claimed")
+    except Exception as exc:
+        logger.debug("Best-effort auto-claim session linking failed: %s", exc)
+
+
 async def spawn_agent_impl(
     prompt: str,
     runner: AgentRunner,
@@ -866,6 +881,10 @@ async def spawn_agent_impl(
                         run_id,
                         spawn_result.child_session_id,
                     )
+                    if task_owned_by_child:
+                        _link_auto_claimed_session(
+                            task_manager, spawn_result.child_session_id, resolved_task_id
+                        )
                     if (
                         task_owned_by_child
                         and db is not None
