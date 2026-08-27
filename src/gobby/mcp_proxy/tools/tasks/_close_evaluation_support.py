@@ -129,38 +129,79 @@ async def derive_close_transcript_evidence(
     task_edited_files: set[str],
     repo_path: str,
 ) -> TranscriptEvidence:
-    """Parse and merge owning and closing session transcripts."""
+    """Parse and merge every session transcript that worked the task.
+
+    The owner and closing sessions are required. Every other session that
+    claimed or worked the task (an implementer that handed off to a QA
+    session, for example) contributes within its own link window, so a
+    red/green cycle recorded before the handoff still satisfies the TDD gate.
+    History never blocks a close: a linked session that no longer exists or
+    has no readable transcript is skipped.
+    """
     config = ctx.config
     detection = resolve_validation_detection_config(
         daemon_config=config,
         project_path=repo_path,
     )
     archive_dir = config.session_lifecycle.transcript_archive_dir if config is not None else None
+    windows: dict[str, str | None] = {owner_session_id: owner_window_start}
+    if closing_session_id not in windows:
+        windows[closing_session_id] = task_session_window_start(ctx, task_id, closing_session_id)
+    required = frozenset(windows)
+    for session_id, window_start in _linked_session_windows(ctx, task_id).items():
+        windows.setdefault(session_id, window_start)
     evidence: list[TranscriptEvidence] = []
-    for session_id in dict.fromkeys((owner_session_id, closing_session_id)):
+    for session_id, window_start in windows.items():
         session = ctx.session_manager.get(session_id)
         if session is None:
-            raise TranscriptEvidenceUnavailable(
-                f"Session {session_id} was not found",
-                source="unknown",
-                attempted_paths=(),
+            if session_id in required:
+                raise TranscriptEvidenceUnavailable(
+                    f"Session {session_id} was not found",
+                    source="unknown",
+                    attempted_paths=(),
+                )
+            logger.debug("Skipping close evidence for missing linked session %s", session_id)
+            continue
+        effective_window: str | datetime | None = window_start
+        if session_id != owner_session_id:
+            effective_window = window_start or session.created_at
+        try:
+            evidence.append(
+                await derive_transcript_evidence(
+                    session,
+                    effective_window,
+                    detection,
+                    task_edited_files,
+                    repo_path,
+                    archive_dir=archive_dir,
+                )
             )
-        window_start = (
-            owner_window_start
-            if session_id == owner_session_id
-            else task_session_window_start(ctx, task_id, session_id) or session.created_at
-        )
-        evidence.append(
-            await derive_transcript_evidence(
-                session,
-                window_start,
-                detection,
-                task_edited_files,
-                repo_path,
-                archive_dir=archive_dir,
-            )
-        )
+        except TranscriptEvidenceUnavailable as exc:
+            if session_id in required:
+                raise
+            logger.warning("Skipping close evidence for linked session %s: %s", session_id, exc)
     return merge_transcript_evidence(*evidence)
+
+
+_EVIDENCE_LINK_ACTIONS = frozenset({"claimed", "worked_on"})
+
+
+def _linked_session_windows(ctx: RegistryContext, task_id: str) -> dict[str, str | None]:
+    """Map each session that claimed or worked the task to its earliest such link."""
+    try:
+        rows = ctx.session_task_manager.get_task_sessions(task_id)
+    except Exception as exc:
+        logger.debug("Failed to load task-session history: %s", exc)
+        return {}
+    windows: dict[str, str | None] = {}
+    # Rows arrive newest first, so the last assignment leaves the earliest link.
+    for row in rows:
+        if (row.get("action") or row.get("session_action")) not in _EVIDENCE_LINK_ACTIONS:
+            continue
+        windows[str(row.get("session_id"))] = _format_git_since(
+            row.get("created_at") or row.get("link_created_at")
+        )
+    return windows
 
 
 def claimed_session_window_start(

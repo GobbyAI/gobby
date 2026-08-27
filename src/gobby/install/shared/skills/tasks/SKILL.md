@@ -137,8 +137,10 @@ committed or abandoned the work, ask that owner to call
 Only the owning session can release attribution, and the tool refuses paths with
 uncommitted content.
 
-The close tool derives validation evidence from the claiming and closing session
-transcripts. A later task-attributed file edit makes earlier validation stale;
+The close tool derives validation evidence from the transcripts of the claiming
+and closing sessions plus every earlier session that claimed or worked the task,
+each within its own link window — an implementer's red/green run still counts
+after it hands the task to a QA session. A later task-attributed file edit makes earlier validation stale;
 commits preserve it. Shell validation must produce a definitive exit code, so
 follow every yielded cell or PTY session until exit.
 
