@@ -13,7 +13,7 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
 _ARTIFACT_REF_RE = re.compile(
-    r"\b(?P<kind>test|file):\s*(?:`(?P<quoted>[^`]+)`|(?P<bare>[^\s,;]+))",
+    r"\b(?P<kind>test|file):(?:\s*`(?P<quoted>[^`]+)`|\s+(?P<bare>[^\s,;]+))",
     re.IGNORECASE,
 )
 _FIELD_RE = re.compile(
