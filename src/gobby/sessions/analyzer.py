@@ -7,7 +7,6 @@ autonomous continuity without relying on manual /clear boundaries.
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -15,6 +14,7 @@ from typing import Any
 from gobby.hooks.normalization import is_shell_tool
 from gobby.sessions.transcripts.base import TranscriptParser
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
+from gobby.sessions.transcripts.tool_activity import canonical_tool_name, commit_outcome
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +139,10 @@ class TranscriptAnalyzer:
     # ------------------------------------------------------------------
 
     def extract_handoff_context(
-        self, turns: list[dict[str, Any]], max_turns: int | None = None
+        self,
+        turns: list[dict[str, Any]],
+        max_turns: int | None = None,
+        initial_goal: str | None = None,
     ) -> HandoffContext:
         """
         Extract context for autonomous handoff.
@@ -162,25 +165,53 @@ class TranscriptAnalyzer:
             HandoffContext object populated with extracted data
         """
         _ = max_turns  # Deprecated — all turns are now processed
-        context = HandoffContext()
+        context = HandoffContext(initial_goal=initial_goal or "")
 
         if not turns:
             return context
 
         # 1. Extract Initial Goal (First User Message)
-        for turn in turns:
-            if self._is_user_turn(turn):
-                context.initial_goal = self._get_user_text(turn)
-                break
+        if initial_goal is None:
+            for turn in turns:
+                if self._is_user_turn(turn):
+                    context.initial_goal = self._get_user_text(turn)
+                    break
 
         # 2. Analyze Recent Activity (Scan all turns)
         found_active_task = False
         modified_files_set: set[str] = set()
+        tool_results: dict[str, tuple[str, bool]] = {}
+        for turn in turns:
+            for block in self._iter_content_blocks(turn):
+                if block.get("type") != "tool_result":
+                    continue
+                tool_use_id = block.get("tool_use_id")
+                if isinstance(tool_use_id, str):
+                    tool_results[tool_use_id] = (
+                        self._tool_result_text(block.get("content")),
+                        bool(block.get("is_error")),
+                    )
 
         for turn in reversed(turns):
             for block in self._iter_content_blocks(turn):
                 if block.get("type") == "tool_use":
-                    self._analyze_tool_use(block, context, found_active_task, modified_files_set)
+                    canonical_block = self._canonical_tool_block(block)
+                    tool_use_id = canonical_block.get("id")
+                    result = tool_results.get(tool_use_id) if isinstance(tool_use_id, str) else None
+                    if (
+                        isinstance(canonical_block.get("name"), str)
+                        and canonical_block["name"].startswith("mcp gobby-tasks:")
+                        and result is not None
+                        and result[1]
+                    ):
+                        continue
+                    self._analyze_tool_use(
+                        canonical_block,
+                        context,
+                        found_active_task,
+                        modified_files_set,
+                        result,
+                    )
 
         context.files_modified = sorted(modified_files_set)
         # task_progress was built in reverse order; restore chronological
@@ -194,7 +225,12 @@ class TranscriptAnalyzer:
                 break
             for block in self._iter_content_blocks(turn):
                 if block.get("type") == "tool_use":
-                    recent_tools.append(self._format_tool_description(block))
+                    canonical_block = self._canonical_tool_block(block)
+                    description = self._format_tool_description(canonical_block)
+                    canonical_name = canonical_block.get("name")
+                    if isinstance(canonical_name, str) and canonical_name.startswith("mcp "):
+                        description = f"{canonical_name}: {description}"
+                    recent_tools.append(description)
                     count += 1
                     if count >= 10:
                         break
@@ -231,29 +267,51 @@ class TranscriptAnalyzer:
 
         return context
 
+    @staticmethod
+    def _canonical_tool_block(block: dict[str, Any]) -> dict[str, Any]:
+        raw_name = block.get("name")
+        raw_input = block.get("input")
+        if not isinstance(raw_name, str):
+            return {**block, "name": "unknown", "input": {}}
+        name, tool_input = canonical_tool_name(raw_name, raw_input)
+        if name == raw_name and raw_name in {"mcp_call_tool", "mcp__gobby__call_tool"}:
+            tool_input = dict(raw_input) if isinstance(raw_input, dict) else {}
+        return {**block, "name": name, "input": tool_input}
+
+    @staticmethod
+    def _tool_result_text(value: Any) -> str:
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            return "\n".join(TranscriptAnalyzer._tool_result_text(item) for item in value)
+        if isinstance(value, dict):
+            for key in ("text", "output", "content", "message", "error"):
+                if key in value:
+                    text = TranscriptAnalyzer._tool_result_text(value[key])
+                    if text:
+                        return text
+        return ""
+
     def _analyze_tool_use(
         self,
         block: dict[str, Any],
         context: HandoffContext,
         found_active_task: bool,
         modified_files_set: set[str],
+        result: tuple[str, bool] | None = None,
     ) -> None:
         """Helper to analyze a single tool use block."""
+        block = self._canonical_tool_block(block)
         tool_name = block.get("name")
         tool_input = block.get("input", {})
 
         # -- Gobby Tasks --
-        if tool_name in ("mcp_call_tool", "mcp__gobby__call_tool"):
-            server = tool_input.get("server_name")
-            tool = tool_input.get("tool_name")
-            args = tool_input.get("arguments", {})
-            if isinstance(args, str):
-                try:
-                    args = json.loads(args)
-                except (json.JSONDecodeError, TypeError):
-                    args = {}
+        if isinstance(tool_name, str) and tool_name.startswith("mcp "):
+            server_tool = tool_name.removeprefix("mcp ")
+            server, separator, tool = server_tool.partition(":")
+            args = tool_input
 
-            if server == "gobby-tasks":
+            if separator and server == "gobby-tasks":
                 # Track all task interactions for task_progress
                 task_id = args.get("task_id") or args.get("id")
                 title = args.get("title", "")
@@ -276,30 +334,63 @@ class TranscriptAnalyzer:
                             "title": args.get("title", f"Task {task_id}"),
                         }
 
+                commit_sha = args.get("commit_sha")
+                if tool in {"close_task", "link_commit"} and isinstance(commit_sha, str):
+                    context.git_commits.append(
+                        {
+                            "hash": commit_sha,
+                            "message": f"{tool} {task_id or ''}".strip(),
+                        }
+                    )
+
         # -- File Modifications --
-        elif tool_name in ("Edit", "Write", "Replace", "replace_file_content", "write_to_file"):
+        elif tool_name in {
+            "Edit",
+            "Write",
+            "Replace",
+            "apply_patch",
+            "create_file",
+            "edit_file",
+            "replace_file_content",
+            "search_replace",
+            "write",
+            "write_file",
+            "write_to_file",
+        }:
             # Claude Code uses Edit/Write; Codex uses write_to_file/replace_file_content
             # Support both standard and generic names.
             path = (
                 tool_input.get("file_path")
                 or tool_input.get("TargetFile")
                 or tool_input.get("path")
+                or tool_input.get("target_file")
             )
             if path:
                 modified_files_set.add(path)
 
         # -- Git Commits --
-        elif is_shell_tool(tool_name):
+        elif isinstance(tool_name, str) and is_shell_tool(tool_name):
             command = tool_input.get("command", "")
             if "git commit" in command:
-                # Attempt to extract message
-                # This is a bit brittle, but useful context
-                context.git_commits.append(
-                    {
-                        "hash": "",
-                        "message": command,
-                    }
-                )
+                commit_hash = ""
+                message = command
+                if result is not None and not result[1]:
+                    outcome = (
+                        result[0]
+                        if result[0].startswith("commit ")
+                        else commit_outcome(tool_name, tool_input, result[0])
+                    )
+                    if outcome:
+                        parts = outcome.split(" ", 2)
+                        if len(parts) >= 2:
+                            commit_hash = parts[1]
+                        if len(parts) == 3:
+                            message = parts[2]
+                commit = {"hash": commit_hash, "message": message}
+                tool_use_id = block.get("id")
+                if isinstance(tool_use_id, str):
+                    commit["tool_use_id"] = tool_use_id
+                context.git_commits.append(commit)
 
     def _format_tool_description(self, block: dict[str, Any]) -> str:
         """
@@ -313,19 +404,17 @@ class TranscriptAnalyzer:
         Returns:
             Human-readable description of what the tool call did
         """
+        block = self._canonical_tool_block(block)
         tool_name = block.get("name", "unknown")
         tool_input = block.get("input", {})
 
         # MCP tool calls - show server.tool with details for gobby-tasks
-        if tool_name in ("mcp__gobby__call_tool", "mcp_call_tool"):
-            server = tool_input.get("server_name", "unknown")
-            tool = tool_input.get("tool_name", "unknown")
-            args = tool_input.get("arguments", {})
-            if isinstance(args, str):
-                try:
-                    args = json.loads(args)
-                except (json.JSONDecodeError, TypeError):
-                    args = {}
+        if isinstance(tool_name, str) and tool_name.startswith("mcp "):
+            server_tool = tool_name.removeprefix("mcp ")
+            server, separator, tool = server_tool.partition(":")
+            if not separator:
+                server, tool = "unknown", "unknown"
+            args = tool_input
 
             # Enhanced formatting for gobby-tasks operations
             if server == "gobby-tasks":
@@ -357,6 +446,17 @@ class TranscriptAnalyzer:
                     return f"Fetched task {task_id}"
 
             # Generic MCP call formatting - extract meaningful context from args
+            context = self._extract_mcp_context(args)
+            if context:
+                return f"{server}.{tool}: {context}"
+            return f"Called {server}.{tool}"
+
+        if tool_name in ("mcp__gobby__call_tool", "mcp_call_tool"):
+            server = tool_input.get("server_name", "unknown")
+            tool = tool_input.get("tool_name", "unknown")
+            args = tool_input.get("arguments", {})
+            if not isinstance(args, dict):
+                args = {}
             context = self._extract_mcp_context(args)
             if context:
                 return f"{server}.{tool}: {context}"
