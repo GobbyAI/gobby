@@ -1977,11 +1977,14 @@ def _recording_summary_manager(
 @pytest.mark.asyncio
 async def test_refresh_digests_pending_turn_before_fallback() -> None:
     session = _compact_session(digest_markdown=None, summary_markdown=None)
-    manager, persisted, events = _recording_summary_manager(session)
+    reloaded_session = _compact_session(
+        digest_markdown="### Turn 1\nCompact prompt and exact tool result",
+        summary_markdown=None,
+    )
+    manager, persisted, events = _recording_summary_manager(reloaded_session)
 
     async def digest(**_kwargs: Any) -> dict[str, int]:
         events.append("digest")
-        session.digest_markdown = "### Turn 1\nCompact prompt and exact tool result"
         return {"turn_num": 1}
 
     with (
@@ -2012,7 +2015,7 @@ async def test_refresh_digests_pending_turn_before_fallback() -> None:
 
     def get_reloaded_session(_session_id: str) -> SimpleNamespace:
         background_events.append("reload")
-        return session
+        return reloaded_session
 
     manager.get.side_effect = get_reloaded_session
 
@@ -2095,6 +2098,11 @@ async def test_compact_self_resolves_memory_manager_per_call() -> None:
     manager.resolve_session_reference.side_effect = lambda ref, project_id=None: ref
     memory_manager = object()
     memory_manager_resolver = MagicMock(return_value=memory_manager)
+    operation_config = SimpleNamespace(
+        session_summary=MagicMock(),
+        compact_handoff=CompactHandoffConfig(),
+    )
+    config_resolver = MagicMock(return_value=operation_config)
     registry = _TestRegistry(name="test", description="test")
     db = MagicMock()
     agent_run_manager = MagicMock()
@@ -2113,11 +2121,19 @@ async def test_compact_self_resolves_memory_manager_per_call() -> None:
             db,
             llm_service_resolver=MagicMock(return_value=MagicMock()),
             memory_manager_resolver=memory_manager_resolver,
+            config_resolver=config_resolver,
         )
 
     compact_self = registry.get_tool("compact_self")
     assert compact_self is not None
-    refresh = AsyncMock(return_value={"success": True, "refreshed": False})
+    refresh = AsyncMock(
+        return_value={
+            "success": True,
+            "refreshed": False,
+            "background_refresh_needed": True,
+        }
+    )
+    schedule = MagicMock(return_value=True)
     with (
         patch(
             "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
@@ -2128,6 +2144,10 @@ async def test_compact_self_resolves_memory_manager_per_call() -> None:
             "gobby.mcp_proxy.tools.sessions._terminal._refresh_compact_handoff_context",
             refresh,
         ),
+        patch(
+            "gobby.mcp_proxy.tools.sessions._terminal._schedule_compact_handoff_background_refresh",
+            schedule,
+        ),
         session_context_for_test("s1"),
     ):
         first = await compact_self()
@@ -2136,9 +2156,22 @@ async def test_compact_self_resolves_memory_manager_per_call() -> None:
     assert first["compacted"] is True
     assert second["compacted"] is True
     assert memory_manager_resolver.call_count == 2
+    assert config_resolver.call_count == 2
     assert [call.kwargs["memory_manager"] for call in refresh.await_args_list] == [
         memory_manager,
         memory_manager,
+    ]
+    assert [call.kwargs["config"] for call in refresh.await_args_list] == [
+        operation_config,
+        operation_config,
+    ]
+    assert [call.kwargs["memory_manager"] for call in schedule.call_args_list] == [
+        memory_manager,
+        memory_manager,
+    ]
+    assert [call.kwargs["config"] for call in schedule.call_args_list] == [
+        operation_config,
+        operation_config,
     ]
 
 
@@ -2207,6 +2240,7 @@ async def test_tail_withheld_retries_then_persists_transcript_tail_fallback() ->
     assert digest.await_count == 1 + _terminal_handoff.COMPACT_HANDOFF_TAIL_RETRY_ATTEMPTS
     assert result["success"] is True
     fallback = persisted[0]["summary_markdown"]
+    assert fallback.startswith("## Compact-triggering prompt\n\n" + pair["prompt"])
     assert pair["prompt"] in fallback
     assert "latest call: (no result recorded)" in fallback
     assert "tool call 0:" not in fallback
@@ -2218,7 +2252,15 @@ async def test_tail_withheld_retries_then_persists_transcript_tail_fallback() ->
     }
     assert events[-2:] == ["persist", "status:handoff_ready"]
 
-    completed = _compact_session(summary_markdown="fresh digest-backed summary")
+    completed_initial = _compact_session(
+        summary_markdown=None,
+        digest_markdown="### Turn 1\nPrior digest only",
+    )
+    completed = _compact_session(
+        summary_markdown="fresh digest-backed summary",
+        digest_markdown="### Turn 1\nPrior digest only\n\n### Turn 2\nCompleted pair facts",
+        summary_digest_turn_count=2,
+    )
     complete_manager, complete_persisted, complete_events = _recording_summary_manager(completed)
     complete_digest = AsyncMock(
         side_effect=[
@@ -2235,7 +2277,7 @@ async def test_tail_withheld_retries_then_persists_transcript_tail_fallback() ->
     ):
         completed_result = await _terminal_handoff._refresh_compact_handoff_context(
             "s1",
-            completed,
+            completed_initial,
             complete_manager,
             MagicMock(),
             MagicMock(),
@@ -2321,6 +2363,7 @@ async def test_withheld_pair_fallback_reserves_prompt_within_cap(tmp_path: Path)
         },
     )
     assert over_cap is not None
+    assert over_cap.startswith("## Compact-triggering prompt\n\n" + over_cap_prompt)
     assert over_cap_prompt in over_cap
     assert "must not appear" not in over_cap
     assert "prompt truncated" not in over_cap
@@ -2332,14 +2375,16 @@ async def test_withheld_pair_fallback_reserves_prompt_within_cap(tmp_path: Path)
         withheld_pair={
             "prompt": "Q" * 2_000,
             "activity": activity,
-            "response": "narration that cannot displace tool activity",
+            "response": "narration that cannot displace tool activity" * 500,
         },
     )
     assert bounded is not None
+    assert bounded.startswith("## Compact-triggering prompt\n\n" + ("Q" * 2_000))
     assert "Q" * 2_000 in bounded
     assert bounded.count("earlier ledger lines truncated") == 1
     assert "ledger 499:" in bounded
     assert "ledger 0:" not in bounded
+    assert "narration that cannot displace tool activity" not in bounded
     assert len(bounded) <= _terminal_handoff._COMPACT_HANDOFF_FALLBACK_MAX_CHARS
 
     transcript = tmp_path / "transcript.jsonl"
@@ -2360,15 +2405,24 @@ async def test_withheld_pair_fallback_reserves_prompt_within_cap(tmp_path: Path)
 @pytest.mark.parametrize(
     "terminal_case",
     [
+        "compact-self-command",
         "initial-timeout",
         "initial-error",
+        "initial-cancelled",
         "initial-raised",
+        "initial-persist-raised",
         "retry-timeout",
         "retry-error",
         "retry-cancelled",
         "retry-raised",
+        "retry-persist-raised",
         "retry-transcript-corruption",
         "complete-then-error",
+        "complete-then-cancelled",
+        "complete-then-raised",
+        "complete-then-persist-raised",
+        "complete-then-timeout",
+        "persistence-barrier-timeout",
     ],
 )
 @pytest.mark.asyncio
@@ -2385,10 +2439,70 @@ async def test_foreground_refresh_digest_timeout_falls_back_within_deadline(
         "activity": "B call: completed",
         "response": "B narration",
     }
+    if terminal_case == "compact-self-command":
+        compact_session = _compact_session(
+            session_type="terminal",
+            terminal_context={"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
+        )
+        compact_manager, _persisted, compact_events = _recording_summary_manager(compact_session)
+        registry = _TestRegistry(name="test", description="test")
+        db = MagicMock()
+        agent_run_manager = MagicMock()
+        agent_run_manager.get_by_session.return_value = None
+        tmux = MagicMock()
+        tmux.capture_pane = AsyncMock(return_value="")
+
+        async def send_keys(_target: str, keys: str, *, literal: bool) -> bool:
+            compact_events.append(f"tmux:{keys}")
+            return True
+
+        tmux.send_keys = AsyncMock(side_effect=send_keys)
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+            return_value=agent_run_manager,
+        ):
+            register_terminal_tools(
+                registry,
+                compact_manager,
+                db,
+                llm_service_resolver=MagicMock(return_value=MagicMock()),
+                memory_manager_resolver=MagicMock(return_value=MagicMock()),
+                compact_handoff_config=CompactHandoffConfig(refresh_timeout_seconds=0.02),
+            )
+
+        compact_self = registry.get_tool("compact_self")
+        assert compact_self is not None
+
+        async def never_digest(**_kwargs: Any) -> dict[str, Any]:
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+        with (
+            patch("gobby.memory.digest.build_turn_and_digest", side_effect=never_digest),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
+                return_value=tmux,
+            ),
+            patch("gobby.mcp_proxy.tools.sessions._terminal._CODEX_INTERRUPT_SETTLE_SECONDS", 0),
+            session_context_for_test("s1"),
+        ):
+            compact_result = await compact_self()
+
+        assert compact_result["compacted"] is True
+        assert compact_result["handoff_context_refresh_timed_out"] is True
+        assert compact_events[-4:] == [
+            "persist",
+            "status:handoff_ready",
+            "tmux:C-c",
+            "tmux:/compact\n",
+        ]
+        return
+
     session = _compact_session()
     manager, persisted, events = _recording_summary_manager(session)
     calls = 0
     cancelled = asyncio.Event()
+    persistence_released = asyncio.Event()
 
     async def hang() -> None:
         try:
@@ -2400,21 +2514,49 @@ async def test_foreground_refresh_digest_timeout_falls_back_within_deadline(
         nonlocal calls
         calls += 1
         capture = kwargs["withheld_capture"]
+        if terminal_case == "persistence-barrier-timeout":
+            capture.update(tail_withheld=False, withheld_pair=pair_b)
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                asyncio.get_running_loop().call_soon(persistence_released.set)
+                await persistence_released.wait()
+                session.digest_markdown = (
+                    "### Turn 1\nPrior digest only\n\n### Turn 2\nSettled persistence"
+                )
+                raise
         if terminal_case.startswith("initial"):
             capture.update(tail_withheld=True, withheld_pair=pair_a)
             if terminal_case == "initial-timeout":
                 await hang()
             if terminal_case == "initial-error":
                 return {"error": "boom", "tail_withheld": True, "withheld_pair": pair_a}
+            if terminal_case == "initial-cancelled":
+                return {
+                    "cancelled": True,
+                    "reason": "shutdown",
+                    "tail_withheld": True,
+                    "withheld_pair": pair_a,
+                }
+            if terminal_case == "initial-persist-raised":
+                raise RuntimeError("persist boom")
             raise RuntimeError("raised boom")
 
         if calls == 1:
             capture.update(tail_withheld=True, withheld_pair=pair_a)
             return {"tail_withheld": True, "withheld_pair": pair_a}
 
-        if terminal_case == "complete-then-error":
+        if terminal_case.startswith("complete-then"):
             capture.update(tail_withheld=False, withheld_pair=pair_b)
-            return {"error": "boom"}
+            if terminal_case == "complete-then-error":
+                return {"error": "boom"}
+            if terminal_case == "complete-then-cancelled":
+                return {"cancelled": True, "reason": "shutdown"}
+            if terminal_case == "complete-then-timeout":
+                await hang()
+            if terminal_case == "complete-then-persist-raised":
+                raise RuntimeError("persist boom")
+            raise RuntimeError("raised boom")
         if terminal_case == "retry-timeout":
             await hang()
         if terminal_case == "retry-error":
@@ -2428,6 +2570,8 @@ async def test_foreground_refresh_digest_timeout_falls_back_within_deadline(
             }
         if terminal_case == "retry-transcript-corruption":
             return {"error": "corrupt", "error_kind": "transcript_read"}
+        if terminal_case == "retry-persist-raised":
+            raise RuntimeError("persist boom")
         raise RuntimeError("raised boom")
 
     config = CompactHandoffConfig(refresh_timeout_seconds=0.02)
@@ -2445,7 +2589,8 @@ async def test_foreground_refresh_digest_timeout_falls_back_within_deadline(
         )
 
     if "timeout" in terminal_case:
-        assert cancelled.is_set()
+        if terminal_case != "persistence-barrier-timeout":
+            assert cancelled.is_set()
         assert result["timed_out"] is True
 
     if terminal_case == "retry-transcript-corruption":
@@ -2457,10 +2602,37 @@ async def test_foreground_refresh_digest_timeout_falls_back_within_deadline(
     assert events[-2:] == ["persist", "status:handoff_ready"]
     assert persisted
     fallback = persisted[0]
-    expected_pair = pair_b if terminal_case == "complete-then-error" else pair_a
+    expected_pair = (
+        pair_b
+        if terminal_case.startswith("complete-then")
+        or terminal_case == "persistence-barrier-timeout"
+        else pair_a
+    )
+    assert fallback["summary_markdown"].startswith(
+        "## Compact-triggering prompt\n\n" + expected_pair["prompt"]
+    )
     assert expected_pair["prompt"] in fallback["summary_markdown"]
     assert expected_pair["activity"] in fallback["summary_markdown"]
-    assert fallback["metadata_json"]["tail_withheld"] is (terminal_case != "complete-then-error")
-    if terminal_case == "complete-then-error":
+    assert fallback["metadata_json"]["tail_withheld"] is (
+        not terminal_case.startswith("complete-then")
+        and terminal_case != "persistence-barrier-timeout"
+    )
+    if terminal_case.startswith("complete-then"):
+        assert "## Tool activity (in flight)" in fallback["summary_markdown"]
+        assert "## Narration so far" in fallback["summary_markdown"]
         assert pair_b["response"] in fallback["summary_markdown"]
         assert pair_a["activity"] not in fallback["summary_markdown"]
+    if terminal_case == "persistence-barrier-timeout":
+        assert fallback["source_digest_turn_count"] == 2
+
+    reason = fallback["metadata_json"]["reason"]
+    if "timeout" in terminal_case:
+        assert "timed out" in reason
+    elif "cancelled" in terminal_case:
+        assert reason == "shutdown"
+    elif "persist-raised" in terminal_case:
+        assert reason == "persist boom"
+    elif "raised" in terminal_case:
+        assert reason == "raised boom"
+    else:
+        assert reason == "boom"

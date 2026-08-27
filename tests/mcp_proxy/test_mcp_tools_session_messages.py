@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
@@ -7,6 +8,7 @@ import pytest
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
 from gobby.mcp_proxy.wait_tools import MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS
+from gobby.sessions.summary_generation import _persist_summary_markdown
 from gobby.sessions.transcript_reader import TranscriptReader
 from gobby.sessions.transcript_renderer import ContentBlock, RenderedMessage
 from gobby.sessions.transcript_window import WindowResult
@@ -417,25 +419,78 @@ async def test_get_handoff_context_by_session_id(mock_session_manager, full_sess
 
 
 @pytest.mark.asyncio
-async def test_get_handoff_context_preserves_oversized_precompact_summary(
-    mock_session_manager: MagicMock,
-    full_sessions_registry: InternalToolRegistry,
-) -> None:
+async def test_get_handoff_context_preserves_oversized_precompact_summary() -> None:
     summary = "# Latest pre-compact summary\n\n" + "\n".join(["complete fact"] * 3_000)
-    mock_session = _make_mock_session("sess-oversized")
-    mock_session.summary_markdown = summary
-    mock_session.summary_digest_turn_count = 1
-    mock_session.digest_markdown = "### Turn 1\nComplete compact-triggering turn"
-    mock_session.last_turn_markdown = "older observer-only fallback"
-    mock_session.status = "handoff_ready"
-    mock_session_manager.resolve_session_reference.return_value = "sess-oversized"
-    mock_session_manager.get.return_value = mock_session
-
-    result = await full_sessions_registry.call(
-        "get_handoff_context",
-        {"session_id": "sess-oversized"},
+    session = SimpleNamespace(
+        id="sess-oversized",
+        summary_markdown=None,
+        summary_source_context_hash=None,
+        summary_digest_turn_count=None,
+        digest_markdown="### Turn 1\nComplete compact-triggering turn",
+        last_turn_markdown="older observer-only fallback",
+        last_assistant_content=None,
+        title="Oversized compact handoff",
+        status="handoff_ready",
+        project_id="proj-123",
     )
 
+    class PersistingSessionManager:
+        def __init__(self) -> None:
+            self.persisted: list[str] = []
+
+        def get(self, session_id: str) -> SimpleNamespace | None:
+            return session if session_id == session.id else None
+
+        def resolve_session_reference(
+            self,
+            ref: str,
+            project_id: str | None = None,
+        ) -> str:
+            return ref
+
+        def persist_summary_state(
+            self,
+            session_id: str,
+            *,
+            summary_markdown: str,
+            generation_mode: str,
+            source_context_hash: str | None = None,
+            source_digest_turn_count: int | None = None,
+            metadata_json: dict[str, Any] | None = None,
+            summary_path: str | None = None,
+        ) -> SimpleNamespace:
+            assert session_id == session.id
+            self.persisted.append(summary_markdown)
+            session.summary_markdown = summary_markdown
+            session.summary_source_context_hash = source_context_hash
+            session.summary_digest_turn_count = source_digest_turn_count
+            return session
+
+    session_manager = PersistingSessionManager()
+    await _persist_summary_markdown(
+        session_id=session.id,
+        session_manager=cast(Any, session_manager),
+        db_runner=None,
+        summary_markdown=summary,
+        generation_mode="full",
+        source_hash="source-hash",
+        digest_turns=1,
+        metadata={"reason": "pre-compact"},
+    )
+    registry = create_session_messages_registry(
+        session_manager=cast(Any, session_manager),
+    )
+    with patch(
+        "gobby.mcp_proxy.tools.sessions._handoff.get_project_context",
+        return_value={"id": "proj-123"},
+    ):
+        result = await registry.call(
+            "get_handoff_context",
+            {"session_id": "sess-oversized"},
+        )
+
+    assert session_manager.persisted == [summary]
+    assert result["success"] is True, result
     assert result["context"] == summary
     assert result["context_type"] == "summary_markdown"
     assert result.get("stale") is False

@@ -16,6 +16,7 @@ import pytest
 
 from gobby.hooks.hook_manager import HookManager
 from gobby.hooks.session_summary_dispatcher import SessionSummaryDispatcher
+from gobby.mcp_proxy.tools.sessions import _terminal_handoff
 
 
 def _dispatcher(
@@ -126,6 +127,9 @@ async def test_pre_digest_follows_daemon_loop_identity(
         patch("gobby.sessions.summarize.generate_session_summaries", summarize),
         caplog.at_level(logging.DEBUG, logger="tests.session-summary-dispatcher"),
     ):
+        await _dispatch_and_wait(
+            _dispatcher(loop=asyncio.get_running_loop(), memory_manager=MagicMock())
+        )
         await _dispatch_and_wait(_dispatcher(loop=None, memory_manager=MagicMock()))
 
         def dispatch_without_running_loop() -> bool:
@@ -165,8 +169,8 @@ async def test_pre_digest_follows_daemon_loop_identity(
             await asyncio.to_thread(daemon_thread.join, 2)
             daemon_loop.close()
 
-    assert digest.await_count == 1
-    assert summarize.await_count == 3
+    assert digest.await_count == 2
+    assert summarize.await_count == 4
     assert caplog.text.count("pre-summary digest skipped: no daemon loop") == 2
 
 
@@ -255,6 +259,51 @@ async def test_transcript_corruption_never_persists_a_summary(
     summarize.assert_not_awaited()
     session_manager.persist_summary_state.assert_not_called()
     session_manager.update_summary.assert_not_called()
+
+    compact_session = SimpleNamespace(
+        summary_markdown="previous summary",
+        digest_markdown="### Turn 1\nPrior complete turn",
+        summary_digest_turn_count=1,
+        transcript_path=str(transcript),
+        source="claude",
+    )
+    compact_manager = MagicMock()
+    compact_manager.get.return_value = compact_session
+    compact_manager.persist_summary_state.return_value = compact_session
+    compact_outcome: dict[str, Any]
+    if expected_log == "transcript corruption":
+        compact_outcome = {"error": "corrupt transcript", "error_kind": "transcript_read"}
+    else:
+        compact_outcome = {
+            "tail_withheld": True,
+            "withheld_pair": {
+                "prompt": "compact now",
+                "activity": "in-flight call: (no result recorded)",
+                "response": "",
+            },
+        }
+    with patch(
+        "gobby.memory.digest.build_turn_and_digest",
+        new=AsyncMock(return_value=compact_outcome),
+    ):
+        compact_result = await _terminal_handoff._refresh_compact_handoff_context(
+            "session-1",
+            compact_session,
+            compact_manager,
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            memory_manager=MagicMock(),
+            config=config,
+        )
+
+    if expected_log == "transcript corruption":
+        assert compact_result["digest_failure_reason"] == "corrupt transcript"
+        compact_manager.persist_summary_state.assert_not_called()
+    else:
+        metadata = compact_manager.persist_summary_state.call_args.kwargs["metadata_json"]
+        assert metadata["reason"] == "transcript tail in-flight"
+        assert metadata["tail_withheld"] is True
 
 
 @pytest.mark.asyncio

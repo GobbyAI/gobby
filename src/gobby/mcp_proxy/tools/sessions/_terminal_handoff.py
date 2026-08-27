@@ -94,11 +94,11 @@ async def _compact_handoff_transcript_tail_markdown(
         activity = str(withheld_pair.get("activity") or "")
         response = str(withheld_pair.get("response") or "")
         fallback = (
+            "## Compact-triggering prompt\n\n"
+            f"{prompt}\n\n"
             "# Compact Handoff\n\n"
             f"Archival handoff refresh is running in the background ({reason}). "
-            "This handoff preserves the compact-triggering turn.\n\n"
-            "## Compact-triggering prompt\n\n"
-            f"{prompt}"
+            "This handoff preserves the compact-triggering turn."
         )
         if len(fallback) >= _COMPACT_HANDOFF_FALLBACK_MAX_CHARS:
             return fallback

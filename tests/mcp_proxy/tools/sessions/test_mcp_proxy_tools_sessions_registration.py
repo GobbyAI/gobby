@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.mcp_proxy.registries import setup_internal_registries
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
 from gobby.runner_init.helpers import ensure_machine_identity
@@ -31,6 +32,22 @@ def test_sessions_registry_forwards_memory_manager_resolver() -> None:
     assert registry.get_tool("get_session") is not None
     assert registry.get_tool("get_handoff_context") is not None
     assert register_terminal_tools.call_args.kwargs["memory_manager_resolver"] is (
+        memory_manager_resolver
+    )
+
+    config = MagicMock()
+    config.get_gobby_tasks_config.return_value.enabled = False
+    with patch(
+        "gobby.mcp_proxy.tools.sessions.create_session_messages_registry"
+    ) as create_sessions_registry:
+        create_sessions_registry.return_value.name = "gobby-sessions"
+        setup_internal_registries(
+            config_resolver=lambda: config,
+            session_manager=MagicMock(),
+            memory_manager_resolver=memory_manager_resolver,
+        )
+
+    assert create_sessions_registry.call_args.kwargs["memory_manager_resolver"] is (
         memory_manager_resolver
     )
 
