@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from gobby.hooks._normalization_canonical import _curl_output_paths
+from gobby.hooks._normalization_operands import _curl_output_paths
 
 pytestmark = pytest.mark.unit
 

@@ -3684,6 +3684,36 @@ class TestCodeIndexNavigationRules:
         assert "If that call fails, its recorded failure fails this rule open" in response.reason
 
     @pytest.mark.asyncio
+    async def test_search_over_non_source_targets_is_not_redirected(self, db: HubDatabase) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        allowed = (
+            "git log --oneline | grep handoff",
+            "grep -n '^#' .gobby/plans/herdr-terminal-client.md",
+            "grep needle docs/research/gobby-feedback/inbox/2026-08-27T183821-claude.md",
+        )
+
+        for loaded in (False, True):
+            variables = self._variables(loaded=loaded)
+            for command in allowed:
+                response = await engine.evaluate(
+                    self._normalized_bash_event(command),
+                    session_id=SESSION_ID,
+                    variables=variables,
+                )
+                assert response.decision == "allow", (loaded, command)
+
+            redirected = await engine.evaluate(
+                self._normalized_bash_event("grep needle src/gobby/x.py"),
+                session_id=SESSION_ID,
+                variables=variables,
+            )
+            assert redirected.decision == "block", loaded
+            assert redirected.reason is not None
+            expected_rule = "prefer-gcode-for-code-search" if loaded else "require-code-index-skill"
+            assert expected_rule in redirected.reason
+
+    @pytest.mark.asyncio
     async def test_code_index_skill_proxy_error_fails_open_until_matching_success(
         self,
         db,
@@ -3969,14 +3999,14 @@ class TestCodeIndexNavigationRules:
         scratchpad = tmp_path / "scratchpad"
         command_template = (
             "cd {root} && "
-            "echo alpha > first.txt && "
-            "grep alpha first.txt && "
-            "echo beta > second.txt && "
-            "grep beta second.txt | head -1 && "
-            "echo gamma > third.txt && "
-            "grep gamma third.txt"
+            "echo alpha > first.py && "
+            "grep alpha first.py && "
+            "echo beta > second.py && "
+            "grep beta second.py | head -1 && "
+            "echo gamma > third.py && "
+            "grep gamma third.py"
         )
-        expected_names = ("first.txt", "second.txt", "third.txt")
+        expected_names = ("first.py", "second.py", "third.py")
 
         for loaded in (False, True):
             event = self._normalized_bash_event(

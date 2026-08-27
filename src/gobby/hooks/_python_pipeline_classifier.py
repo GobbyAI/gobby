@@ -10,6 +10,7 @@ unsupported dynamic execution.
 
 import ast
 from collections.abc import Mapping
+from dataclasses import dataclass
 from enum import StrEnum
 
 from gobby.hooks.code_navigation import shell_command_name
@@ -70,27 +71,28 @@ _PYTHON_PIPELINE_BLOCKED_NODES = (
 _PYTHON_REFLECTION_ESCAPE_NAMES = frozenset(
     {"__import__", "attrgetter", "compile", "delattr", "eval", "exec", "getattr", "setattr"}
 )
-_PYTHON_FILESYSTEM_MUTATION_CALLS = frozenset(
-    {
-        "os.chmod",
-        "os.chown",
-        "os.makedirs",
-        "os.mkdir",
-        "os.remove",
-        "os.rename",
-        "os.renames",
-        "os.replace",
-        "os.rmdir",
-        "os.truncate",
-        "os.unlink",
-        "shutil.copy",
-        "shutil.copy2",
-        "shutil.copyfile",
-        "shutil.copytree",
-        "shutil.move",
-        "shutil.rmtree",
-    }
-)
+# Module-level filesystem mutations, each with the positional arguments that
+# name the paths it mutates (a copy's source is only read).
+_PYTHON_FILESYSTEM_MUTATION_CALL_TARGETS: Mapping[str, tuple[int, ...]] = {
+    "os.chmod": (0,),
+    "os.chown": (0,),
+    "os.makedirs": (0,),
+    "os.mkdir": (0,),
+    "os.remove": (0,),
+    "os.rename": (0, 1),
+    "os.renames": (0, 1),
+    "os.replace": (0, 1),
+    "os.rmdir": (0,),
+    "os.truncate": (0,),
+    "os.unlink": (0,),
+    "shutil.copy": (1,),
+    "shutil.copy2": (1,),
+    "shutil.copyfile": (1,),
+    "shutil.copytree": (1,),
+    "shutil.move": (1,),
+    "shutil.rmtree": (0,),
+}
+_PYTHON_FILESYSTEM_MUTATION_CALLS = frozenset(_PYTHON_FILESYSTEM_MUTATION_CALL_TARGETS)
 _PYTHON_FILESYSTEM_MUTATION_METHODS = frozenset(
     {
         "chmod",
@@ -126,6 +128,21 @@ class _PythonExecutionClassification(StrEnum):
     READ_ONLY = "read_only"
     MUTATION = "mutation"
     INDETERMINATE = "indeterminate"
+
+
+@dataclass(frozen=True)
+class _PythonMutationEvidence:
+    """Proof that a script mutates.
+
+    ``targets`` holds every mutated path when each one is a string literal in
+    the script; it is None when any mutation's scope is not literal, so the
+    caller keeps the unknown-scope classification.
+    """
+
+    targets: tuple[str, ...] | None
+
+
+_UNKNOWN_SCOPE_MUTATION = _PythonMutationEvidence(targets=None)
 
 
 def _inline_interpreter_parts(parts: list[str]) -> list[str]:
@@ -250,8 +267,9 @@ def _call_name(node: ast.Call, imported_bindings: Mapping[str, str]) -> str | No
 def _path_value_names(
     tree: ast.AST,
     imported_bindings: Mapping[str, str],
-) -> frozenset[str]:
-    names: set[str] = set()
+) -> Mapping[str, str | None]:
+    """Map names bound to ``pathlib.Path(...)`` to their literal path, or None."""
+    names: dict[str, str | None] = {}
     for node in ast.walk(tree):
         target: ast.expr | None = None
         value: ast.expr | None = None
@@ -266,8 +284,118 @@ def _path_value_names(
             and isinstance(value, ast.Call)
             and _call_name(value, imported_bindings) == "pathlib.Path"
         ):
-            names.add(target.id)
-    return frozenset(names)
+            literal = _literal_path_call(value)
+            names[target.id] = literal if names.get(target.id, literal) == literal else None
+    return names
+
+
+def _literal_string(node: ast.expr) -> str | None:
+    return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+
+
+def _literal_path_call(node: ast.Call) -> str | None:
+    """Return the literal argument of a single-argument ``Path('...')`` call."""
+    if len(node.args) != 1 or node.keywords:
+        return None
+    return _literal_string(node.args[0])
+
+
+def _literal_path(
+    node: ast.expr,
+    imported_bindings: Mapping[str, str],
+    path_value_names: Mapping[str, str | None],
+) -> str | None:
+    """Resolve a string literal, a literal ``Path(...)``, or a name bound to one."""
+    if isinstance(node, ast.Name):
+        return path_value_names.get(node.id)
+    if isinstance(node, ast.Call) and _call_name(node, imported_bindings) == "pathlib.Path":
+        return _literal_path_call(node)
+    return _literal_string(node)
+
+
+def _literal_path_arguments(
+    node: ast.Call,
+    indexes: tuple[int, ...],
+    imported_bindings: Mapping[str, str],
+    path_value_names: Mapping[str, str | None],
+) -> tuple[str, ...]:
+    """Return the literal paths at ``indexes``; empty when any of them is not literal."""
+    literals: list[str] = []
+    for index in indexes:
+        if index >= len(node.args):
+            return ()
+        literal = _literal_path(node.args[index], imported_bindings, path_value_names)
+        if literal is None:
+            return ()
+        literals.append(literal)
+    return tuple(literals)
+
+
+def _mutation_call_targets(
+    node: ast.Call,
+    imported_bindings: Mapping[str, str],
+    path_value_names: Mapping[str, str | None],
+) -> tuple[str, ...] | None:
+    """Return the literal paths a call mutates.
+
+    None means the call is not a proven mutation; an empty tuple means it is one
+    whose target is not a string literal, so its scope stays unknown.
+    """
+    call_name = _call_name(node, imported_bindings)
+    target_indexes = _PYTHON_FILESYSTEM_MUTATION_CALL_TARGETS.get(call_name or "")
+    if target_indexes is not None:
+        return _literal_path_arguments(node, target_indexes, imported_bindings, path_value_names)
+    if isinstance(node.func, ast.Attribute):
+        receiver = node.func.value
+        path_receiver = (
+            isinstance(receiver, ast.Call)
+            and _call_name(receiver, imported_bindings) == "pathlib.Path"
+        ) or (isinstance(receiver, ast.Name) and receiver.id in path_value_names)
+        receiver_literal = (
+            _literal_path(receiver, imported_bindings, path_value_names) if path_receiver else None
+        )
+        if node.func.attr in _PYTHON_FILESYSTEM_MUTATION_METHODS and (
+            node.func.attr != "replace" or path_receiver
+        ):
+            if receiver_literal is None:
+                return ()
+            if node.func.attr in {"rename", "replace"}:
+                destination = _literal_path_arguments(
+                    node, (0,), imported_bindings, path_value_names
+                )
+                return (receiver_literal, *destination) if destination else ()
+            return (receiver_literal,)
+        if (
+            node.func.attr == "open"
+            and path_receiver
+            and not _is_read_only_open_call(node, mode_index=0)
+        ):
+            # `Path(...).open('w')` writes the receiver; a read mode falls through.
+            return (receiver_literal,) if receiver_literal is not None else ()
+    if call_name == "open" or (call_name or "").endswith(".open"):
+        if _is_read_only_open_call(node):
+            return None
+        if call_name == "open":
+            return _literal_path_arguments(node, (0,), imported_bindings, path_value_names)
+        return ()
+    if call_name == "zipfile.ZipFile" and not _is_read_only_zipfile_call(node):
+        return _literal_path_arguments(node, (0,), imported_bindings, path_value_names)
+    if call_name in _PYTHON_PROCESS_CALLS:
+        command = _literal_process_command(node)
+        if command in _PYTHON_MUTATING_COMMANDS:
+            return ()
+        if command == "git" and isinstance(node.args[0], ast.List | ast.Tuple):
+            values = [
+                item.value
+                for item in node.args[0].elts
+                if isinstance(item, ast.Constant) and isinstance(item.value, str)
+            ]
+            if any(
+                value in {"add", "apply", "checkout", "commit", "restore", "revert"}
+                for value in values[1:2]
+            ):
+                return ()
+    return None
 
 
 def _is_safe_python_pipeline_callable(
@@ -315,11 +443,15 @@ def _has_safe_python_pipeline_callbacks(
     return True
 
 
-def _is_read_only_open_call(node: ast.Call) -> bool:
-    """Allow ``open(...)`` only when the mode is absent or a literal read mode."""
+def _is_read_only_open_call(node: ast.Call, *, mode_index: int = 1) -> bool:
+    """Allow ``open(...)`` only when the mode is absent or a literal read mode.
+
+    ``mode_index`` is 1 for the builtin (``open(path, mode)``) and 0 for the
+    ``Path.open(mode)`` method form.
+    """
     mode: ast.expr | None = None
-    if len(node.args) >= 2:
-        mode = node.args[1]
+    if len(node.args) > mode_index:
+        mode = node.args[mode_index]
     for keyword in node.keywords:
         if keyword.arg == "mode":
             mode = keyword.value
@@ -515,120 +647,113 @@ def _literal_process_command(node: ast.Call) -> str | None:
     return None
 
 
-def _has_proven_python_mutation(
+def _proven_python_mutation(
     tree: ast.AST,
     rebound_names: frozenset[str],
     imported_bindings: Mapping[str, str],
-    path_value_names: frozenset[str],
-) -> bool:
-    """Return whether rejected source contains an evidenced mutation or escape."""
+    path_value_names: Mapping[str, str | None],
+) -> _PythonMutationEvidence | None:
+    """Return the evidenced mutation or escape in rejected source, if any.
+
+    Reflection escapes, rebinding, and dynamic receivers prove a mutation of
+    unknown scope; literal-targeted filesystem calls prove one whose targets
+    are collected so callers can attribute the write to those paths.
+    """
     if rebound_names & (_PYTHON_PIPELINE_RESERVED_NAMES | imported_bindings.keys()):
-        return True
+        return _UNKNOWN_SCOPE_MUTATION
 
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    targets: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Name):
             if _has_dunder_name(node.id) or node.id in _PYTHON_REFLECTION_ESCAPE_NAMES:
-                return True
+                return _UNKNOWN_SCOPE_MUTATION
             if node.id == "open":
                 parent = parents.get(node)
                 if not (isinstance(parent, ast.Call) and parent.func is node):
-                    return True
+                    return _UNKNOWN_SCOPE_MUTATION
         elif isinstance(node, ast.Attribute):
             attribute_name = _python_attribute_name(node)
             if _has_dunder_name(attribute_name or node.attr):
-                return True
+                return _UNKNOWN_SCOPE_MUTATION
             if (
                 node.attr in _PYTHON_REFLECTION_ESCAPE_NAMES
                 and not _is_pure_module_attribute(attribute_name)
             ) or node.attr == "modules":
-                return True
+                return _UNKNOWN_SCOPE_MUTATION
             if not isinstance(node.ctx, ast.Load):
                 root = (attribute_name or "").partition(".")[0]
                 if root in imported_bindings or root in _PYTHON_PIPELINE_RESERVED_NAMES:
-                    return True
+                    return _UNKNOWN_SCOPE_MUTATION
             if attribute_name:
                 parts = attribute_name.split(".")
                 if parts[0] in _PYTHON_PIPELINE_PURE_MODULES and any(
                     part in {"io", "sys"} for part in parts[1:]
                 ):
-                    return True
+                    return _UNKNOWN_SCOPE_MUTATION
         elif isinstance(node, ast.Import):
             for alias in node.names:
                 if (
                     alias.name in _PYTHON_PIPELINE_MODULES | _PYTHON_PIPELINE_PURE_MODULES
                     and alias.asname not in {None, alias.name}
                 ):
-                    return True
+                    return _UNKNOWN_SCOPE_MUTATION
         elif isinstance(node, ast.ImportFrom):
             if any(alias.name == "*" or alias.name.startswith("_") for alias in node.names):
-                return True
+                return _UNKNOWN_SCOPE_MUTATION
         elif isinstance(node, ast.Call):
-            call_name = _call_name(node, imported_bindings)
-            if call_name in _PYTHON_FILESYSTEM_MUTATION_CALLS:
-                return True
-            if isinstance(node.func, ast.Attribute):
-                receiver = node.func.value
-                path_receiver = (
-                    isinstance(receiver, ast.Call)
-                    and _call_name(receiver, imported_bindings) == "pathlib.Path"
-                ) or (isinstance(receiver, ast.Name) and receiver.id in path_value_names)
-                if node.func.attr in _PYTHON_FILESYSTEM_MUTATION_METHODS and (
-                    node.func.attr != "replace" or path_receiver
-                ):
-                    return True
-            if call_name == "open" or (call_name or "").endswith(".open"):
-                if not _is_read_only_open_call(node):
-                    return True
-            if call_name == "zipfile.ZipFile" and not _is_read_only_zipfile_call(node):
-                return True
-            if call_name in _PYTHON_PROCESS_CALLS:
-                command = _literal_process_command(node)
-                if command in _PYTHON_MUTATING_COMMANDS:
-                    return True
-                if command == "git" and isinstance(node.args[0], ast.List | ast.Tuple):
-                    values = [
-                        item.value
-                        for item in node.args[0].elts
-                        if isinstance(item, ast.Constant) and isinstance(item.value, str)
-                    ]
-                    if any(
-                        value in {"add", "apply", "checkout", "commit", "restore", "revert"}
-                        for value in values[1:2]
-                    ):
-                        return True
-    return False
+            call_targets = _mutation_call_targets(node, imported_bindings, path_value_names)
+            if call_targets is None:
+                continue
+            if not call_targets:
+                return _UNKNOWN_SCOPE_MUTATION
+            targets.extend(target for target in call_targets if target not in targets)
+    return _PythonMutationEvidence(tuple(targets)) if targets else None
 
 
-def _classify_python_source(script: str) -> _PythonExecutionClassification:
+def _classify_python_source_with_targets(
+    script: str,
+) -> tuple[_PythonExecutionClassification, tuple[str, ...]]:
+    """Classify ``script``; a MUTATION carries its literal targets when all are known."""
     try:
         tree = ast.parse(script)
     except SyntaxError:
-        return _PythonExecutionClassification.INDETERMINATE
+        return _PythonExecutionClassification.INDETERMINATE, ()
     rebound_names = _rebound_names(tree)
     imported_bindings = _imported_bindings(tree)
     path_value_names = _path_value_names(tree, imported_bindings)
-    if _has_proven_python_mutation(
+    mutation = _proven_python_mutation(
         tree,
         rebound_names,
         imported_bindings,
         path_value_names,
-    ):
-        return _PythonExecutionClassification.MUTATION
+    )
+    if mutation is not None:
+        return _PythonExecutionClassification.MUTATION, mutation.targets or ()
     local_names = rebound_names | imported_bindings.keys()
     safe = not (
         rebound_names & (_PYTHON_PIPELINE_RESERVED_NAMES | imported_bindings.keys())
     ) and _is_safe_python_pipeline_node(tree, local_names, imported_bindings)
     if safe:
-        return _PythonExecutionClassification.READ_ONLY
-    return _PythonExecutionClassification.INDETERMINATE
+        return _PythonExecutionClassification.READ_ONLY, ()
+    return _PythonExecutionClassification.INDETERMINATE, ()
+
+
+def _classify_python_source(script: str) -> _PythonExecutionClassification:
+    return _classify_python_source_with_targets(script)[0]
+
+
+def _classify_python_pipeline_with_targets(
+    parts: list[str],
+) -> tuple[_PythonExecutionClassification, tuple[str, ...]]:
+    script = _python_inline_script(parts)
+    if script is None:
+        return _PythonExecutionClassification.INDETERMINATE, ()
+    return _classify_python_source_with_targets(script)
 
 
 def _classify_python_pipeline(parts: list[str]) -> _PythonExecutionClassification:
-    script = _python_inline_script(parts)
-    if script is None:
-        return _PythonExecutionClassification.INDETERMINATE
-    return _classify_python_source(script)
+    return _classify_python_pipeline_with_targets(parts)[0]
 
 
 def _is_read_only_python_pipeline(parts: list[str]) -> bool:

@@ -502,6 +502,15 @@ class TestDockerPolicyBlockRule:
             ("echo x > Dockerfile", "Dockerfile"),
             ("printf x | tee ops/compose-prod.yml", "ops/compose-prod.yml"),
             ("cp template.yml deploy/podman-compose.yml", "deploy/podman-compose.yml"),
+            (
+                "python -c \"from pathlib import Path; Path('Dockerfile').write_text('x')\"",
+                "Dockerfile",
+            ),
+            (
+                "python3 - <<'PYEOF'\nfrom pathlib import Path\n"
+                "Path('docker-compose.yml').write_text('x')\nPYEOF",
+                "docker-compose.yml",
+            ),
         ],
     )
     async def test_canonical_shell_writes_are_blocked(
@@ -527,6 +536,39 @@ class TestDockerPolicyBlockRule:
             variables={},
         )
         assert response.decision == "block"
+        assert response.reason is not None
+        assert "Docker and Compose policy edits are operator-controlled" in response.reason
+        assert "unknown scope" not in response.reason
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "python3 - <<'PYEOF'\nfrom pathlib import Path\n"
+            "Path('.gobby/plans/a.md').write_text('x')\nPath('docs/b.md').write_text('y')\nPYEOF",
+            "python -c \"open('notes.md', 'w').write('x')\"",
+        ],
+    )
+    async def test_python_writes_to_literal_non_docker_paths_are_allowed(
+        self,
+        db: HubDatabase,
+        command: str,
+    ) -> None:
+        engine = self._isolated_engine(db)
+        data: dict[str, object] = {
+            "tool_input": {"command": command},
+            "tool_name": "Bash",
+        }
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_file_paths"]
+        response = await engine.evaluate(
+            self._event(HookEventType.BEFORE_TOOL, data),
+            session_id=SESSION_ID,
+            variables={},
+        )
+        assert response.decision == "allow"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -534,7 +576,8 @@ class TestDockerPolicyBlockRule:
         [
             "git apply update.patch",
             "patch -p1 < update.patch",
-            "python -c \"from pathlib import Path; Path('Dockerfile').write_text('x')\"",
+            "python3 - <<'PYEOF'\nimport sys\nfrom pathlib import Path\n"
+            "Path(sys.argv[1]).write_text('x')\nPYEOF",
         ],
     )
     async def test_unknown_scope_content_mutations_are_blocked(
@@ -557,6 +600,10 @@ class TestDockerPolicyBlockRule:
             variables={},
         )
         assert response.decision == "block"
+        assert response.reason is not None
+        assert "content mutation of unknown scope" in response.reason
+        assert "Docker and Compose policy edits" not in response.reason
+        assert "toggle_rule('block-docker-policy-edits', enabled=false)" in response.reason
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

@@ -5,7 +5,11 @@ from typing import Any
 
 import pytest
 
-from gobby.hooks._python_pipeline_classifier import _is_read_only_python_pipeline
+from gobby.hooks._python_pipeline_classifier import (
+    _classify_python_source_with_targets,
+    _is_read_only_python_pipeline,
+    _PythonExecutionClassification,
+)
 from gobby.hooks.normalization import normalize_tool_fields
 
 
@@ -327,3 +331,61 @@ def test_python_pipeline_normalization_keeps_uv_run_mutation_script_write() -> N
 
     assert data["canonical_tool_kind"] == "write"
     assert data["canonical_repo_mutation"] is True
+
+
+@pytest.mark.parametrize(
+    ("script", "expected_targets"),
+    [
+        ("open('notes.md', 'w').write('changed')", ("notes.md",)),
+        ("from pathlib import Path; Path('notes.md').write_text('changed')", ("notes.md",)),
+        (
+            "from pathlib import Path; path = Path('notes.md'); path.replace('renamed.md')",
+            ("notes.md", "renamed.md"),
+        ),
+        ("import os; os.rename('a.md', 'b.md')", ("a.md", "b.md")),
+        ("import shutil; shutil.copy('src.md', 'dst.md')", ("dst.md",)),
+        ("import zipfile; zipfile.ZipFile('out.zip', 'w')", ("out.zip",)),
+        ("from pathlib import Path; Path('a.md').open('w')", ("a.md",)),
+        (
+            "from pathlib import Path; Path('a.md').write_text('x'); Path('b.md').touch()",
+            ("a.md", "b.md"),
+        ),
+    ],
+)
+def test_python_source_mutation_targets_are_collected(
+    script: str, expected_targets: tuple[str, ...]
+) -> None:
+    classification, targets = _classify_python_source_with_targets(script)
+
+    assert classification is _PythonExecutionClassification.MUTATION
+    assert targets == expected_targets
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "import sys; from pathlib import Path; Path(sys.argv[1]).write_text('x')",
+        "from pathlib import Path; Path('a.md').write_text('x'); Path(input()).unlink()",
+        "import os; name = 'a.md'; os.remove(name)",
+        "from pathlib import Path; p = Path('a.md'); p = Path('b.md'); p.write_text('x')",
+        "import subprocess; subprocess.run(['rm', 'notes.md'])",
+        "import sys; sys.modules[\"builtins\"].eval(\"open('notes.md', 'w')\")",
+        "import sys; from pathlib import Path; Path(sys.argv[1]).open('w')",
+    ],
+)
+def test_python_source_mutation_without_literal_scope_has_no_targets(script: str) -> None:
+    classification, targets = _classify_python_source_with_targets(script)
+
+    assert classification is _PythonExecutionClassification.MUTATION
+    assert targets == ()
+
+
+def test_python_source_read_only_and_indeterminate_have_no_targets() -> None:
+    assert _classify_python_source_with_targets("print(open('a.md').read())") == (
+        _PythonExecutionClassification.READ_ONLY,
+        (),
+    )
+    assert _classify_python_source_with_targets("import requests") == (
+        _PythonExecutionClassification.INDETERMINATE,
+        (),
+    )

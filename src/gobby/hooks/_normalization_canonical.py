@@ -6,6 +6,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from gobby.hooks._normalization_operands import (
+    _curl_output_paths,
+    _git_add_positional_args_after,
+    _search_command_paths,
+    _truncate_positional_paths,
+)
 from gobby.hooks._normalization_paths import (
     _extract_tool_input_paths,
     _setdefault_tool_input_paths,
@@ -13,7 +19,6 @@ from gobby.hooks._normalization_paths import (
 )
 from gobby.hooks._normalization_shell import (
     _SHELL_CHAIN_TOKENS,
-    _SHELL_CONTROL_TOKENS,
     ShellToken,
     _get_command_text,
     _has_perl_inplace_option,
@@ -33,8 +38,8 @@ from gobby.hooks._normalization_shell import (
 )
 from gobby.hooks._path_scope import apply_path_scope_metadata
 from gobby.hooks._python_pipeline_classifier import (
-    _classify_python_pipeline,
-    _classify_python_source,
+    _classify_python_pipeline_with_targets,
+    _classify_python_source_with_targets,
     _inline_interpreter_parts,
     _is_read_only_python_pipeline,
     _PythonExecutionClassification,
@@ -93,7 +98,6 @@ _GCODE_PIPELINE_READ_ONLY_FILTERS = frozenset(
 )
 # Characters in echo arguments that imply command substitution rather than a plain marker.
 _ECHO_UNSAFE_CHARS = frozenset({"$", "`"})
-_CURL_SHORT_OPTIONS_WITH_VALUES = frozenset("AbcCdDeEFHKmoPQrTtuwxXYz")
 
 # `$` opening a variable (`$VAR`, `${VAR}`), command substitution (`$(cmd)`),
 # positional parameter (`$1`), or special parameter — anything expanded at runtime.
@@ -116,8 +120,10 @@ class _ShellSegmentMetadata:
     neutral_setup: bool = False
     pure_gcode_navigation: bool = False
     read_only_pipeline_filter: bool = False
-    # A python program fed via stdin (heredoc); the body may prove it read-only.
+    # A python program fed via stdin (heredoc); the body may prove it read-only
+    # or name the literal paths it writes, rebased against this segment's cwd.
     stdin_python_program: bool = False
+    cwd: str | None = None
 
 
 def _build_canonical_tool_metadata(
@@ -164,38 +170,6 @@ def _is_structured_file_mutation(data: Mapping[str, Any], tool_name: Any) -> boo
     return mcp_tool.casefold() in _MCP_FILE_MUTATION_LEAF_TOOLS
 
 
-def _truncate_positional_paths(parts: list[str]) -> list[str]:
-    """Return path operands from a simple ``truncate`` command."""
-    positional: list[tuple[str, bool]] = []
-    skip_next = False
-    for index, part in enumerate(parts[1:], start=1):
-        if skip_next:
-            skip_next = False
-            continue
-        if part == "--":
-            positional.extend((candidate, True) for candidate in parts[index + 1 :])
-            break
-        if part in _SHELL_CONTROL_TOKENS or not part:
-            continue
-        if part in {"-s", "--size", "-r", "--reference"}:
-            skip_next = True
-            continue
-        if part.startswith(("--size=", "--reference=")) or part.startswith("-"):
-            continue
-        positional.append((part, False))
-    return [
-        candidate
-        for candidate, after_options in positional
-        if _looks_path_target(candidate)
-        or (
-            after_options
-            and candidate
-            and candidate not in _SHELL_CONTROL_TOKENS
-            and candidate != "-"
-        )
-    ]
-
-
 def _is_read_only_pipeline_stage(tokens: list[ShellToken], parts: list[str]) -> bool:
     if not parts:
         return False
@@ -225,71 +199,6 @@ def _interpreter_reads_program_from_stdin(parts: list[str]) -> bool:
     if any(flag in args for flag in {"-c", "-e", "--eval", "-m"}):
         return False
     return "-" in args or not any(not arg.startswith("-") for arg in args)
-
-
-def _curl_output_paths(parts: list[str]) -> tuple[bool, list[str]]:
-    output_dir: str | None = None
-    for index, part in enumerate(parts[1:], start=1):
-        if part == "--output-dir" and index + 1 < len(parts):
-            output_dir = parts[index + 1]
-        elif part.startswith("--output-dir="):
-            output_dir = part.partition("=")[2]
-
-    paths: list[str] = []
-    writes_file = False
-    unknown_output = False
-    index = 1
-    while index < len(parts):
-        part = parts[index]
-        output: str | None = None
-        short_config = False
-        short_remote_name = False
-        if part in {"-o", "--output"}:
-            if index + 1 >= len(parts):
-                return True, []
-            output = parts[index + 1]
-            index += 1
-        elif part.startswith("--output="):
-            output = part.partition("=")[2]
-        elif part.startswith("-") and not part.startswith("--"):
-            for option_index, option in enumerate(part[1:], start=1):
-                if option == "o":
-                    output = part[option_index + 1 :]
-                    if not output:
-                        if index + 1 >= len(parts):
-                            return True, []
-                        output = parts[index + 1]
-                        index += 1
-                    break
-                if option == "O":
-                    short_remote_name = True
-                elif option == "K":
-                    short_config = True
-                    break
-                elif option in _CURL_SHORT_OPTIONS_WITH_VALUES:
-                    break
-
-        if output is not None and output != "-":
-            writes_file = True
-            if output_dir and not posixpath.isabs(output):
-                output = posixpath.join(output_dir, output)
-            if output not in paths:
-                paths.append(output)
-
-        if short_config or part in {"-K", "--config"} or part.startswith("--config="):
-            unknown_output = True
-
-        remote_name = short_remote_name or part in {"-O", "--remote-name", "--remote-name-all"}
-        if remote_name:
-            writes_file = True
-            if output_dir:
-                if output_dir not in paths:
-                    paths.append(output_dir)
-            else:
-                unknown_output = True
-        index += 1
-
-    return writes_file or unknown_output, [] if unknown_output else paths
 
 
 def _is_neutral_echo_segment(tokens: list[ShellToken], parts: list[str]) -> bool:
@@ -358,95 +267,6 @@ def _apply_cd(cwd: str | None, target: str) -> str:
     return posixpath.normpath(posixpath.join(cwd, target))
 
 
-def _shell_positional_args_after(
-    parts: list[str],
-    start: int,
-    *,
-    option_args: set[str] | None = None,
-) -> list[str]:
-    positional: list[str] = []
-    skip_next = False
-    after_options = False
-    if option_args is None:
-        option_args = {
-            "-A",
-            "-B",
-            "-C",
-            "-e",
-            "-f",
-            "-g",
-            "-m",
-            "--after-context",
-            "--before-context",
-            "--context",
-            "--file",
-            "--glob",
-            "--max-count",
-            "--regexp",
-        }
-    for part in parts[start:]:
-        if skip_next:
-            skip_next = False
-            continue
-        if part in _SHELL_CONTROL_TOKENS or not part:
-            continue
-        if not after_options and part == "--":
-            after_options = True
-            continue
-        if not after_options and part in option_args:
-            skip_next = True
-            continue
-        if not after_options and part.startswith("--") and "=" in part:
-            continue
-        if not after_options and part.startswith("-") and part != "-":
-            continue
-        positional.append(part)
-    return positional
-
-
-def _git_add_positional_args_after(parts: list[str], start: int) -> list[str]:
-    return _shell_positional_args_after(
-        parts,
-        start,
-        option_args={"--chmod", "--pathspec-from-file"},
-    )
-
-
-def _search_command_paths(cmd: str, parts: list[str]) -> list[str]:
-    if cmd in {"rg", "grep"}:
-        positional = _shell_positional_args_after(parts, 1)
-        pattern_from_option = any(
-            part in {"-e", "--regexp"} or part.startswith("-e") or part.startswith("--regexp=")
-            for part in parts[1:]
-        )
-        candidate_paths = positional if pattern_from_option else positional[1:]
-        return [path for path in candidate_paths if _looks_path_target(path)]
-
-    if cmd == "git":
-        if len(parts) <= 1 or parts[1] != "grep":
-            return []
-        if "--" in parts:
-            separator_index = parts.index("--")
-            return [path for path in parts[separator_index + 1 :] if _looks_path_target(path)]
-        positional = _shell_positional_args_after(parts, 2)
-        return [path for path in positional[1:] if _looks_path_target(path)]
-
-    if cmd == "find":
-        paths: list[str] = []
-        for part in parts[1:]:
-            if part == "--":
-                continue
-            if part in _SHELL_CONTROL_TOKENS or not part:
-                continue
-            if part.startswith("-") or part in {"!", "(", ")"}:
-                break
-            if _looks_path_target(part):
-                paths.append(part)
-        return paths
-
-    return []
-
-
 def _without_code_index_navigation(extra: Mapping[str, Any] | None) -> dict[str, Any]:
     if not extra:
         return {}
@@ -466,15 +286,18 @@ def _merge_code_navigation_extra(metadata: list[_ShellSegmentMetadata]) -> dict[
         merged.update(extra)
 
     actions = [extra.get("canonical_code_navigation_action") for extra in extras]
+    broad_values = [
+        extra.get("canonical_code_navigation_broad")
+        for extra in extras
+        if "canonical_code_navigation_broad" in extra
+    ]
     if "search" in actions:
-        merged.update(search_navigation_metadata())
+        merged["canonical_code_navigation_action"] = "search"
+        merged["canonical_code_navigation_broad"] = (
+            any(bool(value) for value in broad_values) if broad_values else True
+        )
     elif "read" in actions:
         merged["canonical_code_navigation_action"] = "read"
-        broad_values = [
-            extra.get("canonical_code_navigation_broad")
-            for extra in extras
-            if "canonical_code_navigation_broad" in extra
-        ]
         if broad_values:
             merged["canonical_code_navigation_broad"] = any(bool(value) for value in broad_values)
     return merged
@@ -607,20 +430,26 @@ def _classify_stdin_python(
 ) -> list[_ShellSegmentMetadata]:
     """Reclassify a lone Python heredoc from its body evidence.
 
-    Ambiguous shell shapes keep their conservative write classification.
+    A proven mutation carries its literal targets as write paths; ambiguous
+    shell shapes keep their conservative unscoped write classification.
     """
     flagged = [item for item in metadata if item.stdin_python_program]
     if len(flagged) != 1 or len(heredoc_bodies) != 1:
         return metadata
-    classification = _classify_python_source(heredoc_bodies[0])
+    classification, targets = _classify_python_source_with_targets(heredoc_bodies[0])
     if classification is _PythonExecutionClassification.MUTATION:
-        return metadata
-    replacement = _ShellSegmentMetadata(
-        "execute",
-        confidence=(
-            "high" if classification is _PythonExecutionClassification.READ_ONLY else "low"
-        ),
-    )
+        replacement = _ShellSegmentMetadata(
+            "write",
+            paths=tuple(_rebase_shell_paths(list(targets), flagged[0].cwd)),
+            repo_mutation=True,
+        )
+    else:
+        replacement = _ShellSegmentMetadata(
+            "execute",
+            confidence=(
+                "high" if classification is _PythonExecutionClassification.READ_ONLY else "low"
+            ),
+        )
     return [replacement if item.stdin_python_program else item for item in metadata]
 
 
@@ -677,6 +506,7 @@ def _classify_shell_segment(
                 "write",
                 repo_mutation=True,
                 stdin_python_program=_stdin_program_is_python(plain_parts),
+                cwd=cwd,
             )
         base_paths = list(base_metadata.paths)
         if base_metadata.repo_mutation and not base_paths:
@@ -697,6 +527,7 @@ def _classify_shell_segment(
                 "write",
                 repo_mutation=True,
                 stdin_python_program=_stdin_program_is_python(plain_parts),
+                cwd=cwd,
             )
         return _ShellSegmentMetadata("execute")
 
@@ -799,12 +630,16 @@ def _classify_shell_segment_without_redirection(
         interpreter = shell_command_name(interpreter_parts[0])
         interpreter_args = interpreter_parts[1:]
         if interpreter in {"python", "python3"} and "-c" in interpreter_args:
-            classification = _classify_python_pipeline(parts)
+            classification, targets = _classify_python_pipeline_with_targets(parts)
             if classification is _PythonExecutionClassification.READ_ONLY:
                 return _ShellSegmentMetadata("execute")
             if classification is _PythonExecutionClassification.INDETERMINATE:
                 return _ShellSegmentMetadata("execute", confidence="low")
-            return _ShellSegmentMetadata("write", repo_mutation=True)
+            return _ShellSegmentMetadata(
+                "write",
+                paths=tuple(_rebase_shell_paths(list(targets), cwd)),
+                repo_mutation=True,
+            )
         if (
             interpreter == "node" and any(flag in interpreter_args for flag in {"-e", "--eval"})
         ) or (interpreter == "ruby" and "-e" in interpreter_args):
@@ -827,7 +662,7 @@ def _classify_shell_segment_without_redirection(
         return _ShellSegmentMetadata(
             "search",
             paths=tuple(paths),
-            extra=search_navigation_metadata(),
+            extra=search_navigation_metadata(paths),
         )
 
     if cmd in {"cat", "head", "tail", "bat", "nl"}:
@@ -983,7 +818,7 @@ def _set_canonical_tool_metadata(data: dict[str, Any]) -> None:
         and not metadata.get("canonical_code_index_navigation")
         and "canonical_code_navigation_broad" not in metadata
     ):
-        metadata.update(search_navigation_metadata())
+        metadata.update(search_navigation_metadata(canonical_file_paths))
 
     apply_path_scope_metadata(data, metadata, canonical_file_paths)
 

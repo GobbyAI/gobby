@@ -1001,6 +1001,37 @@ class TestCanonicalToolMetadata:
             assert data["canonical_tool_kind"] == "search"
             assert data["canonical_file_path"] == expected_path
 
+    def test_exec_command_search_over_non_source_files_is_not_code_navigation(self) -> None:
+        for command in (
+            "grep -n '^#' .gobby/plans/herdr-terminal-client.md",
+            "grep pattern docs/research/gobby-feedback/inbox/2026-08-27T183821-claude.md",
+            "git diff --numstat a..b | awk '{print $3}'; grep -n needle .gobby/plans/x.md",
+            "rg -n needle notes.txt CHANGELOG.md",
+        ):
+            data: dict[str, Any] = {"tool_name": "Bash", "tool_input": {"command": command}}
+
+            normalize_tool_fields(data)
+
+            assert data["canonical_tool_kind"] == "search", command
+            assert data["canonical_code_navigation_action"] == "search", command
+            assert data["canonical_code_navigation_broad"] is False, command
+
+    def test_exec_command_search_reaching_source_stays_broad(self) -> None:
+        for command in (
+            "grep pattern src/gobby/x.py",
+            "grep -r pattern docs/",
+            "grep pattern notes.md src/gobby/x.py",
+            "rg pattern .gobby",
+            "grep pattern Makefile",
+        ):
+            data: dict[str, Any] = {"tool_name": "Bash", "tool_input": {"command": command}}
+
+            normalize_tool_fields(data)
+
+            assert data["canonical_tool_kind"] == "search", command
+            assert data["canonical_code_navigation_action"] == "search", command
+            assert data["canonical_code_navigation_broad"] is True, command
+
     def test_exec_command_tight_sed_source_read_sets_narrow_context(self) -> None:
         data = {
             "tool_name": "exec_command",
@@ -1446,7 +1477,7 @@ class TestCanonicalToolMetadata:
             "tool_name": "exec_command",
             "cwd": str(repo),
             "project_path": str(repo),
-            "tool_input": {"command": "rg error ~/.gobby/logs/daemon.log"},
+            "tool_input": {"command": "rg error ~/.gobby/logs"},
         }
 
         normalize_tool_fields(data)
@@ -1461,13 +1492,13 @@ class TestCanonicalToolMetadata:
     ) -> None:
         repo = tmp_path / "repo"
         gobby_home = tmp_path / "gobby-home"
-        log_path = gobby_home / "logs" / "daemon.log"
+        log_dir = gobby_home / "logs"
         monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
         data = {
             "tool_name": "exec_command",
             "cwd": str(repo),
             "project_path": str(repo),
-            "tool_input": {"command": f"grep error {log_path}"},
+            "tool_input": {"command": f"grep -r error {log_dir}"},
         }
 
         normalize_tool_fields(data)
@@ -2319,6 +2350,41 @@ class TestExternalNavigationScope:
 
         assert data["canonical_tool_kind"] == "write"
         assert data["canonical_repo_mutation"] is True
+        assert data["canonical_file_paths"] == ["out.txt"]
+
+    def test_python_heredoc_literal_targets_become_write_paths(self) -> None:
+        command = (
+            "cd docs && python3 - <<'PYEOF'\n"
+            "from pathlib import Path\n"
+            "plan = Path('plans/a.md')\n"
+            "plan.write_text('x')\n"
+            "Path('b.md').write_text('y')\n"
+            "PYEOF"
+        )
+        data: dict[str, Any] = {"tool_name": "Bash", "tool_input": {"command": command}}
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_repo_mutation"] is True
+        assert data["canonical_file_paths"] == ["docs/plans/a.md", "docs/b.md"]
+
+    def test_python_heredoc_with_dynamic_target_keeps_unknown_scope(self) -> None:
+        command = (
+            "python3 - <<'PYEOF'\n"
+            "import sys\n"
+            "from pathlib import Path\n"
+            "Path('a.md').write_text('x')\n"
+            "Path(sys.argv[1]).write_text('y')\n"
+            "PYEOF"
+        )
+        data: dict[str, Any] = {"tool_name": "Bash", "tool_input": {"command": command}}
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_repo_mutation"] is True
+        assert not data.get("canonical_file_paths")
 
     def test_tmux_capture_pane_is_not_repo_mutation(self) -> None:
         data: dict[str, Any] = {

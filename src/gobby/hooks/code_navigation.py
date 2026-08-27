@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 CODE_FILE_EXTENSIONS = frozenset(
@@ -128,10 +128,18 @@ def source_read_navigation_metadata(
     return metadata
 
 
-def search_navigation_metadata() -> dict[str, Any]:
+def search_navigation_metadata(paths: Sequence[str] = ()) -> dict[str, Any]:
+    """Return search navigation metadata for a search over ``paths``.
+
+    A search that names only non-source files (a plan, a log, a config) is
+    narrow, mirroring the source-read rule; an unscoped search or one that
+    names a directory may reach source and is broad.
+    """
     return {
         "canonical_code_navigation_action": "search",
-        "canonical_code_navigation_broad": True,
+        "canonical_code_navigation_broad": (
+            not paths or any(_may_hold_source(path) for path in paths)
+        ),
     }
 
 
@@ -175,3 +183,15 @@ def _sed_has_quiet_option(parts: list[str]) -> bool:
 
 def _is_source_file_path(path: str) -> bool:
     return path.rpartition(".")[2].lower() in CODE_FILE_EXTENSIONS
+
+
+def _may_hold_source(path: str) -> bool:
+    """Return True unless ``path`` is a file whose extension marks it as non-source."""
+    if path.endswith("/") or path in {".", ".."}:
+        return True
+    name = path.rpartition("/")[2]
+    stem, _, extension = name.rpartition(".")
+    if not stem:
+        # No extension, or a lone leading dot (`.github` may be a directory).
+        return True
+    return extension.lower() in CODE_FILE_EXTENSIONS
