@@ -141,6 +141,13 @@ def test_result_content_keeps_payloads_longer_than_500_characters() -> None:
 
 
 def test_qwen_failed_function_response_in_ledger() -> None:
+    calls = [
+        ("call-error", "error-id"),
+        ("call-cancelled", "cancelled-id"),
+        ("call-response", "response-error"),
+        ("call-none", "none-is-success"),
+        ("call-statusless", "statusless-error"),
+    ]
     turns = [
         {"type": "user", "message": {"parts": [{"text": "inspect"}]}},
         {
@@ -149,38 +156,68 @@ def test_qwen_failed_function_response_in_ledger() -> None:
                 "parts": [
                     {
                         "functionCall": {
-                            "id": "call-1",
+                            "id": call_id,
                             "name": "Read",
-                            "args": {"path": "x"},
+                            "args": {"path": path},
                         }
-                    },
-                    {
-                        "functionCall": {
-                            "id": "call-2",
-                            "name": "Read",
-                            "args": {"path": "y"},
-                        }
-                    },
-                    {
-                        "functionCall": {
-                            "id": "call-3",
-                            "name": "Read",
-                            "args": {"path": "z"},
-                        }
-                    },
+                    }
+                    for call_id, path in calls
                 ]
             },
         },
         {
             "type": "tool_result",
-            "toolCallResult": {"callId": "call-1", "status": "error"},
+            "toolCallResult": {"callId": "call-error", "status": "error"},
             "message": {
                 "parts": [
                     {
                         "functionResponse": {
-                            "id": "call-1",
+                            "id": "call-error",
                             "name": "Read",
-                            "response": {"error": "permission denied"},
+                            "response": {"output": "permission denied"},
+                        }
+                    }
+                ]
+            },
+        },
+        {
+            "type": "tool_result",
+            "toolCallResult": {"status": "cancelled"},
+            "message": {
+                "parts": [
+                    {
+                        "functionResponse": {
+                            "id": "call-cancelled",
+                            "name": "Read",
+                            "response": {"output": "cancelled by user"},
+                        }
+                    }
+                ]
+            },
+        },
+        {
+            "type": "tool_result",
+            "toolCallResult": {"callId": "call-response", "status": "completed"},
+            "message": {
+                "parts": [
+                    {
+                        "functionResponse": {
+                            "name": "Read",
+                            "response": {"error": "response-only failure"},
+                        }
+                    }
+                ]
+            },
+        },
+        {
+            "type": "tool_result",
+            "toolCallResult": {"callId": "call-none", "status": "completed"},
+            "message": {
+                "parts": [
+                    {
+                        "functionResponse": {
+                            "name": "Read",
+                            "response": {"error": None},
                         }
                     }
                 ]
@@ -214,6 +251,20 @@ def test_qwen_failed_function_response_in_ledger() -> None:
                 ]
             },
         },
+        {
+            "type": "tool_result",
+            "message": {
+                "parts": [
+                    {
+                        "functionResponse": {
+                            "id": "call-statusless",
+                            "name": "Read",
+                            "response": {"error": "quota exceeded"},
+                        }
+                    }
+                ]
+            },
+        },
         {"type": "assistant", "message": {"parts": [{"text": "done"}]}},
     ]
 
@@ -221,7 +272,9 @@ def test_qwen_failed_function_response_in_ledger() -> None:
 
     assert messages[0]["tool_activity"].splitlines() == [
         "[tool activity]",
-        "- Read x ! failed: permission denied",
-        "- Read y ! failed: cancelled",
-        "- Read z ! failed: quota exceeded",
+        "- Read error-id ! failed: permission denied",
+        "- Read cancelled-id ! failed: cancelled by user",
+        "- Read response-error ! failed: response-only failure",
+        "- Read none-is-success",
+        "- Read statusless-error ! failed: quota exceeded",
     ]

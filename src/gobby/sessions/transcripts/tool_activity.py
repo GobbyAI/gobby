@@ -10,7 +10,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from gobby.adapters.acp_tool_names import normalize_acp_tool_name
-from gobby.adapters.codex_impl.execution_chain import extract_functions_exec_command
+from gobby.adapters.codex_impl.execution_chain import (
+    definitive_exit_code,
+    extract_functions_exec_command,
+)
 from gobby.hooks._normalization_shell import canonicalize_shell_tool_name
 from gobby.mcp_proxy._call_tool_wrapper import (
     CallToolWrapperInputError,
@@ -26,15 +29,24 @@ DIGEST_ACTIVITY_MAX_CHARS = 6000
 DIGEST_ACTIVITY_TAIL_LINES = 10
 ACTIVITY_HEADER = "[tool activity]"
 
-_LEDGER_SHELL_ALIASES = {"run_terminal_command": "Bash"}
+_LEDGER_SHELL_ALIASES = {"run_terminal_command": "Bash", "Execute": "Bash"}
 _CALL_TOOL_WRAPPERS = {
     "call_tool",
     "mcp__gobby__call_tool",
     "gobby__call_tool",
+    "gobby___call_tool",
     "mcp_call_tool",
 }
 _TASK_MUTATIONS = {"claim_task", "close_task", "update_task", "link_commit", "create_task"}
-_EDIT_TOOLS = {"apply_patch", "Edit", "Write", "search_replace", "write_file"}
+_EDIT_TOOLS = {
+    "apply_patch",
+    "Edit",
+    "MultiEdit",
+    "NotebookEdit",
+    "Write",
+    "search_replace",
+    "write_file",
+}
 _PATH_KEYS = ("file_path", "target_file", "path", "notebook_path", "TargetFile")
 _COMMIT_LINE = re.compile(r"^\[[^\]]+\s+([0-9a-fA-F]{7,40})\]\s*(.*)$", re.MULTILINE)
 
@@ -196,8 +208,11 @@ def event_activity_by_user_index(parser: Any, turns: list[dict[str, Any]]) -> di
             if not isinstance(record, ParsedMessage):
                 continue
             if record.content_type == "tool_use":
+                raw_input = (
+                    dict(record.tool_input) if isinstance(record.tool_input, Mapping) else {}
+                )
+                command = pending_exec_command(record.tool_name or "", raw_input)
                 name, tool_input = canonical_tool_name(record.tool_name, record.tool_input)
-                command = pending_exec_command(name, tool_input)
                 if command is not None:
                     name, tool_input = "Bash", {"command": command}
                 entry = ToolActivityEntry(
@@ -254,7 +269,7 @@ def canonical_tool_name(tool_name: str | None, tool_input: Any) -> tuple[str, di
     if not isinstance(tool_name, str):
         return "unknown-tool", {}
     normalized_input = dict(tool_input) if isinstance(tool_input, Mapping) else {}
-    if tool_name in _CALL_TOOL_WRAPPERS:
+    if tool_name in _CALL_TOOL_WRAPPERS or tool_name.endswith("___call_tool"):
         try:
             wrapper = canonicalize_call_tool_wrapper(
                 server_name=_string_value(normalized_input.get("server_name")),
@@ -288,7 +303,7 @@ def canonical_tool_name(tool_name: str | None, tool_input: Any) -> tuple[str, di
 
 def pending_exec_command(tool_name: str, tool_input: dict[str, Any]) -> str | None:
     """Project the inner command from a pending Codex exec wrapper."""
-    if tool_name not in {"exec", "functions.exec", "exec_command"}:
+    if tool_name not in {"exec", "functions.exec", "exec_command", "functions.exec_command"}:
         return None
     raw: Any = tool_input.get("raw") if tool_name in {"exec", "functions.exec"} else tool_input
     return extract_functions_exec_command(raw)
@@ -413,16 +428,33 @@ def _content_has_text(value: Any) -> bool:
 def _content_text(value: Any) -> str:
     if isinstance(value, str):
         return value
+    if isinstance(value, Mapping):
+        for key in ("error", "message", "detail", "output", "content", "text"):
+            nested = value.get(key)
+            if nested is None:
+                continue
+            text = _content_text(nested)
+            if text:
+                return text
+        return ""
     if isinstance(value, list):
-        return " ".join(
-            str(block.get("text") or block.get("content") or "")
-            for block in value
-            if isinstance(block, Mapping)
-        )
+        return " ".join(filter(None, (_content_text(block) for block in value)))
     return str(value) if value is not None else ""
 
 
 def _resolve_entry(entry: ToolActivityEntry, result: Any, content: Any) -> None:
+    if isinstance(result, Mapping):
+        exit_code = definitive_exit_code(result)
+        if exit_code is not None:
+            entry.resolved = True
+            if exit_code != 0:
+                entry.error = _content_text(result) or _content_text(content) or f"exit {exit_code}"
+                return
+        elif "success" in result and result.get("success") is None:
+            entry.resolved = False
+            entry.error = None
+            entry.outcome = None
+            return
     entry.resolved = True
     error = _result_error(result)
     if error is not None:
@@ -437,16 +469,32 @@ def _result_error(value: Any) -> str | None:
         return None
     status = value.get("status")
     if status in {"error", "cancelled", "failed"}:
-        output = value.get("output")
-        if isinstance(output, Mapping):
-            nested = output.get("error") or output.get("message")
-            if nested is not None:
-                return _content_text(nested)
-        return _content_text(value.get("error") or value.get("message") or status)
+        return (
+            _content_text(value.get("error"))
+            or _content_text(value.get("message"))
+            or _content_text(value.get("output"))
+            or _content_text(value.get("content"))
+            or str(status)
+        )
     if value.get("is_error") is True or value.get("isError") is True:
-        return _content_text(value.get("error") or value.get("message") or value)
-    if value.get("success") is False or "error" in value:
-        return _content_text(value.get("error") or value.get("message") or value)
+        return (
+            _content_text(value.get("error"))
+            or _content_text(value.get("message"))
+            or _content_text(value.get("output"))
+            or _content_text(value.get("content"))
+            or "failed"
+        )
+    if value.get("success") is False:
+        return (
+            _content_text(value.get("error"))
+            or _content_text(value.get("message"))
+            or _content_text(value.get("output"))
+            or _content_text(value.get("content"))
+            or "failed"
+        )
+    error = value.get("error")
+    if error is not None:
+        return _content_text(error) or "failed"
     nested = value.get("toolCallResult")
     if isinstance(nested, Mapping):
         nested_error = _result_error(nested)
@@ -458,20 +506,25 @@ def _result_error(value: Any) -> str | None:
         if output_error is not None:
             return output_error
     response = value.get("response")
-    if isinstance(response, Mapping) and "error" in response:
-        return _content_text(response.get("error"))
+    if isinstance(response, Mapping) and response.get("error") is not None:
+        return _content_text(response.get("error")) or "failed"
     return None
 
 
 def _is_user_text_record(cli_name: str, turn: dict[str, Any]) -> bool:
     if cli_name == "codex":
         payload = turn.get("payload")
-        return (
+        is_user_text = (
             isinstance(payload, Mapping)
             and payload.get("type") == "message"
             and payload.get("role") == "user"
             and _content_has_text(payload.get("content"))
         )
+        if not is_user_text or not isinstance(payload, Mapping):
+            return False
+        from gobby.sessions.transcripts.codex import _is_instruction_dump
+
+        return not _is_instruction_dump(_content_text(payload.get("content")))
     message = turn.get("message")
     if not isinstance(message, Mapping):
         return False
