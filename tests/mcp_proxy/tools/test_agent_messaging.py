@@ -9,6 +9,7 @@ Covers:
 from __future__ import annotations
 
 import ast
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -295,6 +296,9 @@ class TestSendMessage:
         )
         assert "target='session'" in description
         assert "target='all' forbids target_id" in description
+        assert "target='project' fans out to active agent runs" in description
+        assert "target='all' reaches every deliverable session in the project" in description
+        assert "include_wakeup=true is an explicit urgent terminal interrupt" in description
         assert "target" in schema["inputSchema"]["properties"]
         assert "target_id" in schema["inputSchema"]["properties"]
         assert "from_session" in schema["inputSchema"]["properties"]
@@ -488,6 +492,93 @@ class TestSendMessage:
         assert result["wake_results"] == [
             {"session_id": "s-child", "delivered": True, "method": "fake"}
         ]
+
+    @pytest.mark.asyncio
+    async def test_normal_send_does_not_interrupt_long_running_recipient_work(
+        self,
+        mock_session_manager,
+        mock_message_manager,
+        mock_db,
+    ) -> None:
+        """Routine delivery persists while recipient work continues uninterrupted."""
+        from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
+
+        wake_dispatcher = FakeWakeDispatcher()
+        registry = InternalToolRegistry(
+            name="gobby-agents",
+            description="Agent messaging v2",
+        )
+        add_messaging_tools(
+            registry=registry,
+            message_manager=mock_message_manager,
+            session_manager=mock_session_manager,
+            db=mock_db,
+            wake_dispatcher=wake_dispatcher,
+        )
+        mock_session_manager.get.side_effect = lambda sid: {
+            "s-from": MockSession(id="s-from"),
+            "s-to": MockSession(id="s-to", terminal_context={"tmux_pane": "%9"}),
+        }.get(sid)
+
+        work_started = asyncio.Event()
+        release_work = asyncio.Event()
+
+        async def long_running_tool() -> None:
+            work_started.set()
+            await release_work.wait()
+
+        recipient_work = asyncio.create_task(long_running_tool())
+        await work_started.wait()
+
+        result = await registry.call(
+            "send_message",
+            {
+                "from_session": "s-from",
+                "target": "session",
+                "target_id": "s-to",
+                "content": "routine update",
+            },
+        )
+
+        assert result["success"] is True
+        assert wake_dispatcher.calls == []
+        assert not recipient_work.done()
+        release_work.set()
+        await recipient_work
+
+    @pytest.mark.asyncio
+    async def test_send_message_empty_fanout_reports_selector_failure(
+        self,
+        messaging_registry,
+        mock_session_manager,
+        mock_message_manager,
+        mock_db,
+    ) -> None:
+        """Empty fanout is an actionable result for the tool caller."""
+        mock_session_manager.get.return_value = MockSession(id="s-from")
+        mock_db.fetchone.return_value = {"id": "project-1"}
+        mock_db.fetchall.return_value = []
+
+        result = await messaging_registry.call(
+            "send_message",
+            {
+                "from_session": "s-from",
+                "target": "project",
+                "target_id": "project-1",
+                "content": "hello agents",
+            },
+        )
+
+        assert result["success"] is False
+        assert result["error_code"] == "no_recipients"
+        assert result["selector_metadata"] == {
+            "target": "project",
+            "project_id": "project-1",
+            "agent_run_status": ["pending", "running"],
+            "session_status": ["active", "paused"],
+            "exclude_session_id": "s-from",
+        }
+        mock_message_manager.create_message.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_send_message_build_target_uses_context_project_for_coordinator(
@@ -1033,7 +1124,7 @@ class TestGetInterSessionMessages:
         assert not mock_message_manager.mark_delivered.called
 
     @pytest.mark.asyncio
-    async def test_empty_list(self, messaging_registry, mock_message_manager) -> None:
+    async def test_empty_list(self, messaging_registry: Any, mock_message_manager: Any) -> None:
         """Returns empty list when no messages match."""
         mock_message_manager.list_messages.return_value = []
 
@@ -1047,7 +1138,11 @@ class TestGetInterSessionMessages:
         assert result["count"] == 0
 
     @pytest.mark.asyncio
-    async def test_passes_all_filters(self, messaging_registry, mock_message_manager) -> None:
+    async def test_passes_all_filters(
+        self,
+        messaging_registry: Any,
+        mock_message_manager: Any,
+    ) -> None:
         """All filter parameters are forwarded to list_messages."""
         mock_message_manager.list_messages.return_value = []
 

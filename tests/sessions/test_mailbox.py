@@ -361,7 +361,16 @@ class TestMailboxBroadcast:
         assert result.broadcast_id
         assert result.target == "project"
         assert result.target_id == sample_project["id"]
-        assert result.to_dict()["success"] is True
+        assert result.to_dict()["success"] is False
+        assert result.to_dict()["error_code"] == "no_recipients"
+        assert result.to_dict()["error"] == "No recipients matched the target selector."
+        assert result.to_dict()["selector_metadata"] == {
+            "target": "project",
+            "project_id": sample_project["id"],
+            "agent_run_status": ["pending", "running"],
+            "session_status": ["active", "paused"],
+            "exclude_session_id": sender.id,
+        }
         assert result.to_dict()["failed_broadcasts"] == []
         assert temp_db.fetchone("SELECT id FROM inter_session_messages LIMIT 1") is None
 
