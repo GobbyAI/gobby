@@ -18,12 +18,12 @@ from gobby.tasks.acceptance_artifacts import (
 )
 from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
 from gobby.tasks.transcript_evidence import (
-    EvidenceOutcome,
     TranscriptEdit,
     TranscriptEvidence,
     TranscriptValidationRun,
     merge_transcript_evidence,
 )
+from gobby.tasks.transcript_outcomes import EvidenceOutcome
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
