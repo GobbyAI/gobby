@@ -35,7 +35,9 @@ from gobby.mcp_proxy.tools.tasks._notifications import _notification_tasks as no
 from gobby.mcp_proxy.tools.tasks._task_scope import TaskScopeEvaluation
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import Task, TaskHasOpenChildrenError
+from gobby.tasks.acceptance_artifacts import AcceptanceArtifactResult, AcceptanceTest
 from gobby.tasks.close_verdict import CloseCriterionVerdict, CloseVerdict
+from gobby.tasks.tdd_evidence import TddEvidenceResult
 from gobby.tasks.transcript_evidence import TranscriptEvidence, TranscriptValidationRun
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -82,6 +84,92 @@ def _ctx(task: Task, validator: object = None) -> RegistryContext:
             get_current_project_name=lambda: "gobby",
         ),
     )
+
+
+async def _evaluate_named_test_close(
+    task: Task,
+    *,
+    tdd_result: TddEvidenceResult,
+) -> tuple[CloseEvaluation, MagicMock]:
+    review = AsyncMock(
+        return_value=ValidationResult(
+            can_close=True,
+            validation_status="valid",
+            validation_feedback="Criteria satisfied.",
+            reset_reason="llm_valid",
+            extra={"verdict": {"status": "valid"}},
+        )
+    )
+    now = datetime(2026, 7, 27, 12, 5, tzinfo=UTC)
+    transcript = TranscriptEvidence(
+        validation_runs=(
+            TranscriptValidationRun(
+                session_id=task.claimed_by_session_id or "",
+                source="codex",
+                command="uv run pytest tests/test_example.py -q",
+                categories=("test",),
+                matcher_id="pytest",
+                label="pytest",
+                outcome="success",
+                started_at=now,
+                completed_at=now,
+                order=1,
+                exit_code=0,
+            ),
+        ),
+        sessions=(task.claimed_by_session_id or "",),
+    )
+    artifacts = AcceptanceArtifactResult(
+        passed=True,
+        tests=(
+            AcceptanceTest(
+                reference="tests/test_example.py::test_example",
+                path="tests/test_example.py",
+                symbol="test_example",
+                body="def test_example() -> None:\n    assert True\n",
+            ),
+        ),
+        findings=(),
+        evidence_files=(),
+    )
+    tdd_check = MagicMock(return_value=tdd_result)
+
+    with (
+        patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
+        patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
+        patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
+        patch.object(close_finalization, "_linked_commit_paths", return_value=frozenset()),
+        patch.object(close_finalization, "_committable_task_paths", return_value=set()),
+        patch.object(lifecycle, "_has_committable_edits", return_value=False),
+        patch.object(
+            lifecycle,
+            "resolve_close_commit_shas",
+            return_value=(["abc123"], None),
+        ),
+        patch.object(lifecycle, "active_validation_backoff", return_value=None),
+        patch.object(
+            lifecycle,
+            "_derive_close_transcript_evidence",
+            AsyncMock(return_value=transcript),
+        ),
+        patch.object(lifecycle, "evaluate_acceptance_artifacts", return_value=artifacts),
+        patch.object(lifecycle, "evaluate_tdd_evidence", tdd_check),
+        patch.object(lifecycle, "collect_commit_diff_text", return_value="diff"),
+        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch("gobby.workflows.task_claim_state.target_task_has_edits", return_value=False),
+        patch("gobby.workflows.task_claim_state.task_edited_file_set", return_value=set()),
+    ):
+        evaluation = await _evaluate_close(
+            _ctx(task, validator=object()),
+            task_id=task.id,
+            reason="completed",
+            changes_summary="Implemented and tested.",
+            commit_sha="abc123",
+            project_path=None,
+            response_detail="diagnostic",
+        )
+
+    return evaluation, tdd_check
 
 
 def _ready_evaluation(
@@ -308,6 +396,51 @@ async def test_ready_leaf_runs_criteria_review_exactly_once() -> None:
     assert [gate.item for gate in evaluation.gates] == list(range(1, 15))
     linked_paths.assert_called_once_with(task, "/repo", ("base123", "abc123"))
     review.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_named_acceptance_test_skips_tdd_gate_when_task_does_not_require_tdd() -> None:
+    task = replace(
+        _task(criteria="Behavior is pinned. test: `tests/test_example.py::test_example`."),
+        category="test",
+    )
+
+    evaluation, tdd_check = await _evaluate_named_test_close(
+        task,
+        tdd_result=TddEvidenceResult(
+            passed=False,
+            skipped=False,
+            findings=("no production edit follows the test edit",),
+        ),
+    )
+
+    assert evaluation.ready is True
+    assert evaluation.gates[11].name == "tdd_evidence"
+    assert evaluation.gates[11].status == "skipped"
+    tdd_check.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_named_acceptance_test_keeps_tdd_gate_when_task_requires_tdd() -> None:
+    task = replace(
+        _task(criteria="Behavior is pinned. test: `tests/test_example.py::test_example`."),
+        labels=["tdd:required"],
+    )
+
+    evaluation, tdd_check = await _evaluate_named_test_close(
+        task,
+        tdd_result=TddEvidenceResult(
+            passed=False,
+            skipped=False,
+            findings=("no production edit follows the test edit",),
+        ),
+    )
+
+    assert evaluation.ready is False
+    assert evaluation.error == "tdd_evidence_missing"
+    assert evaluation.gates[-1].name == "tdd_evidence"
+    assert evaluation.gates[-1].status == "failed"
+    tdd_check.assert_called_once()
 
 
 @pytest.mark.asyncio

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import re
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
@@ -12,6 +11,7 @@ import psycopg
 from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.commits import extract_mentioned_files
+from gobby.tasks.tdd_evidence import TDD_SKILL, task_requires_tdd
 from gobby.workflows.enforcement.blocking import get_write_file_paths, is_source_code_path
 
 if TYPE_CHECKING:
@@ -21,13 +21,6 @@ logger = logging.getLogger(__name__)
 
 DEVELOPMENT_DISCIPLINE_SKILL = "development-discipline"
 TASKS_SKILL = "tasks"
-TDD_SKILL = "test-driven-development"
-TDD_REQUIRED_LABEL = "tdd:required"
-TDD_EVIDENCE_PHRASE = "tdd evidence"
-TDD_CYCLE_KEYWORDS = frozenset({"red", "green", "refactor"})
-TDD_FAILING_TEST_PHRASE = "failing test"
-TDD_BEFORE_IMPLEMENTATION_PHRASE = "before implementation"
-
 SOURCE_CODE_CATEGORIES = {"code", "refactor", "test"}
 AGGREGATE_KEYS = (
     "claimed_task_required_skills",
@@ -159,7 +152,7 @@ def build_claimed_task_skill_state(
 
         _extend_unique(required_skills, task_additional_skills)
 
-        if _task_requires_tdd(
+        if task_requires_tdd(
             labels=task_labels,
             additional_skills=task_additional_skills,
             validation_criteria=task_validation_criteria,
@@ -300,33 +293,6 @@ def _task_is_source_code(task: Any, files: list[str]) -> bool:
     return any(is_source_code_path(file_path) for file_path in files)
 
 
-def _task_requires_tdd(
-    *,
-    labels: list[str],
-    additional_skills: list[str],
-    validation_criteria: str | None,
-    enforce_tdd: bool,
-) -> bool:
-    if enforce_tdd:
-        return True
-    if TDD_REQUIRED_LABEL in labels:
-        return True
-    if TDD_SKILL in additional_skills:
-        return True
-    return _criteria_require_tdd(validation_criteria)
-
-
-def _criteria_require_tdd(validation_criteria: str | None) -> bool:
-    if not validation_criteria:
-        return False
-    lowered = validation_criteria.lower()
-    if TDD_SKILL in lowered or TDD_EVIDENCE_PHRASE in lowered:
-        return True
-    if all(_contains_word(lowered, keyword) for keyword in TDD_CYCLE_KEYWORDS):
-        return True
-    return TDD_FAILING_TEST_PHRASE in lowered and TDD_BEFORE_IMPLEMENTATION_PHRASE in lowered
-
-
 def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list | tuple):
         return []
@@ -379,10 +345,6 @@ def _append_unique_path(paths: list[str], path: str) -> None:
                 return
 
     paths.append(path)
-
-
-def _contains_word(value: str, word: str) -> bool:
-    return re.search(rf"\b{re.escape(word)}\b", value) is not None
 
 
 def _same_basename(left: tuple[str, ...], right: tuple[str, ...]) -> bool:

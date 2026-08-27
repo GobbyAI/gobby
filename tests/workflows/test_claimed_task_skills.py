@@ -10,10 +10,10 @@ import psycopg
 import pytest
 
 from gobby.storage.tasks import TaskNotFoundError
+from gobby.tasks.tdd_evidence import task_requires_tdd
 from gobby.workflows.claimed_task_skills import (
     LANGUAGE_SKILL_EXTENSIONS,
     _append_unique_path,
-    _criteria_require_tdd,
     _language_skills_for_files,
     _load_task,
     _task_files,
@@ -278,8 +278,16 @@ def test_load_task_propagates_unexpected_errors() -> None:
 
 
 def test_criteria_require_tdd_matches_cycle_keywords_as_whole_words() -> None:
-    assert _criteria_require_tdd("TDD evidence required: red, green, refactor/final-green.")
-    assert not _criteria_require_tdd("Redirection and evergreen refactoring notes are enough.")
+    assert task_requires_tdd(
+        labels=(),
+        additional_skills=(),
+        validation_criteria="TDD evidence required: red, green, refactor/final-green.",
+    )
+    assert not task_requires_tdd(
+        labels=(),
+        additional_skills=(),
+        validation_criteria="Redirection and evergreen refactoring notes are enough.",
+    )
 
 
 def test_missing_required_skills_skip_unresolvable_names() -> None:

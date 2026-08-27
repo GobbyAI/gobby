@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
@@ -39,6 +41,32 @@ class TddEvidenceResult:
 
 _DOCUMENTATION_ROOTS = frozenset({"docs", ".gobby"})
 _INSTRUCTION_FILES = frozenset({"agents.md", "claude.md", "readme.md", "changelog.md"})
+TDD_SKILL = "test-driven-development"
+TDD_REQUIRED_LABEL = "tdd:required"
+_TDD_EVIDENCE_PHRASE = "tdd evidence"
+_TDD_CYCLE_KEYWORDS = frozenset({"red", "green", "refactor"})
+_TDD_FAILING_TEST_PHRASE = "failing test"
+_TDD_BEFORE_IMPLEMENTATION_PHRASE = "before implementation"
+
+
+def task_requires_tdd(
+    *,
+    labels: Iterable[str],
+    additional_skills: Iterable[str],
+    validation_criteria: str | None,
+    enforce_tdd: bool = False,
+) -> bool:
+    """Return whether task metadata requires transcript-backed red/green evidence."""
+    if enforce_tdd or TDD_REQUIRED_LABEL in labels or TDD_SKILL in additional_skills:
+        return True
+    if not validation_criteria:
+        return False
+    lowered = validation_criteria.lower()
+    if TDD_SKILL in lowered or _TDD_EVIDENCE_PHRASE in lowered:
+        return True
+    if all(_contains_word(lowered, keyword) for keyword in _TDD_CYCLE_KEYWORDS):
+        return True
+    return _TDD_FAILING_TEST_PHRASE in lowered and _TDD_BEFORE_IMPLEMENTATION_PHRASE in lowered
 
 
 def _is_production_edit_path(path: str) -> bool:
@@ -49,6 +77,10 @@ def _is_production_edit_path(path: str) -> bool:
     if pure.parts and pure.parts[0].casefold() in _DOCUMENTATION_ROOTS:
         return False
     return pure.name.casefold() not in _INSTRUCTION_FILES
+
+
+def _contains_word(value: str, word: str) -> bool:
+    return re.search(rf"\b{re.escape(word)}\b", value) is not None
 
 
 def evaluate_tdd_evidence(
