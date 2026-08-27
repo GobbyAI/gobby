@@ -636,6 +636,75 @@ async def test_owner_path_release_breaks_commit_and_close_cycle(
 
 
 @pytest.mark.asyncio
+async def test_21049_owner_release_allows_close_when_later_dirt_is_foreign(
+    guard_harness: GuardHarness,
+) -> None:
+    guard_harness.db.execute(
+        "UPDATE rule_definitions SET enabled = (name IN (%s, %s)) ",
+        (RULE_NAME, "require-clean-tree-before-status"),
+    )
+    last_commit_epoch = int(
+        _git(guard_harness.repo, "log", "-1", "--format=%ct", "--", "foreign.txt")
+    )
+    variables = SessionVariableManager(guard_harness.db)
+    variables.merge_variables(
+        guard_harness.foreign_session.id,
+        {
+            "task_edited_file_times": {
+                guard_harness.foreign_task.id: {"foreign.txt": last_commit_epoch - 100},
+            }
+        },
+    )
+    variables.merge_variables(
+        guard_harness.current_session.id,
+        {
+            "task_edited_files": {
+                guard_harness.current_task.id: ["owned.txt", "foreign.txt"],
+            },
+            "task_edited_file_checkouts": {
+                guard_harness.current_task.id: {
+                    str(guard_harness.repo): ["owned.txt", "foreign.txt"],
+                },
+            },
+        },
+    )
+    (guard_harness.repo / "foreign.txt").write_text(
+        "later dirt from current session\n",
+        encoding="utf-8",
+    )
+
+    blocked_close = await guard_harness.handler._evaluate_rules(guard_harness.foreign_close_event())
+    assert blocked_close.decision == "block"
+
+    registry = create_task_registry(LocalTaskManager(guard_harness.db))
+    with session_context_for_test(guard_harness.foreign_session.id):
+        released = await registry.call(
+            "release_task_paths",
+            {
+                "task_id": guard_harness.foreign_task.id,
+                "paths": ["foreign.txt"],
+            },
+        )
+
+    assert released["success"] is True
+    assert released["released_paths"] == ["foreign.txt"]
+    assert released["foreign_dirty_paths"] == {
+        "foreign.txt": [
+            {
+                "task": f"#{guard_harness.current_task.seq_num}",
+                "session": f"#{guard_harness.current_session.seq_num}",
+            }
+        ]
+    }
+    assert guard_harness.foreign_task.id not in variables.get_variables(
+        guard_harness.foreign_session.id
+    ).get("task_edited_files", {})
+
+    allowed_close = await guard_harness.handler._evaluate_rules(guard_harness.foreign_close_event())
+    assert allowed_close.decision == "allow"
+
+
+@pytest.mark.asyncio
 async def test_successful_owner_commit_releases_clean_checkout_attribution(
     guard_harness: GuardHarness,
 ) -> None:
