@@ -758,6 +758,29 @@ def _classify_shell_segment_without_redirection(
             repo_mutation=True,
         )
 
+    if cmd == "git" and parts[git_subcommand_index : git_subcommand_index + 1] in [
+        ["checkout"],
+        ["restore"],
+    ]:
+        try:
+            pathspec_index = parts.index("--", git_subcommand_index + 1)
+        except ValueError:
+            paths = []
+        else:
+            paths = [
+                candidate
+                for candidate in parts[pathspec_index + 1 :]
+                if _looks_path_target(candidate) or _contains_unexpanded_shell_reference(candidate)
+            ]
+        return _ShellSegmentMetadata(
+            "write",
+            paths=tuple(_rebase_shell_paths(paths, cwd)),
+            repo_mutation=True,
+        )
+
+    if cmd == "git" and parts[git_subcommand_index : git_subcommand_index + 1] == ["revert"]:
+        return _ShellSegmentMetadata("write", repo_mutation=True)
+
     if cmd == "patch":
         if "--dry-run" in parts[1:]:
             return _ShellSegmentMetadata("execute")

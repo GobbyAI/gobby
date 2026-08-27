@@ -552,7 +552,7 @@
     "workflows/rules/tool-hygiene/block-web-chat-send-keys.yaml": "9cd15446741904835a30086eafdfab4e147070628d03481a01b2954bd20a0d97",
     "workflows/rules/tool-hygiene/require-pytest-guard-env.yaml": "bb10d8a3972c41cefd32e36b13ac56411aa9e57211595d2beea1af08440d7415",
     "workflows/rules/tool-hygiene/require-uv.yaml": "80787035529caa6756d1a7947cbdf0fb34da1d88331ecb766e6cf196b5d07d09",
-    "workflows/rules/worker-safety/block-docker-policy-edits.yaml": "41aaceec5d5c969faabed08967933cede0f1f5ece3e313a74b541efb1cd9e23d",
+    "workflows/rules/worker-safety/block-docker-policy-edits.yaml": "fe877b6248fb1111e32204e44a88328b07ed403258d2136be791278c353a4e3b",
     "workflows/rules/worker-safety/block-git-clone-interactive.yaml": "f8babe754e883528938a9201248b99bbd12b1a6d8bca2d27a125ee050c00d37c",
     "workflows/rules/worker-safety/block-git-clone.yaml": "4b0e0cf8617efbeb87cccff80c0cb5d5bf47b76f7054e6609c8975d2ed720919",
     "workflows/rules/worker-safety/block-git-worktree-mutations-interactive.yaml": "8d86dfa7f273bce14088b3570872cf91106643d5f097daa1d220f0ac0794fef6",

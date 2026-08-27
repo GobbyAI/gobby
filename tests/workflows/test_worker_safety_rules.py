@@ -422,9 +422,10 @@ class TestDockerPolicyBlockRule:
         assert body.when is not None
         assert "canonical_tool_kind" in body.when
         assert "touches_docker_policy_path" in body.when
+        assert "canonical_file_paths" in body.when
         assert "variables" not in body.when
         assert "ordinary MCP tool" in (row.description or "")
-        assert "path-less shell mutations" in (row.description or "")
+        assert "unknown-scope content mutations" in (row.description or "").lower()
         effects = body.effects
         assert effects is not None
         assert len(effects) == 1
@@ -526,6 +527,108 @@ class TestDockerPolicyBlockRule:
             variables={},
         )
         assert response.decision == "block"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "git apply update.patch",
+            "patch -p1 < update.patch",
+            "python -c \"from pathlib import Path; Path('Dockerfile').write_text('x')\"",
+        ],
+    )
+    async def test_unknown_scope_content_mutations_are_blocked(
+        self,
+        db: HubDatabase,
+        command: str,
+    ) -> None:
+        engine = self._isolated_engine(db)
+        data: dict[str, object] = {
+            "tool_input": {"command": command},
+            "tool_name": "Bash",
+        }
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        assert not data.get("canonical_file_paths")
+        response = await engine.evaluate(
+            self._event(HookEventType.BEFORE_TOOL, data),
+            session_id=SESSION_ID,
+            variables={},
+        )
+        assert response.decision == "block"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("command", "target"),
+        [
+            ("git checkout -- Dockerfile", "Dockerfile"),
+            ("git restore -- deploy/compose.yaml", "deploy/compose.yaml"),
+            ("git revert HEAD", None),
+        ],
+    )
+    async def test_git_content_mutations_are_blocked(
+        self,
+        db: HubDatabase,
+        command: str,
+        target: str | None,
+    ) -> None:
+        engine = self._isolated_engine(db)
+        data: dict[str, object] = {
+            "tool_input": {"command": command},
+            "tool_name": "Bash",
+        }
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        if target is not None:
+            canonical_file_paths = data.get("canonical_file_paths")
+            assert isinstance(canonical_file_paths, list)
+            assert target in canonical_file_paths
+        response = await engine.evaluate(
+            self._event(HookEventType.BEFORE_TOOL, data),
+            session_id=SESSION_ID,
+            variables={},
+        )
+        assert response.decision == "block"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "git add -- Dockerfile",
+            "git commit -m 'authorized Docker edit' --only -- Dockerfile",
+            (
+                "git add -- Dockerfile && "
+                "git commit -m 'authorized Docker edit' --only -- Dockerfile"
+            ),
+        ],
+    )
+    async def test_staging_and_committing_authorized_paths_are_allowed(
+        self,
+        db: HubDatabase,
+        command: str,
+    ) -> None:
+        engine = self._isolated_engine(db)
+        data: dict[str, object] = {
+            "tool_input": {"command": command},
+            "tool_name": "Bash",
+        }
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "execute"
+        response = await engine.evaluate(
+            self._event(HookEventType.BEFORE_TOOL, data),
+            session_id=SESSION_ID,
+            variables={},
+        )
+        assert response.decision == "allow"
+
+        if "git add" in command:
+            assert data["canonical_repo_mutation"] is True
+            canonical_file_paths = data.get("canonical_file_paths")
+            assert isinstance(canonical_file_paths, list)
+            assert "Dockerfile" in canonical_file_paths
 
     @pytest.mark.asyncio
     async def test_multi_path_patch_and_unrelated_write(self, db: HubDatabase) -> None:
