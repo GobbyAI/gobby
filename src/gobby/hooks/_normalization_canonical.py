@@ -33,9 +33,11 @@ from gobby.hooks._normalization_shell import (
 )
 from gobby.hooks._path_scope import apply_path_scope_metadata
 from gobby.hooks._python_pipeline_classifier import (
+    _classify_python_pipeline,
+    _classify_python_source,
     _inline_interpreter_parts,
     _is_read_only_python_pipeline,
-    _is_read_only_python_source,
+    _PythonExecutionClassification,
 )
 from gobby.hooks.code_navigation import (
     count_option_line_count,
@@ -110,6 +112,7 @@ class _ShellSegmentMetadata:
     paths: tuple[str, ...] = ()
     extra: Mapping[str, Any] | None = None
     repo_mutation: bool = False
+    confidence: str = "high"
     neutral_setup: bool = False
     pure_gcode_navigation: bool = False
     read_only_pipeline_filter: bool = False
@@ -532,6 +535,7 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         kind,
         paths=effective_paths or None,
         repo_mutation=any(item.repo_mutation for item in active),
+        confidence="low" if any(item.confidence == "low" for item in active) else "high",
         extra=extra or None,
     )
 
@@ -593,27 +597,31 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
 
         metadata.append(_classify_shell_segment(segment.tokens, parts, persistent_cwd))
 
-    metadata = _downgrade_read_only_stdin_python(metadata, heredoc_bodies)
+    metadata = _classify_stdin_python(metadata, heredoc_bodies)
     return _merge_shell_segment_metadata(metadata)
 
 
-def _downgrade_read_only_stdin_python(
+def _classify_stdin_python(
     metadata: list[_ShellSegmentMetadata],
     heredoc_bodies: list[str],
 ) -> list[_ShellSegmentMetadata]:
-    """Reclassify a lone python heredoc segment whose body is provably read-only.
+    """Reclassify a lone Python heredoc from its body evidence.
 
-    Only the unambiguous shape downgrades: exactly one stdin-python segment fed
-    by exactly one heredoc body. Anything else keeps the conservative write.
+    Ambiguous shell shapes keep their conservative write classification.
     """
     flagged = [item for item in metadata if item.stdin_python_program]
     if len(flagged) != 1 or len(heredoc_bodies) != 1:
         return metadata
-    if not _is_read_only_python_source(heredoc_bodies[0]):
+    classification = _classify_python_source(heredoc_bodies[0])
+    if classification is _PythonExecutionClassification.MUTATION:
         return metadata
-    return [
-        _ShellSegmentMetadata("execute") if item.stdin_python_program else item for item in metadata
-    ]
+    replacement = _ShellSegmentMetadata(
+        "execute",
+        confidence=(
+            "high" if classification is _PythonExecutionClassification.READ_ONLY else "low"
+        ),
+    )
+    return [replacement if item.stdin_python_program else item for item in metadata]
 
 
 def _classify_shell_segment(
@@ -790,16 +798,16 @@ def _classify_shell_segment_without_redirection(
     if interpreter_parts:
         interpreter = shell_command_name(interpreter_parts[0])
         interpreter_args = interpreter_parts[1:]
-        inline_interpreter = (
-            (interpreter in {"python", "python3"} and "-c" in interpreter_args)
-            or (
-                interpreter == "node" and any(flag in interpreter_args for flag in {"-e", "--eval"})
-            )
-            or (interpreter == "ruby" and "-e" in interpreter_args)
-        )
-        if inline_interpreter:
-            if _is_read_only_python_pipeline(parts):
+        if interpreter in {"python", "python3"} and "-c" in interpreter_args:
+            classification = _classify_python_pipeline(parts)
+            if classification is _PythonExecutionClassification.READ_ONLY:
                 return _ShellSegmentMetadata("execute")
+            if classification is _PythonExecutionClassification.INDETERMINATE:
+                return _ShellSegmentMetadata("execute", confidence="low")
+            return _ShellSegmentMetadata("write", repo_mutation=True)
+        if (
+            interpreter == "node" and any(flag in interpreter_args for flag in {"-e", "--eval"})
+        ) or (interpreter == "ruby" and "-e" in interpreter_args):
             return _ShellSegmentMetadata("write", repo_mutation=True)
 
     if cmd == "curl":

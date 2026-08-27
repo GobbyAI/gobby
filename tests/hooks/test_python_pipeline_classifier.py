@@ -1,5 +1,6 @@
-"""Tests for read-only inline Python pipeline classification."""
+"""Tests for inline Python pipeline classification."""
 
+import shlex
 from typing import Any
 
 import pytest
@@ -167,6 +168,33 @@ for path in sorted(base.glob('*/*.xlsx')):
         print(path.relative_to(base), sheet.get('name'), sheet.text)
 """
 
+_AWS_MCP_DIAGNOSTIC = """
+import asyncio
+from gobby.mcp_proxy.manager import MCPClientManager
+from gobby.mcp_proxy.models import MCPServerConfig
+
+
+async def main():
+    config = MCPServerConfig(
+        name="aws-openapi-smoke",
+        project_id="00000000-0000-0000-0000-000000000001",
+        transport="stdio",
+        command="uvx",
+        args=["awslabs.openapi-mcp-server@1.1.5"],
+    )
+    manager = MCPClientManager([config])
+    try:
+        await manager.list_tools("aws-openapi-smoke")
+        session = await manager.get_client_session("aws-openapi-smoke")
+        await session.list_prompts()
+        await session.list_resources()
+    finally:
+        await manager.disconnect_all()
+
+
+asyncio.run(main())
+"""
+
 
 @pytest.mark.parametrize(
     "script",
@@ -247,6 +275,44 @@ def test_python_pipeline_normalization_keeps_uv_run_analysis_script_read_only() 
 
     assert data["canonical_tool_kind"] == "execute"
     assert "canonical_repo_mutation" not in data
+
+
+def test_python_pipeline_normalization_marks_aws_mcp_diagnostic_indeterminate() -> None:
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {"command": f"uv run python -c {shlex.quote(_AWS_MCP_DIAGNOSTIC)}"},
+    }
+
+    normalize_tool_fields(data)
+
+    assert data["canonical_tool_kind"] == "execute"
+    assert data["canonical_tool_confidence"] == "low"
+    assert "canonical_repo_mutation" not in data
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "open('notes.md', 'w').write('changed')",
+        "from pathlib import Path; Path('notes.md').write_text('changed')",
+        "import os; os.remove('notes.md')",
+        "import subprocess; subprocess.run(['rm', 'notes.md'])",
+        "import sys; sys.modules[\"builtins\"].eval(\"open('notes.md', 'w')\")",
+    ],
+)
+def test_python_pipeline_normalization_keeps_proven_mutations_as_writes(
+    script: str,
+) -> None:
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {"command": f"uv run python -c {shlex.quote(script)}"},
+    }
+
+    normalize_tool_fields(data)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_tool_confidence"] == "high"
+    assert data["canonical_repo_mutation"] is True
 
 
 def test_python_pipeline_normalization_keeps_uv_run_mutation_script_write() -> None:

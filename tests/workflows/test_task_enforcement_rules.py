@@ -7,6 +7,7 @@ task claim/release tracking.
 
 from __future__ import annotations
 
+import shlex
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -413,6 +414,65 @@ PYEOF"""
 
             assert data["canonical_tool_kind"] == expected_kind
             assert response.decision == expected_decision
+
+    @pytest.mark.asyncio
+    async def test_indeterminate_aws_mcp_diagnostic_does_not_require_task(
+        self, db: HubDatabase
+    ) -> None:
+        _sync_bundled(db)
+        script = """
+import asyncio
+from gobby.mcp_proxy.manager import MCPClientManager
+from gobby.mcp_proxy.models import MCPServerConfig
+
+
+async def main():
+    config = MCPServerConfig(
+        name="aws-openapi-smoke",
+        project_id="00000000-0000-0000-0000-000000000001",
+        transport="stdio",
+        command="uvx",
+        args=["awslabs.openapi-mcp-server@1.1.5"],
+    )
+    manager = MCPClientManager([config])
+    try:
+        await manager.list_tools("aws-openapi-smoke")
+        session = await manager.get_client_session("aws-openapi-smoke")
+        await session.list_prompts()
+        await session.list_resources()
+    finally:
+        await manager.disconnect_all()
+
+
+asyncio.run(main())
+"""
+        data: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": f"uv run python -c {shlex.quote(script)}"},
+        }
+        normalize_tool_fields(data)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data=data,
+        )
+
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={
+                "require_task_before_edit": True,
+                "task_claimed": False,
+                "plan_mode": False,
+            },
+        )
+
+        assert data["canonical_tool_kind"] == "execute"
+        assert data["canonical_tool_confidence"] == "low"
+        assert "canonical_repo_mutation" not in data
+        assert response.decision == "allow"
 
     def test_when_condition_evaluates_with_plan_file(self) -> None:
         """Plan files should stay exempt when the helper is registered."""
@@ -2101,7 +2161,7 @@ class TestWriteRouteParity:
                 True,
             ),
             ('python3 -c "print(1)"', "execute", False, False),
-            ('printf content | python3 -c "unknown()"', "write", True, True),
+            ('printf content | python3 -c "unknown()"', "execute", False, False),
             (
                 "printf content | python3 -c "
                 '\'import json, sys; json = sys.modules["os"]; '

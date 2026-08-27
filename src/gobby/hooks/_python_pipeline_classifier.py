@@ -1,13 +1,16 @@
-"""Safety classification for inline Python diagnostics and pipeline stages.
+"""Classification for inline Python diagnostics and pipeline stages.
 
 A script is read-only when every node is drawn from a closed allowlist: pure
 stdlib modules, a short builtin set, in-memory methods, ``open`` in read modes,
 read-only workbook-inspection APIs, and the standard streams. Nothing
-reachable from those can mutate the filesystem or start a process.
+reachable from those can mutate the filesystem or start a process. Explicit
+filesystem mutations and reflection escapes are classified separately from
+unsupported dynamic execution.
 """
 
 import ast
 from collections.abc import Mapping
+from enum import StrEnum
 
 from gobby.hooks.code_navigation import shell_command_name
 
@@ -64,6 +67,54 @@ _PYTHON_PIPELINE_BLOCKED_NODES = (
     ast.Global,
     ast.Nonlocal,
 )
+_PYTHON_REFLECTION_ESCAPE_NAMES = frozenset(
+    {"__import__", "compile", "delattr", "eval", "exec", "getattr", "setattr"}
+)
+_PYTHON_FILESYSTEM_MUTATION_CALLS = frozenset(
+    {
+        "os.chmod",
+        "os.chown",
+        "os.makedirs",
+        "os.mkdir",
+        "os.remove",
+        "os.rename",
+        "os.renames",
+        "os.replace",
+        "os.rmdir",
+        "os.truncate",
+        "os.unlink",
+        "shutil.copy",
+        "shutil.copy2",
+        "shutil.copyfile",
+        "shutil.copytree",
+        "shutil.move",
+        "shutil.rmtree",
+    }
+)
+_PYTHON_FILESYSTEM_MUTATION_METHODS = frozenset(
+    {"chmod", "lchmod", "mkdir", "rename", "rmdir", "touch", "unlink", "write_bytes", "write_text"}
+)
+_PYTHON_PROCESS_CALLS = frozenset(
+    {
+        "asyncio.create_subprocess_exec",
+        "asyncio.create_subprocess_shell",
+        "os.system",
+        "subprocess.call",
+        "subprocess.check_call",
+        "subprocess.check_output",
+        "subprocess.Popen",
+        "subprocess.run",
+    }
+)
+_PYTHON_MUTATING_COMMANDS = frozenset(
+    {"cp", "install", "mkdir", "mv", "patch", "rm", "rmdir", "touch", "truncate"}
+)
+
+
+class _PythonExecutionClassification(StrEnum):
+    READ_ONLY = "read_only"
+    MUTATION = "mutation"
+    INDETERMINATE = "indeterminate"
 
 
 def _inline_interpreter_parts(parts: list[str]) -> list[str]:
@@ -409,25 +460,131 @@ def _is_safe_python_pipeline_node(
     )
 
 
-def _is_read_only_python_pipeline(parts: list[str]) -> bool:
+def _call_name(node: ast.Call, imported_bindings: Mapping[str, str]) -> str | None:
+    if isinstance(node.func, ast.Name):
+        return _canonical_imported_name(node.func.id, imported_bindings)
+    if isinstance(node.func, ast.Attribute):
+        return _canonical_imported_name(_python_attribute_name(node.func), imported_bindings)
+    return None
+
+
+def _literal_process_command(node: ast.Call) -> str | None:
+    if not node.args:
+        return None
+    command = node.args[0]
+    if isinstance(command, ast.Constant) and isinstance(command.value, str):
+        return command.value.split(maxsplit=1)[0] if command.value.strip() else None
+    if isinstance(command, ast.List | ast.Tuple) and command.elts:
+        executable = command.elts[0]
+        if isinstance(executable, ast.Constant) and isinstance(executable.value, str):
+            return executable.value.rsplit("/", 1)[-1]
+    return None
+
+
+def _has_proven_python_mutation(
+    tree: ast.AST,
+    rebound_names: frozenset[str],
+    imported_bindings: Mapping[str, str],
+) -> bool:
+    """Return whether rejected source contains an evidenced mutation or escape."""
+    if rebound_names & (_PYTHON_PIPELINE_RESERVED_NAMES | imported_bindings.keys()):
+        return True
+
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            if _has_dunder_name(node.id) or node.id in _PYTHON_REFLECTION_ESCAPE_NAMES:
+                return True
+            if node.id == "open":
+                parent = parents.get(node)
+                if not (isinstance(parent, ast.Call) and parent.func is node):
+                    return True
+        elif isinstance(node, ast.Attribute):
+            attribute_name = _python_attribute_name(node)
+            if _has_dunder_name(attribute_name or node.attr):
+                return True
+            if node.attr in _PYTHON_REFLECTION_ESCAPE_NAMES or node.attr == "modules":
+                return True
+            if not isinstance(node.ctx, ast.Load):
+                root = (attribute_name or "").partition(".")[0]
+                if root in imported_bindings or root in _PYTHON_PIPELINE_RESERVED_NAMES:
+                    return True
+            if attribute_name:
+                parts = attribute_name.split(".")
+                if parts[0] in _PYTHON_PIPELINE_PURE_MODULES and any(
+                    part in {"io", "sys"} for part in parts[1:]
+                ):
+                    return True
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if (
+                    alias.name in _PYTHON_PIPELINE_MODULES | _PYTHON_PIPELINE_PURE_MODULES
+                    and alias.asname not in {None, alias.name}
+                ):
+                    return True
+        elif isinstance(node, ast.ImportFrom):
+            if any(alias.name == "*" or alias.name.startswith("_") for alias in node.names):
+                return True
+        elif isinstance(node, ast.Call):
+            call_name = _call_name(node, imported_bindings)
+            if call_name in _PYTHON_FILESYSTEM_MUTATION_CALLS:
+                return True
+            if isinstance(node.func, ast.Attribute) and (
+                node.func.attr in _PYTHON_FILESYSTEM_MUTATION_METHODS
+            ):
+                return True
+            if call_name == "open" or (call_name or "").endswith(".open"):
+                if not _is_read_only_open_call(node):
+                    return True
+            if call_name == "zipfile.ZipFile" and not _is_read_only_zipfile_call(node):
+                return True
+            if call_name in _PYTHON_PROCESS_CALLS:
+                command = _literal_process_command(node)
+                if command in _PYTHON_MUTATING_COMMANDS:
+                    return True
+                if command == "git" and isinstance(node.args[0], ast.List | ast.Tuple):
+                    values = [
+                        item.value
+                        for item in node.args[0].elts
+                        if isinstance(item, ast.Constant) and isinstance(item.value, str)
+                    ]
+                    if any(
+                        value in {"add", "apply", "checkout", "commit", "restore", "revert"}
+                        for value in values[1:2]
+                    ):
+                        return True
+    return False
+
+
+def _classify_python_source(script: str) -> _PythonExecutionClassification:
+    try:
+        tree = ast.parse(script)
+    except SyntaxError:
+        return _PythonExecutionClassification.INDETERMINATE
+    rebound_names = _rebound_names(tree)
+    imported_bindings = _imported_bindings(tree)
+    local_names = rebound_names | imported_bindings.keys()
+    safe = not (
+        rebound_names & (_PYTHON_PIPELINE_RESERVED_NAMES | imported_bindings.keys())
+    ) and _is_safe_python_pipeline_node(tree, local_names, imported_bindings)
+    if safe:
+        return _PythonExecutionClassification.READ_ONLY
+    if _has_proven_python_mutation(tree, rebound_names, imported_bindings):
+        return _PythonExecutionClassification.MUTATION
+    return _PythonExecutionClassification.INDETERMINATE
+
+
+def _classify_python_pipeline(parts: list[str]) -> _PythonExecutionClassification:
     script = _python_inline_script(parts)
     if script is None:
-        return False
-    return _is_read_only_python_source(script)
+        return _PythonExecutionClassification.INDETERMINATE
+    return _classify_python_source(script)
+
+
+def _is_read_only_python_pipeline(parts: list[str]) -> bool:
+    return _classify_python_pipeline(parts) is _PythonExecutionClassification.READ_ONLY
 
 
 def _is_read_only_python_source(script: str) -> bool:
     """Return True when a Python program provably performs no mutation."""
-    try:
-        tree = ast.parse(script)
-    except SyntaxError:
-        return False
-    rebound_names = _rebound_names(tree)
-    imported_bindings = _imported_bindings(tree)
-    if rebound_names & (_PYTHON_PIPELINE_RESERVED_NAMES | imported_bindings.keys()):
-        return False
-    return _is_safe_python_pipeline_node(
-        tree,
-        rebound_names | imported_bindings.keys(),
-        imported_bindings,
-    )
+    return _classify_python_source(script) is _PythonExecutionClassification.READ_ONLY
