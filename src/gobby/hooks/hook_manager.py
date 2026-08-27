@@ -34,7 +34,7 @@ from gobby.hooks.session_materialize import activate_deferred_session
 from gobby.hooks.session_ref_resolution import (
     resolve_session_refs_in_tool_input,
 )
-from gobby.hooks.session_summary_dispatcher import SessionSummaryDispatcher
+from gobby.hooks.session_summary_wiring import build_session_summary_dispatcher
 from gobby.hooks.session_types import HookSessionManager
 from gobby.sessions.activity import record_session_activity
 from gobby.storage.machines import LocalMachineManager
@@ -137,6 +137,7 @@ class HookManager:
 
         # Unpack all subsystems from factory components
         self._config = components.config
+        self._memory_manager = components.memory_manager
         self._database = components.database
         self._daemon_client = components.daemon_client
         self._transcript_processor = components.transcript_processor
@@ -780,13 +781,15 @@ class HookManager:
         set_handoff_ready: bool = False,
     ) -> None:
         """Fire session summary generation."""
-        dispatcher = SessionSummaryDispatcher(
+        dispatcher = build_session_summary_dispatcher(
             session_manager=self._session_manager,
             llm_service=self._current_llm_service(),
             session_summary_config=getattr(self._config, "session_summary", None),
             database=self._database,
             loop=self._loop,
             logger=self.logger,
+            memory_manager=self._memory_manager,
+            config=self._config,
         )
         dispatcher.dispatch(
             session_id,

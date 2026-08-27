@@ -223,6 +223,7 @@ def setup_internal_registries(
         session_messages_registry = create_session_messages_registry(
             session_manager=session_manager,
             llm_service_resolver=llm_service_resolver,
+            memory_manager_resolver=memory_manager_resolver,
             startup_config=initial_config,
             config_resolver=config_resolver,
             db=db,

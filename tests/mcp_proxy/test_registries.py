@@ -275,6 +275,30 @@ def test_setup_sessions_with_session_manager() -> None:
     assert "gobby-sessions" in registry_names
 
 
+def test_setup_sessions_registry_forwards_memory_manager_resolver() -> None:
+    mock_config = MagicMock()
+    mock_config.get_gobby_tasks_config.return_value.enabled = False
+    memory_manager_resolver = MagicMock(return_value=None)
+
+    with patch(
+        "gobby.mcp_proxy.tools.sessions.create_session_messages_registry"
+    ) as create_sessions_registry:
+        create_sessions_registry.return_value.name = "gobby-sessions"
+        manager = setup_internal_registries(
+            config_resolver=lambda: mock_config,
+            session_manager=MagicMock(),
+            memory_manager_resolver=memory_manager_resolver,
+        )
+
+    assert manager.get_registry("gobby-sessions") is create_sessions_registry.return_value
+    registry_names = [registry.name for registry in manager.get_all_registries()]
+    assert "gobby-sessions" in registry_names
+    assert "gobby-memory" in registry_names
+    assert create_sessions_registry.call_args.kwargs["memory_manager_resolver"] is (
+        memory_manager_resolver
+    )
+
+
 def test_setup_hub_registry_with_active_database(temp_db: Any) -> None:
     """Test hub registry is created from the active runtime database."""
     mock_config = MagicMock()

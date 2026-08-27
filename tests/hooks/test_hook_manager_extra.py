@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.hooks import hook_manager as hook_manager_module
 from gobby.hooks.hook_manager import HookManager
 
 pytestmark = pytest.mark.unit
@@ -33,6 +34,48 @@ class TestReregisterActiveSessions:
 
 
 class TestDispatchSessionSummaries:
+    def test_dispatch_session_summaries_forwards_memory_manager_and_config(self) -> None:
+        memory_manager = object()
+        llm_service = MagicMock()
+        components = MagicMock()
+        components.memory_manager = memory_manager
+        components.config.session_summary = "summary-config"
+        dispatcher = MagicMock()
+        with (
+            patch(
+                "gobby.hooks.hook_manager.HookManagerFactory.create",
+                return_value=components,
+            ),
+            patch(
+                "gobby.hooks.hook_manager.build_session_summary_dispatcher",
+                return_value=dispatcher,
+            ) as build_dispatcher,
+        ):
+            manager = HookManager(llm_service=llm_service)
+            manager._dispatch_session_summaries("session-1", set_handoff_ready=True)
+
+        assert not hasattr(hook_manager_module, "SessionSummaryDispatcher")
+        assert manager._memory_manager is memory_manager
+        assert manager._config is components.config
+        assert manager._session_manager is components.session_manager
+        assert manager._current_llm_service() is llm_service
+        build_dispatcher.assert_called_once_with(
+            session_manager=components.session_manager,
+            llm_service=llm_service,
+            session_summary_config="summary-config",
+            database=components.database,
+            loop=manager._loop,
+            logger=manager.logger,
+            memory_manager=memory_manager,
+            config=components.config,
+        )
+        dispatcher.dispatch.assert_called_once_with(
+            "session-1",
+            _background=False,
+            done_event=None,
+            set_handoff_ready=True,
+        )
+
     @patch("gobby.hooks.session_summary_dispatcher.asyncio.get_running_loop")
     def test_dispatches_on_running_loop(self, mock_get_loop) -> None:
         """Tests that a running loop uses the retained-task scheduler."""

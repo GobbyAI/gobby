@@ -412,9 +412,8 @@ def register_handoff_tools(
             "parent_title": getattr(parent_session, "title", None),
             "parent_status": parent_session.status,
             "linked_child": resolved_child_id or link_child_session_id,
+            "stale": stale,
         }
-        if stale:
-            result["stale"] = True
         return result
 
     @registry.tool(
