@@ -14,10 +14,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.events.wake import CONTINUE_WAKE_MESSAGE, WakeDispatcher
 from gobby.hooks.event_enrichment import EventEnricher
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -625,6 +626,78 @@ class TestSendMessage:
             "exclude_session_id": "s-from",
         }
         mock_message_manager.create_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_explicit_urgent_send_message_dispatches_to_tmux(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, Any],
+    ) -> None:
+        """Explicit include_wakeup links public send_message to tmux delivery."""
+        from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
+
+        session_manager = SessionManager(temp_db)
+        sender = session_manager.register(
+            external_id="urgent-message-sender",
+            machine_id=None,
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        recipient = session_manager.register(
+            external_id="urgent-message-recipient",
+            machine_id=None,
+            source="codex",
+            project_id=sample_project["id"],
+            terminal_context={
+                "tmux_pane": "%9",
+                "tmux_socket_path": "/tmp/tmux-gobby",
+            },
+        )
+        message_manager = InterSessionMessageManager(temp_db)
+        tmux_pane_sender = AsyncMock()
+        wake_dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=message_manager,
+            tmux_pane_sender=tmux_pane_sender,
+        )
+        registry = InternalToolRegistry(
+            name="gobby-agents",
+            description="Agent messaging v2",
+        )
+        add_messaging_tools(
+            registry=registry,
+            message_manager=message_manager,
+            session_manager=session_manager,
+            db=temp_db,
+            wake_dispatcher=wake_dispatcher,
+        )
+
+        result = await registry.call(
+            "send_message",
+            {
+                "from_session": sender.id,
+                "target": "session",
+                "target_id": recipient.id,
+                "content": "urgent update",
+                "include_wakeup": True,
+            },
+        )
+
+        assert result["success"] is True
+        assert result["wake_results"] == [
+            {
+                "session_id": recipient.id,
+                "delivered": True,
+                "method": "tmux_pane",
+            }
+        ]
+        tmux_pane_sender.assert_awaited_once_with(
+            "%9",
+            CONTINUE_WAKE_MESSAGE,
+            "/tmp/tmux-gobby",
+            submit=True,
+            escape_before_submit=True,
+        )
 
     @pytest.mark.asyncio
     async def test_send_message_build_target_uses_context_project_for_coordinator(
