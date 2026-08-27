@@ -396,6 +396,7 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     assert violation_path.parent == expected_parent / "logs"
     temp_path = expected_parent / "tmp"
     assert launch.provider_env[temp_env_name] == str(temp_path)
+    assert "GOBBY_HOOK_SPOOL" not in launch.provider_env
     mux_dir = gobby_home / "runtime" / "srt-sock"
     assert launch.provider_env["GOBBY_SRT_TMPDIR"] == str(mux_dir)
     assert mux_dir.is_dir()
