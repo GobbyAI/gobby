@@ -504,6 +504,20 @@ def test_stage_bundled_content_manifest_writes_manifest(tmp_path: Path) -> None:
     assert list(manifest["files"]) == ["skills/demo/SKILL.md"]
 
 
+def test_load_manifest_module_registers_module_for_runtime_type_resolution(tmp_path: Path) -> None:
+    repo_root = tmp_path
+    (repo_root / "build_backend").mkdir()
+    real_backend = Path(__file__).resolve().parent.parent / "build_backend" / "__init__.py"
+    (repo_root / "build_backend" / "__init__.py").write_text(real_backend.read_text())
+    _copy_manifest_module(repo_root)
+
+    backend = _load_backend(repo_root)
+    manifest_module = backend._load_manifest_module()
+
+    assert sys.modules[manifest_module.__name__] is manifest_module
+    assert callable(manifest_module.write_bundled_content_manifest)
+
+
 def test_committed_bundled_content_manifest_matches_shared_tree() -> None:
     """Committed manifest should stay synchronized with bundled shared content."""
     install_dir = Path(__file__).resolve().parent.parent / "src" / "gobby" / "install"
