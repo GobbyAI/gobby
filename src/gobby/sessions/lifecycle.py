@@ -466,5 +466,5 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
                     config=config,
                     catch_up=True,
                 )
-                if result is None or "error" in result:
+                if result is None or "error" in result or result.get("tail_withheld"):
                     break

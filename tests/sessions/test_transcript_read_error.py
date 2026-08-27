@@ -115,11 +115,14 @@ async def test_transcript_read_error_shared_by_digest_and_summary_readers(
     for partial in (b'{"unfinished":', b'{"split":"\xe2\x82'):
         path.write_bytes(stable_prefix + partial)
 
-        pairs, next_index = await _read_undigested_turns(str(path), "claude", 0)
+        batch = await _read_undigested_turns(str(path), "claude", 0)
         summary_turns = await _read_transcript(path, "claude")
 
-        assert pairs == [("previous", "done")]
-        assert next_index == 1
+        assert batch.pairs == [("previous", "done")]
+        assert batch.next_pair_index == 1
+        assert batch.tail_withheld is True
+        assert batch.tail_pair is not None
+        assert batch.tail_pair.prompt == "current"
         assert [turn["message"]["content"] for turn in summary_turns] == [
             "previous",
             "done",

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from gobby.memory.digest import _extract_digest_pairs
+from gobby.memory.digest import DigestPair, _extract_digest_pairs
 from gobby.sessions.transcript_normalization import normalize_transcript_records
 from gobby.sessions.transcripts.base import (
     NON_MESSAGE_CONTENT_TYPES,
@@ -408,8 +408,12 @@ def test_grok_extract_last_messages_turn_keyed_pairs() -> None:
         {"role": "assistant", "content": "Done."},
     ]
     assert _extract_digest_pairs(parser, turns) == [
-        ("first prompt", "Hello world"),
-        ("second prompt", "Done."),
+        DigestPair(
+            "first prompt",
+            "Hello world",
+            "[tool activity]\n- Bash pwd (no result recorded)",
+        ),
+        DigestPair("second prompt", "Done.", ""),
     ]
 
 
@@ -436,7 +440,7 @@ def test_grok_marathon_turn_sub_segmentation() -> None:
     ]
     assert [len(msg["content"]) for msg in messages[1:]] == [4000]
     assert _extract_digest_pairs(parser, turns) == [
-        ("marathon prompt", seg1_a + seg1_b),
+        DigestPair("marathon prompt", seg1_a + seg1_b, ""),
     ]
 
 
@@ -500,8 +504,8 @@ def test_grok_mid_turn_injection_anchoring() -> None:
         {"role": "assistant", "content": "acknowledged"},
     ]
     assert _extract_digest_pairs(parser, turns) == [
-        ("do the work", "started more"),
-        (injection, "acknowledged"),
+        DigestPair("do the work", "started more", ""),
+        DigestPair(injection, "acknowledged", ""),
     ]
 
 
@@ -537,9 +541,9 @@ def test_grok_open_and_cancelled_turn_pairs() -> None:
         {"role": "assistant", "content": ""},
     ]
     assert _extract_digest_pairs(parser, turns) == [
-        ("cancelled prompt", ""),
-        ("finished prompt", "all done"),
-        ("in flight", "partial"),
+        DigestPair("cancelled prompt", "", ""),
+        DigestPair("finished prompt", "all done", ""),
+        DigestPair("in flight", "partial", ""),
     ]
 
 

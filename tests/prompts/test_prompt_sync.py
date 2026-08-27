@@ -92,6 +92,15 @@ class TestSyncBundledPrompts:
         for record in records:
             assert record.scope == "bundled"
 
+    def test_turn_record_sync_carries_ledger_instruction(self, db: HubDatabase) -> None:
+        sync_bundled_prompts(db)
+
+        record = LocalPromptManager(db).get_bundled("memory/turn_record")
+
+        assert record is not None
+        assert "[tool activity]" in record.content
+        assert set(record.variables or {}) == {"prompt_text", "response_text"}
+
     def test_known_templates_synced(self, db) -> None:
         """Test that known bundled templates are synced."""
         sync_bundled_prompts(db)

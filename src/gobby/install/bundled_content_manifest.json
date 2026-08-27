@@ -39,7 +39,7 @@
     "prompts/memory/dream.md": "7167cd192d0722c896a5c89d870fac37d903a7d6f3154bd2cc8fa517acb7888c",
     "prompts/memory/extract_entities.md": "81098e10d6a27973549c313685ffd44961138dddd96d45cd2e57169be65a2910",
     "prompts/memory/extract_relations.md": "cd6a1562b4e2b2f1b8b965838b4f47cb0b95e1ef54009b75866c2466365419b8",
-    "prompts/memory/turn_record.md": "cd4ce936d312a0a1c54578871e7c39109064a1def89c209bf17ab0c27e76c6f7",
+    "prompts/memory/turn_record.md": "4db04783c575e31f546c801a7079a0b5dfe19d8884807b2756ae93dc7c4d7499",
     "prompts/merge/resolve_full.md": "f774c00b50c6b0267a73e81e30f68f6113f4f00d88aa775ea3b8f3f6066db9fa",
     "prompts/merge/resolve_hunks.md": "2464140b767c5136b1a5b52d972ae3ae466a810d218ec64f71210883d93f7337",
     "prompts/research/step.md": "d295af7cf200365537b4f1bf43d6b581cefa7143c24897fa08b20bed49eae60e",

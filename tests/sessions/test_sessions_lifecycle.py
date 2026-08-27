@@ -2166,6 +2166,21 @@ class TestDigestBacklogSweep:
         assert build.await_count == 1
 
     @pytest.mark.asyncio
+    async def test_sweep_stops_session_on_tail_withheld(
+        self,
+        mock_db: MagicMock,
+        mock_config: SessionLifecycleConfig,
+    ) -> None:
+        swept = self._armed_manager(mock_db, mock_config)
+        mock_db.fetchall.return_value = [{"id": "session-a"}]
+
+        build = AsyncMock(return_value={"turn_num": 1, "tail_withheld": True})
+        with patch("gobby.memory.digest.build_turn_and_digest", build):
+            await swept._sweep_digest_backlogs(swept._capture_active())
+
+        assert build.await_count == 1
+
+    @pytest.mark.asyncio
     async def test_sweep_skips_without_memory_services(
         self,
         mock_db: MagicMock,

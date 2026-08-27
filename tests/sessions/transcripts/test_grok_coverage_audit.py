@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from gobby.memory.digest import _extract_digest_pairs
+from gobby.memory.digest import DigestPair, _extract_digest_pairs
 from gobby.memory.synthetic_prompts import synthetic_body_reason
 from gobby.sessions.transcripts.grok import (
     GrokTranscriptParser,
@@ -59,7 +59,7 @@ class UserAnchoredCoverage:
     """Coverage of real user prompts by digest-pair anchors."""
 
     real_prompts: tuple[str, ...]
-    pairs: tuple[tuple[str, str], ...]
+    pairs: tuple[DigestPair, ...]
     anchored: int
     complete_responses: int
     coverage: float
@@ -73,11 +73,11 @@ def compute_user_anchored_coverage(
     """Recompute the epic user-anchored coverage metric for one transcript."""
     real_prompts = tuple(_real_user_prompts(records))
     pairs = tuple(_extract_digest_pairs(parser, records))
-    pair_prompt_counts = Counter(prompt for prompt, _response in pairs)
+    pair_prompt_counts = Counter(pair.prompt for pair in pairs)
     real_set = set(real_prompts)
     anchored = sum(1 for prompt in real_prompts if pair_prompt_counts[prompt] > 0)
-    anchored_pairs = [(prompt, response) for prompt, response in pairs if prompt in real_set]
-    complete_responses = sum(1 for _prompt, response in anchored_pairs if response.strip())
+    anchored_pairs = [pair for pair in pairs if pair.prompt in real_set]
+    complete_responses = sum(1 for pair in anchored_pairs if pair.response.strip())
     if not real_prompts:
         coverage = 1.0 if anchored == 0 else 0.0
     else:
@@ -126,7 +126,7 @@ def test_user_anchored_coverage_on_audited_shapes(
         assert metric.completeness == 1.0
     else:
         assert metric.coverage == 1.0, name
-        pair_prompt_counts = Counter(prompt for prompt, _response in metric.pairs)
+        pair_prompt_counts = Counter(pair.prompt for pair in metric.pairs)
         for prompt in metric.real_prompts:
             assert pair_prompt_counts[prompt] == 1, name
     assert metric.completeness == expected_completeness, name

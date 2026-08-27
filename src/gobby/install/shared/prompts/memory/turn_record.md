@@ -26,6 +26,14 @@ that starts with `/` or `$`. Use plain words only: no dates, timestamps, session
 or task refs, provider names, emoji, tree glyphs, bullets, or decorative
 punctuation.
 
+The Agent Response may end with a `[tool activity]` ledger: one line per tool call in
+order, with the primary argument (file path, command, query, MCP server:tool and task
+ref) and ` ! failed:` annotations. Treat that ledger as the authoritative record of tools
+used, files created or modified, commands run, commits, and task operations; narration
+that contradicts it is wrong. A line with no annotation completed successfully — a bare
+test command line means those tests ran and passed; ` ! failed:` means the call failed;
+`(no result recorded)` means the call was still in flight when the turn ended.
+
 `turn_markdown` must cover:
 - What the user asked or requested
 - What the agent found, decided, or accomplished

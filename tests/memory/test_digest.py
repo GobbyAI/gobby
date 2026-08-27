@@ -20,7 +20,10 @@ from gobby.agents.watchdog.codex import CodexTranscriptWatchdogReader
 from gobby.config.sessions import DigestConfig
 from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.digest import (
+    DigestPair,
+    UndigestedBatch,
     _build_turn_record_prompt,
+    _extract_digest_pairs,
     _get_next_turn_number,
     _read_last_turn_from_transcript,
     _read_undigested_turns,
@@ -34,6 +37,47 @@ from gobby.memory.title_heuristics import (
     is_template_placeholder,
     normalize_title_candidate,
 )
+from gobby.sessions.transcripts.grok import GrokTranscriptParser
+
+
+def test_extract_digest_pairs_includes_tool_activity() -> None:
+    fixture = (
+        Path(__file__).parents[1]
+        / "sessions"
+        / "transcripts"
+        / "fixtures"
+        / "grok_audit"
+        / "10711"
+        / "updates.jsonl"
+    )
+    turns = [json.loads(line) for line in fixture.read_text(encoding="utf-8").splitlines()]
+
+    activity = "\n".join(
+        pair.activity for pair in _extract_digest_pairs(GrokTranscriptParser(), turns)
+    )
+
+    assert "search_replace" in activity
+    assert "mcp gobby-tasks:claim_task" in activity
+
+
+def test_turn_record_prompts_carry_tool_activity_instruction() -> None:
+    bundled = (
+        Path(__file__).parents[2]
+        / "src"
+        / "gobby"
+        / "install"
+        / "shared"
+        / "prompts"
+        / "memory"
+        / "turn_record.md"
+    ).read_text(encoding="utf-8")
+    inline = _build_turn_record_prompt("Prompt", "Response")
+
+    for prompt in (bundled, inline):
+        normalized = " ".join(prompt.split())
+        assert "[tool activity]" in normalized
+        assert "narration that contradicts it is wrong" in normalized
+        assert "(no result recorded)" in normalized
 
 
 async def _assert_event_loop_progresses[T](
@@ -1622,7 +1666,9 @@ class TestReadUndigestedTurns:
     @pytest.mark.asyncio
     async def test_nonexistent_file(self) -> None:
         """Returns empty list for missing transcript."""
-        result, next_index = await _read_undigested_turns("/nonexistent/path.jsonl", "claude", 0)
+        batch = await _read_undigested_turns("/nonexistent/path.jsonl", "claude", 0)
+        result = batch.pairs
+        next_index = batch.next_pair_index
         assert result == []
         assert next_index == 0
 
@@ -1637,7 +1683,9 @@ class TestReadUndigestedTurns:
         self._write_claude_transcript(transcript, [("prompt", "response")])
 
         with caplog.at_level(logging.WARNING):
-            result, next_index = await _read_undigested_turns(str(transcript), source, 0)
+            batch = await _read_undigested_turns(str(transcript), source, 0)
+        result = batch.pairs
+        next_index = batch.next_pair_index
 
         assert result == []
         assert next_index == 0
@@ -1649,7 +1697,9 @@ class TestReadUndigestedTurns:
         transcript = tmp_path / "transcript.jsonl"
         self._write_claude_transcript(transcript, [("Hello", "Hi there")])
 
-        result, next_index = await _read_undigested_turns(str(transcript), "claude", 0)
+        batch = await _read_undigested_turns(str(transcript), "claude", 0)
+        result = batch.pairs
+        next_index = batch.next_pair_index
         assert len(result) == 1
         assert result[0][0] == "Hello"
         assert result[0][1] == "Hi there"
@@ -1668,7 +1718,9 @@ class TestReadUndigestedTurns:
             ],
         )
 
-        result, next_index = await _read_undigested_turns(str(transcript), "claude", 1)
+        batch = await _read_undigested_turns(str(transcript), "claude", 1)
+        result = batch.pairs
+        next_index = batch.next_pair_index
         assert len(result) == 2
         assert result[0][0] == "Second question"
         assert result[0][1] == "Second answer"
@@ -1682,9 +1734,9 @@ class TestReadUndigestedTurns:
         exchanges = [(f"Question {number}", f"Answer {number}") for number in range(1, 52)]
         self._write_claude_transcript(transcript, exchanges)
 
-        result, next_index = await _read_undigested_turns(
-            str(transcript), "claude", 50, num_pairs=50
-        )
+        batch = await _read_undigested_turns(str(transcript), "claude", 50, num_pairs=50)
+        result = batch.pairs
+        next_index = batch.next_pair_index
 
         assert result == [("Question 51", "Answer 51")]
         assert next_index == 51
@@ -1702,7 +1754,8 @@ class TestReadUndigestedTurns:
             ],
         )
 
-        result, _ = await _read_undigested_turns(str(transcript), "claude", 0)
+        batch = await _read_undigested_turns(str(transcript), "claude", 0)
+        result = batch.pairs
         assert len(result) == 2
         assert result[0][0] == "Real question"
         assert result[1][0] == "Another question"
@@ -1765,7 +1818,8 @@ class TestReadUndigestedTurns:
                 + "\n"
             )
 
-        result, _ = await _read_undigested_turns(str(transcript), "claude", 0)
+        batch = await _read_undigested_turns(str(transcript), "claude", 0)
+        result = batch.pairs
         assert len(result) == 1
         assert result[0][0] == "New question"
         assert result[0][1] == "New answer"
@@ -1803,10 +1857,12 @@ class TestReadUndigestedTurns:
             for record in records:
                 transcript_file.write(json.dumps(record) + "\n")
 
-        result, next_index = await _read_undigested_turns(str(transcript), "claude", 1)
-        repeated, repeated_index = await _read_undigested_turns(
-            str(transcript), "claude", next_index
-        )
+        batch = await _read_undigested_turns(str(transcript), "claude", 1)
+        result = batch.pairs
+        next_index = batch.next_pair_index
+        repeated_batch = await _read_undigested_turns(str(transcript), "claude", next_index)
+        repeated = repeated_batch.pairs
+        repeated_index = repeated_batch.next_pair_index
         with open(transcript, "a") as transcript_file:
             for record in (
                 {
@@ -1822,7 +1878,9 @@ class TestReadUndigestedTurns:
                 },
             ):
                 transcript_file.write(json.dumps(record) + "\n")
-        later, later_index = await _read_undigested_turns(str(transcript), "claude", repeated_index)
+        later_batch = await _read_undigested_turns(str(transcript), "claude", repeated_index)
+        later = later_batch.pairs
+        later_index = later_batch.next_pair_index
 
         assert result == [("New question", "New answer")]
         assert next_index == 2
@@ -1875,10 +1933,12 @@ class TestReadUndigestedTurns:
             ):
                 transcript_file.write(json.dumps(record) + "\n")
 
-        result, next_index = await _read_undigested_turns(str(transcript), "claude", 1)
-        repeated, repeated_index = await _read_undigested_turns(
-            str(transcript), "claude", next_index
-        )
+        batch = await _read_undigested_turns(str(transcript), "claude", 1)
+        result = batch.pairs
+        next_index = batch.next_pair_index
+        repeated_batch = await _read_undigested_turns(str(transcript), "claude", next_index)
+        repeated = repeated_batch.pairs
+        repeated_index = repeated_batch.next_pair_index
 
         assert result == [("New question", "New answer")]
         assert next_index == 2
@@ -1925,7 +1985,8 @@ class TestReadUndigestedTurns:
                 + "\n"
             )
 
-        result, _ = await _read_undigested_turns(str(transcript), "claude", 0)
+        batch = await _read_undigested_turns(str(transcript), "claude", 0)
+        result = batch.pairs
         assert len(result) == 2
         assert result[0] == ("Interrupted question", "")
         assert result[1] == ("Follow-up question", "Final answer")
@@ -1935,18 +1996,22 @@ class TestReadUndigestedTurns:
         transcript = tmp_path / "codex.jsonl"
         _write_interrupted_codex_transcript(transcript)
 
-        result, next_index = await _read_undigested_turns(
+        batch = await _read_undigested_turns(
             str(transcript),
             "codex",
             0,
             catch_up=True,
         )
-        repeated, repeated_index = await _read_undigested_turns(
+        result = batch.pairs
+        next_index = batch.next_pair_index
+        repeated_batch = await _read_undigested_turns(
             str(transcript),
             "codex",
             next_index,
             catch_up=True,
         )
+        repeated = repeated_batch.pairs
+        repeated_index = repeated_batch.next_pair_index
 
         assert result == [("Investigate the title", "The title is still provisional.")]
         assert next_index == 1
@@ -1964,15 +2029,21 @@ class TestReadUndigestedTurns:
             [("Q1", "A1"), ("Q2", "A2"), ("Q3", "A3"), ("Active prompt", None)],
         )
 
-        first, first_index = await _read_undigested_turns(
+        first_batch = await _read_undigested_turns(
             str(transcript), "claude", 0, num_pairs=2, catch_up=True
         )
-        second, second_index = await _read_undigested_turns(
+        first = first_batch.pairs
+        first_index = first_batch.next_pair_index
+        second_batch = await _read_undigested_turns(
             str(transcript), "claude", first_index, num_pairs=2, catch_up=True
         )
-        drained, drained_index = await _read_undigested_turns(
+        second = second_batch.pairs
+        second_index = second_batch.next_pair_index
+        drained_batch = await _read_undigested_turns(
             str(transcript), "claude", second_index, num_pairs=2, catch_up=True
         )
+        drained = drained_batch.pairs
+        drained_index = drained_batch.next_pair_index
 
         assert first == [("Q1", "A1"), ("Q2", "A2")]
         assert first_index == 2
@@ -1995,7 +2066,9 @@ class TestReadUndigestedTurns:
             ],
         )
 
-        result, next_index = await _read_undigested_turns(str(transcript), "claude", 0)
+        batch = await _read_undigested_turns(str(transcript), "claude", 0)
+        result = batch.pairs
+        next_index = batch.next_pair_index
 
         assert result == [
             ("Real question", "Real answer"),
@@ -2048,9 +2121,13 @@ class TestReadUndigestedTurns:
             ):
                 f.write(json.dumps(turn) + "\n")
 
-        result, _ = await _read_undigested_turns(str(transcript), "claude", 0)
+        batch = await _read_undigested_turns(str(transcript), "claude", 0)
+        result = batch.pairs
 
-        assert result == [("Run the command", "I will use uv instead.")]
+        assert len(result) == 1
+        assert result[0][0] == "Run the command"
+        assert result[0][1].startswith("I will use uv instead.\n\n[tool activity]\n")
+        assert "- Bash python script.py (no result recorded)" in result[0][1]
 
     @pytest.mark.asyncio
     async def test_cursor_past_new_segment_resets_to_segment_start(self, tmp_path) -> None:
@@ -2061,7 +2138,9 @@ class TestReadUndigestedTurns:
             [("Q1", "A1"), ("Q2", "A2")],
         )
 
-        result, next_index = await _read_undigested_turns(str(transcript), "claude", 5)
+        batch = await _read_undigested_turns(str(transcript), "claude", 5)
+        result = batch.pairs
+        next_index = batch.next_pair_index
         assert result == [("Q1", "A1"), ("Q2", "A2")]
         assert next_index == 2
 
@@ -2084,7 +2163,8 @@ class TestReadUndigestedTurns:
             ],
         )
 
-        result, _ = await _read_undigested_turns(str(transcript), "claude", 0)
+        batch = await _read_undigested_turns(str(transcript), "claude", 0)
+        result = batch.pairs
 
         assert result == [("Real follow-up", "Real response")]
 
@@ -2108,6 +2188,27 @@ class TestReadUndigestedTurns:
         result = await _read_last_turn_from_transcript(str(transcript), "claude")
 
         assert result == ("Question", "Answer")
+
+    @pytest.mark.asyncio
+    async def test_partial_transcript_tail_withholds_trailing_pair(self, tmp_path: Path) -> None:
+        transcript = tmp_path / "transcript.jsonl"
+        self._write_claude_transcript(
+            transcript,
+            [
+                ("Complete prompt", "Complete response"),
+                ("Trailing prompt", None),
+            ],
+        )
+        with transcript.open("ab") as stream:
+            stream.write(b'{"type":"assistant"')
+
+        batch = await _read_undigested_turns(str(transcript), "claude", 0)
+
+        assert batch.pairs == [("Complete prompt", "Complete response")]
+        assert batch.next_pair_index == 1
+        assert batch.tail_withheld is True
+        assert batch.tail_pair is not None
+        assert batch.tail_pair.prompt == "Trailing prompt"
 
 
 class TestBuildTurnAndDigestCatchUp:
@@ -2227,9 +2328,9 @@ class TestBuildTurnAndDigestCatchUp:
         assert "### Turn 2" in digest_content
         persisted_index = sm.persist_digest_state.call_args.kwargs["last_digested_pair_index"]
         assert persisted_index == 3
-        remaining, next_index = await _read_undigested_turns(
-            str(transcript), "claude", persisted_index
-        )
+        remaining_batch = await _read_undigested_turns(str(transcript), "claude", persisted_index)
+        remaining = remaining_batch.pairs
+        next_index = remaining_batch.next_pair_index
         assert remaining == []
         assert next_index == 3
 
@@ -2368,3 +2469,423 @@ class TestBuildTurnAndDigestCatchUp:
 
         assert result is None
         mock_llm_service.call_json_feature.assert_not_called()
+
+
+def _digest_dependencies(
+    *, transcript_path: str | None = "transcript.jsonl"
+) -> tuple[
+    MagicMock,
+    MagicMock,
+    MagicMock,
+    MagicMock,
+]:
+    memory_manager = MagicMock()
+    memory_manager.config.enabled = True
+    session_manager = MagicMock()
+    session = MagicMock()
+    session.id = "session-tail"
+    session.transcript_path = transcript_path
+    session.source = "claude"
+    session.digest_markdown = None
+    session.summary_digest_turn_count = 0
+    session.summary_markdown = "## Current State\nSnapshot"
+    session.last_digested_pair_index = 0
+    session.last_digest_input_hash = None
+    session.title = None
+    session.title_source = None
+    session.seq_num = 1
+    session.terminal_context = None
+    session_manager.get.return_value = session
+    session_manager.persist_digest_state.return_value = session
+    llm_service = MagicMock()
+    llm_service.call_json_feature = AsyncMock(
+        return_value=_turn_record_payload("Recorded the complete prefix.", "Tail Handling")
+    )
+    return memory_manager, session_manager, session, llm_service
+
+
+@pytest.mark.asyncio
+async def test_tool_only_turn_ledger_stays_on_current_pair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transcript = tmp_path / "tool-only.jsonl"
+    transcript.write_text("{}\n", encoding="utf-8")
+
+    class ToolOnlyParser:
+        def extract_turns_since_clear(
+            self, turns: list[dict[str, Any]], max_turns: int | None = None
+        ) -> list[dict[str, Any]]:
+            return turns
+
+        def extract_last_messages(
+            self,
+            turns: list[dict[str, Any]],
+            num_pairs: int,
+            *,
+            include_tool_activity: bool = False,
+        ) -> list[dict[str, Any]]:
+            assert include_tool_activity is True
+            return [
+                {"role": "user", "content": "First prompt"},
+                {"role": "assistant", "content": "First response"},
+                {
+                    "role": "user",
+                    "content": "Run checks",
+                    "tool_activity": "[tool activity]\n- Bash uv run pytest tests/unit -q",
+                },
+                {"role": "assistant", "content": ""},
+            ]
+
+    monkeypatch.setattr(
+        "gobby.memory.digest._parser_for_transcript",
+        lambda _source, _path: ToolOnlyParser(),
+    )
+
+    batch = await _read_undigested_turns(str(transcript), "claude", 1)
+    catch_up = await _read_undigested_turns(str(transcript), "claude", 1, catch_up=True)
+
+    assert batch.pairs == [("Run checks", "[tool activity]\n- Bash uv run pytest tests/unit -q")]
+    assert batch.next_pair_index == 2
+    assert batch.tail_pair == DigestPair(
+        "Run checks",
+        "",
+        "[tool activity]\n- Bash uv run pytest tests/unit -q",
+    )
+    assert catch_up.pairs == []
+    assert catch_up.next_pair_index == 1
+
+
+@pytest.mark.asyncio
+async def test_completed_tail_record_reaches_ledger_after_withhold(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transcript = tmp_path / "completed-tail.jsonl"
+
+    class CompletingParser:
+        def extract_turns_since_clear(
+            self, turns: list[dict[str, Any]], max_turns: int | None = None
+        ) -> list[dict[str, Any]]:
+            return turns
+
+        def extract_last_messages(
+            self,
+            turns: list[dict[str, Any]],
+            num_pairs: int,
+            *,
+            include_tool_activity: bool = False,
+        ) -> list[dict[str, Any]]:
+            complete = any(turn.get("complete") is True for turn in turns)
+            suffix = "" if complete else " (no result recorded)"
+            return [
+                {"role": "user", "content": "First"},
+                {"role": "assistant", "content": "Done"},
+                {
+                    "role": "user",
+                    "content": "Run command",
+                    "tool_activity": f"[tool activity]\n- Bash uv run pytest{suffix}",
+                },
+                {"role": "assistant", "content": ""},
+            ]
+
+    monkeypatch.setattr(
+        "gobby.memory.digest._parser_for_transcript",
+        lambda _source, _path: CompletingParser(),
+    )
+    transcript.write_bytes(b'{}\n{}\n{}\n{"complete"')
+
+    withheld = await _read_undigested_turns(str(transcript), "claude", 0)
+    transcript.write_text('{}\n{}\n{}\n{"complete": true}\n', encoding="utf-8")
+    completed = await _read_undigested_turns(str(transcript), "claude", withheld.next_pair_index)
+
+    assert withheld.next_pair_index == 1
+    assert withheld.tail_withheld is True
+    assert withheld.tail_pair is not None
+    assert "(no result recorded)" in withheld.tail_pair.activity
+    assert completed.next_pair_index == 2
+    assert completed.tail_withheld is False
+    assert completed.pairs == [("Run command", "[tool activity]\n- Bash uv run pytest")]
+
+
+@pytest.mark.asyncio
+async def test_tail_withheld_propagates_to_public_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    memory_manager, session_manager, _session, llm_service = _digest_dependencies()
+    withheld_pair = DigestPair(
+        "Trailing prompt",
+        "partial narration",
+        "[tool activity]\n- Bash uv run pytest (no result recorded)",
+    )
+    read = AsyncMock(return_value=UndigestedBatch([], 0, True, withheld_pair))
+    monkeypatch.setattr("gobby.memory.digest._read_undigested_turns", read)
+    capture: dict[str, Any] = {}
+
+    only_tail = await build_turn_and_digest(
+        memory_manager,
+        session_manager,
+        "session-tail",
+        llm_service=llm_service,
+        config=_digest_config(),
+        withheld_capture=capture,
+    )
+
+    assert only_tail == {"tail_withheld": True, "withheld_pair": withheld_pair._asdict()}
+    assert capture == only_tail
+    llm_service.call_json_feature.assert_not_awaited()
+    session_manager.persist_digest_state.assert_not_called()
+
+    read.return_value = UndigestedBatch(
+        [("Complete prompt", "Complete response")],
+        1,
+        True,
+        withheld_pair,
+    )
+    llm_service.call_json_feature.side_effect = RuntimeError("provider unavailable")
+    failed = await build_turn_and_digest(
+        memory_manager,
+        session_manager,
+        "session-tail",
+        llm_service=llm_service,
+        config=_digest_config(),
+        withheld_capture=capture,
+    )
+
+    assert failed is not None
+    assert failed["error"] == "provider unavailable"
+    assert failed["tail_withheld"] is True
+    assert failed["withheld_pair"] == withheld_pair._asdict()
+    assert capture["withheld_pair"] == withheld_pair._asdict()
+
+    complete_pair = DigestPair(
+        "Complete prompt",
+        "Complete response",
+        "[tool activity]\n- Bash uv run pytest",
+    )
+    read.return_value = UndigestedBatch(
+        [(complete_pair.prompt, f"{complete_pair.response}\n\n{complete_pair.activity}")],
+        1,
+        False,
+        complete_pair,
+    )
+    completed_failure = await build_turn_and_digest(
+        memory_manager,
+        session_manager,
+        "session-tail",
+        llm_service=llm_service,
+        config=_digest_config(),
+        withheld_capture=capture,
+    )
+
+    assert completed_failure is not None
+    assert "tail_withheld" not in completed_failure
+    assert capture == {
+        "tail_withheld": False,
+        "withheld_pair": complete_pair._asdict(),
+    }
+
+    read.side_effect = RuntimeError("read failed before resolution")
+    before_read_failure = dict(capture)
+    read_failure = await build_turn_and_digest(
+        memory_manager,
+        session_manager,
+        "session-tail",
+        llm_service=llm_service,
+        config=_digest_config(),
+        withheld_capture=capture,
+    )
+    assert read_failure == {"error": "read failed before resolution"}
+    assert capture == before_read_failure
+
+
+@pytest.mark.asyncio
+async def test_cancelled_digest_holds_lock_through_persistence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    memory_manager, session_manager, session, llm_service = _digest_dependencies()
+    started = threading.Event()
+    release = threading.Event()
+    barrier_waiting = asyncio.Event()
+    original_wait = asyncio.wait
+
+    async def observed_wait(
+        futures: set[asyncio.Future[Any]],
+    ) -> tuple[set[asyncio.Future[Any]], set[asyncio.Future[Any]]]:
+        barrier_waiting.set()
+        return await original_wait(futures)
+
+    async def read_batch(
+        _path: str,
+        _source: str,
+        digested_pair_index: int,
+        num_pairs: int = 50,
+        *,
+        catch_up: bool = False,
+    ) -> UndigestedBatch:
+        if digested_pair_index:
+            return UndigestedBatch([], digested_pair_index, False, None)
+        pair = DigestPair("Same prompt", "Same response", "")
+        return UndigestedBatch([("Same prompt", "Same response")], 1, False, pair)
+
+    monkeypatch.setattr("gobby.memory.digest._read_undigested_turns", read_batch)
+    monkeypatch.setattr("gobby.memory.digest.asyncio.wait", observed_wait)
+
+    def persist(_session_id: str, **values: Any) -> MagicMock:
+        started.set()
+        release.wait(timeout=2)
+        session.last_digest_input_hash = values["last_digest_input_hash"]
+        session.last_digested_pair_index = values["last_digested_pair_index"]
+        session.digest_markdown = values["digest_markdown"]
+        return session
+
+    session_manager.persist_digest_state.side_effect = persist
+    first = asyncio.create_task(
+        build_turn_and_digest(
+            memory_manager,
+            session_manager,
+            "session-tail",
+            llm_service=llm_service,
+            config=_digest_config(),
+        )
+    )
+    assert await asyncio.to_thread(started.wait, 1)
+    first.cancel()
+    await asyncio.wait_for(barrier_waiting.wait(), timeout=1)
+    second = asyncio.create_task(
+        build_turn_and_digest(
+            memory_manager,
+            session_manager,
+            "session-tail",
+            llm_service=llm_service,
+            config=_digest_config(),
+        )
+    )
+    assert not first.done()
+    assert not second.done()
+
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    assert await second is None
+    assert session.last_digested_pair_index == 1
+    assert llm_service.call_json_feature.await_count == 1
+
+    session.last_digested_pair_index = 0
+    session.last_digest_input_hash = None
+    session.digest_markdown = None
+    session_manager.persist_digest_state.reset_mock()
+    llm_started = asyncio.Event()
+
+    async def slow_llm(*_args: Any, **_kwargs: Any) -> dict[str, str]:
+        llm_started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    llm_service.call_json_feature.side_effect = slow_llm
+    cancelled_before_persist = asyncio.create_task(
+        build_turn_and_digest(
+            memory_manager,
+            session_manager,
+            "session-tail",
+            llm_service=llm_service,
+            config=_digest_config(),
+        )
+    )
+    await asyncio.wait_for(llm_started.wait(), timeout=1)
+    cancelled_before_persist.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await cancelled_before_persist
+    session_manager.persist_digest_state.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_withheld_tail_suppresses_summary_refresh_scheduling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    memory_manager, session_manager, session, llm_service = _digest_dependencies()
+    tail = DigestPair("Tail", "", "[tool activity]\n- Read file.py")
+    read = AsyncMock(
+        side_effect=[
+            UndigestedBatch([("Prefix", "Done")], 1, True, tail),
+            UndigestedBatch([("Tail", tail.activity)], 2, False, tail),
+        ]
+    )
+    monkeypatch.setattr("gobby.memory.digest._read_undigested_turns", read)
+    config = _DigestTestConfig(digest=_digest_config().digest, session_summary=object())
+
+    await build_turn_and_digest(
+        memory_manager,
+        session_manager,
+        "session-tail",
+        llm_service=llm_service,
+        config=config,
+    )
+    first_names = [
+        call.kwargs.get("name") for call in memory_manager.schedule_background_task.call_args_list
+    ]
+    assert "session-summary-refresh-session-tail" not in first_names
+
+    session.last_digest_input_hash = None
+    await build_turn_and_digest(
+        memory_manager,
+        session_manager,
+        "session-tail",
+        llm_service=llm_service,
+        config=config,
+    )
+    all_names = [
+        call.kwargs.get("name") for call in memory_manager.schedule_background_task.call_args_list
+    ]
+    assert "session-summary-refresh-session-tail" in all_names
+
+
+@pytest.mark.asyncio
+async def test_repeated_cancellation_holds_lock_until_persistence_settles(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    memory_manager, session_manager, _session, llm_service = _digest_dependencies(
+        transcript_path=None
+    )
+    started = threading.Event()
+    release = threading.Event()
+    barrier_waiting = asyncio.Event()
+    original_wait = asyncio.wait
+
+    async def observed_wait(
+        futures: set[asyncio.Future[Any]],
+    ) -> tuple[set[asyncio.Future[Any]], set[asyncio.Future[Any]]]:
+        barrier_waiting.set()
+        return await original_wait(futures)
+
+    monkeypatch.setattr("gobby.memory.digest.asyncio.wait", observed_wait)
+
+    def failing_persist(_session_id: str, **_values: Any) -> None:
+        started.set()
+        release.wait(timeout=2)
+        raise RuntimeError("write failed")
+
+    session_manager.persist_digest_state.side_effect = failing_persist
+    task = asyncio.create_task(
+        build_turn_and_digest(
+            memory_manager,
+            session_manager,
+            "session-tail",
+            prompt_text="Persist once",
+            llm_service=llm_service,
+            config=_digest_config(),
+        )
+    )
+    assert await asyncio.to_thread(started.wait, 1)
+    task.cancel()
+    await asyncio.wait_for(barrier_waiting.wait(), timeout=1)
+    task.cancel()
+    assert not task.done()
+
+    with caplog.at_level(logging.WARNING):
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    assert "digest persistence failed for session-tail during cancellation" in caplog.text
