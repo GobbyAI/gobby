@@ -2415,6 +2415,11 @@ def test_tool_activity_flag_preserves_pair_shape(source: str, fixture_path: Path
         assert {key: value for key, value in enriched.items() if key != "tool_activity"} == original
         if "tool_activity" in enriched:
             assert enriched["role"] == "user"
+    if source == "grok" and fixture_path.parent.name == "10711":
+        ledgers = "\n".join(
+            str(message["tool_activity"]) for message in with_ledger if "tool_activity" in message
+        )
+        assert "- search_replace /repo/widget.py" in ledgers
 
     fixture_root = Path(__file__).parent / "transcripts" / "fixtures"
     fixture_parsers: list[tuple[TranscriptParser, Path]] = [

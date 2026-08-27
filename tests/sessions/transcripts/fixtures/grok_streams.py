@@ -28,6 +28,7 @@ class ToolSpec:
     status: str = "completed"
     output: str = "ok"
     use_fallback_keys: bool = False
+    malformed_primary_keys: bool = False
 
 
 @dataclass(frozen=True)
@@ -150,14 +151,15 @@ def _emit_tools(
         call_id = f"{session_id}-t{turn_i}-{tool_i}"
         name_key = "name" if tool.use_fallback_keys else "title"
         input_key = "input" if tool.use_fallback_keys else "rawInput"
-        emit(
-            {
-                "sessionUpdate": "tool_call",
-                name_key: tool.name,
-                "toolCallId": call_id,
-                input_key: tool.tool_input,
-            }
-        )
+        call: dict[str, Any] = {
+            "sessionUpdate": "tool_call",
+            name_key: tool.name,
+            "toolCallId": call_id,
+            input_key: tool.tool_input,
+        }
+        if tool.malformed_primary_keys:
+            call.update({"title": 7, "rawInput": "invalid"})
+        emit(call)
         emit(
             {
                 "sessionUpdate": "tool_call_update",
@@ -333,6 +335,7 @@ def _session_10711_turns() -> tuple[TurnSpec, ...]:
                             "new_string": "new",
                         },
                         use_fallback_keys=True,
+                        malformed_primary_keys=True,
                     ),
                     ToolSpec(
                         "use_tool",
