@@ -8,6 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Literal
 
+import gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization as close_finalization
 from gobby.install.manifest import check_linked_committed_bundled_manifest
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.task_repo_paths import (
@@ -283,6 +284,30 @@ async def _evaluate_close(
         )
     evaluation.pass_gate(6, "changes_summary_present", "Changes summary is present.")
 
+    claim_started_at = close_finalization.claim_window_start(
+        ctx,
+        task=task,
+        resolved_id=resolved_id,
+    )
+    commit_shas, commit_error = await asyncio.to_thread(
+        resolve_close_commit_shas,
+        ctx.task_manager,
+        task=task,
+        task_id=resolved_id,
+        claim_started_at=claim_started_at,
+        commit_sha=commit_sha,
+        cwd=repo_path,
+        project_name=ctx.get_current_project_name(),
+    )
+    evaluation.commit_shas = commit_shas
+    if commit_error:
+        return evaluation.fail(
+            7,
+            "linked_commits",
+            str(commit_error["error"]),
+            str(commit_error["message"]),
+        )
+
     try:
         attribution = await _capture_attribution(
             ctx,
@@ -290,7 +315,7 @@ async def _evaluate_close(
             task_id=resolved_id,
             resolved_session_id=resolved_session_id,
             repo_path=repo_path,
-            prospective_commit_shas=(commit_sha,) if commit_sha else (),
+            prospective_commit_shas=tuple(commit_shas),
         )
     except (KeyError, TypeError, ValueError) as exc:
         return evaluation.fail(
@@ -315,26 +340,6 @@ async def _evaluate_close(
         children_state=children_state,
         attribution=attribution,
     )
-    # Off the loop, for the same reason as the skip_leaf_checks branch above: a
-    # close resolves several shas and each one forks git and waits for it (#20861).
-    commit_shas, commit_error = await asyncio.to_thread(
-        resolve_close_commit_shas,
-        ctx.task_manager,
-        task=task,
-        task_id=resolved_id,
-        claim_started_at=evaluation.claim_started_at,
-        commit_sha=commit_sha,
-        cwd=repo_path,
-        project_name=ctx.get_current_project_name(),
-    )
-    evaluation.commit_shas = commit_shas
-    if commit_error:
-        return evaluation.fail(
-            7,
-            "linked_commits",
-            str(commit_error["error"]),
-            str(commit_error["message"]),
-        )
     evaluation_task = replace(task, commits=commit_shas or None)
     if evaluation.had_attributed_edits:
         # Off the loop: normalize_commit_sha again, once per already-linked commit.

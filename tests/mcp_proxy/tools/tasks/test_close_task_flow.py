@@ -258,17 +258,19 @@ async def test_ready_leaf_runs_criteria_review_exactly_once() -> None:
         ),
         sessions=(task.claimed_by_session_id or "",),
     )
+    linked_paths = MagicMock(return_value=frozenset({"src/a.py"}))
 
     with (
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
+        patch.object(close_finalization, "_linked_commit_paths", linked_paths),
         patch.object(close_finalization, "_committable_task_paths", return_value={"src/a.py"}),
         patch.object(lifecycle, "_has_committable_edits", return_value=False),
         patch.object(
             lifecycle,
             "resolve_close_commit_shas",
-            return_value=(["abc123"], None),
+            return_value=(["base123", "abc123"], None),
         ),
         patch.object(
             lifecycle,
@@ -285,11 +287,11 @@ async def test_ready_leaf_runs_criteria_review_exactly_once() -> None:
         patch.object(lifecycle, "evaluate_criteria_review", review),
         patch(
             "gobby.workflows.task_claim_state.target_task_has_edits",
-            return_value=True,
+            return_value=False,
         ),
         patch(
             "gobby.workflows.task_claim_state.task_edited_file_set",
-            return_value={"src/a.py"},
+            return_value=set(),
         ),
     ):
         evaluation = await _evaluate_close(
@@ -304,6 +306,7 @@ async def test_ready_leaf_runs_criteria_review_exactly_once() -> None:
 
     assert evaluation.ready is True
     assert [gate.item for gate in evaluation.gates] == list(range(1, 15))
+    linked_paths.assert_called_once_with(task, "/repo", ("base123", "abc123"))
     review.assert_awaited_once()
 
 

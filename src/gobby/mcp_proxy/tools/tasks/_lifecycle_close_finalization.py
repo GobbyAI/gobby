@@ -36,6 +36,11 @@ from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
 logger = logging.getLogger(__name__)
 
 
+def claim_window_start(ctx: RegistryContext, *, task: Task, resolved_id: str) -> str | None:
+    """Expose the claim boundary shared by evaluation and attribution capture."""
+    return _claimed_session_window_start(ctx, task=task, resolved_id=resolved_id)
+
+
 def children_state(
     ctx: RegistryContext,
     task_id: str,
