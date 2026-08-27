@@ -521,3 +521,30 @@ class TranscriptReadError(ValueError):
         self.line_number = line_number
         line = f", line {line_number}" if line_number is not None else ""
         super().__init__(f"Corrupt transcript record in {path} at byte {byte_offset}{line}")
+
+
+def decode_transcript_record(
+    raw_record: bytes,
+    *,
+    path: Path,
+    byte_offset: int,
+    line_number: int | None,
+    is_final: bool,
+) -> dict[str, Any] | None:
+    """Decode one JSONL object, withholding only an unterminated final fragment."""
+    possibly_in_flight = is_final and not raw_record.endswith(b"\n")
+    try:
+        text = raw_record.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        if possibly_in_flight:
+            return None
+        raise TranscriptReadError(path, byte_offset, line_number) from exc
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as exc:
+        if possibly_in_flight:
+            return None
+        raise TranscriptReadError(path, byte_offset, line_number) from exc
+    if not isinstance(value, dict):
+        raise TranscriptReadError(path, byte_offset, line_number)
+    return value

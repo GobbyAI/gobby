@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -543,31 +544,19 @@ def test_grok_open_and_cancelled_turn_pairs() -> None:
 
 
 def test_extract_last_messages_tool_activity_ledger() -> None:
-    turns = [
-        _user_chunk("inspect"),
-        _record(
-            {
-                "sessionUpdate": "tool_call",
-                "title": "run_terminal_command",
-                "toolCallId": "call-1",
-                "rawInput": {"command": "uv run pytest -k widget"},
-            }
-        ),
-        _record(
-            {
-                "sessionUpdate": "tool_call_update",
-                "toolCallId": "call-1",
-                "status": "failed",
-                "content": {"type": "text", "text": "exit 1"},
-            }
-        ),
-        _agent_chunk("done"),
-    ]
+    fixture = Path(__file__).parent / "fixtures" / "grok_audit" / "10711" / "updates.jsonl"
+    turns = [json.loads(line) for line in fixture.read_text(encoding="utf-8").splitlines()]
 
-    messages = GrokTranscriptParser().extract_last_messages(turns, include_tool_activity=True)
+    messages = GrokTranscriptParser().extract_last_messages(
+        turns,
+        num_pairs=len(turns),
+        include_tool_activity=True,
+    )
+    ledgers = "\n".join(
+        str(message["tool_activity"]) for message in messages if "tool_activity" in message
+    )
 
-    assert messages[0]["tool_activity"].splitlines() == [
-        "[tool activity]",
-        "- Bash uv run pytest -k widget ! failed: exit 1",
-    ]
-    assert "run_terminal_command" not in messages[0]["tool_activity"]
+    assert "- search_replace /repo/widget.py" in ledgers
+    assert "- mcp gobby-tasks:claim_task task_id=#20728" in ledgers
+    assert "- Bash uv run pytest -k widget ! failed: exit 1" in ledgers
+    assert "run_terminal_command" not in ledgers

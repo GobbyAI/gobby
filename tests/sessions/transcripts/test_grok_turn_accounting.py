@@ -159,6 +159,9 @@ def _assert_shape_counts(
     ), name
     assert types.count("auto_compact_completed") == types.count("compaction_checkpoint"), name
     assert types.count("agent_message_chunk") == sum(len(spec.agent_blocks) for spec in turns), name
+    expected_tool_calls = sum(spec.tool_calls + len(spec.tools) for spec in turns)
+    assert types.count("tool_call") == expected_tool_calls, name
+    assert types.count("tool_call_update") == expected_tool_calls, name
     stop_reasons = [
         _update(record).get("stop_reason")
         for record in records
