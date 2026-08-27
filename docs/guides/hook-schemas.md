@@ -133,7 +133,7 @@ The workflow engine resolves raw provider events into semantic authoring events:
 | Semantic Event | Raw Events That Trigger It | Use For |
 | --- | --- | --- |
 | `turn_start` | `before_agent` | Prompt-time context injection, per-turn setup |
-| `turn_end` | `after_agent`, `stop` | Stop gates, task/commit checks, end-of-turn cleanup |
+| `turn_end` | `after_agent`, `stop`, `stop_failure` | Stop gates, task/commit checks, end-of-turn cleanup and failed-stop recovery |
 
 Use provider-specific names only when writing adapter code, testing native hook
 transport, or documenting low-level payloads.
@@ -159,7 +159,7 @@ passes kebab-case hook types to the daemon.
 | `task-created` | `TaskCreated` | `task_created` | `task_created` |
 | `task-completed` | `TaskCompleted` | `task_completed` | `task_completed` |
 | `stop` | `Stop` | `stop` | `turn_end` |
-| `stop-failure` | `StopFailure` | `stop_failure` | `stop_failure` |
+| `stop-failure` | `StopFailure` | `stop_failure` | `turn_end` |
 | `teammate-idle` | `TeammateIdle` | `teammate_idle` | `teammate_idle` |
 | `config-change` | `ConfigChange` | `config_change` | `config_change` |
 | `cwd-changed` | `CwdChanged` | `cwd_changed` | `cwd_changed` |
@@ -200,7 +200,7 @@ Qwen uses a dedicated Claude-shaped adapter with Qwen-specific contracts.
 | `PostToolUse` | `after_tool` | `after_tool` |
 | `PostToolUseFailure` | `after_tool` | `after_tool` |
 | `Stop` | `stop` | `turn_end` |
-| `StopFailure` | `stop_failure` | `stop_failure` |
+| `StopFailure` | `stop_failure` | `turn_end` |
 | `SubagentStart` | `subagent_start` | `subagent_start` |
 | `SubagentStop` | `subagent_stop` | `subagent_stop` |
 | `PreCompact` | `pre_compact` | `pre_compact` |
@@ -228,6 +228,26 @@ integration, but they are not the installed terminal hook contract.
 
 Codex `PreToolUse` and `Stop` responses use `systemMessage` for context; Codex
 does not accept `additionalContext` for those hooks.
+
+### Grok
+
+Grok uses lowercase snake-case native hook names and camelCase payload fields.
+
+| Native Hook | Raw Workflow Event | Semantic Event |
+| --- | --- | --- |
+| `session_start` | `session_start` | `session_start` |
+| `session_end` | `session_end` | `session_end` |
+| `user_prompt_submit` | `before_agent` | `turn_start` |
+| `pre_tool_use` | `before_tool` | `before_tool` |
+| `post_tool_use` | `after_tool` | `after_tool` |
+| `stop` | `stop` | `turn_end` |
+| `stop_failure` | `stop_failure` | `turn_end` |
+| `pre_compact` | `pre_compact` | `pre_compact` |
+| `post_compact` | `post_compact` | `post_compact` |
+| `notification` | `notification` | `notification` |
+| `permission_denied` | `permission_denied` | `permission_denied` |
+| `subagent_start` | `subagent_start` | `subagent_start` |
+| `subagent_stop` | `subagent_stop` | `subagent_stop` |
 
 ### Droid
 

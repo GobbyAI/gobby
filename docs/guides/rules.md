@@ -22,6 +22,19 @@ Use rules when you need behavior that should happen automatically at hook time:
 Rules are not the right tool for long-running control flow. Use pipelines or
 agent step workflows for that.
 
+## Bundled Memory Gates
+
+The `memory-lifecycle` rule group keeps memory use explicit and bounded across
+providers. `search-memories-on-claim` prompts an agent to search for relevant
+project knowledge after a successful task claim. `guard-plan-memory-writes`
+keeps draft findings in the plan artifact unless they are durable preferences
+or finalized decisions. The `review-closed-task-memories-before-compact` and
+`review-closed-task-memories-on-stop` gates request one
+`review_task_memories` pass for each closure batch. These rules guide and gate
+agent behavior; they do not inject project memories automatically. See
+[Memory System Guide](./memory.md#lifecycle-rules) for the complete installed
+rule table.
+
 ## YAML Format
 
 Bundled and project rule files are grouped YAML documents:

@@ -188,13 +188,19 @@ for the authoritative signature before calling a tool.
 | `rebuild_crossrefs` | Rebuild memory-to-memory cross-reference edges. |
 | `rebuild_knowledge_graph` | Extract entities and relationships into FalkorDB. |
 | `reindex_embeddings` | Regenerate embedding vectors for stored memories. |
+| `review_task_memories` | Search memories related to a task after it closes and record that closure's memory review. |
 | `restore_memories` | Restore the project memory backup into the hub database without deleting absent or newer rows. |
 | `backup_memories` | Back up current live project memories to the machine-local project backup path. |
 | `memory_dream` | Review stale memories, apply a validated plan, and snapshot mutations. |
 | `memory_dream_status` | Return status and summary for a memory dream run. |
 | `memory_dream_revert` | Revert a memory dream run from its snapshots. |
-| `bootstrap_session_title` | System lifecycle tool for heuristic session titles. |
 | `build_turn_and_digest` | System lifecycle tool for turn records and session digest updates. |
+
+When a memory call exceeds the inline MCP result budget, the proxy returns an
+offload envelope containing a `result_id`. Page the raw result with
+`gobby-results:get_tool_result`, or search its stored chunks with
+`gobby-results:search_tool_result`. The envelope is a successful result; do not
+repeat the original memory call merely to make its output smaller.
 
 ### Common Calls
 
@@ -289,7 +295,14 @@ Search uses the best available local infrastructure:
    `raw_semantic_score`, `temporal_decay_factor`, and `ranking_mode`.
 
 `search_memories` supports an explicit `min_score` threshold. Agents search on
-demand; no rule injects memories automatically.
+demand; no rule injects memories automatically. The tool returns
+`memories`, `recall_request_id`, `project_id`, and `diagnostics`; each hit
+includes its content, rationale, type, provenance, ranking fields, and duplicate
+fold information. Live-corpus raw cosine score bands are p10 `0.62`, p50
+`0.69`, and p90 `0.75`. Compare hits within the returned set and judge their
+content and rationale instead of treating one score as a universal relevance
+boundary. `min_score` filters the reported `undecayed_similarity` axis;
+`similarity` includes temporal decay.
 
 ### Knowledge Graph
 
@@ -366,6 +379,11 @@ manager uses `~/.gobby/backups/<project-uuid>/memories.jsonl`; setting
 `backup_path` selects an explicit override. Treat the file as a backup and
 migration artifact, not a live bidirectional source of truth.
 
+Automatic prompt recall configuration has been removed. Legacy
+`memory_recall` and `memory.min_recall_score` settings fail configuration
+validation; agents choose a per-call `search_memories(min_score=...)` threshold
+when a task needs one.
+
 ## Lifecycle Rules
 
 Memory lifecycle automation is installed as rules against semantic workflow
@@ -397,20 +415,28 @@ Current bundled memory rules:
 | `review-closed-task-memories-before-compact` | `before_tool` | Blocks `gobby-sessions:compact_self` once per queued closure set with the same request, so a compaction right after `close_task` cannot defer the review past the closing context (the manual-compact bypass skips the `turn_end` gate); silent once every queued closure is reviewed. |
 | `review-closed-task-memories-on-stop` | `turn_end` | Blocks once per queued closure set with a `review_task_memories` request; silent once every queued closure is reviewed. |
 | `digest-on-response` | `turn_end` | Builds a turn record and appends to the session digest in the background. |
+| `digest-catch-up-on-turn-start` | `turn_start` | Drains one bounded batch of undigested turns after an outage or interrupted digest. |
 | `digest-on-plan-turn-end` | `after_tool` | Builds a digest when plan mode ends through supported plan tools. |
+| `guard-plan-memory-writes` | `before_tool` | Blocks the first plan-time `create_memory` or `update_memory` call until the agent confirms that the write is a durable preference or finalized decision rather than plan evidence. |
 | `reset-memory-tracking-on-start` | `session_start` | Clears injected review-lesson tracking after clear, compact, or selected resume events. |
 | `increment-parent-turn-seq` | `turn_start` | Increments the parent session turn sequence counter. |
+| `search-memories-on-claim` | `after_tool` | Nudges one subject search after a successful `claim_task` or claimed `create_task`, before editing starts. |
 
 Author new lifecycle rules against semantic events such as `turn_start` and
 `turn_end`. Raw provider/runtime hook names are transport details.
 
 ## Retrieval Is Agent-Driven
 
-No rule injects project memories into a turn. Agents call `search_memories`
-when the work needs prior knowledge and judge each hit by its `similarity`,
-`memory_type`, and `rationale`. The `injected_memory_ids` session variable now
-tracks only rule-delivered review lessons; context reset rules clear it after
-compaction or selected resumes.
+Agents search on demand; no rule injects memories automatically. Call
+`search_memories` after claiming unfamiliar work and whenever prior project
+knowledge could change the implementation. Judge each hit by its `similarity`,
+`type`, `rationale`, and content; search results are evidence, not
+authority.
+
+Rule-delivered review lessons are deduplicated for one context epoch through
+`injected_memory_ids`. Clear, compact, and selected resume events start a new
+context epoch by resetting that variable, allowing relevant guidance to appear
+again without suppressing it for the whole session.
 
 ## Backup Format
 
