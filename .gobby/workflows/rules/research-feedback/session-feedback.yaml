@@ -52,12 +52,14 @@ rules:
           When substantive feedback exists, create one Markdown file at
           `docs/research/gobby-feedback/inbox/YYYY-MM-DDTHHMMSS-CLI-session-NNNNN.md` using
           the schema in `docs/research/gobby-feedback/README.md`. A concrete defect is
-          found work, never just an observation: create a claimed task and fix it in
-          this session; hand it off via `gobby-agents:send_message` when another
-          session owns the surface; file it labeled `needs-decision` or `clean-window`
-          only as a last resort. Record the resolving task ref in the observation's
-          `Disposition` line. Store durable project knowledge through `gobby-memory`.
-          Omit secrets, private user content, and transcript dumps. Then retry
+          found work, never just an observation: create a claimed task with
+          `parent_task_id: "#21128"` (the standing epic `Gobby session feedback
+          findings`) and fix it in this session; hand it off via
+          `gobby-agents:send_message` when another session owns the surface; file it
+          under the same epic labeled `needs-decision` or `clean-window` only as a last
+          resort. Record the resolving task ref in the observation's `Disposition`
+          line. Store durable project knowledge through `gobby-memory`. Omit secrets,
+          private user content, and transcript dumps. Then retry
           `gobby-sessions:compact_self`.
 
   review-gobby-session-feedback-on-stop:
@@ -81,10 +83,12 @@ rules:
           Each observation needs the concrete behavior or event, bounded evidence
           such as a rule/tool name or short example, its impact, frequency, and a
           suggested improvement when one is apparent. A concrete defect is found
-          work, never just an observation: create a claimed task and fix it in this
-          session; hand it off via `gobby-agents:send_message` when another session
-          owns the surface; file it labeled `needs-decision` or `clean-window` only
-          as a last resort. Record the resolving task ref in the observation's
+          work, never just an observation: create a claimed task with
+          `parent_task_id: "#21128"` (the standing epic `Gobby session feedback
+          findings`) and fix it in this session; hand it off via
+          `gobby-agents:send_message` when another session owns the surface; file it
+          under the same epic labeled `needs-decision` or `clean-window` only as a
+          last resort. Record the resolving task ref in the observation's
           `Disposition` line. Store durable project knowledge through `gobby-memory`.
 
           When substantive feedback exists, create one Markdown file at
