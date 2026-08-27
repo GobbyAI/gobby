@@ -28,6 +28,12 @@ from gobby.tasks.transcript_outcomes import EvidenceOutcome
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_artifact_references_ignore_prose_file_line_token() -> None:
+    criteria = "The plan uses file:line anchors and records file: `docs/evidence.md`."
+
+    assert artifacts_module.extract_artifact_references(criteria, "file") == ("docs/evidence.md",)
+
+
 def test_transcript_evidence_imports_in_fresh_interpreter() -> None:
     result = subprocess.run(
         [
