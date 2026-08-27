@@ -5,6 +5,7 @@ Provides consistent status display across CLI and MCP server.
 """
 
 import logging
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -27,26 +28,97 @@ _CODING_CLI_LABELS = (
 )
 
 
-async def fetch_rich_status(http_port: int, timeout: float = 3.0) -> dict[str, Any]:
-    """Fetch rich status data from the daemon API.
+@dataclass(frozen=True)
+class EndpointProbeFailure:
+    """A failed daemon HTTP endpoint probe."""
 
-    Returns the raw /api/admin/status response dict, or empty dict on failure.
-    """
-    try:
-        async with httpx.AsyncClient() as client:
+    endpoint: str
+    error_class: str
+    detail: str | None = None
+
+    def describe(self) -> str:
+        description = f"endpoint {self.endpoint} failed with {self.error_class}"
+        if self.detail:
+            description += f" ({self.detail})"
+        return description
+
+
+@dataclass(frozen=True)
+class RichStatusProbe:
+    """Rich status data plus the fallback health-probe outcome."""
+
+    api_data: dict[str, Any] = field(default_factory=dict)
+    health_confirmed: bool = False
+    status_failure: EndpointProbeFailure | None = None
+    health_failure: EndpointProbeFailure | None = None
+
+
+def _exception_failure(endpoint: str, exc: Exception) -> EndpointProbeFailure:
+    detail = str(exc).strip() or None
+    return EndpointProbeFailure(
+        endpoint=endpoint,
+        error_class=type(exc).__name__,
+        detail=detail,
+    )
+
+
+def _http_failure(endpoint: str, status_code: int) -> EndpointProbeFailure:
+    return EndpointProbeFailure(
+        endpoint=endpoint,
+        error_class="HTTPStatusError",
+        detail=f"HTTP {status_code}",
+    )
+
+
+async def fetch_rich_status(http_port: int, timeout: float = 3.0) -> RichStatusProbe:
+    """Fetch rich status, falling back to the lightweight health endpoint."""
+    status_endpoint = "/api/admin/status"
+    health_endpoint = "/api/health"
+    origin = f"http://127.0.0.1:{http_port}"
+    headers = daemon_auth_headers()
+
+    async with httpx.AsyncClient() as client:
+        try:
             response = await client.get(
-                f"http://localhost:{http_port}/api/admin/status",
-                headers=daemon_auth_headers(),
+                f"{origin}{status_endpoint}",
+                headers=headers,
                 timeout=timeout,
             )
-        if response.status_code == 200:
-            result: dict[str, Any] = response.json()
-            return result
-    except (httpx.ConnectError, httpx.TimeoutException):
-        pass
-    except Exception as e:
-        logger.debug("Failed to fetch daemon status: %s", e)
-    return {}
+            if response.status_code == 200:
+                payload = response.json()
+                if isinstance(payload, dict):
+                    return RichStatusProbe(api_data=payload, health_confirmed=True)
+                status_failure = EndpointProbeFailure(
+                    endpoint=status_endpoint,
+                    error_class="ResponseTypeError",
+                    detail=f"expected object, received {type(payload).__name__}",
+                )
+            else:
+                status_failure = _http_failure(status_endpoint, response.status_code)
+        except Exception as exc:
+            status_failure = _exception_failure(status_endpoint, exc)
+
+        logger.debug("Daemon rich status probe failed: %s", status_failure.describe())
+        try:
+            response = await client.get(
+                f"{origin}{health_endpoint}",
+                headers=headers,
+                timeout=timeout,
+            )
+            if response.status_code == 200:
+                return RichStatusProbe(
+                    status_failure=status_failure,
+                    health_confirmed=True,
+                )
+            health_failure = _http_failure(health_endpoint, response.status_code)
+        except Exception as exc:
+            health_failure = _exception_failure(health_endpoint, exc)
+
+    logger.debug("Daemon health fallback failed: %s", health_failure.describe())
+    return RichStatusProbe(
+        status_failure=status_failure,
+        health_failure=health_failure,
+    )
 
 
 def _format_bytes(n: int) -> str:
@@ -219,6 +291,7 @@ def format_status_message(
     # Config mismatches
     config_issues: list[dict[str, str]] | None = None,
     control_plane_error: str | None = None,
+    status_details_error: str | None = None,
     process_uptime_seconds: float | None = None,
     unsupported_platform: bool = False,
     **kwargs: Any,
@@ -573,6 +646,9 @@ def format_status_message(
 
     if control_plane_error and not starting:
         health_issues.append(f"Daemon control plane: {control_plane_error}")
+
+    if status_details_error:
+        health_issues.append(f"Status details: {status_details_error}")
 
     for name, error in unhealthy_dependencies:
         health_issues.append(f"Required dependency {name}: {error}")

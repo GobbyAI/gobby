@@ -5,6 +5,8 @@ import pytest
 
 from gobby.utils.dependency_requirements import STARTING_GRACE_SECONDS
 from gobby.utils.status import (
+    EndpointProbeFailure,
+    RichStatusProbe,
     fetch_rich_status,
     format_startup_summary,
     format_status_message,
@@ -40,7 +42,10 @@ async def test_fetch_rich_status_sends_bearer(
     response.json.return_value = {"success": True}
     mock_get.return_value = response
 
-    assert await fetch_rich_status(60887) == {"success": True}
+    result = await fetch_rich_status(60887)
+
+    assert result == RichStatusProbe(api_data={"success": True}, health_confirmed=True)
+    assert mock_get.await_args is not None
     assert mock_get.await_args.kwargs["headers"] == {"Authorization": "Bearer status"}
 
 
@@ -62,7 +67,8 @@ class TestStatusUtils:
         }
         mock_get.return_value = mock_response
 
-        data = await fetch_rich_status(8080)
+        result = await fetch_rich_status(8080)
+        data = result.api_data
 
         # fetch_rich_status now returns the raw API response dict
         assert data["process"]["memory_rss_mb"] == 100.5
@@ -76,20 +82,67 @@ class TestStatusUtils:
         mock_response.status_code = 500
         mock_get.return_value = mock_response
 
-        status = await fetch_rich_status(8080)
-        assert status == {}
+        result = await fetch_rich_status(8080)
+
+        assert result.status_failure == EndpointProbeFailure(
+            endpoint="/api/admin/status",
+            error_class="HTTPStatusError",
+            detail="HTTP 500",
+        )
+        assert result.health_failure == EndpointProbeFailure(
+            endpoint="/api/health",
+            error_class="HTTPStatusError",
+            detail="HTTP 500",
+        )
 
     @patch("httpx.AsyncClient.get")
     async def test_fetch_rich_status_connection_error(self, mock_get: AsyncMock) -> None:
         mock_get.side_effect = httpx.ConnectError("Connection failed")
-        status = await fetch_rich_status(8080)
-        assert status == {}
+        result = await fetch_rich_status(8080)
+
+        assert result.health_confirmed is False
+        assert result.status_failure == EndpointProbeFailure(
+            endpoint="/api/admin/status",
+            error_class="ConnectError",
+            detail="Connection failed",
+        )
+        assert result.health_failure == EndpointProbeFailure(
+            endpoint="/api/health",
+            error_class="ConnectError",
+            detail="Connection failed",
+        )
 
     @patch("httpx.AsyncClient.get")
     async def test_fetch_rich_status_other_error(self, mock_get: AsyncMock) -> None:
         mock_get.side_effect = Exception("Unknown error")
-        status = await fetch_rich_status(8080)
-        assert status == {}
+        result = await fetch_rich_status(8080)
+
+        assert result.status_failure is not None
+        assert result.status_failure.error_class == "Exception"
+        assert result.health_failure is not None
+        assert result.health_failure.error_class == "Exception"
+
+    @patch("httpx.AsyncClient.get")
+    async def test_fetch_rich_status_timeout_uses_healthy_fallback(
+        self, mock_get: AsyncMock
+    ) -> None:
+        health_response = MagicMock(status_code=200)
+        mock_get.side_effect = [httpx.ReadTimeout("slow status"), health_response]
+
+        result = await fetch_rich_status(8080)
+
+        assert result.api_data == {}
+        assert result.health_confirmed is True
+        assert result.status_failure == EndpointProbeFailure(
+            endpoint="/api/admin/status",
+            error_class="ReadTimeout",
+            detail="slow status",
+        )
+        assert result.health_failure is None
+        assert [call.args[0] for call in mock_get.await_args_list] == [
+            "http://127.0.0.1:8080/api/admin/status",
+            "http://127.0.0.1:8080/api/health",
+        ]
 
     def test_format_status_message_running(self) -> None:
         msg = format_status_message(
@@ -138,6 +191,23 @@ class TestStatusUtils:
         assert "Health Issues:" in msg
         assert "Daemon control plane:" in msg
         assert "HTTP control plane unavailable at localhost:8080" in msg
+
+    def test_format_status_message_keeps_healthy_fallback_running(self) -> None:
+        msg = format_status_message(
+            running=True,
+            pid=1234,
+            http_port=8080,
+            status_details_error=(
+                "temporarily unavailable; endpoint /api/admin/status failed with "
+                "ReadTimeout; fallback /api/health is healthy; PID 1234"
+            ),
+        )
+
+        assert "Running (PID: 1234)" in msg
+        assert "Status details: temporarily unavailable" in msg
+        assert "endpoint /api/admin/status failed with ReadTimeout" in msg
+        assert "fallback /api/health is healthy; PID 1234" in msg
+        assert "HTTP unavailable" not in msg
 
     @pytest.mark.parametrize("age", [0.0, 6.0, STARTING_GRACE_SECONDS - 0.001])
     def test_format_status_message_starting_during_control_plane_grace(

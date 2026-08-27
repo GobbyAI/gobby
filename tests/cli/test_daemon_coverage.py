@@ -20,6 +20,7 @@ from gobby.cli.daemon import (
 )
 from gobby.cli.installers.compose_env import ComposeEnvironmentError, ComposeRuntime
 from gobby.cli.runtime import CliRuntime
+from gobby.utils.status import EndpointProbeFailure, RichStatusProbe
 
 pytestmark = pytest.mark.unit
 
@@ -331,7 +332,7 @@ class TestStatusCommand:
     @patch("gobby.cli.daemon.os.kill")
     @patch("gobby.cli.daemon.probe_daemon_lock")
     @patch("gobby.cli.daemon.get_gobby_home")
-    def test_status_running(
+    def test_status_reports_http_unavailable_when_both_probes_fail(
         self,
         mock_home: MagicMock,
         mock_probe: MagicMock,
@@ -352,6 +353,18 @@ class TestStatusCommand:
         (tmp_path / "gobby.pid").write_text("12345")
         mock_kill.return_value = None
         mock_process.return_value.create_time.return_value = 0.0
+        _async.return_value = RichStatusProbe(
+            status_failure=EndpointProbeFailure(
+                endpoint="/api/admin/status",
+                error_class="ReadTimeout",
+                detail="rich status deadline",
+            ),
+            health_failure=EndpointProbeFailure(
+                endpoint="/api/health",
+                error_class="ConnectError",
+                detail="connection refused",
+            ),
+        )
 
         config = MagicMock()
         config.logging.dir = str(tmp_path)
@@ -373,9 +386,11 @@ class TestStatusCommand:
         assert result.exit_code == 0
         assert "Running PID 123" in result.output
         assert _fmt.call_args.kwargs["control_plane_error"] == (
-            "HTTP control plane unavailable at localhost:61999; "
-            "PID exists but /api/admin/status did not respond"
+            "endpoint /api/admin/status failed with ReadTimeout "
+            "(rich status deadline); endpoint /api/health failed with ConnectError "
+            "(connection refused); PID 12345"
         )
+        assert _fmt.call_args.kwargs["status_details_error"] is None
 
     @patch("gobby.utils.deps.check_config_mismatches", return_value=[])
     @patch("gobby.utils.deps.collect_all_deps", side_effect=RuntimeError("database unavailable"))
@@ -407,6 +422,10 @@ class TestStatusCommand:
         (tmp_path / "gobby.pid").write_text("12345")
         mock_kill.return_value = None
         mock_process.return_value.create_time.return_value = 0.0
+        _async.return_value = RichStatusProbe(
+            api_data={"process": {}},
+            health_confirmed=True,
+        )
 
         config = MagicMock()
         config.logging.dir = str(tmp_path)
@@ -418,6 +437,9 @@ class TestStatusCommand:
 
         assert result.exit_code == 0
         assert "Running PID 123" in result.output
+        assert mock_format.call_args.kwargs["api_data"] == {"process": {}}
+        assert mock_format.call_args.kwargs["control_plane_error"] is None
+        assert mock_format.call_args.kwargs["status_details_error"] is None
         assert mock_format.call_args.kwargs["deps_info"] == {
             "dependencies": {
                 "required": {
@@ -439,6 +461,64 @@ class TestStatusCommand:
                 }
             },
         }
+
+    @patch("gobby.utils.deps.check_config_mismatches", return_value=[])
+    @patch(
+        "gobby.utils.deps.collect_all_deps",
+        return_value={"gobby": {}, "coding_clis": {}, "dependencies": {}},
+    )
+    @patch("gobby.cli.daemon.asyncio.run")
+    @patch("gobby.cli.daemon.format_status_message", return_value="Running PID 123")
+    @patch("gobby.cli.daemon.format_uptime", return_value="1h 30m")
+    @patch("gobby.cli.daemon.psutil.Process")
+    @patch("gobby.cli.daemon.os.kill")
+    @patch("gobby.cli.daemon.probe_daemon_lock")
+    @patch("gobby.cli.daemon.get_gobby_home")
+    def test_status_timeout_with_healthy_fallback_keeps_daemon_running(
+        self,
+        mock_home: MagicMock,
+        mock_probe: MagicMock,
+        mock_kill: MagicMock,
+        mock_process: MagicMock,
+        _uptime: MagicMock,
+        mock_format: MagicMock,
+        mock_async: MagicMock,
+        _deps: MagicMock,
+        _mismatches: MagicMock,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        from gobby.runner_pid_file import ProbeState, SingletonProbe
+
+        mock_home.return_value = tmp_path
+        mock_probe.return_value = SingletonProbe(state=ProbeState.DAEMON, pid=12345, role="daemon")
+        (tmp_path / "gobby.pid").write_text("12345")
+        mock_kill.return_value = None
+        mock_process.return_value.create_time.return_value = 0.0
+        mock_async.return_value = RichStatusProbe(
+            status_failure=EndpointProbeFailure(
+                endpoint="/api/admin/status",
+                error_class="ReadTimeout",
+                detail="rich status deadline",
+            ),
+            health_confirmed=True,
+        )
+
+        config = MagicMock()
+        config.logging.dir = str(tmp_path)
+        config.daemon_port = 60888
+        config.websocket.port = 60889
+        config.ui.enabled = False
+
+        result = runner.invoke(status, [], obj=_cli_runtime(config), catch_exceptions=False)
+
+        assert result.exit_code == 0
+        assert "Running PID 123" in result.output
+        assert mock_format.call_args.kwargs["control_plane_error"] is None
+        assert mock_format.call_args.kwargs["status_details_error"] == (
+            "temporarily unavailable; endpoint /api/admin/status failed with ReadTimeout "
+            "(rich status deadline); fallback /api/health is healthy; PID 12345"
+        )
 
     @patch("gobby.cli.daemon.format_status_message", return_value="Stale PID")
     @patch("gobby.cli.daemon.os.kill", side_effect=ProcessLookupError)
