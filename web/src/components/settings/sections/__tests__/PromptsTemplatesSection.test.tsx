@@ -121,6 +121,7 @@ function renderSection(ctx: SettingsSectionContextValue) {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("PromptsTemplatesSection", () => {
@@ -336,6 +337,63 @@ describe("PromptsTemplatesSection", () => {
     expect(
       await screen.findByRole("button", { name: "Restart now" }),
     ).toBeInTheDocument();
+  });
+
+  it("surfaces protected restart details and offers a force retry", async () => {
+    const protectedRun = {
+      run_id: "run-1",
+      job_id: "job-1",
+      job_name: "gobby:memory-dream",
+      started_at: "2026-08-27T07:00:00+00:00",
+      elapsed_seconds: 3725,
+      remaining_seconds: 12475,
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            status: "restart_protected",
+            message: "Restart blocked by active protected cron runs",
+            protected_runs: [protectedRun],
+          }),
+          { status: 409, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ status: "restarting" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const ctx = makeContext();
+    renderSection(ctx);
+
+    fireEvent.change(screen.getByLabelText("Configuration template"), {
+      target: { value: "defaults:\n  enabled: false\n" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save template" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Restart now" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "gobby:memory-dream (running 1h 2m 5s, at most 3h 27m 55s left)",
+    );
+    const forceButton = screen.getByRole("button", {
+      name: "Force restart",
+    });
+    expect(forceButton).toBeInTheDocument();
+
+    fireEvent.click(forceButton);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/admin/restart");
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/admin/restart?force=true");
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Force restart" }),
+      ).not.toBeInTheDocument(),
+    );
   });
 
   it("exports the configuration bundle", async () => {

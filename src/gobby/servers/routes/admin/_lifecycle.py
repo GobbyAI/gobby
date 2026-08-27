@@ -246,7 +246,7 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
             }
 
     @router.post("/restart")
-    async def restart() -> dict[str, Any]:
+    async def restart(response: Response, force: bool = False) -> dict[str, Any]:
         """
         Graceful daemon restart endpoint.
 
@@ -262,6 +262,21 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
         shutdown_initiated = False
         try:
             await restart_lock.acquire()
+
+            if not force:
+                runner = server.get_runner()
+                scheduler = getattr(runner, "cron_scheduler", None) if runner else None
+                if scheduler is not None:
+                    protected_runs = await server.run_db(scheduler.list_protected_runs)
+                    if protected_runs:
+                        response.status_code = 409
+                        restart_lock.release()
+                        return {
+                            "status": "restart_protected",
+                            "message": "Restart blocked by active protected cron runs",
+                            "protected_runs": protected_runs,
+                        }
+
             service_managed = await asyncio.to_thread(_should_restart_via_service_manager)
             logger.info(
                 "Restart requested via HTTP endpoint (service_managed=%s)",

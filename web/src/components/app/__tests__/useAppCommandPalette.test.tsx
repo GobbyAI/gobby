@@ -1,4 +1,4 @@
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ACTIVITY_PANEL_TABS } from "../../activity/ActivityPanelTabs";
@@ -87,6 +87,67 @@ describe("useAppCommandPalette", () => {
     );
     expect(addSystemMessage).not.toHaveBeenCalledWith(
       "Failed to restart daemon",
+    );
+  });
+
+  it("surfaces protected work and offers a force restart", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            status: "restart_protected",
+            message: "Restart blocked by active protected cron runs",
+            protected_runs: [
+              {
+                run_id: "run-1",
+                job_id: "job-1",
+                job_name: "gobby:memory-dream",
+                started_at: "2026-08-27T07:00:00+00:00",
+                elapsed_seconds: 3725,
+                remaining_seconds: 12475,
+              },
+            ],
+          }),
+          { status: 409, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ status: "restarting" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const addSystemMessage = vi.fn();
+    const { result } = renderHook(() =>
+      useAppCommandPalette(makeHookArgs(addSystemMessage)),
+    );
+
+    act(() => {
+      result.current.commandPaletteActions
+        .find((action) => action.id === "restart")
+        ?.onSelect();
+    });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      "/api/admin/restart",
+      "/api/admin/restart?force=true",
+    ]);
+    expect(confirm).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "gobby:memory-dream (running 1h 2m 5s, at most 3h 27m 55s left)",
+      ),
+    );
+    expect(addSystemMessage).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "gobby:memory-dream (running 1h 2m 5s, at most 3h 27m 55s left)",
+      ),
+    );
+    expect(addSystemMessage).toHaveBeenCalledWith(
+      "Daemon restart requested; reconnecting...",
     );
   });
 

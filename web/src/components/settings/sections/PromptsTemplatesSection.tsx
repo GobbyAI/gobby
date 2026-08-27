@@ -343,8 +343,13 @@ function TemplateGroup({ content, onSave }: TemplateGroupProps) {
   const [baseline, setBaseline] = useState(content);
   const [errors, setErrors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
-  const { showRestart, restartError, markRestartRequired, restartDaemon } =
-    useDaemonRestart();
+  const {
+    showRestart,
+    restartError,
+    restartProtectedRuns,
+    markRestartRequired,
+    restartDaemon,
+  } = useDaemonRestart();
 
   // Re-sync from the latest fetched template (e.g. after an import refetch) by
   // adjusting state during render rather than in an effect — React's
@@ -404,6 +409,15 @@ function TemplateGroup({ content, onSave }: TemplateGroupProps) {
               void restartDaemon();
             }}
           />
+          {restartProtectedRuns.length > 0 ? (
+            <DetailActionButton
+              label="Force restart"
+              variant="destructive"
+              onClick={() => {
+                void restartDaemon(true);
+              }}
+            />
+          ) : null}
         </div>
       ) : null}
       <div className="min-h-72 overflow-hidden rounded-lg border border-border bg-surface-secondary [&_.codemirror-container]:h-full">
