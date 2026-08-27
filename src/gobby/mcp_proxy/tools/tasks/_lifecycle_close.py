@@ -72,7 +72,7 @@ from gobby.tasks.criteria_contract import split_validation_criteria
 from gobby.tasks.epic_guards import evaluate_epic_guards
 from gobby.tasks.generation_schemas import TASK_CLOSE_VALIDATION_SCHEMA
 from gobby.tasks.state_semantics import get_claimed_session_id
-from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
+from gobby.tasks.tdd_evidence import evaluate_tdd_evidence, task_requires_tdd
 from gobby.tasks.transcript_evidence import (
     TranscriptEvidence,
     TranscriptEvidenceUnavailable,
@@ -605,31 +605,45 @@ async def _evaluate_close(
         )
         test_bodies = render_acceptance_test_bodies(artifacts.tests)
 
-        tdd = evaluate_tdd_evidence(artifacts.tests, transcript)
-        tdd_details = tdd.details()
-        # Gate 12 and gate 14 both ask whether the loop was followed rather than
-        # whether the deliverable is sound, so a justified deliberate close waives
-        # them together. The delivery gates above stay hard: a waived close still
-        # proves the work is committed, in scope, clean, and validated.
-        waive_tdd = not tdd.passed and _is_deliberate_close(task, override_justification)
-        if not tdd.passed and not waive_tdd:
-            return evaluation.fail(
+        if task_requires_tdd(
+            labels=task.labels or (),
+            additional_skills=task.additional_skills or (),
+            validation_criteria=task.validation_criteria,
+        ):
+            tdd = evaluate_tdd_evidence(artifacts.tests, transcript)
+            tdd_details = tdd.details()
+            # Gate 12 and gate 14 both ask whether the loop was followed rather than
+            # whether the deliverable is sound, so a justified deliberate close waives
+            # them together. The delivery gates above stay hard: a waived close still
+            # proves the work is committed, in scope, clean, and validated.
+            waive_tdd = not tdd.passed and _is_deliberate_close(task, override_justification)
+            if not tdd.passed and not waive_tdd:
+                return evaluation.fail(
+                    12,
+                    "tdd_evidence",
+                    "tdd_evidence_missing",
+                    tdd.findings[0],
+                    details=tdd_details,
+                    extra={"tdd_evidence": tdd_details},
+                )
+            evaluation.pass_gate(
                 12,
                 "tdd_evidence",
-                "tdd_evidence_missing",
-                tdd.findings[0],
+                _DELIBERATE_CLOSE_SKIP
+                if waive_tdd
+                else "Every named acceptance test has assertion-backed red and later green evidence.",
                 details=tdd_details,
-                extra={"tdd_evidence": tdd_details},
+                skipped=tdd.skipped or waive_tdd,
             )
-        evaluation.pass_gate(
-            12,
-            "tdd_evidence",
-            _DELIBERATE_CLOSE_SKIP
-            if waive_tdd
-            else "Every named acceptance test has assertion-backed red and later green evidence.",
-            details=tdd_details,
-            skipped=tdd.skipped or waive_tdd,
-        )
+        else:
+            tdd_details = {"findings": [], "red_runs": [], "green_runs": []}
+            evaluation.pass_gate(
+                12,
+                "tdd_evidence",
+                "Skipped because task metadata does not require TDD evidence.",
+                details=tdd_details,
+                skipped=True,
+            )
 
         guards = await evaluate_epic_guards(
             task_manager=ctx.task_manager,
