@@ -74,6 +74,9 @@ from gobby.runner_maintenance.telemetry_loops import (
     _METRIC_SNAPSHOT_CLEANUP_BATCH_LIMIT as _METRIC_SNAPSHOT_CLEANUP_BATCH_LIMIT,
 )
 from gobby.runner_maintenance.telemetry_loops import (
+    loop_progress_cleanup_loop as loop_progress_cleanup_loop,
+)
+from gobby.runner_maintenance.telemetry_loops import (
     metric_snapshot_loop as metric_snapshot_loop,
 )
 from gobby.runner_maintenance.telemetry_loops import (

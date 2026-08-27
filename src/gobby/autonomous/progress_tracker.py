@@ -642,6 +642,19 @@ class ProgressTracker:
 
         return result.rowcount
 
+    def prune_older_than(self, *, retention_days: int) -> int:
+        """Delete progress records older than the retention period."""
+        with self._lock:
+            result = self.db.execute(
+                """
+                DELETE FROM loop_progress
+                WHERE recorded_at < NOW() - (%s * INTERVAL '1 day')
+                """,
+                (retention_days,),
+            )
+
+        return result.rowcount
+
     def get_recent_events(self, session_id: str, limit: int = 20) -> list[ProgressEvent]:
         """Get recent progress events for a session.
 

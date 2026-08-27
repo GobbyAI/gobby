@@ -107,9 +107,10 @@ async def test_schema_sweep_loop_rechecks_after_startup(
 
 
 @pytest.mark.asyncio
-async def test_periodic_start_schedules_test_schema_sweep_loop() -> None:
+async def test_periodic_start_schedules_schema_and_progress_cleanup_loops() -> None:
     database_url = "postgresql://gobby:test@localhost:5432/gobby"
     calls: list[tuple[str | None, Callable[[], bool]]] = []
+    progress_calls: list[tuple[object, Callable[[], bool], int, object]] = []
 
     async def complete_loop(*_args: Any, **_kwargs: Any) -> None:
         return None
@@ -117,8 +118,18 @@ async def test_periodic_start_schedules_test_schema_sweep_loop() -> None:
     async def capture_sweep(url: str | None, is_shutdown: Callable[[], bool]) -> None:
         calls.append((url, is_shutdown))
 
+    async def capture_progress_cleanup(
+        db: object,
+        is_shutdown: Callable[[], bool],
+        retention_days: int = 7,
+        run_db: object = None,
+    ) -> None:
+        progress_calls.append((db, is_shutdown, retention_days, run_db))
+
     loops = dict.fromkeys(_default_loops(), complete_loop)
     loops["sweep_test_schemas_loop"] = capture_sweep
+    loops["loop_progress_cleanup_loop"] = capture_progress_cleanup
+    database = object()
     runner = cast(
         "GobbyRunner",
         SimpleNamespace(
@@ -129,7 +140,7 @@ async def test_periodic_start_schedules_test_schema_sweep_loop() -> None:
             ),
             metrics_manager=object(),
             metrics_event_store=object(),
-            database=object(),
+            database=database,
             db_executor=None,
             memory_manager=None,
             http_server=SimpleNamespace(app=object()),
@@ -147,6 +158,10 @@ async def test_periodic_start_schedules_test_schema_sweep_loop() -> None:
     assert len(calls) == 1
     assert calls[0][0] == database_url
     assert calls[0][1]() is False
+    assert len(progress_calls) == 1
+    assert progress_calls[0][0] is database
+    assert progress_calls[0][1]() is False
+    assert progress_calls[0][2:] == (7, None)
 
 
 @pytest.mark.asyncio

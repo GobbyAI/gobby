@@ -123,6 +123,7 @@ class GobbyRunner:
     _chat_attachments_cleanup_task: asyncio.Task[None] | None
     _span_cleanup_task: asyncio.Task[None] | None
     _unmodeled_observations_cleanup_task: asyncio.Task[None] | None
+    _loop_progress_cleanup_task: asyncio.Task[None] | None
     _metrics_archive_task: asyncio.Task[None] | None
     _metric_snapshot_task: asyncio.Task[None] | None
     _resource_monitor_task: asyncio.Task[None] | None

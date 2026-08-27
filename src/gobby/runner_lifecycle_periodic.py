@@ -48,6 +48,7 @@ def _default_loops() -> dict[str, Any]:
         cleanup_zombie_messages_loop,
         drain_hook_inbox_loop,
         expire_approval_timeouts_loop,
+        loop_progress_cleanup_loop,
         memory_reconcile_loop,
         metric_snapshot_loop,
         metrics_archive_loop,
@@ -83,6 +84,7 @@ def _default_loops() -> dict[str, Any]:
         "bin_freshness_loop": bin_freshness_loop,
         "drain_hook_inbox_loop": drain_hook_inbox_loop,
         "expire_approval_timeouts_loop": expire_approval_timeouts_loop,
+        "loop_progress_cleanup_loop": loop_progress_cleanup_loop,
         "tmux_window_name_repair_loop": tmux_window_name_repair_loop,
         "resource_monitor_loop": resource_monitor_loop,
         "model_metadata_refresh_loop": model_metadata_refresh_loop,
@@ -281,6 +283,14 @@ def start_periodic_tasks(
         ),
         name="unmodeled-observation-cleanup",
     )
+    runner._loop_progress_cleanup_task = asyncio.create_task(
+        loops["loop_progress_cleanup_loop"](
+            runner.database,
+            lambda: runner._shutdown_requested,
+            run_db=getattr(db_executor, "run", None),
+        ),
+        name="loop-progress-cleanup",
+    )
 
     runner._memory_reconcile_task = None
     if memory_manager:
@@ -461,6 +471,7 @@ def start_periodic_tasks(
             runner._generation_endpoint_health_task,
             runner._span_cleanup_task,
             runner._unmodeled_observations_cleanup_task,
+            runner._loop_progress_cleanup_task,
             getattr(runner, "_memory_reconcile_task", None),
             getattr(runner, "_recall_drift_task", None),
             runner._zombie_messages_task,

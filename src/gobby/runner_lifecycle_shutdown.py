@@ -193,6 +193,7 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
         "_generation_endpoint_health_task",
         "_span_cleanup_task",
         "_unmodeled_observations_cleanup_task",
+        "_loop_progress_cleanup_task",
         "_metric_snapshot_task",
         "_resource_monitor_task",
         "_hook_inbox_task",
