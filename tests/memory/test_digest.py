@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -651,14 +651,26 @@ class TestBuildTurnAndDigest:
             session_summary=object(),
         )
 
-        result = await build_turn_and_digest(
-            memory_manager=mock_memory_manager,
-            session_manager=mock_session_manager,
-            session_id="session-123",
-            prompt_text="Fix the authentication bug in auth.py",
-            llm_service=mock_llm_service,
-            config=digest_config,
-        )
+        with patch(
+            "gobby.sessions.summarize.refresh_session_summary_to_watermark",
+            new_callable=AsyncMock,
+            return_value={"success": True, "source_digest_turn_count": 1},
+        ) as refresh_summary:
+            result = await build_turn_and_digest(
+                memory_manager=mock_memory_manager,
+                session_manager=mock_session_manager,
+                session_id="session-123",
+                prompt_text="Fix the authentication bug in auth.py",
+                llm_service=mock_llm_service,
+                config=digest_config,
+            )
+
+            summary_call = next(
+                call
+                for call in mock_memory_manager.schedule_background_task.call_args_list
+                if call.kwargs.get("name") == "session-summary-refresh-session-123"
+            )
+            await summary_call.args[0]
 
         assert result is not None
         refresh_names = [
@@ -666,6 +678,14 @@ class TestBuildTurnAndDigest:
             for call in mock_memory_manager.schedule_background_task.call_args_list
         ]
         assert "session-summary-refresh-session-123" in refresh_names
+        refresh_summary.assert_awaited_once_with(
+            session_id="session-123",
+            minimum_digest_turn_count=1,
+            session_manager=mock_session_manager,
+            llm_service=mock_llm_service,
+            session_summary_config=digest_config.session_summary,
+            db=mock_memory_manager.db,
+        )
 
     @pytest.mark.asyncio
     async def test_does_not_schedule_summary_refresh_when_at_watermark(

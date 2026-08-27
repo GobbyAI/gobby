@@ -682,16 +682,16 @@ def _schedule_summary_refresh_if_stale(
     watermark = coerce_digest_turn_count(getattr(session, "summary_digest_turn_count", None)) or 0
     if current <= watermark:
         return
-    from gobby.sessions.summarize import generate_session_summaries
+    from gobby.sessions.summarize import refresh_session_summary_to_watermark
 
     memory_manager.schedule_background_task(
-        generate_session_summaries(
+        refresh_session_summary_to_watermark(
             session_id=session_id,
+            minimum_digest_turn_count=current,
             session_manager=session_manager,
             llm_service=llm_service,
             session_summary_config=session_summary_config,
             db=db,
-            set_handoff_ready=False,
         ),
         name=f"session-summary-refresh-{session_id}",
     )

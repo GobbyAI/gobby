@@ -26,6 +26,7 @@ from gobby.sessions.summarize import (
     _source_hash_payload,
     _SummaryCoreResult,
     generate_session_summaries,
+    refresh_session_summary_to_watermark,
 )
 from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.hub.protocol import HubDatabase
@@ -539,6 +540,109 @@ class TestGenerateSessionSummaries:
         assert len(generated_logs) == 1
         assert generated_logs[0].levelno == logging.DEBUG
         assert joined_count == 19
+
+    @pytest.mark.asyncio
+    async def test_scheduled_refresh_retries_after_joining_stale_generation(self) -> None:
+        session = _make_session(
+            session_id="sess-scheduled-catch-up",
+            digest_markdown=_digest_turns(1),
+        )
+        manager = _RevisionAwareSummaryManager(session)
+        generation_started = asyncio.Event()
+        release_generation = asyncio.Event()
+        scheduled_joined = asyncio.Event()
+        original_debug = logging.getLogger("gobby.sessions.summarize").debug
+
+        async def generate_full(**_kwargs: object) -> tuple[str, None]:
+            generation_started.set()
+            await release_generation.wait()
+            return VALID_SUMMARY, None
+
+        def observe_debug(message: object, *args: object) -> None:
+            original_debug(message, *args)
+            if message == "Joining in-flight session summary generation for %s":
+                scheduled_joined.set()
+
+        with (
+            patch("gobby.sessions.summarize._enrich_git_context", new_callable=AsyncMock),
+            patch(
+                "gobby.sessions.summarize._build_summary_prompt_context",
+                new_callable=AsyncMock,
+                return_value={},
+            ),
+            patch(
+                "gobby.sessions.summarize.load_summary_prompt_template",
+                return_value=_valid_summary_prompt("Summary"),
+            ),
+            patch(
+                "gobby.sessions.summarize._generate_full_summary",
+                new_callable=AsyncMock,
+                side_effect=generate_full,
+            ) as mock_full,
+            patch(
+                "gobby.sessions.summarize._generate_delta_summary",
+                new_callable=AsyncMock,
+                return_value=(VALID_SUMMARY, None),
+            ) as mock_delta,
+            patch(
+                "gobby.sessions.session_wiki_file.write_session_wiki_page",
+                return_value={"written": True},
+            ),
+            patch("gobby.sessions.summarize.logger.debug", side_effect=observe_debug),
+        ):
+            initial = asyncio.create_task(
+                generate_session_summaries(
+                    session_id=session.id,
+                    session_manager=manager,
+                )
+            )
+            await asyncio.wait_for(generation_started.wait(), timeout=1)
+            session.digest_markdown = _digest_turns(2)
+            scheduled = asyncio.create_task(
+                refresh_session_summary_to_watermark(
+                    session_id=session.id,
+                    minimum_digest_turn_count=2,
+                    session_manager=manager,
+                )
+            )
+            await asyncio.wait_for(scheduled_joined.wait(), timeout=1)
+            release_generation.set()
+            await initial
+            result = await scheduled
+
+        assert result["success"] is True
+        assert result["source_digest_turn_count"] == 2
+        assert mock_full.await_count == 1
+        assert mock_delta.await_count == 1
+        assert [call["source_digest_turn_count"] for call in manager.persist_calls] == [1, 2]
+
+    @pytest.mark.asyncio
+    async def test_scheduled_refresh_logs_generation_skip_reason(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with (
+            patch(
+                "gobby.sessions.summarize.generate_session_summaries",
+                new_callable=AsyncMock,
+                return_value={
+                    "success": False,
+                    "error": "remote session is owned by another machine",
+                    "session_id": "sess-remote",
+                },
+            ),
+            caplog.at_level(logging.WARNING, logger="gobby.sessions.summarize"),
+        ):
+            result = await refresh_session_summary_to_watermark(
+                session_id="sess-remote",
+                minimum_digest_turn_count=7,
+                session_manager=MagicMock(),
+            )
+
+        assert result["success"] is False
+        assert "Scheduled session summary refresh skipped for sess-remote" in caplog.text
+        assert "target_digest_turns=7" in caplog.text
+        assert "remote session is owned by another machine" in caplog.text
 
     @pytest.mark.asyncio
     async def test_concurrent_callers_receive_nested_result_copies(self) -> None:
