@@ -452,6 +452,11 @@ def _result_error(value: Any) -> str | None:
         nested_error = _result_error(nested)
         if nested_error is not None:
             return nested_error
+    output = value.get("output")
+    if isinstance(output, Mapping):
+        output_error = _result_error(output)
+        if output_error is not None:
+            return output_error
     response = value.get("response")
     if isinstance(response, Mapping) and "error" in response:
         return _content_text(response.get("error"))

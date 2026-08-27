@@ -146,7 +146,29 @@ def test_qwen_failed_function_response_in_ledger() -> None:
         {
             "type": "assistant",
             "message": {
-                "parts": [{"functionCall": {"id": "call-1", "name": "Read", "args": {"path": "x"}}}]
+                "parts": [
+                    {
+                        "functionCall": {
+                            "id": "call-1",
+                            "name": "Read",
+                            "args": {"path": "x"},
+                        }
+                    },
+                    {
+                        "functionCall": {
+                            "id": "call-2",
+                            "name": "Read",
+                            "args": {"path": "y"},
+                        }
+                    },
+                    {
+                        "functionCall": {
+                            "id": "call-3",
+                            "name": "Read",
+                            "args": {"path": "z"},
+                        }
+                    },
+                ]
             },
         },
         {
@@ -164,10 +186,42 @@ def test_qwen_failed_function_response_in_ledger() -> None:
                 ]
             },
         },
+        {
+            "type": "tool_result",
+            "toolCallResult": {"callId": "call-2", "status": "cancelled"},
+            "message": {
+                "parts": [
+                    {
+                        "functionResponse": {
+                            "name": "Read",
+                            "response": {"output": "cancelled by user"},
+                        }
+                    }
+                ]
+            },
+        },
+        {
+            "type": "tool_result",
+            "message": {
+                "parts": [
+                    {
+                        "functionResponse": {
+                            "id": "call-3",
+                            "name": "Read",
+                            "response": {"error": "quota exceeded"},
+                        }
+                    }
+                ]
+            },
+        },
         {"type": "assistant", "message": {"parts": [{"text": "done"}]}},
     ]
 
     messages = QwenTranscriptParser().extract_last_messages(turns, include_tool_activity=True)
 
-    assert "- Read x ! failed:" in messages[0]["tool_activity"]
-    assert "permission denied" in messages[0]["tool_activity"]
+    assert messages[0]["tool_activity"].splitlines() == [
+        "[tool activity]",
+        "- Read x ! failed: permission denied",
+        "- Read y ! failed: cancelled",
+        "- Read z ! failed: quota exceeded",
+    ]

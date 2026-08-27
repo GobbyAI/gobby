@@ -548,6 +548,45 @@ def test_extract_last_messages_tool_activity_ledger() -> None:
         _record(
             {
                 "sessionUpdate": "tool_call",
+                "title": "use_tool",
+                "toolCallId": "call-edit",
+                "rawInput": {
+                    "tool_name": "search_replace",
+                    "tool_input": {"file_path": "widget.py"},
+                },
+            }
+        ),
+        _record(
+            {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "call-edit",
+                "status": "completed",
+                "content": {"type": "text", "text": "updated"},
+            }
+        ),
+        _record(
+            {
+                "sessionUpdate": "tool_call",
+                "title": "call_tool",
+                "toolCallId": "call-task",
+                "rawInput": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "claim_task",
+                    "arguments": {"task_id": "#20728"},
+                },
+            }
+        ),
+        _record(
+            {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "call-task",
+                "status": "completed",
+                "content": {"type": "text", "text": "claimed"},
+            }
+        ),
+        _record(
+            {
+                "sessionUpdate": "tool_call",
                 "title": "run_terminal_command",
                 "toolCallId": "call-1",
                 "rawInput": {"command": "uv run pytest -k widget"},
@@ -568,6 +607,8 @@ def test_extract_last_messages_tool_activity_ledger() -> None:
 
     assert messages[0]["tool_activity"].splitlines() == [
         "[tool activity]",
+        "- search_replace widget.py",
+        "- mcp gobby-tasks:claim_task task_id=#20728",
         "- Bash uv run pytest -k widget ! failed: exit 1",
     ]
     assert "run_terminal_command" not in messages[0]["tool_activity"]
