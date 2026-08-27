@@ -60,6 +60,26 @@ def test_extract_digest_pairs_includes_tool_activity() -> None:
     assert "mcp gobby-tasks:claim_task" in activity
 
 
+@pytest.mark.asyncio
+async def test_last_turn_reader_omits_tool_activity() -> None:
+    fixture = (
+        Path(__file__).parents[1]
+        / "sessions"
+        / "transcripts"
+        / "fixtures"
+        / "grok_audit"
+        / "10711"
+        / "updates.jsonl"
+    )
+
+    last_turn = await _read_last_turn_from_transcript(str(fixture), "grok")
+
+    assert last_turn is not None
+    assert "[tool activity]" not in "\n".join(last_turn)
+    assert "search_replace" not in last_turn[1]
+    assert "gobby-tasks:claim_task" not in last_turn[1]
+
+
 def test_turn_record_prompts_carry_tool_activity_instruction() -> None:
     bundled = (
         Path(__file__).parents[2]
