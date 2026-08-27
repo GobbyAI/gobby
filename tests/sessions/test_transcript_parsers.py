@@ -6,11 +6,11 @@ Consolidated from individual files.
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
-from gobby.memory.digest import _extract_digest_pairs
+from gobby.memory.digest import DigestPair, _extract_digest_pairs
 from gobby.sessions.message_stats import compute_message_stats
 from gobby.sessions.transcript_normalization import normalize_transcript_records
 from gobby.sessions.transcript_parsing import _get_parser
@@ -20,6 +20,7 @@ from gobby.sessions.transcripts.base import (
     UNMODELED_RECORD_CONTENT_TYPE,
     ParsedMessage,
     ParsedToolEvent,
+    TranscriptParser,
 )
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
@@ -2382,25 +2383,6 @@ _TRANSCRIPT_FIXTURES = (
 )
 
 
-class _ToolActivityDigestParser:
-    def __init__(self, parser: Any) -> None:
-        self._parser = parser
-
-    def extract_last_messages(
-        self,
-        turns: list[dict[str, Any]],
-        num_pairs: int = 2,
-    ) -> list[dict[str, Any]]:
-        return cast(
-            list[dict[str, Any]],
-            self._parser.extract_last_messages(
-                turns,
-                num_pairs=num_pairs,
-                include_tool_activity=True,
-            ),
-        )
-
-
 @pytest.mark.parametrize("source", ["claude", "codex", "grok", "qwen", "droid"])
 @pytest.mark.parametrize(
     "fixture_path",
@@ -2430,10 +2412,8 @@ def test_tool_activity_flag_preserves_pair_shape(source: str, fixture_path: Path
     assert [(message["role"], message["content"]) for message in with_ledger] == [
         (message["role"], message["content"]) for message in without_ledger
     ]
-    flag_off_pairs = _extract_digest_pairs(get_parser(source), turns)
-    flag_on_pairs = _extract_digest_pairs(_ToolActivityDigestParser(get_parser(source)), turns)
-    assert flag_on_pairs == flag_off_pairs
-    assert len(flag_on_pairs) == len(flag_off_pairs)
+    digest_pairs = _extract_digest_pairs(get_parser(source), turns)
+    assert all(isinstance(pair, DigestPair) for pair in digest_pairs)
     for original, enriched in zip(without_ledger, with_ledger, strict=True):
         assert {key: value for key, value in enriched.items() if key != "tool_activity"} == original
         if "tool_activity" in enriched:
@@ -2522,8 +2502,8 @@ def test_tool_only_turn_ledger_stays_on_its_user_message(
     assert "tool_activity" not in previous_user
     if source == "grok":
         assert _extract_digest_pairs(parser, turns) == [
-            ("previous", "previous reply"),
-            ("inspect", ""),
+            DigestPair("previous", "previous reply", ""),
+            DigestPair("inspect", "", "[tool activity]\n- Read widget.py (no result recorded)"),
         ]
 
 

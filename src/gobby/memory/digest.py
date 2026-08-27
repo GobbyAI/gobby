@@ -17,7 +17,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, NoReturn, Protocol
+from typing import Any, NamedTuple, NoReturn, Protocol
 
 from jinja2 import TemplateError
 
@@ -49,6 +49,27 @@ TRANSCRIPT_TAIL_RETRY_DELAY_SECONDS = 0.2
 class _TurnRecord:
     turn_markdown: str
     title_candidate: str
+
+
+class DigestPair(NamedTuple):
+    prompt: str
+    response: str
+    activity: str
+
+
+class UndigestedBatch(NamedTuple):
+    pairs: list[tuple[str, str]]
+    next_pair_index: int
+    tail_withheld: bool
+    tail_pair: DigestPair | None
+
+
+class ResolvedPairs(NamedTuple):
+    pairs: list[tuple[str, str]]
+    input_hash: str
+    next_pair_index: int
+    tail_withheld: bool
+    tail_pair: DigestPair | None
 
 
 class SessionTitlePolicy(Protocol):
@@ -114,29 +135,36 @@ def _render_prompt_template(template: str, values: dict[str, str], db: HubDataba
     return PromptLoader(db=db).render(template, values)
 
 
-def _extract_digest_pairs(parser: Any, turns: list[dict[str, Any]]) -> list[tuple[str, str]]:
+def _extract_digest_pairs(parser: Any, turns: list[dict[str, Any]]) -> list[DigestPair]:
     """Extract digestible pairs from a transcript slice."""
     if not turns:
         return []
-    messages = parser.extract_last_messages(turns, num_pairs=max(1, len(turns)))
+    messages = parser.extract_last_messages(
+        turns,
+        num_pairs=max(1, len(turns)),
+        include_tool_activity=True,
+    )
     messages = [
         {**msg, "content": stripped}
         for msg in messages
         if (stripped := strip_injected_context(str(msg["content"]))).strip()
     ]
 
-    pairs: list[tuple[str, str]] = []
+    pairs: list[DigestPair] = []
     current_prompt = ""
+    current_activity = ""
     for msg in messages:
         if msg["role"] == "user":
             if current_prompt:
-                pairs.append((current_prompt, ""))
+                pairs.append(DigestPair(current_prompt, "", current_activity))
             current_prompt = msg["content"]
+            current_activity = str(msg.get("tool_activity") or "")
         elif msg["role"] == "assistant":
-            pairs.append((current_prompt or "", msg["content"]))
+            pairs.append(DigestPair(current_prompt or "", msg["content"], current_activity))
             current_prompt = ""
+            current_activity = ""
     if current_prompt:
-        pairs.append((current_prompt, ""))
+        pairs.append(DigestPair(current_prompt, "", current_activity))
 
     def _is_lifecycle_prompt(prompt: str) -> bool:
         normalized = " ".join(re.sub(r"<[^>]+>", "", prompt).lower().split())
@@ -150,9 +178,10 @@ def _extract_digest_pairs(parser: Any, turns: list[dict[str, Any]]) -> list[tupl
         return not response.strip() and synthetic_body_reason(prompt) is not None
 
     return [
-        (prompt, response)
-        for prompt, response in pairs
-        if not _is_lifecycle_prompt(prompt) and not _is_synthetic_noise(prompt, response)
+        pair
+        for pair in pairs
+        if not _is_lifecycle_prompt(pair.prompt)
+        and not _is_synthetic_noise(pair.prompt, pair.response)
     ]
 
 
@@ -224,7 +253,7 @@ async def _read_undigested_turns(
     num_pairs: int = 50,
     *,
     catch_up: bool = False,
-) -> tuple[list[tuple[str, str]], int]:
+) -> UndigestedBatch:
     """Read user/assistant pairs from transcript that haven't been digested yet.
 
     Uses extract_turns_since_clear() to respect /clear boundaries, then
@@ -240,26 +269,26 @@ async def _read_undigested_turns(
         catch_up: Backlog catch-up outside turn end — exclude the active turn
 
     Returns:
-        Tuple of the undigested pair batch and the next persisted pair index.
+        The composed undigested pairs, next cursor, and recoverable tail evidence.
     """
     transcript_file = Path(transcript_path)
     if not transcript_file.exists():
-        return [], digested_pair_index
+        return UndigestedBatch([], digested_pair_index, False, None)
 
     try:
         parser = _parser_for_transcript(source, transcript_path)
         if parser is None:
-            return [], digested_pair_index
+            return UndigestedBatch([], digested_pair_index, False, None)
 
         turns, tail_withheld = await _read_digest_records(transcript_file)
 
         if not turns:
-            return [], digested_pair_index
+            return UndigestedBatch([], digested_pair_index, tail_withheld, None)
 
         # Get current conversation segment (respects /clear boundaries)
         segment = parser.extract_turns_since_clear(turns, max_turns=None)
         if not segment:
-            return [], digested_pair_index
+            return UndigestedBatch([], digested_pair_index, tail_withheld, None)
 
         segment_turn_offset = len(turns) - len(segment)
         is_codex = (source or "").lower() == "codex"
@@ -268,18 +297,23 @@ async def _read_undigested_turns(
             # active turn; everything before it is complete history.
             segment = _prior_codex_turns(segment, source)
             if not segment:
-                return [], digested_pair_index
+                return UndigestedBatch([], digested_pair_index, tail_withheld, None)
 
-        pairs = _extract_digest_pairs(parser, segment)
-        if tail_withheld and pairs:
-            pairs = pairs[:-1]
-        if catch_up and not is_codex and pairs and not pairs[-1][1].strip():
+        extracted_pairs = _extract_digest_pairs(parser, segment)
+        withheld_pair = extracted_pairs[-1] if tail_withheld and extracted_pairs else None
+        digestible_pairs = extracted_pairs[:-1] if withheld_pair is not None else extracted_pairs
+        if (
+            catch_up
+            and not is_codex
+            and digestible_pairs
+            and not digestible_pairs[-1].response.strip()
+        ):
             # Without a turn marker, a trailing pair with no response is the
             # in-flight turn (or the just-submitted prompt); leave it for the
             # turn-end digest so the cursor never consumes an active turn.
-            pairs = pairs[:-1]
-        if not pairs:
-            return [], digested_pair_index
+            digestible_pairs = digestible_pairs[:-1]
+        if not digestible_pairs:
+            return UndigestedBatch([], digested_pair_index, tail_withheld, withheld_pair)
 
         # Parsers return the active transcript suffix, but may sanitize records
         # in that suffix (for example Claude removes orphaned tool results).
@@ -288,23 +322,38 @@ async def _read_undigested_turns(
         prefix_turns = turns[:segment_turn_offset] if segment_turn_offset >= 0 else []
         segment_pair_offset = len(_extract_digest_pairs(parser, prefix_turns))
         start_index = digested_pair_index - segment_pair_offset
-        if start_index < 0 or start_index > len(pairs):
+        if start_index < 0 or start_index > len(digestible_pairs):
             logger.debug(
                 "Resetting digest cursor to active transcript segment: index=%s offset=%s pairs=%s",
                 digested_pair_index,
                 segment_pair_offset,
-                len(pairs),
+                len(digestible_pairs),
             )
             start_index = 0
 
-        batch = pairs[start_index : start_index + num_pairs]
-        return batch, segment_pair_offset + start_index + len(batch)
+        selected_pairs = digestible_pairs[start_index : start_index + num_pairs]
+        composed_pairs = [
+            (
+                pair.prompt,
+                "\n\n".join(part for part in (pair.response, pair.activity) if part).strip(),
+            )
+            for pair in selected_pairs
+        ]
+        tail_pair = (
+            withheld_pair if tail_withheld else (selected_pairs[-1] if selected_pairs else None)
+        )
+        return UndigestedBatch(
+            composed_pairs,
+            segment_pair_offset + start_index + len(selected_pairs),
+            tail_withheld,
+            tail_pair,
+        )
 
     except TranscriptReadError:
         raise
     except Exception as e:
         logger.warning("Failed to read undigested turns from %s: %s", transcript_path, e)
-        return [], digested_pair_index
+        return UndigestedBatch([], digested_pair_index, False, None)
 
 
 async def _read_digest_records(path: Path) -> tuple[list[dict[str, Any]], bool]:
@@ -391,6 +440,14 @@ def _build_turn_record_prompt(prompt_text: str, response_text: str) -> str:
         "agent performed. Use plain words only: no dates, timestamps, session or "
         "task refs, provider names, emoji, tree glyphs, bullets, or decorative "
         "punctuation. Never return a title that starts with `/` or `$`.\n\n"
+        "The Agent Response may end with a `[tool activity]` ledger: one line per tool call in\n"
+        "order, with the primary argument (file path, command, query, MCP server:tool and task\n"
+        "ref) and ` ! failed:` annotations. Treat that ledger as the authoritative record of\n"
+        "tools used, files created or modified, commands run, commits, and task operations;\n"
+        "narration that contradicts it is wrong. A line with no annotation completed\n"
+        "successfully — a bare test command line means those tests ran and passed; ` ! failed:`\n"
+        "means the call failed; `(no result recorded)` means the call was still in flight when\n"
+        "the turn ended.\n\n"
         "turn_markdown must cover:\n"
         "- What the user asked or requested\n"
         "- What the agent found, decided, or accomplished\n"
@@ -418,19 +475,18 @@ async def _resolve_undigested_pairs(
     num_pairs: int = 50,
     *,
     catch_up: bool = False,
-) -> tuple[list[tuple[str, str]], str, int] | None:
+) -> ResolvedPairs | None:
     """Resolve undigested turn pairs from transcript or prompt_text.
 
     Returns:
-        Tuple of (pairs, input_hash, next_pair_index) or None if no content to digest.
+        Resolved pairs and tail evidence, or None if no content needs digesting.
     """
-    undigested_pairs: list[tuple[str, str]] = []
     raw_pair_index = getattr(session, "last_digested_pair_index", 0)
     pair_index = raw_pair_index if isinstance(raw_pair_index, int) and raw_pair_index >= 0 else 0
-    next_pair_index = pair_index
+    batch = UndigestedBatch([], pair_index, False, None)
 
     if session.transcript_path:
-        undigested_pairs, next_pair_index = await _read_undigested_turns(
+        batch = await _read_undigested_turns(
             session.transcript_path,
             session.source,
             pair_index,
@@ -438,7 +494,12 @@ async def _resolve_undigested_pairs(
             catch_up=catch_up,
         )
 
+    undigested_pairs = batch.pairs
+    next_pair_index = batch.next_pair_index
+    tail_pair = batch.tail_pair
     if not undigested_pairs:
+        if batch.tail_withheld:
+            return ResolvedPairs([], "", next_pair_index, True, tail_pair)
         if catch_up:
             return None
         user_prompt = prompt_text or ""
@@ -457,6 +518,7 @@ async def _resolve_undigested_pairs(
             return None
         undigested_pairs = [(user_prompt, "")]
         next_pair_index = pair_index + 1
+        tail_pair = DigestPair(user_prompt, "", "")
 
     start_pair_index = next_pair_index - len(undigested_pairs)
     combined_content = f"{start_pair_index}||" + "||".join(f"{p}||{r}" for p, r in undigested_pairs)
@@ -467,9 +529,17 @@ async def _resolve_undigested_pairs(
             session_id,
             input_hash,
         )
+        if batch.tail_withheld:
+            return ResolvedPairs([], "", next_pair_index, True, tail_pair)
         return None
 
-    return undigested_pairs, input_hash, next_pair_index
+    return ResolvedPairs(
+        undigested_pairs,
+        input_hash,
+        next_pair_index,
+        batch.tail_withheld,
+        tail_pair,
+    )
 
 
 def _turn_record_source_texts(pairs: list[tuple[str, str]]) -> tuple[str, str]:
@@ -627,6 +697,32 @@ def _schedule_summary_refresh_if_stale(
     )
 
 
+async def _persist_digest_state(
+    session_manager: Any,
+    session_id: str,
+    **values: Any,
+) -> Any:
+    """Keep the session lock until an in-flight persistence worker settles."""
+    persist = asyncio.ensure_future(
+        _run_sync_io(session_manager.persist_digest_state, session_id, **values)
+    )
+    try:
+        return await asyncio.shield(persist)
+    except asyncio.CancelledError:
+        while not persist.done():
+            try:
+                await asyncio.wait({persist})
+            except asyncio.CancelledError:
+                continue
+        if (exc := persist.exception()) is not None:
+            logger.warning(
+                "digest persistence failed for %s during cancellation",
+                session_id,
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
+        raise
+
+
 async def _build_turn_and_digest_serialized(
     memory_manager: Any,
     session_manager: Any,
@@ -636,6 +732,8 @@ async def _build_turn_and_digest_serialized(
     db: HubDatabase | None = None,
     config: Any | None = None,
     catch_up: bool = False,
+    *,
+    withheld_capture: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Build a detailed turn record, append to digest, and synthesize title.
 
@@ -656,6 +754,7 @@ async def _build_turn_and_digest_serialized(
     Returns:
         Dict with turn_num and pipeline results, or None if skipped
     """
+    tail_result: dict[str, Any] = {}
     if not memory_manager or not memory_manager.config.enabled:
         logger.debug(
             "build_turn_and_digest: skipped — memory_manager missing or disabled (session_id=%s)",
@@ -706,10 +805,29 @@ async def _build_turn_and_digest_serialized(
         if resolved is None:
             return None
 
-        if digest_config is None:
-            return {"error": "memory digest feature config not available"}
+        tail_pair_payload = resolved.tail_pair._asdict() if resolved.tail_pair is not None else None
+        if withheld_capture is not None:
+            withheld_capture.clear()
+            withheld_capture.update(
+                {
+                    "tail_withheld": resolved.tail_withheld,
+                    "withheld_pair": tail_pair_payload,
+                }
+            )
+        if resolved.tail_withheld:
+            tail_result = {
+                "tail_withheld": True,
+                "withheld_pair": tail_pair_payload,
+            }
+        if not resolved.pairs:
+            return tail_result or None
 
-        undigested_pairs, input_hash, next_pair_index = resolved
+        if digest_config is None:
+            return {"error": "memory digest feature config not available", **tail_result}
+
+        undigested_pairs = resolved.pairs
+        input_hash = resolved.input_hash
+        next_pair_index = resolved.next_pair_index
 
         # 4. Build turn record via LLM
         turn_record = await _build_turn_record(llm_service, digest_config, undigested_pairs, db)
@@ -740,8 +858,8 @@ async def _build_turn_and_digest_serialized(
 
         # 6. Persist digest state only after contract validation succeeds.
         try:
-            updated_session = await _run_sync_io(
-                session_manager.persist_digest_state,
+            updated_session = await _persist_digest_state(
+                session_manager,
                 session_id,
                 last_turn_markdown=last_turn,
                 digest_markdown=updated_digest,
@@ -768,16 +886,17 @@ async def _build_turn_and_digest_serialized(
             len(last_turn),
             session_id,
         )
-        _schedule_summary_refresh_if_stale(
-            memory_manager=memory_manager,
-            session_manager=session_manager,
-            session=updated_session,
-            updated_digest=updated_digest,
-            session_id=session_id,
-            llm_service=llm_service,
-            db=db,
-            config=config,
-        )
+        if not resolved.tail_withheld:
+            _schedule_summary_refresh_if_stale(
+                memory_manager=memory_manager,
+                session_manager=session_manager,
+                session=updated_session,
+                updated_digest=updated_digest,
+                session_id=session_id,
+                llm_service=llm_service,
+                db=db,
+                config=config,
+            )
 
         result: dict[str, Any] = {
             "turn_num": turn_num,
@@ -786,6 +905,7 @@ async def _build_turn_and_digest_serialized(
         }
         if digest_title and title_changed:
             result["title"] = digest_title
+        result.update(tail_result)
 
         # Poll durable recall rows after digest persistence. The manager retains
         # this work independently so digest completion does not await judging.
@@ -809,16 +929,16 @@ async def _build_turn_and_digest_serialized(
             session_id,
             e,
         )
-        return {"error": str(e), "error_kind": "transcript_read"}
+        return {"error": str(e), "error_kind": "transcript_read", **tail_result}
     except LLMProviderCancellation as e:
-        return _provider_cancelled_result(session_id, e)
+        return {**_provider_cancelled_result(session_id, e), **tail_result}
     except Exception as e:
         logger.exception(
             "build_turn_and_digest: Failed for session %s: %s",
             session_id,
             e,
         )
-        return {"error": str(e)}
+        return {"error": str(e), **tail_result}
 
 
 async def build_turn_and_digest(
@@ -830,6 +950,8 @@ async def build_turn_and_digest(
     db: HubDatabase | None = None,
     config: Any | None = None,
     catch_up: bool = False,
+    *,
+    withheld_capture: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Build one digest turn and its title under a per-session serialization lock."""
     async with _serialize_session_digest(session_id):
@@ -842,4 +964,5 @@ async def build_turn_and_digest(
             db=db,
             config=config,
             catch_up=catch_up,
+            withheld_capture=withheld_capture,
         )
