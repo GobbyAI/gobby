@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import datetime
 from typing import Any
 
@@ -22,7 +22,9 @@ from gobby.workflows.task_dirty_state import committable_task_paths, has_committ
 __all__ = [
     "CloseAttributionSnapshot",
     "CloseEvaluationFingerprint",
+    "closes_as_structural_parent",
     "committable_task_paths",
+    "fingerprint_differences",
     "has_committable_edits",
 ]
 
@@ -75,6 +77,46 @@ class CloseEvaluationFingerprint:
             children_state=children_state,
             attribution=attribution,
         )
+
+
+def closes_as_structural_parent(task: Task, *, has_children: bool) -> bool:
+    """Whether a close skips the leaf gates because the task only organizes work.
+
+    A task with children is organizational only when it owns no work of its
+    own. A claimed task, or one with linked commits, is a worked leaf that
+    gained found-work children; its own gates still apply (#20969 closed
+    without them once #21046 hung under it). The evaluation and the commit
+    recheck must agree on this, or the recheck captures a different
+    attribution shape and every close of such a task reports stale state
+    (#21093).
+    """
+    owns_work = task.claimed_by_session_id is not None or bool(task.commits)
+    return task.task_type == "epic" or (has_children and not owns_work)
+
+
+def fingerprint_differences(
+    expected: CloseEvaluationFingerprint | None,
+    fresh: CloseEvaluationFingerprint,
+) -> list[str]:
+    """Name the fingerprint fields that changed, nested into the attribution."""
+    if expected is None:
+        return ["evaluation"]
+    changed: list[str] = []
+    for field_info in fields(CloseEvaluationFingerprint):
+        name = field_info.name
+        before = getattr(expected, name)
+        after = getattr(fresh, name)
+        if before == after:
+            continue
+        if name == "attribution" and before is not None and after is not None:
+            changed.extend(
+                f"attribution.{inner.name}"
+                for inner in fields(CloseAttributionSnapshot)
+                if getattr(before, inner.name) != getattr(after, inner.name)
+            )
+            continue
+        changed.append(name)
+    return changed
 
 
 async def derive_close_transcript_evidence(

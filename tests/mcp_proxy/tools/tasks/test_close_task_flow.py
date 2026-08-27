@@ -20,6 +20,8 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
     CloseAttributionSnapshot,
     CloseEvaluationFingerprint,
+    closes_as_structural_parent,
+    fingerprint_differences,
 )
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close import (
@@ -1575,3 +1577,137 @@ async def test_a_child_created_during_the_close_window_asks_for_a_retry() -> Non
     assert result.get("error") == "stale_task_state"
     assert result.get("stale_state") is True
     assert "Late child" in str(result.get("message"))
+
+
+_QA_SESSION = "00000000-0000-4000-8000-000000000301"
+
+
+@pytest.mark.asyncio
+async def test_worked_leaf_with_a_closed_child_passes_the_commit_recheck() -> None:
+    """The commit recheck classifies a worked leaf the way the evaluation did.
+
+    #20728 carried a linked commit and closed found-work children: the
+    evaluation captured its attribution, the recheck recomputed the task as a
+    structural parent with no attribution, and every close looped on
+    stale_task_state (#21093).
+    """
+    task = replace(_task(), claimed_by_session_id=None, commits=["abc123"])
+    ctx = _ctx(task)
+    cast(MagicMock, ctx.task_manager.list_tasks).return_value = [_closed_child_of(task)]
+    _children, state = close_finalization.children_state(ctx, task.id)
+    attribution = await close_finalization.capture_attribution(
+        ctx,
+        task=task,
+        task_id=task.id,
+        resolved_session_id=_QA_SESSION,
+        repo_path="/repo",
+    )
+    evaluation = CloseEvaluation(task.id)
+    evaluation.task = task
+    evaluation.task_id = task.id
+    evaluation.repo_path = "/repo"
+    evaluation.resolved_session_id = _QA_SESSION
+    evaluation.commit_shas = ["before"]
+    evaluation.fingerprint = CloseEvaluationFingerprint.capture(
+        task, children_state=state, attribution=attribution
+    )
+    evaluation.pass_gate(11, "criteria_review", "Passed.")
+
+    with patch.object(
+        close_finalization,
+        "resolve_close_commit_shas",
+        return_value=(["after"], None),
+    ):
+        result = await _commit_close(
+            ctx,
+            evaluation,
+            reason="completed",
+            skip_validation=False,
+            override_justification=None,
+            commit_sha=None,
+        )
+
+    # The gate-input fingerprint matched; the recheck stopped at the patched
+    # commit-set comparison instead.
+    assert result["error"] == "stale_task_state"
+    assert result["message"].startswith("The prospective commit set changed")
+    assert "changed_gate_inputs" not in result
+
+
+@pytest.mark.asyncio
+async def test_gate_input_change_names_the_changed_fields() -> None:
+    task = _task()
+    ctx = _ctx(task)
+    evaluation = CloseEvaluation(task.id)
+    evaluation.task = task
+    evaluation.task_id = task.id
+    evaluation.repo_path = "/repo"
+    evaluation.resolved_session_id = _QA_SESSION
+    evaluation.commit_shas = ["before"]
+    evaluation.fingerprint = CloseEvaluationFingerprint.capture(
+        replace(task, validation_criteria="Old criteria."),
+        children_state=(),
+        attribution=None,
+    )
+
+    result = await _commit_close(
+        ctx,
+        evaluation,
+        reason="completed",
+        skip_validation=False,
+        override_justification=None,
+        commit_sha=None,
+    )
+
+    assert result["error"] == "stale_task_state"
+    assert result["changed_gate_inputs"] == ["validation_criteria", "attribution"]
+    assert "(validation_criteria, attribution)" in result["message"]
+    cast(MagicMock, ctx.task_manager.close_task).assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("task_kwargs", "has_children", "expected"),
+    [
+        pytest.param({"task_type": "epic"}, False, True, id="epic"),
+        pytest.param(
+            {"claimed_by_session_id": None, "commits": None}, True, True, id="unworked-parent"
+        ),
+        pytest.param(
+            {"claimed_by_session_id": None, "commits": ["abc123"]},
+            True,
+            False,
+            id="linked-commit-leaf",
+        ),
+        pytest.param({"commits": None}, True, False, id="claimed-leaf"),
+        pytest.param(
+            {"claimed_by_session_id": None, "commits": None}, False, False, id="childless"
+        ),
+    ],
+)
+def test_closes_as_structural_parent(
+    task_kwargs: dict[str, Any], has_children: bool, expected: bool
+) -> None:
+    task = replace(_task(), **task_kwargs)
+
+    assert closes_as_structural_parent(task, has_children=has_children) is expected
+
+
+def test_fingerprint_differences_name_nested_attribution_fields() -> None:
+    task = _task()
+    before = CloseAttributionSnapshot(
+        owner_session_id=_QA_SESSION,
+        attributed=True,
+        raw_paths=frozenset({"a.py"}),
+        edited_paths=frozenset({"a.py"}),
+        had_attributed_edits=True,
+        claim_started_at=None,
+    )
+    after = replace(before, raw_paths=frozenset(), edited_paths=frozenset())
+    expected = CloseEvaluationFingerprint.capture(task, children_state=(), attribution=before)
+    fresh = CloseEvaluationFingerprint.capture(task, children_state=(), attribution=after)
+
+    assert fingerprint_differences(expected, fresh) == [
+        "attribution.raw_paths",
+        "attribution.edited_paths",
+    ]
+    assert fingerprint_differences(None, fresh) == ["evaluation"]

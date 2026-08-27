@@ -10,6 +10,8 @@ from gobby.mcp_proxy.tools._task_query_pagination import collect_task_query_page
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
     CloseAttributionSnapshot,
     CloseEvaluationFingerprint,
+    closes_as_structural_parent,
+    fingerprint_differences,
 )
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
     claimed_session_window_start as _claimed_session_window_start,
@@ -132,7 +134,10 @@ async def commit_close(
         )
     # Paginated: this walks every child, so its cost grows with the sibling set.
     fresh_children, fresh_children_state = await asyncio.to_thread(children_state, ctx, task.id)
-    fresh_skip_leaf_checks = bool(fresh_children) or fresh.task_type == "epic"
+    # Same rule as the evaluation: a worked leaf with found-work children keeps
+    # its attribution in the fingerprint, so the recheck below compares like
+    # with like (#21093).
+    fresh_skip_leaf_checks = closes_as_structural_parent(fresh, has_children=bool(fresh_children))
     fresh_attribution: CloseAttributionSnapshot | None = None
     if not fresh_skip_leaf_checks:
         if evaluation.resolved_session_id is None or evaluation.repo_path is None:
@@ -159,8 +164,11 @@ async def commit_close(
         attribution=fresh_attribution,
     )
     if evaluation.fingerprint is None or fresh_fingerprint != evaluation.fingerprint:
+        changed = fingerprint_differences(evaluation.fingerprint, fresh_fingerprint)
+        evaluation.extra["changed_gate_inputs"] = changed
         return stale_close_response(
-            evaluation, "Task gate inputs changed after evaluation; retry close_task."
+            evaluation,
+            f"Task gate inputs changed after evaluation ({', '.join(changed)}); retry close_task.",
         )
     # Off the loop: the re-resolve forks git per sha, same as the evaluation's
     # own call did before #20861.

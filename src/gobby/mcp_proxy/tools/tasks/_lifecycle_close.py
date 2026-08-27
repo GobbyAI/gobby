@@ -14,6 +14,9 @@ from gobby.mcp_proxy.tools.task_repo_paths import (
 )
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import CloseEvaluationFingerprint
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
+    closes_as_structural_parent as _closes_as_structural_parent,
+)
+from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
     derive_close_transcript_evidence as _derive_close_transcript_evidence,
 )
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
@@ -211,12 +214,7 @@ async def _evaluate_close(
                 extra=parent_result.extra,
             )
     evaluation.is_epic = task.task_type == "epic"
-    # A task with children is organizational only when it owns no work of its
-    # own. A claimed task, or one with linked commits, is a worked leaf that
-    # gained found-work children; its own gates still apply (#20969 closed
-    # without them once #21046 hung under it).
-    owns_work = task.claimed_by_session_id is not None or bool(task.commits)
-    evaluation.skip_leaf_checks = evaluation.is_epic or (has_children and not owns_work)
+    evaluation.skip_leaf_checks = _closes_as_structural_parent(task, has_children=has_children)
     evaluation.pass_gate(4, "children_closed", "Every child task is closed.")
     if evaluation.skip_leaf_checks:
         evaluation.fingerprint = CloseEvaluationFingerprint.capture(
