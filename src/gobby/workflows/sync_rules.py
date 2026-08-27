@@ -371,7 +371,7 @@ def _sync_single_rule(
     existing = manager.get_by_name(rule_name, project_id=project_id, include_deleted=True)
 
     if existing is not None and existing.deleted_at is not None:
-        if _is_sync_managed_rule(existing, sync_tag):
+        if _is_sync_managed_rule(existing, sync_tag, project_id):
             manager.restore(existing.id)
             update_fields = _build_rule_update_fields(
                 existing=existing,
@@ -396,7 +396,7 @@ def _sync_single_rule(
         existing = None
 
     if existing is not None:
-        if _is_sync_managed_rule(existing, sync_tag):
+        if _is_sync_managed_rule(existing, sync_tag, project_id):
             update_fields = _build_rule_update_fields(
                 existing=existing,
                 definition_json=definition_json,
@@ -430,11 +430,16 @@ def _sync_single_rule(
     result["synced"] += 1
 
 
-def _is_sync_managed_rule(existing: Any, sync_tag: str) -> bool:
-    """Return whether an existing row is safe for template sync to manage."""
+def _is_sync_managed_rule(existing: Any, sync_tag: str, project_id: str | None) -> bool:
+    """Return whether an existing row is safe for template sync to manage.
+
+    A global row may be adopted (and re-scoped) by a project sync, and a row the
+    syncing project already owns keeps following its YAML; a row owned by another
+    project is never touched.
+    """
     return (
         existing.source == "installed"
-        and existing.project_id is None
+        and existing.project_id in (None, project_id)
         and sync_tag in (existing.tags or [])
     )
 

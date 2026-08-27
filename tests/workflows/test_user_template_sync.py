@@ -396,6 +396,74 @@ class TestProjectScopedUserSync:
         assert refreshed.project_id == project_id
         assert refreshed.enabled is True
 
+    def test_resync_refreshes_a_project_scoped_row_when_its_yaml_changes(
+        self, manager: RuleDefinitionManager, temp_db: HubDatabase, tmp_path: Path
+    ) -> None:
+        """A row the project already owns keeps following its YAML on later syncs (#21131)."""
+        from gobby.workflows.sync_rules import sync_bundled_rules
+
+        project_id = _register_project(temp_db, "scoped-rules")
+        project_rules = tmp_path / "project-rules"
+        _write_rule(project_rules, "project-rule")
+
+        first = sync_bundled_rules(
+            temp_db,
+            rules_path=[project_rules],
+            tag="user",
+            project_id=project_id,
+            project_root=project_rules,
+        )
+        assert first["errors"] == []
+        assert first["synced"] == 1
+
+        (project_rules / "project-rule.yaml").write_text(
+            "rules:\n  project-rule:\n    event: before_tool\n    priority: 7\n"
+            "    description: refreshed\n    effect:\n"
+            "      type: inject_context\n      template: refreshed\n"
+        )
+        second = sync_bundled_rules(
+            temp_db,
+            rules_path=[project_rules],
+            tag="user",
+            project_id=project_id,
+            project_root=project_rules,
+        )
+
+        assert second["errors"] == []
+        assert second["updated"] == 1
+        assert second["skipped"] == 0
+        refreshed = manager.get_by_name("project-rule", project_id=project_id)
+        assert refreshed is not None
+        assert refreshed.project_id == project_id
+        assert refreshed.priority == 7
+        assert refreshed.description == "refreshed"
+
+    def test_resync_never_adopts_another_projects_row(
+        self, manager: RuleDefinitionManager, temp_db: HubDatabase, tmp_path: Path
+    ) -> None:
+        """A project sync leaves a same-named row owned by another project untouched."""
+        from gobby.workflows.sync_rules import sync_bundled_rules
+
+        owner = _register_project(temp_db, "owner-project")
+        other = _register_project(temp_db, "other-project")
+        owned = _create_rule(manager, "shared-name", tags=["user"], project_id=owner)
+        other_rules = tmp_path / "other-rules"
+        _write_rule(other_rules, "shared-name")
+
+        result = sync_bundled_rules(
+            temp_db,
+            rules_path=[other_rules],
+            tag="user",
+            project_id=other,
+            project_root=other_rules,
+        )
+
+        assert result["errors"] == []
+        untouched = manager.get(owned.id)
+        assert untouched is not None
+        assert untouched.project_id == owner
+        assert untouched.definition_json == owned.definition_json
+
     def test_installer_scopes_the_project_rules_dir_to_the_registered_project(
         self, temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
