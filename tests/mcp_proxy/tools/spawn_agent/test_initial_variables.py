@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -457,32 +458,33 @@ class TestSpawnAgentStepVariables:
         assert instance.variables["task_claimed"] is True
         assert instance.variables["skill_loaded"] is False
 
-    async def test_auto_claim_records_claimed_session_task_link(
+    async def _spawn_with_auto_claim(
         self,
         db: Any,
         mock_runner: MagicMock,
-    ) -> None:
-        """The spawn-time claim leaves the same link the claim_task tool writes (#21102)."""
+        *,
+        project_name: str,
+    ) -> tuple[dict[str, Any], LocalTaskManager, Task, str]:
+        """Spawn a workflow-less agent against a fresh task and return the claim facts."""
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
         from gobby.storage.projects import LocalProjectManager
-        from gobby.storage.session_tasks import SessionTaskManager
         from gobby.storage.sessions import SessionManager
         from gobby.storage.tasks import LocalTaskManager
 
-        project = LocalProjectManager(db).create(name="spawn-link-project", repo_path="/tmp/gobby")
+        project = LocalProjectManager(db).create(name=project_name, repo_path="/tmp/gobby")
         task_manager = LocalTaskManager(db)
         task = task_manager.create_task(
             project.id, "Implement widget", validation_criteria="Widget tests pass."
         )
         session_manager = SessionManager(db)
         parent = session_manager.register(
-            external_id="parent-link-ext",
+            external_id=f"{project_name}-parent",
             machine_id="21000000-0000-4000-8000-000000000003",
             source="codex",
             project_id=project.id,
         )
         child = session_manager.register(
-            external_id="child-link-ext",
+            external_id=f"{project_name}-child",
             machine_id="21000000-0000-4000-8000-000000000003",
             source="codex",
             project_id=project.id,
@@ -520,7 +522,7 @@ class TestSpawnAgentStepVariables:
             mock_ctx.return_value = project_ctx
             mock_execute.return_value = MagicMock(
                 success=True,
-                run_id="run-link-123",
+                run_id=f"run-{project_name}",
                 child_session_id=child.id,
                 status="pending",
                 pid=None,
@@ -540,11 +542,52 @@ class TestSpawnAgentStepVariables:
                     "parent_session_id": parent.id,
                 },
             )
+        return result, task_manager, task, child.id
+
+    async def test_auto_claim_records_claimed_session_task_link(
+        self,
+        db: Any,
+        mock_runner: MagicMock,
+    ) -> None:
+        """The spawn-time claim leaves the same link the claim_task tool writes (#21102)."""
+        from gobby.storage.session_tasks import SessionTaskManager
+
+        result, task_manager, task, child_id = await self._spawn_with_auto_claim(
+            db, mock_runner, project_name="spawn-link"
+        )
 
         assert result["success"] is True, result
-        assert task_manager.get_task(task.id).claimed_by_session_id == child.id
+        assert task_manager.get_task(task.id).claimed_by_session_id == child_id
         links = SessionTaskManager(db).get_task_sessions(task.id)
-        assert [(row["session_id"], row["action"]) for row in links] == [(child.id, "claimed")]
+        assert [(row["session_id"], row["action"]) for row in links] == [(child_id, "claimed")]
+
+    async def test_auto_claim_link_failure_is_best_effort(
+        self,
+        db: Any,
+        mock_runner: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A failing session-task link is logged and never fails the spawn (#21102)."""
+        from gobby.storage.session_tasks import SessionTaskManager
+
+        with (
+            patch.object(
+                SessionTaskManager, "link_task", side_effect=RuntimeError("session_tasks down")
+            ),
+            caplog.at_level(logging.DEBUG, logger="gobby.mcp_proxy.tools.spawn_agent"),
+        ):
+            result, task_manager, task, child_id = await self._spawn_with_auto_claim(
+                db, mock_runner, project_name="spawn-link-failure"
+            )
+
+        assert result["success"] is True, result
+        assert task_manager.get_task(task.id).claimed_by_session_id == child_id
+        assert SessionTaskManager(db).get_task_sessions(task.id) == []
+        assert any(
+            "Best-effort auto-claim session linking failed" in record.getMessage()
+            and "session_tasks down" in record.getMessage()
+            for record in caplog.records
+        )
 
     async def _spawn_bundled_developer_agent(
         self,
