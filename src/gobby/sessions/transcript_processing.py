@@ -99,6 +99,11 @@ class TranscriptProcessingMixin:
     token_event_store: TokenEventStore
 
     @property
+    def memory_manager(self) -> Any | None:
+        """Provided by the host; the lifecycle manager resolves it per use."""
+        raise NotImplementedError
+
+    @property
     def llm_service(self) -> Any | None:
         """Provided by the host; the lifecycle manager resolves it per use."""
         raise NotImplementedError
@@ -141,6 +146,60 @@ class TranscriptProcessingMixin:
                 await self._process_session_transcript(session.id, session.transcript_path)
             except Exception as e:
                 logger.error("Failed to process transcript for %s: %s", session.id, e)
+
+            if agent_depth > 0 and source == "codex":
+                memory_manager = self.memory_manager
+                llm_service = self.llm_service
+                if memory_manager is None:
+                    logger.info(
+                        "Skipped spawned Codex digest for %s: memory manager unavailable",
+                        session.id,
+                    )
+                elif llm_service is None:
+                    logger.info(
+                        "Skipped spawned Codex digest for %s: LLM service unavailable",
+                        session.id,
+                    )
+                else:
+                    from gobby.memory.digest import build_turn_and_digest
+
+                    try:
+                        digest_result = await build_turn_and_digest(
+                            memory_manager=memory_manager,
+                            session_manager=self.session_manager,
+                            session_id=session.id,
+                            llm_service=llm_service,
+                            db=self.db,
+                            config=active,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Spawned Codex digest failed for %s; deferring transcript processing",
+                            session.id,
+                            exc_info=True,
+                        )
+                        continue
+                    if digest_result is None:
+                        logger.info(
+                            "Skipped spawned Codex digest for %s: "
+                            "no undigested turns or digest disabled",
+                            session.id,
+                        )
+                    elif digest_result.get("error") or digest_result.get("cancelled"):
+                        reason = digest_result.get("error") or digest_result.get("reason")
+                        logger.warning(
+                            "Spawned Codex digest failed for %s: %s; "
+                            "deferring transcript processing",
+                            session.id,
+                            reason or "unknown digest failure",
+                        )
+                        continue
+                    elif digest_result.get("tail_withheld"):
+                        logger.info(
+                            "Spawned Codex digest deferred for %s: transcript tail still in flight",
+                            session.id,
+                        )
+                        continue
 
             skip_llm = agent_depth > 0 or source in ("pipeline", "cron")
 
