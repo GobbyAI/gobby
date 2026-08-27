@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -3665,19 +3666,18 @@ class TestVerboseOnceBlockReason:
         }
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Write"})
 
-        first = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
-        second = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
-
-        assert first.decision == "block"
-        assert first.reason is not None
-        directive = skill_fetch_batch_directive(["rust", "development-discipline"])
-        assert first.reason.endswith(directive)
-        assert self._TERSE_HINT not in first.reason
-        assert second.decision == "block"
-        assert second.reason is not None
-        assert second.reason.startswith(
-            f"Rule enforced by Gobby: [require-claimed-task-required-skills] {self._TERSE_HINT}"
+        first, second = await asyncio.gather(
+            engine.evaluate(event, session_id=SESSION_ID, variables=variables),
+            engine.evaluate(event, session_id=SESSION_ID, variables=variables),
         )
+
+        assert {first.decision, second.decision} == {"block"}
+        assert first.reason is not None
+        assert second.reason is not None
+        directive = skill_fetch_batch_directive(["rust", "development-discipline"])
+        reasons = [first.reason, second.reason]
+        assert sum(reason.endswith(directive) for reason in reasons) == 1
+        assert sum(self._TERSE_HINT in reason for reason in reasons) == 1
         assert len(variables["_block_reasons_shown"]) == 1
 
     @pytest.mark.asyncio
