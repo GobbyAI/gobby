@@ -3836,6 +3836,34 @@ class TestCodeIndexNavigationRules:
             assert response.decision == "allow"
 
     @pytest.mark.asyncio
+    async def test_external_file_discovery_bypasses_code_index_rules(
+        self, db: HubDatabase, tmp_path: Path
+    ) -> None:
+        _sync_bundled(db)
+        repo = tmp_path / "repo"
+        extraction = tmp_path / "workbook-extract"
+        cases = (
+            ("rg --files", extraction),
+            (f"find {extraction} -type f", repo),
+        )
+
+        for command, cwd in cases:
+            event = self._normalized_bash_event(
+                command,
+                cwd=str(cwd),
+                project_path=str(repo),
+            )
+            assert event.data["canonical_code_navigation_repo_scope"] is False
+
+            response = await RuleEngine(db).evaluate(
+                event,
+                session_id=SESSION_ID,
+                variables=self._variables(loaded=True),
+            )
+
+            assert response.decision == "allow"
+
+    @pytest.mark.asyncio
     async def test_gcode_fail_open_allows_fallback_search(self, db) -> None:
         _sync_bundled(db)
         variables = self._variables(loaded=True)

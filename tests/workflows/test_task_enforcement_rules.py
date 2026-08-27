@@ -47,7 +47,7 @@ def manager(db: HubDatabase) -> RuleDefinitionManager:
     return RuleDefinitionManager(db)
 
 
-def _sync_bundled(db):
+def _sync_bundled(db: HubDatabase) -> object:
     """Sync bundled rules from the real rules directory."""
     from gobby.workflows.sync_rules import get_bundled_rules_path
 
@@ -360,6 +360,59 @@ class TestRequireTaskBeforeEdit:
         assert "canonical_repo_mutation" in body.when
         assert "requires_task_for_any_touched_file" in body.when
         assert "plan_mode" in body.when
+
+    @pytest.mark.asyncio
+    async def test_workbook_diagnostic_heredoc_is_not_treated_as_an_edit(
+        self, db: HubDatabase
+    ) -> None:
+        _sync_bundled(db)
+        read_only = """python3 - <<'PYEOF'
+from pathlib import Path
+import zipfile
+import xml.etree.ElementTree as ET
+base = Path('/tmp/workbook-extract')
+for path in sorted(base.glob('*.xlsx')):
+    with zipfile.ZipFile(path) as archive:
+        root = ET.fromstring(archive.read('xl/workbook.xml'))
+        print(path.relative_to(base), root.find('.//sheet').text)
+PYEOF"""
+        mutating = """python3 - <<'PYEOF'
+from pathlib import Path
+Path('result.txt').write_text('changed')
+PYEOF"""
+        variables = {
+            "require_task_before_edit": True,
+            "task_claimed": False,
+            "loaded_skills": ["python", "tasks"],
+            "brevity_disabled": True,
+            "skill_discovery_instructions_shown": True,
+        }
+
+        for command, expected_kind, expected_decision in (
+            (read_only, "execute", "allow"),
+            (mutating, "write", "block"),
+        ):
+            data: dict[str, object] = {
+                "tool_name": "Bash",
+                "tool_input": {"command": command},
+            }
+            normalize_tool_fields(data)
+            event = HookEvent(
+                event_type=HookEventType.BEFORE_TOOL,
+                session_id=SESSION_ID,
+                source=SessionSource.CODEX,
+                timestamp=datetime.now(UTC),
+                data=data,
+            )
+
+            response = await RuleEngine(db).evaluate(
+                event,
+                session_id=SESSION_ID,
+                variables=variables,
+            )
+
+            assert data["canonical_tool_kind"] == expected_kind
+            assert response.decision == expected_decision
 
     def test_when_condition_evaluates_with_plan_file(self) -> None:
         """Plan files should stay exempt when the helper is registered."""

@@ -153,6 +153,20 @@ for word, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[
 print(len(counts), 'distinct words', file=sys.stderr)
 """
 
+_XLSX_WORKBOOK_DIAGNOSTIC = """
+from pathlib import Path
+import zipfile
+import xml.etree.ElementTree as ET
+
+base = Path('/tmp/workbook-extract')
+namespace = {'m': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+for path in sorted(base.glob('*/*.xlsx')):
+    with zipfile.ZipFile(path) as archive:
+        root = ET.fromstring(archive.read('xl/workbook.xml'))
+        sheet = root.find('.//m:sheet', namespace)
+        print(path.relative_to(base), sheet.get('name'), sheet.text)
+"""
+
 
 @pytest.mark.parametrize(
     "script",
@@ -164,6 +178,7 @@ print(len(counts), 'distinct words', file=sys.stderr)
         "import sys; print('progress', file=sys.stderr)",
         "from datetime import datetime; print(datetime.now())",
         "import json, sys; payload = json.load(sys.stdin); print(payload.get('name'))",
+        _XLSX_WORKBOOK_DIAGNOSTIC,
     ],
 )
 def test_python_pipeline_accepts_pure_stdlib_analysis_scripts(script: str) -> None:
@@ -196,10 +211,25 @@ def test_python_pipeline_accepts_pure_stdlib_analysis_scripts(script: str) -> No
         "from re import *",
         "import sys; sys.stderr = None",
         "import json; json.dump({}, open('x', 'w'))",
+        "import zipfile; zipfile.ZipFile('out.xlsx', 'w')",
+        "import zipfile; zipfile.ZipFile('out.xlsx', mode='a')",
+        "from pathlib import Path; Path('out.txt').write_text('payload')",
+        "writer = open; writer('out.txt', 'w')",
+        ("import xml.etree.ElementTree as ET\nET = open\nET('out.xml', 'w')"),
     ],
 )
 def test_python_pipeline_rejects_mutation_and_reflection_escapes(script: str) -> None:
     assert not _classify_python_pipeline(script)
+
+
+def test_workbook_diagnostic_heredoc_is_read_only() -> None:
+    command = f"python3 - <<'PYEOF'\n{_XLSX_WORKBOOK_DIAGNOSTIC}\nPYEOF"
+    data: dict[str, Any] = {"tool_name": "Bash", "tool_input": {"command": command}}
+
+    normalize_tool_fields(data)
+
+    assert data["canonical_tool_kind"] == "execute"
+    assert not data.get("canonical_repo_mutation")
 
 
 def test_python_pipeline_normalization_keeps_uv_run_analysis_script_read_only() -> None:
