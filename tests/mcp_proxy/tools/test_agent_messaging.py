@@ -11,13 +11,19 @@ from __future__ import annotations
 import ast
 import asyncio
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.hooks.event_enrichment import EventEnricher
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.inter_session_messages import InterSessionMessageManager
+from gobby.storage.sessions import SessionManager
 from gobby.utils.session_context import (
     reset_session_context,
     session_context_for_test,
@@ -496,13 +502,26 @@ class TestSendMessage:
     @pytest.mark.asyncio
     async def test_normal_send_does_not_interrupt_long_running_recipient_work(
         self,
-        mock_session_manager,
-        mock_message_manager,
-        mock_db,
+        temp_db: HubDatabase,
+        sample_project: dict[str, Any],
     ) -> None:
-        """Routine delivery persists while recipient work continues uninterrupted."""
+        """Routine delivery is durable, non-interrupting, and injected by the next hook."""
         from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
 
+        session_manager = SessionManager(temp_db)
+        sender = session_manager.register(
+            external_id="routine-message-sender",
+            machine_id=None,
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        recipient = session_manager.register(
+            external_id="busy-message-recipient",
+            machine_id=None,
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        message_manager = InterSessionMessageManager(temp_db)
         wake_dispatcher = FakeWakeDispatcher()
         registry = InternalToolRegistry(
             name="gobby-agents",
@@ -510,15 +529,11 @@ class TestSendMessage:
         )
         add_messaging_tools(
             registry=registry,
-            message_manager=mock_message_manager,
-            session_manager=mock_session_manager,
-            db=mock_db,
+            message_manager=message_manager,
+            session_manager=session_manager,
+            db=temp_db,
             wake_dispatcher=wake_dispatcher,
         )
-        mock_session_manager.get.side_effect = lambda sid: {
-            "s-from": MockSession(id="s-from"),
-            "s-to": MockSession(id="s-to", terminal_context={"tmux_pane": "%9"}),
-        }.get(sid)
 
         work_started = asyncio.Event()
         release_work = asyncio.Event()
@@ -529,22 +544,53 @@ class TestSendMessage:
 
         recipient_work = asyncio.create_task(long_running_tool())
         await work_started.wait()
+        try:
+            result = await registry.call(
+                "send_message",
+                {
+                    "from_session": sender.id,
+                    "target": "session",
+                    "target_id": recipient.id,
+                    "content": "routine update",
+                },
+            )
 
-        result = await registry.call(
-            "send_message",
-            {
-                "from_session": "s-from",
-                "target": "session",
-                "target_id": "s-to",
-                "content": "routine update",
-            },
-        )
+            assert result["success"] is True
+            assert wake_dispatcher.calls == []
+            assert not recipient_work.done()
+            message_id = result["message_ids"][0]
+            stored = message_manager.get_message(message_id)
+            assert stored is not None
+            assert stored.content == "routine update"
+            assert stored.delivered_at is None
 
-        assert result["success"] is True
-        assert wake_dispatcher.calls == []
-        assert not recipient_work.done()
-        release_work.set()
-        await recipient_work
+            event = HookEvent(
+                event_type=HookEventType.BEFORE_TOOL,
+                session_id=recipient.external_id,
+                source=SessionSource.CLAUDE,
+                timestamp=datetime.now(UTC),
+                data={},
+                project_id=sample_project["id"],
+                metadata={
+                    "_platform_session_id": recipient.id,
+                    "_native_hook_type": "pre-tool-use",
+                },
+            )
+            response = HookResponse()
+            EventEnricher(
+                session_manager=session_manager,
+                injected_sessions=set(),
+                inter_session_msg_manager=message_manager,
+            ).enrich(event, response)
+
+            assert response.context is not None
+            assert "routine update" in response.context
+            delivered = message_manager.get_message(message_id)
+            assert delivered is not None
+            assert delivered.delivered_at is not None
+        finally:
+            release_work.set()
+            await recipient_work
 
     @pytest.mark.asyncio
     async def test_send_message_empty_fanout_reports_selector_failure(
