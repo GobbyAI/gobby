@@ -690,16 +690,16 @@ def build_condition_helpers(
             record["tool"] == tool and record["target_key"] == target_key for record in records
         )
 
-    def _first_unloaded_claimed_task_required_skill(
+    def _missing_claimed_task_required_skills(
         tool_input: Any = None,
         event_data: dict[str, Any] | None = None,
-    ) -> str:
-        """Return the first claimed-task skill missing from the canonical skill ledger."""
+    ) -> list[str]:
+        """Return claimed-task skills missing from the canonical skill ledger."""
         from gobby.workflows.claimed_task_skills import (
-            first_unloaded_claimed_task_required_skill,
+            missing_claimed_task_required_skills,
         )
 
-        return first_unloaded_claimed_task_required_skill(
+        return missing_claimed_task_required_skills(
             _get_variables(ctx),
             tool_input,
             event_data,
@@ -749,9 +749,7 @@ def build_condition_helpers(
     funcs["projected_monolith_paths"] = _projected_monolith_paths
     funcs["outstanding_monolith_paths"] = _outstanding_monolith_paths
     funcs["has_open_tool_error"] = _has_open_tool_error
-    funcs["first_unloaded_claimed_task_required_skill"] = (
-        _first_unloaded_claimed_task_required_skill
-    )
+    funcs["missing_claimed_task_required_skills"] = _missing_claimed_task_required_skills
     funcs["assistant_response_matches_any"] = _assistant_response_matches_any
     funcs["queue_memory_review_close"] = lambda event_data=None, tool_input=None: (
         queue_memory_review_close(

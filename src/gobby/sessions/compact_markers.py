@@ -40,14 +40,13 @@ COMPACT_RESUME_EXCLUDED_SKILLS = frozenset({LOADING_SKILLS_NAME, "brevity"})
 # Written by the workflow engine's load_skill effect: the skills the session's
 # active workflow asked for, whether or not the agent got to them yet.
 WORKFLOW_REQUESTED_SKILLS_VARIABLE = "workflow_requested_skills"
-# `loaded_skills` is the current-context ledger of successful agent-visible get_skill
-# calls. Compaction snapshots it into the required resume tier before the reset rule
-# clears the ledger; successful reloads repopulate it for the next compaction.
+# Compact reload scope comes from current core, claimed-task, and workflow requirements.
+# `loaded_skills` is historical within the context epoch and can retain language skills
+# from already-closed work, so it is reset after compaction without entering the snapshot.
 COMPACT_RESUME_REQUIRED_SKILL_VARIABLE_KEYS = (
     "required_skills",
     "claimed_task_required_skills",
     WORKFLOW_REQUESTED_SKILLS_VARIABLE,
-    "loaded_skills",
 )
 COMPACT_RESUME_ADVISORY_SKILL_VARIABLE_KEYS = (
     "additional_skills",

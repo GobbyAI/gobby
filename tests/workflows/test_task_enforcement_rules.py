@@ -15,7 +15,10 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
-from gobby.skills.formatting import skill_fetch_directive
+from gobby.skills.formatting import (
+    skill_fetch_directive,
+    skill_fetch_proxy_path,
+)
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody
@@ -668,7 +671,7 @@ class TestRequireClaimedTaskRequiredSkills:
     CONDITION = (
         "event.data.get('canonical_tool_kind') == 'write' "
         "and claimed_task_source_code_write(tool_input, event.data) "
-        "and first_unloaded_claimed_task_required_skill(tool_input, event.data) != ''"
+        "and missing_claimed_task_required_skills(tool_input, event.data) != []"
     )
 
     def _eval(
@@ -714,8 +717,9 @@ class TestRequireClaimedTaskRequiredSkills:
 
         assert body.event.value == "before_tool"
         assert body.effects[0].type == "block"
-        assert "first_unloaded_claimed_task_required_skill(tool_input, event.data)" in body.when
-        assert "skill_fetch_directive" in body.effects[0].reason
+        helper = "missing_claimed_task_required_skills(tool_input, event.data)"
+        assert helper in body.when
+        assert "skill_fetch_batch_directive" in body.effects[0].reason
 
     def test_condition_blocks_inferred_python_from_task_metadata(self) -> None:
         assert (
@@ -785,7 +789,7 @@ class TestRequireClaimedTaskRequiredSkills:
         ],
     )
     @pytest.mark.asyncio
-    async def test_rule_blocks_with_first_unloaded_skill_directive(
+    async def test_rule_blocks_with_every_missing_skill_in_load_order(
         self,
         db: HubDatabase,
         source: SessionSource,
@@ -822,7 +826,13 @@ class TestRequireClaimedTaskRequiredSkills:
 
         assert response.decision == "block"
         assert response.reason is not None
-        assert skill_fetch_directive("tasks") in response.reason
+        calls = [
+            skill_fetch_proxy_path(skill) for skill in ("tasks", "python", "development-discipline")
+        ]
+        assert all(call in response.reason for call in calls)
+        assert [response.reason.index(call) for call in calls] == sorted(
+            response.reason.index(call) for call in calls
+        )
 
     @pytest.mark.asyncio
     async def test_rule_allows_when_all_relevant_skills_loaded(self, db: HubDatabase) -> None:

@@ -56,7 +56,6 @@ REDIRECT_RULES = frozenset(
         "require-json-skill",
         "require-kotlin-skill",
         "require-lua-skill",
-        "require-memory-recall-before-tool",
         "require-monolith-resolution-before-commit",
         "require-monolith-resolution-before-task-transition",
         "require-objc-skill",
@@ -129,14 +128,12 @@ TRUE_RESTRICTION_RULES = frozenset(
         "no-uv-add",
         "no-wget-upload",
         "no-yarn-add",
+        "review-closed-task-memories-before-compact",
+        "review-gobby-session-feedback-before-compact",
     }
 )
 
-SKILL_FETCH_REASON_TEMPLATE = (
-    "{{ skill_fetch_directive("
-    "first_unloaded_claimed_task_required_skill(tool_input, event.data)"
-    ") }}"
-)
+SKILL_FETCH_REASON_TEMPLATE = "{{ skill_fetch_batch_directive(missing_claimed_task_required_skills(tool_input, event.data)) }}"
 
 
 def bundled_before_tool_block_reasons(*, validate: bool = False) -> dict[str, str]:

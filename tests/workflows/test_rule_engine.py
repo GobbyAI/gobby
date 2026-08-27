@@ -16,7 +16,7 @@ from gobby.config.runtime_models import ConfigSnapshot
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.metrics_events import MetricsEventStore
 from gobby.sessions.compact_continuation import WORKFLOW_REQUESTED_SKILLS_VARIABLE
-from gobby.skills.formatting import skill_fetch_directive
+from gobby.skills.formatting import skill_fetch_batch_directive, skill_fetch_directive
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -3638,7 +3638,7 @@ class TestVerboseOnceBlockReason:
         assert "gcode outline path/to/file" in second.reason
 
     @pytest.mark.asyncio
-    async def test_changed_claimed_task_required_skills_reason_emits_full_reason(
+    async def test_parallel_skill_blocks_share_one_batch_recovery_event(
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
         _insert_rule(
@@ -3646,13 +3646,13 @@ class TestVerboseOnceBlockReason:
             "require-claimed-task-required-skills",
             RuleDefinitionBody(
                 event=RuleTriggerEvent.BEFORE_TOOL,
-                when="first_unloaded_claimed_task_required_skill() != ''",
+                when="missing_claimed_task_required_skills() != []",
                 effects=[
                     RuleEffect(
                         type="block",
                         reason=(
-                            "{{ skill_fetch_directive("
-                            "first_unloaded_claimed_task_required_skill()) }}"
+                            "{{ skill_fetch_batch_directive("
+                            "missing_claimed_task_required_skills()) }}"
                         ),
                     )
                 ],
@@ -3666,24 +3666,19 @@ class TestVerboseOnceBlockReason:
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Write"})
 
         first = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
-        variables["loaded_skills"] = ["rust"]
         second = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
-        third = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert first.decision == "block"
         assert first.reason is not None
-        assert first.reason.endswith(skill_fetch_directive("rust"))
+        directive = skill_fetch_batch_directive(["rust", "development-discipline"])
+        assert first.reason.endswith(directive)
         assert self._TERSE_HINT not in first.reason
         assert second.decision == "block"
         assert second.reason is not None
-        assert second.reason.endswith(skill_fetch_directive("development-discipline"))
-        assert self._TERSE_HINT not in second.reason
-        assert third.decision == "block"
-        assert third.reason is not None
-        assert third.reason.startswith(
+        assert second.reason.startswith(
             f"Rule enforced by Gobby: [require-claimed-task-required-skills] {self._TERSE_HINT}"
         )
-        assert third.reason.endswith(skill_fetch_directive("development-discipline"))
+        assert len(variables["_block_reasons_shown"]) == 1
 
     @pytest.mark.asyncio
     async def test_different_rule_still_emits_full_reason(
