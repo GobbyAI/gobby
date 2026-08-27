@@ -44,17 +44,33 @@ and the post-commit notification succeed or roll back together.
   setting is added.
 - Generated bundled content is updated through the repository manifest builder;
   hand-edited manifest hashes are out of scope.
-- Current implementation anchors (2026-08-27):
-  `src/gobby/memory/dream/options.py:14-93`,
-  `src/gobby/storage/memories_dreams.py:197-282`,
-  `src/gobby/memory/dream/candidates.py:24-68`,
-  `src/gobby/memory/dream/models.py:92-171`,
-  `src/gobby/memory/dream/planner.py:38-244`,
-  `src/gobby/memory/dream/plan.py:30-229`,
-  `src/gobby/memory/dream/orchestrator.py:217-466`,
-  `src/gobby/memory/dream/apply.py:31-426`,
-  `src/gobby/memory/dream/storage_actions.py:47-274`, and
-  `src/gobby/memory/dream/storage_journal.py:72-309`.
+- Current implementation anchor inventory (2026-08-27):
+  - Selector/run state: `src/gobby/memory/dream/options.py:14-93`,
+    `src/gobby/storage/memories_dreams.py:197-282`,
+    `src/gobby/memory/dream/candidates.py:24-68`, and
+    `src/gobby/memory/dream/orchestrator.py:217-466`.
+  - Generation schema and action validation:
+    `src/gobby/memory/generation_schemas.py:15-44`,
+    `src/gobby/memory/dream/models.py:92-171`, and
+    `src/gobby/memory/dream/plan.py:30-229`.
+  - Bundled planner prompt and paging:
+    `src/gobby/install/shared/prompts/memory/dream.md:12-82` and
+    `src/gobby/memory/dream/planner.py:38-244`.
+  - Apply path: `src/gobby/memory/dream/apply.py:31-96`,
+    `src/gobby/memory/dream/apply.py:257-346`, and
+    `src/gobby/memory/dream/storage_actions.py:47-189`.
+  - Revert path: `src/gobby/memory/dream/apply.py:99-254`,
+    `src/gobby/memory/dream/storage_actions.py:191-274`, and
+    `src/gobby/memory/dream/storage_journal.py:252-309`.
+  - Planner/schema tests: `tests/memory/test_dream.py:309-664` and
+    `tests/memory/test_dream.py:2885-2903`.
+  - Apply/revert tests: `tests/memory/test_dream.py:668-1011` and
+    `tests/memory/test_create_supersedes.py:181-272`.
+  - Selector/admission tests: `tests/memory/test_dream_options.py:12-66` and
+    `tests/memory/test_dream.py:1210-1360`.
+  - Public-surface tests: `tests/mcp_proxy/tools/test_memory.py:713-900`,
+    `tests/servers/routes/test_memory_routes.py:98-306`, and
+    `tests/cli/test_memory_cli.py:583-908`.
 
 ## D1: Confirmed Decision Record
 `kind: framing`
