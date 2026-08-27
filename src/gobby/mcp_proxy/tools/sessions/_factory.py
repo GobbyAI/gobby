@@ -30,6 +30,7 @@ __all__ = ["create_session_messages_registry"]
 def create_session_messages_registry(
     session_manager: SessionManager | None = None,
     llm_service_resolver: Callable[[], Any | None] | None = None,
+    memory_manager_resolver: Callable[[], Any | None] | None = None,
     transcript_processor: Any | None = None,
     startup_config: DaemonConfig | None = None,
     config_resolver: Callable[[], DaemonConfig | None] | None = None,
@@ -45,6 +46,7 @@ def create_session_messages_registry(
     Args:
         session_manager: SessionManager instance for session CRUD
         llm_service_resolver: per-call resolver for the current LLM service (optional)
+        memory_manager_resolver: per-call resolver for the current memory manager (optional)
         transcript_processor: Transcript processor for handoff generation (optional)
         startup_config: DaemonConfig fallback before runtime readiness
         config_resolver: per-operation current DaemonConfig resolver
@@ -127,6 +129,7 @@ def create_session_messages_registry(
             session_manager,
             db,
             llm_service_resolver=llm_service_resolver,
+            memory_manager_resolver=memory_manager_resolver,
             session_summary_config=session_summary_config,
             compact_handoff_config=compact_handoff_config,
             config_resolver=_config,

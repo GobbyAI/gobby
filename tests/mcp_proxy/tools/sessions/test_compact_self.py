@@ -11,13 +11,16 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Callable, Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
+from gobby.config.tasks import CompactHandoffConfig
 from gobby.llm.claude_models import DoneEvent
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.sessions import _terminal_handoff
 from gobby.mcp_proxy.tools.sessions._handoff import register_handoff_tools
 from gobby.mcp_proxy.tools.sessions._terminal import (
     _CLI_COMPACT_COMMANDS,
@@ -1089,6 +1092,7 @@ class TestCompactSelfTerminalPath:
                 "metadata_json": {
                     "reason": "summary metadata stale or missing",
                     "source": "compact_self",
+                    "tail_withheld": False,
                 },
             }
         ]
@@ -1336,6 +1340,7 @@ class TestCompactSelfTerminalPath:
         assert persist_calls[0]["metadata_json"] == {
             "reason": "digest missing",
             "source": "compact_self",
+            "tail_withheld": False,
         }
         assert "transcript line 89" in handoff["context"]
         assert "transcript line 0" not in handoff["context"]
@@ -1905,3 +1910,557 @@ def _local_session_ownership(monkeypatch: pytest.MonkeyPatch) -> None:
         "gobby.mcp_proxy.tools.sessions._summary_metadata.require_local_session_ownership",
         lambda _session: "local-machine",
     )
+
+
+def _compact_session(**overrides: Any) -> SimpleNamespace:
+    values: dict[str, Any] = {
+        "id": "s1",
+        "status": "active",
+        "summary_markdown": "previous summary",
+        "summary_source_context_hash": None,
+        "summary_digest_turn_count": 1,
+        "digest_markdown": "### Turn 1\nPrior digest only",
+        "last_turn_markdown": "prior last turn",
+        "last_assistant_content": None,
+        "transcript_path": None,
+        "source": "codex",
+        "project_id": "project-1",
+        "title": "Compact coordinator",
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def _recording_summary_manager(
+    session: SimpleNamespace,
+) -> tuple[MagicMock, list[dict[str, Any]], list[str]]:
+    manager = MagicMock()
+    persisted: list[dict[str, Any]] = []
+    events: list[str] = []
+    manager.get.side_effect = lambda session_id: session if session_id == "s1" else None
+    manager.resolve_session_reference.side_effect = lambda ref, project_id=None: ref
+
+    def persist_summary_state(
+        session_id: str,
+        *,
+        summary_markdown: str,
+        generation_mode: str,
+        source_context_hash: str | None = None,
+        source_digest_turn_count: int | None = None,
+        metadata_json: dict[str, Any] | None = None,
+    ) -> SimpleNamespace:
+        assert session_id == "s1"
+        events.append("persist")
+        record = {
+            "summary_markdown": summary_markdown,
+            "generation_mode": generation_mode,
+            "source_context_hash": source_context_hash,
+            "source_digest_turn_count": source_digest_turn_count,
+            "metadata_json": metadata_json or {},
+        }
+        persisted.append(record)
+        session.summary_markdown = summary_markdown
+        session.summary_source_context_hash = source_context_hash
+        session.summary_digest_turn_count = source_digest_turn_count
+        return session
+
+    def update_status(session_id: str, status: str) -> None:
+        assert session_id == "s1"
+        events.append(f"status:{status}")
+        session.status = status
+
+    manager.persist_summary_state.side_effect = persist_summary_state
+    manager.update_status.side_effect = update_status
+    return manager, persisted, events
+
+
+@pytest.mark.asyncio
+async def test_refresh_digests_pending_turn_before_fallback() -> None:
+    session = _compact_session(digest_markdown=None, summary_markdown=None)
+    manager, persisted, events = _recording_summary_manager(session)
+
+    async def digest(**_kwargs: Any) -> dict[str, int]:
+        events.append("digest")
+        session.digest_markdown = "### Turn 1\nCompact prompt and exact tool result"
+        return {"turn_num": 1}
+
+    with (
+        patch("gobby.memory.digest.build_turn_and_digest", side_effect=digest),
+        patch(
+            "gobby.mcp_proxy.tools.sessions._summary_metadata.compact_summary_metadata_matches",
+            new=AsyncMock(return_value=False),
+        ),
+    ):
+        result = await _terminal_handoff._refresh_compact_handoff_context(
+            "s1",
+            session,
+            manager,
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            memory_manager=MagicMock(),
+            config=MagicMock(),
+        )
+
+    assert result["success"] is True
+    assert events[:2] == ["digest", "persist"]
+    assert "Compact prompt and exact tool result" in persisted[0]["summary_markdown"]
+    assert persisted[0]["source_digest_turn_count"] == 1
+    assert persisted[0]["metadata_json"]["reason"] != "digest missing"
+
+    background_events: list[str] = []
+
+    def get_reloaded_session(_session_id: str) -> SimpleNamespace:
+        background_events.append("reload")
+        return session
+
+    manager.get.side_effect = get_reloaded_session
+
+    async def background_digest(**_kwargs: Any) -> dict[str, int]:
+        background_events.append("digest")
+        return {"turn_num": 2}
+
+    async def summarize(**_kwargs: Any) -> dict[str, bool]:
+        background_events.append("summary")
+        return {"success": True}
+
+    with (
+        patch("gobby.memory.digest.build_turn_and_digest", side_effect=background_digest),
+        patch("gobby.sessions.summarize.generate_session_summaries", side_effect=summarize),
+    ):
+        await _terminal_handoff._run_compact_handoff_background_refresh(
+            "s1",
+            manager,
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            memory_manager=MagicMock(),
+            config=MagicMock(),
+        )
+
+    assert background_events == ["digest", "reload", "summary"]
+
+
+@pytest.mark.asyncio
+async def test_refresh_records_digest_error_as_fallback_reason() -> None:
+    session = _compact_session()
+    manager, persisted, _events = _recording_summary_manager(session)
+    digest = AsyncMock(return_value={"error": "boom"})
+    with patch("gobby.memory.digest.build_turn_and_digest", digest):
+        result = await _terminal_handoff._refresh_compact_handoff_context(
+            "s1",
+            session,
+            manager,
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            memory_manager=MagicMock(),
+            config=MagicMock(),
+        )
+
+    assert result["digest_failure_reason"] == "boom"
+    assert persisted[0]["metadata_json"]["reason"] == "boom"
+
+    manager.reset_mock()
+    persisted.clear()
+    with (
+        patch("gobby.memory.digest.build_turn_and_digest", digest),
+        patch(
+            "gobby.mcp_proxy.tools.sessions._summary_metadata.compact_summary_metadata_matches",
+            new=AsyncMock(return_value=True),
+        ),
+    ):
+        skipped = await _terminal_handoff._refresh_compact_handoff_context(
+            "s1",
+            session,
+            manager,
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            memory_manager=None,
+        )
+
+    assert skipped["success"] is True
+    assert not persisted
+    assert digest.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_compact_self_resolves_memory_manager_per_call() -> None:
+    session = _make_terminal_session("codex")
+    session.id = "s1"
+    session.status = "active"
+    manager = MagicMock()
+    manager.get.return_value = session
+    manager.resolve_session_reference.side_effect = lambda ref, project_id=None: ref
+    memory_manager = object()
+    memory_manager_resolver = MagicMock(return_value=memory_manager)
+    registry = _TestRegistry(name="test", description="test")
+    db = MagicMock()
+    agent_run_manager = MagicMock()
+    agent_run_manager.get_by_session.return_value = None
+    tmux = MagicMock()
+    tmux.capture_pane = AsyncMock(return_value="")
+    tmux.send_keys = AsyncMock(return_value=True)
+
+    with patch(
+        "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+        return_value=agent_run_manager,
+    ):
+        register_terminal_tools(
+            registry,
+            manager,
+            db,
+            llm_service_resolver=MagicMock(return_value=MagicMock()),
+            memory_manager_resolver=memory_manager_resolver,
+        )
+
+    compact_self = registry.get_tool("compact_self")
+    assert compact_self is not None
+    refresh = AsyncMock(return_value={"success": True, "refreshed": False})
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
+            return_value=tmux,
+        ),
+        patch("gobby.mcp_proxy.tools.sessions._terminal._CODEX_INTERRUPT_SETTLE_SECONDS", 0),
+        patch(
+            "gobby.mcp_proxy.tools.sessions._terminal._refresh_compact_handoff_context",
+            refresh,
+        ),
+        session_context_for_test("s1"),
+    ):
+        first = await compact_self()
+        second = await compact_self()
+
+    assert first["compacted"] is True
+    assert second["compacted"] is True
+    assert memory_manager_resolver.call_count == 2
+    assert [call.kwargs["memory_manager"] for call in refresh.await_args_list] == [
+        memory_manager,
+        memory_manager,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scheduled_background_refresh_forwards_memory_manager() -> None:
+    memory_manager = object()
+    config = object()
+    called = asyncio.Event()
+    received: dict[str, Any] = {}
+
+    async def background(*args: Any, **kwargs: Any) -> None:
+        received["args"] = args
+        received["kwargs"] = kwargs
+        called.set()
+
+    with patch.object(
+        _terminal_handoff,
+        "_run_compact_handoff_background_refresh",
+        side_effect=background,
+    ):
+        scheduled = _terminal_handoff._schedule_compact_handoff_background_refresh(
+            "s1",
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            memory_manager=memory_manager,
+            config=config,
+        )
+        await asyncio.wait_for(called.wait(), 1)
+
+    assert scheduled is True
+    assert received["kwargs"] == {
+        "memory_manager": memory_manager,
+        "config": config,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tail_withheld_retries_then_persists_transcript_tail_fallback() -> None:
+    activity = "\n".join(
+        [f"tool call {index}: {'x' * 60}" for index in range(400)]
+        + ["latest call: (no result recorded)"]
+    )
+    pair = {
+        "prompt": "Keep this complete compact-triggering prompt",
+        "activity": activity,
+        "response": "narration after tools",
+    }
+    session = _compact_session()
+    manager, persisted, events = _recording_summary_manager(session)
+    digest = AsyncMock(return_value={"tail_withheld": True, "withheld_pair": pair})
+    with patch("gobby.memory.digest.build_turn_and_digest", digest):
+        result = await _terminal_handoff._refresh_compact_handoff_context(
+            "s1",
+            session,
+            manager,
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            memory_manager=MagicMock(),
+            config=MagicMock(),
+        )
+
+    assert digest.await_count == 1 + _terminal_handoff.COMPACT_HANDOFF_TAIL_RETRY_ATTEMPTS
+    assert result["success"] is True
+    fallback = persisted[0]["summary_markdown"]
+    assert pair["prompt"] in fallback
+    assert "latest call: (no result recorded)" in fallback
+    assert "tool call 0:" not in fallback
+    assert len(fallback) <= _terminal_handoff._COMPACT_HANDOFF_FALLBACK_MAX_CHARS
+    assert persisted[0]["metadata_json"] == {
+        "reason": "transcript tail in-flight",
+        "source": "compact_self",
+        "tail_withheld": True,
+    }
+    assert events[-2:] == ["persist", "status:handoff_ready"]
+
+    completed = _compact_session(summary_markdown="fresh digest-backed summary")
+    complete_manager, complete_persisted, complete_events = _recording_summary_manager(completed)
+    complete_digest = AsyncMock(
+        side_effect=[
+            {"tail_withheld": True, "withheld_pair": pair},
+            {"turn_num": 2},
+        ]
+    )
+    with (
+        patch("gobby.memory.digest.build_turn_and_digest", complete_digest),
+        patch(
+            "gobby.mcp_proxy.tools.sessions._summary_metadata.compact_summary_metadata_matches",
+            new=AsyncMock(return_value=True),
+        ),
+    ):
+        completed_result = await _terminal_handoff._refresh_compact_handoff_context(
+            "s1",
+            completed,
+            complete_manager,
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            memory_manager=MagicMock(),
+            config=MagicMock(),
+        )
+
+    assert completed_result["success"] is True
+    assert not complete_persisted
+    assert complete_events == ["status:handoff_ready"]
+    assert complete_digest.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_immediate_wait_never_sees_prior_digest_fallback() -> None:
+    pair = {
+        "prompt": "Immediate compact-triggering prompt",
+        "activity": "tool call: (no result recorded)",
+        "response": "",
+    }
+    session = _compact_session(summary_markdown="prior digest fallback")
+    manager, _persisted, _events = _recording_summary_manager(session)
+    digest = AsyncMock(return_value={"tail_withheld": True, "withheld_pair": pair})
+    with patch("gobby.memory.digest.build_turn_and_digest", digest):
+        await _terminal_handoff._refresh_compact_handoff_context(
+            "s1",
+            session,
+            manager,
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            memory_manager=MagicMock(),
+            config=MagicMock(),
+        )
+
+    registry = _TestRegistry(name="test", description="test")
+    register_handoff_tools(registry, manager)
+    immediate = await registry.call(
+        "wait_for_summary",
+        {"session_id": "s1", "timeout_seconds": 1, "poll_interval_seconds": 0.1},
+    )
+    assert pair["prompt"] in immediate["context"]
+    assert "prior digest fallback" not in immediate["context"]
+
+    async def complete_digest(**_kwargs: Any) -> dict[str, int]:
+        session.digest_markdown = "### Turn 1\nTool fact landed"
+        return {"turn_num": 1}
+
+    async def regenerate(**_kwargs: Any) -> dict[str, bool]:
+        session.summary_markdown = "Regenerated summary with Tool fact landed"
+        session.summary_digest_turn_count = 1
+        return {"success": True}
+
+    with (
+        patch("gobby.memory.digest.build_turn_and_digest", side_effect=complete_digest),
+        patch("gobby.sessions.summarize.generate_session_summaries", side_effect=regenerate),
+    ):
+        await _terminal_handoff._run_compact_handoff_background_refresh(
+            "s1",
+            manager,
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            memory_manager=MagicMock(),
+            config=MagicMock(),
+        )
+
+    later = await registry.call("wait_for_summary", {"session_id": "s1"})
+    assert "Tool fact landed" in later["context"]
+
+
+@pytest.mark.asyncio
+async def test_withheld_pair_fallback_reserves_prompt_within_cap(tmp_path: Path) -> None:
+    over_cap_prompt = "P" * (_terminal_handoff._COMPACT_HANDOFF_FALLBACK_MAX_CHARS + 1)
+    over_cap = await _terminal_handoff._compact_handoff_transcript_tail_markdown(
+        _compact_session(),
+        reason="tail in flight",
+        withheld_pair={
+            "prompt": over_cap_prompt,
+            "activity": "must not appear",
+            "response": "must not appear",
+        },
+    )
+    assert over_cap is not None
+    assert over_cap_prompt in over_cap
+    assert "must not appear" not in over_cap
+    assert "prompt truncated" not in over_cap
+
+    activity = "\n".join(f"ledger {index}: {'x' * 80}" for index in range(500))
+    bounded = await _terminal_handoff._compact_handoff_transcript_tail_markdown(
+        _compact_session(),
+        reason="tail in flight",
+        withheld_pair={
+            "prompt": "Q" * 2_000,
+            "activity": activity,
+            "response": "narration that cannot displace tool activity",
+        },
+    )
+    assert bounded is not None
+    assert "Q" * 2_000 in bounded
+    assert bounded.count("earlier ledger lines truncated") == 1
+    assert "ledger 499:" in bounded
+    assert "ledger 0:" not in bounded
+    assert len(bounded) <= _terminal_handoff._COMPACT_HANDOFF_FALLBACK_MAX_CHARS
+
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text("old\nnew", encoding="utf-8")
+    raw_session = _compact_session(transcript_path=str(transcript))
+    implicit = await _terminal_handoff._compact_handoff_transcript_tail_markdown(
+        raw_session,
+        reason="digest missing",
+    )
+    explicit = await _terminal_handoff._compact_handoff_transcript_tail_markdown(
+        raw_session,
+        reason="digest missing",
+        withheld_pair=None,
+    )
+    assert explicit == implicit
+
+
+@pytest.mark.parametrize(
+    "terminal_case",
+    [
+        "initial-timeout",
+        "initial-error",
+        "initial-raised",
+        "retry-timeout",
+        "retry-error",
+        "retry-cancelled",
+        "retry-raised",
+        "retry-transcript-corruption",
+        "complete-then-error",
+    ],
+)
+@pytest.mark.asyncio
+async def test_foreground_refresh_digest_timeout_falls_back_within_deadline(
+    terminal_case: str,
+) -> None:
+    pair_a = {
+        "prompt": "withheld prompt A",
+        "activity": "A call: (no result recorded)",
+        "response": "",
+    }
+    pair_b = {
+        "prompt": "completed prompt B",
+        "activity": "B call: completed",
+        "response": "B narration",
+    }
+    session = _compact_session()
+    manager, persisted, events = _recording_summary_manager(session)
+    calls = 0
+    cancelled = asyncio.Event()
+
+    async def hang() -> None:
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    async def digest(**kwargs: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        capture = kwargs["withheld_capture"]
+        if terminal_case.startswith("initial"):
+            capture.update(tail_withheld=True, withheld_pair=pair_a)
+            if terminal_case == "initial-timeout":
+                await hang()
+            if terminal_case == "initial-error":
+                return {"error": "boom", "tail_withheld": True, "withheld_pair": pair_a}
+            raise RuntimeError("raised boom")
+
+        if calls == 1:
+            capture.update(tail_withheld=True, withheld_pair=pair_a)
+            return {"tail_withheld": True, "withheld_pair": pair_a}
+
+        if terminal_case == "complete-then-error":
+            capture.update(tail_withheld=False, withheld_pair=pair_b)
+            return {"error": "boom"}
+        if terminal_case == "retry-timeout":
+            await hang()
+        if terminal_case == "retry-error":
+            return {"error": "boom", "tail_withheld": True, "withheld_pair": pair_a}
+        if terminal_case == "retry-cancelled":
+            return {
+                "cancelled": True,
+                "reason": "shutdown",
+                "tail_withheld": True,
+                "withheld_pair": pair_a,
+            }
+        if terminal_case == "retry-transcript-corruption":
+            return {"error": "corrupt", "error_kind": "transcript_read"}
+        raise RuntimeError("raised boom")
+
+    config = CompactHandoffConfig(refresh_timeout_seconds=0.02)
+    with patch("gobby.memory.digest.build_turn_and_digest", side_effect=digest):
+        result = await _terminal_handoff._refresh_compact_handoff_context(
+            "s1",
+            session,
+            manager,
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            memory_manager=MagicMock(),
+            config=MagicMock(),
+            compact_handoff_config=config,
+        )
+
+    if "timeout" in terminal_case:
+        assert cancelled.is_set()
+        assert result["timed_out"] is True
+
+    if terminal_case == "retry-transcript-corruption":
+        assert not persisted
+        assert result["digest_failure_reason"] == "corrupt"
+        return
+
+    assert result["success"] is True
+    assert events[-2:] == ["persist", "status:handoff_ready"]
+    assert persisted
+    fallback = persisted[0]
+    expected_pair = pair_b if terminal_case == "complete-then-error" else pair_a
+    assert expected_pair["prompt"] in fallback["summary_markdown"]
+    assert expected_pair["activity"] in fallback["summary_markdown"]
+    assert fallback["metadata_json"]["tail_withheld"] is (terminal_case != "complete-then-error")
+    if terminal_case == "complete-then-error":
+        assert pair_b["response"] in fallback["summary_markdown"]
+        assert pair_a["activity"] not in fallback["summary_markdown"]

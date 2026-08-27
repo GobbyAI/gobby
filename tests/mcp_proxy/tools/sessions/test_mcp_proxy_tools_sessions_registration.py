@@ -15,6 +15,26 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._update_sentinel import UNSET
 from gobby.utils.session_context import session_context_for_test
 
+
+def test_sessions_registry_forwards_memory_manager_resolver() -> None:
+    memory_manager_resolver = MagicMock()
+    with patch(
+        "gobby.mcp_proxy.tools.sessions._factory.register_terminal_tools"
+    ) as register_terminal_tools:
+        registry = create_session_messages_registry(
+            session_manager=MagicMock(),
+            memory_manager_resolver=memory_manager_resolver,
+            db=MagicMock(),
+        )
+
+    assert registry.name == "gobby-sessions"
+    assert registry.get_tool("get_session") is not None
+    assert registry.get_tool("get_handoff_context") is not None
+    assert register_terminal_tools.call_args.kwargs["memory_manager_resolver"] is (
+        memory_manager_resolver
+    )
+
+
 pytestmark = pytest.mark.unit
 
 

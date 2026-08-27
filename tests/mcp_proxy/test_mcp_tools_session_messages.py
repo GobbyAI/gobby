@@ -413,7 +413,82 @@ async def test_get_handoff_context_by_session_id(mock_session_manager, full_sess
     assert result["has_context"] is True
     assert "Test handoff content" in result["context"]
     assert result["context_type"] == "summary_markdown"
-    assert "stale" not in result
+    assert result.get("stale") is False
+
+
+@pytest.mark.asyncio
+async def test_get_handoff_context_preserves_oversized_precompact_summary(
+    mock_session_manager: MagicMock,
+    full_sessions_registry: InternalToolRegistry,
+) -> None:
+    summary = "# Latest pre-compact summary\n\n" + "\n".join(["complete fact"] * 3_000)
+    mock_session = _make_mock_session("sess-oversized")
+    mock_session.summary_markdown = summary
+    mock_session.summary_digest_turn_count = 1
+    mock_session.digest_markdown = "### Turn 1\nComplete compact-triggering turn"
+    mock_session.last_turn_markdown = "older observer-only fallback"
+    mock_session.status = "handoff_ready"
+    mock_session_manager.resolve_session_reference.return_value = "sess-oversized"
+    mock_session_manager.get.return_value = mock_session
+
+    result = await full_sessions_registry.call(
+        "get_handoff_context",
+        {"session_id": "sess-oversized"},
+    )
+
+    assert result["context"] == summary
+    assert result["context_type"] == "summary_markdown"
+    assert result.get("stale") is False
+
+
+@pytest.mark.asyncio
+async def test_get_handoff_context_same_session_returns_latest_precompact_summary(
+    mock_session_manager: MagicMock,
+    full_sessions_registry: InternalToolRegistry,
+) -> None:
+    summary = "latest exact pre-compact revision"
+    mock_session = _make_mock_session("sess-self")
+    mock_session.summary_markdown = summary
+    mock_session.summary_digest_turn_count = 1
+    mock_session.digest_markdown = "### Turn 1\nLatest exact turn"
+    mock_session.last_turn_markdown = "older observer-only fallback"
+    mock_session.status = "active"
+    mock_session_manager.resolve_session_reference.return_value = "sess-self"
+    mock_session_manager.get.return_value = mock_session
+
+    with session_context_for_test("sess-self"):
+        result = await full_sessions_registry.call(
+            "get_handoff_context",
+            {"session_id": "sess-self"},
+        )
+
+    assert result["context"] == summary
+    assert result.get("stale") is False
+
+
+@pytest.mark.asyncio
+async def test_get_handoff_context_rejects_stale_last_turn_fallback(
+    mock_session_manager: MagicMock,
+    full_sessions_registry: InternalToolRegistry,
+) -> None:
+    summary = "complete latest summary revision"
+    mock_session = _make_mock_session("sess-fresh")
+    mock_session.summary_markdown = summary
+    mock_session.summary_digest_turn_count = 2
+    mock_session.digest_markdown = "### Turn 1\nOne\n\n### Turn 2\nTwo"
+    mock_session.last_turn_markdown = "older observer-only fallback"
+    mock_session.status = "handoff_ready"
+    mock_session_manager.resolve_session_reference.return_value = "sess-fresh"
+    mock_session_manager.get.return_value = mock_session
+
+    result = await full_sessions_registry.call(
+        "get_handoff_context",
+        {"session_id": "sess-fresh"},
+    )
+
+    assert result["context"] == summary
+    assert "older observer-only fallback" not in result["context"]
+    assert result.get("stale") is False
 
 
 async def test_get_handoff_context_appends_digest_tail_when_summary_lags_digest(

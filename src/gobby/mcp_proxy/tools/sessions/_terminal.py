@@ -352,6 +352,7 @@ def register_terminal_tools(
     session_manager: SessionManager,
     db: HubDatabase,
     llm_service_resolver: Callable[[], Any | None] | None = None,
+    memory_manager_resolver: Callable[[], Any | None] | None = None,
     session_summary_config: SessionSummaryConfig | None = None,
     compact_handoff_config: CompactHandoffConfig | None = None,
     config_resolver: Callable[[], DaemonConfig | None] | None = None,
@@ -581,13 +582,23 @@ def register_terminal_tools(
                     "error_code": "codex_interrupt_observation_unavailable",
                 }
 
+        operation_config = config_resolver() if config_resolver is not None else None
         operation_session_summary_config, operation_compact_handoff_config = (
             _capture_handoff_configs(
-                config_resolver,
-                session_summary_config=session_summary_config,
-                compact_handoff_config=compact_handoff_config,
+                None,
+                session_summary_config=(
+                    operation_config.session_summary
+                    if operation_config is not None
+                    else session_summary_config
+                ),
+                compact_handoff_config=(
+                    operation_config.compact_handoff
+                    if operation_config is not None
+                    else compact_handoff_config
+                ),
             )
         )
+        memory_manager = memory_manager_resolver() if memory_manager_resolver is not None else None
         refresh_result = await _refresh_compact_handoff_context(
             resolved_session_id,
             session,
@@ -595,6 +606,9 @@ def register_terminal_tools(
             db,
             llm_service_resolver() if llm_service_resolver is not None else None,
             operation_session_summary_config,
+            memory_manager=memory_manager,
+            config=operation_config,
+            compact_handoff_config=operation_compact_handoff_config,
         )
         if not refresh_result.get("success"):
             return {
@@ -687,6 +701,8 @@ def register_terminal_tools(
                 llm_service_resolver() if llm_service_resolver is not None else None,
                 operation_session_summary_config,
                 operation_compact_handoff_config,
+                memory_manager=memory_manager,
+                config=operation_config,
             )
         result = {
             "compacted": True,
