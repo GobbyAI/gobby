@@ -6,10 +6,11 @@ Consolidated from individual files.
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
+from gobby.memory.digest import _extract_digest_pairs
 from gobby.sessions.message_stats import compute_message_stats
 from gobby.sessions.transcript_normalization import normalize_transcript_records
 from gobby.sessions.transcript_parsing import _get_parser
@@ -19,7 +20,6 @@ from gobby.sessions.transcripts.base import (
     UNMODELED_RECORD_CONTENT_TYPE,
     ParsedMessage,
     ParsedToolEvent,
-    TranscriptParser,
 )
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
@@ -2374,99 +2374,264 @@ class TestParserRegistry:
             _get_parser(source)
 
 
-def test_tool_activity_flag_preserves_pair_shape() -> None:
-    parsers: list[TranscriptParser] = [
-        ClaudeTranscriptParser(),
-        CodexTranscriptParser(),
-        GrokTranscriptParser(),
-        QwenTranscriptParser(),
-        DroidTranscriptParser(),
-    ]
-    for parser in parsers:
-        assert parser.extract_last_messages([], include_tool_activity=True) == []
+_TRANSCRIPT_FIXTURE_ROOT = Path(__file__).parent / "transcripts" / "fixtures"
+_TRANSCRIPT_FIXTURES = (
+    _TRANSCRIPT_FIXTURE_ROOT / "fail_soft_unknown_payloads.json",
+    _TRANSCRIPT_FIXTURE_ROOT / "droid" / "dbf95187-5fa4-43a0-b207-8c24f412baf7.jsonl",
+    *sorted((_TRANSCRIPT_FIXTURE_ROOT / "grok_audit").glob("*/updates.jsonl")),
+)
 
-    turns: list[dict[str, Any]] = [
-        {"message": {"role": "user", "content": "inspect it"}},
-        {
-            "message": {
-                "role": "assistant",
-                "content": [
-                    {
-                        "type": "tool_use",
-                        "id": "tool-1",
-                        "name": "Read",
-                        "input": {"file_path": "widget.py"},
-                    }
-                ],
-            }
-        },
-        {
-            "message": {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": "tool-1",
-                        "content": "contents",
-                    }
-                ],
-            }
-        },
-        {"message": {"role": "assistant", "content": "done"}},
-    ]
-    parser = ClaudeTranscriptParser()
-    without_ledger = parser.extract_last_messages(turns)
-    with_ledger = parser.extract_last_messages(turns, include_tool_activity=True)
 
+class _ToolActivityDigestParser:
+    def __init__(self, parser: Any) -> None:
+        self._parser = parser
+
+    def extract_last_messages(
+        self,
+        turns: list[dict[str, Any]],
+        num_pairs: int = 2,
+    ) -> list[dict[str, Any]]:
+        return cast(
+            list[dict[str, Any]],
+            self._parser.extract_last_messages(
+                turns,
+                num_pairs=num_pairs,
+                include_tool_activity=True,
+            ),
+        )
+
+
+@pytest.mark.parametrize("source", ["claude", "codex", "grok", "qwen", "droid"])
+@pytest.mark.parametrize(
+    "fixture_path",
+    _TRANSCRIPT_FIXTURES,
+    ids=[str(path.relative_to(_TRANSCRIPT_FIXTURE_ROOT)) for path in _TRANSCRIPT_FIXTURES],
+)
+def test_tool_activity_flag_preserves_pair_shape(source: str, fixture_path: Path) -> None:
+    turns = _load_transcript_fixture(fixture_path)
+    parser = get_parser(source)
+
+    default_messages = parser.extract_last_messages(turns, num_pairs=max(1, len(turns)))
+    without_ledger = parser.extract_last_messages(
+        turns,
+        num_pairs=max(1, len(turns)),
+        include_tool_activity=False,
+    )
+    with_ledger = parser.extract_last_messages(
+        turns,
+        num_pairs=max(1, len(turns)),
+        include_tool_activity=True,
+    )
+
+    assert json.dumps(default_messages, ensure_ascii=False) == json.dumps(
+        without_ledger,
+        ensure_ascii=False,
+    )
     assert [(message["role"], message["content"]) for message in with_ledger] == [
         (message["role"], message["content"]) for message in without_ledger
     ]
-    assert with_ledger[0]["tool_activity"].splitlines() == [
-        "[tool activity]",
-        "- Read widget.py",
-    ]
-    assert "tool_activity" not in with_ledger[1]
+    flag_off_pairs = _extract_digest_pairs(get_parser(source), turns)
+    flag_on_pairs = _extract_digest_pairs(_ToolActivityDigestParser(get_parser(source)), turns)
+    assert flag_on_pairs == flag_off_pairs
+    assert len(flag_on_pairs) == len(flag_off_pairs)
+    for original, enriched in zip(without_ledger, with_ledger, strict=True):
+        assert {key: value for key, value in enriched.items() if key != "tool_activity"} == original
+        if "tool_activity" in enriched:
+            assert enriched["role"] == "user"
+    if source == "grok" and fixture_path.parent.name == "10711":
+        ledgers = "\n".join(
+            str(message["tool_activity"]) for message in with_ledger if "tool_activity" in message
+        )
+        assert "- search_replace /repo/widget.py" in ledgers, ledgers
+        assert "unknown-tool" not in ledgers
 
 
-def test_tool_only_turn_ledger_stays_on_its_user_message() -> None:
-    turns = [
-        {
-            "jsonrpc": "2.0",
-            "method": "session/update",
-            "params": {
-                "update": {
-                    "sessionUpdate": "user_message_chunk",
-                    "content": {"type": "text", "text": "inspect"},
+@pytest.mark.parametrize(
+    ("source", "expected_shape"),
+    [
+        ("claude", [("user", "previous"), ("assistant", "previous reply"), ("user", "inspect")]),
+        ("codex", [("user", "previous"), ("assistant", "previous reply"), ("user", "inspect")]),
+        (
+            "qwen",
+            [
+                ("user", "previous"),
+                ("assistant", "previous reply"),
+                ("user", "inspect"),
+                ("assistant", "[Tool call: Read]"),
+            ],
+        ),
+        ("droid", [("user", "previous"), ("assistant", "previous reply"), ("user", "inspect")]),
+        (
+            "grok",
+            [
+                ("user", "previous"),
+                ("assistant", "previous reply"),
+                ("user", "inspect"),
+                ("assistant", ""),
+            ],
+        ),
+    ],
+)
+def test_tool_only_turn_ledger_stays_on_its_user_message(
+    source: str,
+    expected_shape: list[tuple[str, str]],
+) -> None:
+    turns = _tool_only_turns(source)
+    parser = get_parser(source)
+
+    without_ledger = parser.extract_last_messages(turns, num_pairs=len(turns))
+    with_ledger = parser.extract_last_messages(
+        turns,
+        num_pairs=len(turns),
+        include_tool_activity=True,
+    )
+
+    assert [(item["role"], item["content"]) for item in without_ledger] == expected_shape
+    assert [(item["role"], item["content"]) for item in with_ledger] == expected_shape
+    current_user = next(item for item in with_ledger if item["content"] == "inspect")
+    previous_user = next(item for item in with_ledger if item["content"] == "previous")
+    assert "- Read widget.py (no result recorded)" in current_user["tool_activity"]
+    assert "tool_activity" not in previous_user
+    if source == "grok":
+        assert _extract_digest_pairs(parser, turns) == [
+            ("previous", "previous reply"),
+            ("inspect", ""),
+        ]
+
+
+def _load_transcript_fixture(path: Path) -> list[dict[str, Any]]:
+    if path.suffix == ".jsonl":
+        return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    captured = json.loads(path.read_text(encoding="utf-8"))
+    records: list[dict[str, Any]] = []
+    for value in captured.values():
+        if not isinstance(value, dict):
+            continue
+        payload = value.get("payload")
+        record = value.get("record")
+        if isinstance(payload, dict):
+            records.append({"type": "response_item", "payload": payload})
+        elif isinstance(record, dict):
+            records.append(record)
+    return records
+
+
+def _tool_only_turns(source: str) -> list[dict[str, Any]]:
+    if source == "claude":
+        return [
+            {"message": {"role": "user", "content": "previous"}},
+            {"message": {"role": "assistant", "content": "previous reply"}},
+            {"message": {"role": "user", "content": "inspect"}},
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call-1",
+                            "name": "Read",
+                            "input": {"path": "widget.py"},
+                        }
+                    ],
                 }
             },
-        },
-        {
-            "jsonrpc": "2.0",
-            "method": "session/update",
-            "params": {
-                "update": {
-                    "sessionUpdate": "tool_call",
-                    "title": "Read",
-                    "toolCallId": "call-1",
-                    "rawInput": {"path": "widget.py"},
-                }
+        ]
+    if source == "codex":
+        turns = [
+            _codex_text_message("user", "previous"),
+            _codex_text_message("assistant", "previous reply"),
+            _codex_text_message("user", "inspect"),
+        ]
+        turns.append(
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "call_id": "call-1",
+                    "name": "Read",
+                    "arguments": json.dumps({"path": "widget.py"}),
+                },
+            }
+        )
+        return turns
+    if source == "qwen":
+        return [
+            {"type": "user", "message": {"parts": [{"text": "previous"}]}},
+            {"type": "assistant", "message": {"parts": [{"text": "previous reply"}]}},
+            {"type": "user", "message": {"parts": [{"text": "inspect"}]}},
+            {
+                "type": "assistant",
+                "message": {
+                    "parts": [
+                        {
+                            "functionCall": {
+                                "id": "call-1",
+                                "name": "Read",
+                                "args": {"path": "widget.py"},
+                            }
+                        }
+                    ]
+                },
             },
-        },
-    ]
-
-    without_ledger = GrokTranscriptParser().extract_last_messages(turns)
-    with_ledger = GrokTranscriptParser().extract_last_messages(turns, include_tool_activity=True)
-
-    assert [(item["role"], item["content"]) for item in without_ledger] == [
-        ("user", "inspect"),
-        ("assistant", ""),
-    ]
-    assert [(item["role"], item["content"]) for item in with_ledger] == [
-        ("user", "inspect"),
-        ("assistant", ""),
-    ]
-    assert "- Read widget.py (no result recorded)" in with_ledger[0]["tool_activity"]
-    assert "tool_activity" not in with_ledger[1]
+        ]
+    if source == "droid":
+        return [
+            {
+                "type": "message",
+                "message": {
+                    "role": role,
+                    "content": [{"type": "text", "text": text}],
+                },
+            }
+            for role, text in (
+                ("user", "previous"),
+                ("assistant", "previous reply"),
+                ("user", "inspect"),
+            )
+        ] + [
+            {
+                "type": "message",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call-1",
+                            "name": "Read",
+                            "input": {"path": "widget.py"},
+                        }
+                    ],
+                },
+            }
+        ]
+    if source == "grok":
+        return [
+            {
+                "params": {
+                    "update": {
+                        "sessionUpdate": update_type,
+                        "content": {"type": "text", "text": text},
+                    }
+                }
+            }
+            for update_type, text in (
+                ("user_message_chunk", "previous"),
+                ("agent_message_chunk", "previous reply"),
+                ("user_message_chunk", "inspect"),
+            )
+        ] + [
+            {
+                "params": {
+                    "update": {
+                        "sessionUpdate": "tool_call",
+                        "title": "Read",
+                        "toolCallId": "call-1",
+                        "rawInput": {"path": "widget.py"},
+                    }
+                }
+            }
+        ]
+    raise AssertionError(f"unsupported test source: {source}")
 
 
 def _codex_text_message(role: str, text: str) -> dict[str, Any]:
@@ -2484,75 +2649,317 @@ def _codex_text_message(role: str, text: str) -> dict[str, Any]:
 def test_codex_item_stream_precedence_in_ledger() -> None:
     turns = [
         _codex_text_message("user", "inspect"),
+        *[
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "item_completed",
+                    "item": {
+                        "type": "McpToolCall",
+                        "server": "gobby",
+                        "tool": "call_tool",
+                        "arguments": {
+                            "server_name": "gobby-tasks",
+                            "tool_name": "update_task",
+                            "arguments": {"task_id": task_id},
+                        },
+                        "status": "completed",
+                        **({} if result is None else {"result": result}),
+                    },
+                },
+            }
+            for task_id, result in (
+                ("#dict", {"success": False, "error": "dict failure"}),
+                ("#ok-json", {"Ok": '{"success":false,"error":"ok-json failure"}'}),
+                (
+                    "#structured",
+                    {
+                        "structuredContent": {
+                            "success": False,
+                            "error": "structured failure",
+                        }
+                    },
+                ),
+                ("#err", {"Err": "transport failure"}),
+                ("#success", {"success": True}),
+                ("#no-result", None),
+            )
+        ],
         {
             "type": "event_msg",
             "payload": {
                 "type": "item_completed",
                 "item": {
-                    "type": "McpToolCall",
-                    "server": "gobby",
-                    "tool": "call_tool",
-                    "arguments": {
-                        "server_name": "gobby-tasks",
-                        "tool_name": "claim_task",
-                        "arguments": {"task_id": "#20728"},
+                    "type": "CommandExecution",
+                    "command": ["/bin/zsh", "-lc", "uv run pytest -k widget"],
+                    "exit_code": 1,
+                    "aggregated_output": "one failed",
+                },
+            },
+        },
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "item_completed",
+                "item": {
+                    "type": "FileChange",
+                    "changes": {
+                        "/repo/one.py": {"type": "update"},
+                        "/repo/two.py": {"type": "create"},
                     },
-                    "status": "completed",
-                    "result": {"success": True},
                 },
             },
         },
         _codex_text_message("assistant", "done"),
+        _codex_text_message("user", "second"),
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "item_completed",
+                "item": {
+                    "type": "FileChange",
+                    "changes": {"/repo/second.py": {"type": "update"}},
+                },
+            },
+        },
+        _codex_text_message("assistant", "second done"),
     ]
 
     messages = CodexTranscriptParser().extract_last_messages(turns, include_tool_activity=True)
 
     assert messages[0]["tool_activity"].splitlines() == [
         "[tool activity]",
-        "- mcp gobby-tasks:claim_task task_id=#20728",
+        "- mcp gobby-tasks:update_task task_id=#dict ! failed: dict failure",
+        "- mcp gobby-tasks:update_task task_id=#ok-json ! failed: ok-json failure",
+        "- mcp gobby-tasks:update_task task_id=#structured ! failed: structured failure",
+        "- mcp gobby-tasks:update_task task_id=#err ! failed: transport failure",
+        "- mcp gobby-tasks:update_task task_id=#success",
+        "- mcp gobby-tasks:update_task task_id=#no-result",
+        "- Bash uv run pytest -k widget ! failed: one failed",
+        "- apply_patch /repo/one.py",
+        "- apply_patch /repo/two.py",
+    ]
+    assert messages[2]["tool_activity"].splitlines() == [
+        "[tool activity]",
+        "- apply_patch /repo/second.py",
     ]
 
 
 def test_codex_mixed_window_and_split_tail_precedence() -> None:
-    command = "tail -f /var/log/widget.log"
+    tail_command = "tail -f /var/log/widget.log"
+    covered_command = "echo covered"
+    wrapper_only_command = "echo wrapper-only"
+    duplicate_command = "uv run pytest -k widget"
     turns = [
         _codex_text_message("user", "inspect"),
+        _codex_text_message("user", "<user_instructions>provider details</user_instructions>"),
         {
             "type": "response_item",
             "payload": {
                 "type": "custom_tool_call",
                 "name": "exec",
-                "call_id": "call-1",
-                "input": f'await tools.exec_command({{"cmd":{json.dumps(command)}}})',
+                "call_id": "tail-call",
+                "input": f'await tools.exec_command({{"cmd":{json.dumps(tail_command)}}})',
+            },
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "functions.exec_command",
+                "call_id": "direct-call",
+                "arguments": json.dumps({"cmd": "pwd"}),
+            },
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call",
+                "name": "exec",
+                "call_id": "multi-call",
+                "input": (
+                    'await tools.exec_command({"cmd":"echo one"}); '
+                    'await tools.exec_command({"cmd":"echo two"});'
+                ),
+            },
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call",
+                "name": "exec",
+                "call_id": "covered-call",
+                "input": (
+                    "const r = await tools.exec_command("
+                    f'{{"cmd":{json.dumps(covered_command)}}}); text(r);'
+                ),
+            },
+        },
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "item_completed",
+                "item": {
+                    "type": "CommandExecution",
+                    "command": ["/bin/zsh", "-lc", covered_command],
+                    "exit_code": 0,
+                    "aggregated_output": "covered",
+                },
+            },
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call",
+                "name": "functions.exec",
+                "call_id": "wrapper-only-call",
+                "input": (
+                    "const r = await tools.exec_command("
+                    f'{{"cmd":{json.dumps(wrapper_only_command)}}}); text(r);'
+                ),
+            },
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call_output",
+                "call_id": "wrapper-only-call",
+                "output": [
+                    {
+                        "type": "input_text",
+                        "text": json.dumps({"exit_code": 0, "output": "wrapper done"}),
+                    }
+                ],
+            },
+        },
+        *[
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "name": "exec",
+                    "call_id": f"duplicate-{index}",
+                    "input": (
+                        "const r = await tools.exec_command("
+                        f'{{"cmd":{json.dumps(duplicate_command)}}}); text(r);'
+                    ),
+                },
+            }
+            for index in range(2)
+        ],
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "item_completed",
+                "item": {
+                    "type": "CommandExecution",
+                    "command": ["/bin/zsh", "-lc", duplicate_command],
+                    "exit_code": 0,
+                    "aggregated_output": "passed",
+                },
             },
         },
         _codex_text_message("assistant", "waiting"),
+        _codex_text_message("user", "second turn"),
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "item_completed",
+                "item": {
+                    "type": "FileChange",
+                    "changes": {"/repo/second.py": {"type": "update"}},
+                },
+            },
+        },
+        _codex_text_message("assistant", "second done"),
     ]
 
     messages = CodexTranscriptParser().extract_last_messages(turns, include_tool_activity=True)
+    first_ledger = messages[0]["tool_activity"]
+    second_ledger = messages[2]["tool_activity"]
 
-    assert messages[0]["tool_activity"].count(command) == 1
-    assert "(no result recorded)" in messages[0]["tool_activity"]
-    assert "await tools.exec_command" not in messages[0]["tool_activity"]
+    assert first_ledger.count(tail_command) == 1
+    assert f"- Bash {tail_command} (no result recorded)" in first_ledger
+    assert "- Bash pwd (no result recorded)" in first_ledger
+    assert "- exec (no result recorded)" in first_ledger
+    assert first_ledger.count(f"- Bash {covered_command}") == 1
+    assert first_ledger.count(f"- Bash {wrapper_only_command}") == 1
+    assert first_ledger.count(f"- Bash {duplicate_command}") == 2
+    assert "await tools.exec_command" not in first_ledger
+    assert second_ledger.splitlines() == ["[tool activity]", "- apply_patch /repo/second.py"]
 
 
 def test_codex_item_canonicalization_matches_exec_adapter() -> None:
     from gobby.sessions.transcripts.codex import _command_execution_outcomes
     from gobby.sessions.transcripts.codex_items import normalize_command_execution
 
-    item = {
-        "type": "CommandExecution",
-        "id": "exec-1",
-        "command": ["/bin/zsh", "-lc", "uv run pytest -k widget"],
-        "exit_code": 1,
-        "stderr": "failed",
-    }
-    normalized = normalize_command_execution(item)
-    outcomes = _command_execution_outcomes(
-        {}, {"type": "item_completed", "item": item}, datetime.now(UTC)
-    )
+    items = [
+        {
+            "type": "CommandExecution",
+            "id": "exec-1",
+            "command": ["/bin/zsh", "-lc", "uv run pytest -k widget"],
+            "exit_code": 1,
+            "stderr": "failed",
+        },
+        {
+            "type": "CommandExecution",
+            "id": "exec-2",
+            "command": ["git", "status", "--short"],
+            "exit_code": 0,
+            "stdout": "clean",
+        },
+    ]
+    for item in items:
+        normalized = normalize_command_execution(item)
+        outcomes = _command_execution_outcomes(
+            {}, {"type": "item_completed", "item": item}, datetime.now(UTC)
+        )
 
-    assert normalized is not None
-    assert len(outcomes) == 1
-    assert outcomes[0].command == normalized.command
-    assert outcomes[0].result["success"] == normalized.success
+        assert normalized is not None
+        assert len(outcomes) == 1
+        assert outcomes[0].command == normalized.command
+        assert outcomes[0].result == {
+            "exit_code": normalized.exit_code,
+            "success": normalized.success,
+            "output": normalized.output,
+            "outcome_provenance": "codex.event_msg.command_execution",
+        }
+
+    duplicate_command = "uv run pytest -k widget"
+    turns = [
+        _codex_text_message("user", "inspect"),
+        *[
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "call_id": f"call-{index}",
+                    "name": "functions.exec",
+                    "input": (
+                        "const r = await tools.exec_command("
+                        f"{{cmd:{json.dumps(duplicate_command)}}}); text(r);"
+                    ),
+                },
+            }
+            for index in range(2)
+        ],
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "item_completed",
+                "item": {
+                    "type": "CommandExecution",
+                    "command": ["/bin/zsh", "-lc", duplicate_command],
+                    "exit_code": 0,
+                    "aggregated_output": "passed",
+                },
+            },
+        },
+        _codex_text_message("assistant", "done"),
+    ]
+
+    ledger = CodexTranscriptParser().extract_last_messages(
+        turns,
+        include_tool_activity=True,
+    )[0]["tool_activity"]
+    assert ledger.count(f"- Bash {duplicate_command}") == 2

@@ -262,9 +262,14 @@ class QwenTranscriptParser(BaseTranscriptParser):
                     tool_name = raw_tool_name if isinstance(raw_tool_name, str) else None
                     raw_tool_result = record.get("toolCallResult")
                     result_metadata = raw_tool_result if isinstance(raw_tool_result, dict) else {}
-                    raw_call_id = function_response.get("id") or result_metadata.get("callId")
+                    response_id = function_response.get("id")
+                    result_call_id = result_metadata.get("callId")
                     call_id = (
-                        raw_call_id if isinstance(raw_call_id, str) else self._last_tool_use_id
+                        response_id
+                        if isinstance(response_id, str) and response_id
+                        else result_call_id
+                        if isinstance(result_call_id, str) and result_call_id
+                        else self._last_tool_use_id
                     )
                     response = function_response.get("response")
                     output = (

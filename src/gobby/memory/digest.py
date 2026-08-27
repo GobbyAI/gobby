@@ -35,11 +35,14 @@ from gobby.sessions.summary_refresh import (
     coerce_digest_turn_count,
     digest_turn_count,
 )
+from gobby.sessions.transcripts.base import TranscriptReadError, decode_transcript_record
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions._title_defaults import DIGEST_TITLE_SOURCE, MANUAL_TITLE_SOURCE
 from gobby.utils.injected_context import strip_injected_context
 
 logger = logging.getLogger(__name__)
+
+TRANSCRIPT_TAIL_RETRY_DELAY_SECONDS = 0.2
 
 
 @dataclass(frozen=True)
@@ -248,16 +251,7 @@ async def _read_undigested_turns(
         if parser is None:
             return [], digested_pair_index
 
-        def _read_lines() -> list[str]:
-            with open(transcript_file, encoding="utf-8") as f:
-                return f.readlines()
-
-        lines = await asyncio.to_thread(_read_lines)
-        turns: list[dict[str, Any]] = []
-        for line in lines:
-            line = line.strip()
-            if line:
-                turns.append(json.loads(line))
+        turns, tail_withheld = await _read_digest_records(transcript_file)
 
         if not turns:
             return [], digested_pair_index
@@ -277,6 +271,8 @@ async def _read_undigested_turns(
                 return [], digested_pair_index
 
         pairs = _extract_digest_pairs(parser, segment)
+        if tail_withheld and pairs:
+            pairs = pairs[:-1]
         if catch_up and not is_codex and pairs and not pairs[-1][1].strip():
             # Without a turn marker, a trailing pair with no response is the
             # in-flight turn (or the just-submitted prompt); leave it for the
@@ -304,9 +300,41 @@ async def _read_undigested_turns(
         batch = pairs[start_index : start_index + num_pairs]
         return batch, segment_pair_offset + start_index + len(batch)
 
+    except TranscriptReadError:
+        raise
     except Exception as e:
         logger.warning("Failed to read undigested turns from %s: %s", transcript_path, e)
         return [], digested_pair_index
+
+
+async def _read_digest_records(path: Path) -> tuple[list[dict[str, Any]], bool]:
+    data = await asyncio.to_thread(path.read_bytes)
+    records, tail_withheld = _decode_digest_records(data, path)
+    if not tail_withheld:
+        return records, False
+    await asyncio.sleep(TRANSCRIPT_TAIL_RETRY_DELAY_SECONDS)
+    data = await asyncio.to_thread(path.read_bytes)
+    return _decode_digest_records(data, path)
+
+
+def _decode_digest_records(data: bytes, path: Path) -> tuple[list[dict[str, Any]], bool]:
+    records: list[dict[str, Any]] = []
+    offset = 0
+    lines = data.splitlines(keepends=True)
+    for index, raw_record in enumerate(lines):
+        if raw_record.strip():
+            record = decode_transcript_record(
+                raw_record,
+                path=path,
+                byte_offset=offset,
+                line_number=index + 1,
+                is_final=index == len(lines) - 1,
+            )
+            if record is None:
+                return records, True
+            records.append(record)
+        offset += len(raw_record)
+    return records, False
 
 
 def _prior_codex_turns(
@@ -775,6 +803,13 @@ async def _build_turn_and_digest_serialized(
 
     except _DigestPersistenceError:
         raise
+    except TranscriptReadError as e:
+        logger.warning(
+            "build_turn_and_digest: Corrupt transcript for session %s: %s",
+            session_id,
+            e,
+        )
+        return {"error": str(e), "error_kind": "transcript_read"}
     except LLMProviderCancellation as e:
         return _provider_cancelled_result(session_id, e)
     except Exception as e:

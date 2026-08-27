@@ -22,12 +22,23 @@ _METHODS = ("session/update", "_x.ai/session/update")
 
 
 @dataclass(frozen=True)
+class ToolSpec:
+    name: str
+    tool_input: dict[str, Any]
+    status: str = "completed"
+    output: str = "ok"
+    use_fallback_keys: bool = False
+    malformed_primary_keys: bool = False
+
+
+@dataclass(frozen=True)
 class TurnSpec:
     prompt: str | None
     injections: tuple[str, ...] = ()
     agent_blocks: tuple[str, ...] = ()
     thought_blocks: int = 0
     tool_calls: int = 0
+    tools: tuple[ToolSpec, ...] = ()
     stop_reason: str | None = "end_turn"
     usage: dict[str, int] | None = None
     compaction_restart: bool = False
@@ -103,7 +114,13 @@ def build_stream(turns: list[TurnSpec], *, session_id: str = "grok-fixture") -> 
             for block in part:
                 emit(_text_update("agent_message_chunk", block))
             if part_i == 0:
-                _emit_tools(emit, session_id=session_id, turn_i=turn_i, count=spec.tool_calls)
+                _emit_tools(
+                    emit,
+                    session_id=session_id,
+                    turn_i=turn_i,
+                    count=spec.tool_calls,
+                    tools=spec.tools,
+                )
 
         if spec.stop_reason is not None:
             completed: dict[str, Any] = {
@@ -127,23 +144,28 @@ def _emit_tools(
     session_id: str,
     turn_i: int,
     count: int,
+    tools: tuple[ToolSpec, ...],
 ) -> None:
-    for tool_i in range(count):
+    default_tools = tuple(ToolSpec("grep", {"pattern": "fixture"}) for _ in range(count))
+    for tool_i, tool in enumerate((*default_tools, *tools)):
         call_id = f"{session_id}-t{turn_i}-{tool_i}"
-        emit(
-            {
-                "sessionUpdate": "tool_call",
-                "title": "grep",
-                "toolCallId": call_id,
-                "rawInput": {"pattern": "fixture"},
-            }
-        )
+        name_key = "name" if tool.use_fallback_keys else "title"
+        input_key = "input" if tool.use_fallback_keys else "rawInput"
+        call: dict[str, Any] = {
+            "sessionUpdate": "tool_call",
+            name_key: tool.name,
+            "toolCallId": call_id,
+            input_key: tool.tool_input,
+        }
+        if tool.malformed_primary_keys:
+            call.update({"title": "  ", "rawInput": {}})
+        emit(call)
         emit(
             {
                 "sessionUpdate": "tool_call_update",
-                "status": "completed",
+                "status": tool.status,
                 "toolCallId": call_id,
-                "content": {"type": "text", "text": "ok"},
+                "content": {"type": "text", "text": tool.output},
             }
         )
         emit({"sessionUpdate": "hook_annotation", "hook": "PostToolUse"})
@@ -303,6 +325,39 @@ def _session_10711_turns() -> tuple[TurnSpec, ...]:
             prompt=f"Real user request {index}: add fixture coverage.",
             agent_blocks=(f"done-{index}",),
             thought_blocks=1 if index == 0 else 0,
+            tools=(
+                (
+                    ToolSpec(
+                        "search_replace",
+                        {
+                            "target_file": "/repo/widget.py",
+                            "old_string": "old",
+                            "new_string": "new",
+                        },
+                        use_fallback_keys=True,
+                        malformed_primary_keys=True,
+                    ),
+                    ToolSpec(
+                        "use_tool",
+                        {
+                            "tool_name": "call_tool",
+                            "tool_input": {
+                                "server_name": "gobby-tasks",
+                                "tool_name": "claim_task",
+                                "arguments": {"task_id": "#20728"},
+                            },
+                        },
+                    ),
+                    ToolSpec(
+                        "run_terminal_command",
+                        {"command": "uv run pytest -k widget"},
+                        status="failed",
+                        output="exit 1",
+                    ),
+                )
+                if index == 0
+                else ()
+            ),
             stop_reason="end_turn",
             usage=_usage(index, model_calls=2),
         )
