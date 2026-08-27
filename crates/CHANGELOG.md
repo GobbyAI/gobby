@@ -32,12 +32,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CodeWiki contract re-anchored to gwiki** — persist `generated_by:
   gwiki-code` as the page-format identifier and pin the golden page fixture
   against gwiki's emitter and parsers. Version: `0.9.2`.
+- **Minor version bump** — `0.10.0` marks the accumulated schema-authority, grant, and overlay changes since `0.9.2`; every consumer crate's `gobby-core` requirement moves with it. Version: `0.10.0`.
 
 #### gdaemon
 
 - **Exclusive schema maintenance** — ship the schema CLI and single-active
   daemon lease against `gobby-core 0.9.1`. Version: `0.3.0`.
 - **Foundation alignment** — require `gobby-core 0.9.2`. Version: `0.3.1`.
+- **Minor version bump** — `0.4.0`; requires `gobby-core 0.10.0`. The managed `gdaemon` floor (`MANAGED_BIN_VERSION_PINS`) moves to `0.4.0` with it. Version: `0.4.0`.
 
 #### gcode
 
@@ -46,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Read-only CodeWiki facts facade** — expose `codewiki_facts` as the sole
   datastore surface for the relocated `gwiki code` engine and privatize the
   remaining gcode datastore modules. Version: `1.6.1`.
+- **Minor version bump** — `1.7.0`; requires `gobby-core 0.10.0`. Version: `1.7.0`.
 
 #### gwiki
 
@@ -59,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `trust: generated` alongside the `gwiki-code` marker before a page skips
   claim auditing, so structural placeholders and marker-stamped knowledge
   pages stay fully audited. Version: `0.9.2`.
+- **Minor version bump** — `0.10.0`; requires `gobby-core 0.10.0` and `gobby-code 1.7.0`. Version: `0.10.0`.
 
 #### ghook
 
@@ -72,6 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Display-only Claude statusline adapter** — preserve the configured downstream
   statusline command and byte-exact stdin/stdout forwarding while leaving usage
   ingestion to transcript processing.
+- **Minor version bump** — `0.9.0`; requires `gobby-core 0.10.0`. Version: `0.9.0`.
 
 ## [0.8.1] — gobby-core — 2026-07-14
 

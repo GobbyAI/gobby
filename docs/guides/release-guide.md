@@ -8,11 +8,11 @@ holds pre-monorepo release history only.
 
 | Crate | Binary | Version | Tag | Publishes? |
 |---|---|---:|---|---|
-| `gobby-core` | n/a | `0.9.2` | `gobby-core-v0.9.2` | crates.io only |
-| `gobby-code` | `gcode` | `1.6.1` | `gcode-v1.6.1` | crates.io + GitHub binaries |
-| `gobby-daemon` | `gdaemon` | `0.3.1` | `gdaemon-v0.3.1` | crates.io + GitHub binaries |
-| `gobby-hooks` | `ghook` | `0.8.4` | `ghook-v0.8.4` | crates.io + GitHub binaries |
-| `gobby-wiki` | `gwiki` | `0.9.2` | `gwiki-v0.9.2` | crates.io + GitHub binaries |
+| `gobby-core` | n/a | `0.10.0` | `gobby-core-v0.10.0` | crates.io only |
+| `gobby-code` | `gcode` | `1.7.0` | `gcode-v1.7.0` | crates.io + GitHub binaries |
+| `gobby-daemon` | `gdaemon` | `0.4.0` | `gdaemon-v0.4.0` | crates.io + GitHub binaries |
+| `gobby-hooks` | `ghook` | `0.9.0` | `ghook-v0.9.0` | crates.io + GitHub binaries |
+| `gobby-wiki` | `gwiki` | `0.10.0` | `gwiki-v0.10.0` | crates.io + GitHub binaries |
 
 ## Version Rules
 
@@ -33,7 +33,7 @@ After validation passes, push the branch, sync `main`, and merge it into
 `main` with:
 
 ```text
-Merge 0.5.0 into main for release: gobby-core 0.9.2, gcode 1.6.1, gdaemon 0.3.1, ghook 0.8.4, gwiki 0.9.2
+Merge 0.5.0 into main for release: gobby-core 0.10.0, gcode 1.7.0, gdaemon 0.4.0, ghook 0.9.0, gwiki 0.10.0
 ```
 
 Push `main` and wait for main CI to pass before tagging. Tags are lightweight
