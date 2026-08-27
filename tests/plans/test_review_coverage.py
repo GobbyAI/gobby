@@ -142,7 +142,9 @@ def _coverage_case(
     lanes: list[object] = [
         {
             "lane_id": lane_id,
-            "status": "completed",
+            "status": (
+                "delegated-verified" if lane_id == "repository_blast_radius" else "completed"
+            ),
             "section_ids_checked": section_ids,
             "source_citations": [citation],
             "candidate_issues": candidates if lane_id == REVIEW_LANES[0] else [],
@@ -200,6 +202,11 @@ def test_valid_coverage_returns_canonical_attestation(tmp_path: Path) -> None:
     attested_lanes = attestation["lanes"]
     assert isinstance(attested_lanes, list)
     assert [lane["lane_id"] for lane in attested_lanes] == list(REVIEW_LANES)
+    assert [lane["status"] for lane in attested_lanes] == [
+        "completed",
+        "delegated-verified",
+        "completed",
+    ]
     assert attestation["disposition_counts"] == {
         "total": 1,
         "emitted_findings": 1,
@@ -208,7 +215,10 @@ def test_valid_coverage_returns_canonical_attestation(tmp_path: Path) -> None:
     assert validate_coverage_attestation(attestation, verdict="approved") == attestation
 
 
-@pytest.mark.parametrize("mutation", ["missing", "duplicate", "incomplete"])
+@pytest.mark.parametrize(
+    "mutation",
+    ["missing", "duplicate", "incomplete", "repository-not-delegated"],
+)
 def test_coverage_rejects_missing_duplicate_or_incomplete_lanes(
     tmp_path: Path,
     mutation: str,
@@ -218,9 +228,12 @@ def test_coverage_rejects_missing_duplicate_or_incomplete_lanes(
         lanes.pop()
     elif mutation == "duplicate":
         lanes[-1] = copy.deepcopy(lanes[0])
-    else:
+    elif mutation == "incomplete":
         assert isinstance(lanes[-1], dict)
         lanes[-1]["status"] = "failed"
+    else:
+        assert isinstance(lanes[1], dict)
+        lanes[1]["status"] = "completed"
 
     with pytest.raises(ReviewEvidenceError) as error:
         _validate(tmp_path, document, lanes, dispositions, shadow)
@@ -327,3 +340,14 @@ def test_approval_rejects_invalid_shadow_manifest() -> None:
 
     with pytest.raises(ReviewEvidenceError, match="valid shadow manifest"):
         validate_coverage_attestation(attestation, verdict="approved")
+
+
+def test_attestation_rejects_completed_repository_lane() -> None:
+    attestation = coverage_attestation(evidence_id="evidence-1")
+    lanes = attestation["lanes"]
+    assert isinstance(lanes, list)
+    assert isinstance(lanes[1], dict)
+    lanes[1]["status"] = "completed"
+
+    with pytest.raises(ReviewEvidenceError, match="canonical lane statuses"):
+        validate_coverage_attestation(attestation, verdict="needs_review")

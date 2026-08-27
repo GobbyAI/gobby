@@ -1,7 +1,7 @@
 ---
 name: plan
 description: Adaptive /gobby plan workflow. Investigates first, recommends lightweight or full planning depth, requires decision elicitation, and preserves explicit human gates for artifact enhancement, adversarial review, and optional build handoff.
-version: "4.0.0"
+version: "4.1.0"
 category: core
 triggers: plan, specification, requirements
 metadata:
@@ -113,6 +113,14 @@ The constructive enhancement methodology lives in `plan-enhance`. The taskless
 `plan-enhancer-taskless` agent loads it during the enhancement phase (step 4.5),
 which runs after enhancement approval and before the adversary gate.
 
+### Agent roles and tier boundary
+
+Plan orchestration names planner, enhancer, and adversary roles only. Provider,
+model, and reasoning-effort choices live in user-editable agent profiles. Omitted
+profile fields inherit provider or session defaults; explicit profile values win.
+Internal research and mechanical repair use relative tier language, never a model
+name, so the workflow remains portable across profile inventories.
+
 ### Draft checkpoint
 
 1. Use the confirmed Decision Record as drafting input. Persist every settled
@@ -151,11 +159,29 @@ the user changes the cap. Start it only after explicit enhancement approval.
 
 Start only after explicit adversarial-review approval.
 
+0. Immediately before every adversary round, and after any plan-byte change since
+   the previous clean gate, run the deterministic sweep from the project root:
+
+   ```bash
+   uv run gobby plans validate <plan-file> -p <project-root>
+   uv run gobby plans validate <plan-file> -p <project-root> --mode expansion
+   ```
+
+   When either mode reports residue, use a mid-tier internal subagent with this
+   prompt: "Load `restraint`, `plan-draft`, and `plan-mechanic`; apply only bounded
+   validator-driven repairs to the canonical artifact; rerun both project-aware
+   modes; return the `plan-mechanic` report." This is the validator
+   rerun-until-clean loop. A `needs-planner` result returns to the planner role;
+   repeat the deterministic gate after its semantic repair. Prepare no evidence
+   and launch no adversary until both modes are clean. Preserve the final clean
+   `plan-mechanic` result, or a zero-residue direct-run result with the same fields,
+   as the deterministic sweep report.
 1. Call `prepare_plan_review_round` immediately before spawning
    `plan-adversary-taskless` without `task_id`, using `isolation="none"`. Pass
    only `plan_path`, `round_number`, and optional `project`, `session_id`,
    `task_id`, and `stage` preparation inputs. Pass the returned `evidence_id`,
-   artifact path, round number, cap, and parent session id to the agent.
+   artifact path, deterministic sweep report, round number, cap, and parent
+   session id to the adversary role.
 2. Bind the spawned run with `bind_evidence_run`. Expire the evidence if spawn
    or bind fails. After a successful bind, immediately call
    `gobby-sessions:compact_self`, then use **Waiting on Spawned Runs**. In a

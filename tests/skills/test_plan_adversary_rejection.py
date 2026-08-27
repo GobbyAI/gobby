@@ -124,3 +124,13 @@ def test_plan_adversary_prompt_documents_upstream_draft_validation_contract() ->
     assert "uv run gobby plans validate <plan-file>" in prompt
     assert "spawn gate runs the same internal validator" in prompt
     assert "typed grammar has already passed the draft-mode contract gate" in prompt
+
+
+def test_review_methodology_delegates_mechanical_blast_radius_verification() -> None:
+    body = " ".join(_plan_review_body().split())
+
+    assert "semantic and architectural" in body
+    assert "repository_blast_radius" in body
+    assert "spot-check" in body
+    assert "deterministic sweep report" in body
+    assert "delegated-verified" in body

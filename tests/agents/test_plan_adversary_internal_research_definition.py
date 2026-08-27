@@ -97,6 +97,7 @@ def test_adversaries_use_internal_three_lane_research_contract() -> None:
         for field in (
             "lane_id",
             "status: completed",
+            "delegated-verified",
             "section_ids_checked",
             "source_citations",
             "candidate_issues",
@@ -115,6 +116,25 @@ def test_adversaries_use_internal_three_lane_research_contract() -> None:
             "sequential",
         ):
             assert fallback in normalized
+
+
+def test_adversaries_spot_check_the_deterministic_sweep_report() -> None:
+    for name in ADVERSARIES:
+        agent = _agent(name)
+        instructions = " ".join(agent["prompts"]["agent"].split())
+
+        assert "semantic and architectural" in instructions
+        assert "deterministic sweep report" in instructions
+        assert "repository_blast_radius" in instructions
+        assert "spot-check" in instructions
+        assert "status: delegated-verified" in instructions
+
+
+def test_adversary_logic_contains_no_model_names() -> None:
+    for name in ADVERSARIES:
+        prompt = _agent(name)["prompts"]["agent"]
+        for model_name in ("gpt-5.6-sol", "gemini-3.1-pro", "fable"):
+            assert model_name not in prompt
 
 
 def test_parent_adversary_retains_evidence_and_verdict_ownership() -> None:

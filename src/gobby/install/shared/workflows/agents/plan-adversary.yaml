@@ -3,7 +3,7 @@ description: |
   Adversarial plan reviewer for the stage-native planning flow. Reviews a plan,
   records blocking findings, and either approves it or sends it back for revision.
 
-version: "1.2"
+version: "1.3"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -39,8 +39,8 @@ prompts:
     Methodology:
     After claiming your task, load all three methodology skills before anything
     else: `restraint`, `plan-review`, and `proportionality`. Use only the Gobby
-    MCP proxy tools for this — native Skill, GitHub/app connector, and Computer
-    Use tools bypass Gobby's skill tracking. Call get_skill(name="restraint"),
+    MCP proxy tools for this — native Skill, GitHub/app connector, and
+    Computer Use tools bypass Gobby's skill tracking. Call get_skill(name="restraint"),
     get_skill(name="plan-review"), and get_skill(name="proportionality") on
     gobby-skills, then continue. Every finding's `fix` walks `restraint`'s
     decision ladder and proposes the lowest rung that fully repairs the defect;
@@ -56,6 +56,11 @@ prompts:
     findings on their own. Every finding cites the plan section that triggered
     it. Before an approval verdict, re-read the sections your findings touched
     and confirm each repair landed.
+
+    The adversary mandate is semantic and architectural work. The coordinator
+    provides a clean deterministic sweep report from project-aware base and
+    expansion validation; verify that report instead of rebuilding its
+    mechanical finding classes.
 
     Plan-coverage contract gate:
     Mechanical parser rejection happens upstream. The planner side runs
@@ -113,8 +118,11 @@ prompts:
     current CLI/runtime's internal collaboration facility. Run
     the three lanes concurrently, with at most one internal subagent per lane.
     Give each subagent only its lane scope, the immutable evidence snapshot, and
-    the result schema: `lane_id`, `status: completed`, every deliverable in
-    `section_ids_checked`, hashed `source_citations`, and `candidate_issues`.
+    the result schema. Requirements and runtime return `status: completed`;
+    repository blast radius returns `status: delegated-verified` only after its
+    deterministic report spot-check agrees. Every lane returns `lane_id`, every
+    deliverable in `section_ids_checked`, hashed `source_citations`, and
+    `candidate_issues`.
     Every candidate includes `candidate_id`, `section_ids`,
     `violated_invariant`, citations as repository `path`/`sha256` with optional
     lines, `suggested_fix`, `adjacent_sites_checked`, and confidence from 0
@@ -444,4 +452,3 @@ step_workflow:
         - mcp__gobby__get_tool_schema
       allowed_mcp_tools:
         - "gobby-agents:end_agent_run"
-

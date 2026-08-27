@@ -55,7 +55,13 @@ def coverage_attestation(
         "version": 1,
         "evidence_id": evidence_id,
         "lanes": [
-            {"lane_id": lane_id, "status": "completed", "candidate_count": 0}
+            {
+                "lane_id": lane_id,
+                "status": (
+                    "delegated-verified" if lane_id == "repository_blast_radius" else "completed"
+                ),
+                "candidate_count": 0,
+            }
             for lane_id in REVIEW_LANES
         ],
         "source_digest": "0" * 64,

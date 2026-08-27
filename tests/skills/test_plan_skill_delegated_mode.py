@@ -66,7 +66,7 @@ def test_compact_self_interrupt_warning_is_shared_by_runtime_surfaces() -> None:
 
 
 def test_plan_skill_version(body: str) -> None:
-    assert 'version: "4.0.0"' in body
+    assert 'version: "4.1.0"' in body
 
 
 def test_plan_investigates_before_recommending_depth(body: str) -> None:
@@ -166,6 +166,44 @@ def test_full_plan_loads_draft_methodology_and_validates_before_review(body: str
     assert "ask separately whether to run enhancement" in normalized
     assert "Declining enhancement does not imply adversarial-review approval" in normalized
     assert "ask separately whether to begin adversarial review" in normalized
+
+
+def test_review_runs_deterministic_gate_and_bounded_mechanic_before_adversary(
+    body: str,
+) -> None:
+    section = _normalize_prose(
+        body[
+            body.index("### Adversarial review phase") : body.index(
+                "## Universal Checkpoint and Handoff Contract"
+            )
+        ]
+    )
+
+    base_gate = section.index("uv run gobby plans validate <plan-file> -p <project-root>")
+    expansion_gate = section.index(
+        "uv run gobby plans validate <plan-file> -p <project-root> --mode expansion"
+    )
+    prepare = section.index("prepare_plan_review_round")
+
+    assert base_gate < expansion_gate < prepare
+    assert "mid-tier internal subagent" in section
+    assert "plan-mechanic" in section
+    assert "validator rerun-until-clean" in section
+    assert "deterministic sweep report" in section
+    assert "needs-planner" in section
+
+
+def test_plan_review_orchestration_uses_roles_and_tiers(body: str) -> None:
+    normalized = _normalize_prose(body)
+
+    assert "planner, enhancer, and adversary" in normalized
+    assert "Provider, model, and reasoning-effort choices live in user-editable agent profiles" in (
+        normalized
+    )
+    assert "Omitted profile fields inherit provider or session defaults" in normalized
+    assert "explicit profile values win" in normalized
+    for model_name in ("gpt-5.6-sol", "gemini-3.1-pro", "fable"):
+        assert model_name not in body
 
 
 def test_selecting_full_does_not_launch_later_phases(body: str) -> None:

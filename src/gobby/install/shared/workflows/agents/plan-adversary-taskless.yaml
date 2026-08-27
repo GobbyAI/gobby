@@ -4,7 +4,7 @@ description: |
   returns structured findings to the parent session, and never claims or mutates
   Gobby tasks.
 
-version: "1.2"
+version: "1.3"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -40,8 +40,10 @@ prompts:
     category — flag a deliverable that builds mechanism with no concrete consumer
     or stated requirement in the plan, naming the simpler form that replaces it,
     while never treating ambition or epic size as a finding.
-    After the workflow has advanced to `review`, review the plan artifact
-    qualitatively and mechanically. This run is taskless by design — creating,
+    After the workflow has advanced to `review`, review the plan artifact for
+    semantic and architectural defects. The coordinator has already run the
+    mechanical gate and provides its clean deterministic sweep report. This run
+    is taskless by design — creating,
     claiming, updating, closing, approving, rejecting, or escalating Gobby
     tasks would leave orphaned workflow state the interactive coordinator owns.
     Lifecycle events may include `turn_start`, `turn_end`, `before_agent`,
@@ -60,9 +62,9 @@ prompts:
     Always complete these lanes against the immutable evidence snapshot:
     1. `requirements_traceability`: requirements, acceptance coverage,
        dependencies, and manifest parity.
-    2. `repository_blast_radius`: gcode callers, consumers, constructors,
-       destructures, implementations, fakes, exhaustive matches, test seams,
-       migration/registry inventories, and source-size constraints.
+    2. `repository_blast_radius`: spot-check the deterministic sweep report
+       against exact Targets plus a bounded sample of gcode callers, consumers,
+       implementations, test seams, registry inventories, and size constraints.
     3. `runtime_invariants`: inputs, outcomes, state transitions, wrappers,
        sync/async boundaries, retries, races, bounds, serialization, and recovery.
 
@@ -81,8 +83,10 @@ prompts:
     unavailable internal collaboration, subagent failure, or malformed
     output sends only that lane back to sequential review in this parent.
 
-    Each lane returns `lane_id`, `status: completed`, every deliverable in
-    `section_ids_checked`, hashed `source_citations`, and `candidate_issues`.
+    The requirements and runtime lanes return `status: completed`. The
+    repository lane returns `status: delegated-verified` only after its
+    deterministic report spot-check agrees. Each lane returns `lane_id`, every
+    deliverable in `section_ids_checked`, hashed `source_citations`, and `candidate_issues`.
     Every candidate has `candidate_id`, `section_ids`, `violated_invariant`,
     citations as repository `path`/`sha256` with optional lines, `suggested_fix`,
     `adjacent_sites_checked`, and confidence from 0 through 1.
@@ -236,8 +240,8 @@ step_workflow:
       mcp_error_policy: stay
       description: "Load the restraint, plan-review, and proportionality methodology skills"
       status_message: |
-        Load all three methodology skills before reviewing with the Gobby proxy
-        tools: call get_skill(name="restraint"), get_skill(name="plan-review"),
+        Load all three methodology skills with the Gobby proxy tools before
+        reviewing: call get_skill(name="restraint"), get_skill(name="plan-review"),
         and get_skill(name="proportionality") on gobby-skills.
         Use only mcp__gobby__call_tool in this step. Call get_skill directly:
         call_tool("gobby-skills", "get_skill", {"name": "restraint"}),
@@ -322,4 +326,3 @@ step_workflow:
           action: set_variable
           variable: review_complete
           value: true
-
