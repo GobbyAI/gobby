@@ -58,7 +58,7 @@ fn recent_git_blob_protects_matching_content() -> anyhow::Result<()> {
 
 mod serial_db {
     use std::cell::RefCell;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use super::*;
     use crate::index::api;
@@ -576,6 +576,84 @@ mod serial_db {
         for candidate in &candidates {
             assert_eq!(content_row_count(&mut conn, &candidate.id), 0);
         }
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn budgeted_run_commits_progress_so_a_rerun_sees_fewer_candidates() {
+        let (mut conn, database_url) = connect_test_db();
+        let project_id = unique_test_project_id("gcode-gc-progress");
+        cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
+        let _cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: project_id.clone(),
+        };
+        let root = git_init_root();
+        seed_project(&mut conn, &project_id, root.path());
+        for content_hash in ["gc-hash-progress-a", "gc-hash-progress-b"] {
+            seed_content_version(&mut conn, &project_id, "src/lib.rs", content_hash, 60, true);
+        }
+        let candidates = discover_content_gc(&database_url, 17, Some(&project_id))
+            .expect("discover GC candidates");
+        assert_eq!(candidates.len(), 2);
+
+        // The first delete outlives the budget, so the second candidate is
+        // deferred while the first stays committed.
+        let budget = Duration::from_millis(50);
+        let services = test_context(&database_url, &project_id);
+        let totals = prune_content_versions_with(
+            &services,
+            &candidates,
+            Some(Instant::now() + budget),
+            |project_id| Ok(test_context(&database_url, project_id)),
+            |_: &Context, _: &ContentGcCandidate| {
+                std::thread::sleep(budget * 3);
+                Ok(())
+            },
+            |_: &Context| panic!("no graph store is configured, nothing to sweep"),
+        )
+        .expect("prune honours the time budget");
+        assert_eq!(totals.deleted_versions, 1);
+        assert_eq!(totals.deferred_versions, 1);
+
+        let remaining = discover_content_gc(&database_url, 17, Some(&project_id))
+            .expect("rediscover GC candidates");
+        assert_eq!(
+            remaining.len(),
+            1,
+            "the interrupted run's deletion is committed, so a rerun has less to do",
+        );
+        let key = crate::index_lock::project_lock_key(&project_id);
+        let unheld: bool = conn
+            .query_one("SELECT pg_try_advisory_lock($1)", &[&key])
+            .expect("probe project advisory lock")
+            .get(0);
+        assert!(
+            unheld,
+            "an interrupted run never leaves the project advisory lock held"
+        );
+        conn.query_one("SELECT pg_advisory_unlock($1)", &[&key])
+            .expect("release probe lock");
+
+        let totals = prune_content_versions_with(
+            &services,
+            &remaining,
+            None,
+            |project_id| Ok(test_context(&database_url, project_id)),
+            delete_candidate_projections,
+            code_graph::cleanup_orphans,
+        )
+        .expect("rerun finishes the backlog");
+        assert_eq!(totals.deleted_versions, 1);
+        assert!(
+            discover_content_gc(&database_url, 17, Some(&project_id))
+                .expect("final discovery")
+                .is_empty()
+        );
     }
 
     #[test]
