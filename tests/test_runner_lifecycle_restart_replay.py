@@ -363,6 +363,55 @@ class TestAgentRestartReconciliation:
         assert tmux_manager.list_sessions.await_count == 1
 
     @pytest.mark.asyncio
+    async def test_reconcile_live_native_run_survives_without_probing_the_host(self) -> None:
+        run = SimpleNamespace(
+            id="ac314d27-4314-5fe3-a0ab-01645086e137",
+            terminal_id="5c0a4b6e-7f1d-4c1e-9d2a-3e4f5a6b7c8d",
+            continuation_prompt=None,
+        )
+        row = SimpleNamespace(id=run.terminal_id, backend="native", state="live")
+        run_storage = SimpleNamespace(list_active_for_machine=MagicMock(return_value=[run]))
+        runner = self._runner(run_storage)
+        runner.terminal_manager = SimpleNamespace(get=MagicMock(return_value=row))
+        runner.terminal_runtime_registry = SimpleNamespace(
+            resolve=MagicMock(side_effect=AssertionError("host must not be probed"))
+        )
+
+        reconciled = await runner_lifecycle._reconcile_agent_runs_after_restart(runner)
+
+        assert reconciled == 1
+        runner.agent_lifecycle_monitor.terminalize_cancelled_run.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_reconcile_orphaned_native_run_parks_and_resumes(self) -> None:
+        run = SimpleNamespace(
+            id="ac314d27-4314-5fe3-a0ab-01645086e137",
+            terminal_id="5c0a4b6e-7f1d-4c1e-9d2a-3e4f5a6b7c8d",
+            resume_metadata_json={},
+            child_session_id="child-1",
+        )
+        row = SimpleNamespace(id=run.terminal_id, backend="native", state="orphaned")
+        run_storage = SimpleNamespace(list_active_for_machine=MagicMock(return_value=[run]))
+        runner = self._runner(run_storage, parked_run=run)
+        runner.terminal_manager = SimpleNamespace(get=MagicMock(return_value=row))
+        resolved_run_ids: set[str] = set()
+
+        with patch(
+            "gobby.agents.resume_executor.resume_agent_run",
+            new=AsyncMock(return_value=SimpleNamespace(success=True, error=None)),
+        ) as resume:
+            reconciled = await runner_lifecycle._reconcile_agent_runs_after_restart(
+                runner, resolved_run_ids=resolved_run_ids
+            )
+
+        assert reconciled == 2
+        assert resolved_run_ids == {run.id}
+        runner.agent_lifecycle_monitor.terminalize_cancelled_run.assert_awaited_once_with(
+            run.id, terminal_reason="daemon_stop"
+        )
+        resume.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_reconcile_active_non_tmux_run_only_hydrates_completion(self) -> None:
         run = SimpleNamespace(
             id="ac314d27-4314-5fe3-a0ab-01645086e137",

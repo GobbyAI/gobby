@@ -121,27 +121,17 @@ async def _reconcile_native_runs(
     runs: list[tuple[Any, Terminal]],
     resolved_run_ids: set[str] | None,
 ) -> int:
-    """A native run survives restart only while its host terminal is still live."""
-    registry = getattr(runner, "terminal_runtime_registry", None)
-    if registry is None:
-        logger.warning(
-            "No terminal runtime registry; %d native agent runs left unreconciled", len(runs)
-        )
-        return 0
-    runtime = registry.resolve("native")
-    manager = getattr(runner, "terminal_manager", None)
+    """Park and resume native runs whose terminal the host manager already lost.
+
+    Native rows are owned by the gterm host manager: it orphans them on host
+    loss and interrupts their runs, so reconciliation trusts the row state and
+    never probes the host (which may not be re-adopted yet at this point).
+    """
     reconciled = 0
     for run, row in runs:
-        try:
-            live = await runtime.is_live(row)
-        except Exception:
-            logger.debug("native is_live probe failed for %s", run.id, exc_info=True)
-            live = False
-        if live:
+        if row.state == "live":
             reconciled += await _refresh_surviving_run(runner, run, resolved_run_ids)
             continue
-        if manager is not None:
-            await _run_db(runner, manager.mark_orphaned, row.id)
         if await _cleanup_missing_terminal_agent_run(runner, run, row.id):
             reconciled += 1
             if resolved_run_ids is not None:
