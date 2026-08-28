@@ -42,7 +42,7 @@ from gobby.agents.trust import pre_approve_directory as pre_approve_directory
 from gobby.config.terminals import TerminalConfig
 from gobby.providers import AGY_UNAVAILABLE_REASON
 from gobby.providers.capabilities.apply import speed_result
-from gobby.storage.terminals import Terminal, TerminalManager
+from gobby.storage.terminals import Terminal, TerminalManager, mint_terminal_id
 from gobby.terminals import TerminalRuntimeRegistry, UnregisteredBackendError
 from gobby.terminals.host_client import HostCommandError
 from gobby.terminals.runtime import (
@@ -313,7 +313,7 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
         terminal_id = existing.id
         spawn_key = existing.spawn_key or derive_spawn_key(backend, terminal_id)
     else:
-        terminal_id = str(uuid4())
+        terminal_id = mint_terminal_id()
         spawn_key = derive_spawn_key(backend, terminal_id)
         manager.create_pending(
             terminal_id,
@@ -381,7 +381,7 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
         else:
             prepared = await asyncio.shield(prepare_task)
     except TimeoutError:
-        await _kill_spawn_key(runtime, spawn_key, pending=manager.get(terminal_id))
+        await kill_spawn_key(runtime, spawn_key, pending=manager.get(terminal_id))
         return SpawnResult(
             success=False,
             run_id=plan.agent_run_id,
@@ -466,7 +466,7 @@ async def _promote_prepared(
             else:
                 prepared.acknowledge_observer()
         except Exception as exc:
-            await _kill_spawn_key(
+            await kill_spawn_key(
                 runtime,
                 spawn_key,
                 pending=manager.get(terminal_id),
@@ -506,7 +506,7 @@ async def _promote_prepared(
         if _same_live_identity(current, backend, locator_key):
             promoted = current
         else:
-            await _kill_spawn_key(runtime, spawn_key, pending=current)
+            await kill_spawn_key(runtime, spawn_key, pending=current)
             return SpawnResult(
                 success=False,
                 run_id=plan.agent_run_id,
@@ -580,7 +580,7 @@ def _terminal_for_spawn_key(
     )
 
 
-async def _kill_spawn_key(
+async def kill_spawn_key(
     runtime: TerminalRuntime,
     spawn_key: str,
     *,

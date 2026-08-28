@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from uuid import UUID, uuid4
+from uuid import UUID
 
-from gobby.agents.spawn_executor import derive_spawn_key
-from gobby.storage.terminals import Terminal, TerminalManager
+from gobby.agents.spawn_executor import derive_spawn_key, kill_spawn_key
+from gobby.storage.terminals import TerminalManager, mint_terminal_id
 from gobby.terminals.dimensions import validate_dimensions
 from gobby.terminals.host_client import HostCommandError
 from gobby.terminals.runtime import (
@@ -43,7 +43,7 @@ async def spawn_web_terminal(
 ) -> WebSpawnResult:
     """Create a pending row, prepare, and promote — same CAS matrix as execute_spawn."""
     validated = validate_dimensions(rows, cols)
-    terminal_id = str(uuid4())
+    terminal_id = mint_terminal_id()
     spawn_key = derive_spawn_key(runtime.backend, terminal_id)
     manager.create_pending(
         terminal_id,
@@ -84,7 +84,7 @@ async def spawn_web_terminal(
         else:
             prepared = await asyncio.shield(prepare_task)
     except TimeoutError:
-        await _kill(runtime, spawn_key, manager.get(terminal_id))
+        await kill_spawn_key(runtime, spawn_key, pending=manager.get(terminal_id))
         manager.fail_pending(terminal_id)
         return WebSpawnResult(False, terminal_id, "spawn timed out")
     except asyncio.CancelledError:
@@ -108,7 +108,7 @@ async def spawn_web_terminal(
             else:
                 prepared.acknowledge_observer()
         except Exception as exc:
-            await _kill(runtime, spawn_key, manager.get(terminal_id))
+            await kill_spawn_key(runtime, spawn_key, pending=manager.get(terminal_id))
             manager.fail_pending(terminal_id)
             return WebSpawnResult(False, terminal_id, str(exc))
     try:
@@ -127,31 +127,7 @@ async def spawn_web_terminal(
     )
     if promoted is None:
         current = manager.get(terminal_id)
-        await _kill(runtime, spawn_key, current)
+        await kill_spawn_key(runtime, spawn_key, pending=current)
         manager.fail_pending(terminal_id)
         return WebSpawnResult(False, terminal_id, "lost_cas_conflict")
     return WebSpawnResult(True, terminal_id)
-
-
-async def _kill(runtime: TerminalRuntime, spawn_key: str, pending: Terminal | None) -> None:
-    from datetime import UTC, datetime
-
-    now = datetime.now(UTC)
-    terminal = pending or Terminal(
-        id=str(uuid4()),
-        backend=runtime.backend,
-        ownership="gobby",
-        state="pending",
-        machine_id=str(uuid4()),
-        project_id=str(uuid4()),
-        created_at=now,
-        updated_at=now,
-        attempt_generation=1,
-        attempt_started_at=now,
-        unresolved_writes={},
-        spawn_key=spawn_key,
-    )
-    try:
-        await runtime.terminate(terminal, 1.0)
-    except Exception:
-        return

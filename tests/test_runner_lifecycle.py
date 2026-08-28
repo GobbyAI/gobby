@@ -17,6 +17,7 @@ import pytest
 import gobby.runner_lifecycle as runner_lifecycle
 import gobby.runner_lifecycle_agents as runner_lifecycle_agents
 import gobby.runner_lifecycle_processes as runner_lifecycle_processes
+import gobby.runner_lifecycle_reconcile as runner_lifecycle_reconcile
 import gobby.runner_lifecycle_shutdown as runner_lifecycle_shutdown
 import gobby.runner_lifecycle_subsystems as runner_lifecycle_subsystems
 from gobby.agents.readiness import spawn_readiness_blocker
@@ -4589,28 +4590,28 @@ class TestAgentRestartRecoveryHelpers:
         suffixed_b = SimpleNamespace(name="wf-agent-bbbb2222")
 
         assert (
-            runner_lifecycle_agents._find_live_tmux_by_planned_name(
+            runner_lifecycle_reconcile._find_live_tmux_by_planned_name(
                 {"wf-agent": exact, "wf-agent-aaaa1111": suffixed_a},
                 "wf-agent",
             )
             is exact
         )
         assert (
-            runner_lifecycle_agents._find_live_tmux_by_planned_name(
+            runner_lifecycle_reconcile._find_live_tmux_by_planned_name(
                 {"wf-agent-aaaa1111": suffixed_a},
                 "wf-agent",
             )
             is suffixed_a
         )
         assert (
-            runner_lifecycle_agents._find_live_tmux_by_planned_name(
+            runner_lifecycle_reconcile._find_live_tmux_by_planned_name(
                 {"wf-agent-bbbb2222": suffixed_b, "wf-agent-aaaa1111": suffixed_a},
                 "wf-agent",
             )
             is suffixed_a
         )
         assert (
-            runner_lifecycle_agents._find_live_tmux_by_planned_name(
+            runner_lifecycle_reconcile._find_live_tmux_by_planned_name(
                 {"other-session": exact, "wf-agent2-aaaa1111": suffixed_a},
                 "wf-agent",
             )

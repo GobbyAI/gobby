@@ -221,6 +221,11 @@ def _serialized_unresolved_size(payload: Mapping[str, object]) -> int:
     return len(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
 
 
+def mint_terminal_id() -> str:
+    """Mint a terminal row identity; runtimes never generate their own."""
+    return str(uuid4())
+
+
 class TerminalManager:
     """Hub-transaction CRUD and CAS transitions for the terminals table."""
 

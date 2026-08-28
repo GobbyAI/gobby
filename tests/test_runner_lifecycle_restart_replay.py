@@ -19,15 +19,18 @@ from gobby.runner import GobbyRunner
 from gobby.runner_lifecycle_agents import (
     _RUN_REPLAY_PAGE_SIZE,
     _list_active_agent_runs_once,
-    _reclassify_reconciliation_pending_runs,
     _rehydrate_active_agent_completion_subscribers,
-    _resolve_provisional_daemon_resumes,
     _run_agent_hook_replay_barrier,
+)
+from gobby.runner_lifecycle_reconcile import (
+    _reclassify_reconciliation_pending_runs,
+    _resolve_provisional_daemon_resumes,
 )
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.storage.terminals import TerminalManager
 from gobby.utils.machine_id import require_machine_id
 from tests.agents.terminal_fixtures import make_live_terminal
 
@@ -484,7 +487,14 @@ class TestAgentRestartReconciliation:
         assert mutex is not None
         assert mutex.lease_until is not None
         assert mutex.lease_until < datetime.now(UTC)
-        assert run_storage.get(run.id).terminal_id == "gobby-run-1"
+        linked_id = _live_run.terminal_id
+        assert linked_id is not None
+        reloaded = run_storage.get(run.id)
+        assert reloaded is not None
+        assert reloaded.terminal_id == linked_id
+        linked = TerminalManager(temp_db).get(linked_id)
+        assert linked is not None
+        assert linked.session_name == "gobby-run-1"
 
     def test_list_active_agent_runs_requires_agent_runner(self) -> None:
         # A runner without an agent_runner is exactly the invalid input under
@@ -558,7 +568,7 @@ class TestReclassifyReconciliationPendingRuns:
         barrier = AsyncMock(return_value=True)
 
         with patch(
-            "gobby.runner_lifecycle_agents._run_agent_hook_replay_barrier",
+            "gobby.runner_lifecycle_reconcile._run_agent_hook_replay_barrier",
             new=barrier,
         ):
             reclassified = await _reclassify_reconciliation_pending_runs(runner)
@@ -866,11 +876,11 @@ class TestReclassifyReconciliationPendingRuns:
 
         with (
             patch(
-                "gobby.runner_lifecycle_agents._run_agent_hook_replay_barrier",
+                "gobby.runner_lifecycle_reconcile._run_agent_hook_replay_barrier",
                 new=barrier,
             ),
             patch(
-                "gobby.runner_lifecycle_agents._reconcile_agent_runs_after_restart",
+                "gobby.runner_lifecycle_reconcile._reconcile_agent_runs_after_restart",
                 new=reconcile_mock,
             ),
         ):
@@ -918,11 +928,11 @@ class TestReclassifyReconciliationPendingRuns:
 
         with (
             patch(
-                "gobby.runner_lifecycle_agents._run_agent_hook_replay_barrier",
+                "gobby.runner_lifecycle_reconcile._run_agent_hook_replay_barrier",
                 new=AsyncMock(return_value=True),
             ),
             patch(
-                "gobby.runner_lifecycle_agents._reconcile_agent_runs_after_restart",
+                "gobby.runner_lifecycle_reconcile._reconcile_agent_runs_after_restart",
                 new=AsyncMock(side_effect=reconcile),
             ),
         ):
@@ -947,11 +957,11 @@ class TestReclassifyReconciliationPendingRuns:
 
         with (
             patch(
-                "gobby.runner_lifecycle_agents._run_agent_hook_replay_barrier",
+                "gobby.runner_lifecycle_reconcile._run_agent_hook_replay_barrier",
                 new=barrier,
             ),
             patch(
-                "gobby.runner_lifecycle_agents._reconcile_agent_runs_after_restart",
+                "gobby.runner_lifecycle_reconcile._reconcile_agent_runs_after_restart",
                 new=reconcile_mock,
             ),
         ):

@@ -31,7 +31,7 @@ from gobby.storage.terminals import Terminal
 from gobby.terminals.frame_client import FrameClient
 from gobby.terminals.host_client import HostCommandError
 from gobby.terminals.host_manager import TerminalHostManager
-from gobby.terminals.host_protocol import frames_socket_path
+from gobby.terminals.host_protocol import frames_socket_path, read_pidfile
 from gobby.terminals.native_runtime import HostManagerControl, NativeTerminalRuntime
 from gobby.terminals.runtime import (
     Delivered,
@@ -606,7 +606,13 @@ def _start_isolated_daemon(
     postgres_database_url: str,
     postgres_schema: str,
     backend: str,
-) -> DaemonInstance:
+) -> tuple[DaemonInstance, Path]:
+    """Start a daemon whose gterm host lives in the returned socket dir.
+
+    The host outlives the daemon by design (restart adoption) and the harness
+    hard-kills the daemon before its graceful host stop runs, so callers own the
+    host and stop it with ``_stop_host``.
+    """
     home = _short_dir("gobby-rt-home")
     socket_dir = _short_dir("gobby-rt-host")
     binary = gterm_binary()
@@ -677,7 +683,28 @@ def _start_isolated_daemon(
     if not wait_for_port(ws_port, timeout=10.0):
         terminate_process_tree(process.pid)
         pytest.fail("contract daemon websocket was not ready")
-    return instance
+    return instance, socket_dir
+
+
+def _stop_host(socket_dir: Path) -> None:
+    """Terminate the gterm host recorded in ``socket_dir`` and remove the dir."""
+    pid = read_pidfile(socket_dir)
+    if pid is not None:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pid = None
+    if pid is not None:
+
+        def gone() -> bool:
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                return True
+            return False
+
+        wait_for_condition(gone, timeout=5.0, interval=0.05, description="gterm host exit")
+    shutil.rmtree(socket_dir, ignore_errors=True)
 
 
 async def _recv_until(
@@ -802,7 +829,7 @@ async def test_daemon_restart_continuity(
     postgres_schema: str,
 ) -> None:
     require_backend(contract_backend)
-    daemon = _start_isolated_daemon(
+    daemon, host_socket_dir = _start_isolated_daemon(
         postgres_db=postgres_db,
         postgres_database_url=postgres_database_url,
         postgres_schema=postgres_schema,
@@ -850,6 +877,7 @@ async def test_daemon_restart_continuity(
         client.close()
         if daemon.is_alive():
             daemon.stop()
+        _stop_host(host_socket_dir)
         shutil.rmtree(daemon.project_dir, ignore_errors=True)
 
 

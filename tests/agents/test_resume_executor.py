@@ -77,11 +77,13 @@ def _runner(*, storage: MagicMock | None = None) -> SimpleNamespace:
     run_storage.transition_resume_phase.return_value = running
     run_storage.start.return_value = running
     run_storage.get.return_value = running
-    manager, runtime = bind_spawn_runtime(SimpleNamespace())
+    bound = SimpleNamespace()
+    manager, runtime = bind_spawn_runtime(bound)
     return SimpleNamespace(
         child_session_manager=MagicMock(),
         run_storage=run_storage,
         terminal_manager=manager,
+        write_coordinator=bound.write_coordinator,
         terminal_runtime_registry=SimpleNamespace(
             resolve=lambda _backend: runtime,
         ),
@@ -155,7 +157,8 @@ async def test_codex_resume_delivers_prompt_via_composer_not_argv(
     assert "Continue" not in command
     mock_codex_prompt_delivery.assert_called_once()
     delivery_args = mock_codex_prompt_delivery.call_args.args
-    assert delivery_args[1] == runner._test_runtime.last_request.spawn_key
+    assert delivery_args[0] is runner.write_coordinator
+    assert delivery_args[1].spawn_key == runner._test_runtime.last_request.spawn_key
     assert delivery_args[2] == "Continue"
     assert delivery_args[3] == str(_SUCCESSOR_ID)
     assert delivery_args[4] is runner.run_storage

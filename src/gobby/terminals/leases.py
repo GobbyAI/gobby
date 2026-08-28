@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import secrets
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from hashlib import sha256
-from uuid import uuid4
 
 from gobby.terminals.dimensions import InvalidTerminalDimensionsError, validate_dimensions
 from gobby.terminals.ws_protocol import (
@@ -110,7 +110,7 @@ class TerminalLeaseRegistry:
         attachment_id: str | None = None,
     ) -> _Attachment:
         delivery = "direct" if frame_delivery == "direct" else "proxy"
-        minted = attachment_id or str(uuid4())
+        minted = attachment_id or secrets.token_hex(16)
         record = _Attachment(
             attachment_id=minted,
             terminal_id=terminal_id,

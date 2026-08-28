@@ -24,7 +24,6 @@ from gobby.agents.recovery_state import (
     daemon_resume_successor_id,
     is_daemon_stop_parked,
 )
-from gobby.agents.tmux import get_tmux_session_manager
 from gobby.mcp_proxy.tools.agent_live_activity import (
     overlay_live_activity,
     overlay_runs_live_activity,
@@ -510,7 +509,7 @@ def register_agent_query_tools(
         consecutive_capture_failures = 0
         from gobby.storage.terminals import TerminalManager
         from gobby.terminals.runtime import TerminalRuntime
-        from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
+        from gobby.terminals.tmux_runtime import configured_tmux_runtime
 
         db = getattr(ctx.runner, "database", None) or getattr(ctx.runner, "db", None)
         injected_manager = getattr(ctx.runner, "terminal_manager", None)
@@ -533,7 +532,7 @@ def register_agent_query_tools(
                     if registry is not None:
                         runtime = registry.resolve(terminal.backend)
                     elif runtime is None:
-                        runtime = TmuxTerminalRuntime(get_tmux_session_manager())
+                        runtime = configured_tmux_runtime()
                     snapshot = await runtime.snapshot(terminal, _WAIT_OUTPUT_CAPTURE_LINES)
                     pane_output = snapshot.text
                     capture_failed = pane_output is None
@@ -587,7 +586,7 @@ def register_agent_query_tools(
                             if registry is not None:
                                 runtime = registry.resolve(terminal.backend)
                             else:
-                                runtime = TmuxTerminalRuntime(get_tmux_session_manager())
+                                runtime = configured_tmux_runtime()
                         pane_exists = await runtime.is_live(terminal)
                 except asyncio.CancelledError:
                     raise

@@ -56,6 +56,7 @@ _OWNED_CONSUMER_PATHS = _MONITOR_PATHS + (
     ROOT / "src/gobby/agents/spawn_executor_support.py",
     ROOT / "src/gobby/runner_lifecycle_shutdown.py",
     ROOT / "src/gobby/runner_lifecycle_agents.py",
+    ROOT / "src/gobby/runner_lifecycle_reconcile.py",
 )
 
 _WRITE_PATH_CONSUMERS = (
@@ -206,7 +207,6 @@ _FIELD_SWEEP_ALLOWED = {
     "src/gobby/mcp_proxy/tools/spawn_agent/_runtime.py",
     "src/gobby/mcp_proxy/tools/spawn_agent/_execution.py",
     "src/gobby/mcp_proxy/tools/spawn_agent/_health.py",
-    "src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py",
 }
 
 

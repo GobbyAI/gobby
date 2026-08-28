@@ -13,11 +13,13 @@ from gobby.config.logging import UI_LOG_FILENAME, resolved_log_path
 from gobby.hooks.background_tasks import create_background_task
 from gobby.runner_lifecycle_agents import (
     _reap_orphaned_srt_runners_on_startup,
-    _reclassify_reconciliation_pending_runs,
-    _reconcile_agent_runs_after_restart,
     _recover_agent_completion_subscribers_on_startup,
     _retry_parked_non_task_resumes,
     _run_agent_hook_replay_barrier,
+)
+from gobby.runner_lifecycle_reconcile import (
+    _reclassify_reconciliation_pending_runs,
+    _reconcile_agent_runs_after_restart,
 )
 from gobby.runner_lifecycle_startup import StartupTracker
 

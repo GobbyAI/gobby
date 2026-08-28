@@ -399,7 +399,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
     from gobby.storage.terminals import TerminalManager
     from gobby.terminals import TerminalRuntimeRegistry
     from gobby.terminals.native_runtime import HostManagerControl, NativeTerminalRuntime
-    from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
+    from gobby.terminals.tmux_runtime import configured_tmux_runtime
 
     runner.terminal_manager = TerminalManager(runner.database)
     runner.terminal_config = config.terminals
@@ -417,9 +417,8 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
         tmux_attach_history_lines=config.tmux.attach_history_lines,
     )
     terminal_runtime_registry = TerminalRuntimeRegistry()
-    from gobby.agents.tmux.session_manager import TmuxSessionManager
 
-    terminal_runtime_registry.register(TmuxTerminalRuntime(TmuxSessionManager()))
+    terminal_runtime_registry.register(configured_tmux_runtime())
     native_runtime = NativeTerminalRuntime(
         HostManagerControl(runner.terminal_host_manager),
         frame_host_epoch=str(getattr(runner.terminal_host_manager, "host_epoch", "") or ""),

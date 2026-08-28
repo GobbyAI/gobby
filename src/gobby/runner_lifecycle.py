@@ -13,12 +13,10 @@ import uvicorn
 
 from gobby.app_context import clear_app_context
 from gobby.runner_gate import acquire_runner_gate
-from gobby.runner_lifecycle_agents import (
-    _reconcile_agent_runs_after_restart,
-    _recover_agent_runs_after_restart,
-)
+from gobby.runner_lifecycle_agents import _recover_agent_runs_after_restart
 from gobby.runner_lifecycle_periodic import start_periodic_tasks
 from gobby.runner_lifecycle_processes import _reap_remaining_child_processes
+from gobby.runner_lifecycle_reconcile import _reconcile_agent_runs_after_restart
 from gobby.runner_lifecycle_shutdown import (
     _await_critical_stop_hook_grace_window,
     _shutdown_websocket_server,

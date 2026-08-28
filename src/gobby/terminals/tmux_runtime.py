@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Literal
 
-from gobby.agents.tmux.session_manager import TmuxSessionManager
+from gobby.agents.tmux.session_manager import TmuxSessionInfo, TmuxSessionManager
 from gobby.agents.tmux.spawner import tmux_spawn_shell_and_env, validate_spawn_key
 from gobby.agents.tmux.text_injection import (
     TMUX_TEXT_ENTER_DELAY_SECONDS,
@@ -43,6 +43,7 @@ __all__ = [
     "CommitSpawnRefusedError",
     "InputPayloadTooLargeError",
     "TmuxTerminalRuntime",
+    "configured_tmux_runtime",
 ]
 
 _NAMED_TMUX_KEYS: dict[str, str] = {
@@ -105,6 +106,10 @@ class TmuxTerminalRuntime:
 
     def _cmd(self) -> list[str]:
         return self._sessions.base_args()
+
+    async def list_sessions(self) -> list[TmuxSessionInfo]:
+        """Live sessions on this runtime's socket (restart reconciliation)."""
+        return await self._sessions.list_sessions()
 
     def _sessions_for(self, terminal: Terminal) -> TmuxSessionManager:
         locator = terminal.locator or {}
@@ -409,3 +414,14 @@ def _encode_key(key: NamedKey, *, cursor_app: bool, keypad_app: bool) -> bytes:
     if encoded is None:
         raise TerminalWriteError(stage="none")
     return encoded
+
+
+def configured_tmux_runtime() -> TmuxTerminalRuntime:
+    """Runtime over the daemon-configured tmux session manager.
+
+    The accessor is imported at call time so the configured socket (and any
+    test patch of the accessor) resolves when the runtime is built.
+    """
+    from gobby.agents.tmux import get_tmux_session_manager
+
+    return TmuxTerminalRuntime(get_tmux_session_manager())
