@@ -191,7 +191,7 @@ class IsolatedTmux:
         self.start_time = 0
         self.session_name = self.session
 
-    def start(self) -> None:
+    def start(self) -> OwnerClient:
         status = subprocess.run(
             [
                 "tmux",
@@ -227,7 +227,8 @@ class IsolatedTmux:
         )
         _tmux(self.socket, "select-window", "-t", self.window_id)
         _tmux(self.socket, "select-pane", "-t", self.pane_id)
-        self.owner = OwnerClient(self.socket, self.session, OWNER_COLS, OWNER_ROWS)
+        owner = OwnerClient(self.socket, self.session, OWNER_COLS, OWNER_ROWS)
+        self.owner = owner
         wait_for_condition(
             lambda: int(_tmux(self.socket, "display-message", "-p", "#{window_width}"))
             >= OWNER_COLS,
@@ -248,6 +249,7 @@ class IsolatedTmux:
             interval=0.05,
             description="prompt parked at pane tail",
         )
+        return owner
 
     def context(self) -> dict[str, object]:
         return {

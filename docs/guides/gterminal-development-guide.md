@@ -70,21 +70,20 @@ Tag prefixes: `gterm-v*` and `gclient-v*`. **Publish `gobby-terminal` version
 preflights crates.io and fails before `cargo package` / `cargo publish` if that
 version is unpublished or yanked. Do not invent a combined workflow.
 
-## Default backend and rollback
+## Backend status
 
-Gobby-owned launches use `terminals.default_backend: native`
-(`TerminalConfig.default_backend`). tmux remains the backend for externally
-discovered sessions (`ownership: external`) and stays selectable per spawn via
-`terminal_backend`. The flip's evidence artifact and its weekly parity producer
-were removed from the tree: the artifact cited scheduled runs that never
-executed (commit `d07111cf2d`), so no repository-local evidence supports the
-native default. Landing leaf 1.3 of `.gobby/plans/herdr-foundation-landing.md`
-reverts the default to `tmux`.
-
-Rollback: set `terminals.default_backend` back to `tmux` in
-`src/gobby/install/shared/config/config.yaml` (and any overlay that copies it).
-Running native terminals finish in place — symmetric to the forward migration.
-Do not kill live native PTYs as part of the rollback.
+`tmux` is the default backend: `terminals.default_backend: tmux` in the bundled
+`config.yaml` and `TerminalConfig.default_backend`. Externally discovered sessions
+(`ownership: external`) are always tmux. `native` is explicit opt-in — `backend:
+native` on the spawn request, or `terminals.default_backend: native` — and requires
+an installed `gterm`. When the host is unavailable a native spawn fails before fork
+with the typed refusal `host_unavailable` (`HostUnavailableError`, a
+`HostCommandError`); there is no silent tmux fallback. The native path is incomplete
+pending the follow-on epic (*herdr client completion*): pending-row lifecycle, host
+respawn, the `WriteCoordinator` composition graph, and `gclient`. The flip's
+fabricated evidence artifact and its weekly parity producer were removed in
+`d091addeab`; leaf 1.3 of `.gobby/plans/herdr-foundation-landing.md` reverted the
+default it had justified.
 
 ## Landing worktree
 

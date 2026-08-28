@@ -32,7 +32,7 @@ from gobby.terminals.host_protocol import (
     frames_socket_path,
     pidfile_path,
 )
-from tests._timing import wait_for_condition
+from tests._timing import wait_for_awaited_condition, wait_for_condition
 from tests.e2e.conftest import (
     CLIEventSimulator,
     DaemonInstance,
@@ -144,6 +144,9 @@ def e2e_pre_daemon_setup(
         expected_revision=mutations.repository.current_revision(),
         patch=ConfigPatch(
             values={
+                # Native is explicit opt-in under the tmux default; this stack test
+                # exercises the native web-create path, so the daemon opts in here.
+                "terminals.default_backend": "native",
                 "terminal_host.socket_dir": str(socket_dir),
                 "terminal_host.max_attachments_total": 8,
                 "terminal_host.max_attachments_per_terminal": 4,
@@ -502,7 +505,6 @@ async def test_terminal_client_stack_end_to_end(
     assert native_item["backend"] == "native"
     assert tmux_item["state"] == "live"
     assert native_item["state"] == "live"
-    assert tmux_item.get("dims") or tmux_item.get("id")
     native_id = str(native_item["id"])
     tmux_id = str(tmux_item["id"])
 
@@ -674,7 +676,6 @@ async def test_terminal_client_stack_end_to_end(
     fault_path = daemon_instance.gobby_home / WRITE_FAULT_NAME
     fault_path.write_text("1")
     try:
-        before_frames = len(native_frames._queue)
         faulted = await gclient_ws.write(native_id, "FAULT-WRITE\r")
         assert faulted.get("outcome") == "refused"
         assert faulted.get("reason") == "write_handler_fault"
@@ -687,7 +688,6 @@ async def test_terminal_client_stack_end_to_end(
             timeout=8.0,
             description="frames during write-handler fault",
         )
-        assert native_frames._queue or before_frames >= 0
         await web_ws.wait_for(
             lambda item: item.get("type") in {"terminal_output", "terminal_attach_history"},
             timeout=8.0,
@@ -697,7 +697,7 @@ async def test_terminal_client_stack_end_to_end(
         fault_path.unlink(missing_ok=True)
 
     isolated = IsolatedTmux(tmp_path)
-    isolated.start()
+    owner = isolated.start()
     try:
         before_view = isolated.display(OWNER_VIEW)
         clients_before = isolated.clients()
@@ -725,8 +725,7 @@ async def test_terminal_client_stack_end_to_end(
         assert isolated.clients() == clients_before
         assert isolated.display(PANE_PROPS, target=isolated.control_pane) == control_props
         assert isolated.display("#{pane_pipe}") == "0"
-        assert isolated.owner is not None
-        isolated.owner.resize(100, 30)
+        owner.resize(100, 30)
         wait_for_condition(
             lambda: isolated.display("#{window_width}") != before_view.split()[4],
             timeout=5.0,
@@ -739,7 +738,6 @@ async def test_terminal_client_stack_end_to_end(
         await ext_frames.detach()
         await ext_frames.close()
         await web_ext.close()
-        assert isolated.clients() == clients_before or isolated.owner.pid
     finally:
         isolated.close()
 
@@ -846,10 +844,17 @@ async def test_terminal_client_stack_end_to_end(
         commit_deadline_ms=400,
     )
     await control.close()
-    await asyncio.sleep(1.2)
     control = await _open_control(socket_dir)
-    listed = await control.list_terminals()
-    assert all(row.terminal_id != expire_id for row in listed)
+
+    async def prepared_row_expired() -> bool:
+        return all(row.terminal_id != expire_id for row in await control.list_terminals())
+
+    await wait_for_awaited_condition(
+        prepared_row_expired,
+        timeout=5.0,
+        interval=0.1,
+        description="prepared row past its commit deadline expired from list",
+    )
 
     inflight_id = str(uuid.uuid4())
     inflight_res = await control.reserve_observer(inflight_id, inflight_id)

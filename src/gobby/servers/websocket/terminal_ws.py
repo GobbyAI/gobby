@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, cast
 from unittest.mock import Mock
 
+from gobby.config.terminals import TerminalConfig
 from gobby.storage.terminals import AttachLocator
 from gobby.terminals.dimensions import InvalidTerminalDimensionsError, validate_dimensions
 from gobby.terminals.leases import TerminalLeaseRegistry, paste_oversize
@@ -181,7 +182,8 @@ class TerminalWsMixin:
                 {"type": "terminal_create_result", "success": False, "request_id": request_id},
             )
             return
-        runtime = registry.resolve(getattr(self.terminal_config, "default_backend", "native"))
+        backend = getattr(self.terminal_config, "default_backend", None)
+        runtime = registry.resolve(backend or TerminalConfig().default_backend)
         command = data.get("command") or ["zsh"]
         if not isinstance(command, list):
             command = ["zsh"]

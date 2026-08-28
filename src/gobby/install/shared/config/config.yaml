@@ -1,4 +1,4 @@
 bind_host: localhost
 daemon_port: 60887
 terminals:
-  default_backend: native
+  default_backend: tmux

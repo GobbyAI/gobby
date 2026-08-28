@@ -18,10 +18,6 @@ from gobby.terminals.host_protocol import (
 MAX_CONTROL_LINE = 2 * 1024 * 1024
 
 
-class HostUnavailableError(RuntimeError):
-    """The gterm host cannot be reached; native work must not fall back to tmux."""
-
-
 class HostEpochChangedError(RuntimeError):
     """Welcome/ping epoch did not match the locator the caller still holds."""
 
@@ -32,6 +28,14 @@ class HostCommandError(RuntimeError):
     def __init__(self, code: str) -> None:
         super().__init__(code)
         self.code = code
+
+
+class HostUnavailableError(HostCommandError):
+    """The gterm host cannot be reached: a `host_unavailable` refusal, never a tmux fallback."""
+
+    def __init__(self, message: str = "gterm host unavailable") -> None:
+        super().__init__("host_unavailable")
+        self.message = message
 
 
 class HostDecodeError(ValueError):

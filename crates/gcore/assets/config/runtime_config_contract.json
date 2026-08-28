@@ -4179,7 +4179,7 @@
     },
     {
       "activation": "live",
-      "default": "native",
+      "default": "tmux",
       "description": "Default TerminalRuntime backend for new Gobby-owned terminals.",
       "key": "terminals.default_backend",
       "machineExport": false,

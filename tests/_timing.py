@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 
 async def wait_for_async_condition[T](
@@ -19,6 +19,25 @@ async def wait_for_async_condition[T](
     deadline = loop.time() + timeout
     while True:
         value = predicate()
+        if value:
+            return value
+        if loop.time() >= deadline:
+            raise AssertionError(f"Timed out waiting for {description}")
+        await asyncio.sleep(min(interval, max(deadline - loop.time(), 0)))
+
+
+async def wait_for_awaited_condition[T](
+    probe: Callable[[], Awaitable[T]],
+    *,
+    timeout: float = 1.0,
+    interval: float = 0.001,
+    description: str = "condition",
+) -> T:
+    """Await a probe coroutine until it returns a truthy value, then return it."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while True:
+        value = await probe()
         if value:
             return value
         if loop.time() >= deadline:

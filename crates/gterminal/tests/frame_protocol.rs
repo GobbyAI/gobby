@@ -5,8 +5,8 @@
 mod host_support;
 
 use gobby_terminal::protocol::{
-    read_message, write_message, ClientMessage, RenderEncoding, ServerMessage, DELTA_QUEUE_ENTRIES,
-    MAX_CELLS, MAX_FRAME_SIZE, PROTOCOL_VERSION, WORST_CELL_BYTES,
+    read_message, write_message, ClientMessage, RenderEncoding, ServerMessage, MAX_CELLS,
+    MAX_FRAME_SIZE, PROTOCOL_VERSION, WORST_CELL_BYTES,
 };
 use host_support::{
     connect, recv_json, send_json, spawn_host, wait_exit, wait_socket, write_token, CONTROL_SOCKET,
@@ -355,7 +355,7 @@ fn worst_case_keyframe_fits_max_frame_size() {
     );
     let n = MAX_CELLS.min(200);
     let frame = FrameData {
-        cells: vec![cell; n],
+        cells: vec![cell.clone(); n],
         width: n as u16,
         height: 1,
         cursor: None,
@@ -364,8 +364,18 @@ fn worst_case_keyframe_fits_max_frame_size() {
         modes: gobby_terminal::protocol::PaneModes::default(),
     };
     let msg = ServerMessage::Frame(frame);
-    let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
-    assert!(encoded.len() < MAX_FRAME_SIZE);
+    let mut buf = Vec::new();
+    write_message(&mut buf, &msg).expect("encode worst-case keyframe");
+    let mut cursor = buf.as_slice();
+    let decoded: ServerMessage =
+        read_message(&mut cursor, MAX_FRAME_SIZE).expect("keyframe decodes within MAX_FRAME_SIZE");
+    match decoded {
+        ServerMessage::Frame(decoded_frame) => {
+            assert_eq!(decoded_frame.cells.len(), n);
+            assert_eq!(decoded_frame.cells[n - 1], cell);
+        }
+        other => panic!("{other:?}"),
+    }
 }
 
 #[test]
@@ -376,31 +386,23 @@ fn attach_history_then_max_keyframe_fits() {
         dropped_bytes: 1,
         total_bytes: 256 * 1024 + 1,
     };
-    let encoded = bincode::serde::encode_to_vec(&history, bincode::config::standard()).unwrap();
-    assert!(encoded.len() < MAX_FRAME_SIZE);
-}
-
-#[test]
-fn resource_bounds_are_numeric_and_eof_on_blocked_peer() {
-    assert_eq!(MAX_FRAME_SIZE, 2 * 1024 * 1024);
-    assert_eq!(DELTA_QUEUE_ENTRIES, 64);
-    let _ = WORST_CELL_BYTES;
-}
-
-#[test]
-fn slow_observer_resyncs_or_lags_out() {
-    resource_bounds_are_numeric_and_eof_on_blocked_peer();
-    assert_eq!(format!("{}", 5_000), "5000");
-}
-
-#[test]
-fn control_overflow_closes_attachment_bounded() {
-    resource_bounds_are_numeric_and_eof_on_blocked_peer();
-    assert_eq!(format!("{}", 16), "16");
-}
-
-#[test]
-fn internal_observers_scale_with_live_native_terminals() {
-    resource_bounds_are_numeric_and_eof_on_blocked_peer();
-    assert_eq!(format!("{}", 4), "4");
+    let mut buf = Vec::new();
+    write_message(&mut buf, &history).expect("encode attach history");
+    let mut cursor = buf.as_slice();
+    let decoded: ServerMessage =
+        read_message(&mut cursor, MAX_FRAME_SIZE).expect("history decodes within MAX_FRAME_SIZE");
+    match decoded {
+        ServerMessage::AttachHistory {
+            text,
+            truncated,
+            dropped_bytes,
+            total_bytes,
+        } => {
+            assert_eq!(text.len(), 256 * 1024);
+            assert!(truncated);
+            assert_eq!(dropped_bytes, 1);
+            assert_eq!(total_bytes, 256 * 1024 + 1);
+        }
+        other => panic!("{other:?}"),
+    }
 }
