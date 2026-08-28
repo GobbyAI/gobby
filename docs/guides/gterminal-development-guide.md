@@ -96,10 +96,17 @@ default it had justified.
   `agent_runs.terminal_id`, backend-neutral WS messages), pins stay at schema 407
   until migration 408 lands, tests take the union with 0.5.0 assertions ported to
   the renamed seams (`manager_for_terminal_context`, `snapshot_lines`,
-  `dispatch_keys`). The tmux PTY bridge (`pty_bridge.py`, `tmux_activation.py`,
-  `history.py`, `alt_screen.py`) is superseded by the gterm host proxy; the #20805
-  no-op-resize guard now lives in
-  `src/gobby/servers/websocket/terminal_ws.py::_handle_terminal_resize`.
+  `dispatch_keys`). Web delivery is split by backend (#21195): a `tmux` row is
+  viewed through the tmux-client PTY bridge (`src/gobby/agents/tmux/pty_bridge.py`,
+  `history.py`, `alt_screen.py` and `src/gobby/servers/websocket/tmux_activation.py`)
+  — `terminal_attach` reserves, the browser's first `terminal_resize` spawns
+  `tmux attach-session` in a PTY at that geometry, the bounded `capture-pane`
+  history goes out as `terminal_attach_history`, raw PTY bytes stream as
+  `terminal_output` keyed by attachment id, and `terminal_input` writes raw
+  bytes to the PTY; a `native` row goes through the gterm host proxy. The #20805
+  no-op-resize guard lives in `TmuxPTYBridge.resize` for tmux rows and in
+  `src/gobby/servers/websocket/terminal_ws.py::_handle_terminal_resize` for native
+  rows. Rendering tmux rows through gterm is the gclient epic's to solve.
 
 ## Guard set G
 

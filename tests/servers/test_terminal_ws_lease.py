@@ -11,14 +11,15 @@ import pytest
 
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.terminals import TerminalManager, tmux_locator_key
+from gobby.storage.terminals import TerminalManager, native_locator_key
 from gobby.terminals.leases import TerminalLeaseRegistry
 from tests.servers.test_tmux_mixin import MockWebSocket
 from tests.storage.test_terminals import LOCAL_MACHINE_ID, _create_pending, _manager
 
 pytestmark = pytest.mark.unit
 
-_SOCKET = "/private/tmp/tmux-501/default"
+_HOST_EPOCH = "epoch-1"
+_HOST_TERMINAL_ID = "host-web"
 
 
 @pytest.fixture(autouse=True)
@@ -38,20 +39,15 @@ def _ws_server() -> WebSocketServer:
 
 
 def _live_row(temp_db: HubDatabase, sample_project: dict[str, Any]) -> str:
+    """A live native row: the lease protocol under test is backend-neutral,
+    and a tmux row takes its lease on attach through the tmux-client path."""
     manager = _manager(temp_db)
-    pending = _create_pending(manager, sample_project["id"])
-    locator = {
-        "socket_path": _SOCKET,
-        "server_pid": 9,
-        "server_start_time": 9,
-        "pane_id": "%9",
-    }
+    pending = _create_pending(manager, sample_project["id"], backend="native")
     promoted = manager.promote_to_live(
         pending.id,
-        locator=locator,
-        locator_key=tmux_locator_key(
-            socket_path=_SOCKET, server_pid=9, server_start_time=9, pane_id="%9"
-        ),
+        locator={"host_terminal_id": _HOST_TERMINAL_ID},
+        locator_key=native_locator_key(_HOST_EPOCH, _HOST_TERMINAL_ID),
+        host_epoch=_HOST_EPOCH,
         session_name="web-sess",
     )
     assert promoted is not None

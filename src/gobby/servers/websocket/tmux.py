@@ -7,16 +7,31 @@ pattern.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from websockets.exceptions import ConnectionClosed
 
+from gobby.agents.tmux.pty_bridge import TmuxPTYBridge
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
 from gobby.servers.websocket.terminal_ws import TerminalWsMixin
+from gobby.servers.websocket.tmux_activation import (
+    STATE_ACTIVATING,
+    STATE_RESERVED,
+    PendingAttachment,
+    activate_attachment,
+    cancel_all_pending,
+    cancel_pending_for_owner,
+    cancel_stale_reservations,
+    teardown_bridge,
+    teardown_terminal_bridges,
+)
+from gobby.terminals.dimensions import InvalidTerminalDimensionsError, validate_dimensions
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.utils.json_helpers import json_dumps
 from gobby.utils.machine_id import require_machine_id
@@ -42,10 +57,13 @@ class TmuxMixin(TerminalWsMixin):
 
     clients: dict[Any, dict[str, Any]]
 
-    # Set up by _init_tmux.
+    # Set up by _init_tmux; declared here so the attachment state machine in
+    # tmux_activation can type-check against this class structurally.
+    _tmux_bridge: TmuxPTYBridge
     _tmux_mgr_gobby: TmuxSessionManager
     _tmux_mgr_default: TmuxSessionManager
     _tmux_client_bridges: dict[Any, set[str]]
+    _tmux_pending: dict[str, PendingAttachment]
 
     # These are provided by other mixins (BroadcastMixin, HandlerMixin) or by
     # WebSocketServer itself (daemon_config, the live config-store projection).
@@ -61,13 +79,20 @@ class TmuxMixin(TerminalWsMixin):
 
     def _init_tmux(self) -> None:
         """Initialize tmux subsystem. Call from WebSocketServer.__init__."""
+        self._tmux_bridge = TmuxPTYBridge()
         self._tmux_mgr_gobby = TmuxSessionManager(_GOBBY_CONFIG)
         self._tmux_mgr_default = TmuxSessionManager(_DEFAULT_CONFIG)
+        # Track which client owns which bridge (for cleanup on disconnect)
         self._tmux_client_bridges: dict[Any, set[str]] = {}
+        # Attachments acknowledged but not yet built (attachment_id -> reservation)
+        self._tmux_pending: dict[str, PendingAttachment] = {}
         self.lease_registry = TerminalLeaseRegistry()
 
     async def _cleanup_tmux(self) -> None:
-        """Detach every proxy attachment. Call from WebSocketServer.stop."""
+        """Detach every tmux client and proxy attachment. Call from WebSocketServer.stop."""
+        cancel_all_pending(self)
+        for attachment_id in list((await self._tmux_bridge.list_bridges()).keys()):
+            await teardown_bridge(self, attachment_id)
         hub = getattr(self, "_proxy_hub", None)
         if hub is not None:
             for websocket in list(hub.relays):
@@ -75,7 +100,11 @@ class TmuxMixin(TerminalWsMixin):
         self._tmux_client_bridges.clear()
 
     async def _cleanup_tmux_client(self, websocket: Any) -> None:
-        """Release leases and host-frame attachments for a disconnecting client."""
+        """Release bridges, leases, and host-frame attachments for a disconnecting client."""
+        cancel_pending_for_owner(self, websocket)
+        for attachment_id in list(self._tmux_client_bridges.get(websocket, ())):
+            await teardown_bridge(self, attachment_id)
+            logger.debug("Cleaned up tmux bridge %s for disconnected client", attachment_id)
         self._leases().finalize_websocket(websocket, "ws_close")
         hub = getattr(self, "_proxy_hub", None)
         if hub is not None:
@@ -188,6 +217,195 @@ class TmuxMixin(TerminalWsMixin):
                 continue
 
         return expired_session_ids
+
+    # ------------------------------------------------------------------
+    # tmux rows attach through a real tmux client in a PTY sized to the
+    # browser (the pre-herdr renderer); native rows keep the host proxy.
+    # ------------------------------------------------------------------
+
+    def _tmux_attach_target(self, row: Any) -> tuple[TmuxSessionManager, TmuxConfig, str] | None:
+        """The session manager, config, and session name a tmux client needs for ``row``."""
+        session_name = row.session_name or row.spawn_key
+        if not isinstance(session_name, str) or not session_name:
+            return None
+        locator = row.locator if isinstance(row.locator, dict) else {}
+        socket_path = locator.get("socket_path")
+        if isinstance(socket_path, str) and socket_path:
+            template = TmuxConfig(socket_name="", socket_path=socket_path)
+        else:
+            template = _DEFAULT_CONFIG if row.ownership == "external" else _GOBBY_CONFIG
+        # The attach-history bound is the config store's to set, so the live
+        # daemon value overlays the template's default.
+        daemon = getattr(self, "daemon_config", None)
+        config = (
+            template
+            if daemon is None
+            else template.model_copy(
+                update={"attach_history_lines": daemon.tmux.attach_history_lines}
+            )
+        )
+        return TmuxSessionManager(config), config, session_name
+
+    async def _tmux_bridge_for(self, attachment_id: object) -> Any | None:
+        if not isinstance(attachment_id, str):
+            return None
+        return await self._tmux_bridge.get_bridge(attachment_id)
+
+    async def _handle_terminal_attach(self, websocket: Any, data: dict[str, Any]) -> None:
+        """Reserve a tmux-client attachment for a tmux row; other rows use the proxy.
+
+        This deliberately builds nothing. ``TmuxPTYBridge.attach`` spawns
+        ``tmux attach-session`` immediately, so creating the bridge here would
+        start a tmux client painting at the hardcoded 50x200 default -- a
+        full-screen paint plus a resize redraw, both at the wrong width, both
+        delivered after the history as garbage. The client's first resize
+        carries its real geometry; :func:`activate_attachment` builds there, so
+        tmux attaches exactly once at the size the user is actually looking at.
+        """
+        terminal_id = data.get("terminal_id")
+        manager = getattr(self, "terminal_manager", None)
+        row = (
+            manager.get(terminal_id)
+            if manager is not None and isinstance(terminal_id, str) and terminal_id
+            else None
+        )
+        target = None if row is None or row.backend != "tmux" else self._tmux_attach_target(row)
+        if target is None or data.get("frame_delivery") == "direct":
+            await super()._handle_terminal_attach(websocket, data)
+            return
+        assert row is not None and isinstance(terminal_id, str)
+        session_manager, config, session_name = target
+        registry = self._leases()
+        record = registry.attach(terminal_id, "proxy", websocket=websocket)
+        # A tmux client is a typing seat: the newest viewer holds the lease,
+        # exactly as every attached desktop client can type.
+        displaced = registry.displaced_holder(terminal_id, record.attachment_id)
+        control = registry.take_control(terminal_id, record.attachment_id, takeover=True)
+        if control.granted and displaced is not None:
+            await self._fanout_lease_lost(displaced, record.attachment_id, control.lease_generation)
+        cancel_stale_reservations(self, terminal_id, websocket)
+        self._tmux_pending[record.attachment_id] = PendingAttachment(
+            terminal_id=terminal_id,
+            session_name=session_name,
+            manager=session_manager,
+            config=config,
+            owner=websocket,
+        )
+        await self._send_json(
+            websocket,
+            {
+                "type": "terminal_attach_result",
+                "request_id": data.get("request_id"),
+                "terminal_id": terminal_id,
+                "attachment_id": record.attachment_id,
+                "rows": row.rows or 24,
+                "cols": row.cols or 80,
+                "backend": row.backend,
+                "frame_delivery": record.frame_delivery,
+                "lease_generation": registry.generation(terminal_id),
+                "success": True,
+            },
+        )
+
+    async def _handle_terminal_resize(self, websocket: Any, data: dict[str, Any]) -> None:
+        """Resize a tmux client, or activate its pending reservation.
+
+        The first resize is the activation point: it is the earliest message
+        carrying the client's real terminal geometry.
+        """
+        attachment_id = data.get("attachment_id")
+        pending = self._tmux_pending.get(attachment_id) if isinstance(attachment_id, str) else None
+        bridge = None if pending is not None else await self._tmux_bridge_for(attachment_id)
+        if pending is None and bridge is None:
+            await super()._handle_terminal_resize(websocket, data)
+            return
+        assert isinstance(attachment_id, str)
+        try:
+            rows, cols = validate_dimensions(data.get("rows"), data.get("cols"))
+        except InvalidTerminalDimensionsError:
+            await self._send_json(
+                websocket, {"type": "terminal_error", "code": "invalid_dimensions"}
+            )
+            return
+        if pending is not None:
+            if pending.owner is not websocket:
+                logger.debug(
+                    "Ignoring resize for %s from a websocket that does not own it", attachment_id
+                )
+                return
+            if pending.state != STATE_RESERVED:
+                # Activation is already in flight; there is no bridge to resize
+                # yet, and the client will resend once the terminal is live.
+                return
+            pending.state = STATE_ACTIVATING
+            await activate_attachment(self, websocket, attachment_id, pending, rows, cols)
+            return
+        # The bridge records the geometry tmux runs the client at and repaints
+        # nothing for a resize to that same size (#20805).
+        resized = await self._tmux_bridge.resize(attachment_id, rows, cols)
+        if resized is not None and resized.config is not None:
+            try:
+                await TmuxSessionManager(resized.config).refresh_client(resized.session_name)
+            except Exception as exc:
+                logger.debug("Post-resize refresh-client failed: %s", exc)
+
+    async def _handle_terminal_detach(self, websocket: Any, data: dict[str, Any]) -> None:
+        attachment_id = data.get("attachment_id")
+        if isinstance(attachment_id, str) and (
+            attachment_id in self._tmux_pending or await self._tmux_bridge_for(attachment_id)
+        ):
+            await teardown_bridge(self, attachment_id)
+        await super()._handle_terminal_detach(websocket, data)
+
+    async def _handle_terminal_set_viewport(self, websocket: Any, data: dict[str, Any]) -> None:
+        """A tmux client has no host viewport; the refresh redraws it instead."""
+        bridge = await self._tmux_bridge_for(data.get("attachment_id"))
+        if bridge is None:
+            await super()._handle_terminal_set_viewport(websocket, data)
+            return
+        if bridge.config is not None:
+            try:
+                await TmuxSessionManager(bridge.config).refresh_client(bridge.session_name)
+            except Exception as exc:
+                logger.debug("refresh-client failed: %s", exc)
+
+    async def _handle_terminal_kill(self, websocket: Any, data: dict[str, Any]) -> None:
+        terminal_id = data.get("terminal_id")
+        if isinstance(terminal_id, str):
+            await teardown_terminal_bridges(self, terminal_id)
+        await super()._handle_terminal_kill(websocket, data)
+
+    async def _deliver_operator_write(
+        self,
+        terminal_id: str,
+        attachment_id: str,
+        *,
+        kind: str,
+        payload: str,
+        generation: int | None,
+        seq: object = None,
+    ) -> tuple[str, str | None]:
+        """Raw bytes into the tmux client's PTY; everything else goes to the runtime.
+
+        The PTY gives full terminal fidelity (Ctrl+C, arrows, Tab, mouse), which
+        ``send-keys -l`` cannot carry.
+        """
+        bridge_fd = await self._tmux_bridge.get_master_fd(attachment_id)
+        if bridge_fd is None:
+            return await super()._deliver_operator_write(
+                terminal_id,
+                attachment_id,
+                kind=kind,
+                payload=payload,
+                generation=generation,
+                seq=seq,
+            )
+        try:
+            await asyncio.to_thread(os.write, bridge_fd, payload.encode("utf-8"))
+        except OSError as exc:
+            logger.warning("Failed to write to tmux bridge %s: %s", attachment_id, exc)
+            return "indeterminate", "indeterminate_backend"
+        return "delivered", None
 
     # ------------------------------------------------------------------
     # Handlers
@@ -470,6 +688,12 @@ class TmuxMixin(TerminalWsMixin):
             success = await mgr.destroy_session(session_name)
             expired_session_ids: list[str] = []
             if success:
+                for attachment_id, bridge in (await self._tmux_bridge.list_bridges()).items():
+                    bridge_socket = "default"
+                    if bridge.config is not None and bridge.config.socket_name == "gobby":
+                        bridge_socket = "gobby"
+                    if bridge.session_name == session_name and bridge_socket == socket:
+                        await teardown_bridge(self, attachment_id)
                 expired_session_ids = await self._expire_gobby_sessions_for_tmux_kill(
                     gobby_session_ids
                 )

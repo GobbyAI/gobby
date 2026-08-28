@@ -72,7 +72,8 @@ class TestTmuxMixinInit:
     """Test TmuxMixin initialization."""
 
     def test_tmux_bridge_initialized(self, server: WebSocketServer) -> None:
-        assert not hasattr(server, "_tmux_bridge")
+        assert hasattr(server, "_tmux_bridge")
+        assert hasattr(server, "_tmux_pending")
         assert hasattr(server, "_tmux_mgr_gobby")
         assert hasattr(server, "_tmux_mgr_default")
         assert hasattr(server, "_tmux_client_bridges")

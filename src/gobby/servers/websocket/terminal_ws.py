@@ -520,8 +520,31 @@ class TerminalWsMixin:
                 websocket, data, outcome="refused", reason="write_handler_fault"
             )
             return
+        outcome, reason = await self._deliver_operator_write(
+            terminal_id,
+            attachment_id,
+            kind=kind,
+            payload=payload,
+            generation=generation,
+            seq=seq,
+        )
+        if isinstance(seq, int):
+            self._leases().complete_write(attachment_id, seq, outcome, reason)
+        await self._write_outcome(websocket, data, outcome=outcome, reason=reason)
+
+    async def _deliver_operator_write(
+        self,
+        terminal_id: str,
+        attachment_id: str,
+        *,
+        kind: str,
+        payload: str,
+        generation: int | None,
+        seq: object = None,
+    ) -> tuple[str, str | None]:
+        """Deliver an admitted write to the backend; returns (outcome, reason)."""
         outcome = "delivered"
-        reason = None
+        reason: str | None = None
         manager = getattr(self, "terminal_manager", None)
         row = None if manager is None else manager.get(terminal_id)
         runtime = None if row is None else self._runtime_for(row.backend)
@@ -560,9 +583,7 @@ class TerminalWsMixin:
             elif not isinstance(result, Delivered):
                 outcome = "refused"
                 reason = "held"
-        if isinstance(seq, int):
-            self._leases().complete_write(attachment_id, seq, outcome, reason)
-        await self._write_outcome(websocket, data, outcome=outcome, reason=reason)
+        return outcome, reason
 
     async def _write_outcome(
         self,

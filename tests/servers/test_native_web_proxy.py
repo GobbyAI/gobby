@@ -804,21 +804,23 @@ async def test_lifecycle_reserved_send_and_wedged_control_closes_socket(
             }
         )
     await frame.queue.put(None)
-    await asyncio.sleep(0.2)
+    # The EOF finalizes the lease before the lifecycle event is enqueued on
+    # the wedged relay; only then may the gate open.
+    await _until(lambda: harness.server.lease_registry.get(att) is None)
     ws.gate.set()
     await _until(lambda: ws.messages_of_type("terminal_attachment_finalized"), timeout=6.0)
     finalized = ws.messages_of_type("terminal_attachment_finalized")[-1]
     assert finalized["attachment_id"] == att
 
     wedged = BlockingWebSocket()
-    await _attach(harness, wedged, harness.tmux_row, request_id="wedge")
+    await _attach(harness, wedged, harness.native_row, request_id="wedge")
     wedged.gate = asyncio.Event()
     await _send(
         harness.server,
         wedged,
         {
             "type": "terminal_take_control",
-            "terminal_id": harness.tmux_row.id,
+            "terminal_id": harness.native_row.id,
             "attachment_id": wedged.messages_of_type("terminal_attach_result")[-1]["attachment_id"],
             "takeover": False,
         },
@@ -831,9 +833,11 @@ async def test_frame_queue_overflow_closes_socket_for_all_attachments(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     harness = _harness(temp_db, sample_project)
+    second_native = _promote_native(harness.manager, sample_project["id"])
     ws = BlockingWebSocket()
     att_a = await _attach(harness, ws, harness.native_row, request_id="qa")
-    att_b = await _attach(harness, ws, harness.tmux_row, request_id="qb")
+    att_b = await _attach(harness, ws, second_native, request_id="qb")
+    await _until(lambda: len(harness.frame_list) == 2)
     frame_a = _frame_for(harness, harness.native_row)
     ws.gate = asyncio.Event()
     for index in range(80):
@@ -876,10 +880,12 @@ async def test_scroll_offset_and_wrapped_attach_history(
     applied = ws.messages_of_type("terminal_scroll_offset_applied")[-1]
     assert applied["applied_rows"] == 12
     wrapped = "宽宽宽宽宽宽宽宽\nnext"
-    tmux_ws = MockWebSocket()
-    await _attach(harness, tmux_ws, harness.tmux_row, request_id="wrap")
-    tmux_frame = _frame_for(harness, harness.tmux_row)
-    await tmux_frame.queue.put(
+    second_native = _promote_native(harness.manager, sample_project["id"])
+    wrap_ws = MockWebSocket()
+    await _attach(harness, wrap_ws, second_native, request_id="wrap")
+    await _until(lambda: len(harness.frame_list) == 2)
+    wrap_frame = _frame_for(harness, second_native)
+    await wrap_frame.queue.put(
         {
             "type": "attach_history",
             "text": wrapped,
@@ -888,8 +894,8 @@ async def test_scroll_offset_and_wrapped_attach_history(
             "total_bytes": len(wrapped.encode()),
         }
     )
-    await _until(lambda: tmux_ws.messages_of_type("terminal_attach_history"))
-    text = tmux_ws.messages_of_type("terminal_attach_history")[-1]["text"]
+    await _until(lambda: wrap_ws.messages_of_type("terminal_attach_history"))
+    text = wrap_ws.messages_of_type("terminal_attach_history")[-1]["text"]
     assert "\n" in text
     assert "宽" in text
 
@@ -1006,6 +1012,7 @@ async def test_write_seq_ledger_tmux_and_native(
     ]
     assert conflict
     harness.native_rt.hold = asyncio.Event()
+    writes_before = len(harness.native_rt.host_writes)
     tasks = [
         asyncio.create_task(
             _send(
@@ -1022,7 +1029,8 @@ async def test_write_seq_ledger_tmux_and_native(
         )
         for seq in range(2, 66)
     ]
-    await asyncio.sleep(0.2)
+    # Every admitted write reaches the held runtime before the capacity probe.
+    await _until(lambda: len(harness.native_rt.host_writes) >= writes_before + 64)
     await _send(
         harness.server,
         ws,
