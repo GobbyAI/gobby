@@ -6,7 +6,7 @@ use std::io::IsTerminal;
 use std::time::Duration;
 use thiserror::Error;
 
-const HEALTH_PATH: &str = "/api/admin/health";
+const HEALTH_PATH: &str = "/api/health";
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
