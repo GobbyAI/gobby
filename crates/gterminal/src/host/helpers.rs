@@ -1,11 +1,14 @@
 //! Shared host helpers kept out of `state.rs` for the line ceiling.
 
 use std::path::PathBuf;
+use std::time::Instant;
 
 use serde_json::{json, Map, Value};
 
-use super::state::{CommitState, Inner, ObserverBind};
-use crate::protocol::{ObservationReason, ObservationState, TITLE_MAX_BYTES};
+use super::state::{Attachment, CommitState, Inner, ObserverBind};
+use crate::protocol::{
+    FrameData, ObservationReason, ObservationState, ServerMessage, TerminalFrame, TITLE_MAX_BYTES,
+};
 
 pub(crate) fn list_rows(inner: &Inner) -> Vec<Value> {
     inner
@@ -126,18 +129,39 @@ pub fn truncate_title(text: &str) -> String {
     text[..end].to_string()
 }
 
-pub fn encode_terminal_ansi(frame: &crate::protocol::FrameData) -> Vec<u8> {
-    let mut out = Vec::new();
-    for (i, cell) in frame.cells.iter().enumerate() {
-        if i > 0 && i as u16 % frame.width == 0 {
-            out.extend_from_slice(b"\r\n");
-        }
-        if i % 2 == 0 {
-            out.extend_from_slice(b"\x1b[38;2;255;255;255m\x1b[48;2;0;0;0m");
-        } else {
-            out.extend_from_slice(b"\x1b[38;2;0;0;0m\x1b[48;2;255;255;255m");
-        }
-        out.extend_from_slice(cell.symbol.as_bytes());
+/// Encode `frame` for a `terminal_ansi` attachment and queue it on the
+/// attachment's channel; returns whether a message was queued.
+///
+/// A synced attachment whose last committed frame equals `frame` sends
+/// nothing. The encoder commits only after a successful send, so a dropped
+/// delta marks the attachment desynced and the next frame is a full repaint.
+pub(crate) fn push_terminal_ansi(att: &mut Attachment, frame: &FrameData, seq: u64) -> bool {
+    if !att.desynced && att.encoder.is_current(frame) {
+        return false;
     }
-    out
+    let mut encoded = att.encoder.encode(frame, att.desynced);
+    let bytes = std::mem::take(&mut encoded.bytes);
+    let msg = ServerMessage::Terminal(TerminalFrame {
+        seq,
+        width: frame.width,
+        height: frame.height,
+        full: encoded.full,
+        bytes,
+    });
+    match att.tx.try_send(msg) {
+        Ok(()) => {
+            att.encoder.commit(frame.clone(), encoded);
+            att.desynced = false;
+            att.last_send = Instant::now();
+            true
+        }
+        Err(_) => {
+            att.desynced = true;
+            false
+        }
+    }
 }
+
+#[cfg(test)]
+#[path = "helpers/tests.rs"]
+mod tests;

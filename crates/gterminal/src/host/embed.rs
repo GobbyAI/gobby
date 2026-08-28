@@ -185,26 +185,27 @@ async fn attach_tmux(
             desynced: true,
             delta_len: 0,
             delta_bytes: 0,
+            encoder: crate::protocol::render_ansi::BlitEncoder::new(),
         },
     );
+    let mut replay = None;
     if let Some(slot) = inner.terminals.get_mut(&identity) {
         slot.user_attachments.insert(id);
         if let Some(history) = slot.history.clone() {
             let _ = tx.try_send(history);
         }
-        if let Some(frame) = slot.last_frame.clone() {
-            let _ = tx.try_send(match encoding {
-                RenderEncoding::SemanticFrame => ServerMessage::Frame(frame),
-                RenderEncoding::TerminalAnsi => {
-                    ServerMessage::Terminal(crate::protocol::TerminalFrame {
-                        seq: 1,
-                        width: frame.width,
-                        height: frame.height,
-                        full: true,
-                        bytes: super::helpers::encode_terminal_ansi(&frame),
-                    })
+        replay = slot.last_frame.clone().map(|frame| (frame, slot.last_seq));
+    }
+    if let Some((frame, seq)) = replay {
+        if let Some(att) = inner.attachments.get_mut(&id) {
+            match encoding {
+                RenderEncoding::SemanticFrame => {
+                    let _ = att.tx.try_send(ServerMessage::Frame(frame));
                 }
-            });
+                RenderEncoding::TerminalAnsi => {
+                    super::helpers::push_terminal_ansi(att, &frame, seq);
+                }
+            }
         }
     }
     drop(inner);
@@ -583,13 +584,8 @@ async fn publish_frame(
                 match att.encoding {
                     RenderEncoding::SemanticFrame => ServerMessage::Frame(frame.clone()),
                     RenderEncoding::TerminalAnsi => {
-                        ServerMessage::Terminal(crate::protocol::TerminalFrame {
-                            seq,
-                            width: frame.width,
-                            height: frame.height,
-                            full: att.desynced,
-                            bytes: super::helpers::encode_terminal_ansi(&frame),
-                        })
+                        super::helpers::push_terminal_ansi(att, &frame, seq);
+                        continue;
                     }
                 }
             };
