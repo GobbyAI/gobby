@@ -252,7 +252,7 @@ def _native_terminal(host: FakeHostClient, terminal_id: str | None = None) -> An
 
 
 @pytest.mark.asyncio
-async def test_injection_parity_and_stage() -> None:
+async def test_injection_parity_and_stage(monkeypatch: pytest.MonkeyPatch) -> None:
     runtime, host = _runtime()
     terminal = _native_terminal(host)
     delivered = await runtime.write_text(terminal, "hello", submit=True)
@@ -286,7 +286,7 @@ async def test_injection_parity_and_stage() -> None:
             raise HostCommandError("write_failed")
         return await FakeHostClient.write(host, **kwargs)
 
-    host.write = fail_enter  # type: ignore[method-assign]
+    monkeypatch.setattr(host, "write", fail_enter)
     with pytest.raises(TerminalWriteError) as partial:
         await runtime.write_text(terminal, "hello", submit=True)
     assert partial.value.stage == "partial"
@@ -422,8 +422,9 @@ async def test_reconnect_reconciles_rows() -> None:
     await runtime.reconnect()
     assert store.get(pending.id) is not None
     assert host.kills == ["ht-orphan"]
-    assert store.get(stale.id) is not None
-    assert store.get(stale.id).state == "exited"  # type: ignore[union-attr]
+    stale_row = store.get(stale.id)
+    assert stale_row is not None
+    assert stale_row.state == "exited"
 
 
 @pytest.mark.asyncio
@@ -514,7 +515,9 @@ async def test_control_client_preflights_encoded_line() -> None:
 
 
 @pytest.mark.asyncio
-async def test_attention_and_lease_writes_serialize_native() -> None:
+async def test_attention_and_lease_writes_serialize_native(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     hold = asyncio.Event()
     host = FakeHostClient(hold=hold)
     runtime = NativeTerminalRuntime(host, frame_host_epoch=host.host_epoch)
@@ -563,7 +566,7 @@ async def test_attention_and_lease_writes_serialize_native() -> None:
         started.set()
         return await original_write(**kwargs)
 
-    host.write = gated  # type: ignore[method-assign]
+    monkeypatch.setattr(host, "write", gated)
     task_a = asyncio.create_task(attention())
     task_b = asyncio.create_task(lease_holder())
     await started.wait()

@@ -2685,7 +2685,9 @@ async def test_srt_wrap_single_chokepoint(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 @pytest.mark.asyncio
-async def test_lost_cas_converges_when_reconciler_already_promoted() -> None:
+async def test_lost_cas_converges_when_reconciler_already_promoted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     request = SpawnRequest(
         prompt="Test",
         cwd="/path",
@@ -2715,7 +2717,7 @@ async def test_lost_cas_converges_when_reconciler_already_promoted() -> None:
         current.session_name = session_name if isinstance(session_name, str) else None
         return None
 
-    manager.promote_to_live = already_live  # type: ignore[method-assign, assignment]
+    monkeypatch.setattr(manager, "promote_to_live", already_live)
     result = await execute_spawn(request)
     assert result.success is True
     assert not runtime.killed

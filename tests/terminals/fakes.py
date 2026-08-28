@@ -474,8 +474,7 @@ class FakeRuntime:
         if self.release is not None:
             self.release.set()
         if self.raise_on_write is not None and (
-            self.raise_on_write_after is None
-            or len(self.write_log) >= self.raise_on_write_after
+            self.raise_on_write_after is None or len(self.write_log) >= self.raise_on_write_after
         ):
             raise self.raise_on_write
         self.write_log.append((kind, payload))

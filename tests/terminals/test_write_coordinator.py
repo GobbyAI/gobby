@@ -22,6 +22,13 @@ from gobby.terminals.write_coordinator import (
 )
 from tests.terminals.fakes import FakeRuntime, MemoryTerminalStore, make_memory_terminal
 
+
+def _unresolved(store: MemoryTerminalStore, terminal_id: str) -> dict[str, Any]:
+    row = store.get(terminal_id)
+    assert row is not None
+    return row.unresolved_writes
+
+
 pytestmark = pytest.mark.unit
 
 
@@ -113,11 +120,11 @@ async def test_coordinator_owns_lock_identity_and_latch() -> None:
             payload="same",
         )
     )
-    assert "a1" not in store.get(terminal.id).unresolved_writes  # type: ignore[union-attr]
-    assert "a2" in store.get(terminal.id).unresolved_writes  # type: ignore[union-attr]
+    assert "a1" not in _unresolved(store, terminal.id)
+    assert "a2" in _unresolved(store, terminal.id)
 
     await runtime.write_text(terminal, "bypass", submit=False)
-    assert "bypass" not in store.get(terminal.id).unresolved_writes  # type: ignore[union-attr]
+    assert "bypass" not in _unresolved(store, terminal.id)
 
     recapture_under_lock = []
 
@@ -244,7 +251,7 @@ async def test_sequence_holds_lock_across_steps(monkeypatch: pytest.MonkeyPatch)
     )
     payloads = [payload for _kind, payload in runtime.write_log]
     assert "enter" not in payloads
-    assert "wake-indeterminate" in store.get(terminal.id).unresolved_writes  # type: ignore[union-attr]
+    assert "wake-indeterminate" in _unresolved(store, terminal.id)
 
 
 @pytest.mark.asyncio
@@ -275,7 +282,7 @@ async def test_sequence_cancellation_settles_once() -> None:
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        assert store.get(terminal.id).unresolved_writes == {}  # type: ignore[union-attr]
+        assert _unresolved(store, terminal.id) == {}
         assert runtime.write_log == []
 
         hold2 = asyncio.Event()
@@ -311,7 +318,7 @@ async def test_sequence_cancellation_settles_once() -> None:
         with pytest.raises(asyncio.CancelledError):
             await task2
         await asyncio.sleep(0)
-        assert "seq-mid" in store2.get(terminal2.id).unresolved_writes  # type: ignore[union-attr]
+        assert "seq-mid" in _unresolved(store2, terminal2.id)
         payloads = [payload for _kind, payload in runtime2.write_log]
         assert "enter" not in payloads
 
@@ -409,7 +416,7 @@ async def test_unresolved_write_capacity_is_reserved_before_dispatch() -> None:
             )
         )
     assert runtime32.write_log == []
-    assert "overflow-key" not in store32.get(terminal32.id).unresolved_writes  # type: ignore[union-attr]
+    assert "overflow-key" not in _unresolved(store32, terminal32.id)
 
     huge_origin = "o" * 70000
     coordinator_big, runtime_big, store_big = _coordinator()
@@ -466,7 +473,7 @@ async def test_write_ahead_latch_survives_hard_kill() -> None:
                 payload="x",
             )
         )
-    assert "k1" in store.get(terminal.id).unresolved_writes  # type: ignore[union-attr]
+    assert "k1" in _unresolved(store, terminal.id)
     assert runtime.write_log == []
 
     class KillAfterBytes(FakeRuntime):
@@ -488,7 +495,7 @@ async def test_write_ahead_latch_survives_hard_kill() -> None:
                 payload="x",
             )
         )
-    assert "k2" in store2.get(terminal2.id).unresolved_writes  # type: ignore[union-attr]
+    assert "k2" in _unresolved(store2, terminal2.id)
 
     store3 = MemoryTerminalStore(make_memory_terminal())
     runtime3 = FakeRuntime(outcome=Delivered())
@@ -503,7 +510,7 @@ async def test_write_ahead_latch_survives_hard_kill() -> None:
             payload="x",
         )
     )
-    assert "k3" not in store3.get(terminal3.id).unresolved_writes  # type: ignore[union-attr]
+    assert "k3" not in _unresolved(store3, terminal3.id)
 
     class FailTyped(FakeRuntime):
         async def write_text(self, terminal: Any, text: str, submit: bool) -> Any:
@@ -562,4 +569,4 @@ async def test_write_ahead_latch_survives_hard_kill() -> None:
         await task
     payloads = [payload for _kind, payload in runtime5.write_log]
     assert "enter" not in payloads
-    assert "seq-kill" in store5.get(terminal5.id).unresolved_writes  # type: ignore[union-attr]
+    assert "seq-kill" in _unresolved(store5, terminal5.id)

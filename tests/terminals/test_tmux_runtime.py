@@ -36,9 +36,19 @@ pytestmark = pytest.mark.unit
 MAX_INPUT_PAYLOAD = 1024 * 1024
 
 
-def _sessions() -> TmuxSessionManager:
-    sessions = TmuxSessionManager(TmuxConfig(history_limit=10000))
-    sessions.is_available = MagicMock(return_value=True)  # type: ignore[method-assign]
+class _StubSessions(TmuxSessionManager):
+    """Session manager whose tmux seams are plain attributes the tests replace."""
+
+    _run: Any
+    is_available: Any
+    create_session: Any
+    capture_pane: Any
+    capture_full_pane: Any
+
+
+def _sessions() -> _StubSessions:
+    sessions = _StubSessions(TmuxConfig(history_limit=10000))
+    sessions.is_available = MagicMock(return_value=True)
     return sessions
 
 
@@ -58,10 +68,8 @@ async def test_prepare_commit_requires_caller_ack() -> None:
         created.append(name)
         return TmuxSessionInfo(name=name, pane_pid=42, pane_id="%9")
 
-    sessions.create_session = create_session  # type: ignore[method-assign]
-    sessions._run = AsyncMock(  # type: ignore[method-assign]
-        return_value=(0, "/tmp/tmux.sock|1658|1784592177|%9", "")
-    )
+    sessions.create_session = create_session
+    sessions._run = AsyncMock(return_value=(0, "/tmp/tmux.sock|1658|1784592177|%9", ""))
     request = TerminalSpawnRequest(
         terminal_id=uuid4(),
         spawn_key="gobby-abc",
@@ -87,9 +95,9 @@ async def test_snapshot_counters_are_utf8_bytes_with_unknown_history_loss() -> N
     runtime = TmuxTerminalRuntime(sessions)
     terminal = make_memory_terminal()
     wide = "盒🙂"
-    sessions.capture_pane = AsyncMock(return_value=wide)  # type: ignore[method-assign]
-    sessions.capture_full_pane = AsyncMock(return_value=wide)  # type: ignore[method-assign]
-    sessions._run = AsyncMock(return_value=(0, "12|10000", ""))  # type: ignore[method-assign]
+    sessions.capture_pane = AsyncMock(return_value=wide)
+    sessions.capture_full_pane = AsyncMock(return_value=wide)
+    sessions._run = AsyncMock(return_value=(0, "12|10000", ""))
 
     visible = await runtime.snapshot(terminal, lines=50)
     assert isinstance(visible, SnapshotResult)
@@ -99,7 +107,7 @@ async def test_snapshot_counters_are_utf8_bytes_with_unknown_history_loss() -> N
     assert visible.total_bytes == len(wide.encode("utf-8"))
     assert visible.total_bytes != len(wide)
 
-    sessions._run = AsyncMock(return_value=(0, "10000|10000", ""))  # type: ignore[method-assign]
+    sessions._run = AsyncMock(return_value=(0, "10000|10000", ""))
     full = await runtime.snapshot_full(terminal)
     assert full.truncated is True
     assert full.dropped_bytes is None
@@ -182,7 +190,7 @@ async def test_write_paste_follows_live_bracketed_mode_and_size_cap(
     sent: list[str] = []
 
     async def query(flag: str) -> None:
-        sessions._run = AsyncMock(return_value=(0, flag, ""))  # type: ignore[method-assign]
+        sessions._run = AsyncMock(return_value=(0, flag, ""))
 
     async def capture_paste(*args: object, **_kwargs: object) -> None:
         sent.append(str(args[1]))
@@ -220,7 +228,7 @@ async def test_write_key_encodes_against_live_pane_flags() -> None:
             return (0, "", "")
         return (0, "", "")
 
-    sessions._run = AsyncMock(side_effect=run)  # type: ignore[method-assign]
+    sessions._run = AsyncMock(side_effect=run)
     await runtime.write_key(terminal, "up")
     assert any(part.lower() == "1b" or part == "1b" for cmd in hex_payloads for part in cmd)
     first = hex_payloads[-1]
@@ -236,7 +244,7 @@ async def test_write_key_encodes_against_live_pane_flags() -> None:
             return (0, "", "")
         return (0, "", "")
 
-    sessions._run = AsyncMock(side_effect=run_normal)  # type: ignore[method-assign]
+    sessions._run = AsyncMock(side_effect=run_normal)
     await runtime.write_key(terminal, "up")
     up_normal = hex_payloads[-1]
     assert "5b" in [part.lower() for part in up_normal]
@@ -255,6 +263,6 @@ async def test_write_key_encodes_against_live_pane_flags() -> None:
             return (0, "", "")
         return (0, "", "")
 
-    sessions._run = AsyncMock(side_effect=run_normal_keypad)  # type: ignore[method-assign]
+    sessions._run = AsyncMock(side_effect=run_normal_keypad)
     await runtime.write_key(terminal, "kpplus")
     assert hex_payloads[-1] != app_keypad
