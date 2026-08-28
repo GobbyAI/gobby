@@ -1,5 +1,5 @@
 use super::*;
-use crate::cli::{GraphViewArgs, GraphViewKind};
+use crate::cli::{GraphViewArgs, GraphViewKind, GraphViewSeed};
 use crate::codewiki_facts::GraphAvailability;
 use crate::config::Context;
 use crate::graph::code_graph::GraphReadError;
@@ -353,7 +353,7 @@ fn graph_view_unavailable_differs_from_empty() {
 
     let args = GraphViewArgs {
         view: GraphViewKind::Fcg,
-        seed: "Derived".into(),
+        seed: GraphViewSeed::Symbol("Derived".into()),
         depth: None,
         incoming_limit: None,
         outgoing_limit: None,

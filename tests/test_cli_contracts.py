@@ -377,7 +377,8 @@ def test_gcode_contract_covers_daemon_consumed_surface() -> None:
     contract = _contract("gcode")
     commands = {command["name"] for command in contract["commands"]}
 
-    assert contract["contract_version"] == 6
+    assert contract["contract_version"] == 7
+    assert "invalid_path_scope" in contract["error_codes"]
     assert {
         "index",
         "search",
@@ -425,6 +426,11 @@ def test_gcode_contract_covers_daemon_consumed_surface() -> None:
     assert "--max-depth" in _allowed_flags(contract, "path")
     assert {"status", "project_id", "summary"} <= _json_keys(contract, "graph clear")
     assert {"status", "project_id", "summary"} <= _json_keys(contract, "graph rebuild")
+    assert {"--file", "--module", "--symbol"} <= _allowed_flags(contract, "graph view")
+    assert _command(contract, "graph view")["positionals"] == []
+    assert _command(contract, "tree")["positionals"] == [
+        {"name": "PATH", "required": False, "repeatable": True}
+    ]
     assert "--allow-missing-indexed-file" in _allowed_flags(contract, "graph sync-file")
     assert "--allow-missing-indexed-file" in _allowed_flags(contract, "vector sync-file")
 

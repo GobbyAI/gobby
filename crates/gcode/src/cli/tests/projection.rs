@@ -332,7 +332,9 @@ fn parse_vector_sync_file_with_flag() {
 
 #[test]
 fn graph_view_rejects_unknown_kind() {
-    let error = match Cli::try_parse_from(["gcode", "graph", "view", "--view", "pdg", "Derived"]) {
+    let error = match Cli::try_parse_from([
+        "gcode", "graph", "view", "--view", "pdg", "--symbol", "Derived",
+    ]) {
         Ok(_) => panic!("unknown --view must fail clap parse"),
         Err(error) => error,
     };
@@ -345,9 +347,42 @@ fn graph_view_rejects_unknown_kind() {
 }
 
 #[test]
+fn graph_view_requires_typed_compatible_selector() {
+    for args in [
+        ["--view", "mcg", "--file", "src/lib.rs"],
+        ["--view", "mcg", "--module", "crate.module"],
+        ["--view", "fcg", "--symbol", "run"],
+        ["--view", "class-hierarchy", "--symbol", "Derived"],
+    ] {
+        Cli::try_parse_from(["gcode", "graph", "view"].into_iter().chain(args))
+            .expect("valid typed graph selector parses");
+    }
+
+    for args in [
+        ["--view", "mcg", "--symbol", "run"],
+        ["--view", "fcg", "--file", "src/lib.rs"],
+        ["--view", "fcg", "--module", "crate.module"],
+        ["--view", "class-hierarchy", "--file", "src/lib.rs"],
+    ] {
+        let error = match Cli::try_parse_from(["gcode", "graph", "view"].into_iter().chain(args)) {
+            Ok(_) => panic!("incompatible graph selector must fail"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    let positional =
+        match Cli::try_parse_from(["gcode", "graph", "view", "--view", "fcg", "Derived"]) {
+            Ok(_) => panic!("removed positional seed syntax must fail"),
+            Err(error) => error,
+        };
+    assert_eq!(positional.kind(), clap::error::ErrorKind::UnknownArgument);
+}
+
+#[test]
 fn graph_view_depth_domain() {
     let error = match Cli::try_parse_from([
-        "gcode", "graph", "view", "--view", "fcg", "seed", "--depth", "0",
+        "gcode", "graph", "view", "--view", "fcg", "--symbol", "seed", "--depth", "0",
     ]) {
         Ok(_) => panic!("--depth 0 must fail clap parse"),
         Err(error) => error,
@@ -355,7 +390,7 @@ fn graph_view_depth_domain() {
     assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
 
     let error = match Cli::try_parse_from([
-        "gcode", "graph", "view", "--view", "fcg", "seed", "--depth", "17",
+        "gcode", "graph", "view", "--view", "fcg", "--symbol", "seed", "--depth", "17",
     ]) {
         Ok(_) => panic!("--depth 17 must fail clap parse"),
         Err(error) => error,
@@ -368,6 +403,7 @@ fn graph_view_depth_domain() {
         "view",
         "--view",
         "class-hierarchy",
+        "--symbol",
         "Derived",
         "--depth",
         "16",
@@ -384,8 +420,10 @@ fn graph_view_depth_domain() {
         _ => panic!("expected graph view command"),
     }
 
-    let fcg = Cli::try_parse_from(["gcode", "graph", "view", "--view", "fcg", "seed"])
-        .expect("omitted --depth parses for fcg");
+    let fcg = Cli::try_parse_from([
+        "gcode", "graph", "view", "--view", "fcg", "--symbol", "seed",
+    ])
+    .expect("omitted --depth parses for fcg");
     match fcg.command {
         Command::Graph {
             command: GraphCommand::View(args),
@@ -396,8 +434,16 @@ fn graph_view_depth_domain() {
         _ => panic!("expected graph view command"),
     }
 
-    let mcg = Cli::try_parse_from(["gcode", "graph", "view", "--view", "mcg", "src/lib.rs"])
-        .expect("omitted --depth parses for mcg");
+    let mcg = Cli::try_parse_from([
+        "gcode",
+        "graph",
+        "view",
+        "--view",
+        "mcg",
+        "--file",
+        "src/lib.rs",
+    ])
+    .expect("omitted --depth parses for mcg");
     match mcg.command {
         Command::Graph {
             command: GraphCommand::View(args),
@@ -414,6 +460,7 @@ fn graph_view_depth_domain() {
         "view",
         "--view",
         "class-hierarchy",
+        "--symbol",
         "Derived",
     ])
     .expect("omitted --depth parses for class-hierarchy");
@@ -430,8 +477,10 @@ fn graph_view_depth_domain() {
 
 #[test]
 fn graph_view_omitted_depth_defaults_by_kind() {
-    let fcg = Cli::try_parse_from(["gcode", "graph", "view", "--view", "fcg", "seed"])
-        .expect("omitted --depth parses for fcg");
+    let fcg = Cli::try_parse_from([
+        "gcode", "graph", "view", "--view", "fcg", "--symbol", "seed",
+    ])
+    .expect("omitted --depth parses for fcg");
     match fcg.command {
         Command::Graph {
             command: GraphCommand::View(args),
@@ -442,8 +491,10 @@ fn graph_view_omitted_depth_defaults_by_kind() {
         _ => panic!("expected graph view command"),
     }
 
-    let mcg = Cli::try_parse_from(["gcode", "graph", "view", "--view", "mcg", "src/a.py"])
-        .expect("omitted --depth parses for mcg");
+    let mcg = Cli::try_parse_from([
+        "gcode", "graph", "view", "--view", "mcg", "--file", "src/a.py",
+    ])
+    .expect("omitted --depth parses for mcg");
     match mcg.command {
         Command::Graph {
             command: GraphCommand::View(args),
@@ -460,6 +511,7 @@ fn graph_view_omitted_depth_defaults_by_kind() {
         "view",
         "--view",
         "class-hierarchy",
+        "--symbol",
         "Derived",
     ])
     .expect("omitted --depth parses for class-hierarchy");
@@ -482,6 +534,7 @@ fn graph_view_rejects_hierarchy_row_limits() {
         "view",
         "--view",
         "class-hierarchy",
+        "--symbol",
         "Derived",
         "--incoming-limit",
         "4",
@@ -497,6 +550,7 @@ fn graph_view_rejects_hierarchy_row_limits() {
         "view",
         "--view",
         "class-hierarchy",
+        "--symbol",
         "Derived",
         "--outgoing-limit",
         "4",
@@ -512,6 +566,7 @@ fn graph_view_rejects_hierarchy_row_limits() {
         "view",
         "--view",
         "fcg",
+        "--symbol",
         "seed",
         "--incoming-limit",
         "3",
@@ -535,6 +590,7 @@ fn graph_view_rejects_hierarchy_row_limits() {
         "view",
         "--view",
         "mcg",
+        "--file",
         "src/lib.rs",
         "--incoming-limit",
         "2",

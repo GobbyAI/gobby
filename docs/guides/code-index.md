@@ -131,13 +131,15 @@ All commands accept these global options unless noted:
 | `gcode symbol <ID>` | Fetch one symbol's source by byte offset |
 | `gcode symbols <IDS>...` | Fetch bounded source for multiple symbols and report stale IDs |
 | `gcode kinds` | List indexed symbol kinds |
-| `gcode tree` | File tree with symbol counts |
+| `gcode tree [PATH]...` | File tree with optional file, directory, or glob filters |
 | `gcode repo-outline` | Directory-grouped project stats |
 
 Ranked search commands support `--limit`, `--offset`, `--language`, and
 positional path filters after the query. `gcode search` and
 `gcode search-symbol` also support `--kind`. `gcode grep` supports positional
 paths, `-g/--glob`, `-i`, `-F`, `-C/-A/-B`, and `-m/--max-count`.
+Bare project-file paths resolve from the project root; `./` and `../` resolve
+from the current directory. Multiple tree paths use OR semantics.
 
 ### Graph Queries
 

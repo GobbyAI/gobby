@@ -32,6 +32,9 @@ def test_code_index_skill_documents_positional_path_filters() -> None:
     assert 'gcode search "query" [PATH ...]' in body
     assert 'gcode grep "regex" [PATH ...] -m 50' in body
     assert 'gcode search-content "query" [PATH ...]' in body
+    assert "`gcode tree [PATH ...]`" in body
+    assert "OR semantics before paging" in body
+    assert "Bare project-file paths resolve from the project root" in body
     assert "-m/--limit" in body
     assert "`--max-count` is an alias for `--limit`" in body
     assert "--format json" in body
@@ -114,7 +117,9 @@ def test_code_index_skill_documents_callees_and_graph_view() -> None:
     assert "automatically uses a 2,000-token page budget" in body
     assert "prints an exact shell-safe continuation command" in body
     assert "oversized first item is returned complete" in body
-    assert "`gcode graph view --view=fcg|mcg|class-hierarchy <seed>`" in body
+    assert "`gcode graph view --view=mcg --file <file>`" in body
+    assert "`--module <module>`" in body
+    assert "`gcode graph view --view=fcg|class-hierarchy --symbol <symbol>`" in body
     assert "complete within `--depth`" in body
     assert "omitted `--depth` is 8 for CHG and 1 for FCG/MCG" in body
     assert "`incoming_truncated`" in body

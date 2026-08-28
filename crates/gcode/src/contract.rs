@@ -9,7 +9,7 @@ use schema::*;
 pub fn contract() -> CliContract {
     CliContract {
         tool: "gcode",
-        contract_version: 6,
+        contract_version: 7,
         summary: "Fast code index CLI for Gobby.",
         global_flags: vec![
             FlagContract::value("--project", "ROOT"),
@@ -252,7 +252,11 @@ pub fn contract() -> CliContract {
             },
             CommandContract {
                 daemon_consumed: true,
-                positionals: vec![],
+                positionals: vec![PositionalContract {
+                    name: "PATH",
+                    required: false,
+                    repeatable: true,
+                }],
                 flags: paged_navigation_flags(),
                 json_output_keys: tree_keys(),
                 ..CommandContract::new("tree", "Show file tree with symbol counts.")
@@ -391,11 +395,7 @@ pub fn contract() -> CliContract {
                 )
             },
             CommandContract {
-                positionals: vec![PositionalContract {
-                    name: "SEED",
-                    required: true,
-                    repeatable: false,
-                }],
+                positionals: vec![],
                 flags: vec![
                     FlagContract {
                         name: "--view",
@@ -405,6 +405,9 @@ pub fn contract() -> CliContract {
                         required: true,
                         repeatable: false,
                     },
+                    FlagContract::value("--file", "FILE"),
+                    FlagContract::value("--module", "MODULE"),
+                    FlagContract::value("--symbol", "SYMBOL"),
                     FlagContract::value("--depth", "N"),
                     FlagContract::value("--incoming-limit", "N"),
                     FlagContract::value("--outgoing-limit", "N"),
@@ -535,6 +538,7 @@ pub fn contract() -> CliContract {
         ],
         error_codes: vec![
             "invalid_input",
+            "invalid_path_scope",
             "missing_project",
             "backend_unavailable",
             "index_unavailable",
@@ -551,7 +555,7 @@ pub fn contract() -> CliContract {
             },
             ExitCodeContract {
                 code: 2,
-                meaning: "usage error or typed error (grant, project_required, capability_unavailable, graph sync contract); one JSON line on stderr",
+                meaning: "usage error or typed error (grant, project_required, invalid_path_scope, capability_unavailable, graph sync contract); one JSON line on stderr",
             },
             ExitCodeContract {
                 code: 3,

@@ -1529,8 +1529,8 @@ class TestCanonicalToolMetadata:
 def test_gcode_callees_and_graph_view_are_navigation() -> None:
     for command, expected_kind in (
         ("gcode callees TaskValidator", "read"),
-        ("gcode graph view --view=fcg Derived", "read"),
-        ("gcode graph view --view=class-hierarchy Derived", "read"),
+        ("gcode graph view --view=fcg --symbol Derived", "read"),
+        ("gcode graph view --view=class-hierarchy --symbol Derived", "read"),
     ):
         data = {"tool_name": "exec_command", "tool_input": {"command": command}}
         normalize_tool_fields(data)

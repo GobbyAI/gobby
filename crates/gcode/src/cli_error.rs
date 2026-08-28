@@ -9,7 +9,7 @@ use serde_json::json;
 pub struct CliError {
     pub code: &'static str,
     pub message: String,
-    pub recovery: Option<&'static str>,
+    pub recovery: Option<String>,
     pub exit_status: u8,
 }
 
@@ -18,7 +18,7 @@ impl CliError {
         Self {
             code: error.cli_code(),
             message: error.to_string(),
-            recovery: grant_recovery(&error),
+            recovery: grant_recovery(&error).map(str::to_string),
             exit_status: error.exit_status() as u8,
         }
     }
@@ -41,8 +41,22 @@ impl CliError {
         }
     }
 
+    pub fn invalid_path_scope(input: &str, project_root: Option<&std::path::Path>) -> Self {
+        Self {
+            code: "invalid_path_scope",
+            message: format!("path `{input}` resolves outside the current project scope"),
+            recovery: project_root.map(|root| {
+                format!(
+                    "rerun with `--project {}` to select that project",
+                    root.display()
+                )
+            }),
+            exit_status: 2,
+        }
+    }
+
     pub(crate) fn json_payload(&self) -> serde_json::Value {
-        match self.recovery {
+        match &self.recovery {
             Some(recovery) => json!({
                 "error": self.code,
                 "message": self.message,
@@ -111,7 +125,7 @@ mod tests {
         });
         assert_eq!(rendered.code, "payload_skew");
         assert_eq!(rendered.exit_status, 2);
-        assert_eq!(rendered.recovery, Some(SKEW_RECOVERY));
+        assert_eq!(rendered.recovery.as_deref(), Some(SKEW_RECOVERY));
         let value = rendered.json_payload();
         assert_eq!(value["error"], "payload_skew");
         assert_eq!(
@@ -126,11 +140,36 @@ mod tests {
         let rendered = CliError::grant(GrantError::DaemonRequired);
         assert_eq!(rendered.code, "daemon_required");
         assert_eq!(rendered.exit_status, 2);
-        assert_eq!(rendered.recovery, Some(DAEMON_RECOVERY));
+        assert_eq!(rendered.recovery.as_deref(), Some(DAEMON_RECOVERY));
         let value = rendered.json_payload();
         assert_eq!(value["error"], "daemon_required");
         assert_eq!(value["message"], "daemon required");
         assert_eq!(value["recovery"], DAEMON_RECOVERY);
+    }
+
+    #[test]
+    fn invalid_path_scope_serializes_dynamic_recovery() {
+        let rendered = CliError::invalid_path_scope(
+            "../other/src/lib.rs",
+            Some(std::path::Path::new("/workspace/other")),
+        );
+
+        assert_eq!(rendered.code, "invalid_path_scope");
+        assert_eq!(rendered.exit_status, 2);
+        assert_eq!(
+            rendered.recovery.as_deref(),
+            Some("rerun with `--project /workspace/other` to select that project")
+        );
+        let value = rendered.json_payload();
+        assert_eq!(value["error"], "invalid_path_scope");
+        assert_eq!(
+            value["message"],
+            "path `../other/src/lib.rs` resolves outside the current project scope"
+        );
+        assert_eq!(
+            value["recovery"],
+            "rerun with `--project /workspace/other` to select that project"
+        );
     }
 
     #[test]

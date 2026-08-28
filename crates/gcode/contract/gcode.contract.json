@@ -1,6 +1,6 @@
 {
   "tool": "gcode",
-  "contract_version": 6,
+  "contract_version": 7,
   "summary": "Fast code index CLI for Gobby.",
   "global_flags": [
     {
@@ -1009,7 +1009,13 @@
       "name": "tree",
       "summary": "Show file tree with symbol counts.",
       "daemon_consumed": true,
-      "positionals": [],
+      "positionals": [
+        {
+          "name": "PATH",
+          "required": false,
+          "repeatable": true
+        }
+      ],
       "flags": [
         {
           "name": "--limit",
@@ -1672,13 +1678,7 @@
       "name": "graph view",
       "summary": "Render a scoped fcg, mcg, or class-hierarchy graph view.",
       "daemon_consumed": false,
-      "positionals": [
-        {
-          "name": "SEED",
-          "required": true,
-          "repeatable": false
-        }
-      ],
+      "positionals": [],
       "flags": [
         {
           "name": "--view",
@@ -1690,6 +1690,30 @@
             "class-hierarchy"
           ],
           "required": true,
+          "repeatable": false
+        },
+        {
+          "name": "--file",
+          "takes_value": true,
+          "value_name": "FILE",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--module",
+          "takes_value": true,
+          "value_name": "MODULE",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--symbol",
+          "takes_value": true,
+          "value_name": "SYMBOL",
+          "allowed_values": [],
+          "required": false,
           "repeatable": false
         },
         {
@@ -2168,6 +2192,7 @@
   ],
   "error_codes": [
     "invalid_input",
+    "invalid_path_scope",
     "missing_project",
     "backend_unavailable",
     "index_unavailable",
@@ -2184,7 +2209,7 @@
     },
     {
       "code": 2,
-      "meaning": "usage error or typed error (grant, project_required, capability_unavailable, graph sync contract); one JSON line on stderr"
+      "meaning": "usage error or typed error (grant, project_required, invalid_path_scope, capability_unavailable, graph sync contract); one JSON line on stderr"
     },
     {
       "code": 3,
