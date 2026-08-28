@@ -8,6 +8,8 @@ MANAGED_BIN_VERSION_PINS: dict[str, str] = {
     "gcode": "1.5.0",
     "gdaemon": "0.4.0",
     "gwiki": "0.8.0",
+    "gterm": "0.1.0",
+    "gclient": "0.1.0",
 }
 
 __all__ = ["MANAGED_BIN_VERSION_PINS"]

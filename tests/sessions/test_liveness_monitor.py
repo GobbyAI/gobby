@@ -146,7 +146,7 @@ class TestPaneOwnershipLifecycle:
         manager.release_window_title_ownership = AsyncMock(return_value=TmuxReleaseOutcome.RELEASED)
 
         with patch(
-            "gobby.sessions.liveness_monitor.get_tmux_manager_for_context",
+            "gobby.sessions.liveness_monitor.manager_for_terminal_context",
             return_value=manager,
         ):
             await monitor._release_tmux_title(record)
@@ -170,7 +170,7 @@ class TestPaneOwnershipLifecycle:
         )
 
         with patch(
-            "gobby.sessions.liveness_monitor.get_tmux_manager_for_context",
+            "gobby.sessions.liveness_monitor.manager_for_terminal_context",
             return_value=manager,
         ):
             await monitor._release_tmux_title(record)
@@ -581,6 +581,23 @@ class TestConditionalExpiry:
 
         assert result is True
         generate.assert_awaited_once_with("session")
+
+    @pytest.mark.asyncio
+    async def test_expiry_cases_linked_terminal_row(self) -> None:
+        storage = _Storage(expire_result=SimpleNamespace(status="expired"))
+        terminal = MagicMock()
+        live = SimpleNamespace(id="term-1")
+        terminal.get_live_for_session.return_value = live
+        monitor = SessionLivenessMonitor(
+            session_storage=cast(Any, storage),
+            terminal_manager=terminal,
+        )
+
+        result = await monitor._expire_session("session")
+
+        assert result is True
+        terminal.get_live_for_session.assert_called_once_with("session")
+        terminal.mark_exited.assert_called_once_with("term-1")
 
 
 class TestTmuxInventory:

@@ -173,6 +173,10 @@
       "definition": "uuid|uuid|YES||NEVER"
     },
     {
+      "name": "agent_runs.terminal_id",
+      "definition": "uuid|uuid|YES||NEVER"
+    },
+    {
       "name": "agent_runs.terminal_reason",
       "definition": "text|text|YES||NEVER"
     },
@@ -183,10 +187,6 @@
     {
       "name": "agent_runs.timeout_seconds",
       "definition": "real|float4|YES||NEVER"
-    },
-    {
-      "name": "agent_runs.tmux_session_name",
-      "definition": "text|text|YES||NEVER"
     },
     {
       "name": "agent_runs.tool_calls_count",
@@ -5329,6 +5329,110 @@
       "definition": "text|text|YES||NEVER"
     },
     {
+      "name": "terminals.agent_run_id",
+      "definition": "uuid|uuid|YES||NEVER"
+    },
+    {
+      "name": "terminals.attempt_generation",
+      "definition": "integer|int4|NO|1|NEVER"
+    },
+    {
+      "name": "terminals.attempt_started_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "terminals.automatic_write_quarantine_action_key",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "terminals.automatic_write_quarantined_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "terminals.backend",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "terminals.cols",
+      "definition": "integer|int4|YES||NEVER"
+    },
+    {
+      "name": "terminals.created_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "terminals.host_epoch",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "terminals.id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "terminals.liveness_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "terminals.locator",
+      "definition": "jsonb|jsonb|YES||NEVER"
+    },
+    {
+      "name": "terminals.locator_key",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "terminals.machine_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "terminals.ownership",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "terminals.process",
+      "definition": "jsonb|jsonb|YES||NEVER"
+    },
+    {
+      "name": "terminals.project_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "terminals.rows",
+      "definition": "integer|int4|YES||NEVER"
+    },
+    {
+      "name": "terminals.session_id",
+      "definition": "uuid|uuid|YES||NEVER"
+    },
+    {
+      "name": "terminals.session_name",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "terminals.spawn_key",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "terminals.state",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "terminals.title",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "terminals.unresolved_writes",
+      "definition": "jsonb|jsonb|NO|'{}'::jsonb|NEVER"
+    },
+    {
+      "name": "terminals.updated_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "terminals.window_id",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
       "name": "token_events.cache_creation_tokens",
       "definition": "integer|int4|NO|0|NEVER"
     },
@@ -5877,6 +5981,10 @@
     {
       "name": "agent_runs.agent_runs_task_id_fkey",
       "definition": "FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL DEFERRABLE"
+    },
+    {
+      "name": "agent_runs.agent_runs_terminal_id_fkey",
+      "definition": "FOREIGN KEY (terminal_id) REFERENCES terminals(id)"
     },
     {
       "name": "agent_step_instances.agent_step_instances_agent_step_workflow_id_fkey",
@@ -7443,6 +7551,82 @@
       "definition": "CHECK (validation_status = ANY (ARRAY['pending'::text, 'valid'::text, 'invalid'::text, 'error'::text]))"
     },
     {
+      "name": "terminals.terminals_agent_run_id_fkey",
+      "definition": "FOREIGN KEY (agent_run_id) REFERENCES agent_runs(id) ON DELETE SET NULL DEFERRABLE"
+    },
+    {
+      "name": "terminals.terminals_backend_check",
+      "definition": "CHECK (backend = ANY (ARRAY['tmux'::text, 'native'::text]))"
+    },
+    {
+      "name": "terminals.terminals_external_always_has_locator",
+      "definition": "CHECK (ownership = 'gobby'::text OR locator IS NOT NULL AND locator_key IS NOT NULL)"
+    },
+    {
+      "name": "terminals.terminals_external_is_never_pending",
+      "definition": "CHECK (ownership = 'gobby'::text OR state <> 'pending'::text)"
+    },
+    {
+      "name": "terminals.terminals_host_epoch_is_native_only",
+      "definition": "CHECK (host_epoch IS NULL OR backend = 'native'::text)"
+    },
+    {
+      "name": "terminals.terminals_locator_pair_consistent",
+      "definition": "CHECK ((locator IS NULL) = (locator_key IS NULL))"
+    },
+    {
+      "name": "terminals.terminals_locator_present_when_attachable",
+      "definition": "CHECK ((state = ANY (ARRAY['pending'::text, 'exited'::text])) OR locator IS NOT NULL AND locator_key IS NOT NULL)"
+    },
+    {
+      "name": "terminals.terminals_machine_id_fkey",
+      "definition": "FOREIGN KEY (machine_id) REFERENCES machines(id)"
+    },
+    {
+      "name": "terminals.terminals_native_attachable_has_epoch",
+      "definition": "CHECK (backend <> 'native'::text OR (state <> ALL (ARRAY['live'::text, 'orphaned'::text])) OR host_epoch IS NOT NULL)"
+    },
+    {
+      "name": "terminals.terminals_ownership_check",
+      "definition": "CHECK (ownership = ANY (ARRAY['gobby'::text, 'external'::text]))"
+    },
+    {
+      "name": "terminals.terminals_pending_has_no_identity",
+      "definition": "CHECK (state <> 'pending'::text OR locator IS NULL AND locator_key IS NULL AND host_epoch IS NULL)"
+    },
+    {
+      "name": "terminals.terminals_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "terminals.terminals_process_is_native_only",
+      "definition": "CHECK (process IS NULL OR backend = 'native'::text)"
+    },
+    {
+      "name": "terminals.terminals_project_id_fkey",
+      "definition": "FOREIGN KEY (project_id) REFERENCES projects(id)"
+    },
+    {
+      "name": "terminals.terminals_quarantine_pair_consistent",
+      "definition": "CHECK ((automatic_write_quarantined_at IS NULL) = (automatic_write_quarantine_action_key IS NULL))"
+    },
+    {
+      "name": "terminals.terminals_session_id_fkey",
+      "definition": "FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE"
+    },
+    {
+      "name": "terminals.terminals_spawn_key_matches_ownership",
+      "definition": "CHECK (ownership = 'gobby'::text AND spawn_key IS NOT NULL OR ownership = 'external'::text AND spawn_key IS NULL)"
+    },
+    {
+      "name": "terminals.terminals_state_check",
+      "definition": "CHECK (state = ANY (ARRAY['pending'::text, 'live'::text, 'exited'::text, 'orphaned'::text]))"
+    },
+    {
+      "name": "terminals.terminals_title_byte_limit",
+      "definition": "CHECK (title IS NULL OR octet_length(title) <= 1024)"
+    },
+    {
       "name": "token_events.token_events_pkey",
       "definition": "PRIMARY KEY (id)"
     },
@@ -8851,6 +9035,30 @@
       "definition": "CREATE INDEX idx_tasks_state_bucket ON $schema.tasks USING btree (state_bucket)"
     },
     {
+      "name": "idx_terminals_live",
+      "definition": "CREATE INDEX idx_terminals_live ON $schema.terminals USING btree (state) WHERE (state = ANY (ARRAY['pending'::text, 'live'::text]))"
+    },
+    {
+      "name": "idx_terminals_locator_key_active",
+      "definition": "CREATE UNIQUE INDEX idx_terminals_locator_key_active ON $schema.terminals USING btree (locator_key) WHERE ((locator_key IS NOT NULL) AND (state = ANY (ARRAY['pending'::text, 'live'::text])))"
+    },
+    {
+      "name": "idx_terminals_machine",
+      "definition": "CREATE INDEX idx_terminals_machine ON $schema.terminals USING btree (machine_id)"
+    },
+    {
+      "name": "idx_terminals_project",
+      "definition": "CREATE INDEX idx_terminals_project ON $schema.terminals USING btree (project_id)"
+    },
+    {
+      "name": "idx_terminals_run",
+      "definition": "CREATE INDEX idx_terminals_run ON $schema.terminals USING btree (agent_run_id) WHERE (agent_run_id IS NOT NULL)"
+    },
+    {
+      "name": "idx_terminals_spawn_key",
+      "definition": "CREATE UNIQUE INDEX idx_terminals_spawn_key ON $schema.terminals USING btree (spawn_key) WHERE (spawn_key IS NOT NULL)"
+    },
+    {
       "name": "idx_token_events_dedup",
       "definition": "CREATE UNIQUE INDEX idx_token_events_dedup ON $schema.token_events USING btree (session_id, message_id) WHERE (message_id IS NOT NULL)"
     },
@@ -9305,6 +9513,10 @@
     {
       "name": "tasks_search_bm25",
       "definition": "CREATE INDEX tasks_search_bm25 ON $schema.tasks USING bm25 (id, title, description) WITH (key_field=id)"
+    },
+    {
+      "name": "terminals_pkey",
+      "definition": "CREATE UNIQUE INDEX terminals_pkey ON $schema.terminals USING btree (id)"
     },
     {
       "name": "token_events_pkey",

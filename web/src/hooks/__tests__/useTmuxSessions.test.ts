@@ -6,9 +6,20 @@ import {
   createMockWebSocket,
   type MockWebSocketInstance,
 } from "../../test/mocks/websocket";
-import { TMUX_REQUEST_TIMEOUT_MS, useTmuxSessions } from "../useTmuxSessions";
+import {
+  TMUX_REQUEST_TIMEOUT_MS,
+  createTerminalWsReducer,
+  TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES,
+  TERMINAL_WS_FRAGMENT_MAX_SOCKET_REASSEMBLY_BYTES,
+  TERMINAL_WS_SAFE_INTEGER_MAX,
+  useTmuxSessions,
+} from "../useTmuxSessions";
 
 type WireMessage = Record<string, unknown>;
+
+function lastOf<T>(items: readonly T[]): T | undefined {
+  return items[items.length - 1];
+}
 
 let mockWs: {
   instances: MockWebSocketInstance[];
@@ -41,12 +52,11 @@ function respondToAttach(
 ): void {
   act(() => {
     ws.simulateMessage({
-      type: "tmux_attach_result",
+      type: "terminal_attach_result",
       request_id: id,
       success: true,
-      streaming_id: streamingId,
-      session_name: name,
-      socket,
+      attachment_id: streamingId,
+      terminal_id: name || socket,
     });
   });
 }
@@ -83,7 +93,7 @@ describe("useTmuxSessions", () => {
     expect(liveMount.result.current.connected).toBe(true);
     act(() => {
       live.simulateMessage({
-        type: "tmux_sessions_list",
+        type: "terminal_list",
         sessions: [{ name: "worker", socket: "default" }],
       });
     });
@@ -92,14 +102,13 @@ describe("useTmuxSessions", () => {
     act(() => liveMount.result.current.attachSession("worker", "default"));
     respondToAttach(
       live,
-      requestId(live, "tmux_attach"),
+      requestId(live, "terminal_attach"),
       "worker",
       "default",
       "stream-1",
     );
     expect(liveMount.result.current.attachedTarget).toEqual({
-      name: "worker",
-      socket: "default",
+      terminal_id: "worker",
     });
 
     act(() => {
@@ -135,65 +144,56 @@ describe("useTmuxSessions", () => {
     open(ws);
     ws.send.mockClear();
 
-    act(() => result.current.attachSession("shared", "default"));
+    act(() => result.current.attachSession("term-default", "default"));
     respondToAttach(
       ws,
-      requestId(ws, "tmux_attach"),
-      "shared",
+      requestId(ws, "terminal_attach"),
+      "term-default",
       "default",
       "stream-default",
     );
     expect(result.current.attachedTarget).toEqual({
-      name: "shared",
-      socket: "default",
+      terminal_id: "term-default",
     });
 
     ws.send.mockClear();
-    act(() => result.current.attachSession("shared", "gobby"));
-    expect(sentMessages(ws)).toEqual([
-      {
-        type: "tmux_detach",
-        request_id: expect.any(String),
-        streaming_id: "stream-default",
-      },
-    ]);
+    act(() => result.current.attachSession("term-gobby", "gobby"));
+    expect(sentMessages(ws, "terminal_detach")[0]).toMatchObject({
+      type: "terminal_detach",
+      attachment_id: "stream-default",
+    });
 
-    const detachId = requestId(ws, "tmux_detach");
+    const detachId = requestId(ws, "terminal_detach");
     act(() =>
       ws.simulateMessage({
-        type: "tmux_detach_result",
+        type: "terminal_detach_result",
         request_id: detachId,
         success: true,
       }),
     );
-    const attachMessages = sentMessages(ws, "tmux_attach");
-    expect(attachMessages[attachMessages.length - 1]).toEqual({
-      type: "tmux_attach",
-      request_id: expect.any(String),
-      session_name: "shared",
-      socket: "gobby",
+    const attachMessages = sentMessages(ws, "terminal_attach");
+    expect(attachMessages[attachMessages.length - 1]).toMatchObject({
+      type: "terminal_attach",
+      terminal_id: "term-gobby",
     });
 
     respondToAttach(
       ws,
-      requestId(ws, "tmux_attach"),
-      "shared",
+      requestId(ws, "terminal_attach"),
+      "term-gobby",
       "gobby",
       "stream-gobby",
     );
     expect(result.current.attachedTarget).toEqual({
-      name: "shared",
-      socket: "gobby",
+      terminal_id: "term-gobby",
     });
     ws.send.mockClear();
     act(() => result.current.sendInput("pwd\r"));
-    expect(sentMessages(ws)).toEqual([
-      {
-        type: "terminal_input",
-        run_id: "stream-gobby",
-        data: "pwd\r",
-      },
-    ]);
+    expect(sentMessages(ws, "terminal_input")[0]).toMatchObject({
+      type: "terminal_input",
+      attachment_id: "stream-gobby",
+      data: "pwd\r",
+    });
     unmount();
   });
 
@@ -216,34 +216,28 @@ describe("useTmuxSessions", () => {
       result.current.refreshTerminal("default-worker", "default");
       result.current.refreshTerminal("gobby-worker", "gobby");
     });
-    expect(sentMessages(ws)).toEqual([
+    expect(sentMessages(ws, "terminal_set_viewport")).toEqual([
       {
-        type: "tmux_refresh_client",
+        type: "terminal_set_viewport",
         request_id: expect.any(String),
-        session_name: "default-worker",
-        socket: "default",
+        terminal_id: "default-worker",
       },
       {
-        type: "tmux_refresh_client",
+        type: "terminal_set_viewport",
         request_id: expect.any(String),
-        session_name: "gobby-worker",
-        socket: "gobby",
+        terminal_id: "gobby-worker",
       },
     ]);
 
     ws.send.mockClear();
     act(() => result.current.attachSession("worker", "gobby"));
-    expect(sentMessages(ws)).toEqual([
-      {
-        type: "tmux_attach",
-        request_id: expect.any(String),
-        session_name: "worker",
-        socket: "gobby",
-      },
-    ]);
+    expect(lastOf(sentMessages(ws, "terminal_attach"))).toMatchObject({
+      type: "terminal_attach",
+      terminal_id: "worker",
+    });
     respondToAttach(
       ws,
-      requestId(ws, "tmux_attach"),
+      requestId(ws, "terminal_attach"),
       "worker",
       "gobby",
       "stream-wire",
@@ -254,10 +248,17 @@ describe("useTmuxSessions", () => {
       result.current.sendInput("\u001b[A");
       result.current.resizeTerminal(42, 120);
     });
-    expect(sentMessages(ws)).toEqual([
-      { type: "terminal_input", run_id: "stream-wire", data: "\u001b[A" },
-      { type: "tmux_resize", streaming_id: "stream-wire", rows: 42, cols: 120 },
-    ]);
+    expect(lastOf(sentMessages(ws, "terminal_input"))).toMatchObject({
+      type: "terminal_input",
+      attachment_id: "stream-wire",
+      data: "\u001b[A",
+    });
+    expect(lastOf(sentMessages(ws, "terminal_resize"))).toMatchObject({
+      type: "terminal_resize",
+      attachment_id: "stream-wire",
+      rows: 42,
+      cols: 120,
+    });
 
     act(() => ws.simulateClose());
     ws.send.mockClear();
@@ -276,7 +277,7 @@ describe("useTmuxSessions", () => {
     ws.send.mockClear();
 
     act(() => result.current.attachSession("worker", "default"));
-    const failedAttachId = requestId(ws, "tmux_attach");
+    const failedAttachId = requestId(ws, "terminal_attach");
     act(() =>
       ws.simulateMessage({
         type: "error",
@@ -293,7 +294,7 @@ describe("useTmuxSessions", () => {
     act(() => result.current.attachSession("worker", "default"));
     respondToAttach(
       ws,
-      requestId(ws, "tmux_attach"),
+      requestId(ws, "terminal_attach"),
       "worker",
       "default",
       "stream-retry",
@@ -301,7 +302,7 @@ describe("useTmuxSessions", () => {
     expect(result.current.requestPending).toBe(false);
 
     act(() => result.current.detachSession());
-    const failedDetachId = requestId(ws, "tmux_detach");
+    const failedDetachId = requestId(ws, "terminal_detach");
     act(() =>
       ws.simulateMessage({
         type: "error",
@@ -315,10 +316,10 @@ describe("useTmuxSessions", () => {
 
     act(() => result.current.detachSession());
     expect(result.current.attachError).toBeNull();
-    const retryDetachId = requestId(ws, "tmux_detach");
+    const retryDetachId = requestId(ws, "terminal_detach");
     act(() =>
       ws.simulateMessage({
-        type: "tmux_detach_result",
+        type: "terminal_detach_result",
         request_id: retryDetachId,
         success: true,
       }),
@@ -341,13 +342,13 @@ describe("useTmuxSessions", () => {
       result.current.attachSession("other", "gobby");
       result.current.detachSession();
     });
-    expect(sentMessages(ws, "tmux_attach")).toHaveLength(1);
-    expect(sentMessages(ws, "tmux_detach")).toHaveLength(0);
+    expect(sentMessages(ws, "terminal_attach")).toHaveLength(1);
+    expect(sentMessages(ws, "terminal_detach")).toHaveLength(0);
     expect(result.current.requestPending).toBe(true);
 
     respondToAttach(
       ws,
-      requestId(ws, "tmux_attach"),
+      requestId(ws, "terminal_attach"),
       "worker",
       "default",
       "stream-pending",
@@ -358,8 +359,8 @@ describe("useTmuxSessions", () => {
       result.current.detachSession();
       result.current.attachSession("other", "gobby");
     });
-    expect(sentMessages(ws, "tmux_detach")).toHaveLength(1);
-    expect(sentMessages(ws, "tmux_attach")).toHaveLength(0);
+    expect(sentMessages(ws, "terminal_detach")).toHaveLength(1);
+    expect(sentMessages(ws, "terminal_attach")).toHaveLength(0);
     expect(result.current.requestPending).toBe(true);
     unmount();
   });
@@ -375,24 +376,21 @@ describe("useTmuxSessions", () => {
       result.current.createSession();
     });
 
-    expect(sentMessages(ws, "tmux_create_session")).toEqual([
-      {
-        type: "tmux_create_session",
-        request_id: expect.any(String),
-        socket: "default",
-      },
-    ]);
+    expect(sentMessages(ws, "terminal_create")[0]).toMatchObject({
+      type: "terminal_create",
+      rows: 24,
+      cols: 80,
+    });
     expect(result.current.requestPending).toBe(true);
     expect(result.current.createdSession).toBeNull();
 
-    const createId = requestId(ws, "tmux_create_session");
+    const createId = requestId(ws, "terminal_create");
     act(() =>
       ws.simulateMessage({
-        type: "tmux_create_result",
+        type: "terminal_create_result",
         request_id: "stale-create",
         success: true,
-        session_name: "web-stale",
-        socket: "default",
+        terminal_id: "web-stale",
       }),
     );
     expect(result.current.requestPending).toBe(true);
@@ -400,20 +398,18 @@ describe("useTmuxSessions", () => {
 
     act(() =>
       ws.simulateMessage({
-        type: "tmux_create_result",
+        type: "terminal_create_result",
         request_id: createId,
         success: true,
-        session_name: "web-new",
-        socket: "default",
+        terminal_id: "web-new",
       }),
     );
     expect(result.current.requestPending).toBe(false);
     expect(result.current.isLoading).toBe(false);
     expect(result.current.createdSession).toEqual({
-      session_name: "web-new",
-      socket: "default",
+      terminal_id: "web-new",
     });
-    expect(sentMessages(ws, "tmux_list_sessions")).toHaveLength(1);
+    expect(sentMessages(ws, "terminal_list")).toHaveLength(1);
     unmount();
   });
 
@@ -424,7 +420,7 @@ describe("useTmuxSessions", () => {
     ws.send.mockClear();
 
     act(() => result.current.createSession());
-    const createId = requestId(ws, "tmux_create_session");
+    const createId = requestId(ws, "terminal_create");
     act(() =>
       ws.simulateMessage({
         type: "error",
@@ -458,7 +454,7 @@ describe("useTmuxSessions", () => {
     });
     respondToAttach(
       ws,
-      requestId(ws, "tmux_attach"),
+      requestId(ws, "terminal_attach"),
       "worker",
       "default",
       "stream-timeout",
@@ -487,16 +483,16 @@ describe("useTmuxSessions", () => {
     open(ws);
 
     act(() => result.current.attachSession("worker", "default"));
-    const attachId = requestId(ws, "tmux_attach");
+    const attachId = requestId(ws, "terminal_attach");
     expect(result.current.isLoading).toBe(true);
 
     act(() => {
       ws.simulateMessage({
-        type: "tmux_sessions_list",
+        type: "terminal_list",
         sessions: [{ name: "worker", socket: "default" }],
       });
       ws.simulateMessage({
-        type: "tmux_kill_result",
+        type: "terminal_kill_result",
         request_id: "unrelated-kill",
         success: true,
       });
@@ -515,7 +511,7 @@ describe("useTmuxSessions", () => {
     open(first);
 
     act(() => result.current.attachSession("worker", "default"));
-    const staleAttachId = requestId(first, "tmux_attach");
+    const staleAttachId = requestId(first, "terminal_attach");
     const staleAttachMessage = first.onmessage;
     expect(result.current.requestPending).toBe(true);
 
@@ -527,14 +523,14 @@ describe("useTmuxSessions", () => {
     const second = mockWs.instances[1];
     open(second);
     act(() => result.current.attachSession("worker", "default"));
-    const liveAttachId = requestId(second, "tmux_attach");
+    const liveAttachId = requestId(second, "terminal_attach");
     expect(result.current.requestPending).toBe(true);
 
     act(() => {
       staleAttachMessage?.(
         new MessageEvent("message", {
           data: JSON.stringify({
-            type: "tmux_attach_result",
+            type: "terminal_attach_result",
             request_id: staleAttachId,
             success: true,
             streaming_id: "stale-stream",
@@ -559,7 +555,7 @@ describe("useTmuxSessions", () => {
 
     respondToAttach(second, liveAttachId, "worker", "default", "live-stream");
     act(() => result.current.detachSession());
-    const staleDetachId = requestId(second, "tmux_detach");
+    const staleDetachId = requestId(second, "terminal_detach");
     const staleDetachMessage = second.onmessage;
     expect(result.current.requestPending).toBe(true);
 
@@ -571,13 +567,13 @@ describe("useTmuxSessions", () => {
     const third = mockWs.instances[2];
     open(third);
     act(() => result.current.attachSession("worker", "gobby"));
-    const finalAttachId = requestId(third, "tmux_attach");
+    const finalAttachId = requestId(third, "terminal_attach");
 
     act(() => {
       staleDetachMessage?.(
         new MessageEvent("message", {
           data: JSON.stringify({
-            type: "tmux_detach_result",
+            type: "terminal_detach_result",
             request_id: staleDetachId,
             success: true,
           }),
@@ -599,8 +595,7 @@ describe("useTmuxSessions", () => {
     respondToAttach(third, finalAttachId, "worker", "gobby", "final-stream");
     expect(result.current.requestPending).toBe(false);
     expect(result.current.attachedTarget).toEqual({
-      name: "worker",
-      socket: "gobby",
+      terminal_id: "worker",
     });
     expect(result.current.streamingId).toBe("final-stream");
     unmount();
@@ -655,45 +650,327 @@ describe("useTmuxSessions", () => {
     });
   });
 
-  it("surfaces a post-ack activation failure and clears the attachment", () => {
-    const mount = renderHook(() => useTmuxSessions());
-    const [ws] = mockWs.instances;
+  it("test_terminal_list_follows_pages", () => {
+    const { result } = renderHook(() => useTmuxSessions());
+    const ws = mockWs.instances[0];
     open(ws);
-
-    act(() => mount.result.current.attachSession("worker", "default"));
-    respondToAttach(
-      ws,
-      requestId(ws, "tmux_attach"),
-      "worker",
-      "default",
-      "stream-1",
-    );
-    expect(mount.result.current.streamingId).toBe("stream-1");
-
-    // A failure naming a superseded stream must not disturb the live one.
     act(() => {
       ws.simulateMessage({
-        type: "tmux_activation_failed",
-        streaming_id: "stream-old",
-        code: "bridge_failed",
-        message: "stale",
+        type: "terminal_list",
+        request_id: "init",
+        items: Array.from({ length: 100 }, (_, index) => ({
+          terminal_id: `t-${index.toString().padStart(3, "0")}`,
+          backend: "tmux",
+          ownership: "gobby",
+          state: "live",
+          title: `row-${index}`,
+          session_id: null,
+          agent_run_id: null,
+          dims: null,
+        })),
+        next_cursor: "cursor-1",
       });
     });
-    expect(mount.result.current.streamingId).toBe("stream-1");
-    expect(mount.result.current.attachError).toBeNull();
-
+    const pageRequest = sentMessages(ws, "terminal_list").find(
+      (message) => message.cursor === "cursor-1",
+    );
+    expect(pageRequest).toBeDefined();
     act(() => {
       ws.simulateMessage({
-        type: "tmux_activation_failed",
-        streaming_id: "stream-1",
-        code: "client_registration_failed",
-        message: "tmux client never registered",
+        type: "terminal_list",
+        request_id: "page-1",
+        items: [
+          {
+            terminal_id: "t-100",
+            backend: "tmux",
+            ownership: "gobby",
+            state: "live",
+            title: "row-100",
+            session_id: null,
+            agent_run_id: null,
+            dims: null,
+          },
+        ],
+        next_cursor: null,
       });
     });
-    expect(mount.result.current.streamingId).toBeNull();
-    expect(mount.result.current.attachedTarget).toBeNull();
-    expect(mount.result.current.attachError).toBe(
-      "tmux client never registered",
+    const ids = result.current.sessions.map((session) => session.terminal_id);
+    expect(ids[0]).toBe("t-000");
+    expect(lastOf(ids)).toBe("t-100");
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("test_write_seq_refusals_clear_inflight_and_do_not_resend", () => {
+    const { result } = renderHook(() => useTmuxSessions());
+    const ws = mockWs.instances[0];
+    open(ws);
+    act(() => {
+      result.current.attachSession("term-1", "tmux");
+    });
+    const attachId = requestId(ws, "terminal_attach");
+    respondToAttach(ws, attachId, "term-1", "tmux", "att-1");
+    const before = sentMessages(ws, "terminal_input").length;
+    act(() => {
+      result.current.sendInput("x");
+    });
+    expect(sentMessages(ws, "terminal_input").length).toBe(before + 1);
+    act(() => {
+      ws.simulateMessage({
+        type: "terminal_write_outcome",
+        attachment_id: "att-1",
+        client_write_seq: lastOf(sentMessages(ws, "terminal_input"))
+          ?.client_write_seq,
+        outcome: "refused",
+        reason: "write_seq_conflict",
+      });
+    });
+    expect(sentMessages(ws, "terminal_input").length).toBe(before + 1);
+  });
+
+  it("test_fragment_reassembly_and_cleanup", () => {
+    const reducer = createTerminalWsReducer({ now: () => 0 });
+    reducer.markLive("att-a");
+    reducer.markLive("att-b");
+    const history = JSON.stringify({
+      type: "terminal_attach_history",
+      attachment_id: "att-a",
+      text: "hist",
+    });
+    const output = JSON.stringify({
+      type: "terminal_output",
+      attachment_id: "att-a",
+      data: "kf",
+    });
+    const slice = (
+      event: string,
+      attachment: string,
+      seq: number,
+      index: number,
+      more: boolean,
+      text: string,
+    ) => ({
+      type: "terminal_ws_fragment",
+      event,
+      terminal_id: "t1",
+      attachment_id: attachment,
+      message_seq: seq,
+      fragment_index: index,
+      more,
+      encoding: "utf8-b64",
+      payload: btoa(text),
+    });
+    reducer.push(
+      slice(
+        "terminal_attach_history",
+        "att-a",
+        1,
+        0,
+        true,
+        history.slice(0, 12),
+      ),
     );
+    reducer.push(
+      slice(
+        "terminal_output",
+        "att-b",
+        1,
+        0,
+        false,
+        JSON.stringify({ type: "terminal_output", data: "b" }),
+      ),
+    );
+    reducer.push(
+      slice("terminal_attach_history", "att-a", 1, 1, false, history.slice(12)),
+    );
+    expect(reducer.applied[0]).toMatchObject({
+      type: "terminal_output",
+      data: "b",
+    });
+    expect(reducer.applied[1]).toMatchObject({
+      type: "terminal_attach_history",
+      text: "hist",
+    });
+    reducer.push(
+      slice("terminal_output", "att-a", 2, 0, true, output.slice(0, 10)),
+    );
+    reducer.push(
+      slice("terminal_output", "att-a", 2, 1, false, output.slice(10)),
+    );
+    expect(lastOf(reducer.applied)).toMatchObject({
+      type: "terminal_output",
+      data: "kf",
+    });
+
+    const gappy = createTerminalWsReducer({ now: () => 0 });
+    gappy.markLive("att-a");
+    gappy.push(slice("terminal_output", "att-a", 1, 0, true, "abc"));
+    gappy.push(slice("terminal_output", "att-a", 1, 2, false, "def"));
+    expect(gappy.applied).toEqual([]);
+    expect(gappy.errors.some((item) => item.code === "fragment_sequence")).toBe(
+      true,
+    );
+
+    const jumped = createTerminalWsReducer({ now: () => 0 });
+    jumped.markLive("att-a");
+    jumped.push(slice("terminal_output", "att-a", 1, 0, true, "abc"));
+    jumped.push(slice("terminal_output", "att-a", 2, 0, false, output));
+    expect(jumped.applied).toEqual([]);
+    expect(
+      jumped.errors.some((item) => item.code === "fragment_sequence"),
+    ).toBe(true);
+
+    let now = 0;
+    const timed = createTerminalWsReducer({ now: () => now, timeoutMs: 5000 });
+    timed.markLive("att-a");
+    timed.push(slice("terminal_output", "att-a", 1, 0, true, "abc"));
+    now = 5001;
+    timed.tick(now);
+    expect(timed.applied).toEqual([]);
+    expect(timed.errors.some((item) => item.code === "fragment_timeout")).toBe(
+      true,
+    );
+
+    expect(TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES).toBe(16 * 1024 * 1024);
+    const huge = createTerminalWsReducer({
+      now: () => 0,
+      maxReassemblyBytes: 8,
+    });
+    huge.markLive("att-a");
+    huge.push({
+      ...slice("terminal_output", "att-a", 1, 0, false, "x"),
+      payload: btoa("123456789"),
+    });
+    expect(huge.applied).toEqual([]);
+    expect(huge.errors.some((item) => item.code === "fragment_too_large")).toBe(
+      true,
+    );
+
+    const dropped = createTerminalWsReducer({ now: () => 0 });
+    dropped.markLive("att-a");
+    dropped.push(slice("terminal_output", "att-a", 1, 0, true, "abc"));
+    dropped.disconnect();
+    dropped.push(slice("terminal_output", "att-a", 1, 1, false, "def"));
+    expect(dropped.applied).toEqual([]);
+  });
+
+  it("test_socket_reassembly_budget_and_stale_fragments", () => {
+    expect(TERMINAL_WS_FRAGMENT_MAX_SOCKET_REASSEMBLY_BYTES).toBe(
+      64 * 1024 * 1024,
+    );
+    expect(TERMINAL_WS_SAFE_INTEGER_MAX).toBe(2 ** 53 - 1);
+    const reducer = createTerminalWsReducer({
+      now: () => 0,
+      maxSocketBytes: 24,
+    });
+    reducer.markLive("a");
+    reducer.markLive("b");
+    const chunk = (attachment: string, seq: number, text: string) => ({
+      type: "terminal_ws_fragment",
+      event: "terminal_output",
+      terminal_id: "t",
+      attachment_id: attachment,
+      message_seq: seq,
+      fragment_index: 0,
+      more: true,
+      encoding: "utf8-b64",
+      payload: btoa(text),
+    });
+    reducer.push(chunk("a", 1, "1234567890123456"));
+    reducer.push(chunk("b", 1, "1234567890123456"));
+    expect(
+      reducer.errors.some((item) => item.code === "fragment_socket_budget"),
+    ).toBe(true);
+    expect(reducer.applied).toEqual([]);
+    const stale = createTerminalWsReducer({ now: () => 0 });
+    stale.push(chunk("missing", 1, "hello"));
+    expect(stale.applied).toEqual([]);
+    expect(stale.socketBytes).toBe(0);
+    const finished = createTerminalWsReducer({ now: () => 0 });
+    finished.markLive("a");
+    finished.push({
+      ...chunk("a", 1, '{"type":"terminal_output","data":"z"}'),
+      more: false,
+    });
+    expect(finished.socketBytes).toBe(0);
+    const afterFinal = createTerminalWsReducer({ now: () => 0 });
+    afterFinal.markLive("a");
+    afterFinal.finalize("a");
+    afterFinal.push(chunk("a", 1, "hello"));
+    expect(afterFinal.applied).toEqual([]);
+    expect(afterFinal.socketBytes).toBe(0);
+    const seqs = createTerminalWsReducer({ now: () => 0 });
+    seqs.markLive("a");
+    seqs.push({
+      ...chunk(
+        "a",
+        Number.MAX_SAFE_INTEGER - 1,
+        '{"type":"terminal_output","data":"x"}',
+      ),
+      more: false,
+    });
+    seqs.push({
+      ...chunk(
+        "a",
+        Number.MAX_SAFE_INTEGER,
+        '{"type":"terminal_output","data":"y"}',
+      ),
+      more: false,
+    });
+    expect(seqs.applied).toHaveLength(2);
+    const overflowSeq = createTerminalWsReducer({ now: () => 0 });
+    overflowSeq.markLive("a");
+    overflowSeq.push({
+      ...chunk(
+        "a",
+        Number.MAX_SAFE_INTEGER + 1,
+        '{"type":"terminal_output","data":"z"}',
+      ),
+      more: false,
+    });
+    expect(overflowSeq.applied).toEqual([]);
+  });
+
+  it("test_observe_only_finalized_drops_stale_fragments", () => {
+    const reducer = createTerminalWsReducer({ now: () => 0 });
+    reducer.markLive("obs");
+    reducer.push({
+      type: "terminal_ws_fragment",
+      event: "terminal_output",
+      terminal_id: "t",
+      attachment_id: "obs",
+      message_seq: 1,
+      fragment_index: 0,
+      more: true,
+      encoding: "utf8-b64",
+      payload: btoa("abc"),
+    });
+    reducer.push({
+      type: "terminal_attachment_finalized",
+      terminal_id: "t",
+      attachment_id: "obs",
+      reason: "proxy_frame_eof",
+      lease_generation: 0,
+    });
+    expect(reducer.applied).toEqual([
+      expect.objectContaining({
+        type: "terminal_attachment_finalized",
+        attachment_id: "obs",
+        reason: "proxy_frame_eof",
+      }),
+    ]);
+    expect(reducer.socketBytes).toBe(0);
+    reducer.push({
+      type: "terminal_ws_fragment",
+      event: "terminal_output",
+      terminal_id: "t",
+      attachment_id: "obs",
+      message_seq: 1,
+      fragment_index: 1,
+      more: false,
+      encoding: "utf8-b64",
+      payload: btoa("def"),
+    });
+    expect(reducer.applied).toHaveLength(1);
+    expect(reducer.socketBytes).toBe(0);
   });
 });

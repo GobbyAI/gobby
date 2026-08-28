@@ -363,6 +363,9 @@ class HTTPServer:
             run_db=services.run_db,
             coverage_executor=services.coverage_executor,
             detection_registry=services.detection_registry,
+            terminal_manager=getattr(services, "terminal_manager", None),
+            terminal_runtime_registry=getattr(services, "terminal_runtime_registry", None),
+            write_coordinator=getattr(services, "write_coordinator", None),
             dream_coordinator_resolver=lambda: getattr(services, "memory_dream_coordinator", None),
         )
         registry_count = len(self._internal_manager)

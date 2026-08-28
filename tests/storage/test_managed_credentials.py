@@ -40,7 +40,6 @@ from tests.storage.test_postgres_agent_authorization import (
 )
 
 pytestmark = pytest.mark.integration
-pytest_plugins = ("tests.storage.test_postgres_agent_authorization",)
 
 
 def test_validate_expiry_covers_spawn_timeouts_and_bounds_runaways() -> None:

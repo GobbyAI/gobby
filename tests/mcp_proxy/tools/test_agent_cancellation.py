@@ -215,11 +215,13 @@ async def test_stop_agent_run_happy_path_call_order() -> None:
     run = MagicMock()
     run.id = "run-123"
     run.status = "pending"
-    run.tmux_session_name = "tmux-run-123"
+    run.terminal_id = "tmux-run-123"
     run.child_session_id = "child-session-123"
 
     runner = MagicMock()
     runner.get_run.return_value = run
+    terminal_services = object()
+    runner.terminal_services = terminal_services
     agent_run_manager = MagicMock()
     agent_run_manager.db.bounded_transaction.return_value = nullcontext()
 
@@ -269,6 +271,7 @@ async def test_stop_agent_run_happy_path_call_order() -> None:
         agent_run_manager.db,
         signal_name="TERM",
         close_terminal=True,
+        terminal_services=terminal_services,
     )
     terminalize.assert_awaited_once_with(
         runner=runner,
@@ -282,7 +285,7 @@ async def test_stop_agent_run_happy_path_call_order() -> None:
     cleanup_terminal_artifacts.assert_awaited_once_with(
         run_id="run-123",
         db=agent_run_manager.db,
-        tmux_session_name="tmux-run-123",
+        terminal_id="tmux-run-123",
         agent_session_id="child-session-123",
         debug=False,
         session_manager=None,
@@ -302,7 +305,7 @@ class TestStopAgentRunCapturePreemptedDelivery:
         live_run = MagicMock()
         live_run.id = "run-123"
         live_run.status = "running"
-        live_run.tmux_session_name = "tmux-run-123"
+        live_run.terminal_id = "tmux-run-123"
         live_run.child_session_id = "child-session-123"
 
         runner = MagicMock()

@@ -7,9 +7,19 @@ import { TerminalSessionList } from "../TerminalSessionList";
 import type { JoinedTerminalSession } from "../terminalSessions";
 
 function makeTmux(overrides: Partial<TmuxSession> = {}): TmuxSession {
+  const name = overrides.name ?? "shell";
+  const socket = overrides.socket ?? "default";
   return {
-    name: "shell",
-    socket: "default",
+    terminal_id: overrides.terminal_id ?? `${socket}:${name}`,
+    backend: "tmux",
+    ownership: socket === "gobby" ? "gobby" : "external",
+    state: "live",
+    title: name,
+    session_id: overrides.session_id ?? null,
+    agent_run_id: overrides.agent_run_id ?? null,
+    dims: null,
+    name,
+    socket,
     pane_pid: 123,
     pane_dead: false,
     pane_title: null,
@@ -19,7 +29,6 @@ function makeTmux(overrides: Partial<TmuxSession> = {}): TmuxSession {
     session_title: null,
     gobby_session_id: null,
     agent_managed: false,
-    agent_run_id: null,
     attached_bridge: null,
     ...overrides,
   };

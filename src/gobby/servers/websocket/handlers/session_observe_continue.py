@@ -60,7 +60,12 @@ async def _release_source_session(
 
                 async def kill_and_deliver() -> bool:
                     try:
-                        await agent_kill.kill_agent(run, session_manager.db, close_terminal=True)
+                        await agent_kill.kill_agent(
+                            run,
+                            session_manager.db,
+                            close_terminal=True,
+                            terminal_services=getattr(mixin, "terminal_services", None),
+                        )
                         await run_storage(
                             arm.cancel,
                             run.id,

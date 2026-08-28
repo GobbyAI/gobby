@@ -3922,6 +3922,196 @@
       "visibility": "public"
     },
     {
+      "activation": "live",
+      "default": null,
+      "description": "Optional absolute gterm binary path. None uses resolve_native_bin.",
+      "key": "terminal_host.binary_path",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable gterm host supervision for native terminals.",
+      "key": "terminal_host.enabled",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 5.0,
+      "description": "Seconds between control ping health checks.",
+      "key": "terminal_host.health_interval_seconds",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 64,
+      "description": "Maximum distinct terminals the host will observe.",
+      "key": "terminal_host.max_attached_terminals",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 8,
+      "description": "Maximum user frame attachments on one terminal.",
+      "key": "terminal_host.max_attachments_per_terminal",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 128,
+      "description": "Attachment pool including four reserved lifecycle slots.",
+      "key": "terminal_host.max_attachments_total",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 8388608,
+      "description": "Oldest-first native scrollback byte ceiling.",
+      "key": "terminal_host.native_scrollback_max_bytes",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 10000,
+      "description": "Oldest-first native scrollback line ceiling.",
+      "key": "terminal_host.native_scrollback_max_lines",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 10.0,
+      "description": "Grace period for host_shutdown and process-group reaping.",
+      "key": "terminal_host.shutdown_grace_seconds",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "~/.gobby",
+      "description": "Directory for gterm sockets, pidfile, and control token.",
+      "key": "terminal_host.socket_dir",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 262144,
+      "description": "AttachHistory byte cap for tmux observers (3.4).",
+      "key": "terminal_host.tmux_attach_history_max_bytes",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 5000,
+      "description": "Backoff ceiling for transient tmux poll failures.",
+      "key": "terminal_host.tmux_poll_backoff_ceiling_ms",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 150,
+      "description": "Host capture-poll interval for tmux observers.",
+      "key": "terminal_host.tmux_poll_interval_ms",
+      "machineExport": false,
+      "namespace": "terminal_host",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "tmux",
+      "description": "Default TerminalRuntime backend for new Gobby-owned terminals.",
+      "key": "terminals.default_backend",
+      "machineExport": false,
+      "namespace": "terminals",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 5.0,
+      "description": "How long shutdown drains in-flight TerminalEffectBridge tasks.",
+      "key": "terminals.hook_write_shutdown_timeout_seconds",
+      "machineExport": false,
+      "namespace": "terminals",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 5.0,
+      "description": "How long a hook thread waits for a coordinator write to dispatch.",
+      "key": "terminals.hook_write_timeout_seconds",
+      "machineExport": false,
+      "namespace": "terminals",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 150.0,
+      "description": "Age below which a pending spawn is in doubt, not dead. Defaults to the tmux init timeout (120s) plus a 30s margin.",
+      "key": "terminals.spawn_in_doubt_seconds",
+      "machineExport": false,
+      "namespace": "terminals",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
       "activation": "restart_required",
       "default": false,
       "description": "Run daemon in test mode (enables test endpoints)",

@@ -66,10 +66,13 @@ async def _spawn_fast() -> tuple[dict[str, Any], SpawnRequest]:
             create=True,
         ),
         patch(
+            "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
+            new_callable=AsyncMock,
+        ) as mock_execute,
+        patch(
             "gobby.mcp_proxy.tools.spawn_agent._implementation.prepare_terminal_spawn",
             return_value=prepared_spawn(),
         ),
-        patch("gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn") as mock_execute,
         patch(
             "gobby.mcp_proxy.tools.spawn_agent._implementation.get_machine_id",
             return_value="21000000-0000-4000-8000-000000000001",
@@ -84,7 +87,7 @@ async def _spawn_fast() -> tuple[dict[str, Any], SpawnRequest]:
             child_session_id="child-session-abc",
             pid=12345,
             terminal_type="tmux",
-            tmux_session_name=None,
+            terminal_id=None,
             tmux_socket_name=None,
             tmux_socket_path=None,
             status="running",
@@ -94,6 +97,7 @@ async def _spawn_fast() -> tuple[dict[str, Any], SpawnRequest]:
         )
 
         result = await spawn_agent_impl(
+            terminal_backend="tmux",
             prompt="Do the thing",
             runner=runner,
             agent_body=agent_body,
@@ -140,6 +144,7 @@ async def test_execute_spawn_attaches_speed_result() -> None:
         project_id="proj-abc",
         speed_resolution=_fast_resolution(),
         prepared_spawn=prepared_spawn(),
+        terminal_backend="tmux",
     )
     provider_result = SpawnResult(
         success=True,

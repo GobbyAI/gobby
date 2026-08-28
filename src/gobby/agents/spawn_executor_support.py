@@ -34,9 +34,11 @@ from gobby.config.tmux import TmuxConfig
 from gobby.sessions.session_wiki_file import redact_session_markdown
 
 if TYPE_CHECKING:
-    from gobby.agents.tmux.session_manager import TmuxSessionManager
     from gobby.agents.tmux.spawner import TmuxSpawner
     from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.terminals import Terminal
+    from gobby.terminals.runtime import TerminalRuntime
+    from gobby.terminals.write_coordinator import WriteCoordinator
 
 logger = logging.getLogger(__name__)
 _RESERVED_EXTRA_ENV_KEYS = frozenset(
@@ -273,6 +275,7 @@ _CODEX_PROMPT_SUBMIT_RETRY_DELAY_SECONDS = 3.0
 _CODEX_PROMPT_DELIVERY_TASKS: set[asyncio.Task[None]] = set()
 _CODEX_PROMPT_FAILURE_PANE_MAX_CHARS = 1024
 _CODEX_PROMPT_FAILURE_TRUNCATION_MARKER = "[truncated]\n"
+_CODEX_PROMPT_FAILURE_KILL_GRACE_SECONDS = 5.0
 
 
 def _codex_prompt_failure_reason(
@@ -291,8 +294,8 @@ def _codex_prompt_failure_reason(
 
 
 async def _fail_codex_prompt_delivery(
-    tmux: "TmuxSessionManager",
-    session_name: str,
+    runtime: "TerminalRuntime",
+    terminal: "Terminal",
     run_id: str,
     run_manager: "LocalAgentRunManager | None",
     error: str,
@@ -300,7 +303,9 @@ async def _fail_codex_prompt_delivery(
     """Settle a run whose Codex prompt never arrived: fail it, then kill the terminal.
 
     Leaving the run alive would hand the diagnosis to the session-init watchdog,
-    which reports an unrelated provider-connection timeout.
+    which reports an unrelated provider-connection timeout. The error already
+    carries the redacted pane, so the run is failed before the terminal dies
+    (#20844).
     """
     logger.error("Codex prompt delivery failed for run %s: %s", run_id, error)
     try:
@@ -311,12 +316,12 @@ async def _fail_codex_prompt_delivery(
     except Exception:
         logger.exception("Cannot persist Codex prompt delivery failure for run %s", run_id)
     finally:
-        await tmux.kill_session(session_name, missing_ok=True)
+        await runtime.terminate(terminal, grace_seconds=_CODEX_PROMPT_FAILURE_KILL_GRACE_SECONDS)
 
 
 def schedule_codex_prompt_delivery(
-    tmux: "TmuxSessionManager",
-    session_name: str,
+    coordinator: "WriteCoordinator | None",
+    terminal: "Terminal | None",
     prompt: str,
     run_id: str,
     run_manager: "LocalAgentRunManager | None",
@@ -325,10 +330,10 @@ def schedule_codex_prompt_delivery(
 
     Returns True when a delivery task was scheduled.
     """
-    if not prompt:
+    if not prompt or coordinator is None or terminal is None:
         return False
     task = asyncio.get_running_loop().create_task(
-        _deliver_codex_prompt(tmux, session_name, prompt, run_id, run_manager)
+        _deliver_codex_prompt(coordinator, terminal, prompt, run_id, run_manager)
     )
     _CODEX_PROMPT_DELIVERY_TASKS.add(task)
     task.add_done_callback(_CODEX_PROMPT_DELIVERY_TASKS.discard)
@@ -336,22 +341,24 @@ def schedule_codex_prompt_delivery(
 
 
 async def _deliver_codex_prompt(
-    tmux: "TmuxSessionManager",
-    session_name: str,
+    coordinator: "WriteCoordinator",
+    terminal: "Terminal",
     prompt: str,
     run_id: str,
     run_manager: "LocalAgentRunManager | None",
 ) -> None:
+    from gobby.terminals.runtime import Delivered, IndeterminateWrite
+    from gobby.terminals.write_coordinator import SequenceDelay, WriteRequest
+
+    runtime = coordinator.runtime
     last_pane: str | None = None
     try:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + _CODEX_COMPOSER_READY_TIMEOUT_SECONDS
         while True:
             try:
-                pane = await tmux.capture_pane(
-                    session_name,
-                    lines=_CODEX_COMPOSER_CAPTURE_LINES,
-                )
+                snapshot = await runtime.snapshot(terminal, _CODEX_COMPOSER_CAPTURE_LINES)
+                pane = snapshot.text
                 if pane:
                     last_pane = pane
             except Exception:
@@ -364,9 +371,11 @@ async def _deliver_codex_prompt(
             if pane and _CODEX_COMPOSER_MARKER in pane:
                 break
             if loop.time() >= deadline:
+                # Never type into a pane that is not showing the composer: if
+                # the CLI died the pane may be gone or a shell.
                 await _fail_codex_prompt_delivery(
-                    tmux,
-                    session_name,
+                    runtime,
+                    terminal,
                     run_id,
                     run_manager,
                     _codex_prompt_failure_reason(last_pane),
@@ -374,39 +383,67 @@ async def _deliver_codex_prompt(
                 return
             await asyncio.sleep(_CODEX_COMPOSER_POLL_SECONDS)
         await asyncio.sleep(_CODEX_COMPOSER_SETTLE_SECONDS)
-        if not await tmux.send_keys(session_name, f"{prompt}\n", literal=True):
+        # A composer still settling the bracketed paste can swallow the
+        # trailing Enter; the delayed Enter step submits in that case and is a
+        # no-op on an already-submitted composer.
+        outcome = await coordinator.run_sequence(
+            terminal.id,
+            action_key=f"codex-prompt:{run_id}",
+            origin="automatic",
+            steps=[
+                WriteRequest(
+                    terminal_id=terminal.id,
+                    action_key=f"codex-prompt:{run_id}",
+                    origin="automatic",
+                    kind="text",
+                    payload=prompt,
+                ),
+                SequenceDelay(seconds=_CODEX_PROMPT_SUBMIT_RETRY_DELAY_SECONDS),
+                WriteRequest(
+                    terminal_id=terminal.id,
+                    action_key=f"codex-prompt:{run_id}",
+                    origin="automatic",
+                    kind="key",
+                    payload="enter",
+                ),
+            ],
+        )
+        if isinstance(outcome, IndeterminateWrite):
+            # The prompt may have landed; the latched unresolved write is the
+            # observation path, so the run is not failed here.
+            logger.error(
+                "Codex spawn prompt write was indeterminate for run %s; Enter not sent",
+                run_id,
+            )
+            return
+        if not isinstance(outcome, Delivered):
             await _fail_codex_prompt_delivery(
-                tmux,
-                session_name,
+                runtime,
+                terminal,
                 run_id,
                 run_manager,
                 _codex_prompt_failure_reason(
                     last_pane,
                     code="codex_prompt_delivery_failed",
-                    detail="tmux rejected the spawn prompt paste into the Codex composer",
+                    detail=(
+                        "the write coordinator refused the spawn prompt write: "
+                        f"{type(outcome).__name__}"
+                    ),
                 ),
             )
-            return
-        # A composer still settling the bracketed paste can swallow the
-        # trailing Enter; this follow-up Enter submits in that case and is a
-        # no-op on an already-submitted composer. The prompt and its newline
-        # already landed, so a failed safety Enter is not a delivery failure.
-        await asyncio.sleep(_CODEX_PROMPT_SUBMIT_RETRY_DELAY_SECONDS)
-        if not await tmux.send_keys(session_name, "Enter", literal=False):
-            logger.warning("Follow-up Enter after Codex prompt paste failed for run %s", run_id)
     except asyncio.CancelledError:
         raise
     except Exception as exc:
         logger.exception("Codex prompt delivery failed for run %s", run_id)
         await _fail_codex_prompt_delivery(
-            tmux,
-            session_name,
+            runtime,
+            terminal,
             run_id,
             run_manager,
             _codex_prompt_failure_reason(
                 last_pane,
                 code="codex_prompt_delivery_failed",
-                detail=f"unexpected error during prompt delivery: {exc!r}",
+                detail=f"the spawn prompt write into the Codex composer failed: {exc!r}",
             ),
         )
 

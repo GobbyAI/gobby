@@ -1782,7 +1782,7 @@ class TestContinueInChatTerminalKill:
         inter_msg_manager.create_message.return_value = inter_message
 
         tmux_manager = MagicMock()
-        tmux_manager.send_keys = AsyncMock(return_value=True)
+        tmux_manager.dispatch_keys = AsyncMock(return_value=True)
 
         host = self._make_host()
         host.session_manager = session_manager
@@ -1795,7 +1795,7 @@ class TestContinueInChatTerminalKill:
                 "gobby.storage.inter_session_messages.InterSessionMessageManager",
             ) as manager_class,
             patch(
-                "gobby.servers.websocket.handlers.session_observe.get_tmux_manager_for_context",
+                "gobby.servers.websocket.handlers.session_observe.manager_for_terminal_context",
                 return_value=tmux_manager,
             ) as mock_get_tmux_manager,
         ):
@@ -1807,7 +1807,7 @@ class TestContinueInChatTerminalKill:
 
         mock_get_tmux_manager.assert_called_once_with(source_session.terminal_context)
         manager_class.assert_not_called()
-        tmux_manager.send_keys.assert_awaited_once_with("%7", "hello\n")
+        tmux_manager.dispatch_keys.assert_awaited_once_with("%7", "hello\n")
         assert inter_msg_manager.create_message.call_args.kwargs["from_session"] == "web-123"
         inter_msg_manager.mark_delivered.assert_called_once_with("msg-1", "source-uuid")
         host._send_error.assert_not_awaited()
@@ -1856,7 +1856,7 @@ class TestContinueInChatTerminalKill:
         inter_msg_manager.create_message.return_value = inter_message
 
         tmux_manager = MagicMock()
-        tmux_manager.send_keys = AsyncMock(return_value=True)
+        tmux_manager.dispatch_keys = AsyncMock(return_value=True)
 
         host = self._make_host()
         host.session_manager = session_manager
@@ -1869,7 +1869,7 @@ class TestContinueInChatTerminalKill:
                 return_value=inter_msg_manager,
             ),
             patch(
-                "gobby.servers.websocket.handlers.session_observe.get_tmux_manager_for_context",
+                "gobby.servers.websocket.handlers.session_observe.manager_for_terminal_context",
                 return_value=tmux_manager,
             ),
         ):
@@ -1890,7 +1890,7 @@ class TestContinueInChatTerminalKill:
                 },
             )
 
-        delivered_content = tmux_manager.send_keys.await_args.args[1]
+        delivered_content = tmux_manager.dispatch_keys.await_args.args[1]
         assert delivered_content.startswith("please inspect\n\nAttachments:\n")
         attached_path = delivered_content.removesuffix("\n").splitlines()[-1]
         assert attached_path.endswith("_note.txt")

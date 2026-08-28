@@ -29,8 +29,13 @@ def test_current_terminal_context_collects_supported_identity(
     with (
         patch("os.getppid", return_value=4321),
         patch(
-            "gobby.mcp_proxy.terminal_context.query_tmux_identity",
-            return_value=("@7", "work"),
+            "gobby.mcp_proxy.terminal_context.query_tmux_generation",
+            return_value={
+                "window_id": "@7",
+                "session_name": "work",
+                "server_pid": 1658,
+                "server_start_time": 1784592177,
+            },
         ),
     ):
         context = current_terminal_context()
@@ -41,6 +46,8 @@ def test_current_terminal_context_collects_supported_identity(
         "tmux_socket_path": "/tmp/tmux-501/default",
         "tmux_window_id": "@7",
         "tmux_session": "work",
+        "tmux_server_pid": 1658,
+        "tmux_server_start_time": 1784592177,
         "tty": "/dev/ttys004",
         "term_program": "iTerm.app",
         "term_session_id": "w0t0p0",

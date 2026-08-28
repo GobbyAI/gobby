@@ -44,6 +44,7 @@ from gobby.cli.postgres_backup import (
 )
 from gobby.config.logging import RULE_ALLOW_AUDIT_LOG_FILENAME
 from gobby.storage.maintenance_epoch import MAINTENANCE_EPOCH_ENV
+from gobby.storage.managed_credential_types import auth_schema_for
 
 POSTGRES_DUMP_RELPATH = "postgres/gobby.dump"
 GLOBALS_DUMP_RELPATH = "postgres/globals.sql"
@@ -206,7 +207,9 @@ def drain_ephemeral_principals(database_url: str) -> int:
     """Revoke every scoped login and prove the reserved login namespace is empty."""
     try:
         with psycopg.connect(database_url, connect_timeout=_CONNECT_TIMEOUT_SECONDS) as conn:
-            row = conn.execute("SELECT gobby_agent_auth.drain_ephemeral_principals()").fetchone()
+            schema_row = conn.execute("SELECT current_schema()").fetchone()
+            auth_schema = auth_schema_for(None if schema_row is None else schema_row[0])
+            row = conn.execute(f"SELECT {auth_schema}.drain_ephemeral_principals()").fetchone()
             if row is None:
                 raise click.ClickException("Managed-role drain returned no result")
             drained = int(row[0])

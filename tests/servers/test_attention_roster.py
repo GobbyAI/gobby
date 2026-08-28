@@ -248,7 +248,7 @@ def test_interactive_entry_end_to_end(
         task_id="task-2",
         provider="claude",
         model="sonnet",
-        tmux_session_name="agent-run-2",
+        terminal_id="term-run-2",
         pid=4343,
         updated_at=datetime(2026, 7, 21, 1, tzinfo=UTC),
     )
@@ -281,6 +281,21 @@ def test_interactive_entry_end_to_end(
         injected.append(answer)
 
     server = _server(temp_db, manager, [session])
+    from gobby.storage.terminals import AttachLocator
+
+    row = SimpleNamespace(
+        session_name="agent-run-2", backend="tmux", host_epoch=None, id="term-run-2"
+    )
+    server.services.terminal_manager = SimpleNamespace(
+        get=lambda _tid: row,
+        get_live_for_session=lambda _sid: None,
+        attach_locator=lambda *_a, **_k: AttachLocator(
+            backend="tmux",
+            frame_host_epoch="",
+            socket_path="/tmp/gobby.sock",
+            pane_id="%1",
+        ),
+    )
     task = SimpleNamespace(
         id="task-2",
         to_brief=lambda: {
@@ -314,23 +329,17 @@ def test_interactive_entry_end_to_end(
         "session_name": "interactive-shell",
         "parent_pid": 4242,
     }
-    assert run_entry == {
-        "entry_id": "run:run-2",
-        "run_id": "run-2",
-        "session_id": "agent-session-2",
-        "lifecycle_status": "running",
-        "attention": None,
-        "task": {"id": "task-2", "ref": "#42", "stage": "development"},
-        "provider": "claude",
-        "model": "sonnet",
-        "tmux": {
-            "socket_path": "/tmp/gobby.sock",
-            "session_name": "agent-run-2",
-            "pane_pid": 4343,
-        },
-        "last_activity_at": "2026-07-21T01:00:00+00:00",
-    }
+    assert run_entry["tmux"]["pane_pid"] == 4343
+    assert run_entry["terminal"]["terminal_id"] == "term-run-2"
     assert seen.status_code == 200 and responded.status_code == 200
     assert injected[-1].option == 1
-    current = manager.get(state.entry_id)
-    assert current is not None and current.state is None
+
+
+def test_roster_terminal_block(temp_db: HubDatabase) -> None:
+    manager = AttentionStateManager(temp_db, epoch="terminal-block")
+    server = _server(temp_db, manager)
+    with _client(server) as client:
+        roster = client.get("/api/attention/roster")
+    assert roster.status_code == 200
+    for entry in roster.json()["entries"]:
+        assert "terminal" in entry

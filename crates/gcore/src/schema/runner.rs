@@ -243,9 +243,8 @@ const APPLY_LOCK_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Serialize every schema apply in the database on one session-level lock.
 ///
-/// The baseline and migrations create cluster-global roles and the shared
-/// `gobby_agent_auth` objects, so applies into different schemas still race on
-/// the same catalog tuples. Waiters poll `pg_try_advisory_lock` instead of
+/// The baseline and migrations create cluster-global roles, so applies into
+/// different schemas still race on the same catalog tuples. Waiters poll `pg_try_advisory_lock` instead of
 /// blocking in `pg_advisory_lock`: a session parked inside that call holds an
 /// open transaction, and the holder's `CREATE INDEX CONCURRENTLY` waits for
 /// every open transaction — a deadlock PostgreSQL resolves by killing one side.
@@ -463,13 +462,14 @@ fn apply_baseline(
     schema: &str,
     state: BaselineState,
 ) -> Result<(), SchemaError> {
-    let rendered = render_baseline_for_schema(schema);
-    let statements = split_sql_statements(&rendered)?;
+    // Statements are classified on the asset text and rendered afterwards, so
+    // the schema-qualified prefixes the classifier matches stay literal.
+    let statements = split_sql_statements(BASELINE_SQL)?;
     let receipt_table = qualified_name(schema, "schema_migrations")?;
     let mut transaction = client.transaction()?;
     for statement in statements {
         if let Some(statement) = baseline_statement_for_state(&statement, state) {
-            transaction.batch_execute(&statement)?;
+            transaction.batch_execute(&render_sql_for_schema(&statement, schema))?;
         }
     }
     let filename = format!("baseline@{BASELINE_VERSION}");
@@ -494,9 +494,20 @@ fn apply_baseline(
     Ok(())
 }
 
-fn render_baseline_for_schema(schema: &str) -> Cow<'static, str> {
-    render_sql_for_schema(BASELINE_SQL, schema)
+/// Name of the agent-auth schema that serves the hub living in `schema`.
+///
+/// The auth functions are SECURITY DEFINER bodies that name hub tables
+/// explicitly, so one auth schema can serve exactly one hub. The public hub
+/// keeps the shared name; every other hub owns `<schema>_agent_auth`.
+pub(super) fn auth_schema_for(schema: &str) -> Cow<'static, str> {
+    if schema == "public" {
+        Cow::Borrowed(AUTH_SCHEMA)
+    } else {
+        Cow::Owned(format!("{schema}_agent_auth"))
+    }
 }
+
+const AUTH_SCHEMA: &str = "gobby_agent_auth";
 
 pub(super) fn render_sql_for_schema<'a>(sql: &'a str, schema: &str) -> Cow<'a, str> {
     if schema == "public" {
@@ -504,7 +515,8 @@ pub(super) fn render_sql_for_schema<'a>(sql: &'a str, schema: &str) -> Cow<'a, s
     }
     Cow::Owned(
         sql.replace("SCHEMA public", &format!("SCHEMA {schema}"))
-            .replace("public.", &format!("{schema}.")),
+            .replace("public.", &format!("{schema}."))
+            .replace(AUTH_SCHEMA, &auth_schema_for(schema)),
     )
 }
 
@@ -793,9 +805,9 @@ fn apply_pending_migrations(
         if destructive && stamp_destructive {
             stamp_receipt_only(client, &table, migration)?;
         } else if non_transactional {
-            apply_non_transactional(client, &table, migration)?;
+            apply_non_transactional(client, schema, &table, migration)?;
         } else {
-            apply_transactional(client, &table, migration)?;
+            apply_transactional(client, schema, &table, migration)?;
         }
         count += 1;
     }
@@ -815,11 +827,15 @@ fn stamp_receipt_only(
 
 fn apply_transactional(
     client: &mut Client,
+    schema: &str,
     receipt_table: &str,
     migration: &EmbeddedMigration,
 ) -> Result<(), SchemaError> {
     let mut transaction = client.transaction()?;
-    execute_sql_script(&mut transaction, migration.sql)?;
+    execute_sql_script(
+        &mut transaction,
+        &render_sql_for_schema(migration.sql, schema),
+    )?;
     insert_receipt(&mut transaction, receipt_table, migration)?;
     transaction.commit()?;
     Ok(())
@@ -827,11 +843,13 @@ fn apply_transactional(
 
 fn apply_non_transactional(
     client: &mut Client,
+    schema: &str,
     receipt_table: &str,
     migration: &EmbeddedMigration,
 ) -> Result<(), SchemaError> {
-    repair_invalid_concurrent_indexes(client, migration.sql)?;
-    execute_sql_script(client, migration.sql)?;
+    let sql = render_sql_for_schema(migration.sql, schema);
+    repair_invalid_concurrent_indexes(client, &sql)?;
+    execute_sql_script(client, &sql)?;
     insert_receipt(client, receipt_table, migration)?;
     Ok(())
 }

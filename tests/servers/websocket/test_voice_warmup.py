@@ -351,7 +351,7 @@ class TestVoiceWarmup:
         inter_msg_manager.create_message.return_value = inter_message
 
         tmux_manager = MagicMock()
-        tmux_manager.send_keys = AsyncMock(return_value=True)
+        tmux_manager.dispatch_keys = AsyncMock(return_value=True)
 
         with (
             patch(
@@ -359,7 +359,7 @@ class TestVoiceWarmup:
                 return_value=inter_msg_manager,
             ),
             patch(
-                "gobby.servers.websocket.handlers.session_observe.get_tmux_manager_for_context",
+                "gobby.servers.websocket.handlers.session_observe.manager_for_terminal_context",
                 return_value=tmux_manager,
             ),
         ):
@@ -373,7 +373,7 @@ class TestVoiceWarmup:
                 },
             )
 
-        tmux_manager.send_keys.assert_awaited_once_with("%21", "run the focused tests\n")
+        tmux_manager.dispatch_keys.assert_awaited_once_with("%21", "run the focused tests\n")
         inter_msg_manager.create_message.assert_called_once()
         mixin._handle_chat_message.assert_not_awaited()
         sent_payloads = [json.loads(call.args[0]) for call in websocket.send.await_args_list]

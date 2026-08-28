@@ -30,6 +30,7 @@ from gobby.storage.auth import (
     hash_token,
 )
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.managed_credential_types import resolve_auth_schema
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.storage.users import LocalUserManager, User
 from gobby.utils.local_token import (
@@ -204,6 +205,7 @@ class AuthService:
         clock: Callable[[], int] | None = None,
     ) -> None:
         self._database_getter = database_getter
+        self._auth_schema: str | None = None
         self._token_file = token_file or local_token_path()
         self._lock = threading.Lock()
         self._last_refresh = _NEVER_REFRESHED
@@ -410,8 +412,12 @@ class AuthService:
         if claims.managed_execution_id is None:
             return False
         try:
-            row = self._database_getter().fetchone(
-                "SELECT gobby_agent_auth.managed_execution_is_login_capable(%s) AS login_capable",
+            database = self._database_getter()
+            if self._auth_schema is None:
+                self._auth_schema = resolve_auth_schema(database)
+            row = database.fetchone(
+                f"SELECT {self._auth_schema}.managed_execution_is_login_capable(%s) "
+                "AS login_capable",
                 (claims.managed_execution_id,),
             )
         except Exception:

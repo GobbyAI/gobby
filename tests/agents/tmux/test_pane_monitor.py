@@ -11,7 +11,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.agents.tmux.pane_monitor import _RECENTLY_ENDED_TTL, TmuxPaneMonitor
-from gobby.agents.tmux.session_manager import TMUX_COMMAND_TIMEOUT_SECONDS, TmuxSessionInfo
+from gobby.agents.tmux.session_activation import TMUX_COMMAND_TIMEOUT_SECONDS
+from gobby.agents.tmux.session_manager import TmuxSessionInfo
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.storage.agents import AgentRun
 from tests.agents.detection_test_support import BundledDetectionRegistry
@@ -24,7 +25,7 @@ def _make_agent_run(
     run_id: str = "run-1",
     child_session_id: str = "sess-1",
     parent_session_id: str = "parent-1",
-    tmux_session_name: str | None = "gobby-agent-1",
+    terminal_id: str | None = "gobby-agent-1",
     pid: int | None = None,
 ) -> AgentRun:
     return AgentRun(
@@ -36,7 +37,7 @@ def _make_agent_run(
         status="running",
         created_at="2024-01-01T00:00:00",
         updated_at="2024-01-01T00:00:00",
-        tmux_session_name=tmux_session_name,
+        terminal_id=terminal_id,
         pid=pid,
     )
 
@@ -51,6 +52,16 @@ def _make_session_obj(
     s.external_id = external_id
     s.source = source
     return s
+
+
+@pytest.fixture(autouse=True)
+def _terminal_rows_from_legacy_ids(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.terminals.fakes import make_memory_terminal
+
+    def get(_self: object, terminal_id: str) -> object:
+        return make_memory_terminal(terminal_id=terminal_id, session_name=terminal_id)
+
+    monkeypatch.setattr("gobby.storage.terminals.TerminalManager.get", get)
 
 
 def _make_monitor_with_db(callback: MagicMock) -> TmuxPaneMonitor:
@@ -69,9 +80,9 @@ def _make_monitor_with_db(callback: MagicMock) -> TmuxPaneMonitor:
 
 @pytest.mark.asyncio
 async def test_no_tmux_agents_noop() -> None:
-    """When no agents have tmux_session_name, callback is never called."""
+    """When no agents have terminal_id, callback is never called."""
     callback = MagicMock()
-    agent_no_tmux = _make_agent_run(tmux_session_name=None)
+    agent_no_tmux = _make_agent_run(terminal_id=None)
     monitor = _make_monitor_with_db(callback)
 
     with (
@@ -95,7 +106,7 @@ async def test_no_tmux_agents_noop() -> None:
 async def test_active_runs_are_paginated_on_worker_thread() -> None:
     callback = MagicMock()
     monitor = _make_monitor_with_db(callback)
-    runs = [_make_agent_run(run_id=f"run-{index}", tmux_session_name=None) for index in range(101)]
+    runs = [_make_agent_run(run_id=f"run-{index}", terminal_id=None) for index in range(101)]
     calls: list[tuple[int, int]] = []
     worker_threads: set[int] = set()
     main_thread = threading.get_ident()
@@ -193,7 +204,7 @@ async def test_tmux_list_timeout_is_quiet(caplog: pytest.LogCaptureFixture) -> N
 async def test_all_alive_noop() -> None:
     """When all agent tmux sessions are still alive, callback is never called."""
     callback = MagicMock()
-    agent = _make_agent_run(tmux_session_name="gobby-agent-1")
+    agent = _make_agent_run(terminal_id="gobby-agent-1")
     monitor = _make_monitor_with_db(callback)
 
     with (
@@ -258,7 +269,7 @@ async def test_dead_session_triggers_callback() -> None:
         side_effect=lambda _event: callback_thread_ids.append(threading.get_ident())
     )
     event_loop_thread_id = threading.get_ident()
-    agent = _make_agent_run(child_session_id="sess-dead", tmux_session_name="gobby-dead")
+    agent = _make_agent_run(child_session_id="sess-dead", terminal_id="gobby-dead")
     session_obj = _make_session_obj(session_id="sess-dead", external_id="ext-dead", source="claude")
     monitor = _make_monitor_with_db(callback)
 
@@ -289,7 +300,7 @@ async def test_dead_session_triggers_callback() -> None:
 async def test_recently_ended_prevents_double_fire() -> None:
     """mark_recently_ended blocks re-fire for the same session."""
     callback = MagicMock()
-    agent = _make_agent_run(child_session_id="sess-ended", tmux_session_name="gobby-ended")
+    agent = _make_agent_run(child_session_id="sess-ended", terminal_id="gobby-ended")
     monitor = _make_monitor_with_db(callback)
 
     # Mark as recently ended
@@ -316,7 +327,7 @@ async def test_recently_ended_prevents_double_fire() -> None:
 async def test_recently_ended_expires() -> None:
     """Old entries get pruned; agent triggers callback normally after TTL."""
     callback = MagicMock()
-    agent = _make_agent_run(child_session_id="sess-old", tmux_session_name="gobby-old")
+    agent = _make_agent_run(child_session_id="sess-old", terminal_id="gobby-old")
     session_obj = _make_session_obj(session_id="sess-old", external_id="ext-old")
     monitor = _make_monitor_with_db(callback)
 
@@ -345,7 +356,7 @@ async def test_recently_ended_expires() -> None:
 async def test_callback_exception_no_crash() -> None:
     """An error in callback doesn't prevent processing other agents."""
     callback = MagicMock(side_effect=RuntimeError("boom"))
-    agent = _make_agent_run(child_session_id="sess-err", tmux_session_name="gobby-err")
+    agent = _make_agent_run(child_session_id="sess-err", terminal_id="gobby-err")
     session_obj = _make_session_obj(session_id="sess-err")
     monitor = _make_monitor_with_db(callback)
 

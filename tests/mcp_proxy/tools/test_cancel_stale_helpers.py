@@ -32,7 +32,7 @@ def _make_agent_run(
     run.agent_name = agent_name
     run.parent_session_id = parent_session_id
     run.child_session_id = f"child-{run_id}"
-    run.tmux_session_name = f"tmux-{run_id}"
+    run.terminal_id = f"tmux-{run_id}"
     return run
 
 

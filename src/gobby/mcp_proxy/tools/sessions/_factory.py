@@ -39,6 +39,9 @@ def create_session_messages_registry(
     inter_session_message_manager: Any | None = None,
     transcript_reader: TranscriptReader | None = None,
     web_chat_session_registry: Any | None = None,
+    terminal_manager: Any | None = None,
+    terminal_runtime_registry: Any | None = None,
+    write_coordinator: Any | None = None,
 ) -> InternalToolRegistry:
     """
     Create a sessions tool registry with session and message tools.
@@ -114,6 +117,9 @@ def create_session_messages_registry(
             session_manager,
             db,
             web_chat_session_registry=web_chat_session_registry,
+            terminal_manager=terminal_manager,
+            terminal_runtime_registry=terminal_runtime_registry,
+            write_coordinator=write_coordinator,
         )
 
     return registry

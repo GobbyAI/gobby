@@ -25,13 +25,12 @@ from gobby.storage.hub.protocol import HubDatabase
 from tests.agents.detection_test_support import BundledDetectionRegistry
 from tests.agents.test_lifecycle_monitor import (
     DETECTION_REGISTRY,
-    TerminalWakeRecorder,
-    _local_machine_identity,  # noqa: F401  # autouse fixture re-export
+    _fake_terminal_services,
     _make_progress_stagnation_monitor,
     _make_terminal_run,
+    _pane_text,
     _rid,
-    agent_run_manager,  # noqa: F401  # fixture re-export
-    sample_session,  # noqa: F401  # fixture re-export
+    _written_keys,
 )
 
 pytestmark = pytest.mark.unit
@@ -93,7 +92,7 @@ def test_plain_prompt_still_reads_idle() -> None:
 
 
 def _idle_monitor(
-    agent_run_manager: LocalAgentRunManager,  # noqa: F811
+    agent_run_manager: LocalAgentRunManager,
     temp_db: HubDatabase,
     registry: CompletionEventRegistry | None = None,
 ) -> AgentLifecycleMonitor:
@@ -105,13 +104,14 @@ def _idle_monitor(
         tmux_config=TmuxConfig(
             idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
         ),
+        terminal_services=_fake_terminal_services(temp_db),
     )
 
 
 async def test_parked_agent_is_never_reprompted_until_its_wait_resolves(
-    agent_run_manager: LocalAgentRunManager,  # noqa: F811
+    agent_run_manager: LocalAgentRunManager,
     temp_db: HubDatabase,
-    sample_session: dict[str, Any],  # noqa: F811
+    sample_session: dict[str, Any],
 ) -> None:
     registry = CompletionEventRegistry()
     monitor = _idle_monitor(agent_run_manager, temp_db, registry)
@@ -119,16 +119,13 @@ async def test_parked_agent_is_never_reprompted_until_its_wait_resolves(
         agent_run_manager,
         sample_session,
         run_id=_rid("run-parked"),
-        tmux_session_name="gobby-parked",
+        terminal_id="gobby-parked",
         child_session_id=sample_session["id"],
     )
     registry.register(_rid("validator-run"), subscribers=[sample_session["id"]])
     monitor._idle_detector.get_state(run.id).first_idle_at = time.monotonic() - 360
 
-    with (
-        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
-        patch.object(monitor._tmux, "send_keys", new=TerminalWakeRecorder()) as wake,
-    ):
+    with _pane_text(monitor, "❯\n") as runtime:
         parked = await monitor.check_idle_agents()
         await registry.notify(_rid("validator-run"), {"status": "success"})
         monitor._idle_detector.get_state(run.id).first_idle_at = time.monotonic() - 360
@@ -136,33 +133,28 @@ async def test_parked_agent_is_never_reprompted_until_its_wait_resolves(
 
     assert parked == 0
     assert resolved == 1
-    assert [keys for _session, keys, _literal in wake.calls][0] == "Escape"
+    assert _written_keys(runtime)[0] == "escape"
 
 
 async def test_agent_mid_turn_is_not_reprompted(
-    agent_run_manager: LocalAgentRunManager,  # noqa: F811
+    agent_run_manager: LocalAgentRunManager,
     temp_db: HubDatabase,
-    sample_session: dict[str, Any],  # noqa: F811
+    sample_session: dict[str, Any],
 ) -> None:
     monitor = _idle_monitor(agent_run_manager, temp_db)
     run = _make_terminal_run(
         agent_run_manager,
         sample_session,
         run_id=_rid("run-thinking"),
-        tmux_session_name="gobby-thinking",
+        terminal_id="gobby-thinking",
     )
     monitor._idle_detector.get_state(run.id).first_idle_at = time.monotonic() - 360
 
-    with (
-        patch.object(
-            monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value=THINKING_PANE
-        ),
-        patch.object(monitor._tmux, "send_keys", new=TerminalWakeRecorder()) as wake,
-    ):
+    with _pane_text(monitor, THINKING_PANE) as runtime:
         handled = await monitor.check_idle_agents()
 
     assert handled == 0
-    assert wake.calls == []
+    assert runtime.write_log == []
     assert monitor._idle_detector.get_state(run.id).first_idle_at is None
 
 
@@ -170,9 +162,9 @@ async def test_agent_mid_turn_is_not_reprompted(
 
 
 async def test_parked_agent_is_not_stagnant_until_its_wait_resolves(
-    agent_run_manager: LocalAgentRunManager,  # noqa: F811
+    agent_run_manager: LocalAgentRunManager,
     temp_db: HubDatabase,
-    sample_session: dict[str, Any],  # noqa: F811
+    sample_session: dict[str, Any],
 ) -> None:
     registry = CompletionEventRegistry()
     monitor, run, _detector = _make_progress_stagnation_monitor(
@@ -185,7 +177,7 @@ async def test_parked_agent_is_not_stagnant_until_its_wait_resolves(
     registry.register(_rid("validator-run-2"), subscribers=[sample_session["id"]])
 
     with (
-        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
+        _pane_text(monitor, "❯\n"),
         patch.object(
             monitor._cleanup_handler, "cleanup_agent", new_callable=AsyncMock
         ) as cleanup_agent,
@@ -200,22 +192,17 @@ async def test_parked_agent_is_not_stagnant_until_its_wait_resolves(
 
 
 async def test_live_spinner_defers_stagnation_and_a_frozen_one_does_not(
-    agent_run_manager: LocalAgentRunManager,  # noqa: F811
+    agent_run_manager: LocalAgentRunManager,
     temp_db: HubDatabase,
-    sample_session: dict[str, Any],  # noqa: F811
+    sample_session: dict[str, Any],
 ) -> None:
     monitor, run, _detector = _make_progress_stagnation_monitor(
         agent_run_manager=agent_run_manager,
         temp_db=temp_db,
         sample_session=sample_session,
     )
-    panes = iter([THINKING_PANE, THINKING_PANE_LATER, THINKING_PANE_LATER])
-
-    async def capture_pane(_name: str, lines: int = 15) -> str:
-        return next(panes)
-
     with (
-        patch.object(monitor._tmux, "capture_pane", new=capture_pane),
+        _pane_text(monitor, [THINKING_PANE, THINKING_PANE_LATER, THINKING_PANE_LATER]),
         patch.object(
             monitor._cleanup_handler, "cleanup_agent", new_callable=AsyncMock
         ) as cleanup_agent,

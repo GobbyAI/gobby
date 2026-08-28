@@ -188,4 +188,18 @@ class SessionEndMixin(EventHandlersBase):
             except Exception as e:
                 self.logger.warning("Failed to update session %s status on end: %s", session_id, e)
 
+        if terminal_outcome and session_id:
+            manager = getattr(self, "terminal_manager", None)
+            if manager is not None:
+                try:
+                    row = manager.get_live_for_session(session_id)
+                    if row is not None:
+                        manager.mark_exited(row.id)
+                except Exception as e:
+                    self.logger.warning(
+                        "SESSION_END: failed to CAS terminal for session %s: %s",
+                        session_id,
+                        e,
+                    )
+
         return HookResponse(decision="allow")

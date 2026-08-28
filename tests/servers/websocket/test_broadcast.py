@@ -409,24 +409,23 @@ class TestBroadcastEventMethods:
         ws = _make_ws(subscriptions={"terminal_output"})
         b.clients[ws] = {}
 
-        await b.broadcast_terminal_output("run-1", "hello world")
+        await b.broadcast_terminal_output("term-1", "hello world")
         msg = _sent_message(ws)
         assert msg["type"] == "terminal_output"
-        assert msg["run_id"] == "run-1"
+        assert msg["terminal_id"] == "term-1"
         assert msg["data"] == "hello world"
 
     @pytest.mark.asyncio
-    async def test_broadcast_tmux_session_event(self) -> None:
+    async def test_broadcast_terminal_event(self) -> None:
         b = FakeBroadcaster()
-        ws = _make_ws(subscriptions={"tmux_session_event"})
+        ws = _make_ws(subscriptions={"terminal_event"})
         b.clients[ws] = {}
 
-        await b.broadcast_tmux_session_event("created", "my-session", "gobby")
+        await b.broadcast_tmux_session_event("created", terminal_id="term-1")
         msg = _sent_message(ws)
-        assert msg["type"] == "tmux_session_event"
+        assert msg["type"] == "terminal_event"
         assert msg["event"] == "created"
-        assert msg["session_name"] == "my-session"
-        assert msg["socket"] == "gobby"
+        assert msg["terminal_id"] == "term-1"
 
     @pytest.mark.asyncio
     async def test_broadcast_agent_message(self) -> None:

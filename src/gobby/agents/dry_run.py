@@ -278,13 +278,11 @@ async def evaluate_spawn(
                 )
             )
 
-    # Terminal availability check (all agents use tmux)
+    # Terminal availability check (all agents use the runtime registry backend)
     try:
-        from gobby.agents.tmux import get_configured_tmux_config
-        from gobby.agents.tmux.spawner import TmuxSpawner
+        from gobby.agents.tmux import get_tmux_session_manager
 
-        spawner = TmuxSpawner(get_configured_tmux_config())
-        if not spawner.is_available():
+        if not get_tmux_session_manager().is_available():
             result.items.append(
                 EvaluationItem(
                     layer="runtime",

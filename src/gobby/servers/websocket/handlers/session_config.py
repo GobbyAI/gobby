@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from gobby.servers.websocket.db import run_db
-from gobby.sessions.tmux_context import get_tmux_manager_for_context
+from gobby.terminals.lookup import manager_for_terminal_context
 from gobby.utils.json_helpers import json_dumps
 
 if TYPE_CHECKING:
@@ -222,7 +222,7 @@ async def _set_attached_session_agent(
 
     try:
         # Extra defense: quote the agent_name even though regex should ensure safety
-        ok = await get_tmux_manager_for_context(ctx).send_keys(
+        ok = await manager_for_terminal_context(ctx).dispatch_keys(
             tmux_pane,
             f"/gobby persona {quote(agent_name)}\n",
         )

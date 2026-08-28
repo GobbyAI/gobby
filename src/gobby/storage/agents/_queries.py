@@ -345,12 +345,16 @@ class _AgentRunQueryMixin:
         )
 
     def list_terminal_with_tmux(self: _AgentRunQueryHost, limit: int = 100) -> list[AgentRun]:
-        """List terminal agent runs that still have a persisted tmux session."""
+        """List terminal agent runs whose terminal row is still pending or live."""
         status_placeholders = ", ".join("%s" for _ in TERMINAL_AGENT_RUN_STATUSES)
         return self._fetch_runs_with_live_stats(
             f"""
             WHERE ar.status IN ({status_placeholders})
-            AND ar.tmux_session_name IS NOT NULL
+            AND EXISTS (
+                SELECT 1 FROM terminals t
+                WHERE t.id = ar.terminal_id
+                  AND t.state IN ('pending', 'live')
+            )
             """,
             TERMINAL_AGENT_RUN_STATUSES,
             order_by="ORDER BY ar.completed_at ASC, ar.updated_at ASC",

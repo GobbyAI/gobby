@@ -181,10 +181,16 @@ class TestRunDaemonSetup:
     @patch("subprocess.run")
     @patch("gobby.cli.install_setup._install_gcode")
     @patch("gobby.cli.install_setup._install_ghook")
+    @patch("gobby.cli.install_setup._install_gwiki", return_value={"skipped": True})
+    @patch("gobby.cli.install_setup._install_gterm", return_value={"skipped": True})
+    @patch("gobby.cli.install_setup._install_gclient", return_value={"skipped": True})
     @patch("gobby.cli.installers.ide_config.configure_vscode_family_terminal_integration")
     def test_run_daemon_setup_success(
         self,
         mock_ide,
+        _mock_gclient,
+        _mock_gterm,
+        _mock_gwiki,
         mock_ghook,
         mock_gcode,
         mock_run,
@@ -269,10 +275,16 @@ class TestRunDaemonSetup:
     @patch("subprocess.run")
     @patch("gobby.cli.install_setup._install_gcode")
     @patch("gobby.cli.install_setup._install_ghook")
+    @patch("gobby.cli.install_setup._install_gwiki", return_value={"skipped": True})
+    @patch("gobby.cli.install_setup._install_gterm", return_value={"skipped": True})
+    @patch("gobby.cli.install_setup._install_gclient", return_value={"skipped": True})
     @patch("gobby.cli.installers.ide_config.configure_vscode_family_terminal_integration")
     def test_run_daemon_setup_stops_when_srt_install_fails(
         self,
         mock_ide: MagicMock,
+        _mock_gclient: MagicMock,
+        _mock_gterm: MagicMock,
+        _mock_gwiki: MagicMock,
         mock_ghook: MagicMock,
         mock_gcode: MagicMock,
         mock_run: MagicMock,
@@ -363,10 +375,16 @@ class TestRunDaemonSetup:
     @patch("subprocess.run")
     @patch("gobby.cli.install_setup._install_gcode")
     @patch("gobby.cli.install_setup._install_ghook")
+    @patch("gobby.cli.install_setup._install_gwiki", return_value={"skipped": True})
+    @patch("gobby.cli.install_setup._install_gterm", return_value={"skipped": True})
+    @patch("gobby.cli.install_setup._install_gclient", return_value={"skipped": True})
     @patch("gobby.cli.installers.ide_config.configure_vscode_family_terminal_integration")
     def test_run_daemon_setup_makes_same_run_hook_generation_use_ghook(
         self,
         mock_ide,
+        _mock_gclient,
+        _mock_gterm,
+        _mock_gwiki,
         mock_ghook,
         mock_gcode,
         mock_run,
@@ -469,7 +487,7 @@ class TestRunDaemonSetup:
                 version="1.0.0",
                 ok=True,
             )
-            for name in ("gcode", "ghook", "gwiki")
+            for name in ("gcode", "ghook", "gwiki", "gterm", "gclient")
         ]
 
         with patch("gobby.cli.installers.tmux_config.configure_tmux_clipboard") as mock_tmux:

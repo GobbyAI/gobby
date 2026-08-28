@@ -15,7 +15,7 @@ async def _cleanup_terminal_artifacts(
     *,
     run_id: str | None,
     db: Any | None,
-    tmux_session_name: str | None,
+    terminal_id: str | None,
     agent_session_id: str | None,
     debug: bool,
     session_manager: Any | None,
@@ -82,14 +82,23 @@ async def _complete_self_terminated_run(
             )
         )
 
-    if run.tmux_session_name and not debug:
-        from gobby.agents.capture import capture_then_kill_async
-        from gobby.agents.tmux import get_tmux_session_manager
+    if run.terminal_id and not debug:
+        from gobby.agents.capture import terminate_managed_runtime_async
+        from gobby.agents.tmux.session_manager import TmuxSessionManager
         from gobby.storage.agents import LocalAgentRunManager, TerminalAction
+        from gobby.storage.terminals import TerminalManager
+        from gobby.terminals.runtime import TerminalRuntime
+        from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
 
-        tmux = get_tmux_session_manager()
         manager = LocalAgentRunManager(kill_db)
-        tmux_name = run.tmux_session_name
+        terminal_manager = TerminalManager(kill_db)
+        terminal = terminal_manager.get(run.terminal_id)
+        registry = getattr(runner, "terminal_runtime_registry", None)
+        runtime: TerminalRuntime
+        if terminal is not None and registry is not None:
+            runtime = registry.resolve(terminal.backend)
+        else:
+            runtime = TmuxTerminalRuntime(TmuxSessionManager())
 
         async def terminalize(
             _action: TerminalAction,
@@ -98,25 +107,33 @@ async def _complete_self_terminated_run(
             await complete_with_acknowledged_delivery()
             return runner.get_run(run.id)
 
-        termination = await capture_then_kill_async(
-            storage=manager,
-            run_id=run.id,
-            session_name=tmux_name,
-            action="complete",
-            session_alive=lambda: tmux.has_session(tmux_name),
-            capture=lambda: tmux.capture_full_pane(tmux_name),
-            kill=lambda: tmux.kill_session(tmux_name, missing_ok=True),
-            terminalize=terminalize,
-        )
-        if not termination.success:
+        termination_error: str | None
+        termination_code: str | None
+        if terminal is None:
+            termination_ok = False
+            termination_error = "agent run has no terminal"
+            termination_code = "kill_failed"
+        else:
+            termination = await terminate_managed_runtime_async(
+                storage=manager,
+                run=run,
+                terminal=terminal,
+                runtime=runtime,
+                action="complete",
+                terminalize=terminalize,
+            )
+            termination_ok = termination.success
+            termination_error = termination.error
+            termination_code = termination.error_code
+        if not termination_ok:
             return {
                 "success": False,
                 "run_id": run.id,
-                "error": termination.error,
-                "error_code": termination.error_code,
+                "error": termination_error,
+                "error_code": termination_code,
             }
         result["status"] = "success"
-        result["tmux_session_killed"] = True
+        result["terminal_killed"] = True
     else:
         kill_result = await agents._kill_agent_process(
             run,
@@ -140,7 +157,7 @@ async def _complete_self_terminated_run(
     await agents._cleanup_terminal_artifacts(
         run_id=run.id,
         db=kill_db,
-        tmux_session_name=run.tmux_session_name,
+        terminal_id=run.terminal_id,
         agent_session_id=agent_session_id,
         debug=debug,
         session_manager=session_manager,

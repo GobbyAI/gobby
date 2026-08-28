@@ -14,29 +14,15 @@ from uuid import uuid4
 
 from websockets.exceptions import ConnectionClosed
 
-from gobby.agents.tmux.pty_bridge import TmuxPTYBridge
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
-from gobby.servers.websocket.tmux_activation import (
-    MAX_TERMINAL_COLS,
-    MAX_TERMINAL_ROWS,
-    STATE_ACTIVATING,
-    STATE_RESERVED,
-    PendingAttachment,
-    activate_attachment,
-    cancel_all_pending,
-    cancel_pending,
-    cancel_pending_for_owner,
-    cancel_pending_for_session,
-    cancel_stale_reservations,
-    normalize_socket_name,
-    parse_dimension,
-)
+from gobby.servers.websocket.terminal_ws import TerminalWsMixin
+from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.utils.json_helpers import json_dumps
 from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
-    from gobby.config.app import DaemonConfig
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +31,7 @@ _DEFAULT_CONFIG = TmuxConfig(socket_name="")
 _GOBBY_CONFIG = TmuxConfig(socket_name="gobby")
 
 
-class TmuxMixin:
+class TmuxMixin(TerminalWsMixin):
     """Mixin providing tmux session management handlers for WebSocketServer.
 
     Requires on the host class:
@@ -56,62 +42,45 @@ class TmuxMixin:
 
     clients: dict[Any, dict[str, Any]]
 
-    # Set up by _init_tmux; declared here so the attachment state machine in
-    # tmux_activation can type-check against this class structurally.
-    _tmux_bridge: TmuxPTYBridge
+    # Set up by _init_tmux.
     _tmux_mgr_gobby: TmuxSessionManager
     _tmux_mgr_default: TmuxSessionManager
     _tmux_client_bridges: dict[Any, set[str]]
-    _tmux_pending: dict[str, PendingAttachment]
 
     # These are provided by other mixins (BroadcastMixin, HandlerMixin) or by
     # WebSocketServer itself (daemon_config, the live config-store projection).
     # Declared as TYPE_CHECKING-only protocol hints to avoid shadowing real methods.
     if TYPE_CHECKING:
 
-        @property
-        def daemon_config(self) -> DaemonConfig | None: ...
-
-        async def broadcast_terminal_output(self, run_id: str, data: str) -> None: ...
+        async def broadcast_terminal_output(
+            self, terminal_id: str, data: str, attachment_id: str | None = None
+        ) -> None: ...
         async def _send_error(
             self, websocket: Any, message: str, request_id: str | None = None, code: str = "ERROR"
         ) -> None: ...
 
     def _init_tmux(self) -> None:
         """Initialize tmux subsystem. Call from WebSocketServer.__init__."""
-        self._tmux_bridge = TmuxPTYBridge()
         self._tmux_mgr_gobby = TmuxSessionManager(_GOBBY_CONFIG)
         self._tmux_mgr_default = TmuxSessionManager(_DEFAULT_CONFIG)
-        # Track which client owns which bridge (for cleanup on disconnect)
-        self._tmux_client_bridges = {}  # websocket -> {streaming_id}
-        # Attachments acknowledged but not yet built (streaming_id -> reservation)
-        self._tmux_pending = {}
+        self._tmux_client_bridges: dict[Any, set[str]] = {}
+        self.lease_registry = TerminalLeaseRegistry()
 
     async def _cleanup_tmux(self) -> None:
-        """Clean up all tmux bridges. Call from WebSocketServer.stop."""
-        from gobby.agents.pty_reader import get_pty_reader_manager
-
-        cancel_all_pending(self)
-        reader = get_pty_reader_manager()
-        for streaming_id in list((await self._tmux_bridge.list_bridges()).keys()):
-            await reader.stop_reader(streaming_id)
-            await self._tmux_bridge.detach(streaming_id)
+        """Detach every proxy attachment. Call from WebSocketServer.stop."""
+        hub = getattr(self, "_proxy_hub", None)
+        if hub is not None:
+            for websocket in list(hub.relays):
+                await hub.drop_socket(websocket, "ws_close")
         self._tmux_client_bridges.clear()
 
     async def _cleanup_tmux_client(self, websocket: Any) -> None:
-        """Clean up bridges and reservations owned by a disconnecting client."""
-        from gobby.agents.pty_reader import get_pty_reader_manager
-
-        cancel_pending_for_owner(self, websocket)
-        bridge_ids = self._tmux_client_bridges.pop(websocket, set())
-        if not bridge_ids:
-            return
-
-        reader = get_pty_reader_manager()
-        for streaming_id in bridge_ids:
-            await reader.stop_reader(streaming_id)
-            await self._tmux_bridge.detach(streaming_id)
-            logger.debug("Cleaned up tmux bridge %s for disconnected client", streaming_id)
+        """Release leases and host-frame attachments for a disconnecting client."""
+        self._leases().finalize_websocket(websocket, "ws_close")
+        hub = getattr(self, "_proxy_hub", None)
+        if hub is not None:
+            await hub.drop_socket(websocket, "ws_close")
+        self._tmux_client_bridges.pop(websocket, None)
 
     def _get_tmux_manager(self, socket: str) -> TmuxSessionManager:
         """Get the session manager for a given socket."""
@@ -122,18 +91,10 @@ class TmuxMixin:
     def _get_tmux_config(self, socket: str) -> TmuxConfig:
         """Get the config for a given socket.
 
-        The socket templates are fixed (they exist to target the gobby socket
-        vs the user's personal default server), but the attach-history bound
-        is the config store's to set, so the live daemon value overlays the
-        template's default.
+        The socket templates are fixed: they exist to target the gobby socket
+        vs the user's personal default server.
         """
-        template = _GOBBY_CONFIG if socket == "gobby" else _DEFAULT_CONFIG
-        daemon = self.daemon_config
-        if daemon is None:
-            return template
-        return template.model_copy(
-            update={"attach_history_lines": daemon.tmux.attach_history_lines}
-        )
+        return _GOBBY_CONFIG if socket == "gobby" else _DEFAULT_CONFIG
 
     @staticmethod
     def _terminal_context_matches_socket(
@@ -294,21 +255,16 @@ class TmuxMixin:
                     agent_managed = False
                     agent_run_id = None
                     for run in active_runs:
-                        if run.tmux_session_name == s.name:
+                        row = None
+                        manager = getattr(self, "terminal_manager", None)
+                        if manager is not None and run.terminal_id:
+                            row = manager.get(run.terminal_id)
+                        if (row.session_name if row is not None else None) == s.name:
                             agent_managed = True
                             agent_run_id = run.id
                             break
 
-                    # Check if a bridge is active for this session
                     attached_bridge = None
-                    bridges = await self._tmux_bridge.list_bridges()
-                    for sid, bridge in bridges.items():
-                        if (
-                            bridge.session_name == s.name
-                            and bridge.socket_name == mgr.config.socket_name
-                        ):
-                            attached_bridge = sid
-                            break
 
                     # Look up synthesized session title and gobby session ID via tmux pane ID
                     pane_id = getattr(s, "pane_id", None)
@@ -336,7 +292,7 @@ class TmuxMixin:
                 logger.warning("Failed to list %s tmux sessions: %s", socket_name, e)
 
         response: dict[str, Any] = {
-            "type": "tmux_sessions_list",
+            "type": "terminal_list",
             "sessions": sessions,
             "live_cli_session_ids": live_cli_session_ids,
         }
@@ -349,47 +305,47 @@ class TmuxMixin:
             logger.debug("Client disconnected before tmux session list response was sent")
 
     async def _handle_tmux_attach(self, websocket: Any, data: dict[str, Any]) -> None:
-        """Reserve a streaming id for a tmux session and acknowledge it.
-
-        This deliberately builds nothing. ``TmuxPTYBridge.attach`` spawns
-        ``tmux attach-session`` immediately, so creating the bridge here would
-        start a tmux client painting at the hardcoded 50x200 default -- a
-        full-screen paint plus a resize redraw, both at the wrong width, both
-        delivered after the history as garbage. The client's first resize
-        carries its real geometry; :func:`activate_attachment` builds there, so
-        tmux attaches exactly once at the size the user is actually looking at.
-
-        A reserved-but-abandoned attachment holds no OS resource, so it needs
-        no deadline -- only removal by the existing teardown paths.
-        """
+        """Attach to a tmux session through the host proxy, never a second tmux client."""
         request_id = data.get("request_id")
         session_name = data.get("session_name")
-        socket = normalize_socket_name(data.get("socket", "default"))
+        socket = "gobby" if data.get("socket", "default") == "gobby" else "default"
 
         if not session_name:
             await self._send_error(websocket, "Missing session_name", request_id=request_id)
             return
 
         mgr = self._get_tmux_manager(socket)
-
-        # Verify session exists
         if not await mgr.has_session(session_name):
             await self._send_error(
                 websocket, f"Session '{session_name}' not found", request_id=request_id
             )
             return
 
-        cancel_stale_reservations(self, session_name, socket, websocket)
+        manager = getattr(self, "terminal_manager", None)
+        terminal_id = None
+        if manager is not None:
+            try:
+                for row in manager.list_by_project(self._project_id(websocket) or ""):
+                    if row.session_name == session_name:
+                        terminal_id = row.id
+                        break
+            except Exception:
+                logger.debug("session_name lookup failed", exc_info=True)
+        if terminal_id is not None:
+            await self._handle_terminal_attach(
+                websocket,
+                {
+                    "request_id": request_id,
+                    "terminal_id": terminal_id,
+                    "frame_delivery": "proxy",
+                },
+            )
+            return
 
         streaming_id = f"tmux-{uuid4().hex[:12]}"
-        self._tmux_pending[streaming_id] = PendingAttachment(
-            session_name=session_name,
-            socket=socket,
-            owner=websocket,
-        )
-
+        self._tmux_client_bridges.setdefault(websocket, set()).add(streaming_id)
         response: dict[str, Any] = {
-            "type": "tmux_attach_result",
+            "type": "terminal_attach_result",
             "success": True,
             "streaming_id": streaming_id,
             "session_name": session_name,
@@ -397,36 +353,29 @@ class TmuxMixin:
         }
         if request_id:
             response["request_id"] = request_id
-
         try:
             await websocket.send(json_dumps(response))
-        except Exception as e:
-            cancel_pending(self, streaming_id)
-            logger.debug("Client disconnected before tmux attach was acknowledged: %s", e)
+        except ConnectionClosed:
+            logger.debug("Client disconnected before tmux attach response was sent")
 
     async def _handle_tmux_detach(self, websocket: Any, data: dict[str, Any]) -> None:
-        """Detach from a tmux session (close PTY bridge)."""
-        from gobby.agents.pty_reader import get_pty_reader_manager
-
+        """Detach a host-proxy attachment (legacy streaming_id still accepted)."""
         request_id = data.get("request_id")
-        streaming_id = data.get("streaming_id")
+        streaming_id = data.get("streaming_id") or data.get("attachment_id")
 
         if not streaming_id:
             await self._send_error(websocket, "Missing streaming_id", request_id=request_id)
             return
 
-        cancel_pending(self, streaming_id)
-        reader = get_pty_reader_manager()
-        await reader.stop_reader(streaming_id)
-        await self._tmux_bridge.detach(streaming_id)
+        if isinstance(streaming_id, str) and streaming_id in self._proxy().attachments:
+            await self._proxy().finalize_attachment(streaming_id, "detach")
 
-        # Remove from client tracking
         client_bridges = self._tmux_client_bridges.get(websocket)
         if client_bridges:
             client_bridges.discard(streaming_id)
 
         response: dict[str, Any] = {
-            "type": "tmux_detach_result",
+            "type": "terminal_detach_result",
             "success": True,
             "streaming_id": streaming_id,
         }
@@ -461,7 +410,7 @@ class TmuxMixin:
             await self._broadcast_tmux_event("session_created", info.name, socket)
 
             response: dict[str, Any] = {
-                "type": "tmux_create_result",
+                "type": "terminal_create_result",
                 "success": True,
                 "session_name": info.name,
                 "pane_pid": info.pane_pid,
@@ -495,7 +444,11 @@ class TmuxMixin:
                 for run in LocalAgentRunManager(session_mgr.db).list_active_for_machine(
                     require_machine_id()
                 ):
-                    if run.tmux_session_name == session_name:
+                    row = None
+                    manager = getattr(self, "terminal_manager", None)
+                    if manager is not None and run.terminal_id:
+                        row = manager.get(run.terminal_id)
+                    if (row.session_name if row is not None else None) == session_name:
                         await self._send_error(
                             websocket,
                             f"Session '{session_name}' is managed by agent {run.id}",
@@ -506,10 +459,6 @@ class TmuxMixin:
             except Exception:
                 logger.debug("Failed to check agent-managed sessions", exc_info=True)
 
-        # Detach any bridges to this session first
-        from gobby.agents.pty_reader import get_pty_reader_manager
-
-        reader = get_pty_reader_manager()
         mgr = self._get_tmux_manager(socket)
         gobby_session_ids = await self._resolve_gobby_session_ids_for_tmux_session(
             session_name,
@@ -517,18 +466,8 @@ class TmuxMixin:
             mgr,
         )
 
-        cancel_pending_for_session(self, session_name, normalize_socket_name(socket))
-        bridges = await self._tmux_bridge.list_bridges()
-        for sid, bridge in list(bridges.items()):
-            if bridge.session_name == session_name and bridge.socket_name == mgr.config.socket_name:
-                await reader.stop_reader(sid)
-                await self._tmux_bridge.detach(sid)
-                # Clean from all client tracking
-                for client_set in self._tmux_client_bridges.values():
-                    client_set.discard(sid)
-
         try:
-            success = await mgr.kill_session(session_name)
+            success = await mgr.destroy_session(session_name)
             expired_session_ids: list[str] = []
             if success:
                 expired_session_ids = await self._expire_gobby_sessions_for_tmux_kill(
@@ -537,7 +476,7 @@ class TmuxMixin:
                 await self._broadcast_tmux_event("session_killed", session_name, socket)
 
             response: dict[str, Any] = {
-                "type": "tmux_kill_result",
+                "type": "terminal_kill_result",
                 "success": success,
                 "session_name": session_name,
                 "expired_session_ids": expired_session_ids,
@@ -552,51 +491,13 @@ class TmuxMixin:
             await self._send_error(websocket, f"Kill failed: {e}", request_id=request_id)
 
     async def _handle_tmux_resize(self, websocket: Any, data: dict[str, Any]) -> None:
-        """Resize an attached tmux session, or activate a pending reservation.
-
-        The first resize is the activation point: it is the earliest message
-        carrying the client's real terminal geometry.
-        """
-        streaming_id = data.get("streaming_id")
-        rows = data.get("rows")
-        cols = data.get("cols")
-
+        """Lease-gated resize through TerminalRuntime; no second tmux client."""
+        streaming_id = data.get("streaming_id") or data.get("attachment_id")
         if not streaming_id:
-            return  # Silent failure for resize events
-
-        parsed_rows = parse_dimension(rows, MAX_TERMINAL_ROWS)
-        parsed_cols = parse_dimension(cols, MAX_TERMINAL_COLS)
-        if parsed_rows is None or parsed_cols is None:
-            logger.debug("Invalid tmux_resize dimensions: rows=%r cols=%r", rows, cols)
             return
-
-        pending = self._tmux_pending.get(streaming_id)
-        if pending is not None:
-            if pending.owner is not websocket:
-                logger.debug(
-                    "Ignoring tmux_resize for %s from a websocket that does not own it",
-                    streaming_id,
-                )
-                return
-            if pending.state != STATE_RESERVED:
-                # Activation is already in flight; there is no bridge to resize
-                # yet, and the client will resend once the terminal is live.
-                return
-            pending.state = STATE_ACTIVATING
-            await activate_attachment(
-                self, websocket, streaming_id, pending, parsed_rows, parsed_cols
-            )
-            return
-
-        bridge = await self._tmux_bridge.resize(streaming_id, parsed_rows, parsed_cols)
-
-        # After resizing the PTY, tell tmux to redraw at the new dimensions
-        if bridge:
-            try:
-                socket = "gobby" if bridge.socket_name == "gobby" else "default"
-                await self._get_tmux_manager(socket).refresh_client(bridge.session_name)
-            except Exception as e:
-                logger.debug("Post-resize refresh-client failed: %s", e)
+        payload = dict(data)
+        payload["attachment_id"] = streaming_id
+        await self._handle_terminal_resize(websocket, payload)
 
     async def _handle_tmux_refresh_client(self, websocket: Any, data: dict[str, Any]) -> None:
         """Force tmux to redraw the clients attached to a session."""
@@ -624,7 +525,7 @@ class TmuxMixin:
             return
 
         response: dict[str, Any] = {
-            "type": "tmux_refresh_result",
+            "type": "terminal_refresh_result",
             "success": True,
             "session_name": session_name,
             "socket": socket,
@@ -648,7 +549,7 @@ class TmuxMixin:
 
         message = json_dumps(
             {
-                "type": "tmux_session_event",
+                "type": "terminal_event",
                 "event": event,
                 "session_name": session_name,
                 "socket": socket,
@@ -660,7 +561,7 @@ class TmuxMixin:
             try:
                 subs = getattr(ws, "subscriptions", None)
                 if subs is not None:
-                    if "tmux_session_event" not in subs and "*" not in subs:
+                    if "terminal_event" not in subs and "*" not in subs:
                         continue
                 await ws.send(message)
             except ConnectionClosed:

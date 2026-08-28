@@ -41,7 +41,8 @@
     "secret_key_material",
     "secrets",
     "sessions",
-    "tasks"
+    "tasks",
+    "terminals"
   ],
   "operator_only_command_families": [
     "global status",

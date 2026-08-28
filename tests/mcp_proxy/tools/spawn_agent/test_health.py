@@ -30,7 +30,7 @@ async def test_check_tmux_session_alive_uses_configured_manager() -> None:
 
     with (
         patch(
-            "gobby.mcp_proxy.tools.spawn_agent._health.TmuxSessionManager",
+            "gobby.agents.tmux.get_tmux_session_manager_for",
             return_value=manager,
         ) as manager_cls,
         patch(
@@ -45,9 +45,8 @@ async def test_check_tmux_session_alive_uses_configured_manager() -> None:
         )
 
     assert result == (True, None)
-    config = manager_cls.call_args.args[0]
-    assert config.socket_name == "custom"
-    assert config.socket_path == "/tmp/tmux-1000/custom"
+    assert manager_cls.call_args.kwargs["socket_name"] == "custom"
+    assert manager_cls.call_args.kwargs["socket_path"] == "/tmp/tmux-1000/custom"
     manager.get_session.assert_awaited_once_with("sess")
 
 
@@ -62,7 +61,7 @@ async def test_check_tmux_session_alive_rejects_dead_pane() -> None:
 
     with (
         patch(
-            "gobby.mcp_proxy.tools.spawn_agent._health.TmuxSessionManager",
+            "gobby.agents.tmux.get_tmux_session_manager_for",
             return_value=manager,
         ) as manager_cls,
         patch(
@@ -73,9 +72,7 @@ async def test_check_tmux_session_alive_rejects_dead_pane() -> None:
         result = await _check_tmux_session_alive("sess", socket_name="gobby")
 
     assert result == (False, _bounded_redacted_pane_output("/bin/bash: claude: command not found"))
-    config = manager_cls.call_args.args[0]
-    assert config.socket_name == "gobby"
-    assert config.socket_path is None
+    assert manager_cls.call_args.kwargs["socket_name"] == "gobby"
     manager.is_available.assert_called_once_with()
     manager.get_session.assert_awaited_once_with("sess")
     manager.capture_pane.assert_awaited_once_with("sess", lines=50)
@@ -90,7 +87,7 @@ async def test_check_tmux_session_alive_rejects_missing_pane_pid() -> None:
 
     with (
         patch(
-            "gobby.mcp_proxy.tools.spawn_agent._health.TmuxSessionManager",
+            "gobby.agents.tmux.get_tmux_session_manager_for",
             return_value=manager,
         ) as manager_cls,
         patch(
@@ -104,9 +101,7 @@ async def test_check_tmux_session_alive_rejects_missing_pane_pid() -> None:
     assert result[1] is not None
     assert len(result[1]) <= 1024
     assert result[1].startswith("[truncated]\n")
-    config = manager_cls.call_args.args[0]
-    assert config.socket_name == "gobby"
-    assert config.socket_path is None
+    assert manager_cls.call_args.kwargs["socket_name"] == "gobby"
     manager.is_available.assert_called_once_with()
     manager.get_session.assert_awaited_once_with("sess")
     manager.capture_pane.assert_awaited_once_with("sess", lines=50)
@@ -123,7 +118,7 @@ async def test_check_tmux_session_alive_keeps_confirmed_death_when_capture_fails
 
     with (
         patch(
-            "gobby.mcp_proxy.tools.spawn_agent._health.TmuxSessionManager",
+            "gobby.agents.tmux.get_tmux_session_manager_for",
             return_value=manager,
         ),
         patch(
@@ -149,7 +144,7 @@ async def test_check_tmux_session_alive_propagates_unexpected_capture_failure() 
 
     with (
         patch(
-            "gobby.mcp_proxy.tools.spawn_agent._health.TmuxSessionManager",
+            "gobby.agents.tmux.get_tmux_session_manager_for",
             return_value=manager,
         ),
         patch(
@@ -186,7 +181,7 @@ async def test_check_tmux_session_alive_bounds_capture_timeout(
 
     with (
         patch(
-            "gobby.mcp_proxy.tools.spawn_agent._health.TmuxSessionManager",
+            "gobby.agents.tmux.get_tmux_session_manager_for",
             return_value=manager,
         ),
         patch(
@@ -229,7 +224,7 @@ async def test_deferred_health_check_does_not_fail_terminal_run() -> None:
         await _deferred_tmux_health_check(
             runner,
             run_id="run-123",
-            tmux_session_name="tmux-run",
+            terminal_id="tmux-run",
             socket_name=None,
             socket_path=None,
             delay=0,
@@ -278,7 +273,7 @@ async def test_deferred_health_failure_reports_available_pane_output(
         await _deferred_tmux_health_check(
             runner,
             run_id="run-123",
-            tmux_session_name="tmux-run",
+            terminal_id="tmux-run",
             socket_name=None,
             socket_path=None,
             delay=0,
@@ -312,7 +307,7 @@ async def test_deferred_health_delivery_failure_is_logged(
         await _deferred_tmux_health_check(
             runner,
             run_id="run-123",
-            tmux_session_name="tmux-run",
+            terminal_id="tmux-run",
             socket_name=None,
             socket_path=None,
             delay=0,
@@ -329,7 +324,7 @@ async def test_scheduled_health_check_does_not_create_a_sleeping_task() -> None:
     handle = schedule_tmux_health_check(
         runner=runner,
         run_id="run-1",
-        tmux_session_name="session-1",
+        terminal_id="session-1",
         socket_name=None,
         socket_path=None,
         delay=60,
@@ -346,7 +341,7 @@ async def test_cancel_health_checks_cancels_pending_timer_before_callback() -> N
         handle = schedule_tmux_health_check(
             runner=runner,
             run_id="run-1",
-            tmux_session_name="session-1",
+            terminal_id="session-1",
             socket_name=None,
             socket_path=None,
             delay=60,

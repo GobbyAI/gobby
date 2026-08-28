@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -43,6 +44,8 @@ if TYPE_CHECKING:
     from gobby.runtime_grants.schema import GrantPrincipal, PostgresDirect
     from gobby.storage.managed_credential_types import SecretStore
     from gobby.storage.managed_credentials import ManagedCredentialManager
+    from gobby.storage.terminals import AttachLocator
+    from gobby.terminals.frame_client import FrameClient
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +166,13 @@ def init_servers(runner: GobbyRunner) -> None:
         attention_manager=runner.attention_manager,
         attention_metadata_store=getattr(runner, "attention_metadata_store", None),
         detection_registry=runner.detection_registry,
+        terminal_manager=getattr(runner, "terminal_manager", None),
+        terminal_runtime_registry=getattr(runner, "terminal_runtime_registry", None),
+        terminal_config=getattr(runner, "terminal_config", None),
+        terminal_services=getattr(runner, "terminal_services", None),
+        terminal_host_config=getattr(runner, "terminal_host_config", None),
+        terminal_host_manager=getattr(runner, "terminal_host_manager", None),
+        frame_client=getattr(runner, "frame_client", None),
         communications_manager=runner.communications_manager,
         code_indexer=runner.code_indexer,
         code_index_pruner=getattr(runner, "code_index_pruner", None),
@@ -245,6 +255,9 @@ def init_servers(runner: GobbyRunner) -> None:
         native_plan_actions = NativePlanActionService(
             runner.session_manager,
             runner.detection_registry,
+            terminal_manager=getattr(runner, "terminal_manager", None),
+            terminal_runtime_registry=getattr(runner, "terminal_runtime_registry", None),
+            write_coordinator=getattr(runner, "write_coordinator", None),
         )
         runner.communications_manager.set_session_notification_service(
             SessionNotificationService(
@@ -295,6 +308,14 @@ def init_servers(runner: GobbyRunner) -> None:
         attention_metadata_store = services.attention_metadata_store
         if attention_metadata_store is not None:
             runner.websocket_server.configure_attention_metadata(attention_metadata_store)
+        if services.terminal_manager is not None and services.terminal_runtime_registry is not None:
+            runner.websocket_server.configure_terminals(
+                services.terminal_manager,
+                services.terminal_runtime_registry,
+                services.terminal_config,
+                terminal_services=services.terminal_services,
+            )
+            _bind_proxy_frame_opener(runner)
         runner.http_server.websocket_server = runner.websocket_server
         runner.http_server.services.websocket_server = runner.websocket_server
         runner.http_server.broadcaster.websocket_server = runner.websocket_server
@@ -587,3 +608,24 @@ def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
             )
     except Exception:
         logger.exception("runtime handshake factory is not ready")
+
+
+def _bind_proxy_frame_opener(runner: GobbyRunner) -> None:
+    """Connect browser proxy attachments to the live gterm frames socket."""
+    server = runner.websocket_server
+    if server is None:
+        return
+
+    async def open_proxy_frame(locator: AttachLocator) -> FrameClient:
+        from gobby.terminals.frame_client import FrameClient
+        from gobby.terminals.host_client import HostUnavailableError
+        from gobby.terminals.host_protocol import frames_socket_path
+
+        host = getattr(runner, "terminal_host_manager", None)
+        if host is None:
+            raise HostUnavailableError("gterm host unavailable")
+        path = locator.host_socket or str(frames_socket_path(host.socket_dir))
+        reader, writer = await asyncio.open_unix_connection(path)
+        return FrameClient(reader, writer)
+
+    server.open_proxy_frame = open_proxy_frame

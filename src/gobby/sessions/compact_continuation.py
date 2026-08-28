@@ -29,9 +29,10 @@ from gobby.sessions.compact_markers import (
 )
 from gobby.sessions.handoff import build_handoff_continue_prompt
 from gobby.sessions.handoff_identity import terminal_process_contexts_match
-from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
+from gobby.sessions.tmux_context import parse_terminal_context_value
 from gobby.storage.hub.protocol import SessionVariableMutation
 from gobby.storage.session_models import Session
+from gobby.terminals.lookup import manager_for_terminal_context
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -348,7 +349,7 @@ def schedule_handoff_compact_continuation(
         )
         return False
 
-    tmux = get_tmux_manager_for_context(ctx)
+    tmux = manager_for_terminal_context(ctx)
     coro = _send_handoff_compact_continuation(
         tmux,
         str(target),
@@ -390,7 +391,7 @@ def schedule_codex_handoff_compact_continuation_readiness(
         )
         return False
 
-    tmux = get_tmux_manager_for_context(ctx)
+    tmux = manager_for_terminal_context(ctx)
     coro = _continue_after_codex_compaction_ready(
         db,
         tmux=tmux,
@@ -505,7 +506,7 @@ async def _send_handoff_compact_continuation(
     if delay_seconds > 0:
         await asyncio.sleep(delay_seconds)
     try:
-        ok = await tmux.send_keys(target, f"{prompt}\n", literal=True)
+        ok = await tmux.dispatch_keys(target, f"{prompt}\n", literal=True)
     except Exception:
         logger.warning(
             "Failed to send set_handoff compact continuation prompt for session %s",
@@ -524,7 +525,7 @@ async def _send_handoff_compact_continuation(
     # a retry failure is logged, never propagated.
     await asyncio.sleep(HANDOFF_COMPACT_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS)
     try:
-        retry_ok = await tmux.send_keys(target, "Enter", literal=False)
+        retry_ok = await tmux.dispatch_keys(target, "Enter", literal=False)
     except Exception:
         retry_ok = False
         logger.warning(
@@ -582,7 +583,7 @@ async def _continue_after_codex_compaction_ready(
             return
 
         try:
-            output = await tmux.capture_pane(
+            output = await tmux.snapshot_lines(
                 target,
                 lines=CODEX_COMPACT_READY_CAPTURE_LINES,
             )

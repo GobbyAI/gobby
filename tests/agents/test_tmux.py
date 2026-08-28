@@ -23,7 +23,6 @@ import pytest
 import gobby.agents.tmux.output_reader as output_reader_mod
 from gobby.agents.tmux.errors import TmuxNotFoundError, TmuxSessionError
 from gobby.agents.tmux.output_reader import TmuxOutputReader, _safe_fifo_component
-from gobby.agents.tmux.pty_bridge import TmuxPTYBridge
 from gobby.agents.tmux.session_manager import (
     TmuxProbeState,
     TmuxReleaseOutcome,
@@ -636,7 +635,7 @@ class TestTmuxSessionManager:
         assert mgr._base_args()[-2:] == ["-f", "/dev/null"]
 
         with patch(
-            "gobby.agents.tmux.session_manager.subprocess.run",
+            "gobby.agents.tmux.session_activation.subprocess.run",
             return_value=subprocess.CompletedProcess([], 0, b"", b""),
         ) as mock_run:
             await getattr(mgr, method_name)(*method_args)
@@ -836,11 +835,11 @@ class TestTmuxSessionManager:
         mgr = TmuxSessionManager()
 
         with patch(
-            "gobby.agents.tmux.session_manager.subprocess.run",
+            "gobby.agents.tmux.session_activation.subprocess.run",
             side_effect=subprocess.TimeoutExpired(cmd=["tmux"], timeout=0.01),
         ):
             with (
-                caplog.at_level(logging.DEBUG, logger="gobby.agents.tmux.session_manager"),
+                caplog.at_level(logging.DEBUG, logger="gobby.agents.tmux.session_activation"),
                 pytest.raises(TimeoutError),
             ):
                 await mgr._run("list-sessions", timeout=0.01)
@@ -1389,191 +1388,6 @@ class TestDaemonConfigTmux:
 
 
 # =============================================================================
-# TmuxPTYBridge
-# =============================================================================
-
-
-class TestTmuxPTYBridge:
-    """Tests for TmuxPTYBridge."""
-
-    @pytest.mark.asyncio
-    async def test_init(self) -> None:
-        bridge = TmuxPTYBridge()
-        assert bridge._bridges == {}
-        assert await bridge.list_bridges() == {}
-
-    @pytest.mark.asyncio
-    async def test_get_master_fd_missing(self) -> None:
-        bridge = TmuxPTYBridge()
-        assert await bridge.get_master_fd("nonexistent") is None
-
-    @pytest.mark.asyncio
-    async def test_get_bridge_missing(self) -> None:
-        bridge = TmuxPTYBridge()
-        assert await bridge.get_bridge("nonexistent") is None
-
-    def test_build_attach_cmd_gobby(self) -> None:
-        bridge = TmuxPTYBridge()
-        config = TmuxConfig(socket_name="gobby")
-        cmd = bridge._build_attach_cmd("my-session", config)
-        assert cmd == [
-            "tmux",
-            "-L",
-            "gobby",
-            "-T",
-            "256,RGB",
-            "attach-session",
-            "-t",
-            "my-session",
-        ]
-
-    def test_build_attach_cmd_default_server(self) -> None:
-        bridge = TmuxPTYBridge()
-        config = TmuxConfig(socket_name="")
-        cmd = bridge._build_attach_cmd("my-session", config)
-        assert cmd == ["tmux", "-T", "256,RGB", "attach-session", "-t", "my-session"]
-
-    def test_build_attach_cmd_socket_path(self) -> None:
-        bridge = TmuxPTYBridge()
-        config = TmuxConfig(socket_name="", socket_path="/tmp/tmux-1000/gobby")
-        cmd = bridge._build_attach_cmd("my-session", config)
-        assert cmd == [
-            "tmux",
-            "-S",
-            "/tmp/tmux-1000/gobby",
-            "-T",
-            "256,RGB",
-            "attach-session",
-            "-t",
-            "my-session",
-        ]
-
-    @pytest.mark.asyncio
-    async def test_detach_missing_is_noop(self) -> None:
-        bridge = TmuxPTYBridge()
-        await bridge.detach("nonexistent")
-
-        assert await bridge.list_bridges() == {}
-
-    @pytest.mark.asyncio
-    async def test_detach_all_empty(self) -> None:
-        bridge = TmuxPTYBridge()
-        await bridge.detach_all()
-
-        assert await bridge.list_bridges() == {}
-
-    @pytest.mark.asyncio
-    async def test_attach_duplicate_raises(self) -> None:
-        bridge = TmuxPTYBridge()
-        # Manually insert a bridge entry
-        from unittest.mock import MagicMock
-
-        from gobby.agents.tmux.pty_bridge import BridgeInfo
-
-        mock_proc = MagicMock()
-        bridge._bridges["21000000-0000-4000-8000-00000000001c"] = BridgeInfo(
-            master_fd=999, proc=mock_proc, session_name="sess", socket_name="gobby"
-        )
-
-        with pytest.raises(RuntimeError, match="already exists"):
-            await bridge.attach("sess", "21000000-0000-4000-8000-00000000001c")
-
-    @pytest.mark.asyncio
-    async def test_attach_duplicate_pending_raises(self) -> None:
-        bridge = TmuxPTYBridge()
-        bridge._pending_bridges.add("21000000-0000-4000-8000-00000000001c")
-
-        with pytest.raises(RuntimeError, match="already exists"):
-            await bridge.attach("sess", "21000000-0000-4000-8000-00000000001c")
-
-    @pytest.mark.asyncio
-    async def test_resize_missing_is_noop(self) -> None:
-        bridge = TmuxPTYBridge()
-        assert await bridge.resize("nonexistent", 50, 200) is None
-
-    @pytest.mark.asyncio
-    async def test_resize_signals_sigwinch_to_attach_process(self) -> None:
-        """TIOCSWINSZ alone never reaches the tmux client: the attach process
-        has no controlling-terminal tie to the PTY, so resize must deliver
-        SIGWINCH explicitly or the client keeps its old size forever."""
-        from gobby.agents.tmux.pty_bridge import BridgeInfo
-
-        bridge = TmuxPTYBridge()
-        master_fd, slave_fd = os.openpty()
-        mock_proc = MagicMock()
-        bridge._bridges["winch-id"] = BridgeInfo(
-            master_fd=master_fd, proc=mock_proc, session_name="sess", socket_name=""
-        )
-
-        try:
-            result = await bridge.resize("winch-id", 21, 111)
-        finally:
-            os.close(master_fd)
-            os.close(slave_fd)
-
-        assert result is not None
-        mock_proc.send_signal.assert_called_once_with(signal.SIGWINCH)
-
-    @pytest.mark.asyncio
-    async def test_resize_to_the_size_it_already_has_is_not_a_resize(self) -> None:
-        """The web client resizes again right after activation.
-
-        Repainting for a resize that changed nothing lands after the attach's
-        history capture, and the history boundary is only correct for the
-        screen the capture's own repaint painted -- so the redundant redraw
-        costs the seam whatever scrolled in between.
-        """
-        from gobby.agents.tmux.pty_bridge import BridgeInfo
-
-        bridge = TmuxPTYBridge()
-        master_fd, slave_fd = os.openpty()
-        mock_proc = MagicMock()
-        bridge._bridges["same-id"] = BridgeInfo(
-            master_fd=master_fd,
-            proc=mock_proc,
-            session_name="sess",
-            socket_name="",
-            rows=39,
-            cols=80,
-        )
-
-        try:
-            assert await bridge.resize("same-id", 39, 80) is None
-            # A genuine change still resizes, and is then itself remembered.
-            assert await bridge.resize("same-id", 20, 80) is not None
-            assert await bridge.resize("same-id", 20, 80) is None
-        finally:
-            os.close(master_fd)
-            os.close(slave_fd)
-
-        assert mock_proc.send_signal.call_count == 1
-        assert (bridge._bridges["same-id"].rows, bridge._bridges["same-id"].cols) == (20, 80)
-
-    @pytest.mark.asyncio
-    async def test_attach_forces_xterm_term_in_subprocess_env(self) -> None:
-        """attach must override TERM: the daemon env has none (or an unusable
-        one), and tmux attach-session exits immediately without a usable TERM,
-        leaving a dead PTY that only surfaces as EIO on later input writes."""
-        bridge = TmuxPTYBridge()
-        mock_proc = MagicMock()
-        with (
-            patch(
-                "gobby.agents.tmux.pty_bridge.asyncio.create_subprocess_exec",
-                new_callable=AsyncMock,
-                return_value=mock_proc,
-            ) as mock_exec,
-            patch.dict(os.environ, {"TERM": "dumb"}),
-        ):
-            master_fd = await bridge.attach("sess", "term-env-id", TmuxConfig(socket_name="gobby"))
-
-        assert mock_exec.await_args is not None
-        env = mock_exec.await_args.kwargs["env"]
-        assert env["TERM"] == "xterm-256color"
-        assert await bridge.get_master_fd("term-env-id") == master_fd
-        os.close(master_fd)
-
-
-# =============================================================================
 # TmuxSpawner
 # =============================================================================
 
@@ -1599,6 +1413,7 @@ class TestTmuxSpawner:
                 command=["echo", "hello"],
                 cwd="/tmp",
                 env={"GOBBY_SESSION_ID": "sess-1"},
+                spawn_key="gobby-test-key",
             )
 
             mock_create.assert_called_once()
@@ -1611,6 +1426,43 @@ class TestTmuxSpawner:
             assert env_arg["VIRTUAL_ENV_PROMPT"] == ""
             # Gobby-specific vars should still be passed
             assert env_arg["GOBBY_SESSION_ID"] == "sess-1"
+
+    @pytest.mark.asyncio
+    async def test_spawner_uses_caller_supplied_spawn_key(self) -> None:
+        from gobby.storage.terminals import AttachLocator
+        from gobby.terminals.runtime import InvalidSpawnKeyError
+
+        spawner = TmuxSpawner(TmuxConfig())
+        with (
+            patch.object(
+                spawner._session_manager, "create_session", new_callable=AsyncMock
+            ) as mock_create,
+            patch.object(
+                spawner._session_manager, "get_session", new_callable=AsyncMock
+            ) as mock_get,
+        ):
+            mock_create.return_value = TmuxSessionInfo(
+                name="gobby-caller-key", pane_pid=123, pane_id="%7"
+            )
+            mock_get.return_value = TmuxSessionInfo(
+                name="gobby-caller-key", pane_pid=123, pane_id="%7"
+            )
+            result = await spawner._async_spawn(
+                command=["echo", "hello"],
+                cwd="/tmp",
+                spawn_key="gobby-caller-key",
+            )
+        mock_create.assert_called_once()
+        assert mock_create.call_args.kwargs["name"] == "gobby-caller-key"
+        assert isinstance(result.locator, AttachLocator)
+        assert result.locator.pane_id == "%7"
+        assert result.locator.backend == "tmux"
+        with pytest.raises(InvalidSpawnKeyError):
+            await spawner._async_spawn(
+                command=["echo", "hello"],
+                cwd="/tmp",
+                spawn_key="bad.key:colon",
+            )
 
     @pytest.mark.asyncio
     async def test_uv_cache_dir_defaults_to_session_temp_path(self) -> None:
@@ -1631,6 +1483,7 @@ class TestTmuxSpawner:
                 command=["echo", "hello"],
                 cwd="/tmp",
                 env={"GOBBY_SESSION_ID": "sess/1"},
+                spawn_key="gobby-test-key",
             )
 
             env_arg = mock_create.call_args[1].get("env")
@@ -1660,6 +1513,7 @@ class TestTmuxSpawner:
                 command=["echo", "hello"],
                 cwd="/tmp",
                 env={"GOBBY_SESSION_ID": "sess-1"},
+                spawn_key="gobby-test-key",
             )
 
             env_arg = mock_create.call_args[1].get("env")
@@ -1689,6 +1543,7 @@ class TestTmuxSpawner:
                     "GOBBY_SESSION_ID": "sess-1",
                     "UV_CACHE_DIR": "/custom/uv-cache",
                 },
+                spawn_key="gobby-test-key",
             )
 
             env_arg = mock_create.call_args[1].get("env")
@@ -1716,6 +1571,7 @@ class TestTmuxSpawner:
                     "GOBBY_SESSION_ID": "sess-1",
                     "UV_CACHE_DIR": "",
                 },
+                spawn_key="gobby-test-key",
             )
 
             env_arg = mock_create.call_args[1].get("env")
@@ -1740,6 +1596,7 @@ class TestTmuxSpawner:
             await spawner._async_spawn(
                 command=["claude", "--session-id=xxx"],
                 cwd="/tmp",
+                spawn_key="gobby-test-key",
             )
 
             mock_create.assert_called_once()
@@ -1767,11 +1624,11 @@ class TestTmuxSpawner:
             result = await spawner._async_spawn(
                 command=["echo", "test"],
                 cwd="/tmp",
+                spawn_key="gobby-test-key",
             )
 
             assert result.success is True
             assert result.pid == 456
-            assert result.tmux_session_name == "test-session"
             assert result.tmux_socket_name == "gobby"
             assert result.tmux_socket_path is None
 
@@ -1810,7 +1667,9 @@ class TestTmuxSpawner:
             )
             mock_capture.side_effect = capture_failure
             mock_kill.side_effect = record_cleanup
-            result = await spawner._async_spawn(command=["echo", "test"], cwd="/tmp")
+            result = await spawner._async_spawn(
+                command=["echo", "test"], cwd="/tmp", spawn_key="gobby-test-key"
+            )
 
         assert result.success is False
         assert result.error is not None
@@ -1842,7 +1701,9 @@ class TestTmuxSpawner:
             mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=None)
             mock_get.return_value = TmuxSessionInfo(name="test-session", pane_pid=None)
             mock_capture.return_value = "/bin/bash: claude: command not found\n"
-            result = await spawner._async_spawn(command=["echo", "test"], cwd="/tmp")
+            result = await spawner._async_spawn(
+                command=["echo", "test"], cwd="/tmp", spawn_key="gobby-test-key"
+            )
 
         assert result.success is False
         assert result.error is not None
@@ -1873,7 +1734,9 @@ class TestTmuxSpawner:
                 pane_dead=True,
             )
             mock_capture.side_effect = TmuxSessionError("capture failed")
-            result = await spawner._async_spawn(command=["echo", "test"], cwd="/tmp")
+            result = await spawner._async_spawn(
+                command=["echo", "test"], cwd="/tmp", spawn_key="gobby-test-key"
+            )
 
         assert result.success is False
         assert result.error == "tmux session 'test-session' pane is dead"
@@ -1897,7 +1760,9 @@ class TestTmuxSpawner:
         ):
             mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=456)
             mock_get.side_effect = RuntimeError("tmux exploded")
-            result = await spawner._async_spawn(command=["echo", "test"], cwd="/tmp")
+            result = await spawner._async_spawn(
+                command=["echo", "test"], cwd="/tmp", spawn_key="gobby-test-key"
+            )
 
         assert result.success is False
         assert result.error == "tmux session verification failed: tmux exploded"
@@ -1914,6 +1779,7 @@ class TestTmuxSpawner:
             result = await spawner._async_spawn(
                 command=["echo", "test"],
                 cwd="/tmp",
+                spawn_key="gobby-test-key",
             )
 
             assert result.success is False
@@ -1952,6 +1818,7 @@ class TestTmuxSpawner:
                 cwd="/tmp",
                 env={"GOBBY_SESSION_ID": "sess-1"},
                 auth_cli="claude",
+                spawn_key="gobby-test-key",
             )
 
         env_arg = mock_create.call_args[1]["env"]
@@ -1980,6 +1847,7 @@ class TestTmuxSpawner:
                 command=["claude"],
                 cwd="/tmp",
                 env={"ANTHROPIC_API_KEY": "sk-override"},
+                spawn_key="gobby-test-key",
             )
 
         assert mock_create.call_args[1]["env"]["ANTHROPIC_API_KEY"] == "sk-override"
@@ -1999,7 +1867,7 @@ class TestTmuxSpawner:
         ):
             mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
             mock_get.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
-            await spawner._async_spawn(command=["claude"], cwd="/tmp")
+            await spawner._async_spawn(command=["claude"], cwd="/tmp", spawn_key="gobby-test-key")
 
         assert "CLAUDE_CODE_OAUTH_TOKEN" not in mock_create.call_args[1]["env"]
 
@@ -2242,7 +2110,7 @@ class TestTmuxSessionManagerExtended:
             return fd, str(env_file)
 
         monkeypatch.setattr(
-            "gobby.agents.tmux.session_manager.tempfile.mkstemp",
+            "gobby.agents.tmux.session_activation.tempfile.mkstemp",
             fake_mkstemp,
         )
 
@@ -2319,7 +2187,7 @@ class TestTmuxSessionManagerExtended:
             return fd, str(env_file)
 
         monkeypatch.setattr(
-            "gobby.agents.tmux.session_manager.tempfile.mkstemp",
+            "gobby.agents.tmux.session_activation.tempfile.mkstemp",
             fake_mkstemp,
         )
 
@@ -2368,7 +2236,7 @@ class TestTmuxSessionManagerExtended:
             return fd, str(env_file)
 
         monkeypatch.setattr(
-            "gobby.agents.tmux.session_manager.tempfile.mkstemp",
+            "gobby.agents.tmux.session_activation.tempfile.mkstemp",
             fake_mkstemp,
         )
 
@@ -2874,3 +2742,45 @@ async def test_tmux_commands_do_not_fork_on_the_event_loop() -> None:
     assert loop_thread not in fork_threads, (
         f"tmux forked on the event loop thread {loop_thread}; the spawn must be offloaded"
     )
+
+
+async def test_session_manager_injection_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Existing injection byte sequences stay intact through TmuxTerminalRuntime."""
+    from gobby.storage.terminals import Terminal
+    from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
+    from tests.terminals.fakes import make_memory_terminal
+
+    commands: list[list[str]] = []
+    sleep = AsyncMock()
+
+    async def fake_exec(*args: str, **_kwargs: object) -> MagicMock:
+        commands.append(list(args))
+        proc = MagicMock()
+        proc.returncode = 0
+        proc.communicate = AsyncMock(return_value=(b"", b""))
+        return proc
+
+    monkeypatch.setattr(
+        "gobby.agents.tmux.text_injection.asyncio.create_subprocess_exec",
+        fake_exec,
+    )
+    monkeypatch.setattr("gobby.agents.tmux.text_injection.asyncio.sleep", sleep)
+    monkeypatch.setattr("gobby.terminals.tmux_runtime.asyncio.sleep", sleep)
+
+    sessions = TmuxSessionManager(
+        TmuxConfig(
+            command="/opt/tmux", socket_path="/tmp/tmux-501/gobby", config_file="/tmp/tmux.conf"
+        )
+    )
+    runtime = TmuxTerminalRuntime(sessions)
+    terminal: Terminal = make_memory_terminal()
+    await runtime.write_text(terminal, "-X message\n", submit=True)
+
+    tmux_cmd = ["/opt/tmux", "-S", "/tmp/tmux-501/gobby", "-f", "/tmp/tmux.conf"]
+    assert commands
+    assert commands[0][:5] == tmux_cmd
+    assert "set-buffer" in commands[0]
+    assert any(command[-1] == "Enter" for command in commands if "send-keys" in command)
+    assert not any("send-keys" in command and "-l" in command for command in commands)

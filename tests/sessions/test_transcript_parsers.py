@@ -10,7 +10,6 @@ from typing import Any
 
 import pytest
 
-from gobby.memory.digest import DigestPair, _extract_digest_pairs
 from gobby.sessions.message_stats import compute_message_stats
 from gobby.sessions.transcript_normalization import normalize_transcript_records
 from gobby.sessions.transcript_parsing import _get_parser
@@ -2412,8 +2411,6 @@ def test_tool_activity_flag_preserves_pair_shape(source: str, fixture_path: Path
     assert [(message["role"], message["content"]) for message in with_ledger] == [
         (message["role"], message["content"]) for message in without_ledger
     ]
-    digest_pairs = _extract_digest_pairs(get_parser(source), turns)
-    assert all(isinstance(pair, DigestPair) for pair in digest_pairs)
     for original, enriched in zip(without_ledger, with_ledger, strict=True):
         assert {key: value for key, value in enriched.items() if key != "tool_activity"} == original
         if "tool_activity" in enriched:
@@ -2500,11 +2497,6 @@ def test_tool_only_turn_ledger_stays_on_its_user_message(
     previous_user = next(item for item in with_ledger if item["content"] == "previous")
     assert "- Read widget.py (no result recorded)" in current_user["tool_activity"]
     assert "tool_activity" not in previous_user
-    if source == "grok":
-        assert _extract_digest_pairs(parser, turns) == [
-            DigestPair("previous", "previous reply", ""),
-            DigestPair("inspect", "", "[tool activity]\n- Read widget.py (no result recorded)"),
-        ]
 
 
 def _load_transcript_fixture(path: Path) -> list[dict[str, Any]]:

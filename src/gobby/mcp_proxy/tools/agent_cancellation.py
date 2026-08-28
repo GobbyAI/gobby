@@ -219,6 +219,7 @@ async def stop_agent_run(
                     kill_db,
                     signal_name="TERM",
                     close_terminal=True,
+                    terminal_services=getattr(runner, "terminal_services", None),
                 ),
             )
             if not result.get("success") and result.get("error_code") != KILL_ERROR_NO_TARGET_PID:
@@ -245,7 +246,7 @@ async def stop_agent_run(
             await cleanup_terminal_artifacts(
                 run_id=run.id,
                 db=kill_db,
-                tmux_session_name=run.tmux_session_name,
+                terminal_id=run.terminal_id,
                 agent_session_id=run.child_session_id,
                 debug=False,
                 session_manager=session_manager,

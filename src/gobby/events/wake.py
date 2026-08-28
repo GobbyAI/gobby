@@ -50,7 +50,7 @@ async def _default_run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -
 class TmuxSender(Protocol):
     def __call__(
         self,
-        tmux_session_name: str,
+        identity: str,
         message: str,
         *,
         submit: bool = False,
@@ -297,11 +297,11 @@ class WakeDispatcher:
             return self._live_wake_debounced_result(session_id, method="live_wake")
 
         if terminal_context and self._tmux_sender:
-            tmux_session_name = self._parse_tmux_session(terminal_context)
-            if tmux_session_name:
+            wake_identity = self._parse_tmux_session(terminal_context)
+            if wake_identity:
                 try:
                     await self._tmux_sender(
-                        tmux_session_name,
+                        wake_identity,
                         CONTINUE_WAKE_MESSAGE,
                         submit=True,
                         escape_before_submit=True,
@@ -312,11 +312,21 @@ class WakeDispatcher:
                         "delivered": True,
                         "method": "tmux",
                     }
-                except Exception:
+                except Exception as exc:
+                    from gobby.terminals.runtime import IndeterminateWrite
+
+                    if isinstance(exc, IndeterminateWrite):
+                        return {
+                            "session_id": session_id,
+                            "delivered": False,
+                            "method": "tmux",
+                            "indeterminate": True,
+                            "error_message": exc.detail,
+                        }
                     logger.warning(
                         "tmux wake failed for session %s (tmux=%s), trying SDK resume",
                         session_id,
-                        tmux_session_name,
+                        wake_identity,
                         exc_info=True,
                     )
 

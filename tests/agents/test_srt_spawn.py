@@ -6,6 +6,7 @@ import ast
 import inspect
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,6 +14,7 @@ import pytest
 from gobby.agents import spawn_executor
 from gobby.agents.kill import pid_matches_agent_identity
 from gobby.agents.sandbox import SandboxConfig
+from gobby.agents.spawn import PreparedSpawn
 from gobby.agents.spawn_executor import execute_spawn
 from gobby.agents.spawn_models import SpawnRequest
 from gobby.agents.srt_runtime import SandboxLaunch, SrtRuntimeError
@@ -54,17 +56,25 @@ def test_every_managed_provider_wraps_the_completed_command_once(spawn_name: str
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "wrap"
     ]
-    terminal_calls = [
+    runtime_calls = [
         node
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == "_spawn_terminal"
+        and node.func.id == "_runtime_spawn"
     ]
 
-    assert len(wrap_calls) == 1
-    assert len(terminal_calls) == 1
-    assert any(keyword.arg == "auth_cli" for keyword in terminal_calls[0].keywords)
+    assert wrap_calls == []
+    assert len(runtime_calls) == 1
+    runtime_tree = ast.parse(inspect.getsource(spawn_executor._runtime_spawn))
+    runtime_wraps = [
+        node
+        for node in ast.walk(runtime_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "wrap_provider_command"
+    ]
+    assert len(runtime_wraps) == 1
 
 
 def test_auth_cli_inference_looks_through_srt_wrapper() -> None:
@@ -121,6 +131,7 @@ async def test_droid_command_is_wrapped_once_after_srt_preflight() -> None:
         run_manager=run_manager,
         sandbox_config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
         prepared_spawn=prepared_spawn(),
+        terminal_backend="tmux",
     )
     spawn_context = SimpleNamespace(
         session_id="child",
@@ -143,7 +154,7 @@ async def test_droid_command_is_wrapped_once_after_srt_preflight() -> None:
         success=True,
         pid=123,
         terminal_type="tmux",
-        tmux_session_name="gobby-agent",
+        terminal_id="gobby-agent",
         tmux_socket_name="gobby",
         tmux_socket_path="/tmp/gobby.sock",
         error=None,
@@ -154,19 +165,21 @@ async def test_droid_command_is_wrapped_once_after_srt_preflight() -> None:
         patch("gobby.agents.spawn_executor.shutil.which", return_value="/usr/local/bin/droid"),
         patch("gobby.agents.spawn_executor.prepare_terminal_spawn", return_value=spawn_context),
         patch(
-            "gobby.agents.spawn_executor.prepare_sandbox_launch",
+            "gobby.agents.spawn_executor_providers.prepare_sandbox_launch",
             return_value=launch,
         ) as prepare_launch,
-        patch("gobby.agents.spawn_executor._record_resume_launch_details"),
-        patch("gobby.agents.spawn_executor._tmux_spawner_for_request", return_value=spawner),
-        patch("gobby.agents.spawn_executor.pre_approve_directory"),
+        patch("gobby.agents.spawn_executor_providers._record_resume_launch_details"),
+        patch("gobby.agents.spawn_executor_providers.pre_approve_directory"),
     ):
+        request.prepared_spawn = cast("PreparedSpawn", spawn_context)
         result = await execute_spawn(request)
 
     assert result.success is True
     prepare_launch.assert_awaited_once()
     assert prepare_launch.call_args.kwargs["resolver"] is None
-    spawn_kwargs = spawner.spawn.call_args.kwargs
+    from tests.agents.test_spawn_executor import _spawn_kwargs
+
+    spawn_kwargs = _spawn_kwargs(request)
     command = spawn_kwargs["command"]
     assert command[:7] == [
         "/managed/node",
@@ -202,22 +215,21 @@ async def test_srt_preflight_failure_prevents_tmux_spawn() -> None:
             agent_run_id="actual-run",
             env_vars={"GOBBY_SESSION_ID": "child"},
         ),
+        terminal_backend="tmux",
     )
     spawn_context = SimpleNamespace(
         session_id="child",
         agent_run_id="actual-run",
         env_vars={"GOBBY_SESSION_ID": "child"},
     )
-    spawner = MagicMock()
 
     with (
         patch("gobby.agents.spawn_executor.shutil.which", return_value="/usr/local/bin/droid"),
         patch("gobby.agents.spawn_executor.prepare_terminal_spawn", return_value=spawn_context),
         patch(
-            "gobby.agents.spawn_executor.prepare_sandbox_launch",
+            "gobby.agents.spawn_executor_providers.prepare_sandbox_launch",
             side_effect=SrtRuntimeError("invalid policy"),
         ),
-        patch("gobby.agents.spawn_executor._tmux_spawner_for_request", return_value=spawner),
     ):
         result = await execute_spawn(request)
 
@@ -228,4 +240,6 @@ async def test_srt_preflight_failure_prevents_tmux_spawn() -> None:
         "actual-run",
         "Sandbox startup failed closed for droid: invalid policy",
     )
-    spawner.spawn.assert_not_called()
+    from tests.agents.test_spawn_executor import _runtime_of
+
+    assert _runtime_of(request).last_request is None

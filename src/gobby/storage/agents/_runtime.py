@@ -156,11 +156,11 @@ class _AgentRunRuntimeMixin:
         run_id: str,
         *,
         pid: int | None = _UNSET,
-        tmux_session_name: str | None = None,
+        terminal_id: str | None = None,
         worktree_id: str | None = None,
         clone_id: str | None = None,
     ) -> None:
-        """Persist runtime state for an agent run (pid, tmux session, mode, isolation).
+        """Persist runtime state for an agent run (pid, terminal row, isolation).
 
         Only updates fields that are provided. Pass ``pid=None`` to clear the PID.
         """
@@ -170,9 +170,9 @@ class _AgentRunRuntimeMixin:
         if pid is not _UNSET:
             updates.append("pid = %s")
             params.append(pid)
-        if tmux_session_name is not None:
-            updates.append("tmux_session_name = %s")
-            params.append(tmux_session_name)
+        if terminal_id is not None:
+            updates.append("terminal_id = %s")
+            params.append(terminal_id)
         if worktree_id is not None:
             updates.append("worktree_id = %s")
             params.append(worktree_id)
@@ -193,22 +193,35 @@ class _AgentRunRuntimeMixin:
             tuple(params),
         )
 
-    def clear_tmux_session_name(
+    def clear_live_terminal(
         self: _AgentRunRuntimeHost,
         run_id: str,
-        tmux_session_name: str,
+        terminal_id: str,
     ) -> bool:
-        """Clear persisted tmux identity and its pane PID if the session still matches."""
+        """Exit the linked terminal when it still matches, and clear the pane PID."""
         now = utc_now()
-        cursor = self.db.execute(
-            """
-            UPDATE agent_runs
-            SET tmux_session_name = NULL, pid = NULL, updated_at = %s
-            WHERE id = %s AND tmux_session_name = %s
-            """,
-            (now, run_id, tmux_session_name),
-        )
-        return bool(_positive_rowcount(cursor))
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE terminals
+                SET state = 'exited', updated_at = %s
+                WHERE id = %s
+                  AND state IN ('pending', 'live', 'orphaned')
+                  AND id = (SELECT terminal_id FROM agent_runs WHERE id = %s)
+                """,
+                (now, terminal_id, run_id),
+            )
+            if not _positive_rowcount(cursor):
+                return False
+            conn.execute(
+                """
+                UPDATE agent_runs
+                SET pid = NULL, updated_at = %s
+                WHERE id = %s AND terminal_id = %s
+                """,
+                (now, run_id, terminal_id),
+            )
+        return True
 
     def update_child_session(
         self: _AgentRunRuntimeHost,

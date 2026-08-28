@@ -146,8 +146,8 @@ already-created registry continue to use the live per-epoch configuration contra
 | session_summary.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | projects-sessions |  |
 | session_summary.prompt | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | projects-sessions |  |
 | session_summary.summary_file_path | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | projects-sessions |  |
-| compact_handoff.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | projects-sessions |  |
-| compact_handoff.refresh_timeout_seconds | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | projects-sessions |  |
+| compact_handoff.enabled | Retired with structured session handoffs (#21140); CompactHandoffConfig was deleted | (none — no surface) | retired | drop | (none) | removed from the runtime config contract; the Projects & Sessions section dropped its compact-handoff rows (#21140) |
+| compact_handoff.refresh_timeout_seconds | Retired with structured session handoffs (#21140); CompactHandoffConfig was deleted | (none — no surface) | retired | drop | (none) | removed from the runtime config contract (#21140) |
 | context_injection.enabled | (removed) | (removed) | dead | drop | (none) | removed in #19400 — dead ContextInjectionConfig group; parsed but never consumed |
 | context_injection.default_source | (removed) | (removed) | dead | drop | (none) | removed in #19400 — dead ContextInjectionConfig group; parsed but never consumed |
 | context_injection.max_file_size | (removed) | (removed) | dead | drop | (none) | removed in #19400 — dead ContextInjectionConfig group; parsed but never consumed |
@@ -215,10 +215,10 @@ already-created registry continue to use the live per-epoch configuration contra
 | communications.inbound_enabled | (removed) | (removed) | dead | drop | (none) | removed in #19400 — dead toggle; no runtime consumer |
 | communications.outbound_enabled | (removed) | (removed) | dead | drop | (none) | removed in #19400 — dead toggle; no runtime consumer |
 | communications.auto_create_sessions | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | integrations-hooks |  |
-| digest.profile | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField select | live | keep | runtime-infrastructure |  |
-| digest.candidates | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for array | mismatched-type | fix | runtime-infrastructure | array items=string map= |
-| digest.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | runtime-infrastructure |  |
-| digest.timeout | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
+| digest.profile | Retired with the rolling digest (#21140); DigestConfig was deleted | (none — no surface) | retired | drop | (none) | removed from the runtime config contract (#21140) |
+| digest.candidates | Retired with the rolling digest (#21140); DigestConfig was deleted | (none — no surface) | retired | drop | (none) | removed from the runtime config contract (#21140) |
+| digest.enabled | Retired with the rolling digest (#21140); DigestConfig was deleted | (none — no surface) | retired | drop | (none) | removed from the runtime config contract (#21140) |
+| digest.timeout | Retired with the rolling digest (#21140); DigestConfig was deleted | (none — no surface) | retired | drop | (none) | removed from the runtime config contract (#21140) |
 | memory_recall.profile | Retired with automatic recall injection (#21009); MemoryRecallConfig was deleted | (none — no surface) | retired | drop | (none) | removed from the runtime config contract; the settings section dropped its Recall group (#21022) |
 | memory_recall.candidates | Retired with automatic recall injection (#21009); MemoryRecallConfig was deleted | (none — no surface) | retired | drop | (none) | removed from the runtime config contract (#21022) |
 | memory_recall.enabled | Retired with automatic recall injection (#21009); MemoryRecallConfig was deleted | (none — no surface) | retired | drop | (none) | removed from the runtime config contract (#21022) |
@@ -488,7 +488,6 @@ These are the rows that P13 must either fix before/while building the overlay or
 | web_chat_sandbox.extra_write_paths | ConfigFormTab -> SchemaField text input fallback for array | runtime-infrastructure |
 | agent_sandbox.extra_read_paths | ConfigFormTab -> SchemaField text input fallback for array | runtime-infrastructure |
 | agent_sandbox.extra_write_paths | ConfigFormTab -> SchemaField text input fallback for array | runtime-infrastructure |
-| digest.candidates | ConfigFormTab -> SchemaField text input fallback for array | runtime-infrastructure |
 | recommend_tools.candidates | ConfigFormTab -> SchemaField text input fallback for array | providers-models |
 | tool_summarizer.candidates | ConfigFormTab -> SchemaField text input fallback for array | providers-models |
 | import_mcp_server.candidates | ConfigFormTab -> SchemaField text input fallback for array | providers-models |

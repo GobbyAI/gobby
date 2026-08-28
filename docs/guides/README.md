@@ -109,6 +109,7 @@ links to the guide that owns that topic.
 | [gcore-development-guide.md](gcore-development-guide.md) | `gobby-core` shared foundation crate internals |
 | [ghook-development-guide.md](ghook-development-guide.md) | `ghook` hook-dispatch implementation details |
 | [gwiki-development-guide.md](gwiki-development-guide.md) | `gwiki` research and knowledge-vault CLI internals |
+| [gterminal-development-guide.md](gterminal-development-guide.md) | `gterm` / `gclient` build, protocols, and rebuild-and-reinstall |
 
 ## Writing Specifications
 

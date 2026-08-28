@@ -75,6 +75,7 @@ async def execute_spawn_action(
                 db=db,
                 error=f"artifact persistence failed after spawn: {exc}",
                 completion_registry=getattr(services, "completion_registry", None),
+                terminal_services=getattr(services, "terminal_services", None),
                 cleanup_unattached_spawned_run=cleanup_unattached_spawned_run,
                 quarantine_unterminated_spawned_run=quarantine_unterminated_spawned_run,
             )
@@ -99,6 +100,7 @@ async def execute_spawn_action(
                 db=db,
                 error=f"dispatch mutex attach failed: {exc}",
                 completion_registry=getattr(services, "completion_registry", None),
+                terminal_services=getattr(services, "terminal_services", None),
                 cleanup_unattached_spawned_run=cleanup_unattached_spawned_run,
                 quarantine_unterminated_spawned_run=quarantine_unterminated_spawned_run,
             )
@@ -123,6 +125,7 @@ async def execute_spawn_action(
                 db=db,
                 error=error,
                 completion_registry=getattr(services, "completion_registry", None),
+                terminal_services=getattr(services, "terminal_services", None),
                 cleanup_unattached_spawned_run=cleanup_unattached_spawned_run,
                 quarantine_unterminated_spawned_run=quarantine_unterminated_spawned_run,
             )
@@ -142,6 +145,7 @@ async def _cleanup_or_quarantine_spawned_run(
     db: HubDatabase,
     error: str,
     completion_registry: Any | None,
+    terminal_services: Any | None,
     cleanup_unattached_spawned_run: AsyncCallback,
     quarantine_unterminated_spawned_run: AsyncCallback,
 ) -> bool:
@@ -155,6 +159,7 @@ async def _cleanup_or_quarantine_spawned_run(
                     db=db,
                     error=error,
                     completion_registry=completion_registry,
+                    terminal_services=terminal_services,
                 )
             )
         except asyncio.CancelledError:
@@ -197,6 +202,7 @@ async def cleanup_unattached_spawned_run(
     db: HubDatabase,
     error: str,
     completion_registry: Any | None = None,
+    terminal_services: Any | None = None,
 ) -> bool:
     run_storage = LocalAgentRunManager(db)
 
@@ -209,7 +215,9 @@ async def cleanup_unattached_spawned_run(
             try:
                 from gobby.agents.kill import kill_agent
 
-                result = await kill_agent(run, db, close_terminal=True)
+                result = await kill_agent(
+                    run, db, close_terminal=True, terminal_services=terminal_services
+                )
             except Exception:
                 logger.exception(
                     "Failed to terminate unattached spawned agent run %s",

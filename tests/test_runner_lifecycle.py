@@ -17,6 +17,7 @@ import pytest
 import gobby.runner_lifecycle as runner_lifecycle
 import gobby.runner_lifecycle_agents as runner_lifecycle_agents
 import gobby.runner_lifecycle_processes as runner_lifecycle_processes
+import gobby.runner_lifecycle_reconcile as runner_lifecycle_reconcile
 import gobby.runner_lifecycle_shutdown as runner_lifecycle_shutdown
 import gobby.runner_lifecycle_subsystems as runner_lifecycle_subsystems
 from gobby.agents.readiness import spawn_readiness_blocker
@@ -66,6 +67,7 @@ def test_pipeline_heartbeat_without_startup_project_is_cross_project(
         db_executor=SimpleNamespace(run=AsyncMock()),
         task_manager=MagicMock(),
         session_manager=MagicMock(),
+        managed_credential_manager=None,
         project_id=None,
     )
 
@@ -400,7 +402,7 @@ class TestInitSubsystems:
             ]
         )
 
-        class RunnerStub:
+        class RunnerStub(SimpleNamespace):
             pass
 
         runner = RunnerStub()
@@ -421,6 +423,7 @@ class TestInitSubsystems:
         runner.session_manager = None
         runner.task_manager = object()
         runner.span_storage = None
+        runner.managed_credential_manager = None
         runner.memory_backup_manager = None
         runner.memory_manager = None
         runner.memory_dream_coordinator = None
@@ -452,7 +455,10 @@ class TestInitSubsystems:
         runner.skill_manager = None
         runner.hub_manager = None
         runner.config_store = None
-        runner.config_runtime = SimpleNamespace(capture=static_runtime_capture(config))
+        runner.config_runtime = SimpleNamespace(
+            capture=static_runtime_capture(config),
+            register_revision_publisher=MagicMock(),
+        )
         runner.prompt_manager = None
         runner.tool_chat_service = None
         runner._dev_mode = False
@@ -3014,6 +3020,11 @@ class TestAgentEventBroadcastingCallback:
         mock_ws_server = MagicMock()
         mock_ws_server.broadcast_agent_event = AsyncMock(side_effect=wait_for_release)
         mock_ws_server.broadcast_tmux_session_event = AsyncMock(side_effect=wait_for_release)
+        # The reader attaches by the terminal row's session name, resolved
+        # through the websocket server's terminal manager.
+        mock_ws_server.terminal_manager.get.return_value = SimpleNamespace(
+            session_name="agent-run-123", spawn_key=None
+        )
 
         mock_pty_manager = MagicMock()
         mock_pty_manager.stop_reader = AsyncMock(side_effect=wait_for_release)
@@ -3040,8 +3051,11 @@ class TestAgentEventBroadcastingCallback:
             fire_agent_event(
                 event_type,
                 "run-123",
-                {"tmux_session_name": "agent-run-123"},
+                {"terminal_id": "terminal-123"},
             )
+            # Only a start resolves the attach name; a kill broadcasts by terminal id.
+            expected_lookups = [call("terminal-123")] if event_type == "agent_started" else []
+            assert mock_ws_server.terminal_manager.get.call_args_list == expected_lookups
 
             scheduled_tasks = rb._agent_broadcast_tasks - tasks_before
             assert len(scheduled_tasks) == expected_task_count
@@ -3592,7 +3606,12 @@ class TestShutdownLoop:
                     new=AsyncMock(side_effect=RuntimeError("readiness failed")),
                 )
             )
-            rollback = stack.enter_context(patch("gobby.runner_rollback.rollback_runner_resources"))
+            rollback = stack.enter_context(
+                patch(
+                    "gobby.runner_rollback.rollback_runner_resources_async",
+                    new=AsyncMock(),
+                )
+            )
             stack.enter_context(patch("gobby.runner_maintenance.setup_signal_handlers"))
             stack.enter_context(patch("gobby.runner_maintenance.cleanup_pid_file"))
 
@@ -3604,7 +3623,7 @@ class TestShutdownLoop:
 
             assert exc_info.value.code == 1
             readiness.assert_awaited_once_with(runner)
-            rollback.assert_called_once_with(runner)
+            rollback.assert_awaited_once_with(runner)
 
     @pytest.mark.asyncio
     async def test_web_chat_runtime_starts_after_http_bind(self, mock_config) -> None:
@@ -4571,28 +4590,28 @@ class TestAgentRestartRecoveryHelpers:
         suffixed_b = SimpleNamespace(name="wf-agent-bbbb2222")
 
         assert (
-            runner_lifecycle_agents._find_live_tmux_by_planned_name(
+            runner_lifecycle_reconcile._find_live_tmux_by_planned_name(
                 {"wf-agent": exact, "wf-agent-aaaa1111": suffixed_a},
                 "wf-agent",
             )
             is exact
         )
         assert (
-            runner_lifecycle_agents._find_live_tmux_by_planned_name(
+            runner_lifecycle_reconcile._find_live_tmux_by_planned_name(
                 {"wf-agent-aaaa1111": suffixed_a},
                 "wf-agent",
             )
             is suffixed_a
         )
         assert (
-            runner_lifecycle_agents._find_live_tmux_by_planned_name(
+            runner_lifecycle_reconcile._find_live_tmux_by_planned_name(
                 {"wf-agent-bbbb2222": suffixed_b, "wf-agent-aaaa1111": suffixed_a},
                 "wf-agent",
             )
             is suffixed_a
         )
         assert (
-            runner_lifecycle_agents._find_live_tmux_by_planned_name(
+            runner_lifecycle_reconcile._find_live_tmux_by_planned_name(
                 {"other-session": exact, "wf-agent2-aaaa1111": suffixed_a},
                 "wf-agent",
             )

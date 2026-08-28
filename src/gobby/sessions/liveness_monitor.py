@@ -24,7 +24,6 @@ from typing import TYPE_CHECKING, Any
 from gobby.agents.tmux.session_manager import TmuxReleaseOutcome
 from gobby.config.tmux import TmuxConfig
 from gobby.sessions.tmux_context import (
-    get_tmux_manager_for_context,
     get_tmux_session_name,
     get_tmux_socket_name,
     get_tmux_window_id,
@@ -38,6 +37,7 @@ from gobby.terminal_ownership import (
     resolve_pane_ownership,
     terminal_session_identity,
 )
+from gobby.terminals.lookup import manager_for_terminal_context
 from gobby.utils.logging import ThrottledLogger
 
 if TYPE_CHECKING:
@@ -111,6 +111,7 @@ class SessionLivenessMonitor:
         message_processor_resolver: Callable[[], SessionMessageProcessor | None] | None = None,
         poll_interval: float = _DEFAULT_POLL_INTERVAL,
         tmux_config: TmuxConfig | None = None,
+        terminal_manager: Any | None = None,
     ) -> None:
         self._session_manager = session_storage
         self._dispatch_summaries_fn = dispatch_summaries_fn
@@ -118,6 +119,7 @@ class SessionLivenessMonitor:
         self._message_processor_resolver = message_processor_resolver or (lambda: None)
         self._poll_interval = poll_interval
         self._tmux_config = tmux_config
+        self.terminal_manager = terminal_manager
         self._task: asyncio.Task[None] | None = None
         # session_id -> monotonic timestamp when we handled it
         self._recently_handled: dict[str, float] = {}
@@ -287,7 +289,7 @@ class SessionLivenessMonitor:
         target = record.tmux_pane or record.tmux_window_id
         if context is None or target is None:
             return
-        manager = get_tmux_manager_for_context(context)
+        manager = manager_for_terminal_context(context)
         for _attempt in range(2):
             try:
                 outcome = await manager.release_window_title_ownership(target)
@@ -579,6 +581,19 @@ class SessionLivenessMonitor:
             return False
         if expired_session is None:
             return False
+
+        manager = self.terminal_manager
+        if manager is not None:
+            try:
+                row = manager.get_live_for_session(session_id)
+                if row is not None:
+                    manager.mark_exited(row.id)
+            except Exception:
+                logger.warning(
+                    "SessionLivenessMonitor: failed to CAS terminal for session %s",
+                    session_id,
+                    exc_info=True,
+                )
 
         if self._dispatch_summaries_fn:
             try:

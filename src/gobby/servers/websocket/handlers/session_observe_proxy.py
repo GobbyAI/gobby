@@ -356,8 +356,8 @@ async def handle_send_to_cli_session(
 
     if tmux_pane:
         try:
-            tmux_manager = _observe_facade().get_tmux_manager_for_context(ctx)
-            ok = await tmux_manager.send_keys(tmux_pane, content + "\n")
+            tmux_manager = _observe_facade().manager_for_terminal_context(ctx)
+            ok = await tmux_manager.dispatch_keys(tmux_pane, content + "\n")
             if ok:
                 delivered_via_tmux = True
                 # Mark as delivered

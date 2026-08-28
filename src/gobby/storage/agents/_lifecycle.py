@@ -50,6 +50,19 @@ def _execute_terminal_transition(
         cursor = txn.execute(sql, params)
         if not _positive_rowcount(cursor):
             return None
+        now = utc_now()
+        txn.execute(
+            """
+            UPDATE terminals
+            SET state = 'exited',
+                updated_at = %s,
+                automatic_write_quarantined_at = NULL,
+                automatic_write_quarantine_action_key = NULL
+            WHERE id = (SELECT terminal_id FROM agent_runs WHERE id = %s)
+              AND state IN ('pending', 'live', 'orphaned')
+            """,
+            (now, run_id),
+        )
         updated_run = host.get(run_id)
         if updated_run is None:
             return None
@@ -315,7 +328,6 @@ class _AgentRunLifecycleMixin:
                 pending_terminal_reason = NULL,
                 termination_requested_at = NULL,
                 pid = NULL,
-                tmux_session_name = NULL,
                 tool_calls_count = %s,
                 turns_used = %s,
                 completed_at = %s,
@@ -360,7 +372,6 @@ class _AgentRunLifecycleMixin:
                 pending_terminal_reason = NULL,
                 termination_requested_at = NULL,
                 pid = NULL,
-                tmux_session_name = NULL,
                 tool_calls_count = %s,
                 turns_used = %s,
                 completed_at = %s,
@@ -394,7 +405,6 @@ class _AgentRunLifecycleMixin:
                 pending_terminal_reason = NULL,
                 termination_requested_at = NULL,
                 pid = NULL,
-                tmux_session_name = NULL,
                 tool_calls_count = %s,
                 turns_used = %s,
                 completed_at = %s,
@@ -426,7 +436,6 @@ class _AgentRunLifecycleMixin:
                 pending_terminal_reason = NULL,
                 termination_requested_at = NULL,
                 pid = NULL,
-                tmux_session_name = NULL,
                 completed_at = %s,
                 updated_at = %s
             WHERE id = %s

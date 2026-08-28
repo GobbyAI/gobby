@@ -339,6 +339,12 @@ class CronExecutor:
         # Spawn agent via spawn_agent_impl (all agents go through tmux)
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
+        daemon_config = getattr(self.services, "config", None) or getattr(
+            self.agent_runner, "config", None
+        )
+        from gobby.agents.spawn_models import resolve_terminal_backend
+
+        scheduled_backend = resolve_terminal_backend(None, daemon_config)
         result = await spawn_agent_impl(
             prompt=prompt,
             runner=self.agent_runner,
@@ -349,6 +355,8 @@ class CronExecutor:
             session_manager=getattr(self.agent_runner, "child_session_manager", None),
             db=self.storage.db,
             completion_registry=getattr(self.services, "completion_registry", None),
+            daemon_config=daemon_config,
+            terminal_backend=scheduled_backend,
         )
 
         if result.get("success") is True:

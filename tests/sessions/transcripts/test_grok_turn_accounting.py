@@ -8,7 +8,6 @@ from typing import Any, cast
 
 import pytest
 
-from gobby.memory.synthetic_prompts import synthetic_body_reason
 from gobby.sessions.message_stats import MessageProtocol, compute_message_stats
 from gobby.sessions.transcripts.base import (
     NON_MESSAGE_CONTENT_TYPES,
@@ -128,14 +127,6 @@ def test_10715_marathon_shape() -> None:
     _assert_10715_marathon_shape()
 
 
-def test_10725_all_synthetic() -> None:
-    _assert_10725_all_synthetic()
-
-
-def test_10711_real_prompt_count() -> None:
-    _assert_10711_real_prompt_count()
-
-
 def _assert_real_envelope(line: str) -> dict[str, Any]:
     record = json.loads(line)
     assert isinstance(record, dict)
@@ -214,26 +205,6 @@ def _assert_10715_marathon_shape() -> None:
         if _update_type(record) == "turn_completed" and "usage" not in _update(record)
     ]
     assert len(local_command) == 1
-
-
-def _assert_10725_all_synthetic() -> None:
-    records = [_assert_real_envelope(line) for line in session_10725_shape()]
-    prompts = [
-        _text(_update(record)) for record in records if _update_type(record) == "user_message_chunk"
-    ]
-    assert prompts
-    assert all(synthetic_body_reason(prompt) is not None for prompt in prompts)
-    assert synthetic_body_reason(prompts[0]) == "daemon_wake_prompt"
-    assert all(synthetic_body_reason(prompt) == "wait_directive" for prompt in prompts[1:])
-
-
-def _assert_10711_real_prompt_count() -> None:
-    records = [_assert_real_envelope(line) for line in session_10711_shape()]
-    prompts = [
-        _text(_update(record)) for record in records if _update_type(record) == "user_message_chunk"
-    ]
-    real = [prompt for prompt in prompts if synthetic_body_reason(prompt) is None]
-    assert len(real) == 5
 
 
 def _is_unknown_sentinel(message: ParsedMessage) -> bool:

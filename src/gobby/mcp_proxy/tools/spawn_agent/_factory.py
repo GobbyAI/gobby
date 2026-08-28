@@ -327,6 +327,7 @@ def create_spawn_agent_registry(
         parent_session_id: str | None = None,
         project_path: str | None = None,
         notify_parent_on_completion: bool = True,
+        terminal_backend: Literal["tmux", "native"] | None = None,
     ) -> dict[str, Any]:
         """
                 Spawn a subagent with the specified configuration.
@@ -552,6 +553,7 @@ def create_spawn_agent_registry(
             completion_registry=completion_registry,
             daemon_config=config_resolver() if config_resolver is not None else None,
             code_index=code_index,
+            terminal_backend=terminal_backend,
         )
 
         # Auto-subscribe the declared parent session to agent completion events.

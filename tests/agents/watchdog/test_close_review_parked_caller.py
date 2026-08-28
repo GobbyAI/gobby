@@ -45,12 +45,11 @@ from gobby.utils.session_context import (
 )
 from tests.agents.test_lifecycle_monitor import (
     DETECTION_REGISTRY,
-    TerminalWakeRecorder,
-    _local_machine_identity,  # noqa: F401  # autouse fixture re-export
+    _fake_terminal_services,
     _make_terminal_run,
+    _pane_text,
     _rid,
-    agent_run_manager,  # noqa: F401  # fixture re-export
-    sample_session,  # noqa: F401  # fixture re-export
+    _runtime_of,
 )
 
 pytestmark = pytest.mark.unit
@@ -104,12 +103,13 @@ class _Harness:
             tmux_config=TmuxConfig(
                 idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
             ),
+            terminal_services=_fake_terminal_services(temp_db),
         )
         self.caller_run = _make_terminal_run(
             runs,
             session,
             run_id=_rid("run-close-review-caller"),
-            tmux_session_name="gobby-close-review-caller",
+            terminal_id="gobby-close-review-caller",
             child_session_id=self.caller_session,
         )
         self.spawned: list[str] = []
@@ -260,14 +260,10 @@ class _Harness:
     async def watchdogs_tick(self) -> tuple[int, int, list[str], int]:
         """Run both watchdogs against a bare prompt; return (idle, stuck, keys, cleanups)."""
         self.age_idle_state()
+        runtime = _runtime_of(self.monitor)
+        runtime.write_log.clear()
         with (
-            patch.object(
-                self.monitor._tmux,
-                "capture_pane",
-                new_callable=AsyncMock,
-                return_value=PROMPT_PANE,
-            ),
-            patch.object(self.monitor._tmux, "send_keys", new=TerminalWakeRecorder()) as wake,
+            _pane_text(self.monitor, PROMPT_PANE),
             patch.object(
                 self.monitor._cleanup_handler, "cleanup_agent", new_callable=AsyncMock
             ) as cleanup_agent,
@@ -277,18 +273,18 @@ class _Harness:
         return (
             idle,
             stuck,
-            [keys for _session, keys, _literal in wake.calls],
+            [payload for _kind, payload in runtime.write_log],
             cleanup_agent.await_count,
         )
 
 
 @pytest.fixture
 def harness(
-    agent_run_manager: LocalAgentRunManager,  # noqa: F811
+    agent_run_manager: LocalAgentRunManager,
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
-    sample_session: dict[str, Any],  # noqa: F811
+    sample_session: dict[str, Any],
 ) -> _Harness:
     return _Harness(
         runs=agent_run_manager,
@@ -340,7 +336,7 @@ async def test_caller_parked_on_its_close_review_survives_until_the_verdict_land
     assert resolved["completed"] is True
     assert resolved["notification_registered"] is False
     idle, stuck, keys, cleanups = await harness.watchdogs_tick()
-    assert (idle, keys[:1]) == (1, ["Escape"])
+    assert (idle, keys[:1]) == (1, ["escape"])
     assert (stuck, cleanups) == (1, 1)
 
 

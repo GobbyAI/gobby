@@ -128,6 +128,9 @@ class WebSocketServer(
         self.hook_broadcaster: HookEventBroadcaster | None = None
         self.inter_session_msg_manager: InterSessionMessageManager | None = None
         self.web_chat_runtime_manager: Any | None = None
+        self.terminal_manager: Any | None = None
+        self.terminal_runtime_registry: Any | None = None
+        self.terminal_config: Any | None = None
 
         # Connected clients: {websocket: client_metadata}
         self.clients: dict[Any, dict[str, Any]] = {}
@@ -184,6 +187,19 @@ class WebSocketServer(
         self._server: Any = None
         self._serve_task: asyncio.Task[None] | None = None
         self._cleanup_task: asyncio.Task[None] | None = None
+
+    def configure_terminals(
+        self,
+        terminal_manager: Any,
+        runtime_registry: Any,
+        terminal_config: Any | None = None,
+        terminal_services: Any | None = None,
+    ) -> None:
+        """Attach composition-root terminal services after construction."""
+        self.terminal_manager = terminal_manager
+        self.terminal_runtime_registry = runtime_registry
+        self.terminal_config = terminal_config
+        self.terminal_services = terminal_services
 
     @property
     def daemon_config(self) -> DaemonConfig | None:
@@ -347,13 +363,17 @@ class WebSocketServer(
                 "stop_chat": self._handle_stop_chat,
                 "ask_user_response": self._handle_ask_user_response,
                 "tool_approval_response": self._handle_tool_approval_response,
-                "tmux_list_sessions": self._handle_tmux_list_sessions,
-                "tmux_attach": self._handle_tmux_attach,
-                "tmux_detach": self._handle_tmux_detach,
-                "tmux_create_session": self._handle_tmux_create_session,
-                "tmux_kill_session": self._handle_tmux_kill_session,
-                "tmux_resize": self._handle_tmux_resize,
-                "tmux_refresh_client": self._handle_tmux_refresh_client,
+                "terminal_list": self._handle_terminal_list,
+                "terminal_attach": self._handle_terminal_attach,
+                "terminal_detach": self._handle_terminal_detach,
+                "terminal_create": self._handle_terminal_create,
+                "terminal_kill": self._handle_terminal_kill,
+                "terminal_resize": self._handle_terminal_resize,
+                "terminal_take_control": self._handle_terminal_take_control,
+                "terminal_release_control": self._handle_terminal_release_control,
+                "terminal_set_viewport": self._handle_terminal_set_viewport,
+                "terminal_set_scroll_offset": self._handle_terminal_set_scroll_offset,
+                "terminal_paste": self._handle_terminal_paste,
                 "clear_chat": self._handle_clear_chat,
                 "delete_chat": self._handle_delete_chat,
                 "set_mode": self._handle_set_mode,

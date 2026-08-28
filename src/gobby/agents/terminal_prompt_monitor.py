@@ -81,6 +81,7 @@ class TerminalPromptMonitor:
         on_prompt_injected: Callable[[AgentRun], Awaitable[None]] | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         run_db: Callable[..., Awaitable[Any]] | None = None,
+        terminal_services: Any | None = None,
     ) -> None:
         self._get_active_terminal_runs = get_active_terminal_runs
         self._get_tmux = get_tmux
@@ -93,11 +94,33 @@ class TerminalPromptMonitor:
         self._last_enter_sent_at: dict[str, float] = {}
         self._last_loop_dismissed_at: dict[str, float] = {}
         self._run_db_callback = run_db
+        self._terminal_services = terminal_services
 
     async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._run_db_callback is None:
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self._run_db_callback(func, *args, **kwargs)
+
+    async def _pane_text(self, run: AgentRun, *, lines: int) -> str | None:
+        if self._terminal_services is None:
+            return None
+        snapshot = await self._terminal_services.snapshot(run, lines)
+        return None if snapshot is None else snapshot.text
+
+    async def _send_enter(self, run: AgentRun, action_key: str) -> bool:
+        from gobby.terminals.runtime import Delivered, IndeterminateWrite
+
+        if self._terminal_services is None:
+            return False
+        outcome = await self._terminal_services.write(
+            run,
+            action_key=action_key,
+            kind="key",
+            payload="enter",
+        )
+        if isinstance(outcome, IndeterminateWrite) or outcome is None:
+            return False
+        return isinstance(outcome, Delivered)
 
     def mark_enter_sent(self, run_id: str) -> None:
         """Record that this run just received an automatic terminal keypress."""
@@ -118,17 +141,10 @@ class TerminalPromptMonitor:
             if detector.was_dismissed(run.id):
                 continue
 
-            tmux_name = run.tmux_session_name
-            if tmux_name is None:
-                continue
-
             try:
-                pane_output = await self._get_tmux().capture_pane(tmux_name, lines=15)
+                pane_output = await self._pane_text(run, lines=15)
                 if pane_output and detector.detect_trust_prompt(pane_output):
-                    sent = await self._get_tmux().send_keys(
-                        tmux_name,
-                        PromptDetector.TRUST_DISMISS_KEYS,
-                    )
+                    sent = await self._send_enter(run, f"trust-dismiss:{run.id}")
                     if sent:
                         self.mark_enter_sent(run.id)
                         detector.mark_dismissed(run.id)
@@ -142,7 +158,7 @@ class TerminalPromptMonitor:
                 _log_prompt_probe_error(
                     operation="trust",
                     run_id=run.id,
-                    tmux_target=tmux_name,
+                    tmux_target=run.terminal_id or run.id,
                     error=e,
                 )
 
@@ -155,12 +171,8 @@ class TerminalPromptMonitor:
         handled = 0
         for run in runs:
             detector = self._prompt_detector.for_provider(run.provider)
-            tmux_name = run.tmux_session_name
-            if tmux_name is None:
-                continue
-
             try:
-                pane_output = await self._get_tmux().capture_pane(tmux_name, lines=15)
+                pane_output = await self._pane_text(run, lines=15)
                 if not pane_output or not detector.detect_loop_prompt(pane_output):
                     continue
                 if detector.was_loop_prompt_dismissed(run.id, pane_output):
@@ -174,10 +186,22 @@ class TerminalPromptMonitor:
                 ):
                     continue
 
-                sent = await self._get_tmux().send_keys(
-                    tmux_name,
-                    PromptDetector.LOOP_DISMISS_KEYS,
+                from gobby.terminals.runtime import Delivered, IndeterminateWrite
+
+                outcome = (
+                    None
+                    if self._terminal_services is None
+                    else await self._terminal_services.write(
+                        run,
+                        action_key=f"loop-dismiss:{run.id}",
+                        kind="text",
+                        payload="y",
+                        submit=True,
+                    )
                 )
+                sent = isinstance(outcome, Delivered)
+                if isinstance(outcome, IndeterminateWrite):
+                    continue
                 if not sent:
                     continue
 
@@ -205,7 +229,7 @@ class TerminalPromptMonitor:
                 _log_prompt_probe_error(
                     operation="loop",
                     run_id=run.id,
-                    tmux_target=tmux_name,
+                    tmux_target=run.terminal_id or run.id,
                     error=e,
                 )
 
@@ -221,22 +245,14 @@ class TerminalPromptMonitor:
         handled = 0
         for run in runs:
             detector = self._prompt_detector.for_provider(run.provider)
-            tmux_name = run.tmux_session_name
-            if tmux_name is None:
-                continue
-
             try:
-                pane_output = await self._get_tmux().capture_pane(tmux_name, lines=15)
+                pane_output = await self._pane_text(run, lines=15)
                 if not pane_output or not detector.detect_approval_prompt(pane_output):
                     continue
                 if detector.was_approval_prompt_dismissed(run.id, pane_output):
                     continue
 
-                sent = await self._get_tmux().send_keys(
-                    tmux_name,
-                    PromptDetector.ENTER_KEY,
-                    literal=False,
-                )
+                sent = await self._send_enter(run, f"approval-enter:{run.id}")
                 if sent:
                     self.mark_enter_sent(run.id)
                     detector.mark_approval_prompt_dismissed(run.id, pane_output)
@@ -247,7 +263,7 @@ class TerminalPromptMonitor:
                 _log_prompt_probe_error(
                     operation="approval",
                     run_id=run.id,
-                    tmux_target=tmux_name,
+                    tmux_target=run.terminal_id or run.id,
                     error=e,
                 )
 
@@ -268,12 +284,8 @@ class TerminalPromptMonitor:
 
         for run in runs:
             detector = self._prompt_detector.for_provider(run.provider)
-            tmux_name = run.tmux_session_name
-            if tmux_name is None:
-                continue
-
             try:
-                pane_output = await self._get_tmux().capture_pane(tmux_name, lines=30)
+                pane_output = await self._pane_text(run, lines=30)
                 if not pane_output:
                     continue
                 if not detector.detect_queued_continuation_prompt(pane_output):
@@ -288,7 +300,7 @@ class TerminalPromptMonitor:
                 _log_prompt_probe_error(
                     operation="queued-continuation",
                     run_id=run.id,
-                    tmux_target=tmux_name,
+                    tmux_target=run.terminal_id or run.id,
                     error=e,
                 )
         return 0
@@ -306,16 +318,12 @@ class TerminalPromptMonitor:
         handled = 0
         for run in runs:
             detector = self._prompt_detector.for_provider(run.provider)
-            tmux_name = run.tmux_session_name
-            if tmux_name is None:
-                continue
-
             last_sent = self._last_enter_sent_at.get(run.id)
             if last_sent is not None and now - last_sent < interval:
                 continue
 
             try:
-                pane_output = await self._get_tmux().capture_pane(tmux_name, lines=15)
+                pane_output = await self._pane_text(run, lines=15)
                 if pane_output is None:
                     pane_output = ""
                 if self._should_skip_periodic_enter_for_dialog(pane_output, config, detector):
@@ -325,11 +333,7 @@ class TerminalPromptMonitor:
                     )
                     continue
 
-                sent = await self._get_tmux().send_keys(
-                    tmux_name,
-                    PromptDetector.ENTER_KEY,
-                    literal=False,
-                )
+                sent = await self._send_enter(run, f"periodic-enter:{run.id}")
                 if sent:
                     self._last_enter_sent_at[run.id] = now
                     logger.debug("Sent periodic Enter to agent terminal %s", run.id)
@@ -338,7 +342,7 @@ class TerminalPromptMonitor:
                 _log_prompt_probe_error(
                     operation="periodic-enter",
                     run_id=run.id,
-                    tmux_target=tmux_name,
+                    tmux_target=run.terminal_id or run.id,
                     error=e,
                 )
 

@@ -251,6 +251,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
             "../../assets/schema/migrations/410_normalize_session_feedback_constraints.sql"
         ),
     },
+    EmbeddedMigration {
+        version: 411,
+        filename: "411_terminals.sql",
+        checksum: "d70abddeec801fab9845861c18610efcb0ecb7b84b2eec9d27e78ac2ae5ed34a",
+        sql: include_str!("../../assets/schema/migrations/411_terminals.sql"),
+    },
 ];
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 

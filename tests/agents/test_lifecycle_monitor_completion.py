@@ -34,7 +34,7 @@ class TestCompletedRunIdleGuard:
         stale_run = MagicMock(
             id="run-123",
             status="running",
-            tmux_session_name="gobby-run-123",
+            terminal_id="gobby-run-123",
             child_session_id="child-123",
             parent_session_id="parent-123",
         )

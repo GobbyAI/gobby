@@ -38,10 +38,14 @@ from gobby.storage.managed_credential_types import (
     SecretStore,
     _CredentialDatabase,
     _row_value,
+    auth_schema_for,
+    resolve_auth_schema,
 )
 
 __all__ = [
     "AUTH_SCHEMA",
+    "auth_schema_for",
+    "resolve_auth_schema",
     "DAEMON_LEASE_DURATION",
     "MANAGED_EXECUTION_BOOTSTRAP_ENV",
     "MAX_ROLE_LIFETIME",
@@ -78,6 +82,14 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
         self._owns_database = owns_database
         self._interactive_grant_expiry: dict[InteractiveGrantExpiryKey, datetime] = {}
         self._grant_revocations: GrantRevocationSink | None = None
+        self._auth_schema: str | None = None
+
+    @property
+    def auth_schema(self) -> str:
+        """Per-hub agent-auth schema, resolved once from the connection's schema."""
+        if self._auth_schema is None:
+            self._auth_schema = resolve_auth_schema(self._database)
+        return self._auth_schema
 
     def bind_grant_revocations(self, sink: GrantRevocationSink) -> None:
         self._grant_revocations = sink
@@ -88,7 +100,7 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
 
     def heartbeat(self) -> None:
         row = self._database.fetchone(
-            f"SELECT {AUTH_SCHEMA}.heartbeat_daemon(%s, %s)",
+            f"SELECT {self.auth_schema}.heartbeat_daemon(%s, %s)",
             (self._machine_id, DAEMON_LEASE_DURATION),
         )
         if row is None:
@@ -112,7 +124,7 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
         try:
             if owner_kind == "tool_chat":
                 row = self._database.fetchone(
-                    f"""SELECT * FROM {AUTH_SCHEMA}.issue_tool_principal(
+                    f"""SELECT * FROM {self.auth_schema}.issue_tool_principal(
                         %s, %s, %s, %s, %s
                     )""",
                     (
@@ -125,7 +137,7 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
                 )
             else:
                 row = self._database.fetchone(
-                    f"""SELECT * FROM {AUTH_SCHEMA}.issue_principal(
+                    f"""SELECT * FROM {self.auth_schema}.issue_principal(
                         %s, %s, %s, %s, %s, %s, %s
                     )""",
                     (
@@ -187,7 +199,7 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
         generation: int | None = None
         try:
             row = self._database.fetchone(
-                f"""SELECT * FROM {AUTH_SCHEMA}.issue_maintenance_principal(
+                f"""SELECT * FROM {self.auth_schema}.issue_maintenance_principal(
                     %s, %s, %s, %s, %s, %s
                 )""",
                 (
@@ -246,7 +258,7 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
             deadline = time.monotonic() + REVOCATION_DRAIN_TIMEOUT_SECONDS
             while True:
                 row = self._database.fetchone(
-                    f"SELECT {AUTH_SCHEMA}.revoke_principal(%s, %s)",
+                    f"SELECT {self.auth_schema}.revoke_principal(%s, %s)",
                     (managed_execution_id, generation),
                 )
                 if row is None:
@@ -300,7 +312,7 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
         expires_at: datetime,
     ) -> ManagedToolCredential:
         resolved = self._database.fetchone(
-            f"SELECT * FROM {AUTH_SCHEMA}.resolve_tool_session(%s)",
+            f"SELECT * FROM {self.auth_schema}.resolve_tool_session(%s)",
             (session_id,),
         )
         if resolved is None:
@@ -326,7 +338,7 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
     def rotate_due(self) -> list[ManagedCredential]:
         self.heartbeat()
         due = self._database.fetchall(
-            f"SELECT * FROM {AUTH_SCHEMA}.principals_due_for_rotation(%s)",
+            f"SELECT * FROM {self.auth_schema}.principals_due_for_rotation(%s)",
             (self._machine_id,),
         )
         rotated_credentials: list[ManagedCredential] = []
@@ -339,7 +351,7 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
             successor_generation: int | None = None
             try:
                 row = self._database.fetchone(
-                    f"""SELECT * FROM {AUTH_SCHEMA}.rotate_principal_if_generation(
+                    f"""SELECT * FROM {self.auth_schema}.rotate_principal_if_generation(
                         %s, %s, %s, %s
                     )""",
                     (execution_id, predecessor_generation, expires_at, password),
@@ -372,7 +384,7 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
                         reason="rotation-rollback",
                     )
                     self._database.fetchone(
-                        f"SELECT {AUTH_SCHEMA}.cancel_principal_rotation(%s, %s, %s)",
+                        f"SELECT {self.auth_schema}.cancel_principal_rotation(%s, %s, %s)",
                         (execution_id, predecessor_generation, successor_generation),
                     )
                 raise CredentialIssuanceError("managed credential rotation failed") from error
@@ -389,7 +401,7 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
 
     def list_active(self) -> list[dict[str, object]]:
         """Return active scoped-role metadata without credential material."""
-        rows = self._database.fetchall(f"SELECT * FROM {AUTH_SCHEMA}.list_active_principals()")
+        rows = self._database.fetchall(f"SELECT * FROM {self.auth_schema}.list_active_principals()")
         results: list[dict[str, object]] = []
         for row in rows:
             expires_at = _row_value(row, "expires_at")
@@ -421,7 +433,7 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
         deadline = time.monotonic() + REVOCATION_DRAIN_TIMEOUT_SECONDS
         while True:
             row = self._database.fetchone(
-                f"SELECT {AUTH_SCHEMA}.reconcile_daemon(%s)",
+                f"SELECT {self.auth_schema}.reconcile_daemon(%s)",
                 (self._machine_id,),
             )
             if row is None:
@@ -450,7 +462,7 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
                     reason=retry[1],
                 )
             active = self._database.fetchone(
-                f"SELECT {AUTH_SCHEMA}.managed_execution_is_login_capable(%s)",
+                f"SELECT {self.auth_schema}.managed_execution_is_login_capable(%s)",
                 (execution_id,),
             )
             if active is not None and not bool(

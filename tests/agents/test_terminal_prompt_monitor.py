@@ -10,6 +10,10 @@ import pytest
 from gobby.agents.terminal_prompt_monitor import TerminalPromptMonitor
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun
+from gobby.terminals import TerminalRuntimeRegistry
+from gobby.terminals.services import TerminalServices
+from gobby.terminals.write_coordinator import WriteCoordinator
+from tests.terminals.fakes import FakeRuntime, MemoryTerminalStore, make_memory_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -23,7 +27,7 @@ def _run() -> AgentRun:
         status="running",
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
         updated_at=datetime(2026, 1, 1, tzinfo=UTC),
-        tmux_session_name="agent-run-1",
+        terminal_id="agent-run-1",
     )
 
 
@@ -37,18 +41,27 @@ async def test_prompt_callback_failure_preserves_successful_injection(
     detector.detect_trust_prompt.return_value = True
     prompt_detector = MagicMock()
     prompt_detector.for_provider.return_value = detector
-    tmux = MagicMock()
-    tmux.capture_pane = AsyncMock(return_value="trust prompt")
-    tmux.send_keys = AsyncMock(return_value=True)
+    terminal = make_memory_terminal(terminal_id="agent-run-1", session_name="agent-run-1")
+    store = MemoryTerminalStore(terminal)
+    runtime = FakeRuntime()
+    runtime.snapshot_text = "trust prompt"
+    registry = TerminalRuntimeRegistry()
+    registry.register(runtime)
+    services = TerminalServices(
+        manager=store,
+        registry=registry,
+        coordinator=WriteCoordinator(store, runtime),
+    )
     callback = AsyncMock(side_effect=RuntimeError("callback failed"))
     monitor = TerminalPromptMonitor(
         get_active_terminal_runs=lambda: [run],
-        get_tmux=lambda: tmux,
+        get_tmux=lambda: MagicMock(),
         prompt_detector=prompt_detector,
         loop_tracker=MagicMock(),
         get_tmux_config=TmuxConfig,
         handle_looping_agent=AsyncMock(),
         on_prompt_injected=callback,
+        terminal_services=services,
     )
 
     handled = await monitor.check_trust_prompts()

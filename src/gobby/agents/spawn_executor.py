@@ -1,65 +1,64 @@
-"""
-Unified Spawn Executor for Agent Spawning.
+"""Unified spawn executor: row-owning TerminalRuntime dispatch."""
 
-This module consolidates the spawn dispatch logic from agents.py, worktrees.py,
-and clones.py into a single executor. All agents spawn via tmux.
-"""
+from __future__ import annotations
 
+import asyncio
 import logging
 import shutil
 from dataclasses import replace
-from pathlib import Path
+from datetime import datetime
 from typing import TYPE_CHECKING
+from uuid import UUID, uuid4
 
-from gobby.agents.constants import (
-    GOBBY_AGENT_API_TOKEN,
-    GOBBY_AGENT_RUN_ID,
-    GOBBY_PROJECT_ID,
-    GOBBY_SESSION_ID,
-)
-from gobby.agents.isolation_code_index import ensure_isolation_code_index
-from gobby.agents.sandbox import get_sandbox_resolver
-from gobby.agents.spawn import (
-    PreparedSpawn,
-    build_cli_command,
-)
+from gobby.agents.sandbox import get_sandbox_resolver as get_sandbox_resolver
 from gobby.agents.spawn import (
     prepare_terminal_spawn as prepare_terminal_spawn,
 )
 from gobby.agents.spawn_cache_policy import (
     sandbox_config_for_spawn as _sandbox_config_for_spawn,
 )
+from gobby.agents.spawn_executor_providers import (
+    _CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS,
+    _NATIVE_SUBAGENT_RESEARCH_AGENTS,
+    ProviderSpawnPlan,
+    _prepare_managed_code_index,
+    prepare_claude_spawn,
+    prepare_codex_spawn,
+    prepare_droid_spawn,
+    prepare_grok_spawn,
+    prepare_qwen_spawn,
+)
 from gobby.agents.spawn_executor_support import (
     _CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC,
     _CODEX_PREAPPROVED_GOBBY_TOOLS,
     _apply_extra_env,
-    _codex_mcp_config_overrides,
-    _record_actual_sandbox_enforcement,
     _record_resume_launch_details,
-    _session_manager_validation_error,
-    _spawn_terminal,
     _unsupported_sandbox_request_error,
     schedule_codex_prompt_delivery,
 )
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult
-from gobby.agents.srt_runtime import (
-    SandboxLaunch,
-    SrtRuntimeError,
-    prepare_sandbox_launch,
-)
-from gobby.agents.trust import pre_approve_directory
+from gobby.agents.srt_runtime import SandboxLaunch
+from gobby.agents.trust import pre_approve_directory as pre_approve_directory
+from gobby.config.terminals import TerminalConfig
 from gobby.providers import AGY_UNAVAILABLE_REASON
 from gobby.providers.capabilities.apply import speed_result
+from gobby.storage.terminals import Terminal, TerminalManager, mint_terminal_id
+from gobby.terminals import TerminalRuntimeRegistry, UnregisteredBackendError
+from gobby.terminals.host_client import HostCommandError
+from gobby.terminals.runtime import (
+    CommitSpawnRefusedError,
+    TerminalRuntime,
+    TerminalSpawnFailed,
+    TerminalSpawnRequest,
+    can_reserve_observer,
+)
+from gobby.terminals.runtime import (
+    PreparedSpawn as RuntimePreparedSpawn,
+)
+from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
-    pass
-from gobby.agents.tmux.spawner import TmuxSpawner
-from gobby.config.tmux import TmuxConfig
-
-# Gobby-managed Claude agents must use Gobby's spawn/session controls. Native Claude
-# delegation bypasses project context, depth limits, sandbox metadata, and task ownership.
-_CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS = ["Workflow", "Task"]
-_NATIVE_SUBAGENT_RESEARCH_AGENTS = frozenset({"plan-adversary", "plan-adversary-taskless"})
+    from gobby.agents.tmux.session_manager import TmuxSessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -67,192 +66,77 @@ __all__ = [
     "SpawnRequest",
     "SpawnResult",
     "execute_spawn",
+    "reap_stale_pending_terminals",
+    "wrap_provider_command",
+    "_CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS",
+    "_CODEX_PREAPPROVED_GOBBY_TOOLS",
+    "_apply_extra_env",
+    "_prepare_managed_code_index",
+    "_record_resume_launch_details",
+    "_sandbox_config_for_spawn",
 ]
 
 _COMPAT_PRIVATE_EXPORTS = (
     _CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC,
     _CODEX_PREAPPROVED_GOBBY_TOOLS,
+    _CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS,
+    _prepare_managed_code_index,
+    _apply_extra_env,
+    _record_resume_launch_details,
+    _sandbox_config_for_spawn,
 )
 
 
-def _tmux_spawner_for_request(request: SpawnRequest) -> TmuxSpawner:
-    daemon_config = request.daemon_config
-    tmux_config = getattr(daemon_config, "tmux", None)
-    if not isinstance(tmux_config, TmuxConfig):
-        tmux_config = TmuxConfig()
-
-    return TmuxSpawner(config=tmux_config)
+def wrap_provider_command(launch: SandboxLaunch, command: list[str]) -> list[str]:
+    """Apply SRT wrap once, immediately before backend dispatch."""
+    return launch.wrap(command)
 
 
-async def _prepare_provider_sandbox(
+def derive_spawn_key(backend: str, terminal_id: str) -> str:
+    """Caller-owned backend identity. Native uses the UUID; tmux prefixes it."""
+    if backend == "native":
+        return terminal_id
+    return f"gobby-{terminal_id}"
+
+
+def resolve_terminal_services(
     request: SpawnRequest,
-    spawn_context: PreparedSpawn,
-    provider: str,
-    env: dict[str, str],
-) -> SandboxLaunch | SpawnResult:
-    config = _sandbox_config_for_spawn(request.sandbox_config, env)
-    if config is None:
-        launch = SandboxLaunch(backend="provider-native", enforced=False)
-        _record_actual_sandbox_enforcement(request, spawn_context, launch)
-        return launch
-    resolver = None
-    if config.enabled and config.backend == "provider-native":
-        resolver = get_sandbox_resolver(provider)
-    daemon_port = int(getattr(request.daemon_config, "daemon_port", 60887))
-    websocket = getattr(request.daemon_config, "websocket", None)
-    websocket_port = int(getattr(websocket, "port", 60888))
-    try:
-        launch = await prepare_sandbox_launch(
-            config=config,
-            provider=provider,
-            workspace_path=request.cwd,
-            run_id=spawn_context.agent_run_id,
-            resolver=resolver,
-            daemon_port=daemon_port,
-            websocket_port=websocket_port,
-            api_base=request.api_base,
-            env=env,
-        )
-    except (OSError, ValueError, SrtRuntimeError) as exc:
-        error = f"Sandbox startup failed closed for {provider}: {exc}"
-        if request.run_manager is not None:
-            request.run_manager.fail(spawn_context.agent_run_id, error)
-        return SpawnResult(
-            success=False,
-            run_id=spawn_context.agent_run_id,
-            child_session_id=spawn_context.session_id,
-            status="failed",
-            error=error,
-        )
-    env.update(launch.provider_env)
-    _record_actual_sandbox_enforcement(request, spawn_context, launch)
-    return launch
+) -> tuple[TerminalManager, TerminalRuntimeRegistry, TerminalRuntime, str]:
+    """Resolve composition-root services, falling back to a tmux singleton registry."""
+    backend = request.terminal_backend
+    manager = request.terminal_manager
+    registry = request.terminal_runtime_registry
+    if manager is None:
+        db = getattr(getattr(request.session_manager, "_storage", None), "db", None)
+        if db is None:
+            raise RuntimeError("terminal_manager is required for spawn")
+        manager = TerminalManager(db)
+    if registry is None:
+        from gobby.agents.tmux import get_tmux_session_manager
+        from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
+
+        registry = TerminalRuntimeRegistry()
+        registry.register(TmuxTerminalRuntime(get_tmux_session_manager()))
+    runtime = registry.resolve(backend)
+    return manager, registry, runtime, backend
 
 
-async def _prepare_managed_code_index(
-    request: SpawnRequest,
-    spawn_context: PreparedSpawn,
-) -> SpawnResult | None:
-    mode = request.code_index_preflight_mode
-    if mode is None:
-        return None
-    try:
-        credential = spawn_context.managed_credential
-        if credential is None:
-            raise RuntimeError("managed credential unavailable for code index preflight")
-        # gcore's effective-config resolution requires the spawned run's
-        # managed-execution identity; the daemon's own env carries none. The
-        # machine id signs the probe grant's principal, which gcode checks
-        # against the local machine before using the credential.
-        identity_env = {
-            name: value
-            for name, value in spawn_context.env_vars.items()
-            if name in (GOBBY_AGENT_RUN_ID, GOBBY_PROJECT_ID, GOBBY_SESSION_ID) and value
-        }
-        if request.machine_id:
-            identity_env["GOBBY_MACHINE_ID"] = request.machine_id
-        # Isolation gcode uses the run-scoped managed credential; the operator
-        # token is only a tokenless-dev fallback when no run token was minted.
-        run_api_token = spawn_context.env_vars.get(GOBBY_AGENT_API_TOKEN)
-        preflight = await ensure_isolation_code_index(
-            request.cwd,
-            credential=credential,
-            api_token=run_api_token or request.code_index_api_token,
-            identity_env=identity_env,
-        )
-        spawn_context.env_vars.update(preflight.env)
-        return None
-    except Exception as exc:
-        if mode == "required":
-            return SpawnResult(
-                success=False,
-                run_id=request.run_id,
-                child_session_id=spawn_context.session_id,
-                status="failed",
-                error=f"planner_code_index_unavailable:{exc}",
-            )
-        warning = {
-            "preflight": "code_index",
-            "cwd": request.cwd,
-            "message": str(exc),
-        }
-        request.code_index_preflight_warning = warning
-        request.prompt = _append_code_index_warning(request.prompt, warning)
-        if request.initial_variables is not None:
-            skills = request.initial_variables.get("additional_skills", [])
-            if isinstance(skills, list):
-                request.initial_variables["additional_skills"] = [
-                    skill for skill in skills if skill != "code-index"
-                ]
-            request.initial_variables["code_index_preflight_warning"] = warning
-            request.initial_variables["prompt"] = request.prompt
-            if request.session_manager is not None:
-                from gobby.workflows.state_manager import SessionVariableManager
-
-                SessionVariableManager(request.session_manager._storage.db).merge_variables(
-                    spawn_context.session_id,
-                    request.initial_variables,
-                )
-        logging.getLogger(__name__).warning(
-            "Continuing spawn after scoped code index preflight failed for cwd=%s: %s",
-            request.cwd,
-            exc,
-        )
-        return None
+def _default_backend(request: SpawnRequest) -> str:
+    config = getattr(request.daemon_config, "terminals", None)
+    if isinstance(config, TerminalConfig):
+        return config.default_backend
+    return TerminalConfig().default_backend
 
 
-def _agent_prompt_prefix(request: SpawnRequest) -> str:
-    """Resolve the spawned agent's execution preamble for prompt assembly.
-
-    Codex delivers hook-injected context after the composer prompt, so the
-    agent block used to trail the task prompt (#20451). Prepending it at
-    spawn assembly puts identity before the task. Only an explicitly requested
-    agent is resolved here — activation may pick a configured default agent,
-    and guessing it at spawn time risks front-loading the wrong persona.
-    """
-    if request.session_manager is None:
-        return ""
-    agent_name = request.agent_name or (request.initial_variables or {}).get("_agent_type")
-    if not agent_name:
-        return ""
-    try:
-        from gobby.workflows.agent_resolver import resolve_agent
-
-        agent_body = resolve_agent(
-            str(agent_name),
-            request.session_manager._storage.db,
-            project_id=request.project_id,
-        )
-    except Exception:
-        logger.debug("Prompt resolution failed for spawn agent %r", agent_name, exc_info=True)
-        return ""
-    if not agent_body:
-        return ""
-    return agent_body.prompt_for("agent") or ""
-
-
-def _append_code_index_warning(prompt: str, warning: dict[str, str]) -> str:
-    message = warning.get("message", "unknown")
-    return (
-        f"{prompt}\n\n---\n\n"
-        "## Code Index\n"
-        "Use standard file search and read tools for code navigation in this isolated "
-        f"workspace. Code-index preflight failed: {message}"
-    )
+def _spawn_in_doubt_seconds(request: SpawnRequest) -> float:
+    config = getattr(request.daemon_config, "terminals", None)
+    if isinstance(config, TerminalConfig):
+        return float(config.spawn_in_doubt_seconds)
+    return 150.0
 
 
 async def execute_spawn(request: SpawnRequest) -> SpawnResult:
-    """
-    Unified spawn dispatch — all agents spawn via tmux.
-
-    Routes to provider-specific terminal spawners based on request.provider.
-
-    Args:
-        request: SpawnRequest with all spawn parameters
-
-    Returns:
-        SpawnResult with spawn outcome and metadata
-    """
+    """Unified spawn dispatch — all agents spawn via TerminalRuntime."""
     result = _unsupported_sandbox_request_error(request)
     if result is None:
         if request.provider == "claude" and request.agent_name in _NATIVE_SUBAGENT_RESEARCH_AGENTS:
@@ -296,492 +180,448 @@ async def execute_spawn(request: SpawnRequest) -> SpawnResult:
 
 
 async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
-    """
-    Spawn Claude agent in terminal with proper session/workflow setup.
-
-    Uses the caller-prepared spawn so the child session already exists.
-    """
-    if validation_error := _session_manager_validation_error(request, "Claude"):
-        return validation_error
-
-    spawn_context = request.prepared_spawn
-
-    gobby_session_id = spawn_context.session_id
-
-    # Build command for Claude CLI
-    # Pass session_id so Claude uses --session-id flag, which allows the
-    # SessionStart hook to match this process to the pre-created session
-    # (and auto-activate the workflow, which delivers the prompt via on_enter).
-    cmd, _cmd_env = build_cli_command(
-        cli="claude",
-        prompt=None,
-        session_id=gobby_session_id,
-        auto_approve=True,
-        model=request.model,
-        reasoning_effort=request.effective_reasoning_effort,
-        disallowed_tools=_CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS,
-    )
-    claude_mcp_config_path = Path(request.cwd) / ".mcp.json"
-    claude_mcp_config_arg: str | None = None
-    strict_mcp = False
-    if claude_mcp_config_path.exists():
-        claude_mcp_config_arg = str(claude_mcp_config_path)
-        strict_mcp = True
-        cmd.extend(["--mcp-config", claude_mcp_config_arg, "--strict-mcp-config"])
-
-    if preflight_error := await _prepare_managed_code_index(request, spawn_context):
-        return preflight_error
-    env = spawn_context.env_vars.copy()
-    _apply_extra_env(env, request)
-    # Gobby owns memory for spawned agents; keep the harness-level auto-memory
-    # section out of their system prompts regardless of user settings.json.
-    env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
-    if request.api_base:
-        env["ANTHROPIC_BASE_URL"] = request.api_base
-    if request.api_token:
-        env["ANTHROPIC_AUTH_TOKEN"] = request.api_token
-    if request.machine_id:
-        env["GOBBY_MACHINE_ID"] = request.machine_id
-
-    sandbox_result = await _prepare_provider_sandbox(request, spawn_context, "claude", env)
-    if isinstance(sandbox_result, SpawnResult):
-        return sandbox_result
-    launch = sandbox_result
-    if launch.enforced and launch.backend == "srt":
-        # Claude's own Bash sandbox cannot nest inside the SRT seatbelt;
-        # CLI --settings outranks user settings, so pin it off regardless
-        # of ~/.claude/settings.json. SRT is the authoritative boundary.
-        cmd.extend(["--settings", '{"sandbox": {"enabled": false}}'])
-    cmd.extend(launch.provider_args)
-    if request.prompt:
-        cmd.append(request.prompt)
-    cmd = launch.wrap(cmd)
-
-    _record_resume_launch_details(
-        request,
-        agent_run_id=spawn_context.agent_run_id,
-        sandbox_args=launch.provider_args,
-        sandbox_env=launch.provider_env,
-        env=env,
-        mcp_path=claude_mcp_config_arg,
-        strict_mcp=strict_mcp,
-        sandbox_launch=launch,
-    )
-
-    # Pre-approve workspace trust so the CLI doesn't show an interactive prompt
-    pre_approve_directory("claude", request.cwd)
-
-    # Spawn in terminal with env vars
-    terminal_spawner = _tmux_spawner_for_request(request)
-    terminal_result = await _spawn_terminal(
-        terminal_spawner,
-        command=cmd,
-        cwd=request.cwd,
-        env=env,
-        auth_cli="claude",
-    )
-
-    if not terminal_result.success:
-        return SpawnResult(
-            success=False,
-            run_id=request.run_id,
-            child_session_id=gobby_session_id,
-            status="failed",
-            error=terminal_result.error or terminal_result.message,
-        )
-
-    return SpawnResult(
-        success=True,
-        run_id=spawn_context.agent_run_id,
-        child_session_id=gobby_session_id,
-        status="pending",
-        pid=terminal_result.pid,
-        terminal_type=terminal_result.terminal_type,
-        tmux_session_name=terminal_result.tmux_session_name,
-        tmux_socket_name=terminal_result.tmux_socket_name,
-        tmux_socket_path=terminal_result.tmux_socket_path,
-        message=f"Claude agent spawned in {terminal_result.terminal_type} with session {gobby_session_id}",
-    )
+    plan = await prepare_claude_spawn(request)
+    if isinstance(plan, SpawnResult):
+        return plan
+    return await _runtime_spawn(request, plan)
 
 
 async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
-    """
-    Spawn Qwen agent in terminal with direct spawn (no preflight).
-
-    Session linkage approach:
-    1. Pre-create Gobby session with parent linkage (no external_id yet)
-    2. Pass GOBBY_SESSION_ID and other env vars to the terminal
-    3. Qwen's hook dispatcher reads env vars and includes in SessionStart
-    4. Daemon updates external_id when SessionStart fires with Qwen's native session_id
-
-    This avoids the preflight+resume approach which failed because Qwen
-    doesn't persist sessions when terminated.
-    """
-    if validation_error := _session_manager_validation_error(request, "Qwen"):
-        return validation_error
-
-    spawn_context = request.prepared_spawn
-
-    gobby_session_id = spawn_context.session_id
-
-    if preflight_error := await _prepare_managed_code_index(request, spawn_context):
-        return preflight_error
-    env = spawn_context.env_vars.copy()
-    _apply_extra_env(env, request)
-    if request.api_base:
-        env["QWEN_API_BASE"] = request.api_base
-    if request.api_token:
-        env["QWEN_API_KEY"] = request.api_token
-    if request.machine_id:
-        env["GOBBY_MACHINE_ID"] = request.machine_id
-
-    sandbox_result = await _prepare_provider_sandbox(request, spawn_context, "qwen", env)
-    if isinstance(sandbox_result, SpawnResult):
-        return sandbox_result
-    launch = sandbox_result
-
-    cmd, _cmd_env = build_cli_command(
-        cli="qwen",
-        prompt=request.prompt,
-        auto_approve=True,
-        model=request.model,
-        reasoning_effort=request.effective_reasoning_effort,
-        sandbox_args=launch.provider_args or None,
-    )
-    cmd = launch.wrap(cmd)
-
-    _record_resume_launch_details(
-        request,
-        agent_run_id=spawn_context.agent_run_id,
-        sandbox_args=launch.provider_args,
-        sandbox_env=launch.provider_env,
-        env=env,
-        sandbox_launch=launch,
-    )
-
-    pre_approve_directory("qwen", request.cwd)
-
-    terminal_spawner = _tmux_spawner_for_request(request)
-    terminal_result = await _spawn_terminal(
-        terminal_spawner,
-        command=cmd,
-        cwd=request.cwd,
-        env=env,
-        auth_cli="qwen",
-    )
-
-    if not terminal_result.success:
-        return SpawnResult(
-            success=False,
-            run_id=request.run_id,
-            child_session_id=gobby_session_id,
-            status="failed",
-            error=terminal_result.error or terminal_result.message,
-        )
-
-    return SpawnResult(
-        success=True,
-        run_id=spawn_context.agent_run_id,
-        child_session_id=gobby_session_id,
-        status="pending",
-        pid=terminal_result.pid,
-        terminal_type=terminal_result.terminal_type,
-        tmux_session_name=terminal_result.tmux_session_name,
-        tmux_socket_name=terminal_result.tmux_socket_name,
-        tmux_socket_path=terminal_result.tmux_socket_path,
-        message=f"Qwen agent spawned in terminal with session {gobby_session_id}",
-    )
+    plan = await prepare_qwen_spawn(request)
+    if isinstance(plan, SpawnResult):
+        return plan
+    return await _runtime_spawn(request, plan)
 
 
 async def _spawn_grok_terminal(request: SpawnRequest) -> SpawnResult:
-    """Spawn Grok agent in terminal with direct hook/env-based session linkage."""
-    if validation_error := _session_manager_validation_error(request, "Grok"):
-        return validation_error
-
-    spawn_context = request.prepared_spawn
-
-    gobby_session_id = spawn_context.session_id
-    if preflight_error := await _prepare_managed_code_index(request, spawn_context):
-        return preflight_error
-    env = spawn_context.env_vars.copy()
-    _apply_extra_env(env, request)
-    if request.api_base:
-        env["GROK_API_BASE"] = request.api_base
-    if request.api_token:
-        env["XAI_API_KEY"] = request.api_token
-    if request.machine_id:
-        env["GOBBY_MACHINE_ID"] = request.machine_id
-
-    sandbox_result = await _prepare_provider_sandbox(request, spawn_context, "grok", env)
-    if isinstance(sandbox_result, SpawnResult):
-        return sandbox_result
-    launch = sandbox_result
-
-    cmd, _cmd_env = build_cli_command(
-        cli="grok",
-        prompt=request.prompt,
-        auto_approve=True,
-        working_directory=request.cwd,
-        model=request.model,
-        reasoning_effort=request.effective_reasoning_effort,
-        sandbox_args=launch.provider_args or None,
-    )
-    cmd = launch.wrap(cmd)
-
-    _record_resume_launch_details(
-        request,
-        agent_run_id=spawn_context.agent_run_id,
-        sandbox_args=launch.provider_args,
-        sandbox_env=launch.provider_env,
-        env=env,
-        sandbox_launch=launch,
-    )
-
-    pre_approve_directory("grok", request.cwd)
-
-    terminal_spawner = _tmux_spawner_for_request(request)
-    terminal_result = await _spawn_terminal(
-        terminal_spawner,
-        command=cmd,
-        cwd=request.cwd,
-        env=env,
-        auth_cli="grok",
-    )
-
-    if not terminal_result.success:
-        return SpawnResult(
-            success=False,
-            run_id=request.run_id,
-            child_session_id=gobby_session_id,
-            status="failed",
-            error=terminal_result.error or terminal_result.message,
-        )
-
-    return SpawnResult(
-        success=True,
-        run_id=spawn_context.agent_run_id,
-        child_session_id=gobby_session_id,
-        status="pending",
-        pid=terminal_result.pid,
-        terminal_type=terminal_result.terminal_type,
-        tmux_session_name=terminal_result.tmux_session_name,
-        tmux_socket_name=terminal_result.tmux_socket_name,
-        tmux_socket_path=terminal_result.tmux_socket_path,
-        message=f"Grok agent spawned in terminal with session {gobby_session_id}",
-    )
+    plan = await prepare_grok_spawn(request)
+    if isinstance(plan, SpawnResult):
+        return plan
+    return await _runtime_spawn(request, plan)
 
 
 async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
-    """
-    Spawn Codex agent in terminal with direct spawn (no preflight).
-
-    Session linkage approach:
-    1. Pre-create Gobby child session with parent linkage (no external_id yet).
-    2. Pass GOBBY_SESSION_ID and other env vars to the terminal.
-    3. Codex's hooks.json dispatcher reads env vars and includes them in SessionStart.
-    4. Daemon updates external_id when SessionStart fires with Codex's native session_id.
-
-    Replaces the prior `codex exec "exit"` preflight workaround. Codex hooks ship
-    via `gobby install --codex`; the SessionStart hook is now the source of truth
-    for the native session id.
-    """
-    if validation_error := _session_manager_validation_error(request, "Codex"):
-        return validation_error
-
-    spawn_context = request.prepared_spawn
-
-    gobby_session_id = spawn_context.session_id
-    if preflight_error := await _prepare_managed_code_index(request, spawn_context):
-        return preflight_error
-    env = spawn_context.env_vars.copy()
-    _apply_extra_env(env, request)
-    if request.api_base:
-        env["OPENAI_BASE_URL"] = request.api_base
-    if request.api_token:
-        env["OPENAI_API_KEY"] = request.api_token
-    if request.machine_id:
-        env["GOBBY_MACHINE_ID"] = request.machine_id
-
-    sandbox_result = await _prepare_provider_sandbox(request, spawn_context, "codex", env)
-    if isinstance(sandbox_result, SpawnResult):
-        return sandbox_result
-    launch = sandbox_result
-
-    config_overrides = [
-        *_codex_mcp_config_overrides(
-            request.project_path,
-            (launch.provider_env or {}).get("TMPDIR"),
-            managed_identity_env=env,
-        ),
-        *request.codex_config_overrides,
-    ]
-    if launch.enforced and launch.backend == "srt":
-        # Codex's internal seatbelt cannot nest inside the SRT sandbox
-        # (sandbox_apply: Operation not permitted kills its shell and
-        # node_repl kernels). SRT is the authoritative boundary.
-        config_overrides.append('sandbox_mode="danger-full-access"')
-    cmd, _cmd_env = build_cli_command(
-        cli="codex",
-        # Never pass the prompt as a CLI argument: Codex 0.147+ starts the
-        # first turn at launch and cancels in-flight MCP client startup,
-        # which kills gobby MCP registration. The prompt is typed into the
-        # composer after launch instead (schedule_codex_prompt_delivery).
-        prompt="",
-        auto_approve=True,
-        working_directory=request.cwd,
-        model=request.model,
-        codex_oss_provider=request.codex_oss_provider,
-        reasoning_effort=request.effective_reasoning_effort,
-        sandbox_args=launch.provider_args or None,
-        config_overrides=config_overrides,
-    )
-    cmd = launch.wrap(cmd)
-
-    _record_resume_launch_details(
-        request,
-        agent_run_id=spawn_context.agent_run_id,
-        sandbox_args=launch.provider_args,
-        sandbox_env=launch.provider_env,
-        env=env,
-        config_overrides=config_overrides,
-        sandbox_launch=launch,
-    )
-
-    pre_approve_directory("codex", request.cwd)
-
-    terminal_spawner = _tmux_spawner_for_request(request)
-    terminal_result = await _spawn_terminal(
-        terminal_spawner,
-        command=cmd,
-        cwd=request.cwd,
-        env=env,
-        auth_cli="codex",
-    )
-
-    if not terminal_result.success:
-        return SpawnResult(
-            success=False,
-            run_id=request.run_id,
-            child_session_id=gobby_session_id,
-            status="failed",
-            error=terminal_result.error or terminal_result.message,
-        )
-
-    if terminal_result.tmux_session_name:
-        prompt_text = request.prompt or ""
-        agent_prompt = _agent_prompt_prefix(request)
-        if agent_prompt and request.session_manager is not None:
-            prompt_text = f"{agent_prompt}\n\n{prompt_text}" if prompt_text else agent_prompt
+    plan = await prepare_codex_spawn(request)
+    if isinstance(plan, SpawnResult):
+        return plan
+    result = await _runtime_spawn(request, plan)
+    if result.success and plan.codex_prompt:
+        if plan.inject_persona and request.session_manager is not None:
             from gobby.workflows.state_manager import SessionVariableManager
 
-            # Suppress first-turn agent prompt injection — the preamble already
-            # precedes the task prompt in the composer text.
             SessionVariableManager(request.session_manager._storage.db).merge_variables(
-                gobby_session_id,
+                plan.child_session_id,
                 {"_agent_context_injected": True},
             )
-        schedule_codex_prompt_delivery(
-            terminal_spawner.session_manager,
-            terminal_result.tmux_session_name,
-            prompt_text,
-            spawn_context.agent_run_id,
-            request.run_manager,
-        )
-
-    return SpawnResult(
-        success=True,
-        run_id=spawn_context.agent_run_id,
-        child_session_id=gobby_session_id,
-        status="pending",
-        pid=terminal_result.pid,
-        terminal_type=terminal_result.terminal_type,
-        tmux_session_name=terminal_result.tmux_session_name,
-        tmux_socket_name=terminal_result.tmux_socket_name,
-        tmux_socket_path=terminal_result.tmux_socket_path,
-        message=f"Codex agent spawned in terminal with session {gobby_session_id}",
-    )
+        coordinator = request.write_coordinator
+        manager = request.terminal_manager
+        if result.terminal_id and coordinator is not None and manager is not None:
+            terminal = manager.get(result.terminal_id)
+            if terminal is not None:
+                schedule_codex_prompt_delivery(
+                    coordinator,
+                    terminal,
+                    plan.codex_prompt,
+                    plan.agent_run_id,
+                    request.run_manager,
+                )
+    return result
 
 
 async def _spawn_droid_terminal(request: SpawnRequest) -> SpawnResult:
-    """Spawn Droid agent in terminal with direct hook/env-based session linkage."""
-    if validation_error := _session_manager_validation_error(request, "Droid"):
-        return validation_error
     if shutil.which("droid") is None:
         return SpawnResult(
             success=False,
             run_id=request.run_id,
             child_session_id=None,
             status="failed",
-            error="droid CLI not found in PATH. Install droid first: see docs/cli-integrations/droid.md",
+            error=(
+                "droid CLI not found in PATH. Install droid first: "
+                "see docs/cli-integrations/droid.md"
+            ),
         )
+    plan = await prepare_droid_spawn(request)
+    if isinstance(plan, SpawnResult):
+        return plan
+    return await _runtime_spawn(request, plan)
 
-    spawn_context = request.prepared_spawn
 
-    gobby_session_id = spawn_context.session_id
-    if preflight_error := await _prepare_managed_code_index(request, spawn_context):
-        return preflight_error
-    env = spawn_context.env_vars.copy()
-    _apply_extra_env(env, request)
-    if request.api_token:
-        env["FACTORY_API_KEY"] = request.api_token
-    if request.api_base:
-        env["FACTORY_API_BASE_URL"] = request.api_base
-    if request.machine_id:
-        env["GOBBY_MACHINE_ID"] = request.machine_id
+def _tmux_sessions_from_request(request: SpawnRequest) -> TmuxSessionManager | None:
+    registry = request.terminal_runtime_registry
+    if registry is None:
+        return None
+    try:
+        runtime = registry.resolve("tmux")
+    except UnregisteredBackendError:
+        return None
+    sessions = getattr(runtime, "_sessions", None)
+    return sessions
 
-    sandbox_result = await _prepare_provider_sandbox(request, spawn_context, "droid", env)
-    if isinstance(sandbox_result, SpawnResult):
-        return sandbox_result
-    launch = sandbox_result
-    cmd, _cmd_env = build_cli_command(
-        cli="droid",
-        prompt=request.prompt,
-        auto_approve=True,
-        working_directory=request.cwd,
-        model=request.model,
-        reasoning_effort=request.effective_reasoning_effort,
-        sandbox_args=launch.provider_args or None,
-    )
-    cmd = launch.wrap(cmd)
 
-    _record_resume_launch_details(
-        request,
-        agent_run_id=spawn_context.agent_run_id,
-        sandbox_args=launch.provider_args,
-        sandbox_env=launch.provider_env,
-        env=env,
-        sandbox_launch=launch,
-    )
-
-    pre_approve_directory("droid", request.cwd)
-
-    terminal_spawner = _tmux_spawner_for_request(request)
-    terminal_result = await _spawn_terminal(
-        terminal_spawner,
-        command=cmd,
-        cwd=request.cwd,
-        env=env,
-        auth_cli="droid",
-    )
-
-    if not terminal_result.success:
+async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> SpawnResult:
+    """Sole pending-row owner: wrap, create/retry, prepare_spawn, promote_to_live."""
+    command = wrap_provider_command(plan.launch, plan.command)
+    try:
+        manager, _registry, runtime, backend = resolve_terminal_services(request)
+    except (RuntimeError, UnregisteredBackendError) as exc:
         return SpawnResult(
             success=False,
-            run_id=request.run_id,
-            child_session_id=gobby_session_id,
+            run_id=plan.agent_run_id,
+            child_session_id=plan.child_session_id,
             status="failed",
-            error=terminal_result.error or terminal_result.message,
+            error=str(exc),
         )
 
+    if request.cancel_event is not None and request.cancel_event.is_set():
+        return SpawnResult(
+            success=False,
+            run_id=plan.agent_run_id,
+            child_session_id=plan.child_session_id,
+            status="cancelled",
+            error="cancelled",
+        )
+
+    if request.retry_terminal_id:
+        existing = manager.get(request.retry_terminal_id)
+        if existing is None:
+            return SpawnResult(
+                success=False,
+                run_id=plan.agent_run_id,
+                child_session_id=plan.child_session_id,
+                status="failed",
+                error="retry_terminal_missing",
+            )
+        if existing.state != "pending":
+            return SpawnResult(
+                success=False,
+                run_id=plan.agent_run_id,
+                child_session_id=plan.child_session_id,
+                status="failed",
+                error="retry_terminal_not_pending",
+                terminal_id=existing.id,
+            )
+        bumped = manager.bump_attempt_generation(existing.id)
+        if bumped is None:
+            return SpawnResult(
+                success=False,
+                run_id=plan.agent_run_id,
+                child_session_id=plan.child_session_id,
+                status="failed",
+                error="retry_generation_cas_failed",
+                terminal_id=existing.id,
+            )
+        terminal_id = existing.id
+        spawn_key = existing.spawn_key or derive_spawn_key(backend, terminal_id)
+    else:
+        terminal_id = mint_terminal_id()
+        spawn_key = derive_spawn_key(backend, terminal_id)
+        manager.create_pending(
+            terminal_id,
+            request.project_id,
+            backend,
+            "gobby",
+            spawn_key,
+            machine_id=request.machine_id,
+            session_id=plan.child_session_id,
+            agent_run_id=plan.agent_run_id,
+            title=plan.title,
+        )
+
+    if request.cancel_event is not None and request.cancel_event.is_set():
+        manager.fail_pending(terminal_id)
+        return SpawnResult(
+            success=False,
+            run_id=plan.agent_run_id,
+            child_session_id=plan.child_session_id,
+            status="cancelled",
+            error="cancelled",
+            terminal_id=terminal_id,
+        )
+
+    spawn_request = TerminalSpawnRequest(
+        terminal_id=UUID(terminal_id),
+        spawn_key=spawn_key,
+        command=command,
+        cwd=request.cwd,
+        env=plan.env,
+        title=plan.title,
+        auth_cli=plan.auth_cli,
+    )
+    if backend == "native":
+        if not can_reserve_observer(runtime):
+            manager.fail_pending(terminal_id)
+            return SpawnResult(
+                success=False,
+                run_id=plan.agent_run_id,
+                child_session_id=plan.child_session_id,
+                status="failed",
+                error="native_reserve_unavailable",
+                terminal_id=terminal_id,
+            )
+        try:
+            reservation = await runtime.reserve_observer(UUID(terminal_id))
+        except HostCommandError as exc:
+            manager.fail_pending(terminal_id)
+            return SpawnResult(
+                success=False,
+                run_id=plan.agent_run_id,
+                child_session_id=plan.child_session_id,
+                status="failed",
+                error=str(exc),
+                terminal_id=terminal_id,
+            )
+        spawn_request.reservation_id = reservation.get("reservation_id")
+        spawn_request.reserve_key = reservation.get("reserve_key")
+
+    prepare_task = asyncio.create_task(runtime.prepare_spawn(spawn_request))
+    timeout = request.timeout_seconds
+    try:
+        if timeout is not None:
+            prepared = await asyncio.wait_for(asyncio.shield(prepare_task), timeout=timeout)
+        else:
+            prepared = await asyncio.shield(prepare_task)
+    except TimeoutError:
+        await kill_spawn_key(runtime, spawn_key, pending=manager.get(terminal_id))
+        return SpawnResult(
+            success=False,
+            run_id=plan.agent_run_id,
+            child_session_id=plan.child_session_id,
+            status="failed",
+            error="spawn timed out",
+            terminal_id=terminal_id,
+        )
+    except asyncio.CancelledError:
+        if not prepare_task.done():
+            try:
+                await asyncio.shield(prepare_task)
+            except Exception:
+                logger.debug("Post-dispatch cancel left spawn pending", exc_info=True)
+        return SpawnResult(
+            success=False,
+            run_id=plan.agent_run_id,
+            child_session_id=plan.child_session_id,
+            status="cancelled",
+            error="cancelled",
+            terminal_id=terminal_id,
+        )
+    except TerminalSpawnFailed as exc:
+        manager.fail_pending(terminal_id)
+        return SpawnResult(
+            success=False,
+            run_id=plan.agent_run_id,
+            child_session_id=plan.child_session_id,
+            status="failed",
+            error=str(exc),
+            terminal_id=terminal_id,
+        )
+    except Exception as exc:
+        logger.exception("Backend spawn raised for terminal %s", terminal_id)
+        return SpawnResult(
+            success=False,
+            run_id=plan.agent_run_id,
+            child_session_id=plan.child_session_id,
+            status="failed",
+            error=str(exc),
+            terminal_id=terminal_id,
+        )
+
+    return await _promote_prepared(
+        request,
+        plan,
+        manager=manager,
+        runtime=runtime,
+        backend=backend,
+        terminal_id=terminal_id,
+        spawn_key=spawn_key,
+        prepared=prepared,
+        reservation_id=spawn_request.reservation_id,
+    )
+
+
+async def _promote_prepared(
+    request: SpawnRequest,
+    plan: ProviderSpawnPlan,
+    *,
+    manager: TerminalManager,
+    runtime: TerminalRuntime,
+    backend: str,
+    terminal_id: str,
+    spawn_key: str,
+    prepared: RuntimePreparedSpawn,
+    reservation_id: str | None = None,
+) -> SpawnResult:
+    if prepared.process is not None:
+        manager.record_process(
+            terminal_id,
+            {"pgid": prepared.process.pgid, "start_time": prepared.process.start_time},
+        )
+    stored = prepared.stored_locator or {}
+    locator_key = prepared.locator_key or ""
+    prepared.acknowledge_persist()
+    if backend == "native":
+        bind = getattr(runtime, "bind_observer", None)
+        try:
+            if callable(bind) and reservation_id:
+                await bind(prepared, reservation_id)
+            else:
+                prepared.acknowledge_observer()
+        except Exception as exc:
+            await kill_spawn_key(
+                runtime,
+                spawn_key,
+                pending=manager.get(terminal_id),
+                host_terminal_id=prepared.host_terminal_id,
+            )
+            manager.fail_pending(terminal_id)
+            return SpawnResult(
+                success=False,
+                run_id=plan.agent_run_id,
+                child_session_id=plan.child_session_id,
+                status="failed",
+                error=str(exc),
+                terminal_id=terminal_id,
+            )
+    try:
+        handle = await runtime.commit_spawn(prepared)
+    except CommitSpawnRefusedError as exc:
+        return SpawnResult(
+            success=False,
+            run_id=plan.agent_run_id,
+            child_session_id=plan.child_session_id,
+            status="failed",
+            error=str(exc),
+            terminal_id=terminal_id,
+        )
+
+    promoted = manager.promote_to_live(
+        terminal_id,
+        locator=stored,
+        locator_key=locator_key,
+        session_name=spawn_key if backend == "tmux" else None,
+        title=plan.title,
+        host_epoch=None if backend == "tmux" else getattr(handle.locator, "frame_host_epoch", None),
+    )
+    if promoted is None:
+        current = manager.get(terminal_id)
+        if _same_live_identity(current, backend, locator_key):
+            promoted = current
+        else:
+            await kill_spawn_key(runtime, spawn_key, pending=current)
+            return SpawnResult(
+                success=False,
+                run_id=plan.agent_run_id,
+                child_session_id=plan.child_session_id,
+                status="failed",
+                error="lost_cas_conflict",
+                terminal_id=terminal_id,
+            )
+
+    pid = prepared.pid
+    process = prepared.process
+    if pid is None and process is not None:
+        pid = process.pgid
+    if request.run_manager is not None:
+        try:
+            request.run_manager.update_runtime(
+                plan.agent_run_id,
+                pid=pid,
+                terminal_id=terminal_id,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to persist terminal_id for run %s", plan.agent_run_id, exc_info=True
+            )
     return SpawnResult(
         success=True,
-        run_id=spawn_context.agent_run_id,
-        child_session_id=gobby_session_id,
+        run_id=plan.agent_run_id,
+        child_session_id=plan.child_session_id,
         status="pending",
-        pid=terminal_result.pid,
-        terminal_type=terminal_result.terminal_type,
-        tmux_session_name=terminal_result.tmux_session_name,
-        tmux_socket_name=terminal_result.tmux_socket_name,
-        tmux_socket_path=terminal_result.tmux_socket_path,
-        message=f"Droid agent spawned in terminal with session {gobby_session_id}",
+        pid=pid,
+        terminal_type=backend,
+        terminal_id=terminal_id,
+        locator=handle.locator,
+        tmux_session_name=spawn_key if backend == "tmux" else None,
+        message=f"{plan.auth_cli} agent spawned with session {plan.child_session_id}",
     )
+
+
+def _same_live_identity(
+    current: Terminal | None,
+    backend: str,
+    locator_key: str,
+) -> bool:
+    if current is None or current.state != "live":
+        return False
+    return current.backend == backend and current.locator_key == locator_key
+
+
+def _terminal_for_spawn_key(
+    backend: str,
+    spawn_key: str,
+    pending: Terminal | None,
+) -> Terminal:
+    if pending is not None and pending.spawn_key == spawn_key and pending.state == "pending":
+        return pending
+    now = utc_now()
+    return Terminal(
+        id=str(uuid4()),
+        backend=backend,
+        ownership="gobby",
+        state="pending",
+        machine_id=str(uuid4()),
+        project_id=str(uuid4()),
+        created_at=now,
+        updated_at=now,
+        attempt_generation=1,
+        attempt_started_at=now,
+        unresolved_writes={},
+        spawn_key=spawn_key,
+        session_name=spawn_key if backend == "tmux" else None,
+    )
+
+
+async def kill_spawn_key(
+    runtime: TerminalRuntime,
+    spawn_key: str,
+    *,
+    pending: Terminal | None,
+    host_terminal_id: str | None = None,
+) -> None:
+    terminal = _terminal_for_spawn_key(runtime.backend, spawn_key, pending)
+    if host_terminal_id:
+        terminal.locator = {**(terminal.locator or {}), "host_terminal_id": host_terminal_id}
+    try:
+        await runtime.terminate(terminal, 1.0)
+    except Exception:
+        logger.debug("spawn_key terminate failed for %s", spawn_key, exc_info=True)
+
+
+async def reap_stale_pending_terminals(
+    manager: TerminalManager,
+    runtime: TerminalRuntime,
+    *,
+    in_doubt_seconds: float,
+    now: datetime | None = None,
+) -> list[str]:
+    """Reap pending rows older than the in-doubt deadline with no backend resource.
+
+    `now` is accepted so tests can name the observed clock; selection uses
+    attempt_started_at via TerminalManager.list_stale_pending.
+    """
+    del now
+    reaped: list[str] = []
+    for row in manager.list_stale_pending(in_doubt_seconds):
+        if row.spawn_key:
+            try:
+                if await runtime.is_live(row):
+                    continue
+            except Exception:
+                logger.debug("is_live failed during reap of %s", row.id, exc_info=True)
+        result = manager.fail_pending_attempt(
+            row.id,
+            attempt_generation=row.attempt_generation,
+            attempt_started_at=row.attempt_started_at,
+        )
+        if result is not None:
+            reaped.append(row.id)
+    return reaped

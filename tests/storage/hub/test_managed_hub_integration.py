@@ -15,7 +15,6 @@ from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
 from tests.storage.test_postgres_agent_authorization import AuthorizationFixture
 
 pytestmark = pytest.mark.integration
-pytest_plugins = ("tests.storage.test_postgres_agent_authorization",)
 
 _GOLDEN = Path(__file__).resolve().parents[2] / "runtime_grants" / "golden"
 

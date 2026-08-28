@@ -67,7 +67,7 @@ def _run() -> AgentRun:
         provider="claude",
         model=None,
         prompt="test",
-        tmux_session_name="gobby-agent-run-1",
+        terminal_id="gobby-agent-run-1",
         created_at=now,
         updated_at=now,
     )

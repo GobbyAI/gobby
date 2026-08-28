@@ -49,7 +49,7 @@ class _AgentRun(Protocol):
     def pid(self) -> int | None: ...
 
     @property
-    def tmux_session_name(self) -> str | None: ...
+    def terminal_id(self) -> str | None: ...
 
 
 class _AgentRunManager(Protocol):
@@ -363,7 +363,7 @@ class TaskRecoveryHandler:
         # Terminal spawners persist the tmux pane PID, not the provider child PID.
         # Once the managed tmux target is cleared, that PID is stale and must not
         # be treated as a safe signal target.
-        if db_run.tmux_session_name is None:
+        if db_run.terminal_id is None:
             return True
         if self._terminal_agent_killer is None:
             logger.warning(

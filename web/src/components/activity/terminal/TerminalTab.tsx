@@ -8,7 +8,10 @@ import {
   useState,
 } from "react";
 
-import { useTmuxSessions } from "../../../hooks/useTmuxSessions";
+import {
+  type TmuxTarget,
+  useTmuxSessions,
+} from "../../../hooks/useTmuxSessions";
 import type { GobbySession } from "../../../types/sessions";
 import { Button } from "../../ui/Button";
 import { ResizeHandle } from "../../shared/ResizeHandle";
@@ -63,10 +66,8 @@ function StatePanel({ title, body, action, busy = false }: StatePanelProps) {
   );
 }
 
-function targetKey(
-  target: { name: string; socket: string } | null,
-): string | null {
-  return target ? `${target.socket}:${target.name}` : null;
+function targetKey(target: TmuxTarget | null): string | null {
+  return target ? target.terminal_id : null;
 }
 
 const TERMINAL_TARGET_STORAGE_KEY = "gobby:terminal:selected-target";
@@ -231,14 +232,14 @@ export function TerminalTab({
 
   const terminateSession = useCallback(
     (session: JoinedTerminalSession) => {
-      killSession(session.tmux.name, session.tmux.socket);
+      killSession(session.tmux.terminal_id);
     },
     [killSession],
   );
 
   useEffect(() => {
     if (createdSession === null) return;
-    const createdKey = `${createdSession.socket}:${createdSession.session_name}`;
+    const createdKey = createdSession.terminal_id;
     if (
       consumedCreatedKeyRef.current === createdKey ||
       !joinedSessions.some((session) => sessionKey(session.tmux) === createdKey)
@@ -353,7 +354,7 @@ export function TerminalTab({
     if (streamingId !== null) {
       detachSession();
     } else {
-      attachSession(selected.tmux.name, selected.tmux.socket);
+      attachSession(selected.tmux.terminal_id, selected.tmux.socket);
     }
   }, [
     attachError,

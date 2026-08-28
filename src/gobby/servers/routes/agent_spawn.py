@@ -61,6 +61,7 @@ class AgentSpawnRequest(ReasoningEffortMixin):
     branch_name: str | None = None
     base_branch: str | None = None
     timeout: float | None = None
+    terminal_backend: Literal["tmux", "native"] | None = None
 
 
 class AgentSpawnResponse(BaseModel):
@@ -318,6 +319,10 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             effective_workflow = agent_body.workflows.pipeline
 
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
+        from gobby.storage.projects import LocalProjectManager
+
+        project = LocalProjectManager(task_manager.db).get(effective_project_id)
+        project_path = None if project is None else (project.repo_path or None)
 
         result = await spawn_agent_impl(
             prompt=effective_prompt,
@@ -341,11 +346,13 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             reasoning_required=req.reasoning_required,
             timeout=req.timeout,
             parent_session_id=parent_session_id,
+            project_path=project_path,
             initial_variables=initial_variables,
             session_manager=server.services.session_manager,
             db=server.services.database,
             completion_registry=server.services.completion_registry,
             daemon_config=config_snapshot.active,
+            terminal_backend=req.terminal_backend,
         )
 
         if result.get("success"):

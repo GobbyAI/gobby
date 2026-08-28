@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-from gobby.memory.digest import DigestPair, _extract_digest_pairs
 from gobby.sessions.transcript_normalization import normalize_transcript_records
 from gobby.sessions.transcripts.base import (
     NON_MESSAGE_CONTENT_TYPES,
@@ -408,14 +407,6 @@ def test_grok_extract_last_messages_turn_keyed_pairs() -> None:
         {"role": "user", "content": "second prompt"},
         {"role": "assistant", "content": "Done."},
     ]
-    assert _extract_digest_pairs(parser, turns) == [
-        DigestPair(
-            "first prompt",
-            "Hello world",
-            "[tool activity]\n- Bash pwd (no result recorded)",
-        ),
-        DigestPair("second prompt", "Done.", ""),
-    ]
 
 
 def test_grok_marathon_turn_sub_segmentation() -> None:
@@ -440,9 +431,6 @@ def test_grok_marathon_turn_sub_segmentation() -> None:
         {"role": "assistant", "content": seg1_a + seg1_b},
     ]
     assert [len(msg["content"]) for msg in messages[1:]] == [4000]
-    assert _extract_digest_pairs(parser, turns) == [
-        DigestPair("marathon prompt", seg1_a + seg1_b, ""),
-    ]
 
 
 def test_grok_turn_segments_split_on_type_field_turn_completed() -> None:
@@ -504,10 +492,6 @@ def test_grok_mid_turn_injection_anchoring() -> None:
         {"role": "user", "content": injection},
         {"role": "assistant", "content": "acknowledged"},
     ]
-    assert _extract_digest_pairs(parser, turns) == [
-        DigestPair("do the work", "started more", ""),
-        DigestPair(injection, "acknowledged", ""),
-    ]
 
 
 def test_grok_open_and_cancelled_turn_pairs() -> None:
@@ -540,11 +524,6 @@ def test_grok_open_and_cancelled_turn_pairs() -> None:
     assert parser.extract_last_messages(turns[:2], num_pairs=1) == [
         {"role": "user", "content": "cancelled prompt"},
         {"role": "assistant", "content": ""},
-    ]
-    assert _extract_digest_pairs(parser, turns) == [
-        DigestPair("cancelled prompt", "", ""),
-        DigestPair("finished prompt", "all done", ""),
-        DigestPair("in flight", "partial", ""),
     ]
 
 

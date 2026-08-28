@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from gobby.sessions.liveness_monitor import SessionLivenessMonitor
     from gobby.storage.session_tasks import SessionTaskManager
     from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.terminals import TerminalManager
     from gobby.storage.worktrees import LocalWorktreeManager
     from gobby.workflows.hooks import WorkflowHookHandler
 
@@ -73,6 +74,7 @@ class EventHandlers(
         resolve_project_id: Callable[[str | None, str | None], str] | None = None,
         code_index_trigger: CodeIndexTrigger | None = None,
         attention_metadata_store: AttentionMetadataStore | None = None,
+        terminal_manager: TerminalManager | None = None,
         event_loop: asyncio.AbstractEventLoop | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
@@ -125,6 +127,7 @@ class EventHandlers(
         self._resolve_project_id = resolve_project_id or (lambda p, c: p or "")
         self._code_index_trigger = code_index_trigger
         self._attention_metadata_store = attention_metadata_store
+        self.terminal_manager = terminal_manager
         self._event_loop = event_loop
         self._dispatch_session_summaries_fn: (
             Callable[[str, bool, threading.Event | None, bool], None] | None

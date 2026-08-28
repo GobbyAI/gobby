@@ -7,7 +7,7 @@ import os
 from collections.abc import Mapping
 from typing import Any
 
-from gobby.sessions.tmux_context import query_tmux_identity
+from gobby.sessions.tmux_context import query_tmux_generation, query_tmux_identity
 
 TERMINAL_CONTEXT_KEYS = (
     "parent_pid",
@@ -15,6 +15,8 @@ TERMINAL_CONTEXT_KEYS = (
     "tmux_socket_path",
     "tmux_window_id",
     "tmux_session",
+    "tmux_server_pid",
+    "tmux_server_start_time",
     "tty",
     "term_program",
     "term_session_id",
@@ -34,8 +36,15 @@ def current_terminal_context() -> dict[str, Any]:
         tmux_socket_path = tmux.split(",", 1)[0]
         if tmux_socket_path:
             context["tmux_socket_path"] = tmux_socket_path
-            if tmux_pane and (identity := query_tmux_identity(tmux_socket_path, tmux_pane)):
-                context["tmux_window_id"], context["tmux_session"] = identity
+            if tmux_pane:
+                generation = query_tmux_generation(tmux_socket_path, tmux_pane)
+                if generation is not None:
+                    context["tmux_window_id"] = generation["window_id"]
+                    context["tmux_session"] = generation["session_name"]
+                    context["tmux_server_pid"] = generation["server_pid"]
+                    context["tmux_server_start_time"] = generation["server_start_time"]
+                elif identity := query_tmux_identity(tmux_socket_path, tmux_pane):
+                    context["tmux_window_id"], context["tmux_session"] = identity
 
     for env_name, context_name in (
         ("TMUX_SESSION", "tmux_session"),

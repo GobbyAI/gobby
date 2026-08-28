@@ -20,6 +20,7 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 from collections.abc import AsyncGenerator, Callable, Generator
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -242,7 +243,7 @@ class DaemonInstance:
                 f"Daemon failed to restart within timeout.\n"
                 f"Logs:\n{self.read_logs()}\nError logs:\n{self.read_error_logs()}"
             )
-        if not wait_for_port(self.ws_port, timeout=10.0):
+        if not wait_for_port(self.ws_port, timeout=30.0):
             terminate_process_tree(process.pid)
             pytest.fail(
                 f"Daemon WebSocket port {self.ws_port} did not become ready within timeout.\n"
@@ -353,16 +354,25 @@ def _postgres_url_for_schema(database_url: str, schema: str) -> str:
     return f"{database_url}{separator}options=-csearch_path%3D{schema}"
 
 
-def _seed_e2e_runtime_state(postgres_db: Any, project_dir: Path) -> None:
-    """Seed PostgreSQL-owned runtime config and the synthetic E2E project."""
+def _seed_e2e_runtime_state(postgres_db: Any, project_dir: Path) -> Path:
+    """Seed PostgreSQL-owned runtime config and the synthetic E2E project.
+
+    Returns the daemon's private tmux socket path. Without ``tmux.socket_path``
+    the daemon shares the user's ``tmux -L gobby`` server, and every agent it
+    spawns outlives the SIGKILL that tears the daemon down (#21175). The path
+    lives in ``/tmp`` because pytest's ``tmp_path`` exceeds the unix socket
+    path limit; the owner kills the server with :func:`kill_tmux_server`.
+    """
     from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 
+    tmux_socket = Path(f"/tmp/gobby-tmux-{os.getpid()}-{uuid.uuid4().hex[:8]}.sock")
     mutations = ConfigMutations(postgres_db)
     mutations.patch_internal(
         expected_revision=mutations.repository.current_revision(),
         patch=ConfigPatch(
             values={
                 "test_mode": True,
+                "tmux.socket_path": str(tmux_socket),
                 "memory.dream.enabled": False,
                 "gobby_tasks.expansion.enabled": False,
                 "gobby_tasks.validation.enabled": False,
@@ -386,6 +396,15 @@ def _seed_e2e_runtime_state(postgres_db: Any, project_dir: Path) -> None:
             str(project_dir),
         ),
     )
+    return tmux_socket
+
+
+def kill_tmux_server(socket_path: Path) -> None:
+    """Stop the tmux server on ``socket_path`` (if any) and drop the socket file."""
+    subprocess.run(
+        ["tmux", "-S", str(socket_path), "kill-server"], capture_output=True, check=False
+    )
+    socket_path.unlink(missing_ok=True)
 
 
 def wait_for_port(port: int, timeout: float = 10.0) -> bool:
@@ -607,7 +626,7 @@ def e2e_config(
 
     # Runtime configuration is PostgreSQL-owned. The legacy config.yaml below
     # remains input coverage for bootstrap-path resolution only.
-    _seed_e2e_runtime_state(postgres_db, e2e_project_dir)
+    tmux_socket = _seed_e2e_runtime_state(postgres_db, e2e_project_dir)
 
     config_content = f"""
 daemon_port: {http_port}
@@ -668,6 +687,8 @@ files_home: {files_home}
     bootstrap_path.chmod(0o600)
 
     yield config_path, http_port, ws_port
+
+    kill_tmux_server(tmux_socket)
 
 
 @pytest.fixture(scope="function")

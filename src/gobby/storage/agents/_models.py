@@ -58,7 +58,7 @@ class AgentRun:
     continuation_prompt: str | None = None
     task_id: str | None = None
     pid: int | None = None
-    tmux_session_name: str | None = None
+    terminal_id: str | None = None
     worktree_id: str | None = None
     clone_id: str | None = None
     timeout_seconds: float | None = None
@@ -127,9 +127,11 @@ class AgentRun:
             else None,
             task_id=row["task_id"] if "task_id" in row.keys() else None,
             pid=row["pid"] if "pid" in row.keys() else None,
-            tmux_session_name=row["tmux_session_name"]
-            if "tmux_session_name" in row.keys()
-            else None,
+            terminal_id=(
+                str(row["terminal_id"])
+                if "terminal_id" in row.keys() and row["terminal_id"] is not None
+                else None
+            ),
             worktree_id=row["worktree_id"] if "worktree_id" in row.keys() else None,
             clone_id=row["clone_id"] if "clone_id" in row.keys() else None,
             timeout_seconds=row["timeout_seconds"] if "timeout_seconds" in row.keys() else None,
@@ -186,7 +188,7 @@ class AgentRun:
             "updated_at": self.updated_at,
             "task_id": self.task_id,
             "pid": self.pid,
-            "tmux_session_name": self.tmux_session_name,
+            "terminal_id": self.terminal_id,
             "worktree_id": self.worktree_id,
             "clone_id": self.clone_id,
             "timeout_seconds": self.timeout_seconds,

@@ -23,9 +23,10 @@ use super::gate::{
 };
 use super::runner::{
     ACCOUNT_IDENTITY_PREDECESSOR_CHECKSUM, PARENT_BASELINE_CHECKSUM, PREDECESSOR_BASELINE_CHECKSUM,
-    SchemaRunner, WORKTREE_BASELINE_CHECKSUM,
+    SchemaRunner, WORKTREE_BASELINE_CHECKSUM, auth_schema_for, render_sql_for_schema,
 };
 use super::sql_splitter::split_sql_statements;
+use super::verify::catalog_manifest;
 
 static RECOVERY_MIGRATION: EmbeddedMigration = EmbeddedMigration {
     version: 376,
@@ -367,6 +368,27 @@ fn fresh_baseline_creates_embedding_coordination_state() -> anyhow::Result<()> {
     for table in ["embedding_generation_acks", "embedding_projection_changes"] {
         assert_runtime_crud_privileges(&mut client, table)?;
     }
+    Ok(())
+}
+
+#[test]
+fn fresh_baseline_grants_terminals_to_daemon_runtime() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+
+    install_baseline(&mut client)?;
+    assert_runtime_crud_privileges(&mut client, "terminals")?;
+    let gcode_select: bool = client
+        .query_one(
+            "SELECT has_table_privilege('gobby_gcode_capability', 'terminals', 'SELECT')",
+            &[],
+        )?
+        .get(0);
+    assert!(!gcode_select, "scoped gcode must not SELECT terminals");
     Ok(())
 }
 
@@ -1707,7 +1729,7 @@ fn migrations_directory_exists_and_copy_agent_entry_is_registered() {
         migrations_dir.is_dir(),
         "crates/gcore/assets/schema/migrations must exist so later leaves can register include_str entries"
     );
-    assert_eq!(MIGRATIONS.len(), 32);
+    assert_eq!(MIGRATIONS.len(), 36);
     assert_eq!(MIGRATIONS[0].version, 376);
     assert_eq!(MIGRATIONS[0].filename, "376_copy_agent_definitions.sql");
     assert_eq!(MIGRATIONS[1].version, 377);
@@ -2371,4 +2393,74 @@ fn migration_receipt_count(
             &[&migration.version, &migration.filename, &migration.checksum],
         )?
         .get(0))
+}
+
+#[test]
+fn migration_411_on_a_410_hub_matches_a_fresh_apply() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+
+    let through_410 = &MIGRATIONS[..MIGRATIONS.len() - 1];
+    assert_eq!(
+        through_410.last().map(|migration| migration.version),
+        Some(410)
+    );
+    let hub =
+        SchemaRunner::with_migrations_for_test(&mut client, "public", through_410)?.apply()?;
+    assert!(hub.baseline_applied);
+    assert_eq!(hub.migrations_applied, through_410.len());
+    let legacy_columns: Vec<String> = client
+        .query(
+            "SELECT column_name FROM information_schema.columns
+             WHERE table_schema = 'public' AND table_name = 'agent_runs'
+               AND column_name IN ('tmux_session_name', 'terminal_id')",
+            &[],
+        )?
+        .into_iter()
+        .map(|row| row.get(0))
+        .collect();
+    assert_eq!(legacy_columns, ["tmux_session_name"]);
+
+    let upgraded = SchemaRunner::new(&mut client, "public")?.apply()?;
+    assert!(!upgraded.baseline_applied);
+    assert_eq!(upgraded.migrations_applied, 1);
+    let repeat = SchemaRunner::new(&mut client, "public")?.apply()?;
+    assert_eq!(repeat.migrations_applied, 0);
+
+    let fresh = SchemaRunner::new(&mut client, "fresh_411")?.apply()?;
+    assert!(fresh.baseline_applied);
+    assert_eq!(fresh.migrations_applied, MIGRATIONS.len());
+
+    assert_eq!(
+        catalog_manifest(&mut client, "public")?,
+        catalog_manifest(&mut client, "fresh_408")?
+    );
+    SchemaRunner::new(&mut client, "public")?.verify()?;
+    Ok(())
+}
+
+#[test]
+fn render_gives_each_non_public_hub_its_own_agent_auth_schema() {
+    let sql = "CREATE SCHEMA IF NOT EXISTS gobby_agent_auth;\n\
+               CREATE OR REPLACE FUNCTION gobby_agent_auth.heartbeat_daemon() \
+               SET search_path = gobby_agent_auth, pg_temp AS $$ \
+               SELECT 1 FROM public.machines $$;";
+    assert_eq!(auth_schema_for("public"), "gobby_agent_auth");
+    assert_eq!(render_sql_for_schema(sql, "public"), sql);
+
+    let rendered = render_sql_for_schema(sql, "gobby_test_1_2_w_abc");
+    assert_eq!(
+        auth_schema_for("gobby_test_1_2_w_abc"),
+        "gobby_test_1_2_w_abc_agent_auth"
+    );
+    assert!(!rendered.contains("gobby_agent_auth"));
+    assert!(!rendered.contains("public."));
+    assert!(rendered.contains("CREATE SCHEMA IF NOT EXISTS gobby_test_1_2_w_abc_agent_auth;"));
+    assert!(rendered.contains("gobby_test_1_2_w_abc_agent_auth.heartbeat_daemon()"));
+    assert!(rendered.contains("search_path = gobby_test_1_2_w_abc_agent_auth, pg_temp"));
+    assert!(rendered.contains("FROM gobby_test_1_2_w_abc.machines"));
 }

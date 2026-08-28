@@ -22,6 +22,7 @@ const PAD = " lorem ipsum dolor sit amet consectetur".repeat(
 );
 
 const SESSION = {
+  terminal_id: "perf-terminal",
   name: "perf-session",
   socket: "default",
   pane_pid: 1,
@@ -144,26 +145,27 @@ async function mocks(page: Page, box: { sendEpoch: number }) {
           JSON.stringify({ type: "subscribe_success", events: m.events ?? [] }),
         );
       }
-      if (m.type === "tmux_list_sessions")
+      if (m.type === "terminal_list")
         ws.send(
           JSON.stringify({
-            type: "tmux_sessions_list",
+            type: "terminal_list",
+            request_id: m.request_id,
+            next_cursor: null,
             live_cli_session_ids: [],
-            sessions: [SESSION],
+            items: [SESSION],
           }),
         );
-      if (m.type === "tmux_attach")
+      if (m.type === "terminal_attach")
         ws.send(
           JSON.stringify({
-            type: "tmux_attach_result",
+            type: "terminal_attach_result",
             request_id: m.request_id,
             success: true,
-            streaming_id: "perf-stream",
-            session_name: m.session_name,
-            socket: m.socket,
+            attachment_id: "perf-stream",
+            terminal_id: m.terminal_id,
           }),
         );
-      if (m.type === "tmux_resize" && !activated) {
+      if (m.type === "terminal_resize" && !activated) {
         activated = true;
         // performance.timeOrigin and Date.now() are the same epoch clock on
         // this machine, so the two sides are directly comparable.
@@ -171,7 +173,7 @@ async function mocks(page: Page, box: { sendEpoch: number }) {
         ws.send(
           JSON.stringify({
             type: "terminal_attach_history",
-            streaming_id: String(m.streaming_id),
+            attachment_id: String(m.attachment_id),
             text: history(),
             truncated: true,
             unavailable: false,

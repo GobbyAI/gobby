@@ -47,7 +47,7 @@ def _make_execute_spawn_result() -> MagicMock:
     result.child_session_id = "child-session-abc"
     result.pid = 12345
     result.terminal_type = "tmux"
-    result.tmux_session_name = None
+    result.terminal_id = None
     result.status = "running"
     result.message = None
     result.error = None
@@ -70,6 +70,7 @@ class TestProviderResolution:
                 surfaces=["persona"],
                 prompts={"persona": "Coordinate interactively."},
             ),
+            terminal_backend="tmux",
         )
 
         assert result["success"] is False
@@ -115,6 +116,7 @@ class TestProviderResolution:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=agent_body,
@@ -167,6 +169,7 @@ class TestProviderResolution:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=agent_body,
@@ -215,6 +218,7 @@ class TestProviderResolution:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=None,
@@ -264,6 +268,7 @@ class TestProviderResolution:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=None,
@@ -311,6 +316,7 @@ class TestProviderResolution:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="Do the thing",
                 runner=runner,
                 provider="codex",
@@ -369,6 +375,7 @@ class TestProviderResolution:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="Do the thing",
                 runner=runner,
                 provider="codex",
@@ -436,6 +443,7 @@ class TestSpawnAutoClaimOwner:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=None,
@@ -494,6 +502,7 @@ class TestSpawnAutoClaimOwner:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=None,
@@ -554,6 +563,7 @@ class TestSpawnAutoClaimOwner:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=None,
@@ -612,6 +622,7 @@ class TestSpawnAutoClaimOwner:
             mock_execute.return_value = _make_execute_spawn_result()
 
             result = await spawn_agent_impl(
+                terminal_backend="tmux",
                 prompt="Do the thing",
                 runner=runner,
                 agent_body=None,

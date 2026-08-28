@@ -19,16 +19,20 @@ from gobby.runner import GobbyRunner
 from gobby.runner_lifecycle_agents import (
     _RUN_REPLAY_PAGE_SIZE,
     _list_active_agent_runs_once,
-    _reclassify_reconciliation_pending_runs,
     _rehydrate_active_agent_completion_subscribers,
-    _resolve_provisional_daemon_resumes,
     _run_agent_hook_replay_barrier,
+)
+from gobby.runner_lifecycle_reconcile import (
+    _reclassify_reconciliation_pending_runs,
+    _resolve_provisional_daemon_resumes,
 )
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.storage.terminals import TerminalManager
 from gobby.utils.machine_id import require_machine_id
+from tests.agents.terminal_fixtures import make_live_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -166,8 +170,7 @@ class TestAgentRestartReconciliation:
     def test_list_active_agent_runs_paginates_offsets(self) -> None:
         page_size = _RUN_REPLAY_PAGE_SIZE
         runs = [
-            SimpleNamespace(id=f"run-{index}", tmux_session_name=None)
-            for index in range(page_size + 2)
+            SimpleNamespace(id=f"run-{index}", terminal_id=None) for index in range(page_size + 2)
         ]
         list_active_for_machine = MagicMock(
             side_effect=lambda _machine_id, *, limit, offset=0: runs[offset : offset + limit]
@@ -186,7 +189,7 @@ class TestAgentRestartReconciliation:
     async def test_reconcile_live_tmux_run_refreshes_pid_and_reader(self) -> None:
         run = SimpleNamespace(
             id="ac314d27-4314-5fe3-a0ab-01645086e137",
-            tmux_session_name="gobby-run-1",
+            terminal_id="gobby-run-1",
             pid=111,
             continuation_prompt="continue later",
         )
@@ -213,7 +216,7 @@ class TestAgentRestartReconciliation:
         # One live tmux-backed run performs three recovery actions: completion
         # registry hydration, runtime PID refresh, and output-reader restart.
         assert reconciled == 3
-        assert run.tmux_session_name == "gobby-run-1"
+        assert run.terminal_id == "gobby-run-1"
         runner.completion_registry.register.assert_called_once_with(
             "ac314d27-4314-5fe3-a0ab-01645086e137",
             subscribers=[],
@@ -222,7 +225,7 @@ class TestAgentRestartReconciliation:
         run_storage.update_runtime.assert_called_once_with(
             "ac314d27-4314-5fe3-a0ab-01645086e137",
             pid=222,
-            tmux_session_name="gobby-run-1",
+            terminal_id="gobby-run-1",
         )
         output_reader.start_reader.assert_awaited_once_with(
             "ac314d27-4314-5fe3-a0ab-01645086e137", "gobby-run-1"
@@ -237,7 +240,7 @@ class TestAgentRestartReconciliation:
             socket_path=str(tmp_path / "gobby-test-reconcile-configured.sock"),
         )
         run = SimpleNamespace(
-            id="ac314d27-4314-5fe3-a0ab-01645086e137", tmux_session_name="gobby-run-1", pid=111
+            id="ac314d27-4314-5fe3-a0ab-01645086e137", terminal_id="gobby-run-1", pid=111
         )
         run_storage = SimpleNamespace(
             list_active_for_machine=MagicMock(return_value=[run]),
@@ -277,7 +280,7 @@ class TestAgentRestartReconciliation:
     async def test_reconcile_missing_tmux_session_parks_and_resumes_run(self) -> None:
         run = SimpleNamespace(
             id="ac314d27-4314-5fe3-a0ab-01645086e137",
-            tmux_session_name="gobby-run-1",
+            terminal_id="gobby-run-1",
             pid=111,
             resume_metadata_json={},
             child_session_id="child-1",
@@ -322,7 +325,7 @@ class TestAgentRestartReconciliation:
     async def test_reconcile_dead_tmux_pane_parks_and_resumes_run(self) -> None:
         run = SimpleNamespace(
             id="ac314d27-4314-5fe3-a0ab-01645086e137",
-            tmux_session_name="gobby-run-1",
+            terminal_id="gobby-run-1",
             pid=111,
             resume_metadata_json={},
             child_session_id="child-1",
@@ -360,10 +363,59 @@ class TestAgentRestartReconciliation:
         assert tmux_manager.list_sessions.await_count == 1
 
     @pytest.mark.asyncio
+    async def test_reconcile_live_native_run_survives_without_probing_the_host(self) -> None:
+        run = SimpleNamespace(
+            id="ac314d27-4314-5fe3-a0ab-01645086e137",
+            terminal_id="5c0a4b6e-7f1d-4c1e-9d2a-3e4f5a6b7c8d",
+            continuation_prompt=None,
+        )
+        row = SimpleNamespace(id=run.terminal_id, backend="native", state="live")
+        run_storage = SimpleNamespace(list_active_for_machine=MagicMock(return_value=[run]))
+        runner = self._runner(run_storage)
+        runner.terminal_manager = SimpleNamespace(get=MagicMock(return_value=row))
+        runner.terminal_runtime_registry = SimpleNamespace(
+            resolve=MagicMock(side_effect=AssertionError("host must not be probed"))
+        )
+
+        reconciled = await runner_lifecycle._reconcile_agent_runs_after_restart(runner)
+
+        assert reconciled == 1
+        runner.agent_lifecycle_monitor.terminalize_cancelled_run.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_reconcile_orphaned_native_run_parks_and_resumes(self) -> None:
+        run = SimpleNamespace(
+            id="ac314d27-4314-5fe3-a0ab-01645086e137",
+            terminal_id="5c0a4b6e-7f1d-4c1e-9d2a-3e4f5a6b7c8d",
+            resume_metadata_json={},
+            child_session_id="child-1",
+        )
+        row = SimpleNamespace(id=run.terminal_id, backend="native", state="orphaned")
+        run_storage = SimpleNamespace(list_active_for_machine=MagicMock(return_value=[run]))
+        runner = self._runner(run_storage, parked_run=run)
+        runner.terminal_manager = SimpleNamespace(get=MagicMock(return_value=row))
+        resolved_run_ids: set[str] = set()
+
+        with patch(
+            "gobby.agents.resume_executor.resume_agent_run",
+            new=AsyncMock(return_value=SimpleNamespace(success=True, error=None)),
+        ) as resume:
+            reconciled = await runner_lifecycle._reconcile_agent_runs_after_restart(
+                runner, resolved_run_ids=resolved_run_ids
+            )
+
+        assert reconciled == 2
+        assert resolved_run_ids == {run.id}
+        runner.agent_lifecycle_monitor.terminalize_cancelled_run.assert_awaited_once_with(
+            run.id, terminal_reason="daemon_stop"
+        )
+        resume.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_reconcile_active_non_tmux_run_only_hydrates_completion(self) -> None:
         run = SimpleNamespace(
             id="ac314d27-4314-5fe3-a0ab-01645086e137",
-            tmux_session_name=None,
+            terminal_id=None,
             continuation_prompt=None,
         )
         run_storage = SimpleNamespace(list_active_for_machine=MagicMock(return_value=[run]))
@@ -454,7 +506,11 @@ class TestAgentRestartReconciliation:
             task_id=task.id,
         )
         run_storage.start(run.id)
-        run_storage.update_runtime(run.id, pid=111, tmux_session_name="gobby-run-1")
+        run_storage.update_runtime(run.id, pid=111)
+        _live_run = run_storage.get(run.id)
+        assert _live_run is not None
+        make_live_terminal(_live_run, db=run_storage.db, session_name="gobby-run-1")
+
         past = datetime.now(UTC) - timedelta(minutes=20)
         mutexes = TaskDispatchMutexManager(temp_db)
         mutexes.acquire_mutex(
@@ -480,7 +536,14 @@ class TestAgentRestartReconciliation:
         assert mutex is not None
         assert mutex.lease_until is not None
         assert mutex.lease_until < datetime.now(UTC)
-        assert run_storage.get(run.id).tmux_session_name == "gobby-run-1"
+        linked_id = _live_run.terminal_id
+        assert linked_id is not None
+        reloaded = run_storage.get(run.id)
+        assert reloaded is not None
+        assert reloaded.terminal_id == linked_id
+        linked = TerminalManager(temp_db).get(linked_id)
+        assert linked is not None
+        assert linked.session_name == "gobby-run-1"
 
     def test_list_active_agent_runs_requires_agent_runner(self) -> None:
         # A runner without an agent_runner is exactly the invalid input under
@@ -554,7 +617,7 @@ class TestReclassifyReconciliationPendingRuns:
         barrier = AsyncMock(return_value=True)
 
         with patch(
-            "gobby.runner_lifecycle_agents._run_agent_hook_replay_barrier",
+            "gobby.runner_lifecycle_reconcile._run_agent_hook_replay_barrier",
             new=barrier,
         ):
             reclassified = await _reclassify_reconciliation_pending_runs(runner)
@@ -862,11 +925,11 @@ class TestReclassifyReconciliationPendingRuns:
 
         with (
             patch(
-                "gobby.runner_lifecycle_agents._run_agent_hook_replay_barrier",
+                "gobby.runner_lifecycle_reconcile._run_agent_hook_replay_barrier",
                 new=barrier,
             ),
             patch(
-                "gobby.runner_lifecycle_agents._reconcile_agent_runs_after_restart",
+                "gobby.runner_lifecycle_reconcile._reconcile_agent_runs_after_restart",
                 new=reconcile_mock,
             ),
         ):
@@ -914,11 +977,11 @@ class TestReclassifyReconciliationPendingRuns:
 
         with (
             patch(
-                "gobby.runner_lifecycle_agents._run_agent_hook_replay_barrier",
+                "gobby.runner_lifecycle_reconcile._run_agent_hook_replay_barrier",
                 new=AsyncMock(return_value=True),
             ),
             patch(
-                "gobby.runner_lifecycle_agents._reconcile_agent_runs_after_restart",
+                "gobby.runner_lifecycle_reconcile._reconcile_agent_runs_after_restart",
                 new=AsyncMock(side_effect=reconcile),
             ),
         ):
@@ -943,11 +1006,11 @@ class TestReclassifyReconciliationPendingRuns:
 
         with (
             patch(
-                "gobby.runner_lifecycle_agents._run_agent_hook_replay_barrier",
+                "gobby.runner_lifecycle_reconcile._run_agent_hook_replay_barrier",
                 new=barrier,
             ),
             patch(
-                "gobby.runner_lifecycle_agents._reconcile_agent_runs_after_restart",
+                "gobby.runner_lifecycle_reconcile._reconcile_agent_runs_after_restart",
                 new=reconcile_mock,
             ),
         ):

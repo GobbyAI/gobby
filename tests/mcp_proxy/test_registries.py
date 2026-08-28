@@ -792,3 +792,36 @@ class TestHubApiKeyResolution:
             assert len(api_keys) == 1
         finally:
             db.close()
+
+
+def test_terminal_tools_receive_composition_root_services() -> None:
+    from gobby.terminals import TerminalRuntimeRegistry
+    from gobby.terminals.write_coordinator import WriteCoordinator
+    from tests.terminals.fakes import FakeRuntime, MemoryTerminalStore, make_memory_terminal
+
+    store = MemoryTerminalStore(make_memory_terminal())
+    runtime = FakeRuntime()
+    registry = TerminalRuntimeRegistry()
+    registry.register(runtime)
+    coordinator = WriteCoordinator(store, runtime)
+    captured: dict[str, object] = {}
+
+    def fake_create_session_messages_registry(**kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return MagicMock(name="gobby-sessions")
+
+    with patch(
+        "gobby.mcp_proxy.tools.sessions.create_session_messages_registry",
+        fake_create_session_messages_registry,
+    ):
+        setup_internal_registries(
+            config_resolver=lambda: MagicMock(),
+            session_manager=MagicMock(),
+            db=MagicMock(),
+            terminal_manager=store,
+            terminal_runtime_registry=registry,
+            write_coordinator=coordinator,
+        )
+    assert captured["terminal_manager"] is store
+    assert captured["terminal_runtime_registry"] is registry
+    assert captured["write_coordinator"] is coordinator

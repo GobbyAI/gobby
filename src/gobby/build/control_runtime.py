@@ -117,6 +117,7 @@ async def _cancel_active_agents(
                         signal_name="TERM",
                         timeout=5.0,
                         close_terminal=True,
+                        terminal_services=getattr(services, "terminal_services", None),
                     )
                     if not result.get("success"):
                         logger.info(

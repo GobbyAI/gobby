@@ -290,6 +290,31 @@ class TestBuildStopWakesWaiter:
             services=services,
         )
 
+    @pytest.mark.asyncio
+    async def test_cancel_closes_terminals_through_shared_services(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from unittest.mock import AsyncMock
+
+        from gobby.build import control_runtime as runtime_module
+
+        harness = self._harness(ism_persisted=True)
+        self._record_removals(monkeypatch)
+        terminal_services = object()
+        harness.services.terminal_services = terminal_services
+        kill_agent = AsyncMock(return_value={"success": True})
+        monkeypatch.setattr(runtime_module, "LocalAgentRunManager", lambda _db: harness.run_manager)
+        monkeypatch.setattr(runtime_module, "kill_agent", kill_agent)
+
+        await runtime_module._cancel_active_agents(
+            harness.db, [harness.run], services=harness.services
+        )
+
+        kill_agent.assert_awaited_once()
+        assert kill_agent.await_args is not None
+        assert kill_agent.await_args.kwargs["close_terminal"] is True
+        assert kill_agent.await_args.kwargs["terminal_services"] is terminal_services
+
     def _record_removals(self, monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, Any]]:
         import gobby.agents.completion_subscribers as subscribers_module
 

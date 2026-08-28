@@ -201,6 +201,42 @@ def test_get_gwiki_version(tmp_path: Path) -> None:
             assert deps.get_gwiki_version() == "0.1.0"
 
 
+def test_get_gterm_version(tmp_path: Path) -> None:
+    with patch.object(Path, "home", return_value=tmp_path):
+        stamp = tmp_path / ".gobby" / "bin" / ".gterm-version"
+        stamp.parent.mkdir(parents=True)
+        stamp.write_text("0.1.0")
+        with patch("gobby.utils.deps.resolve_native_bin", return_value=None):
+            assert deps.get_gterm_version() == "0.1.0"
+
+    with patch.object(Path, "home", return_value=tmp_path):
+        gterm = tmp_path / ".gobby" / "bin" / "gterm"
+        gterm.write_text("")
+        gterm.chmod(0o755)
+        with patch("gobby.utils.deps.probe_native_bin_version", return_value="0.1.1"):
+            assert deps.get_gterm_version() == "0.1.1"
+        with patch("gobby.utils.deps.probe_native_bin_version", return_value=None):
+            assert deps.get_gterm_version() == "0.1.0"
+
+
+def test_get_gclient_version(tmp_path: Path) -> None:
+    with patch.object(Path, "home", return_value=tmp_path):
+        stamp = tmp_path / ".gobby" / "bin" / ".gclient-version"
+        stamp.parent.mkdir(parents=True)
+        stamp.write_text("0.1.0")
+        with patch("gobby.utils.deps.resolve_native_bin", return_value=None):
+            assert deps.get_gclient_version() == "0.1.0"
+
+    with patch.object(Path, "home", return_value=tmp_path):
+        gclient = tmp_path / ".gobby" / "bin" / "gclient"
+        gclient.write_text("")
+        gclient.chmod(0o755)
+        with patch("gobby.utils.deps.probe_native_bin_version", return_value="0.1.1"):
+            assert deps.get_gclient_version() == "0.1.1"
+        with patch("gobby.utils.deps.probe_native_bin_version", return_value=None):
+            assert deps.get_gclient_version() == "0.1.0"
+
+
 def test_get_claude_code_version() -> None:
     with patch("gobby.utils.deps._run_cmd", return_value="claude 1.0.12"):
         assert deps.get_claude_code_version() == "1.0.12"
@@ -808,6 +844,8 @@ def test_collect_all_deps() -> None:
         patch("gobby.utils.deps.get_gcode_version", return_value="2"),
         patch("gobby.utils.deps.get_ghook_version", return_value="3.5"),
         patch("gobby.utils.deps.get_gwiki_version", return_value="3.7"),
+        patch("gobby.utils.deps.get_gterm_version", return_value="0.1.0"),
+        patch("gobby.utils.deps.get_gclient_version", return_value="0.1.0"),
         patch("gobby.utils.deps.get_impeccable_version", return_value="3.5.0"),
         patch("gobby.utils.deps.get_claude_code_version", return_value="4"),
         patch("gobby.utils.deps.get_codex_cli_version", return_value="6"),
@@ -832,6 +870,8 @@ def test_collect_all_deps() -> None:
         assert res["gobby"]["gobby"] == "1"
         assert res["gobby"]["ghook"] == "3.5"
         assert res["gobby"]["gwiki"] == "3.7"
+        assert res["gobby"]["gterm"] == "0.1.0"
+        assert res["gobby"]["gclient"] == "0.1.0"
         assert res["gobby"]["impeccable"] == "3.5.0"
         assert res["coding_clis"]["droid"] == "6.5"
         assert res["coding_clis"]["qwen"] == "6.7"

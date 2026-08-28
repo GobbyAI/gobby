@@ -229,7 +229,7 @@ async def test_voice_and_route_consumers_use_runtime(monkeypatch: pytest.MonkeyP
     )
     payload = _run_tmux_payload(
         attention_server,
-        SimpleNamespace(tmux_session_name="agent-session", pid=42),
+        SimpleNamespace(terminal_id="agent-session", pid=42),
     )
 
     assert payload == {

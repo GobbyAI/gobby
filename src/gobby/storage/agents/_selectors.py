@@ -89,7 +89,7 @@ class _AgentRunSelectorMixin:
                 ar.continuation_prompt,
                 ar.task_id,
                 ar.pid,
-                ar.tmux_session_name,
+                ar.terminal_id,
                 ar.worktree_id,
                 ar.clone_id,
                 ar.timeout_seconds,

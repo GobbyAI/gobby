@@ -1,3 +1,4 @@
 src/gobby/install/shared/skills/impeccable/scripts/** whitespace=-blank-at-eof
 *.sql text eol=lf
 web/src/api/runtimeConfigCodecVectors.gen.ts linguist-generated=true
+crates/gterminal/vendor/** linguist-vendored

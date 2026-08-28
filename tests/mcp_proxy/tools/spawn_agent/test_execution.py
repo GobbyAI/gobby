@@ -593,7 +593,7 @@ class TestSpawnAgentPreRegistration:
                 status="pending",
                 pid=12345,
                 terminal_type="ghostty",
-                tmux_session_name=None,
+                terminal_id=None,
                 message="Spawned",
             )
 
@@ -913,7 +913,7 @@ class TestSpawnAgentPreRegistration:
                 status="pending",
                 pid=12345,
                 terminal_type="ghostty",
-                tmux_session_name="agent-run-canonical",
+                terminal_id="agent-run-canonical",
                 message="Spawned",
             )
 
@@ -970,7 +970,7 @@ class TestSpawnAgentPreRegistration:
                 status="pending",
                 pid=12345,
                 terminal_type="ghostty",
-                tmux_session_name="agent-run-canonical",
+                terminal_id="agent-run-canonical",
                 message="Spawned",
             )
 
@@ -1026,7 +1026,7 @@ class TestSpawnAgentPreRegistration:
                 status="pending",
                 pid=12345,
                 terminal_type="ghostty",
-                tmux_session_name="agent-run-canonical",
+                terminal_id="agent-run-canonical",
                 message="Spawned",
             )
 
@@ -1070,7 +1070,7 @@ class TestSpawnAgentPreRegistration:
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
             ) as mock_execute,
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation._check_tmux_session_alive",
+                "gobby.mcp_proxy.tools.spawn_agent._execution._check_tmux_session_alive",
                 new_callable=AsyncMock,
                 return_value=(True, None),
             ) as mock_health,
@@ -1090,7 +1090,7 @@ class TestSpawnAgentPreRegistration:
                 status="pending",
                 pid=12345,
                 terminal_type="tmux",
-                tmux_session_name="gobby-agent",
+                terminal_id="gobby-agent",
                 tmux_socket_name="gobby",
                 tmux_socket_path="/tmp/tmux-1000/gobby",
                 message="Spawned",
@@ -1103,7 +1103,7 @@ class TestSpawnAgentPreRegistration:
 
         _health_check_tasks.discard(health_task)
         assert result["success"] is True
-        assert result["tmux_session_name"] == "gobby-agent"
+        assert result["terminal_id"] == "gobby-agent"
         assert result["tmux_socket_name"] == "gobby"
         assert result["tmux_socket_path"] == "/tmp/tmux-1000/gobby"
         mock_runner.run_storage.start.assert_called_once()
@@ -1155,7 +1155,7 @@ class TestSpawnAgentPreRegistration:
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
             ) as mock_execute,
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation._check_tmux_session_alive",
+                "gobby.mcp_proxy.tools.spawn_agent._execution._check_tmux_session_alive",
                 new_callable=AsyncMock,
                 return_value=health_result,
             ),
@@ -1175,7 +1175,7 @@ class TestSpawnAgentPreRegistration:
                 status="pending",
                 pid=12345,
                 terminal_type="tmux",
-                tmux_session_name="gobby-agent-timeout",
+                terminal_id="gobby-agent-timeout",
                 tmux_socket_name="gobby",
                 tmux_socket_path=None,
                 message="Spawned",
@@ -1194,7 +1194,7 @@ class TestSpawnAgentPreRegistration:
             mock_runner.run_storage.update_runtime.assert_called_once_with(
                 ANY,
                 pid=12345,
-                tmux_session_name="gobby-agent-timeout",
+                terminal_id="gobby-agent-timeout",
                 worktree_id=None,
                 clone_id=None,
             )

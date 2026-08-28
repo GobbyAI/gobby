@@ -503,12 +503,14 @@ async def _cleanup_unattached_spawned_run(
     db: HubDatabase,
     error: str,
     completion_registry: object | None = None,
+    terminal_services: object | None = None,
 ) -> bool:
     return await _spawn_actions.cleanup_unattached_spawned_run(
         run_id,
         db=db,
         error=error,
         completion_registry=completion_registry,
+        terminal_services=terminal_services,
     )
 
 

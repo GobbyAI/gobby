@@ -100,6 +100,16 @@ def get_gwiki_version() -> str | None:
     return _get_native_binary_version("gwiki", ".gwiki-version")
 
 
+def get_gterm_version() -> str | None:
+    """Get gterm version from stamp file or CLI."""
+    return _get_native_binary_version("gterm", ".gterm-version")
+
+
+def get_gclient_version() -> str | None:
+    """Get gclient version from stamp file or CLI."""
+    return _get_native_binary_version("gclient", ".gclient-version")
+
+
 def get_impeccable_version() -> str | None:
     """Return the version of a fully verified managed Impeccable install."""
     from gobby.cli.install_setup_impeccable import (
@@ -632,6 +642,10 @@ def collect_all_deps(db: HubDatabase, *, managed_services: bool) -> dict[str, An
             "ghook_path": _local_binary_path("ghook"),
             "gwiki": get_gwiki_version(),
             "gwiki_path": _local_binary_path("gwiki"),
+            "gterm": get_gterm_version(),
+            "gterm_path": _local_binary_path("gterm"),
+            "gclient": get_gclient_version(),
+            "gclient_path": _local_binary_path("gclient"),
             "impeccable": get_impeccable_version(),
         },
         "coding_clis": {

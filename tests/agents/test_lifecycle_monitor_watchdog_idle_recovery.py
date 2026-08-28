@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import psycopg
 import pytest
@@ -22,6 +22,14 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.step_context import IncompleteStepWorkflow, StepWorkflowContext
+from tests.agents.terminal_fixtures import make_live_terminal
+from tests.agents.test_lifecycle_monitor import (
+    _fake_terminal_services,
+    _pane_text,
+    _runtime_of,
+    _terminal_liveness,
+    _written_text,
+)
 
 from .detection_test_support import BundledDetectionRegistry
 
@@ -50,7 +58,7 @@ def _make_terminal_run(
     *,
     child_session_id: str,
     run_id: str,
-    tmux_session_name: str,
+    terminal_id: str,
     task_id: str | None = None,
     agent_name: str | None = None,
 ) -> AgentRun:
@@ -64,7 +72,11 @@ def _make_terminal_run(
         agent_name=agent_name,
     )
     agent_run_manager.start(run.id)
-    agent_run_manager.update_runtime(run.id, tmux_session_name=tmux_session_name)
+    agent_run_manager.update_runtime(run.id)
+    _live_run = agent_run_manager.get(run.id)
+    assert _live_run is not None
+    make_live_terminal(_live_run, db=agent_run_manager.db, session_name=terminal_id)
+
     stored_run = agent_run_manager.get(run.id)
     assert stored_run is not None
     return stored_run
@@ -364,6 +376,7 @@ def _make_idle_monitor_run(
         task_manager=task_manager,
         check_interval_seconds=1.0,
         tmux_config=config,
+        terminal_services=_fake_terminal_services(temp_db),
     )
     parent = session_manager.register(
         external_id=f"parent-{run_id}",
@@ -385,7 +398,7 @@ def _make_idle_monitor_run(
         parent.to_dict(),
         child_session_id=child.id,
         run_id=run_id,
-        tmux_session_name=f"gobby-{run_id[-4:]}",
+        terminal_id=f"gobby-{run_id[-4:]}",
     )
     return monitor, run
 
@@ -414,10 +427,7 @@ async def test_completed_turn_reprompts_after_base_timeout_before_semantic_delay
     assert monitor._idle_detector.get_state(run.id).first_idle_at is None
 
     with (
-        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
-        patch.object(
-            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-        ) as mock_send,
+        _pane_text(monitor, "❯\n"),
         patch.object(
             monitor._idle_check_handler._recovery,
             "_idle_reprompt_message",
@@ -434,14 +444,12 @@ async def test_completed_turn_reprompts_after_base_timeout_before_semantic_delay
 
     assert handled == 1
     mock_message.assert_awaited_once()
-    mock_send.assert_has_awaits(
-        [
-            call(run.tmux_session_name, "Escape", literal=False),
-            call(run.tmux_session_name, "workflow-aware continuation"),
-            call(run.tmux_session_name, "Enter", literal=False),
-        ]
-    )
-    assert all(awaited.args[1] != "C-c" for awaited in mock_send.await_args_list)
+    assert _runtime_of(monitor).write_log == [
+        ("key", "escape"),
+        ("text", "workflow-aware continuation"),
+        ("key", "enter"),
+    ]
+    assert "\x03" not in _written_text(_runtime_of(monitor))
     assert monitor._idle_detector.get_state(run.id).reprompt_count == 1
     mock_audit.assert_awaited_once_with(
         run,
@@ -472,10 +480,7 @@ async def test_claude_turn_duration_reprompts_after_base_timeout(
     )
 
     with (
-        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
-        patch.object(
-            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-        ) as mock_send,
+        _pane_text(monitor, "❯\n"),
         patch.object(
             monitor._idle_check_handler._recovery,
             "_idle_reprompt_message",
@@ -486,13 +491,11 @@ async def test_claude_turn_duration_reprompts_after_base_timeout(
         handled = await monitor.check_idle_agents()
 
     assert handled == 1
-    mock_send.assert_has_awaits(
-        [
-            call(run.tmux_session_name, "Escape", literal=False),
-            call(run.tmux_session_name, "workflow-aware continuation"),
-            call(run.tmux_session_name, "Enter", literal=False),
-        ]
-    )
+    assert _runtime_of(monitor).write_log == [
+        ("key", "escape"),
+        ("text", "workflow-aware continuation"),
+        ("key", "enter"),
+    ]
 
 
 @pytest.mark.asyncio
@@ -516,10 +519,7 @@ async def test_grok_turn_completed_reprompts_and_records_watchdog_event(
     )
 
     with (
-        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
-        patch.object(
-            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-        ) as mock_send,
+        _pane_text(monitor, "❯\n"),
         patch.object(
             monitor._idle_check_handler._recovery,
             "_idle_reprompt_message",
@@ -536,14 +536,12 @@ async def test_grok_turn_completed_reprompts_and_records_watchdog_event(
 
     assert handled == 1
     mock_message.assert_awaited_once()
-    mock_send.assert_has_awaits(
-        [
-            call(run.tmux_session_name, "Escape", literal=False),
-            call(run.tmux_session_name, "workflow-aware continuation"),
-            call(run.tmux_session_name, "Enter", literal=False),
-        ]
-    )
-    assert all(awaited.args[1] != "C-c" for awaited in mock_send.await_args_list)
+    assert _runtime_of(monitor).write_log == [
+        ("key", "escape"),
+        ("text", "workflow-aware continuation"),
+        ("key", "enter"),
+    ]
+    assert "\x03" not in _written_text(_runtime_of(monitor))
     assert monitor._idle_detector.get_state(run.id).reprompt_count == 1
     mock_audit.assert_awaited_once_with(
         run,
@@ -574,15 +572,12 @@ async def test_claude_new_user_record_suppresses_obsolete_completion_recovery(
     )
 
     with (
-        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
-        patch.object(
-            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-        ) as mock_send,
+        _pane_text(monitor, "❯\n"),
     ):
         handled = await monitor.check_idle_agents()
 
     assert handled == 0
-    mock_send.assert_not_awaited()
+    assert _runtime_of(monitor).write_log == []
     assert monitor._idle_detector.get_state(run.id).reprompt_count == 0
 
 
@@ -611,15 +606,12 @@ async def test_fresh_task_complete_waits_for_base_timeout_before_any_recovery(
     monitor._idle_detector.get_state(run.id).first_idle_at = time.monotonic() - 360
 
     with (
-        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
-        patch.object(
-            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-        ) as mock_send,
+        _pane_text(monitor, "❯\n"),
     ):
         handled = await monitor.check_idle_agents()
 
     assert handled == 0
-    mock_send.assert_not_awaited()
+    assert _runtime_of(monitor).write_log == []
     assert monitor._idle_detector.get_state(run.id).reprompt_count == 0
 
 
@@ -644,12 +636,7 @@ async def test_fresh_capacity_error_immediately_sends_workflow_aware_reprompt(
     )
 
     with (
-        patch.object(
-            monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value=_CAPACITY_PANE
-        ),
-        patch.object(
-            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-        ) as mock_send,
+        _pane_text(monitor, _CAPACITY_PANE),
         patch.object(
             monitor._idle_check_handler._recovery,
             "_idle_reprompt_message",
@@ -668,13 +655,11 @@ async def test_fresh_capacity_error_immediately_sends_workflow_aware_reprompt(
     assert monitor._idle_detector.get_state(run.id).reprompt_count == 1
     state = monitor._idle_check_handler._recovery._capacity_recovery[run.id]
     assert state.successful_reprompts == 1
-    mock_send.assert_has_awaits(
-        [
-            call(run.tmux_session_name, "Escape", literal=False),
-            call(run.tmux_session_name, "workflow-aware continuation"),
-            call(run.tmux_session_name, "Enter", literal=False),
-        ]
-    )
+    assert _runtime_of(monitor).write_log == [
+        ("key", "escape"),
+        ("text", "workflow-aware continuation"),
+        ("key", "enter"),
+    ]
     mock_audit.assert_awaited_once_with(
         run,
         action="capacity_reprompt",
@@ -711,10 +696,7 @@ async def test_stale_session_discovers_transcript_without_updating_session_row(
             "gobby.agents.watchdog.transcript_resolver.find_transcript_on_disk",
             return_value=str(transcript_path),
         ) as mock_discover,
-        patch.object(
-            monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value=_CAPACITY_PANE
-        ),
-        patch.object(monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True),
+        _pane_text(monitor, _CAPACITY_PANE),
         patch.object(
             monitor._idle_check_handler._recovery,
             "_idle_reprompt_message",
@@ -760,12 +742,7 @@ async def test_fresh_non_capacity_session_skips_transcript_resolution(
     )
 
     with (
-        patch.object(
-            monitor._tmux,
-            "capture_pane",
-            new_callable=AsyncMock,
-            return_value="active output\n",
-        ),
+        _pane_text(monitor, "active output\n"),
         patch.object(
             monitor._idle_check_handler._transcript_resolver,
             "resolve",
@@ -799,17 +776,12 @@ async def test_capacity_pane_text_requires_structured_transcript_confirmation(
     )
 
     with (
-        patch.object(
-            monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value=_CAPACITY_PANE
-        ),
-        patch.object(
-            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-        ) as mock_send,
+        _pane_text(monitor, _CAPACITY_PANE),
     ):
         handled = await monitor.check_idle_agents()
 
     assert handled == 0
-    mock_send.assert_not_awaited()
+    assert _runtime_of(monitor).write_log == []
 
 
 @pytest.mark.asyncio
@@ -833,15 +805,7 @@ async def test_capacity_reprompt_retries_failed_send_and_deduplicates_success(
     )
 
     with (
-        patch.object(
-            monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value=_CAPACITY_PANE
-        ),
-        patch.object(
-            monitor._tmux,
-            "send_keys",
-            new_callable=AsyncMock,
-            side_effect=[True, False, True, True, True],
-        ) as mock_send,
+        _pane_text(monitor, _CAPACITY_PANE) as runtime,
         patch.object(
             monitor._idle_check_handler._recovery,
             "_idle_reprompt_message",
@@ -854,12 +818,13 @@ async def test_capacity_reprompt_retries_failed_send_and_deduplicates_success(
             new_callable=AsyncMock,
         ) as mock_audit,
     ):
+        runtime.write_failures = [False, True, False, False, False]
         first = await monitor.check_idle_agents()
         second = await monitor.check_idle_agents()
         duplicate = await monitor.check_idle_agents()
 
     assert (first, second, duplicate) == (0, 1, 0)
-    assert mock_send.await_count == 5
+    assert len(_runtime_of(monitor).write_log) == 5
     mock_audit.assert_awaited_once()
     state = monitor._idle_check_handler._recovery._capacity_recovery[run.id]
     assert state.successful_reprompts == 1
@@ -886,13 +851,7 @@ async def test_capacity_reprompts_are_bounded_across_user_only_retry_turns(
     )
 
     with (
-        patch.object(
-            monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value=_CAPACITY_PANE
-        ),
-        patch.object(
-            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-        ) as mock_send,
-        patch.object(monitor._tmux, "kill_session", new_callable=AsyncMock, return_value=True),
+        _pane_text(monitor, _CAPACITY_PANE),
         patch.object(
             monitor._idle_check_handler._recovery,
             "_record_watchdog_task_event",
@@ -906,7 +865,7 @@ async def test_capacity_reprompts_are_bounded_across_user_only_retry_turns(
         exhausted = await monitor.check_idle_agents()
 
     assert (first, second, exhausted) == (1, 1, 1)
-    assert mock_send.await_count == 6
+    assert len(_runtime_of(monitor).write_log) == 6
     assert mock_audit.await_count == 2
     updated_run = agent_run_manager.get(run.id)
     assert updated_run is not None
@@ -934,15 +893,7 @@ async def test_capacity_retry_budget_resets_after_model_output(
     )
 
     with (
-        patch.object(
-            monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value=_CAPACITY_PANE
-        ),
-        patch.object(
-            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-        ) as mock_send,
-        patch.object(
-            monitor._tmux, "kill_session", new_callable=AsyncMock, return_value=True
-        ) as mock_kill,
+        _pane_text(monitor, _CAPACITY_PANE),
         patch.object(
             monitor._idle_check_handler._recovery,
             "_record_watchdog_task_event",
@@ -956,8 +907,8 @@ async def test_capacity_retry_budget_resets_after_model_output(
         recovered = await monitor.check_idle_agents()
 
     assert recovered == 1
-    assert mock_send.await_count == 9
-    mock_kill.assert_not_awaited()
+    assert len(_runtime_of(monitor).write_log) == 9
+    assert _runtime_of(monitor).killed == []
     state = monitor._idle_check_handler._recovery._capacity_recovery[run.id]
     assert state.successful_reprompts == 1
 
@@ -1003,15 +954,12 @@ async def test_completed_turn_expedited_recovery_requires_conclusive_provider_ma
     )
 
     with (
-        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
-        patch.object(
-            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-        ) as mock_send,
+        _pane_text(monitor, "❯\n"),
     ):
         handled = await monitor.check_idle_agents()
 
     assert handled == 0
-    mock_send.assert_not_awaited()
+    assert _runtime_of(monitor).write_log == []
     assert monitor._idle_detector.get_state(run.id).reprompt_count == 0
 
 
@@ -1034,10 +982,7 @@ async def test_unreadable_transcript_uses_existing_delayed_idle_reprompt(
     monitor._idle_detector.get_state(run.id).first_idle_at = time.monotonic() - 360
 
     with (
-        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
-        patch.object(
-            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-        ) as mock_send,
+        _pane_text(monitor, "❯\n"),
         patch.object(
             monitor._idle_check_handler._recovery,
             "_idle_reprompt_message",
@@ -1048,13 +993,11 @@ async def test_unreadable_transcript_uses_existing_delayed_idle_reprompt(
         handled = await monitor.check_idle_agents()
 
     assert handled == 1
-    mock_send.assert_has_awaits(
-        [
-            call(run.tmux_session_name, "Escape", literal=False),
-            call(run.tmux_session_name, "delayed continuation"),
-            call(run.tmux_session_name, "Enter", literal=False),
-        ]
-    )
+    assert _runtime_of(monitor).write_log == [
+        ("key", "escape"),
+        ("text", "delayed continuation"),
+        ("key", "enter"),
+    ]
     assert monitor._idle_detector.get_state(run.id).reprompt_count == 1
 
 
@@ -1078,15 +1021,7 @@ async def test_completed_turn_recovery_proceeds_despite_unsubmitted_input(
     )
 
     with (
-        patch.object(
-            monitor._tmux,
-            "capture_pane",
-            new_callable=AsyncMock,
-            return_value="❯ uv run pytest tests/foo.py\n",
-        ),
-        patch.object(
-            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-        ) as mock_send,
+        _pane_text(monitor, "❯ uv run pytest tests/foo.py\n"),
         patch.object(
             monitor._idle_check_handler._recovery,
             "_idle_reprompt_message",
@@ -1097,13 +1032,11 @@ async def test_completed_turn_recovery_proceeds_despite_unsubmitted_input(
         handled = await monitor.check_idle_agents()
 
     assert handled == 1
-    mock_send.assert_has_awaits(
-        [
-            call(run.tmux_session_name, "Escape", literal=False),
-            call(run.tmux_session_name, "completed continuation"),
-            call(run.tmux_session_name, "Enter", literal=False),
-        ]
-    )
+    assert _runtime_of(monitor).write_log == [
+        ("key", "escape"),
+        ("text", "completed continuation"),
+        ("key", "enter"),
+    ]
     assert monitor._idle_detector.get_state(run.id).reprompt_count == 1
 
 
@@ -1127,20 +1060,12 @@ async def test_unsubmitted_input_still_suppresses_reprompt_without_completed_tur
     )
 
     with (
-        patch.object(
-            monitor._tmux,
-            "capture_pane",
-            new_callable=AsyncMock,
-            return_value="❯ uv run pytest tests/foo.py\n",
-        ),
-        patch.object(
-            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-        ) as mock_send,
+        _pane_text(monitor, "❯ uv run pytest tests/foo.py\n"),
     ):
         handled = await monitor.check_idle_agents()
 
     assert handled == 0
-    mock_send.assert_not_awaited()
+    assert _runtime_of(monitor).write_log == []
     assert monitor._idle_detector.get_state(run.id).reprompt_count == 0
 
 
@@ -1165,19 +1090,13 @@ async def test_recent_session_activity_still_checks_supported_capacity_pane(
     )
 
     with (
-        patch.object(
-            monitor._tmux,
-            "capture_pane",
-            new_callable=AsyncMock,
-            return_value="active output\n",
-        ) as mock_capture,
-        patch.object(monitor._tmux, "send_keys", new_callable=AsyncMock) as mock_send,
+        _pane_text(monitor, "active output\n") as runtime,
     ):
         handled = await monitor.check_idle_agents()
 
     assert handled == 0
-    mock_capture.assert_awaited_once_with(_run.tmux_session_name, lines=15)
-    mock_send.assert_not_awaited()
+    assert runtime.snapshot_calls == [15]
+    assert _runtime_of(monitor).write_log == []
 
 
 @pytest.mark.asyncio
@@ -1201,16 +1120,12 @@ async def test_completed_turn_recovery_retains_max_attempt_failure(
     monitor._idle_detector.get_state(run.id).reprompt_count = 2
 
     with (
-        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
-        patch.object(
-            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-        ) as mock_send,
-        patch.object(monitor._tmux, "kill_session", new_callable=AsyncMock, return_value=True),
+        _pane_text(monitor, "❯\n"),
     ):
         handled = await monitor.check_idle_agents()
 
     assert handled == 1
-    mock_send.assert_not_awaited()
+    assert _runtime_of(monitor).write_log == []
     updated_run = agent_run_manager.get(run.id)
     assert updated_run is not None
     assert updated_run.status == "error"
@@ -1250,11 +1165,7 @@ async def test_exhausted_recovery_completes_agent_parked_on_satisfied_exit_condi
     )
 
     with (
-        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
-        patch.object(
-            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-        ) as mock_send,
-        patch.object(monitor._tmux, "kill_session", new_callable=AsyncMock, return_value=True),
+        _pane_text(monitor, "❯\n"),
         patch(
             "gobby.agents.watchdog.recovery.get_active_step_workflow_context",
             return_value=terminate_context,
@@ -1267,7 +1178,7 @@ async def test_exhausted_recovery_completes_agent_parked_on_satisfied_exit_condi
         handled = await monitor.check_idle_agents()
 
     assert handled == 1
-    mock_send.assert_not_awaited()
+    assert _runtime_of(monitor).write_log == []
     mock_incomplete.assert_called_once()
     updated_run = agent_run_manager.get(run.id)
     assert updated_run is not None
@@ -1310,9 +1221,7 @@ async def test_exhausted_recovery_still_fails_when_exit_condition_is_unmet(
     )
 
     with (
-        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
-        patch.object(monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True),
-        patch.object(monitor._tmux, "kill_session", new_callable=AsyncMock, return_value=True),
+        _pane_text(monitor, "❯\n"),
         patch(
             "gobby.agents.watchdog.recovery.get_active_step_workflow_context",
             return_value=qa_context,
@@ -1346,6 +1255,7 @@ async def test_idle_reprompt_falls_back_when_step_context_lookup_fails(
         session_manager=session_manager,
         check_interval_seconds=1.0,
         tmux_config=config,
+        terminal_services=_fake_terminal_services(temp_db),
     )
     parent = session_manager.register(
         external_id="parent-session-fallback",
@@ -1364,7 +1274,7 @@ async def test_idle_reprompt_falls_back_when_step_context_lookup_fails(
         parent.to_dict(),
         child_session_id=child.id,
         run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1001",
-        tmux_session_name="gobby-codex-fallback",
+        terminal_id="gobby-codex-fallback",
     )
 
     with (
@@ -1406,10 +1316,7 @@ async def test_no_reader_provider_uses_shared_idle_path_without_transcript_read(
     state.first_idle_at = time.monotonic() - 360
 
     with (
-        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
-        patch.object(
-            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-        ) as mock_send,
+        _pane_text(monitor, "❯\n"),
         patch.object(
             monitor._idle_check_handler._recovery,
             "_idle_reprompt_message",
@@ -1425,13 +1332,11 @@ async def test_no_reader_provider_uses_shared_idle_path_without_transcript_read(
 
     assert handled == 1
     mock_read.assert_not_awaited()
-    mock_send.assert_has_awaits(
-        [
-            call(run.tmux_session_name, "Escape", literal=False),
-            call(run.tmux_session_name, "shared continuation"),
-            call(run.tmux_session_name, "Enter", literal=False),
-        ]
-    )
+    assert _runtime_of(monitor).write_log == [
+        ("key", "escape"),
+        ("text", "shared continuation"),
+        ("key", "enter"),
+    ]
     assert monitor._idle_detector.get_state(run.id).reprompt_count == 1
 
 
@@ -1460,13 +1365,7 @@ async def test_droid_diagnostics_only_reader_uses_shared_reprompt_and_redacted_l
 
     with (
         caplog.at_level(logging.WARNING),
-        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
-        patch.object(
-            monitor._tmux,
-            "send_keys",
-            new_callable=AsyncMock,
-            return_value=True,
-        ) as mock_send,
+        _pane_text(monitor, "❯\n"),
         patch.object(
             monitor._idle_check_handler._recovery,
             "_idle_reprompt_message",
@@ -1477,13 +1376,11 @@ async def test_droid_diagnostics_only_reader_uses_shared_reprompt_and_redacted_l
         handled = await monitor.check_idle_agents()
 
     assert handled == 1
-    mock_send.assert_has_awaits(
-        [
-            call(run.tmux_session_name, "Escape", literal=False),
-            call(run.tmux_session_name, "shared continuation"),
-            call(run.tmux_session_name, "Enter", literal=False),
-        ]
-    )
+    assert _runtime_of(monitor).write_log == [
+        ("key", "escape"),
+        ("text", "shared continuation"),
+        ("key", "enter"),
+    ]
     diagnostic = "\n".join(caplog.messages)
     assert "Watchdog idle diagnostic for droid" in diagnostic
     assert '"latest_activity_kind": "reasoning"' in diagnostic
@@ -1512,20 +1409,15 @@ async def test_completed_turn_recovery_survives_activity_and_deduplicates_snapsh
     handler = monitor._idle_check_handler
 
     with (
-        patch.object(
-            monitor._tmux,
-            "capture_pane",
-            new_callable=AsyncMock,
-            side_effect=[
+        _pane_text(
+            monitor,
+            [
                 "❯\n",
                 "Processing files...\n",
                 "Processing hook activity...\n",
                 "❯\n",
             ],
         ),
-        patch.object(
-            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-        ) as mock_send,
     ):
         assert await monitor.check_idle_agents() == 1
         state = handler._recovery._completed_turn_recovery[run.id]
@@ -1534,7 +1426,7 @@ async def test_completed_turn_recovery_survives_activity_and_deduplicates_snapsh
         monitor._idle_detector.reset_idle(run.id)
         assert await monitor.check_idle_agents() == 0
         assert state.successful_reprompts == 1
-        assert mock_send.await_count == 3
+        assert len(_runtime_of(monitor).write_log) == 3
 
         temp_db.execute(
             "UPDATE sessions SET updated_at = %s WHERE id = %s",
@@ -1553,7 +1445,7 @@ async def test_completed_turn_recovery_survives_activity_and_deduplicates_snapsh
         assert await monitor.check_idle_agents() == 1
 
     assert state.successful_reprompts == 2
-    assert mock_send.await_count == 6
+    assert len(_runtime_of(monitor).write_log) == 6
 
 
 @pytest.mark.asyncio
@@ -1580,11 +1472,7 @@ async def test_completed_turn_recovery_allows_budget_then_fails_without_step_wor
     caplog.set_level(logging.INFO)
 
     with (
-        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
-        patch.object(
-            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-        ) as mock_send,
-        patch.object(monitor._tmux, "kill_session", new_callable=AsyncMock, return_value=True),
+        _pane_text(monitor, "❯\n"),
     ):
         for attempt in range(3):
             _write_codex_lifecycle_transcript(
@@ -1602,7 +1490,7 @@ async def test_completed_turn_recovery_allows_budget_then_fails_without_step_wor
         monitor._idle_detector.reset_idle(run.id)
         assert await monitor.check_idle_agents() == 1
 
-    assert mock_send.await_count == 9
+    assert len(_runtime_of(monitor).write_log) == 9
     updated_run = agent_run_manager.get(run.id)
     assert updated_run is not None
     assert updated_run.status == "error"
@@ -1656,9 +1544,7 @@ async def test_completed_turn_recovery_completes_run_parked_on_satisfied_exit_co
     )
 
     with (
-        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
-        patch.object(monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True),
-        patch.object(monitor._tmux, "kill_session", new_callable=AsyncMock, return_value=True),
+        _pane_text(monitor, "❯\n"),
         patch(
             "gobby.agents.watchdog.recovery.get_active_step_workflow_context",
             return_value=terminate_context,
@@ -1724,10 +1610,7 @@ async def test_completed_turn_recovery_budget_resets_when_workflow_step_advances
     )
 
     with (
-        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
-        patch.object(
-            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-        ) as mock_send,
+        _pane_text(monitor, "❯\n"),
         patch(
             "gobby.agents.watchdog.recovery.get_active_step_workflow_context",
             return_value=plan_context,
@@ -1748,7 +1631,7 @@ async def test_completed_turn_recovery_budget_resets_when_workflow_step_advances
         monitor._idle_detector.reset_idle(run.id)
         assert await monitor.check_idle_agents() == 1
 
-    assert mock_send.await_count == 9
+    assert len(_runtime_of(monitor).write_log) == 9
     assert state.workflow_fingerprint == "developer-steps:build"
     assert state.successful_reprompts == 1
     updated_run = agent_run_manager.get(run.id)
@@ -1777,14 +1660,9 @@ async def test_failed_completed_turn_prompt_submission_does_not_consume_attempt(
     handler = monitor._idle_check_handler
 
     with (
-        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
-        patch.object(
-            monitor._tmux,
-            "send_keys",
-            new_callable=AsyncMock,
-            side_effect=[True, True, False, True, True, True],
-        ),
+        _pane_text(monitor, "❯\n") as runtime,
     ):
+        runtime.write_failures = [False, False, True]
         assert await monitor.check_idle_agents() == 0
         state = handler._recovery._completed_turn_recovery[run.id]
         assert state.successful_reprompts == 0
@@ -1825,10 +1703,7 @@ async def test_completed_turn_lookup_failure_preserves_existing_recovery_budget(
     )
 
     with (
-        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
-        patch.object(
-            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
-        ) as mock_send,
+        _pane_text(monitor, "❯\n"),
         patch.object(
             monitor._idle_check_handler._recovery,
             "_fail_idle_agent",
@@ -1847,7 +1722,7 @@ async def test_completed_turn_lookup_failure_preserves_existing_recovery_budget(
     state = monitor._idle_check_handler._recovery._completed_turn_recovery[run.id]
     assert state.workflow_fingerprint == "developer-steps:plan"
     assert state.successful_reprompts == 1
-    assert mock_send.await_count == 3
+    assert len(_runtime_of(monitor).write_log) == 3
     mock_fail.assert_awaited_once()
 
 
@@ -1913,20 +1788,10 @@ async def test_tmux_cleanup_failure_preserves_watchdog_recovery_state(
     )
 
     with (
-        patch.object(monitor._tmux, "has_session", new_callable=AsyncMock, return_value=True),
-        patch.object(
-            monitor._tmux,
-            "capture_full_pane",
-            new_callable=AsyncMock,
-            return_value="stalled",
-        ),
-        patch.object(
-            monitor._tmux,
-            "kill_session",
-            new_callable=AsyncMock,
-            return_value=False,
-        ),
+        _terminal_liveness(monitor, True) as runtime,
+        _pane_text(monitor, "stalled"),
     ):
+        runtime.sticky = True
         await handler._recovery._fail_idle_agent(run, reason="test cleanup failure")
 
     updated_run = agent_run_manager.get(run.id)
@@ -1960,10 +1825,10 @@ async def test_terminal_and_unmonitored_runs_clear_completed_turn_recovery_state
     handler._transcript_resolver._path_cache[(inactive_run.id, "codex", "inactive")] = (
         "/inactive.jsonl"
     )
-    assert inactive_run.tmux_session_name is not None
-    assert agent_run_manager.clear_tmux_session_name(
+    assert inactive_run.terminal_id is not None
+    assert agent_run_manager.clear_live_terminal(
         inactive_run.id,
-        inactive_run.tmux_session_name,
+        inactive_run.terminal_id,
     )
     assert await monitor.check_idle_agents() == 0
     assert inactive_run.id not in handler._recovery._capacity_recovery

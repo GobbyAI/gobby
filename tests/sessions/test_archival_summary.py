@@ -43,14 +43,15 @@ async def test_missing_transcript_leaves_archival_summary_empty(temp_db: HubData
     )
 
     assert result["success"] is False
-    assert manager.get(session_id).summary_markdown is None
-    assert (
-        temp_db.fetchone(
-            "SELECT COUNT(*) AS count FROM session_summary_revisions WHERE session_id = %s",
-            (session_id,),
-        )["count"]
-        == 0
+    session = manager.get(session_id)
+    assert session is not None
+    assert session.summary_markdown is None
+    revision_count = temp_db.fetchone(
+        "SELECT COUNT(*) AS count FROM session_summary_revisions WHERE session_id = %s",
+        (session_id,),
     )
+    assert revision_count is not None
+    assert revision_count["count"] == 0
 
 
 @pytest.mark.asyncio
@@ -74,6 +75,7 @@ async def test_transcript_fallback_persists_summary_revision(temp_db: HubDatabas
     )
 
     session = manager.get(session_id)
+    assert session is not None
     assert result["success"] is True
     assert result["generation_mode"] == "full"
     assert session.summary_markdown
