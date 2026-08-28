@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -17,6 +16,7 @@ from gobby.terminals.ws_protocol import (
     TERMINAL_LIST_MAX_PAGE_SIZE,
     encode_page,
     inventory_item,
+    parse_list_cursor,
 )
 
 if TYPE_CHECKING:
@@ -46,9 +46,12 @@ def create_terminals_router(server: HTTPServer) -> APIRouter:
         manager = _manager()
         page_size = max(1, min(limit, TERMINAL_LIST_MAX_PAGE_SIZE))
         parsed_states = _parse_states(states)
-        created_at, cursor_id = _parse_cursor(cursor)
+        try:
+            created_at, cursor_id = parse_list_cursor(cursor)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="invalid cursor") from exc
         items, has_more = manager.list_page(
-            project_id,
+            [project_id],
             states=parsed_states,
             backend=backend,
             cursor_created_at=created_at,
@@ -90,15 +93,6 @@ def _parse_states(raw: str | None) -> tuple[str, ...]:
         return ("pending", "live", "exited", "orphaned")
     parts = tuple(item.strip() for item in raw.split(",") if item.strip())
     return parts or DEFAULT_STATES
-
-
-def _parse_cursor(raw: str | None) -> tuple[datetime | None, str | None]:
-    if not raw:
-        return None, None
-    created_at, _, terminal_id = raw.partition("|")
-    if not terminal_id:
-        return None, None
-    return datetime.fromisoformat(created_at), terminal_id
 
 
 def _live_host_epoch(server: HTTPServer, row: Terminal) -> str:

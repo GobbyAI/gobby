@@ -43,6 +43,7 @@ function makeJoined(
     label: "shell",
     provider: null,
     paneRef: "default:shell",
+    backendLabel: "tmux",
     dead: false,
     agentManaged: false,
     external: true,
@@ -156,5 +157,29 @@ describe("TerminalSessionList kebab menu", () => {
 
     await user.click(screen.getByRole("button", { name: "Attach shell" }));
     expect(onChange).toHaveBeenCalledWith("default:shell");
+  });
+});
+
+describe("TerminalSessionList backend chips", () => {
+  it("names the backend on every row as tmux or gterm", () => {
+    render(
+      <TerminalSessionList
+        sessions={[
+          makeJoined({ label: "shell", backendLabel: "tmux" }),
+          makeJoined({
+            tmux: makeTmux({ name: "native-1", backend: "native" }),
+            label: "native-1",
+            paneRef: "tmux:native-1",
+            backendLabel: "gterm",
+          }),
+        ]}
+        value={null}
+        onChange={vi.fn()}
+        onTerminate={vi.fn()}
+      />,
+    );
+    const rows = screen.getAllByRole("listitem");
+    expect(within(rows[0]).getByText("tmux")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("gterm")).toBeInTheDocument();
   });
 });

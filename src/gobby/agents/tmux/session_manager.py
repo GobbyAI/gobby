@@ -116,6 +116,42 @@ class TmuxSessionInfo:
     pane_path: str | None = None
 
 
+@dataclass
+class TmuxPaneInfo:
+    """One pane on a tmux server, keyed by the server generation that owns it."""
+
+    socket_path: str
+    server_pid: int
+    server_start_time: int
+    session_name: str
+    window_id: str
+    window_name: str | None
+    pane_id: str
+    pane_pid: int | None
+    pane_title: str | None
+    pane_dead: bool
+    pane_command: str | None
+    pane_path: str | None
+
+
+_PANE_LIST_FORMAT = "\t".join(
+    (
+        "#{socket_path}",
+        "#{pid}",
+        "#{start_time}",
+        "#{session_name}",
+        "#{window_id}",
+        "#{window_name}",
+        "#{pane_id}",
+        "#{pane_pid}",
+        "#{pane_title}",
+        "#{pane_dead}",
+        "#{pane_current_command}",
+        "#{pane_current_path}",
+    )
+)
+
+
 class TmuxSessionManager:
     """Manages tmux sessions on an isolated Gobby socket.
 
@@ -388,6 +424,67 @@ class TmuxSessionManager:
             if pane_id and pane_dead != "1":
                 pane_ids.add(pane_id)
         return pane_ids
+
+    async def list_panes(self) -> list[TmuxPaneInfo] | None:
+        """Every pane on this server.
+
+        ``[]`` when no server is running on the socket; ``None`` when tmux
+        failed for any other reason, so callers keep their last view instead
+        of treating the panes as gone.
+        """
+        rc, stdout, stderr = await self._run("list-panes", "-a", "-F", _PANE_LIST_FORMAT)
+        if rc != 0:
+            return [] if _is_missing_tmux_server_error(stderr) else None
+        panes: list[TmuxPaneInfo] = []
+        for line in stdout.splitlines():
+            pane = self._parse_pane_line(line)
+            if pane is not None:
+                panes.append(pane)
+        return panes
+
+    @staticmethod
+    def _parse_pane_line(line: str) -> TmuxPaneInfo | None:
+        """Parse one ``_PANE_LIST_FORMAT`` row; rows with a tab in a name are dropped."""
+        parts = line.split("\t")
+        if len(parts) != 12:
+            return None
+        (
+            socket_path,
+            server_pid,
+            start_time,
+            session_name,
+            window_id,
+            window_name,
+            pane_id,
+            pane_pid,
+            pane_title,
+            pane_dead,
+            pane_command,
+            pane_path,
+        ) = parts
+        if not (
+            socket_path
+            and server_pid.isdigit()
+            and start_time.isdigit()
+            and session_name
+            and window_id.startswith("@")
+            and pane_id.startswith("%")
+        ):
+            return None
+        return TmuxPaneInfo(
+            socket_path=socket_path,
+            server_pid=int(server_pid),
+            server_start_time=int(start_time),
+            session_name=session_name,
+            window_id=window_id,
+            window_name=window_name or None,
+            pane_id=pane_id,
+            pane_pid=int(pane_pid) if pane_pid.isdigit() else None,
+            pane_title=pane_title or None,
+            pane_dead=pane_dead == "1",
+            pane_command=pane_command or None,
+            pane_path=pane_path or None,
+        )
 
     async def has_session(self, name: str) -> bool:
         """Check whether a session with *name* exists."""

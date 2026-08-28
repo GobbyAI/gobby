@@ -3,6 +3,8 @@ import { ActivityRowStatusDot, type StatusKind } from "../ActivityRowStatusDot";
 import { QuickMenu, type QuickMenuItem } from "../QuickMenu";
 import { SourceIcon } from "../../shared/SourceIcon";
 import { Button } from "../../ui/Button";
+import { Chip } from "../../ui/Chip";
+import { chipIdentityClasses } from "../../ui/chipVariants";
 import { coarseHitAreaCls } from "../../ui/controlStyles";
 import { type JoinedTerminalSession, sessionKey } from "./terminalSessions";
 
@@ -87,6 +89,9 @@ function SessionRowContent({ session }: { session: JoinedTerminalSession }) {
         {session.paneRef}
       </span>
       <span className="flex shrink-0 items-center gap-1">
+        <Chip tone="accent" uppercase className={chipIdentityClasses}>
+          {session.backendLabel}
+        </Chip>
         {session.dead ? (
           <span className="rounded-full border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-2xs font-medium text-destructive-foreground">
             Dead

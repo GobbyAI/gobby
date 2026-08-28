@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -409,6 +409,7 @@ class TerminalManager:
                 session_name = EXCLUDED.session_name,
                 window_id = EXCLUDED.window_id,
                 title = EXCLUDED.title,
+                session_id = COALESCE(EXCLUDED.session_id, terminals.session_id),
                 liveness_at = now(),
                 updated_at = now()
             WHERE terminals.project_id = EXCLUDED.project_id
@@ -473,17 +474,27 @@ class TerminalManager:
 
     def list_page(
         self,
-        project_id: str,
+        project_ids: Sequence[str] | None = None,
         *,
+        machine_id: str | None = None,
         states: tuple[str, ...] | None = None,
         backend: str | None = None,
         cursor_created_at: datetime | None = None,
         cursor_id: str | None = None,
         limit: int = 100,
     ) -> tuple[list[Terminal], bool]:
-        """Stable (created_at, id) page for REST and WS inventory."""
-        filters = ["project_id = %s"]
-        params: list[object] = [str(UUID(project_id))]
+        """Stable (created_at, id) page for REST and WS inventory.
+
+        Each of ``project_ids`` and ``machine_id`` narrows the page when given.
+        """
+        filters: list[str] = []
+        params: list[object] = []
+        if project_ids is not None:
+            filters.append("project_id = ANY(%s)")
+            params.append([str(UUID(project_id)) for project_id in project_ids])
+        if machine_id is not None:
+            filters.append("machine_id = %s")
+            params.append(str(UUID(machine_id)))
         if states:
             filters.append("state = ANY(%s)")
             params.append(list(states))
@@ -497,7 +508,7 @@ class TerminalManager:
         rows = self.db.fetchall(
             f"""
             SELECT * FROM terminals
-            WHERE {" AND ".join(filters)}
+            {"WHERE " + " AND ".join(filters) if filters else ""}
             ORDER BY created_at ASC, id ASC
             LIMIT %s
             """,

@@ -2784,3 +2784,62 @@ async def test_session_manager_injection_unchanged(
     assert "set-buffer" in commands[0]
     assert any(command[-1] == "Enter" for command in commands if "send-keys" in command)
     assert not any("send-keys" in command and "-l" in command for command in commands)
+
+
+class TestListPanes:
+    """``list_panes`` enumerates every pane with the server generation that keys it."""
+
+    @pytest.mark.asyncio
+    async def test_parses_every_pane_and_asks_for_the_server_generation(self) -> None:
+        mgr = TmuxSessionManager(TmuxConfig(socket_name=""))
+        run_calls: list[tuple[str, ...]] = []
+        rows = [
+            "/private/tmp/tmux-501/default\t6051\t1787385464\t75\t@76\t(gobby-S#11155): Task"
+            "\t%76\t99781\tpane title\t0\t2.1.247\t/Users/josh/Projects/gobby",
+            "/private/tmp/tmux-501/default\t6051\t1787385464\t0\t@0\t\t%0\t\t\t1\t\t",
+            "garbage line",
+            "",
+        ]
+
+        async def fake_run(*tmux_args: str, timeout: float = 0) -> tuple[int, str, str]:
+            run_calls.append(tmux_args)
+            return (0, "\n".join(rows), "")
+
+        with patch.object(mgr, "_run", side_effect=fake_run):
+            panes = await mgr.list_panes()
+
+        assert run_calls[0][:3] == ("list-panes", "-a", "-F")
+        assert "#{pid}" in run_calls[0][3] and "#{start_time}" in run_calls[0][3]
+        assert panes is not None
+        assert [pane.pane_id for pane in panes] == ["%76", "%0"]
+        first, second = panes
+        assert (first.socket_path, first.server_pid, first.server_start_time) == (
+            "/private/tmp/tmux-501/default",
+            6051,
+            1787385464,
+        )
+        assert (first.session_name, first.window_id, first.window_name) == (
+            "75",
+            "@76",
+            "(gobby-S#11155): Task",
+        )
+        assert (first.pane_pid, first.pane_title, first.pane_dead) == (99781, "pane title", False)
+        assert (first.pane_command, first.pane_path) == ("2.1.247", "/Users/josh/Projects/gobby")
+        assert second.pane_dead is True
+        assert (second.window_name, second.pane_pid, second.pane_title) == (None, None, None)
+        assert (second.pane_command, second.pane_path) == (None, None)
+
+    @pytest.mark.asyncio
+    async def test_no_server_is_an_empty_list_and_other_failures_are_none(self) -> None:
+        mgr = TmuxSessionManager(TmuxConfig(socket_name="gobby"))
+
+        async def no_server(*tmux_args: str, timeout: float = 0) -> tuple[int, str, str]:
+            return (1, "", "no server running on /private/tmp/tmux-501/gobby")
+
+        async def broken(*tmux_args: str, timeout: float = 0) -> tuple[int, str, str]:
+            return (1, "", "protocol version mismatch (client 8, server 7)")
+
+        with patch.object(mgr, "_run", side_effect=no_server):
+            assert await mgr.list_panes() == []
+        with patch.object(mgr, "_run", side_effect=broken):
+            assert await mgr.list_panes() is None

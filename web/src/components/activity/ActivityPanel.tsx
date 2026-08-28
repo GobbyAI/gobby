@@ -428,6 +428,7 @@ export function ActivityPanel({
           <Suspense fallback={null}>
             <TerminalTab
               sessions={sessions}
+              projectId={projectId ?? null}
               focusSessionId={terminalFocusSessionId}
               onFocusHandled={onTerminalFocusHandled}
             />
