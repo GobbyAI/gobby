@@ -24,7 +24,6 @@ from tests.storage.test_terminals import LOCAL_MACHINE_ID, _manager
 pytestmark = pytest.mark.unit
 
 _REPO = Path(__file__).resolve().parents[2]
-_EVIDENCE = _REPO / "docs" / "evidence" / "native-backend-flip.md"
 _CONFIG_YAML = _REPO / "src" / "gobby" / "install" / "shared" / "config" / "config.yaml"
 _GUIDE = _REPO / "docs" / "guides" / "gterminal-development-guide.md"
 _WORKFLOW = "Terminal Parity Weekly"
@@ -468,21 +467,3 @@ def test_flip_gate_rejects_every_nonconforming_artifact() -> None:
     for name, artifact, expect_ok in cases:
         result = check_native_backend_flip(artifact)
         assert result.ok is expect_ok, f"{name}: ok={result.ok} reasons={result.reasons}"
-
-    committed = _EVIDENCE.read_text(encoding="utf-8")
-    committed_result = check_native_backend_flip(committed)
-    assert committed_result.ok, committed_result.reasons
-    for field in (
-        "workflow_name",
-        "weekly_slot",
-        "run_url",
-        "commit_sha",
-        "utc_timestamp",
-        "platform",
-        "package_install",
-        "4.3",
-        "3.6",
-        "query",
-        "query_timestamp",
-    ):
-        assert field in committed

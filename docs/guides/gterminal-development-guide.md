@@ -75,8 +75,11 @@ version is unpublished or yanked. Do not invent a combined workflow.
 Gobby-owned launches use `terminals.default_backend: native`
 (`TerminalConfig.default_backend`). tmux remains the backend for externally
 discovered sessions (`ownership: external`) and stays selectable per spawn via
-`terminal_backend`. Evidence for the flip lives in
-`docs/evidence/native-backend-flip.md`.
+`terminal_backend`. The flip's evidence artifact and its weekly parity producer
+were removed from the tree: the artifact cited scheduled runs that never
+executed (commit `d07111cf2d`), so no repository-local evidence supports the
+native default. Landing leaf 1.3 of `.gobby/plans/herdr-foundation-landing.md`
+reverts the default to `tmux`.
 
 Rollback: set `terminals.default_backend` back to `tmux` in
 `src/gobby/install/shared/config/config.yaml` (and any overlay that copies it).

@@ -18,7 +18,6 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-import yaml
 
 from gobby.agents.spawn_executor import derive_spawn_key
 from gobby.agents.tmux.output_reader import TmuxOutputReader
@@ -887,41 +886,3 @@ async def _ws_create_stream_resume(daemon: DaemonInstance, terminal_id: str) -> 
 
         await _recv_until(websocket, attached, timeout=12.0, description="stream resume")
         return True
-
-
-def test_weekly_workflow_is_the_parity_producer() -> None:
-    path = (
-        Path(__file__).resolve().parents[2] / ".github" / "workflows" / "terminal-parity-weekly.yml"
-    )
-    assert path.is_file()
-    raw = path.read_text(encoding="utf-8")
-    data = yaml.safe_load(raw)
-    on_block = data.get("on", data.get(True))
-    assert isinstance(on_block, dict)
-    assert "schedule" in on_block
-    cron = on_block["schedule"][0]["cron"]
-    assert cron.split()[0].isdigit() or cron.split()[0] == "0"
-    assert "workflow_dispatch" in on_block
-    matrix = data["jobs"]["parity"]["strategy"]["matrix"]["os"]
-    assert matrix == ["macos-latest", "ubuntu-latest"]
-    assert "mlugg/setup-zig" in raw
-    assert "0.15.2" in raw
-    assert "cargo build -p gobby-terminal --features vt-engine" in raw
-    assert "tests/terminals/test_runtime_contract.py" in raw
-    assert "tests/e2e/test_external_terminal_attach.py" in raw
-    assert "tests/servers/test_native_web_proxy.py" in raw
-    assert "tests/servers/test_web_tmux_through_host.py" in raw
-    assert "tests/cli/test_cli_install.py" in raw
-    assert "tests/cli/test_install_setup_gterm.py" in raw
-    assert "cargo package -p gobby-terminal" in raw
-    assert "cargo package -p gobby-client" in raw
-    for evidence_key in (
-        "workflow_name",
-        "weekly_slot",
-        "run_url",
-        "commit_sha",
-        "utc_timestamp",
-        "platform",
-        "package_install",
-    ):
-        assert evidence_key in raw
